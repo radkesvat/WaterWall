@@ -1,0 +1,25 @@
+.DS_Store
+node_modules
+/build
+
+
+
+#compiled bins
+/dist
+
+
+
+/src/texts
+/cmake
+
+.env.local
+.env.*.local
+package-lock.json
+main_linkerArgs.txt
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vscode/
