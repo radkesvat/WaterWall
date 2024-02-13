@@ -30,6 +30,7 @@ static void giveMemBackToOs()
     global_bd_storage.chunks -= 1;
     global_bd_storage.available = realloc(global_bd_storage.available, global_bd_storage.chunks * (GBD_MAX_CAP * sizeof(shift_buffer_t *)));
     hlogw("Global Buffer Dispatcher freed %d buffers, %zu are in use", GBD_MAX_CAP, global_bd_storage.in_use);
+    //TODO: call malloc_trim
 }
 
 shift_buffer_t *popShiftBuffer()

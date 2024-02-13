@@ -48,11 +48,13 @@ static zero_rtt_uuid_t newUUID()
         zero_rtt_uuid_t uuid = {0};
         uuid.epoch_sec = (uint32_t)ts.tv_sec;
         uuid.epoch_nsec = (uint32_t)ts.tv_nsec;
-
-        if (memcmp(&uuid, &global_last_uuid, sizeof(zero_rtt_uuid_t)))
+        
+        if (uuid.epoch_sec == global_last_uuid.epoch_sec && uuid.epoch_nsec == global_last_uuid.epoch_nsec)
         {
             return uuid;
         }
+
+
     }
 }
 
