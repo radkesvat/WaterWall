@@ -33,7 +33,7 @@ typedef struct socket_filter_option_s
 typedef struct socket_accept_result_s
 {
     hio_t *io;
-    tunnel_t *tun;
+    tunnel_t *tunnel;
     socket_protocol_t proto;
 
 } socket_accept_result_t;
