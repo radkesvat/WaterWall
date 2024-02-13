@@ -15,6 +15,7 @@ add_executable(Waterwall src/main.cpp
                    src/shiftbuffer.c
                    src/utils/context_buffer.c
                    src/dispatchers/buffer_dispatcher.c
+                   src/dispatchers/socket_dispatcher.c
                    src/tunnels/client/mux_client.c
                    src/tunnels/client/zero_rtt_client.c
                    src/adapters/listeners/tcp_listener.c

@@ -13,10 +13,13 @@
 typedef struct tcp_listener_state_s
 {
     hloop_t *loop;
-    hio_t *listenio;
-    char *host;
+    // settings
+    char* host;
+    int multiport_backend;
     uint16_t port_min;
     uint16_t port_max;
+    char **white_list_raddr;
+    char **black_list_raddr;
 
 } tcp_listener_state_t;
 
@@ -27,7 +30,7 @@ typedef struct tcp_listener_con_state_s
     hio_t *io;
     context_buffer_t *queue;
 
-    bool paused;
+    bool write_paused;
     bool established;
 } tcp_listener_con_state_t;
 
@@ -104,7 +107,7 @@ bool wants_socket(tunnel_t *self, hio_t *io)
     cstate->line = line;
     cstate->io = io;
     cstate->tunnel = self;
-    cstate->paused = false;
+    cstate->write_paused = false;
     cstate->established = false;
     line->chains_state[self->chain_index] = cstate;
 
@@ -145,7 +148,6 @@ tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
     tunnel_t *t = newTunnel();
     t->state = malloc(sizeof(tcp_listener_state_t));
     STATE(t)->loop = loop;
-    STATE(t)->listenio = NULL;
 
     const cJSON *host = cJSON_GetObjectItemCaseSensitive(settings, "host");
     if (cJSON_IsString(host) && (host->valuestring != NULL))
