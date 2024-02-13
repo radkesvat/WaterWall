@@ -32,7 +32,6 @@
 
 #define DISCARD_CONTEXT(x) (reuseShiftBuffer(x->payload))
 
-// #define BASE_CTX(x) ((context_t *)(hevent_userdata((x))))
 
 
 typedef struct line_s
