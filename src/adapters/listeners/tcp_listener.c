@@ -2,21 +2,21 @@
 #include "hv/hlog.h"
 #include "utils/context_buffer.h"
 #include <time.h>
+#include "dispatchers/socket_dispatcher.h"
+#include <string.h>
 
 #define STATE(x) ((tcp_listener_state_t *)((x)->state))
-#define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->base->chains_state)[self->chain_index])))
 
-typedef void (*wantSocket)(tunnel_t *self, hio_t *io, uint16_t port, int proto);
-
-typedef void (*registerSocketAcceptor)(tunnel_t *self, uint16_t pmin, uint16_t pmax, char *host, int proto,
-                                       int multiport_backend, wantSocket);
+#define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
+#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
 typedef struct tcp_listener_state_s
 {
-    char *host;
-    int port;
     hloop_t *loop;
     hio_t *listenio;
+    char *host;
+    uint16_t port_min;
+    uint16_t port_max;
 
 } tcp_listener_state_t;
 
@@ -28,6 +28,7 @@ typedef struct tcp_listener_con_state_s
     context_buffer_t *queue;
 
     bool paused;
+    bool established;
 } tcp_listener_con_state_t;
 
 static inline void upStream(tunnel_t *self, context_t *c)
@@ -37,9 +38,19 @@ static inline void upStream(tunnel_t *self, context_t *c)
 }
 static inline void downStream(tunnel_t *self, context_t *c)
 {
-
     tcp_listener_con_state_t *cstate = CSTATE(c);
-    cstate->io.upstream_io = c->src_io;
+
+    if (c->est)
+    {
+        cstate->established = true;
+        return;
+    }
+
+    if (c->payload != NULL)
+    {
+        hio_setup_upstream(cstate->io, c->src_io);
+        hio_write(cstate->io, rawBuf(c->payload), len(c->payload));
+    }
 }
 
 static void tcpListenerUpStream(tunnel_t *self, context_t *c)
@@ -68,38 +79,48 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
     self->up->upStream(self->up, c);
 }
 static void on_close(hio_t *io) {}
+
 void on_write_complete(hio_t *io, const void *buf, int writebytes)
 {
-    // line_t *base_con = (line_t *)(hevent_userdata(io));
-    // tunnel_t *self = ((tcp_listener_con_state_t *)base_con->chains_state[0])->tunnel;
 
-    hio_t *upstream_io = io->upstream_io;
+    hio_t *upstream_io = hio_get_upstream(io);
     if (upstream_io && hio_write_is_complete(io))
     {
-        // hio_setcb_write(io, NULL);
         hio_read(upstream_io);
     }
 }
 
-void hio_write_upstream(hio_t *io, void *buf, int bytes)
-{
-}
+// void hio_write_upstream(hio_t *io, void *buf, int bytes)
+// {
+// }
 
 bool wants_socket(tunnel_t *self, hio_t *io)
 {
 
     line_t *line = newLine();
-    context_buffer_t *queue = newContextBuffer();
-    tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
 
-    cstate->src_io = io;
+    tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
+    cstate->queue = newContextBuffer();
+    cstate->line = line;
+    cstate->io = io;
+    cstate->tunnel = self;
+    cstate->paused = false;
+    cstate->established = false;
+    line->chains_state[self->chain_index] = cstate;
+
     hevent_set_userdata(io, cstate);
 
+    // io->upstream_io = NULL;
     hio_setcb_read(io, on_recv);
     hio_setcb_close(io, on_close);
-    hio_setcb_write(io, onWriteComplete);
-    con->chains_state[0] = ;
-    (() con->chains_state[0])->tunnel = self;
+    hio_setcb_write(io, on_write_complete);
+
+    // send the init packet
+    context_t *context = newContext(line);
+    context->init = true;
+    context->src_io = io;
+
+    self->upStream(self, context);
 
     return true;
 }
@@ -119,22 +140,74 @@ static void on_accept(hio_t *io)
     // hio_readbytes(io, 2);
 }
 
-
-tunnel_t *newTcpListeneristener(hloop_t *loop, cJSON* settings)
+tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
 {
     tunnel_t *t = newTunnel();
     t->state = malloc(sizeof(tcp_listener_state_t));
     STATE(t)->loop = loop;
-    STATE(t)->port = port;
-    STATE(t)->host = host;
     STATE(t)->listenio = NULL;
+
+    const cJSON *host = cJSON_GetObjectItemCaseSensitive(settings, "host");
+    if (cJSON_IsString(host) && (host->valuestring != NULL))
+    {
+        STATE(t)->host = malloc(strlen(host->valuestring) + 1);
+        strcpy(STATE(t)->host, host->valuestring);
+    }
+    else
+    {
+        LOGF("JSON Error: TcpListener->settings->host (string field) : The data was empty or invalid.", NULL);
+        exit(1);
+    }
+
+    const cJSON *port = cJSON_GetObjectItemCaseSensitive(settings, "port");
+
+    if ((cJSON_IsNumber(port) && (port->valuedouble != 0)))
+    {
+        // single port given as a number
+        STATE(t)->port_min = port->valuedouble;
+        STATE(t)->port_max = port->valuedouble;
+    }
+    else
+    {
+
+        if (cJSON_IsArray(port))
+        {
+            const cJSON *port_minmax;
+            int i = 0;
+            // multi port given
+            cJSON_ArrayForEach(port_minmax, port)
+            {
+                if (!(cJSON_IsNumber(port_minmax) && (port_minmax->valuedouble != 0)))
+                {
+                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.", NULL);
+                    LOGF("JSON Error: MultiPort parsing failed.", NULL);
+                    exit(1);
+                }
+                if (i == 0)
+                    STATE(t)->port_min = port_minmax->valuedouble;
+                else if (i == 1)
+                    STATE(t)->port_max = port_minmax->valuedouble;
+                else
+                {
+                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.", NULL);
+                    LOGF("JSON Error: MultiPort port range has more data than expected.", NULL);
+                    exit(1);
+                }
+
+                i++;
+            }
+        }
+        else
+        {
+            LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.", NULL);
+            exit(1);
+        }
+    }
 
     t->upStream = &tcpListenerUpStream;
     t->packetUpStream = &tcpListenerPacketUpStream;
     t->downStream = &tcpListenerDownStream;
     t->packetDownStream = &tcpListenerPacketDownStream;
+
+
 }
-
-
-
-void startTcpListeneristener(tunnel_t *self) {}
