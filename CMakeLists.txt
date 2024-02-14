@@ -15,6 +15,7 @@ add_executable(Waterwall src/main.c
                    src/shiftbuffer.c
                    src/utils/context_buffer.c
                    src/utils/utils.c
+                   src/loggers/core_logger.c
                    src/dispatchers/buffer_dispatcher.c
                    src/dispatchers/socket_dispatcher.c
                    src/dispatchers/node_dispatcher.c
@@ -22,7 +23,6 @@ add_executable(Waterwall src/main.c
                    src/tunnels/client/zero_rtt_client.c
                    src/adapters/listeners/tcp_listener.c
 )
-
 
 
 
