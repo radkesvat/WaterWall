@@ -8,18 +8,23 @@ project(Waterwall VERSION 0.1)
 
 
 # add executable
-add_executable(Waterwall src/main.cpp
+add_executable(Waterwall src/main.c
                    src/connection.c
                    src/tunnel.c
                    src/router.c
                    src/shiftbuffer.c
                    src/utils/context_buffer.c
+                   src/utils/utils.c
                    src/dispatchers/buffer_dispatcher.c
                    src/dispatchers/socket_dispatcher.c
+                   src/dispatchers/node_dispatcher.c
                    src/tunnels/client/mux_client.c
                    src/tunnels/client/zero_rtt_client.c
                    src/adapters/listeners/tcp_listener.c
 )
+
+
+
 
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -130,3 +135,11 @@ message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 target_link_libraries(Waterwall hv_static)
 
 # set_property(TARGET Waterwall PROPERTY C_STANDARD 99)
+
+# set output path to build/bin/
+set_target_properties(Waterwall
+    PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
