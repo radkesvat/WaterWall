@@ -1,4 +1,4 @@
-#include "core_logger.h"
+#include "dns_logger.h"
 #include "hv/hbase.h"
 #include "hv/hmutex.h"
 
@@ -28,7 +28,7 @@ struct logger_s
 static logger_t *logger = NULL;
 static int s_gmtoff = 28800; // 8*3600
 
-static void destroy_core_logger(void)
+static void destroy_dns_logger(void)
 {
     if (logger)
     {
@@ -135,26 +135,24 @@ static void logfile_write(logger_t *logger, const char *buf, int len)
     }
 }
 
-void core_logger_handle(int loglevel, const char *buf, int len)
+void dns_logger_handle(int loglevel, const char *buf, int len)
 {
     stdout_logger(loglevel, buf, len);
     logfile_write(logger, buf, len);
 }
 
-logger_t *core_logger()
+logger_t *dns_logger()
 {
     return logger;
 }
 
-
-
-void initCoreLogger(char * log_file)
+void initDnsLogger(char * log_file)
 {
     if (logger == NULL)
     {
         logger = logger_create();
         logger_set_file(logger,log_file );
-        logger_set_handler(logger, core_logger_handle);
-        atexit(destroy_core_logger);
+        logger_set_handler(logger, dns_logger_handle);
+        atexit(destroy_dns_logger);
     }
 }

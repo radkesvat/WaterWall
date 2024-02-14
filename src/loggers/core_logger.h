@@ -11,4 +11,4 @@
 
 logger_t *core_logger();
 
-void initCoreLogger();
+void initCoreLogger(char * log_file);

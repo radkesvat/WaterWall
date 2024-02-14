@@ -16,6 +16,8 @@ add_executable(Waterwall src/main.c
                    src/utils/context_buffer.c
                    src/utils/utils.c
                    src/loggers/core_logger.c
+                   src/loggers/network_logger.c
+                   src/loggers/dns_logger.c
                    src/dispatchers/buffer_dispatcher.c
                    src/dispatchers/socket_dispatcher.c
                    src/dispatchers/node_dispatcher.c
