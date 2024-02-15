@@ -146,13 +146,15 @@ logger_t *dns_logger()
     return logger;
 }
 
-void initDnsLogger(char * log_file)
+void initDnsLogger(const char * log_file,const char* log_level)
 {
     if (logger == NULL)
     {
         logger = logger_create();
         logger_set_file(logger,log_file );
         logger_set_handler(logger, dns_logger_handle);
+        logger_set_level_by_str(logger, log_level);
+
         atexit(destroy_dns_logger);
     }
 }

@@ -9,4 +9,4 @@
 
 logger_t *core_logger();
 
-void initCoreLogger(char *log_file);
+void initCoreLogger(const char * log_file,const char* log_level);

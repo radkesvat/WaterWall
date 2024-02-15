@@ -146,13 +146,15 @@ logger_t *network_logger()
     return logger;
 }
 
-void initNetworkLogger(char * log_file)
+void initNetworkLogger(const char * log_file,const char* log_level)
 {
     if (logger == NULL)
     {
         logger = logger_create();
         logger_set_file(logger,log_file );
         logger_set_handler(logger, network_logger_handle);
+        logger_set_level_by_str(logger, log_level);
+
         atexit(destroy_network_logger);
     }
 }

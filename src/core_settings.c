@@ -146,18 +146,20 @@ static void parseLogSection(const cJSON *log_obj)
 static void parseIncludeSection(const cJSON *inc_array)
 {
     const cJSON *path = NULL;
-
+    bool had_child = false;
     cJSON_ArrayForEach(path, inc_array)
     {
         if (cJSON_IsString(path) && path->valuestring != NULL)
         {
+            had_child = true;
+
             char *buf = malloc(strlen(path->valuestring) + 1);
             strcpy(buf, path->valuestring);
             vec_config_path_t_push(&settings->config_paths, buf);
         }
     }
 
-    if (path == NULL)
+    if (!had_child)
     {
         fprintf(stderr, "Error: \"include\" array in core json is empty or invalid \n");
         exit(1);

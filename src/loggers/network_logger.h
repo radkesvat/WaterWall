@@ -10,4 +10,4 @@
 
 logger_t *network_logger();
 
-void initNetworkLogger(char * log_file);
+void initNetworkLogger(const char * log_file,const char* log_level);

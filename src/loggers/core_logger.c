@@ -148,13 +148,14 @@ logger_t *core_logger()
 
 
 
-void initCoreLogger(char * log_file)
+void initCoreLogger(const char * log_file,const char* log_level)
 {
     if (logger == NULL)
     {
         logger = logger_create();
         logger_set_file(logger,log_file );
         logger_set_handler(logger, core_logger_handle);
+        logger_set_level_by_str(logger, log_level);
         atexit(destroy_core_logger);
     }
 }

@@ -7,4 +7,4 @@
 
 logger_t *dns_logger();
 
-void initDnsLogger(char *log_file);
+void initDnsLogger(const char * log_file,const char* log_level);

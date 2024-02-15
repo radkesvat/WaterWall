@@ -59,7 +59,6 @@ CPMAddPackage(
   GIT_TAG 09790f024ad29fca6fe60528461eeb589d4a917b
   DOWNLOAD_ONLY True
 )
-target_compile_definitions(Waterwall PUBLIC STC_STATIC=1)
 
 
 if(stc_ADDED)
@@ -122,8 +121,11 @@ CPMAddPackage(
     OPTIONS "WITH_OPENSSL ON"
 )
 
+
+
 # for release, define NDEBUG !
-target_compile_definitions(Waterwall PUBLIC DEBUG=1)
+
+target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 DEBUG=1 WATERWALL_VERSION=${Waterwall_VERSION})
 # target_compile_definitions(Waterwall PRIVATE NDEBUG=1)
 
 
@@ -151,7 +153,5 @@ set_target_properties(Waterwall
 get_target_property(target_options Waterwall COMPILE_OPTIONS)
 # list(REMOVE_ITEM target_options "-pedantic")
 # set_property(TARGET Waterwall PROPERTY COMPILE_OPTIONS ${target_options})
-
-message(STATUS "Waterwall version: ${target_options}")
 
 # set_property(TARGET Waterwall PROPERTY C_STANDARD 11)
