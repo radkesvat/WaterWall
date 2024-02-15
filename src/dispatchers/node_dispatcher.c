@@ -1,5 +1,5 @@
 #include "node_dispatcher.h"
-#include "hv/hlog.h"
+#include "loggers/core_logger.h"
 
 static node_map_t *all_nodes = NULL;
 static node_array_t *listener_nodes = NULL;
@@ -8,7 +8,7 @@ void initNodeDispatcher()
 {
     if (all_nodes != NULL)
     {
-        LOGF("initSocketDispatcher called twice!", NULL);
+        LOGF("initSocketDispatcher called twice!");
         exit(1);
     }
     all_nodes = malloc(sizeof(node_map_t));
@@ -27,7 +27,7 @@ static void includeNode(const cJSON *node_json)
 
     if (!(cJSON_IsString(name) && (name->valuestring != NULL)))
     {
-        LOGF("JSON ERROR: ConfigFile->nodes[x]->name (string field) : The data was empty or invalid.", NULL);
+        LOGF("JSON ERROR: ConfigFile->nodes[x]->name (string field) : The data was empty or invalid.");
         exit(1);
     }
 
@@ -36,7 +36,7 @@ static void includeNode(const cJSON *node_json)
 
     if (!(cJSON_IsString(type_name) && (type_name->valuestring != NULL)))
     {
-        LOGF("JSON ERROR: ConfigFile->nodes[x]->type (string field) : The data was empty or invalid.", NULL);
+        LOGF("JSON ERROR: ConfigFile->nodes[x]->type (string field) : The data was empty or invalid.");
         exit(1);
     }
 
@@ -63,25 +63,26 @@ void includeNodeFile(char *data_json)
 
     if (!(cJSON_IsString(name) && (name->valuestring != NULL)))
     {
-        LOGW("JSON Warning: ConfigFile->name (string field) : The data was empty or invalid.", NULL);
+        LOGW("JSON Warning: ConfigFile->name (string field) : The data was empty or invalid.");
     }
 
     const cJSON *author = cJSON_GetObjectItemCaseSensitive(json, "author");
+    
     if (!(cJSON_IsString(author) && (author->valuestring != NULL)))
     {
-        LOGW("JSON Warning: ConfigFile->author (string field) : The data was empty or invalid.", NULL);
+        LOGW("JSON Warning: ConfigFile->author (string field) : The data was empty or invalid.");
     }
 
     const cJSON *minimum_version = cJSON_GetObjectItemCaseSensitive(json, "minimum_version");
     if (!(cJSON_IsNumber(minimum_version) && (minimum_version->valuedouble != 0)))
     {
-        LOGW("JSON Warning: ConfigFile->minimum_version (number field) : The data was empty or invalid.", NULL);
+        LOGW("JSON Warning: ConfigFile->minimum_version (number field) : The data was empty or invalid.");
     }
 
     const cJSON *nodes = cJSON_GetObjectItemCaseSensitive(json, "nodes");
     if (!(cJSON_IsArray(nodes) && (nodes->child != NULL)))
     {
-        LOGW("JSON Warning: ConfigFile->nodes (array field) : The data was empty or invalid.", NULL);
+        LOGW("JSON Warning: ConfigFile->nodes (array field) : The data was empty or invalid.");
     }
 
     const cJSON *single_node = NULL;

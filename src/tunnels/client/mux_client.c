@@ -99,7 +99,7 @@ static void checkUpCon(tunnel_t *self, size_t up_id)
 
     if (!upcon->init_sent)
     {
-        LOGI("Mux Connecting...", NULL);
+        LOGI("Mux Connecting...");
 
         timespec_get(&ts, TIME_UTC);
         upcon->init_epoch = ts.tv_sec;
@@ -115,7 +115,7 @@ static void checkUpCon(tunnel_t *self, size_t up_id)
         timespec_get(&ts, TIME_UTC);
         if (upcon->init_epoch - ts.tv_sec > CONNECT_TIME_OUT)
         {
-            LOGW("Mux Connect Timeout!", NULL);
+            LOGW("Mux Connect Timeout!");
             context_t *clone = newContext(upcon->connection);
             clone->fin = true;
             self->up->upStream(self->up, clone);
@@ -166,7 +166,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     else if (CSTATE(c) != (void *)(state->up_cons[up_id].connection))
     {
         // is from a destroyed previous mux line
-        LOGW("A destroyedLine's dw_cons is talking to MuxUpStream", NULL);
+        LOGW("A destroyedLine's dw_cons is talking to MuxUpStream");
         DISCARD_CONTEXT(c);
         c->payload = NULL;
         c->fin = true;
@@ -337,7 +337,7 @@ process:
     hmap_iio_iter f_iter = hmap_iio_find(&state->dw_cons, id);
     if (f_iter.ref == hmap_iio_end(&state->dw_cons).ref)
     {
-        LOGE("MuxDownStream: Invalid child id.", NULL);
+        LOGE("MuxDownStream: Invalid child id.");
         goto process;
     }
     line_t *con = f_iter.ref->second;

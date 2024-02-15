@@ -1,5 +1,6 @@
 #include "socket_dispatcher.h"
 #include "hv/hv.h"
+#include "loggers/core_logger.h"
 
 typedef struct socket_filter_s
 {
@@ -169,16 +170,17 @@ static HTHREAD_ROUTINE(accept_thread)
 void startSocketDispatcher()
 {
 
-    LOGI("Spawning AcceptThread...", NULL);
+    LOGI("Spawning AcceptThread...");
 
     hthread_create(accept_thread, hloop_new(HLOOP_FLAG_AUTO_FREE));
 }
 
 void initSocketDispatcher()
 {
+    
     if (global_state != NULL)
     {
-        LOGF("initSocketDispatcher called twice!", NULL);
+        LOGF("initSocketDispatcher called twice!");
         exit(1);
     }
 

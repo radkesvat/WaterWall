@@ -1,6 +1,6 @@
 #include "tcp_listener.h"
 #include "hv/hlog.h"
-#include "utils/context_buffer.h"
+#include "utils/context_queue.h"
 #include <time.h>
 #include "dispatchers/socket_dispatcher.h"
 #include "dispatchers/buffer_dispatcher.h"
@@ -31,7 +31,7 @@ typedef struct tcp_listener_con_state_s
     tunnel_t *tunnel;
     line_t *line;
     hio_t *io;
-    context_buffer_t *queue;
+    context_queue_t *queue;
     context_t *current_w;
 
     bool write_paused;
@@ -45,7 +45,7 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *)(hevent_userdata(io));
 
     context_t **cw = &((cstate)->current_w);
-    context_buffer_t *queue = (cstate)->queue;
+    context_queue_t *queue = (cstate)->queue;
 
     hio_t *upstream_io = hio_get_upstream(io);
     if (upstream_io && hio_write_is_complete(io))
@@ -54,9 +54,9 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
         *cw = NULL;
         hio_read(upstream_io);
 
-        while (contextBufferLen(queue) > 0)
+        while (contextQueueLen(queue) > 0)
         {
-            *cw = contextBufferPop(queue);
+            *cw = contextQueuePop(queue);
             hio_setup_upstream(io, (*cw)->src_io);
             int bytes = len((*cw)->payload);
             int nwrite = hio_write(io, rawBuf((*cw)->payload), bytes);
@@ -65,6 +65,11 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
                 cstate->write_paused = true;
                 hio_read_stop((*cw)->src_io);
                 return; // write pending
+            }
+            else
+            {
+                reuseShiftBuffer((*cw)->payload);
+                *cw = NULL;
             }
         }
         cstate->write_paused = false;
@@ -111,7 +116,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         if (cstate->write_paused)
         {
             hio_read_stop(c->src_io);
-            contextBufferPush(cstate->queue, c);
+            contextQueuePush(cstate->queue, c);
         }
         else
         {
@@ -124,6 +129,11 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 cstate->write_paused = true;
                 hio_read_stop(c->src_io);
                 hio_setcb_write(cstate->io, on_write_complete);
+            }
+            else
+            {
+                reuseShiftBuffer(cstate->current_w->payload);
+                cstate->current_w = NULL;
             }
         }
     }
@@ -199,7 +209,7 @@ void onInboundConnected(hevent_t *ev)
     line_t *line = newLine();
 
     tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
-    cstate->queue = newContextBuffer();
+    cstate->queue = newContextQueue();
     cstate->line = line;
     cstate->io = io;
     cstate->tunnel = self;
@@ -209,7 +219,6 @@ void onInboundConnected(hevent_t *ev)
     line->chains_state[self->chain_index] = cstate;
 
     hevent_set_userdata(io, cstate);
-
 
     // io->upstream_io = NULL;
     hio_setcb_read(io, on_recv);
@@ -253,7 +262,7 @@ tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
     }
     else
     {
-        LOGF("JSON Error: TcpListener->settings->host (string field) : The data was empty or invalid.", NULL);
+        LOGF("JSON Error: TcpListener->settings->host (string field) : The data was empty or invalid.");
         exit(1);
     }
 
@@ -276,8 +285,8 @@ tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
             {
                 if (!(cJSON_IsNumber(port_minmax) && (port_minmax->valuedouble != 0)))
                 {
-                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.", NULL);
-                    LOGF("JSON Error: MultiPort parsing failed.", NULL);
+                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
+                    LOGF("JSON Error: MultiPort parsing failed.");
                     exit(1);
                 }
                 if (i == 0)
@@ -286,8 +295,8 @@ tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
                     STATE(t)->port_max = port_minmax->valuedouble;
                 else
                 {
-                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.", NULL);
-                    LOGF("JSON Error: MultiPort port range has more data than expected.", NULL);
+                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
+                    LOGF("JSON Error: MultiPort port range has more data than expected.");
                     exit(1);
                 }
 
@@ -296,7 +305,7 @@ tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
         }
         else
         {
-            LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.", NULL);
+            LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
             exit(1);
         }
     }

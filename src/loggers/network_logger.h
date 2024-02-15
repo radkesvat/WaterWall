@@ -1,10 +1,12 @@
 #pragma once
 #include "hv/hlog.h"
 
+
 #ifdef hlog
 #undef hlog
-#endif
 #define hlog network_logger()
+#endif
+
 
 logger_t *network_logger();
 

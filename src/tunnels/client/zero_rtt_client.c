@@ -1,6 +1,6 @@
 #include "mux_client.h"
 #include "hv/hlog.h"
-#include "utils/context_buffer.h"
+#include "utils/context_queue.h"
 #include <time.h>
 
 typedef struct zero_rtt_uuid_s
@@ -16,7 +16,7 @@ typedef struct zero_rtt_con_s
     line_t *dw;
 
     bool paused;
-    context_buffer_t *queue;
+    context_queue_t *queue;
 
     bool est_sent;
 
@@ -69,7 +69,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     if (cstate == NULL)
     {
         cstate = malloc(sizeof(zero_rtt_con_t));
-        cstate->queue = newContextBuffer();
+        cstate->queue = newContextQueue();
         cstate->dw = c->line;
         shiftl(c->payload, sizeof(STATE(self)->uuid.epoch_sec));
         writeUI32(c->payload, STATE(self)->uuid.epoch_sec);
@@ -96,7 +96,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
     if (c->fin)
     {
-        destroyContextBuffer(cstate->queue);
+        destroyContextQueue(cstate->queue);
         free(cstate);
         CSTATE_MUT(c) = NULL;
         self->up->upStream(self->up, c);
@@ -107,7 +107,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         cstate->paused = true;
         hio_read_stop(c->src_io);
-        contextBufferPush(cstate->queue, c);
+        contextQueuePush(cstate->queue, c);
         return;
     }
 
@@ -132,8 +132,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             if (cstate->paused)
             {
-                while(contextBufferLen(cstate->queue)>0){
-                    context_t* buffered_c = contextBufferPop(cstate->queue);
+                while(contextQueueLen(cstate->queue)>0){
+                    context_t* buffered_c = contextQueuePop(cstate->queue);
                     hio_read(buffered_c->src_io);
                     self->up->upStream(self->up, buffered_c);
                     
