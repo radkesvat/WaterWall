@@ -13,7 +13,8 @@ add_executable(Waterwall src/main.c
                    src/tunnel.c
                    src/router.c
                    src/shiftbuffer.c
-                   src/utils/context_buffer.c
+                   src/core_settings.c
+                   src/utils/context_queue.c
                    src/utils/utils.c
                    src/loggers/core_logger.c
                    src/loggers/network_logger.c
@@ -127,6 +128,7 @@ target_compile_definitions(Waterwall PUBLIC DEBUG=1)
 
 
 target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)
+# target_compile_options(Waterwall PUBLIC -pedantic)
 
 
 
@@ -145,3 +147,11 @@ set_target_properties(Waterwall
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+
+get_target_property(target_options Waterwall COMPILE_OPTIONS)
+# list(REMOVE_ITEM target_options "-pedantic")
+# set_property(TARGET Waterwall PROPERTY COMPILE_OPTIONS ${target_options})
+
+message(STATUS "Waterwall version: ${target_options}")
+
+# set_property(TARGET Waterwall PROPERTY C_STANDARD 11)
