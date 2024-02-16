@@ -7,7 +7,7 @@ typedef struct socket_filter_s
     hio_t *listen_io;
 
     socket_filter_option_t option;
-    hloop_t *loop;
+    hloop_t **loops;
     tunnel_t *tunnel;
     onAccept cb;
 } socket_filter_t;
@@ -26,10 +26,10 @@ typedef struct socket_dispatcher_state_s
 
 static socket_dispatcher_state_t *global_state = NULL;
 
-void registerSocketAcceptor(hloop_t *loop, tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
+void registerSocketAcceptor(hloop_t **loops, tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
     socket_filter_t *filter = malloc(sizeof(socket_filter_t));
-    filter->loop = loop;
+    filter->loops = loops;
     filter->tunnel = tunnel;
     filter->option = option;
     filter->cb = cb;
@@ -68,7 +68,9 @@ static void on_accept_tcp(hio_t *io)
                          SOCKADDR_STR(hio_localaddr(io), localaddrstr),
                          SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
                     hio_detach(io);
-                    hloop_t *main_loop = filter->loop;
+                    //TODO load balance threads
+                    hloop_t *main_loop = filter->loops[0];
+
                     hevent_t ev;
                     memset(&ev, 0, sizeof(ev));
                     ev.loop = main_loop;

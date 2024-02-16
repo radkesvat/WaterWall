@@ -85,8 +85,10 @@ void expand(shift_buffer_t *self, size_t increase)
     }
 
     size_t newcap = pow(2, ceil(log2((float)(self->cap * 2) + (increase * 2))));
-    LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, newcap);
 
+#ifdef DEBUG
+    LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, newcap);
+#endif
     self->pbuf = realloc(self->pbuf, newcap);
 
     size_t dif = (newcap / 2) - self->cap;

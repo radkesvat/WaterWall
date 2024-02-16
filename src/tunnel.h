@@ -32,21 +32,20 @@
 
 #define DISCARD_CONTEXT(x) (reuseShiftBuffer(x->payload))
 
-
-
 typedef struct line_s
 {
+    hloop_t *loop;
     socket_context_t dest_ctx;
     socket_context_t src_ctx;
     uint16_t id;
-    void* chains_state[];
+    void *chains_state[];
 
 } line_t;
 
 typedef struct context_s
 {
     hio_t *src_io;
-    line_t* line;
+    line_t *line;
     shift_buffer_t *payload;
 
     //--------------
@@ -60,6 +59,7 @@ typedef struct context_s
 typedef struct tunnel_s
 {
     void *state;
+    hloop_t **loops;
     struct tunnel_s *dw, *up;
 
     void (*upStream)(struct tunnel_s *self, context_t *c);
@@ -76,7 +76,7 @@ tunnel_t *newTunnel();
 line_t *newLine();
 void destroyLine(line_t *con);
 
-context_t *newContext(line_t * line);
+context_t *newContext(line_t *line);
 void destroyContext(context_t *c);
 
 void destroyTunnel(tunnel_t *self);

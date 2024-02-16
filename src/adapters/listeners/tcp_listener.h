@@ -8,5 +8,4 @@
 // user <-----/               \----->    con 3
 //
 
-tunnel_t *newTcpListener(hloop_t *loop,cJSON* settings);
-
+tunnel_t *newTcpListener(hloop_t **loop, cJSON *settings);

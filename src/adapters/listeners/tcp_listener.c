@@ -15,14 +15,16 @@
 
 typedef struct tcp_listener_state_s
 {
-    hloop_t *loop;
+    hloop_t **loops;
     // settings
-    char *host;
+    char *address;
     int multiport_backend;
     uint16_t port_min;
     uint16_t port_max;
     char **white_list_raddr;
     char **black_list_raddr;
+    bool fast_open;
+
 
 } tcp_listener_state_t;
 
@@ -91,8 +93,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
-{
-    tcp_listener_con_state_t *cstate = CSTATE(c);
+{    tcp_listener_con_state_t *cstate = CSTATE(c);
 
     if (c->est)
     {
@@ -165,7 +166,8 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
 
     // context_t *c = newContext(base_con);
     // self->up->upStream(self->up, c);
-    assert(readbytes <= READ_BUFFER_SIZE);
+    // assert(readbytes <= READ_BUFFER_SIZE);
+
     shift_buffer_t *payload = popShiftBuffer();
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
@@ -211,6 +213,7 @@ void onInboundConnected(hevent_t *ev)
     tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
     cstate->queue = newContextQueue();
     cstate->line = line;
+    cstate->line->loop = loop;
     cstate->io = io;
     cstate->tunnel = self;
     cstate->current_w = NULL;
@@ -229,40 +232,28 @@ void onInboundConnected(hevent_t *ev)
     context_t *context = newContext(line);
     context->init = true;
     context->src_io = io;
-
     self->upStream(self, context);
+
+
 }
 
-static void on_accept(hio_t *io)
-{
 
-#ifdef DEBUG
-    LOGD("on_accept connfd=%d\n", hio_fd(io));
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN] = {0};
-    LOGD("accept connfd=%d [%s] <= [%s]\n", hio_fd(io),
-         SOCKADDR_STR(hio_localaddr(io), localaddrstr),
-         SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
-#endif
-
-    // hio_readbytes(io, 2);
-}
-
-tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
+tunnel_t *newTcpListener(hloop_t **loops, cJSON *settings)
 {
     tunnel_t *t = newTunnel();
     t->state = malloc(sizeof(tcp_listener_state_t));
-    STATE(t)->loop = loop;
+    memset(t->state,0,sizeof(tcp_listener_state_t));
+    STATE(t)->loops = loops;
 
-    const cJSON *host = cJSON_GetObjectItemCaseSensitive(settings, "host");
-    if (cJSON_IsString(host) && (host->valuestring != NULL))
+    const cJSON *address = cJSON_GetObjectItemCaseSensitive(settings, "address");
+    if (cJSON_IsString(address) && (address->valuestring != NULL))
     {
-        STATE(t)->host = malloc(strlen(host->valuestring) + 1);
-        strcpy(STATE(t)->host, host->valuestring);
+        STATE(t)->address = malloc(strlen(address->valuestring) + 1);
+        strcpy(STATE(t)->address, address->valuestring);
     }
     else
     {
-        LOGF("JSON Error: TcpListener->settings->host (string field) : The data was empty or invalid.");
+        LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid.");
         exit(1);
     }
 
@@ -311,7 +302,7 @@ tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
     }
 
     socket_filter_option_t filter_opt = {0};
-    filter_opt.host = STATE(t)->host;
+    filter_opt.host = STATE(t)->address;
     filter_opt.port_min = STATE(t)->port_min;
     filter_opt.port_max = STATE(t)->port_max;
     filter_opt.proto = socket_protocol_tcp;
@@ -319,7 +310,7 @@ tunnel_t *newTcpListener(hloop_t *loop, cJSON *settings)
     filter_opt.white_list_raddr = NULL;
     filter_opt.black_list_raddr = NULL;
 
-    registerSocketAcceptor(loop, t, filter_opt, onInboundConnected);
+    registerSocketAcceptor(loops, t, filter_opt, onInboundConnected);
 
     t->upStream = &tcpListenerUpStream;
     t->packetUpStream = &tcpListenerPacketUpStream;

@@ -47,11 +47,15 @@ int main(int argc, char **argv)
             char *config_file_content = readFile(*k.ref);
             if (config_file_content == NULL)
             {
-                LOGF("Could not read core file \"%s\" ", CONFIG_FILE);
+                LOGF("Could not read core file \"%s\" ", *k.ref);
                 exit(1);
             }
 
             LOGI("Parsing config file \"%s\" complete", *k.ref);
         }
     }
+
+
+
+    
 }

@@ -26,6 +26,7 @@ typedef struct socket_filter_option_s
     uint16_t port_max;
     char **white_list_raddr;
     char **black_list_raddr;
+    bool fast_open;
 
 } socket_filter_option_t;
 
@@ -40,8 +41,8 @@ typedef struct socket_accept_result_s
 
 typedef void (*onAccept)(hevent_t *ev);
 
-void registerSocketAcceptor(hloop_t *loop, tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
+void registerSocketAcceptor(hloop_t **loops, tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 
-void initSocketDispatcher();
+void initSocketDispatcher(hloop_t *loop);
 
 void startSocketDispatcher();
