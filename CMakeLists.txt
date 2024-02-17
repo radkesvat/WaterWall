@@ -22,6 +22,8 @@ add_executable(Waterwall src/main.c
                    src/dispatchers/buffer_dispatcher.c
                    src/dispatchers/socket_dispatcher.c
                    src/dispatchers/node_dispatcher.c
+                   src/tunnels/server/trojan/trojan_auth_server.c
+                   src/tunnels/shared/trojan/sha2.c
                    src/tunnels/client/mux_client.c
                    src/tunnels/client/zero_rtt_client.c
                    src/adapters/listeners/tcp_listener.c
@@ -38,6 +40,7 @@ include(cmake/CPM.cmake)
 # add komi hash
 # CPMAddPackage("gh:avaneev/komihash#5.10")
 # CPMAddPackage("gh:JacksonAllan/CC#v1.0.4")
+
 
 CPMAddPackage(
   NAME komihash

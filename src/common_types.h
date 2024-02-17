@@ -52,11 +52,13 @@ typedef struct user_time_info_s
 
 typedef struct user_s
 {
+    struct cJSON *json;
+    //-----------------
     char *name;
     char *email;
     char *notes;
-    char uid[40]; // unique id
-    uint64_t gid; // group id
+    char *uid; // unique id
+    int gid; // group id
     hash_t hash;  // represents uid
 
     bool enable;
@@ -90,12 +92,6 @@ typedef struct user_s
 
 
 
-typedef enum
-{
-    IPv4Addr = 1,
-    FqdnAddr = 3,
-    IPv6Addr = 4,
-} addr_type_e;
 
 // all data we need to connect to somewhere
 typedef struct socket_context_s
@@ -103,6 +99,5 @@ typedef struct socket_context_s
     uint8_t protocol; //IPPROTO_X
     char *domain;
     bool resolved;
-    addr_type_e addr_type;
     sockaddr_u addr;
 } socket_context_t;

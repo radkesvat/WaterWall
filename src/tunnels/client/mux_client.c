@@ -1,5 +1,5 @@
 #include "mux_client.h"
-#include "hv/hlog.h"
+#include "loggers/network_logger.h"
 #include "hv/hv.h"
 #include "hv/hloop.h"
 #include <time.h>

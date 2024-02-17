@@ -19,35 +19,27 @@ void initNodeDispatcher()
 
 static void includeNode(const cJSON *node_json)
 {
-    cJSON *name = cJSON_GetObjectItemCaseSensitive(node_json, "name");
     cJSON *type_name = cJSON_GetObjectItemCaseSensitive(node_json, "type");
     cJSON *next_name = cJSON_GetObjectItemCaseSensitive(node_json, "next");
     cJSON *settings = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
     node_t *node = malloc(sizeof(node_t));
 
-    if (!(cJSON_IsString(name) && (name->valuestring != NULL)))
+    if (!getStringFromJsonObject(&(node->name), node_json, "name"))
     {
         LOGF("JSON ERROR: ConfigFile->nodes[x]->name (string field) : The data was empty or invalid.");
         exit(1);
     }
 
-    node->name = malloc(strlen(name->valuestring) + 1);
-    strcpy(node->name, name->valuestring);
-
-    if (!(cJSON_IsString(type_name) && (type_name->valuestring != NULL)))
+    if (!getStringFromJsonObject(&(node->type_name), node_json, "type"))
     {
         LOGF("JSON ERROR: ConfigFile->nodes[x]->type (string field) : The data was empty or invalid.");
         exit(1);
     }
 
-    node->type_name = malloc(strlen(type_name->valuestring) + 1);
-    strcpy(node->type_name, type_name->valuestring);
-
-    if ((cJSON_IsString(next_name) && (next_name->valuestring != NULL)))
+    if (!getStringFromJsonObject(&(node->next_name), node_json, "next"))
     {
-
-        node->next_name = malloc(strlen(next_name->valuestring) + 1);
-        strcpy(node->next_name, next_name->valuestring);
+        LOGF("JSON ERROR: ConfigFile->nodes[x]->next (string field) : The data was empty or invalid.");
+        exit(1);
     }
 
     if ((cJSON_IsObject(settings) && (settings->valuestring != NULL)))
@@ -67,7 +59,7 @@ void includeNodeFile(char *data_json)
     }
 
     const cJSON *author = cJSON_GetObjectItemCaseSensitive(json, "author");
-    
+
     if (!(cJSON_IsString(author) && (author->valuestring != NULL)))
     {
         LOGW("JSON Warning: ConfigFile->author (string field) : The data was empty or invalid.");

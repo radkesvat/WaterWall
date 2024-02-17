@@ -7,7 +7,6 @@
 #include <string.h>
 
 #define STATE(x) ((tcp_listener_state_t *)((x)->state))
-
 #define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
@@ -24,7 +23,6 @@ typedef struct tcp_listener_state_s
     char **white_list_raddr;
     char **black_list_raddr;
     bool fast_open;
-
 
 } tcp_listener_state_t;
 
@@ -93,7 +91,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
-{    tcp_listener_con_state_t *cstate = CSTATE(c);
+{
+    tcp_listener_con_state_t *cstate = CSTATE(c);
 
     if (c->est)
     {
@@ -233,30 +232,21 @@ void onInboundConnected(hevent_t *ev)
     context->init = true;
     context->src_io = io;
     self->upStream(self, context);
-
-
 }
-
 
 tunnel_t *newTcpListener(hloop_t **loops, cJSON *settings)
 {
     tunnel_t *t = newTunnel();
     t->state = malloc(sizeof(tcp_listener_state_t));
-    memset(t->state,0,sizeof(tcp_listener_state_t));
+    memset(t->state, 0, sizeof(tcp_listener_state_t));
     STATE(t)->loops = loops;
 
-    const cJSON *address = cJSON_GetObjectItemCaseSensitive(settings, "address");
-    if (cJSON_IsString(address) && (address->valuestring != NULL))
-    {
-        STATE(t)->address = malloc(strlen(address->valuestring) + 1);
-        strcpy(STATE(t)->address, address->valuestring);
-    }
-    else
+    if (!getStringFromJsonObject(&(STATE(t)->address), settings, "address"))
     {
         LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid.");
         exit(1);
     }
-
+  
     const cJSON *port = cJSON_GetObjectItemCaseSensitive(settings, "port");
     if ((cJSON_IsNumber(port) && (port->valuedouble != 0)))
     {

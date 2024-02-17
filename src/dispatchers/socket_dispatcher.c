@@ -177,7 +177,7 @@ void startSocketDispatcher()
     hthread_create(accept_thread, hloop_new(HLOOP_FLAG_AUTO_FREE));
 }
 
-void initSocketDispatcher()
+void initSocketDispatcher(hloop_t *loop)
 {
     
     if (global_state != NULL)

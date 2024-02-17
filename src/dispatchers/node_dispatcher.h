@@ -1,7 +1,7 @@
 #pragma once
 
 #include "node.h"
-
+#include "utils/jsonutils.h"
 
 void initNodeDispatcher();
 

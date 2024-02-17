@@ -1,10 +1,9 @@
 #include "core_settings.h"
+#include "utils/jsonutils.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <assert.h> // for assert
-
-#include "cJSON.h"
 
 #define DEFAULT_CORE_LOG_LEVEL "debug"
 #define DEFAULT_CORE_LOG_FILE "core.json"
@@ -19,45 +18,15 @@ static struct core_settings_s *settings = NULL;
 
 static void parseLogSection(const cJSON *log_obj)
 {
-    const cJSON *path = cJSON_GetObjectItemCaseSensitive(log_obj, "path");
-    if (cJSON_IsString(path) && (path->valuestring != NULL))
-    {
-        settings->log_path = malloc(strlen(path->valuestring) + 1);
-        strcpy(settings->log_path, path->valuestring);
-    }
-    else
-    {
-        settings->log_path = malloc(strlen(DEFAULT_LOG_PATH) + 1);
-        strcpy(settings->log_path, DEFAULT_LOG_PATH);
-    }
+    getStringFromJsonObjectOrDefault(&(settings->log_path), log_obj, "path", DEFAULT_LOG_PATH);
 
     {
         const cJSON *core_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "core");
         if (cJSON_IsObject(core_obj) && (core_obj->child != NULL))
         {
-            const cJSON *loglevel = cJSON_GetObjectItemCaseSensitive(core_obj, "loglevel");
-            if (cJSON_IsString(loglevel) && (loglevel->valuestring != NULL))
-            {
-                settings->core_log_level = malloc(strlen(loglevel->valuestring) + 1);
-                strcpy(settings->core_log_level, loglevel->valuestring);
-            }
-            else
-            {
-                settings->core_log_level = malloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
-                strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
-            }
 
-            const cJSON *file = cJSON_GetObjectItemCaseSensitive(core_obj, "file");
-            if (cJSON_IsString(file) && (file->valuestring != NULL))
-            {
-                settings->core_log_file = malloc(strlen(file->valuestring) + 1);
-                strcpy(settings->core_log_file, file->valuestring);
-            }
-            else
-            {
-                settings->core_log_file = malloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
-                strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
-            }
+            getStringFromJsonObjectOrDefault(&(settings->core_log_level), core_obj, "loglevel", DEFAULT_CORE_LOG_LEVEL);
+            getStringFromJsonObjectOrDefault(&(settings->core_log_file), core_obj, "file", DEFAULT_CORE_LOG_FILE);
         }
         else
         {
@@ -72,29 +41,9 @@ static void parseLogSection(const cJSON *log_obj)
         const cJSON *network_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "network");
         if (cJSON_IsObject(network_obj) && (network_obj->child != NULL))
         {
-            const cJSON *loglevel = cJSON_GetObjectItemCaseSensitive(network_obj, "loglevel");
-            if (cJSON_IsString(loglevel) && (loglevel->valuestring != NULL))
-            {
-                settings->network_log_level = malloc(strlen(loglevel->valuestring) + 1);
-                strcpy(settings->network_log_level, loglevel->valuestring);
-            }
-            else
-            {
-                settings->network_log_level = malloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
-                strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
-            }
 
-            const cJSON *file = cJSON_GetObjectItemCaseSensitive(network_obj, "file");
-            if (cJSON_IsString(file) && (file->valuestring != NULL))
-            {
-                settings->network_log_file = malloc(strlen(file->valuestring) + 1);
-                strcpy(settings->network_log_file, file->valuestring);
-            }
-            else
-            {
-                settings->network_log_file = malloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
-                strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
-            }
+            getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "loglevel", DEFAULT_NETWORK_LOG_LEVEL);
+            getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "file", DEFAULT_NETWORK_LOG_FILE);
         }
         else
         {
@@ -109,29 +58,8 @@ static void parseLogSection(const cJSON *log_obj)
         const cJSON *dns_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "dns");
         if (cJSON_IsObject(dns_obj) && (dns_obj->child != NULL))
         {
-            const cJSON *loglevel = cJSON_GetObjectItemCaseSensitive(dns_obj, "loglevel");
-            if (cJSON_IsString(loglevel) && (loglevel->valuestring != NULL))
-            {
-                settings->dns_log_level = malloc(strlen(loglevel->valuestring) + 1);
-                strcpy(settings->dns_log_level, loglevel->valuestring);
-            }
-            else
-            {
-                settings->dns_log_level = malloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
-                strcpy(settings->dns_log_level, DEFAULT_DNS_LOG_LEVEL);
-            }
-
-            const cJSON *file = cJSON_GetObjectItemCaseSensitive(dns_obj, "file");
-            if (cJSON_IsString(file) && (file->valuestring != NULL))
-            {
-                settings->dns_log_file = malloc(strlen(file->valuestring) + 1);
-                strcpy(settings->dns_log_file, file->valuestring);
-            }
-            else
-            {
-                settings->dns_log_file = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
-                strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
-            }
+            getStringFromJsonObjectOrDefault(&(settings->dns_log_level), dns_obj, "loglevel", DEFAULT_DNS_LOG_LEVEL);
+            getStringFromJsonObjectOrDefault(&(settings->dns_log_file), dns_obj, "file", DEFAULT_DNS_LOG_FILE);
         }
         else
         {
