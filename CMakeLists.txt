@@ -26,7 +26,7 @@ add_executable(Waterwall src/main.c
                    src/tunnels/shared/trojan/sha2.c
                    src/tunnels/client/mux_client.c
                    src/tunnels/client/zero_rtt_client.c
-                   src/adapters/listeners/tcp_listener.c
+                   src/tunnels/adapters/listeners/tcp_listener.c
 )
 
 
@@ -129,6 +129,7 @@ CPMAddPackage(
 # for release, define NDEBUG !
 
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 DEBUG=1 WATERWALL_VERSION=${Waterwall_VERSION})
+target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
 # target_compile_definitions(Waterwall PRIVATE NDEBUG=1)
 
 

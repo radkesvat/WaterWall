@@ -15,6 +15,8 @@
 typedef struct tcp_listener_state_s
 {
     hloop_t **loops;
+    socket_dispatcher_state_t *socket_disp_state;
+
     // settings
     char *address;
     int multiport_backend;
@@ -234,12 +236,14 @@ void onInboundConnected(hevent_t *ev)
     self->upStream(self, context);
 }
 
-tunnel_t *newTcpListener(hloop_t **loops, cJSON *settings)
+tunnel_t *newTcpListener(node_instance_context_t *instance_info);
 {
     tunnel_t *t = newTunnel();
     t->state = malloc(sizeof(tcp_listener_state_t));
     memset(t->state, 0, sizeof(tcp_listener_state_t));
-    STATE(t)->loops = loops;
+    STATE(t)->loops = instance_info->loops;
+    STATE(t)->socket_disp_state = instance_info->socket_disp_state;
+    const cJSON settings = instance_info->node_settings_json;
 
     if (!getStringFromJsonObject(&(STATE(t)->address), settings, "address"))
     {
@@ -306,4 +310,14 @@ tunnel_t *newTcpListener(hloop_t **loops, cJSON *settings)
     t->packetUpStream = &tcpListenerPacketUpStream;
     t->downStream = &tcpListenerDownStream;
     t->packetDownStream = &tcpListenerPacketDownStream;
+}
+
+
+
+void apiTcpListener(tunnel_t *self, char *msg){
+    LOGE("TcpListener API NOT IMPLEMENTED"); //TODO
+}
+
+tunnel_t *destroyTcpListener(tunnel_t *self){
+    // aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaay khooooooooooda
 }

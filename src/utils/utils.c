@@ -121,7 +121,7 @@ bool socket_cmp_ip(sockaddr_u *addr1, sockaddr_u *addr2)
     return false;
 }
 
-user_t *parseUser(cJSON *user_json)
+user_t *parseUser(const cJSON *user_json)
 {
     if (!cJSON_IsObject(user_json) || user_json->child == NULL)
         return NULL;

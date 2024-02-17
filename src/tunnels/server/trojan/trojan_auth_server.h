@@ -14,6 +14,9 @@
 //
 
 
+#ifdef NODES_STATIC
+#define NODE_TROJAN_AUTH_SERVER
+#endif
 
 
 tunnel_t *newTrojanAuthServer(hloop_t **loops, cJSON *settings);

@@ -1,4 +1,6 @@
 #include "trojan_auth_server.h"
+#include "loggers/network_logger.h"
+#include "utils/userutils.h"
 #include "hv/hatomic.h"
 
 #define STATE(x) ((trojan_auth_server_state_t *)((x)->state))
@@ -25,7 +27,14 @@ typedef struct trojan_auth_server_con_state_s
 {
     tunnel_t *tunnel;
     line_t *line;
-    hio_t *io;
+    trojan_user_t *t_user;
+
+    
+    ud_t traffic;
+    ud_t speed_limit;
+    
+   
+
 
 } trojan_auth_server_con_state_t;
 
@@ -43,6 +52,26 @@ static void parse(trojan_auth_server_state_t *state, cJSON *settings)
         LOGF("JSON Error: TrojanAuthServer->Settings->Users (array field) was empty or invalid");
         exit(1);
     }
+    const cJSON *elment = NULL;
+
+
+    unsigned int total_parsed = 0;
+    unsigned int total_users = 0;
+    cJSON_ArrayForEach(elment, users_array)
+    {
+        user_t* user = parseUser(elment);
+        if (user ==NULL)
+        {
+            LOGW("TrojanAuthServer: 1 User json-parse failed, plase check the json");
+
+        }else{
+            total_parsed++;
+        }
+   
+
+        total_users++;
+    }
+    LOGI("TrojanAuthServer: %zu users parsed (out of total %zu) and can connect",total_parsed,total_users);
 
     
 }

@@ -5,4 +5,4 @@
 
 
 
-user_t*  parseUser(cJSON* user_json);
+user_t*  parseUser(const cJSON* user_json);

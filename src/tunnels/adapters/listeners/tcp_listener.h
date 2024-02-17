@@ -1,5 +1,5 @@
 #pragma once
-#include "tunnel.h"
+#include "node.h"
 #include "common_types.h"
 #include "utils/jsonutils.h"
 //
@@ -8,4 +8,8 @@
 // user <-----/               \----->    con 3
 //
 
-tunnel_t *newTcpListener(hloop_t **loops, cJSON *settings);
+#define NODE_TCP_LISTINER
+
+tunnel_t *newTcpListener(node_instance_context_t *instance_info);
+void apiTcpListener(tunnel_t *self, char *msg);
+tunnel_t *destroyTcpListener(tunnel_t *self);
