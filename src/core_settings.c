@@ -71,7 +71,7 @@ static void parseLogSection(const cJSON *log_obj)
     }
 }
 
-static void parseIncludeSection(const cJSON *inc_array)
+static void parseConfigsSection(const cJSON *inc_array)
 {
     const cJSON *path = NULL;
     bool had_child = false;
@@ -89,7 +89,7 @@ static void parseIncludeSection(const cJSON *inc_array)
 
     if (!had_child)
     {
-        fprintf(stderr, "Error: \"include\" array in core json is empty or invalid \n");
+        fprintf(stderr, "Error: \"configs\" array in core json is empty or invalid \n");
         exit(1);
     }
 }
@@ -138,14 +138,14 @@ void parseCoreSettings(char *data_json)
         strcpy(settings->log_path, DEFAULT_DNS_LOG_LEVEL);
     }
 
-    const cJSON *inc_array = cJSON_GetObjectItemCaseSensitive(json, "include");
+    const cJSON *inc_array = cJSON_GetObjectItemCaseSensitive(json, "configs");
     if (cJSON_IsArray(inc_array) && (inc_array->child != NULL))
     {
-        parseIncludeSection(inc_array);
+        parseConfigsSection(inc_array);
     }
     else
     {
-        fprintf(stderr, "Error: \"include\" array in core json is empty or invalid \n");
+        fprintf(stderr, "Error: \"configs\" array in core json is empty or invalid \n");
         exit(1);
     }
 

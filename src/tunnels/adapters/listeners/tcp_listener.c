@@ -15,6 +15,7 @@
 typedef struct tcp_listener_state_s
 {
     hloop_t **loops;
+    buffer_dispatcher_storage_t **buffer_dispatchers;
     socket_dispatcher_state_t *socket_disp_state;
 
     // settings
@@ -30,12 +31,13 @@ typedef struct tcp_listener_state_s
 
 typedef struct tcp_listener_con_state_s
 {
+    hloop_t *loop;
     tunnel_t *tunnel;
     line_t *line;
     hio_t *io;
     context_queue_t *queue;
     context_t *current_w;
-
+    buffer_dispatcher_storage_t *buffer_disp;
     bool write_paused;
     bool established;
     bool first_packet_sent;
@@ -52,7 +54,7 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
     hio_t *upstream_io = hio_get_upstream(io);
     if (upstream_io && hio_write_is_complete(io))
     {
-        reuseShiftBuffer((*cw)->payload);
+        reuseShiftBuffer(cstate->buffer_disp, (*cw)->payload);
         *cw = NULL;
         hio_read(upstream_io);
 
@@ -70,7 +72,7 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
             }
             else
             {
-                reuseShiftBuffer((*cw)->payload);
+                reuseShiftBuffer(cstate->buffer_disp, (*cw)->payload);
                 *cw = NULL;
             }
         }
@@ -134,7 +136,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                reuseShiftBuffer(cstate->current_w->payload);
+                reuseShiftBuffer(cstate->buffer_disp, cstate->current_w->payload);
                 cstate->current_w = NULL;
             }
         }
@@ -169,7 +171,7 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
     // self->up->upStream(self->up, c);
     // assert(readbytes <= READ_BUFFER_SIZE);
 
-    shift_buffer_t *payload = popShiftBuffer();
+    shift_buffer_t *payload = popShiftBuffer(cstate->buffer_disp);
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
 
@@ -215,6 +217,7 @@ void onInboundConnected(hevent_t *ev)
     cstate->queue = newContextQueue();
     cstate->line = line;
     cstate->line->loop = loop;
+    cstate->buffer_disp = STATE(self)->buffer_dispatchers[((size_t)loop - (size_t)(STATE(self)->loops[0])) / sizeof(void *)];
     cstate->io = io;
     cstate->tunnel = self;
     cstate->current_w = NULL;
@@ -236,21 +239,21 @@ void onInboundConnected(hevent_t *ev)
     self->upStream(self, context);
 }
 
-tunnel_t *newTcpListener(node_instance_context_t *instance_info);
+tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 {
     tunnel_t *t = newTunnel();
     t->state = malloc(sizeof(tcp_listener_state_t));
     memset(t->state, 0, sizeof(tcp_listener_state_t));
     STATE(t)->loops = instance_info->loops;
     STATE(t)->socket_disp_state = instance_info->socket_disp_state;
-    const cJSON settings = instance_info->node_settings_json;
+    const cJSON *settings = instance_info->node_settings_json;
 
     if (!getStringFromJsonObject(&(STATE(t)->address), settings, "address"))
     {
         LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid.");
         exit(1);
     }
-  
+
     const cJSON *port = cJSON_GetObjectItemCaseSensitive(settings, "port");
     if ((cJSON_IsNumber(port) && (port->valuedouble != 0)))
     {
@@ -304,7 +307,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info);
     filter_opt.white_list_raddr = NULL;
     filter_opt.black_list_raddr = NULL;
 
-    registerSocketAcceptor(loops, t, filter_opt, onInboundConnected);
+    registerSocketAcceptor(STATE(t)->socket_disp_state, STATE(t)->loops, t, filter_opt, onInboundConnected);
 
     t->upStream = &tcpListenerUpStream;
     t->packetUpStream = &tcpListenerPacketUpStream;
@@ -312,12 +315,12 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info);
     t->packetDownStream = &tcpListenerPacketDownStream;
 }
 
-
-
-void apiTcpListener(tunnel_t *self, char *msg){
-    LOGE("TcpListener API NOT IMPLEMENTED"); //TODO
+void apiTcpListener(tunnel_t *self, char *msg)
+{
+    LOGE("TcpListener API NOT IMPLEMENTED"); // TODO
 }
 
-tunnel_t *destroyTcpListener(tunnel_t *self){
+tunnel_t *destroyTcpListener(tunnel_t *self)
+{
     // aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaay khooooooooooda
 }

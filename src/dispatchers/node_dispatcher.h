@@ -1,22 +1,38 @@
 #pragma once
 
 #include "node.h"
-#include "utils/jsonutils.h"
 #include "hv/hmutex.h"
+//  configFile:
+//      info
+//
+//      Node1:
+//              info
+//              tunnel1
+//      Node2:
+//              info
+//              tunnel2
+//      Node3:
+//              info
+//              tunnel3
+//
+//
+// * Nodes inside each file are isaloted.
 
 typedef struct node_dispatcher_state_s
 {
-    hmutex_t mutex;
-    nodes_file_t file;
+    config_file_t *file;
+    map_node_t map;
 
 } node_dispatcher_state_t;
 
-void includeNodeFile(char *data_json);
+// you should use getTunnel, getNode can give you a uninitialized node in certain conditions
+// you are responsible for checking / creating the chain if you use getNode!
+node_t *getNode(node_dispatcher_state_t *state, hash_t hash_node_name);
 
-node_t *getNode(hash_t hash);
+tunnel_t *getTunnelnode_dispatcher_state_t* state,hash_t hash_tunnel_name);
 
-node_array_t *getListenerNodes();
+// private :
 
-void parseNodes();
-
-void initNodeDispatcher();
+void startParsingFiles(node_dispatcher_state_t *state);
+void includeConfigFile(node_dispatcher_state_t *state, char *data_json);
+node_dispatcher_state_t *createNodeDispatcher();

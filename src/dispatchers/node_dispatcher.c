@@ -1,5 +1,6 @@
 #include "node_dispatcher.h"
 #include "loggers/core_logger.h"
+#include "utils/jsonutils.h"
 
 static node_map_t *all_nodes = NULL;
 static node_array_t *listener_nodes = NULL;
@@ -84,16 +85,29 @@ void includeNodeFile(char *data_json)
     }
 }
 
-node_t *getNode(hash_t hash)
+void startParsingFiles(node_dispatcher_state_t *state);
+
+void includeConfigFile(node_dispatcher_state_t *state, char *data_json)
 {
-    return NULL;
+    if (state->file != NULL)
+    {
+        LOGF("Please only include 1 file in core json, because multiple file parsing is not implemented yet.");
+        exit(1);
+    }
+    state->file = malloc(sizeof(node_dispatcher_state_t));
+    memset(state->file, 0, sizeof(node_dispatcher_state_t));
+
+    
+    config_file_t *file = state->file;
+    cJSON *json = cJSON_Parse(data_json);
+
+
+    
 }
 
-node_array_t *getListenerNodes()
+node_dispatcher_state_t *createNodeDispatcher()
 {
-    return listener_nodes;
-}
-
-void parseNodes()
-{
+    node_dispatcher_state_t *state = malloc(sizeof(node_dispatcher_state_t));
+    memset(state, 0, sizeof(node_dispatcher_state_t));
+    return state;
 }

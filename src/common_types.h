@@ -3,6 +3,7 @@
 #include "hv/hplatform.h"
 #include "hv/hsocket.h"
 #include "hv/htime.h"
+#include "hv/hatomic.h"
 
 // typedef enum 
 // {
@@ -23,23 +24,24 @@ typedef uint64_t hash_t;
 
 typedef struct ud_s
 {
-    uint64_t u;
-    uint64_t d;
+    _Atomic uint64_t u;
+    _Atomic uint64_t d;
 } ud_t;
 
 typedef union
 {
     ud_t max;
-    uint64_t max_total;
+    _Atomic uint64_t max_total;
 } traffic_limit_t;
 
 typedef struct user_limit_s
 {
     traffic_limit_t traffic;
     ud_t bandwidth;
-    uint64_t ip;
-    uint64_t cons_in;
-    uint64_t cons_out;
+    _Atomic uint64_t ip;
+    _Atomic uint64_t devices;
+    _Atomic uint64_t cons_in;
+    _Atomic uint64_t cons_out;
 } user_limit_t;
 
 typedef struct user_time_info_s
@@ -47,8 +49,21 @@ typedef struct user_time_info_s
     datetime_t create_date;
     datetime_t first_usage_date;
     datetime_t expire_date;
-    bool since_first_use;
+    _Atomic bool since_first_use;
 } user_time_info_t;
+
+
+typedef struct user_stat_s
+{
+    ud_t speed;
+    ud_t traffic;
+    _Atomic uint64_t ips;
+    _Atomic uint64_t devices;
+    _Atomic uint64_t cons_in;
+    _Atomic uint64_t cons_out;
+
+
+} user_stat_t;
 
 typedef struct user_s
 {
@@ -61,9 +76,12 @@ typedef struct user_s
     int gid; // group id
     hash_t hash;  // represents uid
 
-    bool enable;
+    _Atomic bool enable;
     user_limit_t limit;
     user_time_info_t timeinfo;
+    user_stat_t stats;
+
+
 } user_t;
 
 // typedef struct proxy_protocol_s
@@ -101,3 +119,41 @@ typedef struct socket_context_s
     bool resolved;
     sockaddr_u addr;
 } socket_context_t;
+
+
+
+
+typedef struct node_instance_context_s
+{
+    cJSON *node_json;
+    cJSON *node_settings_json;                  // node_json -> settings
+    uint32_t threads;
+    hloop_t **loops;                            // thread local
+    buffer_dispatcher_storage_t **buffer_disps; // thread local
+    struct socket_dispatcher_state_s *socket_disp_state;
+    struct node_dispatcher_state_s *node_disp_state;
+    struct node_t *self_node_handle;
+    struct config_file_s *self_file_handle;
+} node_instance_context_t;
+
+typedef struct node_s
+{
+    char *name;
+    hash_t hash_name;
+    char *type_name;
+    hash_t hash_type_name;
+    char *next_name;
+    hash_t hash_next_naem;
+    size_t refrenced;
+    size_t version;
+    //------------ evaluated:
+    unsigned listener : 1;
+    unsigned sender : 1;
+    tunnel_t *(*creation_proc)(node_instance_context_t *instance_info);
+    void (*api_proc)(tunnel_t *instance, char *msg);
+    tunnel_t *(*destroy_proc)(tunnel_t *instance);
+    node_instance_context_t instance_context;
+    tunnel_t *instance;
+
+} node_t;
+

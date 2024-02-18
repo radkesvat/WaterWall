@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-char *readFile(const char *path)
+char *readFile(const char * const path)
 {
     FILE *f = fopen(path, "rb");
 
@@ -27,6 +27,20 @@ char *readFile(const char *path)
     return string;
 }
 
+char *readFileFromHandle(FILE *f)
+{
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET); /* same as rewind(f); */
+
+    char *string = malloc(fsize + 1);
+    fread(string, fsize, 1, f);
+
+    string[fsize] = 0;
+    return string;
+}
+
 char *concat(const char *s1, const char *s2)
 {
     char *result = malloc(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
@@ -35,11 +49,11 @@ char *concat(const char *s1, const char *s2)
     return result;
 }
 
-bool getBoolFromJsonObject(bool *dest,const  cJSON *json_obj, const char *key)
+bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
 {
 
     assert(dest != NULL);
-    const  cJSON *jbool = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    const cJSON *jbool = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsBool(jbool))
     {
 
@@ -52,11 +66,11 @@ bool getBoolFromJsonObject(bool *dest,const  cJSON *json_obj, const char *key)
     }
 }
 
-bool geIntFromJsonObject(int *dest,const  cJSON *json_obj, const char *key)
+bool geIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
 {
 
     assert(dest != NULL);
-    const  cJSON *jnumber = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    const cJSON *jnumber = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsNumber(jnumber))
     {
 
@@ -69,11 +83,11 @@ bool geIntFromJsonObject(int *dest,const  cJSON *json_obj, const char *key)
     }
 }
 
-bool getStringFromJsonObject(char **dest,const  cJSON *json_obj, const char *key)
+bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key)
 {
 
     assert(*dest == NULL);
-    const  cJSON *jstr = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    const cJSON *jstr = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
     {
 
@@ -87,7 +101,7 @@ bool getStringFromJsonObject(char **dest,const  cJSON *json_obj, const char *key
     }
 }
 
-bool getStringFromJsonObjectOrDefault(char **dest,const  cJSON *json_obj, const char *key, const char *def)
+bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key, const char *def)
 {
     assert(def != NULL);
     if (!getStringFromJsonObject(dest, json_obj, key))
@@ -98,6 +112,8 @@ bool getStringFromJsonObjectOrDefault(char **dest,const  cJSON *json_obj, const 
     }
     return true;
 }
+
+
 
 extern bool socket_cmp_ipv4(sockaddr_u *addr1, sockaddr_u *addr2);
 extern bool socket_cmp_ipv6(sockaddr_u *addr1, sockaddr_u *addr2);

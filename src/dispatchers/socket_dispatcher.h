@@ -34,7 +34,7 @@ typedef struct socket_filter_option_s
 // user data of accept event
 typedef struct socket_accept_result_s
 {
-    hio_t *io;
+    hio_t *io; // it also has the owner loop
     tunnel_t *tunnel;
     socket_protocol_t proto;
 

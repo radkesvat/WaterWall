@@ -24,8 +24,8 @@ add_executable(Waterwall src/main.c
                    src/dispatchers/node_dispatcher.c
                    src/tunnels/server/trojan/trojan_auth_server.c
                    src/tunnels/shared/trojan/sha2.c
-                   src/tunnels/client/mux_client.c
-                   src/tunnels/client/zero_rtt_client.c
+                  #  src/tunnels/client/mux_client.c
+                  #  src/tunnels/client/zero_rtt_client.c
                    src/tunnels/adapters/listeners/tcp_listener.c
 )
 
