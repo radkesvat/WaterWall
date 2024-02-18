@@ -1,4 +1,5 @@
-#include "config.h"
+#include "hv/hplatform.h"
+#include "config_file.h"
 #include "loggers/core_logger.h"
 #include "utils/fileutils.h"
 
@@ -28,35 +29,58 @@ void releaseUpdateLock(config_file_t *state)
 // only use if you acquired lock before
 void unsafeCommitChanges(config_file_t *state)
 {
+    char *string = cJSON_PrintBuffered(state->root, (state->file_prebuffer_size) * 2, true);
+    size_t len = strlen(string);
+    const max_retries = 3;
+    for (size_t i = 0; i < max_retries; i++)
+    {
+        if (writeFile(state->filepath, string, len))
+            return;
+        LOGE("WriteFile Error: could not write to \"%s\". retry...", state->filepath);
+    }
+    LOGE("WriteFile Error: giving up writing to config file \"%s\"", state->filepath);
 }
 
-void commitChangesHard(config_file_t *state);
+void commitChangesHard(config_file_t *state)
+{
+    acquireUpdateLock(state);
+    unsafeCommitChanges(state);
+    releaseUpdateLock(state);
+}
 // will not write if the mutex is locked
-void commitChangesSoft(config_file_t *state);
+void commitChangesSoft(config_file_t *state)
+{
+#ifdef OS_WI
+    commitChangesHard(state);
+#else
+    if (0 == pthread_mutex_trylock(state->guard))
+    {
+        unsafeCommitChanges(state);
+        releaseUpdateLock(state);
+    }
+
+#endif
+}
 
 config_file_t *parseConfigFile(const char *const file_path)
 {
     config_file_t *state = malloc(sizeof(config_file_t));
     memset(state, 0, sizeof(config_file_t));
     hmutex_init(state->guard);
+
     state->file_path = malloc(strlen(file_path) + 1);
     strcpy(state->filepath, file_path);
 
-    state->handle = fopen(file_path, "rb");
-    if (! state->handle)
+    char *data_json = readFile(file_path);
+
+    if (!data_json)
     {
         LOGF("File Error: config file \"%s\" could not be read", filepath);
         exit(1);
     }
-}
+    state->file_prebuffer_size = strlen(data_json);
 
-void inihConfigFile(const char *const file_path)
-{
-
-    char *data_json = readFileFromHandle(file_path);
-
-
-    cJSON *json = cJSON_Parse(data_json);
+    cJSON *json = cJSON_ParseWithLength(data_json, state->file_prebuffer_size);
     state->root = json;
 
     if (json == NULL)

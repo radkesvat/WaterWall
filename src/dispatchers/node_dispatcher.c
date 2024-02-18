@@ -87,6 +87,10 @@ void includeNodeFile(char *data_json)
 
 void startParsingFiles(node_dispatcher_state_t *state);
 
+void startParsingFiles(node_dispatcher_state_t *state)
+{
+}
+
 void includeConfigFile(node_dispatcher_state_t *state, char *data_json)
 {
     if (state->file != NULL)

@@ -14,7 +14,6 @@
 
 typedef struct config_file_s
 {
-    FILE * handle;
     char *file_path;
     char *name;
     char *author;
@@ -22,6 +21,7 @@ typedef struct config_file_s
     bool encrypted;
     cJSON *root;
     cJSON *nodes;
+    size_t file_prebuffer_size;
 
     hmutex_t guard;
 } config_file_t;
@@ -46,4 +46,4 @@ void commitChangesHard(config_file_t *state);
 // will not write if the mutex is locked
 void commitChangesSoft(config_file_t *state);
 
-config_file_t *initConfigFile(const char *const file_path);
+config_file_t *parseConfigFile(const char *const file_path);

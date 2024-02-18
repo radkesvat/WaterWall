@@ -1,4 +1,4 @@
-
+#include "common_types.h"
 #include "stringutils.h"
 #include "jsonutils.h"
 #include "fileutils.h"
@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-char *readFile(const char * const path)
+char *readFile(const char *const path)
 {
     FILE *f = fopen(path, "rb");
 
@@ -27,18 +27,22 @@ char *readFile(const char * const path)
     return string;
 }
 
-char *readFileFromHandle(FILE *f)
+bool writeFile(const char *const path, char *data, size_t len)
 {
+    FILE *f = fopen(path, "wb");
 
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET); /* same as rewind(f); */
+    if (!f)
+        return false;
 
-    char *string = malloc(fsize + 1);
-    fread(string, fsize, 1, f);
+    fseek(f, 0, SEEK_SET);
 
-    string[fsize] = 0;
-    return string;
+    if (fwrite(data, len, 1, f) != len)
+    {
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+    return true;
 }
 
 char *concat(const char *s1, const char *s2)
@@ -113,8 +117,6 @@ bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const 
     return true;
 }
 
-
-
 extern bool socket_cmp_ipv4(sockaddr_u *addr1, sockaddr_u *addr2);
 extern bool socket_cmp_ipv6(sockaddr_u *addr1, sockaddr_u *addr2);
 bool socket_cmp_ip(sockaddr_u *addr1, sockaddr_u *addr2)
@@ -137,7 +139,7 @@ bool socket_cmp_ip(sockaddr_u *addr1, sockaddr_u *addr2)
     return false;
 }
 
-user_t *parseUser(const cJSON *user_json)
+bool parseUserFromJsonObject(struct user_s * dest,const  cJSON *user_json)
 {
     if (!cJSON_IsObject(user_json) || user_json->child == NULL)
         return NULL;

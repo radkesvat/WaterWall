@@ -1,4 +1,4 @@
 #pragma once
 
 char *readFile(const char *const path);
-char *readFileFromHandle(FILE *f);
+bool writeFile(const char *const path, char *data, size_t len);

@@ -3,7 +3,7 @@
 
 void chain(tunnel_t *from, tunnel_t *to)
 {
-    assert(to->from == NULL); // 2 nodes cannot chain to 1 exact node
+    assert(to->dw == NULL); // 2 nodes cannot chain to 1 exact node
     from->up = to;
     to->dw = from;
     to->chain_index = from->chain_index + 1;

@@ -1,5 +1,6 @@
 #include "core_settings.h"
 #include "utils/jsonutils.h"
+#include "hv/hsysinfo.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -148,6 +149,12 @@ void parseCoreSettings(char *data_json)
         fprintf(stderr, "Error: \"configs\" array in core json is empty or invalid \n");
         exit(1);
     }
+
+    if(!geIntFromJsonObject(&(settings->threads),json,"threads")){
+        settings->threads = get_ncpu();
+        printf("Default threads: %d",settings->threads);
+    }
+    assert((settings->threads > 0) && (settings->threads <= 200));
 
     // TODO: DNS / API
 }

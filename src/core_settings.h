@@ -15,6 +15,8 @@ struct core_settings_s
     char* dns_log_level;
     char* dns_log_file;
 
+    int threads;
+
     vec_config_path_t config_paths;
 
 };
