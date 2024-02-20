@@ -1,0 +1,12 @@
+
+
+
+
+
+
+
+char uid[40]; // unique id
+
+bool enable;
+user_limit_t limit;
+user_time_info_t timeinfo;

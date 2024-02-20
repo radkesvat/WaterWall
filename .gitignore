@@ -9,7 +9,7 @@ node_modules
 
 
 
-/src/texts
+/core/texts
 /cmake
 
 .env.local

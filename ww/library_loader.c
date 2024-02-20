@@ -2,22 +2,6 @@
 #include <string.h>
 #include "hv/hplatform.h"
 
-#ifdef COMPILING_CORE
-#include "tunnels/adapters/listeners/tcp_listener.h"
-
-#define CHECKFOR(x)                                            \
-    do                                                         \
-    {                                                          \
-        if (strcmp(name, #x) == 0)                             \
-        {                                                      \
-            return (tunnel_lib_t){new##x, api##x, destroy##x}; \
-        }                                                      \
-    } while (0)
-
-#else
-
-#define CHECKFOR(x)
-#endif
 
 #define i_key tunnel_lib_t
 #define i_type vec_static_libs

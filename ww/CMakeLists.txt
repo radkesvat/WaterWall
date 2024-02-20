@@ -1,6 +1,6 @@
 
 
-add_library(ww
+add_library(ww STATIC
                    ww.c
                    tunnel.c
                    shiftbuffer.c
@@ -84,7 +84,10 @@ CPMAddPackage(
     GITHUB_REPOSITORY ithewei/libhv
     OPTIONS "WITH_OPENSSL ON"
 )
+# target_compile_options(hv_static PUBLIC -fPIC) 
 
 target_compile_options(ww PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(ww PRIVATE STC_STATIC=1 DEBUG=1 WW_VERSION=0.1)
-target_link_libraries(ww hv_static)
+target_link_libraries(ww hv_static) 
+
+

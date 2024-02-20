@@ -1,7 +1,7 @@
 #include "api.h"
 #include "utils/fileutils.h"
 #include "utils/stringutils.h"
-#include "core/core_settings.h"
+#include "core_settings.h"
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "loggers/core_logger.h"
