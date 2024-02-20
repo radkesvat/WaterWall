@@ -17,7 +17,7 @@ static void reCharge(buffer_pool_t *state)
         state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
     }
     state->len += count;
-    hlogw("BufferPool allocated %d new buffers, %zu are in use", count, state->in_use);
+    LOGD("BufferPool allocated %d new buffers, %zu are in use", count, state->in_use);
 }
 
 static void giveMemBackToOs(buffer_pool_t *state)
@@ -32,7 +32,7 @@ static void giveMemBackToOs(buffer_pool_t *state)
     state->len -= GBD_MAX_CAP;
 
     state->available = realloc(state->available, state->chunks * (GBD_MAX_CAP * sizeof(shift_buffer_t *)));
-    hlogw("BufferPool freed %d buffers, %zu are in use", GBD_MAX_CAP, state->in_use);
+    LOGD("BufferPool freed %d buffers, %zu are in use", GBD_MAX_CAP, state->in_use);
     // TODO: call malloc_trim
 }
 

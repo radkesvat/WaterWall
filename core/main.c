@@ -5,6 +5,7 @@
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "loggers/core_logger.h"
+#include "static_tunnels.h"
 
 #define CORE_FILE "core.json"
 
@@ -35,7 +36,6 @@ int main(int argc, char **argv)
             getCoreSettings()->dns_log_level,
             getCoreSettings()->threads);
 
-
         free(core_log_file_path);
         free(network_log_file_path);
         free(dns_log_file_path);
@@ -43,21 +43,25 @@ int main(int argc, char **argv)
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
 
+    loadStaticTunnelsIntoCore();
+
     //  [Parse ConfigFiles]
+    //  TODO this currently only runs 1 config file
     {
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {
             // read config file
-            LOGD("Begin Parsing config file \"%s\"", *k.ref);
+            LOGD("Begin parsing config file \"%s\"", *k.ref);
+            config_file_t* cfile = parseConfigFile(*k.ref);
 
-            char *config_file_content = readFile(*k.ref);
-            if (config_file_content == NULL)
+            if (cfile == NULL)
             {
                 LOGF("Could not read core file \"%s\" ", *k.ref);
                 exit(1);
             }
 
             LOGI("Parsing config file \"%s\" complete", *k.ref);
+            runConfigFile(cfile);
         }
     }
 }

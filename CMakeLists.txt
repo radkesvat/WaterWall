@@ -2,9 +2,9 @@ cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
 
 
-option(CORE_BUILD_RELEASE "compile core for release build"  FALSE)
-option(WW_BUILD_RELEASE "compile runtime lib for release build"  FALSE)
-option(NODES_BUILD_RELEASE "compile runtime nodes for release build"  FALSE)
+# option(CORE_BUILD_RELEASE "compile core for release build"  FALSE)
+# option(WW_BUILD_RELEASE "compile runtime lib for release build"  FALSE)
+# option(NODES_BUILD_RELEASE "compile runtime nodes for release build"  FALSE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 
@@ -20,14 +20,14 @@ project(Waterwall VERSION 0.1)
 
 # add executable
 add_executable(Waterwall core/main.c
-                   core/core_settings.c
-                  #  core/tunnels/server/trojan/trojan_auth_server.c
-                  #  core/tunnels/shared/trojan/sha2.c
-                  #  core/tunnels/adapters/listeners/tcp_listener.c
+                  core/core_settings.c
+                  core/static_tunnels.c
+               
 )
 
 
 
+target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 
@@ -42,10 +42,12 @@ target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_libraries(Waterwall ww)
 
 #tcp listener
+if(INCLUDE_TCP_LISTENER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TCP_LISTENER=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
-target_link_libraries(Waterwall ww)
-
+target_link_libraries(Waterwall tcp_listener)
+endif()
 
 
 
@@ -114,12 +116,12 @@ CPMAddPackage(
 
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Waterwall_VERSION})
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
-if(CORE_BUILD_RELEASE)
-target_compile_definitions(Waterwall PRIVATE g NDEBUG=1)
-else()
-target_compile_definitions(Waterwall PRIVATE O3 DEBUG=1)
 
-endif()
+# if(CORE_BUILD_RELEASE)
+# target_compile_definitions(Waterwall PRIVATE g NDEBUG=1)
+# else()
+# target_compile_definitions(Waterwall PRIVATE O3 DEBUG=1)
+# endif()
 
 
 target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)

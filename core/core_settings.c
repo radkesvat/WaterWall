@@ -45,7 +45,7 @@ static void parseLogSection(const cJSON *log_obj)
         {
 
             getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "loglevel", DEFAULT_NETWORK_LOG_LEVEL);
-            getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "file", DEFAULT_NETWORK_LOG_FILE);
+            getStringFromJsonObjectOrDefault(&(settings->network_log_file), network_obj, "file", DEFAULT_NETWORK_LOG_FILE);
         }
         else
         {
@@ -156,7 +156,7 @@ void parseCoreSettings(char *data_json)
     if (!getIntFromJsonObject(&(settings->threads), json, "threads"))
     {
         settings->threads = get_ncpu();
-        printf("Default threads: %d", settings->threads);
+        printf("Threads unspecified in json (misc), fallback to cpu cores: %d\n", settings->threads);
     }
     assert((settings->threads > 0) && (settings->threads <= 200));
 

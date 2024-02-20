@@ -22,6 +22,8 @@ static node_manager_t *state;
 static void pathWalk()
 {
 }
+
+
 static void startParsingFiles()
 {
     cJSON *nodes_json = state->config_file->nodes;
@@ -53,6 +55,8 @@ static void startParsingFiles()
         int int_ver = 0;
         if (getIntFromJsonObject(&int_ver, node_json, "version"))
             node_instance->version = int_ver;
+        
+        
     }
 }
 
@@ -67,8 +71,9 @@ void setNodeManager(struct node_manager_s *new_state)
 }
 void runConfigFile(config_file_t *config_file)
 {
-
     state->config_file = config_file;
+    startParsingFiles();
+
 }
 
 node_manager_t *createNodeManager()
@@ -78,6 +83,5 @@ node_manager_t *createNodeManager()
     state = malloc(sizeof(node_manager_t));
     memset(state, 0, sizeof(node_manager_t));
     state->node_map = map_node_t_with_capacity(50);
-    // startParsingFiles(state);
     return state;
 }

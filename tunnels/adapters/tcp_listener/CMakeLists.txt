@@ -1,7 +1,7 @@
 
 
-add_library(tcp_listener SHARED
-                tcp_listener.c
+add_library(tcp_listener STATIC
+                    tcp_listener.c
                  
 )
 

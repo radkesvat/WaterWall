@@ -9,7 +9,6 @@
 #include "managers/socket_manager.h"
 #include "managers/node_manager.h"
 
-
 size_t threads;
 struct hloop_s **loops;
 struct buffer_pool_s **buffer_pools;
@@ -91,6 +90,9 @@ void createWW(
         hthread_create(worker_thread, loops[i]);
     }
     loops[0] = hloop_new(HLOOP_FLAG_AUTO_FREE);
+    LOGI("Threads: %zu",threads_count);
+
+    buffer_pools = (struct buffer_pool_s **)malloc(sizeof(struct buffer_pool_s *) * threads_count);
 
     for (int i = 0; i < threads_count; ++i)
     {

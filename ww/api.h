@@ -6,6 +6,7 @@
 #include "shiftbuffer.h"
 #include "context_queue.h"
 #include "tunnel.h"
+#include "config_file.h"
 #include "ww.h"
 
 

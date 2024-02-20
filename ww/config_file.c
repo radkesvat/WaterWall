@@ -89,7 +89,7 @@ config_file_t *parseConfigFile(const char *const file_path)
         const char *error_ptr = cJSON_GetErrorPtr();
         if (error_ptr != NULL)
         {
-            LOGF("JSON Error before: %s\n", error_ptr);
+            LOGF("JSON Error: before: %s\n", error_ptr);
         }
         exit(1);
     }
