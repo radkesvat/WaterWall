@@ -6,40 +6,30 @@ project(Waterwall VERSION 0.1)
 
 
 
+# file(GLOB_RECURSE ltdlsrc RELATIVE ${CMAKE_SOURCE_DIR} "src/libltdl/*.c")
 
 # add executable
 add_executable(Waterwall src/main.c
-                   src/connection.c
-                   src/tunnel.c
-                   src/router.c
-                   src/shiftbuffer.c
-                   src/core_settings.c
-                   src/utils/context_queue.c
-                   src/utils/utils.c
-                   src/loggers/core_logger.c
-                   src/loggers/network_logger.c
-                   src/loggers/dns_logger.c
-                   src/dispatchers/buffer_dispatcher.c
-                   src/dispatchers/socket_dispatcher.c
-                   src/dispatchers/node_dispatcher.c
-                   src/tunnels/server/trojan/trojan_auth_server.c
-                   src/tunnels/shared/trojan/sha2.c
-                  #  src/tunnels/client/mux_client.c
-                  #  src/tunnels/client/zero_rtt_client.c
-                   src/tunnels/adapters/listeners/tcp_listener.c
+                   src/core/core_settings.c
+                  #  src/tunnels/server/trojan/trojan_auth_server.c
+                  #  src/tunnels/shared/trojan/sha2.c
+                  #  src/tunnels/adapters/listeners/tcp_listener.c
 )
 
 
 
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 
+#ww api
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww)
+target_link_directories(Waterwall PUBLIC ww)
+target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
+target_link_libraries(Waterwall ww)
 
 # add dependencies
 include(cmake/CPM.cmake)
 
-# add komi hash
-# CPMAddPackage("gh:avaneev/komihash#5.10")
-# CPMAddPackage("gh:JacksonAllan/CC#v1.0.4")
 
 
 CPMAddPackage(
@@ -88,26 +78,6 @@ endif()
 
 
 
-# CPMAddPackage(
-#   NAME uuid4
-#   GIT_REPOSITORY https://github.com/gpakosz/uuid4.git 
-#   GIT_TAG HEAD
-#   DOWNLOAD_ONLY True
-# )
-
-
-# if(uuid4_ADDED)
-#   target_include_directories(Waterwall PUBLIC ${uuid4_SOURCE_DIR}/src/)
-#   target_sources(Waterwall PUBLIC ${uuid4_SOURCE_DIR}/src/uuid4.c)
-
-
-# endif()
-
-
-
-
-
-
 # add openssl (default version is 3.2)
 CPMAddPackage(
     NAME openssl-cmake
@@ -125,18 +95,12 @@ CPMAddPackage(
 )
 
 
-
 # for release, define NDEBUG !
-
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 DEBUG=1 WATERWALL_VERSION=${Waterwall_VERSION})
-target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
-# target_compile_definitions(Waterwall PRIVATE NDEBUG=1)
-
+target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1 COMPILING_CORE=1)
 
 target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)
 # target_compile_options(Waterwall PUBLIC -pedantic)
-
-
 
 message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
@@ -145,8 +109,8 @@ message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 target_link_libraries(Waterwall hv_static)
 
 # set_property(TARGET Waterwall PROPERTY C_STANDARD 99)
-
 # set output path to build/bin/
+
 set_target_properties(Waterwall
     PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
@@ -154,8 +118,8 @@ set_target_properties(Waterwall
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
-get_target_property(target_options Waterwall COMPILE_OPTIONS)
+
+# get_target_property(target_options Waterwall COMPILE_OPTIONS)
 # list(REMOVE_ITEM target_options "-pedantic")
 # set_property(TARGET Waterwall PROPERTY COMPILE_OPTIONS ${target_options})
-
 # set_property(TARGET Waterwall PROPERTY C_STANDARD 11)

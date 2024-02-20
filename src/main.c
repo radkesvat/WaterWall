@@ -1,7 +1,7 @@
-#include "hv/hv.h"
+#include "api.h"
 #include "utils/fileutils.h"
 #include "utils/stringutils.h"
-#include "core_settings.h"
+#include "core/core_settings.h"
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "loggers/core_logger.h"
@@ -26,14 +26,20 @@ int main(int argc, char **argv)
         char *core_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->core_log_file);
         char *network_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->network_log_file);
         char *dns_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->dns_log_file);
-        initCoreLogger(core_log_file_path, getCoreSettings()->core_log_level);
-        initNetworkLogger(network_log_file_path, getCoreSettings()->network_log_level);
-        initDnsLogger(dns_log_file_path, getCoreSettings()->dns_log_level);
+        createWW(
+            core_log_file_path,
+            network_log_file_path,
+            dns_log_file_path,
+            getCoreSettings()->core_log_level,
+            getCoreSettings()->network_log_level,
+            getCoreSettings()->dns_log_level,
+            getCoreSettings()->threads);
+
+
         free(core_log_file_path);
         free(network_log_file_path);
         free(dns_log_file_path);
     }
-
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
 
@@ -54,8 +60,4 @@ int main(int argc, char **argv)
             LOGI("Parsing config file \"%s\" complete", *k.ref);
         }
     }
-
-
-
-    
 }
