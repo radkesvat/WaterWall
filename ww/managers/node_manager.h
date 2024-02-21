@@ -26,7 +26,7 @@ struct node_manager_s;
 // you are responsible for checking / creating the chain if you use getNode!
 node_t *getNode(hash_t hash_node_name);
 
-tunnel_t *getTunnel(hash_t hash_tunnel_name);
+tunnel_t *getTunnel(hash_t hash_node_name);
 
 
 void runConfigFile(config_file_t *config_file);

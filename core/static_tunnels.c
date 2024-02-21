@@ -9,8 +9,10 @@
 #define USING(x)                                                       \
     do                                                                 \
     {                                                                  \
-        registerStaticLib((tunnel_lib_t){new##x, api##x, destroy##x}); \
-        LOGD("Imported static tunnel lib%s.a", #x);                    \
+        hash_t h = calcHashLen(#x, strlen(#x));                        \
+        registerStaticLib((tunnel_lib_t){h,                            \
+                                         new##x, api##x, destroy##x}); \
+        LOGD("Imported static tunnel lib%s.a  hash:%lx", #x, h);       \
     } while (0)
 
 void loadStaticTunnelsIntoCore()

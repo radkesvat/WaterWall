@@ -3,6 +3,7 @@
 #include "utils/jsonutils.h"
 #include "utils/hashutils.h"
 #include "config_file.h"
+#include "library_loader.h"
 
 #define i_type map_node_t
 #define i_key hash_t
@@ -19,10 +20,98 @@ typedef struct node_manager_s
 
 static node_manager_t *state;
 
-static void pathWalk()
+static void runNodes()
 {
+    c_foreach(p1, map_node_t, state->node_map)
+    {
+        node_t *n1 = p1.ref->second;
+        while (true)
+        {
+            if (n1 == NULL || n1->instance != NULL)
+                break;
+            LOGD("Starting node \"%s\"", n1->name);
+            n1->instance = n1->lib->creation_proc(&(n1->instance_context));
+            if (n1->instance == NULL)
+            {
+                LOGF("Node Startup Failure: node (\"%s\") create() returned NULL handle",n1->name);
+                exit(1);
+            }
+            node_t *n2 = getNode(n1->hash_next);
+            n1 = n2;
+        }
+    }
 }
 
+static void pathWalk()
+{
+
+    c_foreach(p1, map_node_t, state->node_map)
+    {
+        node_t *n1 = p1.ref->second;
+
+        int c = 0;
+        while (true)
+        {
+            if (n1->hash_next == 0)
+                break;
+            c++;
+            node_t *n2 = getNode(n1->hash_next);
+            n1 = n2;
+            if (c > 200)
+            {
+                LOGF("Node Map Failure: circular reference deteceted");
+                exit(1);
+            }
+        }
+    }
+}
+
+static void cycleProcess()
+{
+    c_foreach(n1, map_node_t, state->node_map)
+    {
+
+        hash_t next_hash = n1.ref->second->hash_next;
+        if (next_hash == 0)
+            continue;
+
+        bool found = false;
+        c_foreach(n2, map_node_t, state->node_map)
+        {
+            if (next_hash == n2.ref->second->hash_name)
+            {
+                ++(n2.ref->second->refrenced);
+                if (n2.ref->second->refrenced > 1)
+                {
+                    LOGF("Node Map Failure: no more than 1 node can be chained to node (\"%s\")", n2.ref->second->name);
+                    exit(1);
+                }
+                LOGD("(\"%s\").next -> (\"%s\") ", n1.ref->second->name, n2.ref->second->name);
+                found = true;
+            }
+        }
+        if (!found)
+        {
+            LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", n1.ref->second->name, n1.ref->second->next);
+            exit(1);
+        }
+    }
+    {
+        bool found = false;
+        c_foreach(n1, map_node_t, state->node_map)
+        {
+            if (n1.ref->second->refrenced == 0)
+            {
+                found = true;
+                n1.ref->second->listener = true;
+            }
+        }
+        if (!found)
+        {
+            LOGW("Node Map has detecetd 0 listener nodes...");
+        }
+    }
+}
 
 static void startParsingFiles()
 {
@@ -55,9 +144,62 @@ static void startParsingFiles()
         int int_ver = 0;
         if (getIntFromJsonObject(&int_ver, node_json, "version"))
             node_instance->version = int_ver;
-        
-        
+
+        // load lib
+        tunnel_lib_t lib = loadTunnelLibByHash(node_instance->hash_type);
+        if (lib.hash_name == 0)
+        {
+            LOGF("Node Creation Failure: library \"%s\" (hash: %lx) could not be loaded ", node_instance->type,
+                 node_instance->hash_type);
+            exit(1);
+        }
+        else
+        {
+            LOGD("\"%s\": library \"%s\" loaded successfully", node_instance->name, node_instance->type);
+        }
+        struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));
+        memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
+        *heap_lib = lib;
+        node_instance->lib = heap_lib;
+
+        cJSON *js_settings = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
+
+        node_instance_context_t node_instance_ctx = {0};
+
+        node_instance_ctx.node_json = node_json;
+        node_instance_ctx.node_settings_json = js_settings;
+        node_instance_ctx.self_node_handle = node_instance;
+        node_instance_ctx.self_file_handle = state->config_file;
+
+        node_instance->instance_context = node_instance_ctx;
+        map_node_t *map = &(state->node_map);
+
+        if (map_node_t_contains(map, node_instance->hash_name))
+        {
+            LOGF("Duplicate node \"%s\" (hash: %lx) ", node_instance->name, node_instance->hash_name);
+        }
+        map_node_t_insert(map, node_instance->hash_name, node_instance);
     }
+    cycleProcess();
+    pathWalk();
+    runNodes();
+}
+
+node_t *getNode(hash_t hash_node_name)
+{
+    map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
+    if (iter.ref == map_node_t_end(&(state->node_map)).ref)
+        return NULL;
+    return (iter.ref->second);
+}
+
+tunnel_t *getTunnel(hash_t hash_node_name)
+{
+    map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
+    if (iter.ref == map_node_t_end(&(state->node_map)).ref)
+        return NULL;
+
+    return (iter.ref->second)->instance;
 }
 
 struct node_manager_s *getNodeManager()
@@ -69,11 +211,11 @@ void setNodeManager(struct node_manager_s *new_state)
     assert(state == NULL);
     state = new_state;
 }
+
 void runConfigFile(config_file_t *config_file)
 {
     state->config_file = config_file;
     startParsingFiles();
-
 }
 
 node_manager_t *createNodeManager()

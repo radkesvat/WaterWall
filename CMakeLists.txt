@@ -117,11 +117,14 @@ CPMAddPackage(
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Waterwall_VERSION})
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
 
-# if(CORE_BUILD_RELEASE)
-# target_compile_definitions(Waterwall PRIVATE g NDEBUG=1)
-# else()
-# target_compile_definitions(Waterwall PRIVATE O3 DEBUG=1)
-# endif()
+
+if(NOT CMAKE_BUILD_TYPE STREQUAL "RELASAE")
+target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
+
+else()
+target_compile_definitions(Waterwall PRIVATE  NDEBUG=1)
+
+endif()
 
 
 target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)

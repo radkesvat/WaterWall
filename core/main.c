@@ -1,12 +1,12 @@
 #include "api.h"
 #include "utils/fileutils.h"
 #include "utils/stringutils.h"
+#include "managers/node_manager.h"
 #include "core_settings.h"
+#include "static_tunnels.h"
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "loggers/core_logger.h"
-#include "static_tunnels.h"
-
 #define CORE_FILE "core.json"
 
 int main(int argc, char **argv)
@@ -52,7 +52,7 @@ int main(int argc, char **argv)
         {
             // read config file
             LOGD("Begin parsing config file \"%s\"", *k.ref);
-            config_file_t* cfile = parseConfigFile(*k.ref);
+            config_file_t *cfile = parseConfigFile(*k.ref);
 
             if (cfile == NULL)
             {

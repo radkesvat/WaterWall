@@ -90,7 +90,6 @@ void createWW(
         hthread_create(worker_thread, loops[i]);
     }
     loops[0] = hloop_new(HLOOP_FLAG_AUTO_FREE);
-    LOGI("Threads: %zu",threads_count);
 
     buffer_pools = (struct buffer_pool_s **)malloc(sizeof(struct buffer_pool_s *) * threads_count);
 

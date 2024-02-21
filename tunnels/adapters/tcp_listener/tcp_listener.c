@@ -1,6 +1,7 @@
 #include "tcp_listener.h"
 #include <time.h>
 #include <string.h>
+#include "loggers/network_logger.h"
 // #include "hv/hatomic.h"
 // #define STATE(x) ((tcp_listener_state_t *)((x)->state))
 // #define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
@@ -327,7 +328,11 @@
 
 
 tunnel_t *newTcpListener(node_instance_context_t *instance_info){
-    hloop_run(loops[0]);
+    LOGD("salam");
+    LOGI("salam");
+    LOGE("salam");
+    LOGF("salam");
+    return 1;
 }
 void apiTcpListener(tunnel_t *self, char *msg){}
 tunnel_t *destroyTcpListener(tunnel_t *self){}

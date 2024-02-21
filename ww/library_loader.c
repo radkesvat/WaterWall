@@ -1,7 +1,7 @@
 #include "library_loader.h"
-#include <string.h>
 #include "hv/hplatform.h"
-
+#include "loggers/core_logger.h"
+#include <string.h>
 
 #define i_key tunnel_lib_t
 #define i_type vec_static_libs
@@ -13,21 +13,34 @@ static struct
     vec_static_libs slibs;
 } *state;
 
-static tunnel_lib_t dynLoadTunnelLib(const char *name)
+static tunnel_lib_t dynLoadTunnelLib(hash_t hname)
 {
+    LOGF("dynLoadTunnelLib not implemented");
+    return (tunnel_lib_t){0};
 }
 
-tunnel_lib_t loadTunnelLib(const char *name)
+tunnel_lib_t loadTunnelLibByHash(hash_t hname)
 {
 
     if (state != NULL)
     {
-        //fech statics
+        c_foreach(k, vec_static_libs, state->slibs)
+        {
+            if ((k.ref)->hash_name == hname)
+            {
+                return *(k.ref);
+            }
+        }
     }
-    // CHECKFOR(TcpListener);
-
-    return dynLoadTunnelLib(name);
+    return dynLoadTunnelLib(hname);
 }
+tunnel_lib_t loadTunnelLib(const char *name)
+{
+    hash_t hname = calcHashLen(name, strlen(name));
+    return loadTunnelLibByHash(hname);
+}
+
+// CHECKFOR(TcpListener);
 
 void registerStaticLib(tunnel_lib_t lib)
 {
