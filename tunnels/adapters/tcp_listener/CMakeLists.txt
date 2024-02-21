@@ -1,15 +1,15 @@
 
 
-add_library(tcp_listener STATIC
+add_library(TcpListener STATIC
                     tcp_listener.c
                  
 )
 
-# target_include_directories(tcp_listener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# target_include_directories(TcpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
-target_include_directories(tcp_listener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
-target_link_libraries(tcp_listener ww)
+target_include_directories(TcpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
+target_link_libraries(TcpListener ww)
 # target_compile_options(ww PUBLIC -fPIC)  
 
 # add dependencies
@@ -25,16 +25,16 @@ CPMAddPackage(
 
 
 if(stc_ADDED)
-  target_include_directories(tcp_listener PUBLIC ${stc_SOURCE_DIR}/include)
+  target_include_directories(TcpListener PUBLIC ${stc_SOURCE_DIR}/include)
 endif()
 
 
 
-target_compile_options(tcp_listener PRIVATE -ftrack-macro-expansion=0)
-target_compile_definitions(tcp_listener PRIVATE STC_STATIC=1 tcp_listener_VERSION=0.1)
+target_compile_options(TcpListener PRIVATE -ftrack-macro-expansion=0)
+target_compile_definitions(TcpListener PRIVATE STC_STATIC=1 TcpListener_VERSION=0.1)
 
 if(NODES_BUILD_RELEASE)
-target_compile_definitions(tcp_listener PRIVATE NDEBUG=1)
+target_compile_definitions(TcpListener PRIVATE NDEBUG=1)
 else()
-target_compile_definitions(tcp_listener PRIVATE DEBUG=1)
+target_compile_definitions(TcpListener PRIVATE DEBUG=1)
 endif()

@@ -46,7 +46,7 @@ if(INCLUDE_TCP_LISTENER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TCP_LISTENER=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
-target_link_libraries(Waterwall tcp_listener)
+target_link_libraries(Waterwall TcpListener)
 endif()
 
 
