@@ -52,6 +52,7 @@ shift_buffer_t *newShiftBuffer(size_t pre_cap)
     self->shadowed = false;
     self->refc = 0;
     self->ref = NULL;
+    return self;
 }
 
 shift_buffer_t *newShadowShiftBuffer(shift_buffer_t *owner)

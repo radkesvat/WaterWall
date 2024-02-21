@@ -33,10 +33,10 @@ void shiftr(shift_buffer_t *self, size_t bytes);
 
 
 //  how many bytes we can fill without realloc
-inline size_t lCap(shift_buffer_t *self) { self->curpos; }
-inline size_t rCap(shift_buffer_t *self) { (self->cap * 2 - self->curpos); }
+inline size_t lCap(shift_buffer_t *self) { return self->curpos; }
+inline size_t rCap(shift_buffer_t *self) { return (self->cap * 2 - self->curpos); }
 
-inline size_t len(shift_buffer_t *self) { self->lenpos - self->curpos; }
+inline size_t len(shift_buffer_t *self) { return self->lenpos - self->curpos; }
 
 inline void setLen(shift_buffer_t *self, size_t bytes)
 {
@@ -56,7 +56,7 @@ inline void consume(shift_buffer_t *self, size_t bytes)
     setLen(self, len(self) - bytes);
 }
 
-inline char *rawBuf(shift_buffer_t *self) { &(self->pbuf[self->curpos]); }
+inline char *rawBuf(shift_buffer_t *self) {return &(self->pbuf[self->curpos]); }
 
 
 
