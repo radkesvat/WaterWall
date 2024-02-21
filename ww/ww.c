@@ -81,7 +81,7 @@ void createWW(
     network_logger = createNetworkLogger(network_log_file_path, network_log_level);
     dns_logger = createDnsLogger(dns_log_file_path, dns_log_level);
 
-    threads_count = threads_count;
+    threads = threads_count;
 
     loops = (hloop_t **)malloc(sizeof(hloop_t *) * threads_count);
     for (int i = 1; i < threads_count; ++i)

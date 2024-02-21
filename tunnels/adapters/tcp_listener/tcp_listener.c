@@ -30,7 +30,7 @@ typedef struct tcp_listener_con_state_s
     hio_t *io;
     context_queue_t *queue;
     context_t *current_w;
-    buffer_pool_t *buffer_disp;
+    buffer_pool_t *buffer_pool;
     bool write_paused;
     bool established;
     bool first_packet_sent;
@@ -47,7 +47,7 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
     hio_t *upstream_io = hio_get_upstream(io);
     if (upstream_io && hio_write_is_complete(io))
     {
-        reuseBuffer(cstate->buffer_disp, (*cw)->payload);
+        reuseBuffer(cstate->buffer_pool, (*cw)->payload);
         *cw = NULL;
         hio_read(upstream_io);
 
@@ -65,7 +65,7 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
             }
             else
             {
-                reuseBuffer(cstate->buffer_disp, (*cw)->payload);
+                reuseBuffer(cstate->buffer_pool, (*cw)->payload);
                 *cw = NULL;
             }
         }
@@ -76,6 +76,19 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
+
+    if (c->payload != NULL)
+    {
+        LOGD("upstream: %.*s", len(c->payload), rawBuf(c->payload));
+
+        if (len(c->payload) == 10)
+        {
+            DISCARD_CONTEXT(c);
+            c->fin = true;
+            self->downStream(self, c);
+            return;
+        }
+    }
     if (c->fin)
     {
         hio_t *io = CSTATE(c)->io;
@@ -83,8 +96,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
         free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
     }
+    else
+    {
+        hio_read(CSTATE(c)->io);
+    }
 
-    self->up->upStream(self->up, c);
+    // self->up->upStream(self->up, c);
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
@@ -129,7 +146,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                reuseBuffer(cstate->buffer_disp, cstate->current_w->payload);
+                reuseBuffer(cstate->buffer_pool, cstate->current_w->payload);
                 cstate->current_w = NULL;
             }
         }
@@ -164,7 +181,7 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
     // self->up->upStream(self->up, c);
     // assert(readbytes <= READ_BUFFER_SIZE);
 
-    shift_buffer_t *payload = popBuffer(cstate->buffer_disp);
+    shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
 
@@ -180,11 +197,19 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
         *first_packet_sent = true;
         context->first = true;
     }
+
     self->upStream(self, context);
 }
 static void on_close(hio_t *io)
 {
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *)(hevent_userdata(io));
+    if (cstate != NULL)
+        LOGD("TcpListener received close for FD:%x ",
+             (int)hio_fd(io));
+    else
+        LOGD("TcpListener sent close for FD:%x ",
+             (int)hio_fd(io));
+
     if (cstate != NULL)
     {
         tunnel_t *self = (cstate)->tunnel;
@@ -198,19 +223,27 @@ static void on_close(hio_t *io)
 void onInboundConnected(hevent_t *ev)
 {
     hloop_t *loop = ev->loop;
-
     socket_accept_result_t *data = (socket_accept_result_t *)hevent_userdata(ev);
-
     hio_t *io = data->io;
+    size_t tid = data->tid;
+    hio_attach(loop, io);
+    char localaddrstr[SOCKADDR_STRLEN] = {0};
+    char peeraddrstr[SOCKADDR_STRLEN] = {0};
+
+    LOGD("TcpListener Accepted FD:%x [%s] <= [%s]",
+         (int)hio_fd(io),
+         SOCKADDR_STR(hio_localaddr(io), localaddrstr),
+         SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+
     tunnel_t *self = data->tunnel;
 
-    line_t *line = newLine();
+    line_t *line = newLine(tid);
 
     tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
     cstate->queue = newContextQueue();
     cstate->line = line;
     cstate->line->loop = loop;
-    cstate->buffer_disp = buffer_pools[((size_t)loop - (size_t)(loops[0])) / sizeof(hloop_t *)];
+    cstate->buffer_pool = buffer_pools[tid];
     cstate->io = io;
     cstate->tunnel = self;
     cstate->current_w = NULL;
