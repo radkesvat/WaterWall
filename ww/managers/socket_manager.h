@@ -47,14 +47,13 @@ typedef struct socket_filter_s
 {
     hio_t *listen_io;
     socket_filter_option_t option;
-    hloop_t **loops;
     tunnel_t *tunnel;
     onAccept cb;
 } socket_filter_t;
 
 
 
-void registerSocketAcceptor(hloop_t **loops, tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
+void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 
 struct socket_manager_s *getSocketManager();
 

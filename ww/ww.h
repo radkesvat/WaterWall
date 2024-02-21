@@ -3,19 +3,19 @@
 
 #ifndef NODES_STATIC
 #if defined(_MSC_VER)
-#define EXPORT __declspec(dllexport)
+#define WWEXPORT __declspec(dllexport)
 #elif defined(__GNUC__)
-#define EXPORT __attribute__((visibility("default")))
+#define WWEXPORT __attribute__((visibility("default")))
 #else
-#define EXPORT
+#define WWEXPORT
 #endif
 #else
-#define EXPORT
+#define WWEXPORT
 #endif
 
 struct ww_runtime_state_s;
 
-EXPORT void setWW(struct ww_runtime_state_s *state);
+WWEXPORT void setWW(struct ww_runtime_state_s *state);
 
 struct ww_runtime_state_s *getWW();
 
@@ -31,11 +31,9 @@ void createWW(
 
 extern size_t threads;
 extern struct hloop_s **loops;
-extern struct buffer_pool_s **buffer_disps;
+extern struct buffer_pool_s **buffer_pools;
 extern struct socket_manager_s *socket_disp_state;
 extern struct node_manager_s *node_disp_state;
 extern struct logger_s *core_logger;
 extern struct logger_s *network_logger;
 extern struct logger_s *dns_logger;
-
-#undef EXPORT

@@ -1,12 +1,14 @@
 #include "api.h"
 #include "utils/fileutils.h"
 #include "utils/stringutils.h"
+#include "managers/socket_manager.h"
 #include "managers/node_manager.h"
 #include "core_settings.h"
 #include "static_tunnels.h"
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "loggers/core_logger.h"
+
 #define CORE_FILE "core.json"
 
 int main(int argc, char **argv)
@@ -62,6 +64,13 @@ int main(int argc, char **argv)
 
             LOGI("Parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
+            LOGD("Spawning accept thread spawned...", *k.ref);
+            startSocketManager();
+            LOGD("Starting the eventloop...", *k.ref);
+            hloop_run(loops[0]);
+            LOGW("MainThread moved out of eventloop", *k.ref);
+
+
         }
     }
 }

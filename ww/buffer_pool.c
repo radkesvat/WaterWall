@@ -6,6 +6,21 @@
 #define GBD_MAX_CAP 1024
 #define DEFAULT_BUFFER_SIZE 4096
 
+
+
+static void firstCharge(buffer_pool_t *state)
+{
+    int count = GBD_MAX_CAP - state->len;
+    state->chunks += 1;
+    state->available = realloc(state->available, state->chunks * (GBD_MAX_CAP * sizeof(shift_buffer_t *)));
+
+    for (size_t i = state->len; i < state->len + count; i++)
+    {
+        state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
+    }
+    state->len += count;
+}
+
 static void reCharge(buffer_pool_t *state)
 {
     int count = GBD_MAX_CAP - state->len;
@@ -17,7 +32,9 @@ static void reCharge(buffer_pool_t *state)
         state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
     }
     state->len += count;
+#ifdef DEBUG
     LOGD("BufferPool allocated %d new buffers, %zu are in use", count, state->in_use);
+#endif
 }
 
 static void giveMemBackToOs(buffer_pool_t *state)
@@ -73,6 +90,6 @@ buffer_pool_t *createBufferPool()
     state->len = 0;
     state->in_use = 0;
     state->chunks = 0;
-    reCharge(state);
+    firstCharge(state);
     return state;
 }

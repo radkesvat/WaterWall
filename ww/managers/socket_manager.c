@@ -1,5 +1,6 @@
 #include "socket_manager.h"
-#include "hv/hv.h"
+#include "ww.h"
+#include "hv/hthread.h"
 #include "loggers/core_logger.h"
 
 #define i_key socket_filter_t *
@@ -18,11 +19,10 @@ typedef struct socket_manager_s
 static socket_manager_state_t *state = NULL;
 
 
-void registerSocketAcceptor(hloop_t **loops, tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
+void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
 
     socket_filter_t *filter = malloc(sizeof(socket_filter_t));
-    filter->loops = loops;
     filter->tunnel = tunnel;
     filter->option = option;
     filter->cb = cb;
@@ -65,7 +65,7 @@ static void on_accept_tcp(hio_t *io)
                          SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
                     hio_detach(io);
                     // TODO load balance threads
-                    hloop_t *main_loop = filter->loops[0];
+                    hloop_t *main_loop = loops[0];
 
                     hevent_t ev;
                     memset(&ev, 0, sizeof(ev));
@@ -187,7 +187,6 @@ void setSocketManager(struct socket_manager_s * new_state){
 void startSocketManager()
 {
 
-    LOGI("Spawning AcceptThread...");
     hloop_t *new_loop = hloop_new(HLOOP_FLAG_AUTO_FREE);
     hloop_set_userdata(new_loop, state);
 

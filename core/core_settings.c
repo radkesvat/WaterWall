@@ -151,13 +151,24 @@ void parseCoreSettings(char *data_json)
         exit(1);
     }
 
-    getStringFromJsonObjectOrDefault(&(settings->libs_path), json, "libs-path", DEFAULT_LIBS_PATH);
-
-    if (!getIntFromJsonObject(&(settings->threads), json, "threads"))
+    const cJSON *misc_obj = cJSON_GetObjectItemCaseSensitive(json, "misc");
+    if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
+        getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
+        if (!getIntFromJsonObject(&(settings->threads), misc_obj, "threads"))
+        {
+            settings->threads = get_ncpu();
+            printf("Threads unspecified in json (misc), fallback to cpu cores: %d\n", settings->threads);
+        }
+    }
+    else
+    {
+        settings->libs_path = malloc(strlen(DEFAULT_LIBS_PATH) + 1);
+        strcpy(settings->libs_path, DEFAULT_LIBS_PATH);
         settings->threads = get_ncpu();
         printf("Threads unspecified in json (misc), fallback to cpu cores: %d\n", settings->threads);
     }
+
     assert((settings->threads > 0) && (settings->threads <= 200));
 
     // TODO: DNS / API
