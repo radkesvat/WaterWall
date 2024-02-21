@@ -30,7 +30,7 @@
     } while (0)
 #endif
 
-#define DISCARD_CONTEXT(x) (reuseBuffer(x->payload))
+#define DISCARD_CONTEXT(x) (reuseBuffer(buffer_pools[x->line->tid],x->payload))
 
 typedef struct line_s
 {
@@ -38,6 +38,7 @@ typedef struct line_s
     socket_context_t dest_ctx;
     socket_context_t src_ctx;
     uint16_t id;
+    size_t tid;
     void *chains_state[];
 
 } line_t;
@@ -73,7 +74,7 @@ typedef struct tunnel_s
 
 tunnel_t *newTunnel();
 
-line_t *newLine();
+line_t *newLine(size_t tid);
 void destroyLine(line_t *con);
 
 context_t *newContext(line_t *line);

@@ -9,11 +9,12 @@ void chain(tunnel_t *from, tunnel_t *to)
     to->chain_index = from->chain_index + 1;
 }
 
-line_t *newLine()
+line_t *newLine(size_t tid)
 {
     size_t size = sizeof(line_t) + (sizeof( void*)*MAX_CHAIN_LEN)  ;
     line_t *result = malloc(size);
     memset(result, 0, size);
+    result->tid = tid;
 }
 void destroyLine(line_t *c)
 {
