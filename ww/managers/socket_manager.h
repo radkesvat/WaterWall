@@ -37,6 +37,7 @@ typedef struct socket_accept_result_s
     hio_t *io; // it also has the owner loop
     tunnel_t *tunnel;
     socket_protocol_t proto;
+    size_t tid;
 
 } socket_accept_result_t;
 
