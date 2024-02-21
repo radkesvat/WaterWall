@@ -2,6 +2,9 @@
 #include "buffer_pool.h"
 #include "managers/socket_manager.h"
 #include "loggers/network_logger.h"
+#include "utils/jsonutils.h"
+#include <time.h>
+#include <string.h>
 
 #define STATE(x) ((tcp_listener_state_t *)((x)->state))
 #define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->line->chains_state)[self->chain_index])))

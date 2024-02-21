@@ -13,6 +13,7 @@ context_queue_t *newContextQueue()
 {
     context_queue_t *cb = malloc(sizeof(context_queue_t));
     cb->q = queue_with_capacity(Q_CAP);
+    return cb;
 }
 void destroyContextQueue(context_queue_t *self)
 {

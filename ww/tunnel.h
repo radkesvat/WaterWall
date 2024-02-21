@@ -30,7 +30,12 @@
     } while (0)
 #endif
 
-#define DISCARD_CONTEXT(x) (reuseBuffer(buffer_pools[x->line->tid],x->payload))
+#define DISCARD_CONTEXT(x)                                   \
+    do                                                       \
+    {                                                        \
+        reuseBuffer(buffer_pools[x->line->tid], x->payload); \
+        x->payload = NULL;                                   \
+    } while (0)
 
 typedef struct line_s
 {

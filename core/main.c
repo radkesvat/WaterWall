@@ -64,7 +64,7 @@ int main(int argc, char **argv)
 
             LOGI("Parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
-            LOGD("Spawning accept thread spawned...", *k.ref);
+            LOGD("Spawning accept thread ...", *k.ref);
             startSocketManager();
             LOGD("Starting the eventloop...", *k.ref);
             hloop_run(loops[0]);

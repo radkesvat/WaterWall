@@ -204,4 +204,5 @@ socket_manager_state_t *createSocketManager()
 
     state->filters = filters_t_init();
     hmutex_init(&state->mutex);
+    return state;
 }
