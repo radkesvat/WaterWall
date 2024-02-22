@@ -68,11 +68,26 @@ typedef struct user_s
 
 } user_t;
 
+enum socket_address_cmd
+{
+    SAC_CONNECT = 0X1,
+    SAC_ASSOCIATE = 0X3,
+};
+enum socket_address_type
+{
+    SAT_IPV4 = 0X1,
+    SAT_DOMAINNAME = 0X3,
+    SAT_IPV6 = 0X4,
+
+};
+
 
 // all data we need to connect to somewhere
 typedef struct socket_context_s
 {
     uint8_t protocol; // IPPROTO_X
+    enum socket_address_cmd acmd;
+    enum socket_address_type atype;
     char *domain;
     bool resolved;
     sockaddr_u addr;
