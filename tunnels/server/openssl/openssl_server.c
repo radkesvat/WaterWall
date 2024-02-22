@@ -18,6 +18,7 @@ typedef struct oss_server_state_s
 {
 
     hssl_ctx_t ssl_context;
+    char *alpns;
     // settings
 
 } oss_server_state_t;
@@ -29,7 +30,7 @@ typedef struct oss_server_con_state_s
     SSL *ssl;
 
     BIO *rbio;
-    BIO *wbio; 
+    BIO *wbio;
     int fd;
 
     bool init_sent;
@@ -37,6 +38,27 @@ typedef struct oss_server_con_state_s
 
 } oss_server_con_state_t;
 
+static int on_alpn_select(SSL *ssl,
+                          const unsigned char **out,
+                          unsigned char *outlen,
+                          const unsigned char *in,
+                          unsigned int inlen,
+                          void *arg)
+{
+    unsigned int offset = 0;
+    while (offset < inlen)
+    {
+        LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
+        offset = offset + 1 + in[offset];
+
+        // TODO alpn paths
+    }
+    // selecting first alpn -_-
+    *out = in;
+    *outlen = inlen;
+    return SSL_TLSEXT_ERR_OK;
+    // return SSL_TLSEXT_ERR_NOACK;
+}
 
 enum sslstatus
 {
@@ -93,7 +115,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 DISCARD_CONTEXT(c);
                 goto failed;
             }
-            shiftr(c->payload,n);
+            shiftr(c->payload, n);
             len -= n;
 
             if (!SSL_is_init_finished(cstate->ssl))
@@ -296,7 +318,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
         if (!SSL_is_init_finished(cstate->ssl))
         {
-            LOGF("How is it possilbe to received data before sending init to upstream?");
+            LOGF("How it is possilbe to receive data before sending init to upstream?");
             exit(1);
         }
         size_t len = bufLen(c->payload);
@@ -430,11 +452,39 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
     oss_server_state_t *state = malloc(sizeof(oss_server_state_t));
     memset(state, 0, sizeof(oss_server_state_t));
-
+    const cJSON *settings = instance_info->node_settings_json;
     hssl_ctx_opt_t ssl_param;
     memset(&ssl_param, 0, sizeof(ssl_param));
-    ssl_param.crt_file = "cert/fullchain.pem";
-    ssl_param.key_file = "cert/privkey.pem";
+
+    if (!(cJSON_IsObject(settings) && settings->child != NULL))
+    {
+        LOGF("JSON Error: OpenSSLServer->settings (object field) : The object was empty or invalid.");
+        return NULL;
+    }
+
+    if (!getStringFromJsonObject((char **)&(ssl_param.crt_file), settings, "cert-file"))
+    {
+        LOGF("JSON Error: OpenSSLServer->settings->cert-file (string field) : The data was empty or invalid.");
+        return NULL;
+    }
+    if (strlen(ssl_param.crt_file) == 0)
+    {
+        LOGF("JSON Error: OpenSSLServer->settings->cert-file (string field) : The data was empty.");
+        return NULL;
+    }
+
+    if (!getStringFromJsonObject((char **)&(ssl_param.key_file), settings, "key-file"))
+    {
+        LOGF("JSON Error: OpenSSLServer->settings->key-file (string field) : The data was empty or invalid.");
+        return NULL;
+    }
+     if (strlen(ssl_param.key_file) == 0)
+    {
+        LOGF("JSON Error: OpenSSLServer->settings->key-file (string field) : The data was empty.");
+                return NULL;
+
+    }
+
     ssl_param.endpoint = HSSL_SERVER;
     state->ssl_context = hssl_ctx_new(&ssl_param);
     if (state->ssl_context == NULL)
@@ -442,10 +492,12 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         LOGF("Could not create node ssl context");
         return NULL;
     }
+
+    SSL_CTX_set_alpn_select_cb(state->ssl_context, on_alpn_select, NULL);
+
     tunnel_t *t = newTunnel();
     t->state = state;
 
-    
     t->upStream = &openSSLUpStream;
     t->packetUpStream = &openSSLPacketUpStream;
     t->downStream = &openSSLDownStream;
