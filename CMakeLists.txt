@@ -7,6 +7,8 @@ cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 # option(NODES_BUILD_RELEASE "compile runtime nodes for release build"  FALSE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
+option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
+option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -42,15 +44,29 @@ target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_libraries(Waterwall ww)
 
 #tcp listener
-if(INCLUDE_TCP_LISTENER)
+if (INCLUDE_TCP_LISTENER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TCP_LISTENER=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
 target_link_libraries(Waterwall TcpListener)
 endif()
 
+#openssl server
+if (INCLUDE_OPENSSL_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_OPENSSL_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/openssl)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/openssl)
+target_link_libraries(Waterwall OpenSSLServer)
+endif()
 
 
+#logger tunnel
+if (INCLUDE_LOGGER_TUNNEL)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_LOGGER_TUNNEL=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/logger)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/logger)
+target_link_libraries(Waterwall LoggerTunnel)
+endif()
 
 # add dependencies
 include(cmake/CPM.cmake)

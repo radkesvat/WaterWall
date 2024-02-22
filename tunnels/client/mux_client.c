@@ -213,7 +213,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     writeUI16(redir_context->payload, redir_context->line->id);
     // size header
     shiftl(redir_context->payload, sizeof(uint16_t));
-    writeUI16(redir_context->payload, (uint16_t)len(redir_context->payload));
+    writeUI16(redir_context->payload, (uint16_t)bufLen(redir_context->payload));
 
     self->up->upStream(self->up, redir_context);
 }
@@ -266,7 +266,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     // extract header correctly even if buffering is required
     // without blocking the flow!
 process:
-    if (len(c->payload) <= 0)
+    if (bufLen(c->payload) <= 0)
     {
         DISCARD_CONTEXT(c);
         destroyContext(c);
@@ -276,11 +276,11 @@ process:
     up_con_t *up_state = &(state->up_cons[up_id]);
     if (up_state->bytes_left > 0)
     {
-        if (len(c->payload) <= up_state->bytes_left)
+        if (bufLen(c->payload) <= up_state->bytes_left)
         {
             // forward the buffer
             assert(up_state->current_child != 0);
-            up_state->bytes_left -= len(c->payload);
+            up_state->bytes_left -= bufLen(c->payload);
 
             self->dw->downStream(self->dw, c);
             return;
@@ -303,12 +303,12 @@ process:
     }
     else
     {
-        size_t rq_bytes = (HEADER_SIZE - up_state->h_index) - len(c->payload);
+        size_t rq_bytes = (HEADER_SIZE - up_state->h_index) - bufLen(c->payload);
         if (rq_bytes > 0)
         {
             // incomplete header
-            memcpy(&(up_state->header) + up_state->h_index, rawBuf(c->payload), len(c->payload));
-            up_state->h_index += len(c->payload);
+            memcpy(&(up_state->header) + up_state->h_index, rawBuf(c->payload), bufLen(c->payload));
+            up_state->h_index += bufLen(c->payload);
             reuseBuffer(c->payload);
             return;
         }
@@ -360,7 +360,7 @@ process:
     else
     {
         // if we consumed all the data
-        if (len(c->payload) == 0)
+        if (bufLen(c->payload) == 0)
         {
             return;
         }

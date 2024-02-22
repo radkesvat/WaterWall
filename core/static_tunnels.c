@@ -6,6 +6,15 @@
 #include "tunnels/adapters/tcp_listener/tcp_listener.h"
 #endif
 
+#ifdef INCLUDE_OPENSSL_SERVER
+#include "tunnels/server/openssl/openssl_server.h"
+#endif
+
+#ifdef INCLUDE_LOGGER_TUNNEL
+#include "tunnels/logger/logger_tunnel.h"
+#endif
+
+
 #define USING(x)                                                       \
     do                                                                 \
     {                                                                  \
@@ -20,4 +29,19 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_TCP_LISTENER
     USING(TcpListener);
 #endif
+
+#ifdef INCLUDE_OPENSSL_SERVER
+    USING(OpenSSLServer);
+#endif
+
+
+
+#ifdef INCLUDE_LOGGER_TUNNEL
+    USING(LoggerTunnel);
+#endif
+
+
+
+
+
 }

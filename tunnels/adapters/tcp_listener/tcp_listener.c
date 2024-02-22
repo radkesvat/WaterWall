@@ -51,24 +51,31 @@ void on_write_complete(hio_t *io, const void *buf, int writebytes)
     if (upstream_io && hio_write_is_complete(io))
     {
         reuseBuffer(cstate->buffer_pool, (*cw)->payload);
+        (*cw)->payload = NULL;
+        destroyContext((*cw));
         *cw = NULL;
         hio_read(upstream_io);
 
         while (contextQueueLen(queue) > 0)
         {
             *cw = contextQueuePop(queue);
-            hio_setup_upstream(io, (*cw)->src_io);
-            int bytes = len((*cw)->payload);
+            if ((*cw)->src_io)
+                hio_setup_upstream(io, (*cw)->src_io);
+            int bytes = bufLen((*cw)->payload);
             int nwrite = hio_write(io, rawBuf((*cw)->payload), bytes);
             if (nwrite >= 0 && nwrite < bytes)
             {
                 cstate->write_paused = true;
-                hio_read_stop((*cw)->src_io);
+                if ((*cw)->src_io)
+                    hio_read_stop((*cw)->src_io);
                 return; // write pending
             }
             else
             {
                 reuseBuffer(cstate->buffer_pool, (*cw)->payload);
+                (*cw)->payload = NULL;
+                destroyContext((*cw));
+
                 *cw = NULL;
             }
         }
@@ -82,51 +89,32 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        LOGD("upstream: %.*s", len(c->payload), rawBuf(c->payload));
-
-        if (len(c->payload) == 10)
-        {
-            DISCARD_CONTEXT(c);
-            c->fin = true;
-            self->downStream(self, c);
-            return;
-        }
-    }
-    if (c->fin)
-    {
-        hio_t *io = CSTATE(c)->io;
-        hevent_set_userdata(io, NULL);
-        free(CSTATE(c));
-        CSTATE_MUT(c) = NULL;
+        // LOGD("upstream: %.*s", bufLen(c->payload), rawBuf(c->payload));
+        // if (bufLen(c->payload) == 10)
+        // {
+        //     DISCARD_CONTEXT(c);
+        //     c->fin = true;
+        //     self->downStream(self, c);
+        //     return;
+        // }
     }
     else
     {
-        hio_read(CSTATE(c)->io);
+        if (c->fin)
+        {
+            hio_t *io = CSTATE(c)->io;
+            hevent_set_userdata(io, NULL);
+            free(CSTATE(c));
+            CSTATE_MUT(c) = NULL;
+        }
     }
 
-    // self->up->upStream(self->up, c);
+    self->up->upStream(self->up, c);
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
     tcp_listener_con_state_t *cstate = CSTATE(c);
-
-    if (c->est)
-    {
-        cstate->established = true;
-        return;
-    }
-    if (c->fin)
-    {
-        hio_t *io = CSTATE(c)->io;
-        hevent_set_userdata(io, NULL);
-
-        free(CSTATE(c));
-        CSTATE_MUT(c) = NULL;
-        hio_close(io);
-
-        return;
-    }
 
     if (c->payload != NULL)
     {
@@ -138,20 +126,44 @@ static inline void downStream(tunnel_t *self, context_t *c)
         else
         {
             cstate->current_w = c;
-            hio_setup_upstream(cstate->io, c->src_io);
-            int bytes = len(c->payload);
+            if (c->src_io)
+                hio_setup_upstream(cstate->io, c->src_io);
+            int bytes = bufLen(c->payload);
             int nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
             if (nwrite >= 0 && nwrite < bytes)
             {
                 cstate->write_paused = true;
-                hio_read_stop(c->src_io);
+                if (c->src_io)
+                    hio_read_stop(c->src_io);
                 hio_setcb_write(cstate->io, on_write_complete);
             }
             else
             {
                 reuseBuffer(cstate->buffer_pool, cstate->current_w->payload);
+                cstate->current_w->payload = NULL;
                 cstate->current_w = NULL;
+                destroyContext(c);
             }
+        }
+    }
+    else
+    {
+
+        if (c->est)
+        {
+            cstate->established = true;
+            return;
+        }
+        if (c->fin)
+        {
+            hio_t *io = CSTATE(c)->io;
+            hevent_set_userdata(io, NULL);
+            destroyLine(c->line);
+            free(CSTATE(c));
+            CSTATE_MUT(c) = NULL;
+            hio_close(io);
+
+            return;
         }
     }
 }
@@ -355,4 +367,5 @@ void apiTcpListener(tunnel_t *self, char *msg)
 tunnel_t *destroyTcpListener(tunnel_t *self)
 {
     LOGE("TcpListener DESTROY NOT IMPLEMENTED"); // TODO
+    return NULL;
 }
