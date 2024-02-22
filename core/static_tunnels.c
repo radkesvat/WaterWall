@@ -15,6 +15,12 @@
 #endif
 
 
+#ifdef INCLUDE_TROJAN_AUTH_SERVER
+#include "tunnels/server/trojan/trojan_auth_server.h"
+#endif
+
+
+
 #define USING(x)                                                       \
     do                                                                 \
     {                                                                  \
@@ -34,14 +40,14 @@ void loadStaticTunnelsIntoCore()
     USING(OpenSSLServer);
 #endif
 
-
-
 #ifdef INCLUDE_LOGGER_TUNNEL
     USING(LoggerTunnel);
 #endif
 
 
-
+#ifdef INCLUDE_TROJAN_AUTH_SERVER
+    USING(TrojanAuthServer);
+#endif
 
 
 }

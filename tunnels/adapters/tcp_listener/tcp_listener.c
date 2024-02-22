@@ -278,6 +278,8 @@ void onInboundConnected(hevent_t *ev)
     context->init = true;
     context->src_io = io;
     self->upStream(self, context);
+    hio_read(io);
+
 }
 
 tunnel_t *newTcpListener(node_instance_context_t *instance_info)
@@ -357,6 +359,9 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     t->packetUpStream = &tcpListenerPacketUpStream;
     t->downStream = &tcpListenerDownStream;
     t->packetDownStream = &tcpListenerPacketDownStream;
+
+    atomic_thread_fence(memory_order_release);
+    return t;
 }
 
 void apiTcpListener(tunnel_t *self, char *msg)

@@ -22,7 +22,7 @@
 
 struct node_manager_s;
 
-void runNode(node_t *n1);
+void runNode(node_t *n1,size_t chain_index);
 node_t *getNode(hash_t hash_node_name);
 
 

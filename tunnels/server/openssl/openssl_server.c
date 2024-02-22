@@ -278,7 +278,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->ssl = SSL_new(state->ssl_context);
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
-            hio_read(c->src_io);
         }
         if (c->fin)
         {
@@ -502,6 +501,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     t->packetUpStream = &openSSLPacketUpStream;
     t->downStream = &openSSLDownStream;
     t->packetDownStream = &openSSLPacketDownStream;
+    atomic_thread_fence(memory_order_release);
     return t;
 }
 

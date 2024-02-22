@@ -20,7 +20,7 @@ typedef struct node_manager_s
 
 static node_manager_t *state;
 
-void runNode(node_t *n1)
+void runNode(node_t *n1,size_t chain_index)
 {
     if (n1 == NULL)
     {
@@ -33,7 +33,7 @@ void runNode(node_t *n1)
 
         if (n2->instance == NULL)
         {
-            runNode(n2);
+            runNode(n2,chain_index+1);
         }
 
         n1->instance = n1->lib->creation_proc(&(n1->instance_context));
@@ -44,7 +44,7 @@ void runNode(node_t *n1)
         }
 
         LOGD("Starting node \"%s\"", n1->name);
-
+        n1->instance->chain_index = chain_index;
         chain(n1->instance, n2->instance);
     }
     else
@@ -58,14 +58,15 @@ void runNode(node_t *n1)
         }
     }
 }
+ 
 
 static void runNodes()
 {
     c_foreach(p1, map_node_t, state->node_map)
     {
         node_t *n1 = p1.ref->second;
-        if (!(n1 == NULL || n1->instance != NULL))
-            runNode(n1);
+        if (!(n1 == NULL || n1->instance != NULL || n1->refrenced != 0))
+            runNode(n1,0);
     }
 }
 
