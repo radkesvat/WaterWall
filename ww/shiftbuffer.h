@@ -36,7 +36,7 @@ void shiftr(shift_buffer_t *self, size_t bytes);
 inline size_t lCap(shift_buffer_t *self) { return self->curpos; }
 inline size_t rCap(shift_buffer_t *self) { return (self->cap * 2 - self->curpos); }
 
-inline size_t len(shift_buffer_t *self) { return self->lenpos - self->curpos; }
+inline size_t bufLen(shift_buffer_t *self) { return self->lenpos - self->curpos; }
 
 inline void setLen(shift_buffer_t *self, size_t bytes)
 {
@@ -47,13 +47,13 @@ inline void setLen(shift_buffer_t *self, size_t bytes)
 
 inline void reserve(shift_buffer_t *self, size_t bytes)
 {
-    if (len(self) < bytes)
+    if (bufLen(self) < bytes)
         setLen(self, bytes);
 }
 
 inline void consume(shift_buffer_t *self, size_t bytes)
 {
-    setLen(self, len(self) - bytes);
+    setLen(self, bufLen(self) - bytes);
 }
 
 inline char *rawBuf(shift_buffer_t *self) {return &(self->pbuf[self->curpos]); }

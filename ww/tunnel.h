@@ -3,7 +3,7 @@
 #include "basic_types.h"
 #include "hv/hatomic.h"
 #include "hv/hloop.h"
-#include "shiftbuffer.h"
+#include "buffer_pool.h"
 
 #define MAX_CHAIN_LEN 50
 #define MAX_WAITERS 20
@@ -33,6 +33,7 @@
 #define DISCARD_CONTEXT(x)                                   \
     do                                                       \
     {                                                        \
+        assert(x->payload != NULL);                          \
         reuseBuffer(buffer_pools[x->line->tid], x->payload); \
         x->payload = NULL;                                   \
     } while (0)

@@ -7,7 +7,7 @@
 
 extern size_t lCap(shift_buffer_t *self);
 extern size_t rCap(shift_buffer_t *self);
-extern size_t len(shift_buffer_t *self);
+extern size_t bufLen(shift_buffer_t *self);
 extern void setLen(shift_buffer_t *self, size_t bytes);
 extern void reserve(shift_buffer_t *self, size_t bytes);
 extern void consume(shift_buffer_t *self, size_t bytse);

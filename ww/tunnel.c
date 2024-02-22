@@ -33,6 +33,7 @@ context_t *newContext(line_t* line)
 
 void destroyContext(context_t *c)
 {
+    assert(c->payload == NULL);
     free(c);
 }
 
