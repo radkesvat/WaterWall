@@ -22,11 +22,9 @@
 
 struct node_manager_s;
 
-// you should use getTunnel, getNode can give you a uninitialized node in certain conditions
-// you are responsible for checking / creating the chain if you use getNode!
+void runNode(node_t *n1);
 node_t *getNode(hash_t hash_node_name);
 
-tunnel_t *getTunnel(hash_t hash_node_name);
 
 
 void runConfigFile(config_file_t *config_file);

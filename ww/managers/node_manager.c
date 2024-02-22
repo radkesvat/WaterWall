@@ -20,25 +20,52 @@ typedef struct node_manager_s
 
 static node_manager_t *state;
 
+void runNode(node_t *n1)
+{
+    if (n1 == NULL)
+    {
+        LOGF("Node Map Failure: please check the graph");
+        exit(1);
+    }
+    if (n1->hash_next != 0)
+    {
+        node_t *n2 = getNode(n1->hash_next);
+
+        if (n2->instance == NULL)
+        {
+            runNode(n2);
+        }
+
+        n1->instance = n1->lib->creation_proc(&(n1->instance_context));
+        if (n1->instance == NULL)
+        {
+            LOGF("Node Startup Failure: node (\"%s\") create() returned NULL handle", n1->name);
+            exit(1);
+        }
+
+        LOGD("Starting node \"%s\"", n1->name);
+
+        chain(n1->instance, n2->instance);
+    }
+    else
+    {
+        LOGD("Starting node \"%s\"", n1->name);
+        n1->instance = n1->lib->creation_proc(&(n1->instance_context));
+        if (n1->instance == NULL)
+        {
+            LOGF("Node Startup Failure: node (\"%s\") create() returned NULL handle", n1->name);
+            exit(1);
+        }
+    }
+}
+
 static void runNodes()
 {
     c_foreach(p1, map_node_t, state->node_map)
     {
         node_t *n1 = p1.ref->second;
-        while (true)
-        {
-            if (n1 == NULL || n1->instance != NULL)
-                break;
-            LOGD("Starting node \"%s\"", n1->name);
-            n1->instance = n1->lib->creation_proc(&(n1->instance_context));
-            if (n1->instance == NULL)
-            {
-                LOGF("Node Startup Failure: node (\"%s\") create() returned NULL handle",n1->name);
-                exit(1);
-            }
-            node_t *n2 = getNode(n1->hash_next);
-            n1 = n2;
-        }
+        if (!(n1 == NULL || n1->instance != NULL))
+            runNode(n1);
     }
 }
 
@@ -87,6 +114,7 @@ static void cycleProcess()
                     exit(1);
                 }
                 LOGD("(\"%s\").next -> (\"%s\") ", n1.ref->second->name, n2.ref->second->name);
+
                 found = true;
             }
         }
@@ -193,7 +221,7 @@ node_t *getNode(hash_t hash_node_name)
     return (iter.ref->second);
 }
 
-tunnel_t *getTunnel(hash_t hash_node_name)
+static tunnel_t *getTunnel(hash_t hash_node_name)
 {
     map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
     if (iter.ref == map_node_t_end(&(state->node_map)).ref)
