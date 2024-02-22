@@ -140,7 +140,7 @@ bool socket_cmp_ip(sockaddr_u *addr1, sockaddr_u *addr2)
     return false;
 }
 
-bool parseUserFromJsonObject(struct user_s *dest, const cJSON *user_json)
+struct user_s *parseUserFromJsonObject(const cJSON *user_json)
 {
     if (!cJSON_IsObject(user_json) || user_json->child == NULL)
         return NULL;
@@ -150,7 +150,7 @@ bool parseUserFromJsonObject(struct user_s *dest, const cJSON *user_json)
 
     getStringFromJsonObjectOrDefault(&(user->name), user_json, "name", "EMPTY_NAME");
     getStringFromJsonObjectOrDefault(&(user->email), user_json, "email", "EMPTY_EMAIL");
-    getStringFromJsonObjectOrDefault(&(user->name), user_json, "notes", "EMTPY_NOTES");
+    getStringFromJsonObjectOrDefault(&(user->notes), user_json, "notes", "EMTPY_NOTES");
 
     if (!getStringFromJsonObject(&(user->uid), user_json, "uid"))
     {
@@ -166,6 +166,6 @@ bool parseUserFromJsonObject(struct user_s *dest, const cJSON *user_json)
         return NULL;
     }
     user->enable = enable;
-    //TODO
+    // TODO
     return user;
 }

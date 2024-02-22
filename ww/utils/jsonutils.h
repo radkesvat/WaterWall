@@ -10,6 +10,3 @@ bool getIntFromJsonObject(int *dest,const  cJSON *json_obj, const char *key);
 bool getStringFromJsonObject(char **dest,const  cJSON *json_obj, const char *key);
 bool getStringFromJsonObjectOrDefault(char **dest,const  cJSON *json_obj, const char *key, const char *def);
 
-struct user_s;
-bool parseUserFromJsonObject(struct user_s* dest,const  cJSON *user_json);
-

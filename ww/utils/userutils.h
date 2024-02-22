@@ -4,5 +4,5 @@
 
 
 
-
-user_t*  parseUser(const cJSON* user_json);
+struct user_s;
+struct user_s *  parseUserFromJsonObject(const cJSON* user_json);

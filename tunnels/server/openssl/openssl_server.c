@@ -452,9 +452,9 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
     oss_server_state_t *state = malloc(sizeof(oss_server_state_t));
     memset(state, 0, sizeof(oss_server_state_t));
-    const cJSON *settings = instance_info->node_settings_json;
     hssl_ctx_opt_t ssl_param;
     memset(&ssl_param, 0, sizeof(ssl_param));
+    const cJSON *settings = instance_info->node_settings_json;
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
