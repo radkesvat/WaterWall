@@ -290,12 +290,12 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: TcpListener->settings (object field) : The object was empty or invalid.");
-        exit(1);
+        return NULL;
     }
     if (!getStringFromJsonObject(&(STATE(t)->address), settings, "address"))
     {
         LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid.");
-        exit(1);
+        return NULL;
     }
 
     const cJSON *port = cJSON_GetObjectItemCaseSensitive(settings, "port");
@@ -319,7 +319,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
                 {
                     LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
                     LOGF("JSON Error: MultiPort parsing failed.");
-                    exit(1);
+                    return NULL;
                 }
                 if (i == 0)
                     STATE(t)->port_min = port_minmax->valuedouble;
@@ -329,7 +329,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
                 {
                     LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
                     LOGF("JSON Error: MultiPort port range has more data than expected.");
-                    exit(1);
+                    return NULL;
                 }
 
                 i++;
@@ -338,7 +338,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         else
         {
             LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
-            exit(1);
+            return NULL;
         }
     }
 
