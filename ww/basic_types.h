@@ -4,6 +4,7 @@
 #include "hv/hsocket.h"
 #include "hv/htime.h"
 #include "hv/hatomic.h"
+#include "hv/hmutex.h"
 
 typedef uint64_t hash_t;
 
@@ -51,6 +52,7 @@ typedef struct user_stat_s
 typedef struct user_s
 {
     struct cJSON *json;
+    hmutex_t* fsync_lock;
     //-----------------
     char *name;
     char *email;
