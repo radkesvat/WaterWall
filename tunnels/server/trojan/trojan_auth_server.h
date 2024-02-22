@@ -1,8 +1,7 @@
 #pragma once
-#include "tunnel.h"
-#include "basic_types.h"
-#include "tunnels/shared/trojan/trojan_types.h"
-#include "cJSON.h"
+#include "api.h"
+#include "shared/trojan/trojan_types.h"
+
 //                                                                        <-- dest2
 //                                                <------> udp associate  ---> dest
 // meant to be tcp -> tls <------>  TrojanServer
@@ -14,9 +13,6 @@
 //
 
 
-#ifdef NODES_STATIC
-#define NODE_TROJAN_AUTH_SERVER
-#endif
-
-
-tunnel_t *newTrojanAuthServer(hloop_t **loops, cJSON *settings);
+tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info);
+void apiTrojanAuthServer(tunnel_t *self, char *msg);
+tunnel_t *destroyTrojanAuthServer(tunnel_t *self);
