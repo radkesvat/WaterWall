@@ -48,10 +48,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             if (c->first)
             {
-                // they payload must not come buffeered here (gfw can do this but not the client)
+                // the payload must not come buffeered here (gfw can do this but not the client)
                 // so , if its incomplete we go to fallback!
                 size_t len = bufLen(c->payload);
-                if (len < (sizeof(sha224_hex_t)))
+                if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
                 {
                     // invalid protocol
                     //  TODO fallback
@@ -80,6 +80,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     goto failed;
                 }
                 LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
+                cstate->authenticated = true;
                 context_t *init_ctx = newContext(c->line);
                 init_ctx->init = true;
                 self->up->upStream(self->up, init_ctx);
@@ -89,7 +90,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     return;
                 }
 
-                shiftr(c,CRLF_LEN);
+                shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
                 self->up->upStream(self->up, c);
                 return;
             }

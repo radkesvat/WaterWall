@@ -10,7 +10,6 @@
 #define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
-#define READ_BUFFER_SIZE 4080
 
 typedef struct tcp_listener_state_s
 {

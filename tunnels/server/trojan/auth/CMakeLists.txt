@@ -2,19 +2,19 @@
 
 add_library(TrojanAuthServer STATIC
       trojan_auth_server.c
-      ${CMAKE_CURRENT_SOURCE_DIR}/../../../tunnels/shared/trojan/sha2.c         
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../../../tunnels/shared/trojan/sha2.c         
 )
 
 # target_include_directories(TrojanAuthServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
-target_include_directories(TrojanAuthServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
-target_include_directories(TrojanAuthServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../tunnels/)
+target_include_directories(TrojanAuthServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../../ww)
+target_include_directories(TrojanAuthServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../../tunnels/)
 target_link_libraries(TrojanAuthServer ww)
 # target_compile_options(ww PUBLIC -fPIC)  
 
 # add dependencies
-include(../../../cmake/CPM.cmake)
+include(../../../../cmake/CPM.cmake)
 
 
 CPMAddPackage(

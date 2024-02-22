@@ -9,6 +9,8 @@ cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
+option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
+option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -58,6 +60,29 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/openssl)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/openssl)
 target_link_libraries(Waterwall OpenSSLServer)
 endif()
+
+
+#trojan auth server
+if (INCLUDE_TROJAN_AUTH_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TROJAN_AUTH_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/auth)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/socks)
+target_link_libraries(Waterwall TrojanAuthServer)
+endif()
+
+
+
+#trojan socks server
+if (INCLUDE_TROJAN_SOCKS_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TROJAN_SOCKS_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/socks)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/socks)
+target_link_libraries(Waterwall TrojanSocksServer)
+endif()
+
+
+
+
 
 
 #logger tunnel

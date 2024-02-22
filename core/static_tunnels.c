@@ -16,7 +16,12 @@
 
 
 #ifdef INCLUDE_TROJAN_AUTH_SERVER
-#include "tunnels/server/trojan/trojan_auth_server.h"
+#include "tunnels/server/trojan/auth/trojan_auth_server.h"
+#endif
+
+
+#ifdef INCLUDE_TROJAN_SOCKS_SERVER
+#include "tunnels/server/trojan/socks/trojan_socks_server.h"
 #endif
 
 
@@ -48,6 +53,12 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_TROJAN_AUTH_SERVER
     USING(TrojanAuthServer);
 #endif
+
+#ifdef INCLUDE_TROJAN_SOCKS_SERVER
+    USING(TrojanSocksServer);
+
+#endif
+
 
 
 }
