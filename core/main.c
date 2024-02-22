@@ -11,6 +11,8 @@
 
 #define CORE_FILE "core.json"
 
+
+
 int main(int argc, char **argv)
 {
 
@@ -66,7 +68,7 @@ int main(int argc, char **argv)
             runConfigFile(cfile);
             LOGD("Spawning accept thread ...", *k.ref);
             startSocketManager();
-            LOGD("Starting the eventloop...", *k.ref);
+            LOGD("Starting eventloops ...", *k.ref);
             hloop_run(loops[0]);
             LOGW("MainThread moved out of eventloop", *k.ref);
 
