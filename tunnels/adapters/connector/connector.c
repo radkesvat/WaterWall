@@ -235,7 +235,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 if (sockfd < 0)
                 {
                     LOGF("Connector: socket fd < 0");
-                    hio_close(c->src_io);
+                    // hio_close(c->src_io);
                     goto fail;
 
                     return;

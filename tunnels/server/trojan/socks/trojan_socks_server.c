@@ -65,11 +65,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     }
                     dest->addr.sa.sa_family = AF_INET;
                     memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 4);
+
                     shiftr(c->payload, 4);
-                    {
-                        uint8_t *buf = (uint8_t *)&(dest->addr.sa.sa_family);
-                        dest->addr.sa.sa_family = (buf[4]) | (buf[3]) | (buf[2]) | (buf[0]);
-                    }
 
                     LOGD("TrojanSocksServer: connect ipv4");
 
@@ -93,18 +90,29 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     char domain[260];
                     memcpy(domain, rawBuf(c->payload), addr_len);
                     domain[addr_len] = 0;
-                    if (sockaddr_set_ip(&(dest->addr), domain) != 0)
+
+                    struct timeval tv1, tv2;
+                    gettimeofday(&tv1, NULL);
+                    /* resolve domain */
                     {
-                        LOGE("TrojanSocksServer: resolve failed  %.*s", addr_len, rawBuf(c->payload));
-                        DISCARD_CONTEXT(c);
-                        goto failed;
+                        if (sockaddr_set_ip(&(dest->addr), domain) != 0)
+                        {
+                            LOGE("TrojanSocksServer: resolve failed  %.*s", addr_len, rawBuf(c->payload));
+                            DISCARD_CONTEXT(c);
+                            goto failed;
+                        }
+                        else
+                        {
+                            char ip[60];
+                            sockaddr_str(&(dest->addr), ip, 60);
+                            LOGD("TrojanSocksServer: %.*s resolved to %.*s", addr_len, rawBuf(c->payload), strlen(ip), ip);
+                        }
                     }
-                    else
-                    {
-                        char ip[60];
-                        sockaddr_str(&(dest->addr), ip, 60);
-                        LOGD("TrojanSocksServer: %.*s resolved to %.*s", addr_len, rawBuf(c->payload), strlen(ip), ip);
-                    }
+                    gettimeofday(&tv2, NULL);
+
+                    double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 +(double)(tv2.tv_sec - tv1.tv_sec);
+                    LOGD("TrojanSocksServer: dns resolve took %lf sec", time_spent);
+
                     dest->resolved = true;
                     shiftr(c->payload, addr_len);
 
@@ -117,16 +125,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     }
                     dest->addr.sa.sa_family = AF_INET6;
                     memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 16);
-
-                    {
-                        uint8_t *buf = (uint8_t *)&(dest->addr.sin.sin_addr);
-                        uint64_t u1 = (buf[7]) | (buf[6]) | (buf[5]) | (buf[4]) | (buf[3]) | (buf[2]) | (buf[1]) | (buf[0]);
-                        uint64_t u2 = (buf[15]) | (buf[14]) | (buf[13]) | (buf[12]) | (buf[11]) | (buf[10]) | (buf[9]) | (buf[8]);
-                        uint64_t *buf64 = (uint64_t *)&(dest->addr.sin.sin_addr);
-                        buf64[0] = u1;
-                        buf64[1] = u2;
-                        
-                    }
 
                     shiftr(c->payload, 16);
                     LOGD("TrojanSocksServer: connect ipv6");
@@ -163,8 +161,16 @@ static inline void upStream(tunnel_t *self, context_t *c)
             uint16_t port = 0;
             memcpy(&port, rawBuf(c->payload), 2);
             port = (port << 8) | (port >> 8);
+            if (port == 0)
+            {
+                LOGE("OSEUOA");
+            }
             sockaddr_set_port(&(dest->addr), port);
             shiftr(c->payload, 4);
+            if (dest->addr.sin.sin_port == 0)
+            {
+                LOGE("OSEUOA");
+            }
 
             context_t *up_init_ctx = newContext(c->line);
             up_init_ctx->init = true;
