@@ -51,26 +51,36 @@ static bool resume_write_queue(connector_con_state_t *cstate)
     while (contextQueueLen(queue) > 0)
     {
         *cw = contextQueuePop(queue);
-        if ((*cw)->src_io)
-            hio_setup_upstream(io, (*cw)->src_io);
+        hio_t *upstream_io = (*cw)->src_io;
+
+        if ((*cw)->payload == NULL)
+        {
+            destroyContext((*cw));
+
+            if (upstream_io)
+                hio_read(upstream_io);
+            continue;
+        }
+
         int bytes = bufLen((*cw)->payload);
         int nwrite = hio_write(io, rawBuf((*cw)->payload), bytes);
         if (nwrite >= 0 && nwrite < bytes)
         {
-
             return false; // write pending
         }
         else
         {
             reuseBuffer(cstate->buffer_pool, (*cw)->payload);
             (*cw)->payload = NULL;
-            destroyContext((*cw));
-
+            contextQueuePush(queue,(*cw));
             *cw = NULL;
+
+         
         }
     }
     return true;
 }
+
 
 static void on_write_complete(hio_t *io, const void *buf, int writebytes)
 {
@@ -82,21 +92,27 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
     context_t **cw = &((cstate)->current_w);
     context_queue_t *queue = (cstate)->queue;
 
-    hio_t *upstream_io = hio_get_upstream(io);
+    hio_t *upstream_io = (*cw)->src_io;
     if (hio_write_is_complete(io))
     {
+
         reuseBuffer(cstate->buffer_pool, (*cw)->payload);
         (*cw)->payload = NULL;
-        destroyContext((*cw));
+        context_t *cpy_ctx = (*cw);
         *cw = NULL;
 
         if (resume_write_queue(cstate))
         {
+            destroyContext(cpy_ctx);
             cstate->write_paused = false;
             hio_setcb_write(io, NULL);
+
             if (upstream_io)
                 hio_read(upstream_io);
-            return;
+        }
+        else
+        {
+            contextQueuePush(cstate->queue, cpy_ctx);
         }
     }
 }
