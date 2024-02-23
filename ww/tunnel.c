@@ -15,6 +15,7 @@ line_t *newLine(size_t tid)
     line_t *result = malloc(size);
     memset(result, 0, size);
     result->tid = tid;
+    return result;
 }
 void destroyLine(line_t *c)
 {
@@ -53,6 +54,7 @@ tunnel_t *newTunnel()
     t->packetUpStream = &defaultPacketUpStream;
     t->downStream = &defaultDownStream;
     t->packetDownStream = &defaultPacketDownStream;
+    return t;
 }
 
 void defaultUpStream(tunnel_t *self, context_t *c)

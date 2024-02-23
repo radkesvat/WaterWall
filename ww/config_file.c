@@ -111,4 +111,6 @@ config_file_t *parseConfigFile(const char *const file_path)
         exit(1);
     }
     state->nodes = nodes;
+    return state;
 }
+
