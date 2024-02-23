@@ -29,11 +29,25 @@ typedef struct tcp_listener_con_state_s
     bool first_packet_sent;
 } connector_con_state_t;
 
-static void resume_write_queue(connector_con_state_t *cstate)
+static void drain_queue(connector_con_state_t *cstate)
 {
-    hio_t *io = cstate->io;
     context_queue_t *queue = (cstate)->queue;
     context_t **cw = &((cstate)->current_w);
+    while (contextQueueLen(queue) > 0)
+    {
+        *cw = contextQueuePop(queue);
+        reuseBuffer(cstate->buffer_pool, (*cw)->payload);
+        (*cw)->payload = NULL;
+        destroyContext((*cw));
+        *cw = NULL;
+    }
+}
+
+static bool resume_write_queue(connector_con_state_t *cstate)
+{
+    context_queue_t *queue = (cstate)->queue;
+    context_t **cw = &((cstate)->current_w);
+    hio_t *io = cstate->io;
     while (contextQueueLen(queue) > 0)
     {
         *cw = contextQueuePop(queue);
@@ -46,7 +60,7 @@ static void resume_write_queue(connector_con_state_t *cstate)
             cstate->write_paused = true;
             if ((*cw)->src_io)
                 hio_read_stop((*cw)->src_io);
-            return; // write pending
+            return false; // write pending
         }
         else
         {
@@ -57,24 +71,35 @@ static void resume_write_queue(connector_con_state_t *cstate)
             *cw = NULL;
         }
     }
+    return true;
 }
+
 static void on_write_complete(hio_t *io, const void *buf, int writebytes)
 {
     // resume the read on other end of the connection
     connector_con_state_t *cstate = (connector_con_state_t *)(hevent_userdata(io));
+    if (cstate == NULL)
+        return;
 
     context_t **cw = &((cstate)->current_w);
+    context_queue_t *queue = (cstate)->queue;
+
     hio_t *upstream_io = hio_get_upstream(io);
-    if (upstream_io && hio_write_is_complete(io))
+    if (hio_write_is_complete(io))
     {
         reuseBuffer(cstate->buffer_pool, (*cw)->payload);
         (*cw)->payload = NULL;
         destroyContext((*cw));
         *cw = NULL;
-        resume_write_queue(cstate);
-        cstate->write_paused = false;
-        hio_read(upstream_io);
-        hio_setcb_write(io, NULL);
+
+        if (upstream_io)
+            hio_read(upstream_io);
+
+        if (resume_write_queue(cstate))
+        {
+            cstate->write_paused = false;
+            hio_setcb_write(io, NULL);
+        }
     }
 }
 
@@ -85,6 +110,7 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
+    setLen(payload,readbytes);
 
     tunnel_t *self = (cstate)->tunnel;
     line_t *line = (cstate)->line;
@@ -252,6 +278,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
+            drain_queue(cstate);
+            destroyContextQueue(cstate->queue);
             destroyLine(c->line);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
@@ -296,10 +324,11 @@ static inline void downStream(tunnel_t *self, context_t *c)
         {
             hio_t *io = CSTATE(c)->io;
             hevent_set_userdata(io, NULL);
+            drain_queue(cstate);
+            destroyContextQueue(cstate->queue);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             self->dw->downStream(self->dw, c);
-
             return;
         }
     }

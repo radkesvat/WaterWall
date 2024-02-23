@@ -101,10 +101,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         oss_server_con_state_t *cstate = CSTATE(c);
-
         enum sslstatus status;
         int n;
         size_t len = bufLen(c->payload);
+
         while (len > 0)
         {
             n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
@@ -187,7 +187,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             /* The encrypted data is now in the input bio so now we can perform actual
              * read of unencrypted data. */
-
             do
             {
                 shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
@@ -292,7 +291,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 fail_context_up->src_io = c->src_io;
                 cleanup(self, c);
                 self->up->upStream(self->up, fail_context_up);
-            }else{
+            }
+            else
+            {
 
                 cleanup(self, c);
             }
@@ -340,13 +341,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
             if (n > 0)
             {
                 /* consume the waiting bytes that have been used by SSL */
-                if ((size_t)n < len)
-                {
-                    shiftr(c->payload, n);
-                }
+                
+                shiftr(c->payload, n);
                 // memmove(cstate->encrypt_buf, cstate->encrypt_buf + n, cstate->encrypt_len - n);
 
                 len -= n;
+
                 // cstate->encrypt_buf = (char *)realloc(cstate->encrypt_buf, cstate->encrypt_len);
 
                 /* take the output of the SSL object and queue it for socket write */
@@ -361,6 +361,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                         setLen(buf, n);
                         context_t *dw_context = newContext(c->line);
                         dw_context->payload = buf;
+                        dw_context->src_io = c->src_io;
                         self->dw->downStream(self->dw, dw_context);
                         if (!ISALIVE(c))
                         {
@@ -391,6 +392,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
             if (n == 0)
                 break;
         }
+        assert(bufLen(c->payload) == 0);
+        DISCARD_CONTEXT(c);
+
         return;
     }
     else
