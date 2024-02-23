@@ -11,18 +11,23 @@ void chain(tunnel_t *from, tunnel_t *to)
 
 line_t *newLine(size_t tid)
 {
-    size_t size = sizeof(line_t) + (sizeof( void*)*MAX_CHAIN_LEN)  ;
+    size_t size = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
     line_t *result = malloc(size);
     memset(result, 0, size);
     result->tid = tid;
 }
 void destroyLine(line_t *c)
 {
-    // we are not responsible for something we didnt allocate
+    for (size_t i = 0; i < MAX_CHAIN_LEN; i++)
+    {
+        if (c->chains_state[i] != NULL)
+            return;
+    }
+
     free(c);
 }
 
-context_t *newContext(line_t* line)
+context_t *newContext(line_t *line)
 {
     context_t *new_ctx = malloc(sizeof(context_t));
     memset(new_ctx, 0, sizeof(context_t));

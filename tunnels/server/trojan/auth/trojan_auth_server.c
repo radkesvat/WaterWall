@@ -30,6 +30,7 @@ typedef struct trojan_auth_server_con_state_s
 {
     trojan_user_t *t_user;
     bool authenticated;
+    bool init_sent;
 
 } trojan_auth_server_con_state_t;
 
@@ -83,12 +84,15 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 cstate->authenticated = true;
                 context_t *init_ctx = newContext(c->line);
                 init_ctx->init = true;
+                init_ctx->src_io = c->src_io;
+
                 self->up->upStream(self->up, init_ctx);
                 if (!ISALIVE(c))
                 {
                     DISCARD_CONTEXT(c);
                     return;
                 }
+                cstate->init_sent = true;
 
                 shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
                 self->up->upStream(self->up, c);
@@ -108,6 +112,16 @@ static inline void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = malloc(sizeof(trojan_auth_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_auth_server_con_state_t));
             trojan_auth_server_con_state_t *cstate = CSTATE(c);
+        }
+        else if (c->fin)
+        {
+            bool init_sent = CSTATE(c)->init_sent;
+            free(CSTATE(c));
+            CSTATE_MUT(c) = NULL;
+            if (init_sent)
+            {
+                self->up->upStream(self->up, c);
+            }
         }
     }
 

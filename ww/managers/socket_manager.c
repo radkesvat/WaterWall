@@ -56,6 +56,10 @@ static void on_accept_tcp(hio_t *io)
                 if (port_min <= socket_port && port_max >= socket_port)
                 {
 
+                    if (option.no_delay)
+                    {
+                        tcp_nodelay(hio_fd(io), 1);
+                    }
                     hio_detach(io);
 
                     hloop_t *main_loop = loops[state->last_round_tindex];

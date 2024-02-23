@@ -10,7 +10,6 @@
 #define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
-
 typedef struct tcp_listener_state_s
 {
     // settings
@@ -21,6 +20,7 @@ typedef struct tcp_listener_state_s
     char **white_list_raddr;
     char **black_list_raddr;
     bool fast_open;
+    bool no_delay;
 
 } tcp_listener_state_t;
 
@@ -38,7 +38,7 @@ typedef struct tcp_listener_con_state_s
     bool first_packet_sent;
 } tcp_listener_con_state_t;
 
-void on_write_complete(hio_t *io, const void *buf, int writebytes)
+static void on_write_complete(hio_t *io, const void *buf, int writebytes)
 {
     // resume the read on other end of the connection
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *)(hevent_userdata(io));
@@ -119,7 +119,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
     {
         if (cstate->write_paused)
         {
-            hio_read_stop(c->src_io);
+            if(c->src_io)
+                hio_read_stop(c->src_io);
             contextQueuePush(cstate->queue, c);
         }
         else
@@ -187,13 +188,6 @@ static void tcpListenerPacketDownStream(tunnel_t *self, context_t *c)
 static void on_recv(hio_t *io, void *buf, int readbytes)
 {
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *)(hevent_userdata(io));
-
-    // line_t *base_con = (line_t *)(hevent_userdata(io));
-    // tunnel_t *self = ((tcp_listener_con_state_t *)base_con->chains_state[0])->tunnel;
-
-    // context_t *c = newContext(base_con);
-    // self->up->upStream(self->up, c);
-    // assert(readbytes <= READ_BUFFER_SIZE);
 
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     reserve(payload, readbytes);
@@ -277,8 +271,12 @@ void onInboundConnected(hevent_t *ev)
     context->init = true;
     context->src_io = io;
     self->upStream(self, context);
+    if ((line->chains_state)[0] == NULL)
+    {
+        LOGW("Tcp socket just got closed by upstream before anything happend...");
+        return;
+    }
     hio_read(io);
-
 }
 
 tunnel_t *newTcpListener(node_instance_context_t *instance_info)
@@ -293,6 +291,8 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         LOGF("JSON Error: TcpListener->settings (object field) : The object was empty or invalid.");
         return NULL;
     }
+    getBoolFromJsonObject(&(STATE(t)->no_delay),settings, "nodelay");
+
     if (!getStringFromJsonObject(&(STATE(t)->address), settings, "address"))
     {
         LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid.");

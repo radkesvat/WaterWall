@@ -11,6 +11,7 @@ option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
+option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -52,6 +53,16 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
 target_link_libraries(Waterwall TcpListener)
 endif()
+
+
+#connector
+if (INCLUDE_CONNECTOR)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_CONNECTOR=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector)
+target_link_libraries(Waterwall Connector)
+endif()
+
 
 #openssl server
 if (INCLUDE_OPENSSL_SERVER)

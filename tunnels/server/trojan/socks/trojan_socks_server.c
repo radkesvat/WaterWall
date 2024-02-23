@@ -31,6 +31,7 @@ typedef struct trojan_socks_server_state_s
 
 typedef struct trojan_socks_server_con_state_s
 {
+    bool init_sent;
 
 } trojan_socks_server_con_state_t;
 
@@ -38,7 +39,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
 {
     if (c->payload != NULL)
     {
-        trojan_socks_server_con_state_t *cstate = CSTATE(c);
 
         if (c->first)
         {
@@ -54,6 +54,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             switch (cmd)
             {
             case TROJANCMD_CONNECT:
+                dest->protocol = IPPROTO_TCP;
                 switch (atyp)
                 {
                 case TROJANATYP_IPV4:
@@ -83,8 +84,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         goto failed;
                     }
 
-                    LOGD("TrojanSocksServer: connect to domain %.*s", addr_len, rawBuf(c->payload));
-                    if (sockaddr_set_ip(&(dest->addr), rawBuf(c->payload)) != 0)
+                    LOGD("TrojanSocksServer: wants domain %.*s", addr_len, rawBuf(c->payload));
+                    char domain[260];
+                    memcpy(domain, rawBuf(c->payload), addr_len);
+                    domain[addr_len] = 0;
+                    if (sockaddr_set_ip(&(dest->addr), domain) != 0)
                     {
                         LOGE("TrojanSocksServer: resolve failed  %.*s", addr_len, rawBuf(c->payload));
                         DISCARD_CONTEXT(c);
@@ -97,7 +101,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         LOGD("TrojanSocksServer: %.*s resolved to %.*s", addr_len, rawBuf(c->payload), strlen(ip), ip);
                     }
                     dest->resolved = true;
-
                     shiftr(c->payload, addr_len);
 
                     break;
@@ -123,6 +126,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 }
                 break;
             case TROJANCMD_UDP_ASSOCIATE:
+                dest->protocol = IPPROTO_UDP;
+
                 LOGE("TrojanSocksServer: UDP not yet");
                 DISCARD_CONTEXT(c);
                 break;
@@ -141,11 +146,13 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
             uint16_t port = 0;
             memcpy(&port, rawBuf(c->payload), 2);
+            port = (port << 8) | (port >> 8);
             sockaddr_set_port(&(dest->addr), port);
             shiftr(c->payload, 4);
 
             context_t *up_init_ctx = newContext(c->line);
             up_init_ctx->init = true;
+            up_init_ctx->src_io = c->src_io;
             self->up->upStream(self->up, up_init_ctx);
             if (!ISALIVE(c))
             {
@@ -153,13 +160,20 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 DISCARD_CONTEXT(c);
                 return;
             }
+            CSTATE(c)->init_sent = true;
+
+            if (bufLen(c->payload) <= 0)
+            {
+                DISCARD_CONTEXT(c);
+                destroyContext(c);
+                return;
+            }
             self->up->upStream(self->up, c);
             return;
         }
         else
         {
-            DISCARD_CONTEXT(c);
-            goto failed;
+            self->up->upStream(self->up, c);
         }
     }
     else
@@ -169,6 +183,16 @@ static inline void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = malloc(sizeof(trojan_socks_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
+        }
+        else if (c->fin)
+        {
+            bool init_sent = CSTATE(c)->init_sent;
+            free(CSTATE(c));
+            CSTATE_MUT(c) = NULL;
+            if (init_sent)
+            {
+                self->up->upStream(self->up, c);
+            }
         }
     }
 

@@ -25,6 +25,10 @@
 #endif
 
 
+#ifdef INCLUDE_CONNECTOR
+#include "tunnels/adapters/connector/connector.h"
+#endif
+
 
 #define USING(x)                                                       \
     do                                                                 \
@@ -56,9 +60,11 @@ void loadStaticTunnelsIntoCore()
 
 #ifdef INCLUDE_TROJAN_SOCKS_SERVER
     USING(TrojanSocksServer);
-
 #endif
 
+#ifdef INCLUDE_CONNECTOR
+    USING(Connector);
+#endif
 
 
 }

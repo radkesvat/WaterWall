@@ -28,6 +28,7 @@ typedef struct socket_filter_option_s
     char **white_list_raddr;
     char **black_list_raddr;
     bool fast_open;
+    bool no_delay;
 
 } socket_filter_option_t;
 

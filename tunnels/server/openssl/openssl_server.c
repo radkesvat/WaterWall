@@ -33,8 +33,8 @@ typedef struct oss_server_con_state_s
     BIO *wbio;
     int fd;
 
-    bool init_sent;
     bool first_sent;
+    bool init_sent;
 
 } oss_server_con_state_t;
 
@@ -172,6 +172,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     cstate->handshake_completed = true;
                     context_t *up_init_ctx = newContext(c->line);
                     up_init_ctx->init = true;
+                    up_init_ctx->src_io = c->src_io;
+
                     self->up->upStream(self->up, up_init_ctx);
                     if (!ISALIVE(c))
                     {
@@ -179,6 +181,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         DISCARD_CONTEXT(c);
                         return;
                     }
+                    cstate->init_sent = true;
                 }
             }
 
@@ -195,6 +198,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     setLen(buf, n);
                     context_t *up_ctx = newContext(c->line);
                     up_ctx->payload = buf;
+                    up_ctx->src_io = c->src_io;
                     if (!(cstate->first_sent))
                     {
                         up_ctx->first = true;
@@ -281,11 +285,18 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
         if (c->fin)
         {
-            context_t *fail_context_up = newContext(c->line);
-            fail_context_up->fin = true;
-            fail_context_up->src_io = c->src_io;
-            cleanup(self, c);
-            self->up->upStream(self->up, fail_context_up);
+            if (CSTATE(c)->init_sent)
+            {
+                context_t *fail_context_up = newContext(c->line);
+                fail_context_up->fin = true;
+                fail_context_up->src_io = c->src_io;
+                cleanup(self, c);
+                self->up->upStream(self->up, fail_context_up);
+            }else{
+
+                cleanup(self, c);
+            }
+
             return;
         }
     }
@@ -477,11 +488,10 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         LOGF("JSON Error: OpenSSLServer->settings->key-file (string field) : The data was empty or invalid.");
         return NULL;
     }
-     if (strlen(ssl_param.key_file) == 0)
+    if (strlen(ssl_param.key_file) == 0)
     {
         LOGF("JSON Error: OpenSSLServer->settings->key-file (string field) : The data was empty.");
-                return NULL;
-
+        return NULL;
     }
 
     ssl_param.endpoint = HSSL_SERVER;
