@@ -66,7 +66,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     dest->addr.sa.sa_family = AF_INET;
                     memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 4);
                     shiftr(c->payload, 4);
-                    LOGE("TrojanSocksServer: connect ipv4");
+                    {
+                        uint8_t *buf = (uint8_t *)&(dest->addr.sa.sa_family);
+                        dest->addr.sa.sa_family = (buf[4]) | (buf[3]) | (buf[2]) | (buf[0]);
+                    }
+
+                    LOGD("TrojanSocksServer: connect ipv4");
 
                     break;
                 case TROJANATYP_DOMAINNAME:
@@ -112,6 +117,17 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     }
                     dest->addr.sa.sa_family = AF_INET6;
                     memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 16);
+
+                    {
+                        uint8_t *buf = (uint8_t *)&(dest->addr.sin.sin_addr);
+                        uint64_t u1 = (buf[7]) | (buf[6]) | (buf[5]) | (buf[4]) | (buf[3]) | (buf[2]) | (buf[1]) | (buf[0]);
+                        uint64_t u2 = (buf[15]) | (buf[14]) | (buf[13]) | (buf[12]) | (buf[11]) | (buf[10]) | (buf[9]) | (buf[8]);
+                        uint64_t *buf64 = (uint64_t *)&(dest->addr.sin.sin_addr);
+                        buf64[0] = u1;
+                        buf64[1] = u2;
+                        
+                    }
+
                     shiftr(c->payload, 16);
                     LOGD("TrojanSocksServer: connect ipv6");
 

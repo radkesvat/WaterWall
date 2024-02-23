@@ -91,7 +91,7 @@ target_compile_definitions(ww PRIVATE STC_STATIC=1 WW_VERSION=0.1)
 target_link_libraries(ww hv_static) 
 
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELASAE")
+if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
 target_compile_definitions(ww PRIVATE  DEBUG=1)
 
 else()

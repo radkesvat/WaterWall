@@ -66,9 +66,7 @@ static bool resume_write_queue(tcp_listener_con_state_t *cstate)
         int nwrite = hio_write(io, rawBuf((*cw)->payload), bytes);
         if (nwrite >= 0 && nwrite < bytes)
         {
-            cstate->write_paused = true;
-            if ((*cw)->src_io)
-                hio_read_stop((*cw)->src_io);
+
             return false; // write pending
         }
         else
@@ -101,14 +99,14 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         destroyContext((*cw));
         *cw = NULL;
 
-        if (upstream_io)
-            hio_read(upstream_io);
-
         if (resume_write_queue(cstate))
         {
             cstate->write_paused = false;
             hio_setcb_write(io, NULL);
+            return;
         }
+        if (upstream_io)
+            hio_read(upstream_io);
     }
 }
 
@@ -117,8 +115,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-
-
     }
     else
     {
@@ -219,7 +215,7 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
-    setLen(payload,readbytes);
+    setLen(payload, readbytes);
 
     tunnel_t *self = (cstate)->tunnel;
     line_t *line = (cstate)->line;

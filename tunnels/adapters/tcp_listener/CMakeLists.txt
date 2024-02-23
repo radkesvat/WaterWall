@@ -33,7 +33,7 @@ endif()
 target_compile_options(TcpListener PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(TcpListener PRIVATE STC_STATIC=1 TcpListener_VERSION=0.1)
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELASAE")
+if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
 target_compile_definitions(TcpListener PRIVATE  DEBUG=1)
 
 else()

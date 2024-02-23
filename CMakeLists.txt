@@ -170,7 +170,7 @@ target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Wat
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
 
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELASAE")
+if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 
 else()
