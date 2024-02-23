@@ -103,10 +103,10 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         {
             cstate->write_paused = false;
             hio_setcb_write(io, NULL);
+            if (upstream_io)
+                hio_read(upstream_io);
             return;
         }
-        if (upstream_io)
-            hio_read(upstream_io);
     }
 }
 
