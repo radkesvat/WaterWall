@@ -6,11 +6,11 @@
 #include <stdio.h>
 #include <assert.h> // for assert
 
-#define DEFAULT_CORE_LOG_LEVEL "debug"
+#define DEFAULT_CORE_LOG_LEVEL "INFO"
 #define DEFAULT_CORE_LOG_FILE "core.json"
-#define DEFAULT_NETWORK_LOG_LEVEL "debug"
+#define DEFAULT_NETWORK_LOG_LEVEL "INFO"
 #define DEFAULT_NETWORK_LOG_FILE "network.json"
-#define DEFAULT_DNS_LOG_LEVEL "debug"
+#define DEFAULT_DNS_LOG_LEVEL "INFO"
 #define DEFAULT_DNS_LOG_FILE "dns.json"
 
 #define DEFAULT_LIBS_PATH "libs/"

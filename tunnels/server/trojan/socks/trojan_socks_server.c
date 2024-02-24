@@ -1,4 +1,5 @@
 #include "trojan_socks_server.h"
+#include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "utils/userutils.h"
 #include "utils/stringutils.h"
@@ -85,6 +86,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         DISCARD_CONTEXT(c);
                         goto failed;
                     }
+#undef hlog
+#define hlog getDnsLogger()
 
                     LOGD("TrojanSocksServer: wants domain %.*s", addr_len, rawBuf(c->payload));
                     char domain[260];
@@ -110,8 +113,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     }
                     gettimeofday(&tv2, NULL);
 
-                    double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 +(double)(tv2.tv_sec - tv1.tv_sec);
+                    double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec - tv1.tv_sec);
                     LOGD("TrojanSocksServer: dns resolve took %lf sec", time_spent);
+#undef hlog
+#define hlog getNetworkLogger()
 
                     dest->resolved = true;
                     shiftr(c->payload, addr_len);

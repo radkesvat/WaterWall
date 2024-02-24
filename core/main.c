@@ -11,8 +11,6 @@
 
 #define CORE_FILE "core.json"
 
-
-
 int main(int argc, char **argv)
 {
 
@@ -31,6 +29,9 @@ int main(int argc, char **argv)
         char *core_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->core_log_file);
         char *network_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->network_log_file);
         char *dns_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->dns_log_file);
+
+        logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
+        logger_set_handler(hv_default_logger(), core_logger_handle);
         createWW(
             core_log_file_path,
             network_log_file_path,
@@ -71,8 +72,6 @@ int main(int argc, char **argv)
             LOGD("Starting eventloops ...", *k.ref);
             hloop_run(loops[0]);
             LOGW("MainThread moved out of eventloop", *k.ref);
-
-
         }
     }
 }

@@ -21,6 +21,7 @@
 #endif // android
 
 
+void core_logger_handle(int loglevel, const char *buf, int len);
 
 logger_t *getCoreLogger();
 void setCoreLogger(logger_t * newlogger);
