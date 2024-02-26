@@ -81,10 +81,8 @@ static bool resume_write_queue(tcp_listener_con_state_t *cstate)
         {
             reuseBuffer(cstate->buffer_pool, (*cw)->payload);
             (*cw)->payload = NULL;
-            contextQueuePush(queue,(*cw));
+            contextQueuePush(queue, (*cw));
             *cw = NULL;
-
-         
         }
     }
     return true;
@@ -125,7 +123,6 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
     }
 }
 
-
 static inline void upStream(tunnel_t *self, context_t *c)
 {
 
@@ -163,8 +160,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
         else
         {
             cstate->current_w = c;
-            if (c->src_io)
-                hio_setup_upstream(cstate->io, c->src_io);
             int bytes = bufLen(c->payload);
             int nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
             if (nwrite >= 0 && nwrite < bytes)
@@ -189,6 +184,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
         if (c->est)
         {
             cstate->established = true;
+            destroyContext(c);
+
             return;
         }
         if (c->fin)
@@ -200,6 +197,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             destroyLine(c->line);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
+            destroyContext(c);
             hio_close(io);
 
             return;

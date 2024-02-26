@@ -66,6 +66,7 @@ void writeI32(shift_buffer_t *self, int32_t data);
 void writeUI32(shift_buffer_t *self, uint32_t data);
 void writeI16(shift_buffer_t *self, int16_t data);
 void writeUI16(shift_buffer_t *self, uint16_t data);
+void writeUI8(shift_buffer_t *self, uint8_t data);
 void readUI8(shift_buffer_t *self, uint8_t *dest);
 void readUI16(shift_buffer_t *self, uint16_t* dest);
 

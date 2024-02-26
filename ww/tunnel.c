@@ -40,6 +40,8 @@ context_t *newContext(line_t *line)
 void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
+    if (c->dest_ctx.domain != NULL)
+        free(c->dest_ctx.domain);
     free(c);
 }
 

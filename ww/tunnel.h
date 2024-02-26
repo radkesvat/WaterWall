@@ -41,7 +41,6 @@
 typedef struct line_s
 {
     hloop_t *loop;
-    socket_context_t dest_ctx;
     socket_context_t src_ctx;
     uint16_t id;
     size_t tid;
@@ -54,8 +53,10 @@ typedef struct context_s
     hio_t *src_io;
     line_t *line;
     shift_buffer_t *payload;
+    socket_context_t dest_ctx;
 
     //--------------
+    uint16_t packet_size; //used for packet based protocols 
     bool init;
     bool est;
     bool first;

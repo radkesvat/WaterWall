@@ -6,6 +6,7 @@ add_library(ww STATIC
                   shiftbuffer.c
                   library_loader.c
                   context_queue.c
+                  buffer_stream.c
                   config_file.c
                   buffer_pool.c
                   utils/utils.c

@@ -80,16 +80,17 @@ void reset(shift_buffer_t *self)
 // all caps in this function are REAL
 void expand(shift_buffer_t *self, size_t increase)
 {
-    if(self->refc > 0){
+    if (self->refc > 0)
+    {
         LOGF("Expanding a shiftbuffer while it has refs is false assumption!");
         assert(false);
     }
 
     size_t newcap = pow(2, ceil(log2((float)(self->cap * 2) + (increase * 2))));
 
-// #ifdef DEBUG
-//     LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, newcap);
-// #endif
+    // #ifdef DEBUG
+    //     LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, newcap);
+    // #endif
     self->pbuf = realloc(self->pbuf, newcap);
 
     size_t dif = (newcap / 2) - self->cap;
@@ -142,6 +143,11 @@ void writeI16(shift_buffer_t *self, int16_t data)
 }
 
 void writeUI16(shift_buffer_t *self, uint16_t data)
+{
+    writeRaw(self, (char *)&data, sizeof(data));
+}
+
+void writeUI8(shift_buffer_t *self, uint8_t data)
 {
     writeRaw(self, (char *)&data, sizeof(data));
 }

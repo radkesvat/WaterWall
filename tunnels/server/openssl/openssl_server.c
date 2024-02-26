@@ -45,6 +45,11 @@ static int on_alpn_select(SSL *ssl,
                           unsigned int inlen,
                           void *arg)
 {
+    if (inlen == 0)
+    {
+        return SSL_TLSEXT_ERR_NOACK;
+    }
+    
     unsigned int offset = 0;
     while (offset < inlen)
     {
@@ -54,8 +59,8 @@ static int on_alpn_select(SSL *ssl,
         // TODO alpn paths
     }
     // selecting first alpn -_-
-    *out = in;
-    *outlen = inlen;
+    *out = in+1;
+    *outlen = in[0];
     return SSL_TLSEXT_ERR_OK;
     // return SSL_TLSEXT_ERR_NOACK;
 }
