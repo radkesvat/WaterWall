@@ -438,10 +438,9 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
         size_t nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
         if (nwrite >= 0 && nwrite < bytes)
         {
-            assert(false);
+            assert(false); // should not happen
         }
-        hio_setcb_read(cstate->io, on_udp_recv);
-        hio_read(cstate->io);
+
 
         DISCARD_CONTEXT(c);
         destroyContext(c);

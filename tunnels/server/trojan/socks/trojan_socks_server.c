@@ -336,6 +336,8 @@ static bool parseAddress(context_t *c)
 static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, line_t *line, hio_t *src_io)
 {
     buffer_stream_t *bstream = cstate->udp_buf;
+    if (bufferStreamLen(bstream) <= 0)
+        return true;
 
     uint8_t atype = bufferStreamReadByteAt(bstream, 0);
     uint16_t packet_size = 0;
@@ -477,7 +479,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
     assert(bufLen(c->payload) == c->packet_size);
     self->up->packetUpStream(self->up, c);
-    return true;
+
+    return processUdp(self, cstate, line, src_io);
 }
 
 static inline void upStream(tunnel_t *self, context_t *c)
@@ -533,15 +536,21 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                     if (!processUdp(self, cstate, c->line, c->src_io))
                     {
-                        LOGE("TrojanSocksServer:  udp packet could not be parsed");
+                        LOGE("TrojanSocksServer: udp packet could not be parsed");
+
+                        {
+                            context_t *fin_up = newContext(c->line);
+                            fin_up->fin = true;
+                            self->up->upStream(self->up, fin_up);
+                        }
 
                         destroyBufferStream(cstate->udp_buf);
                         free(cstate);
                         CSTATE_MUT(c) = NULL;
-                        context_t *reply = newContext(c->line);
-                        reply->fin = true;
+                        context_t *fin_dw = newContext(c->line);
+                        fin_dw->fin = true;
                         destroyContext(c);
-                        self->dw->downStream(self->dw, reply);
+                        self->dw->downStream(self->dw, fin_dw);
                     }
                     else
                         destroyContext(c);
@@ -577,15 +586,21 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                 if (!processUdp(self, cstate, c->line, c->src_io))
                 {
-                    LOGE("TrojanSocksServer:  udp packet could not be parsed");
+                    LOGE("TrojanSocksServer: udp packet could not be parsed");
+
+                    {
+                        context_t *fin_up = newContext(c->line);
+                        fin_up->fin = true;
+                        self->up->upStream(self->up, fin_up);
+                    }
 
                     destroyBufferStream(cstate->udp_buf);
                     free(cstate);
                     CSTATE_MUT(c) = NULL;
-                    context_t *reply = newContext(c->line);
-                    reply->fin = true;
+                    context_t *fin_dw = newContext(c->line);
+                    fin_dw->fin = true;
                     destroyContext(c);
-                    self->dw->downStream(self->dw, reply);
+                    self->dw->downStream(self->dw, fin_dw);
                 }
                 else
                     destroyContext(c);
