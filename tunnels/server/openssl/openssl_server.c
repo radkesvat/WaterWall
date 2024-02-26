@@ -49,7 +49,7 @@ static int on_alpn_select(SSL *ssl,
     {
         return SSL_TLSEXT_ERR_NOACK;
     }
-    
+
     unsigned int offset = 0;
     while (offset < inlen)
     {
@@ -59,7 +59,7 @@ static int on_alpn_select(SSL *ssl,
         // TODO alpn paths
     }
     // selecting first alpn -_-
-    *out = in+1;
+    *out = in + 1;
     *outlen = in[0];
     return SSL_TLSEXT_ERR_OK;
     // return SSL_TLSEXT_ERR_NOACK;
@@ -95,7 +95,6 @@ static void cleanup(tunnel_t *self, context_t *c)
         SSL_free(CSTATE(c)->ssl); /* free the SSL object and its BIO's */
         free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
-        destroyContext(c);
     }
 }
 
@@ -144,6 +143,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                             if (!ISALIVE(c))
                             {
                                 DISCARD_CONTEXT(c);
+                                destroyContext(c);
                                 return;
                             }
                         }
@@ -169,6 +169,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 if (!SSL_is_init_finished(cstate->ssl))
                 {
                     DISCARD_CONTEXT(c);
+                    destroyContext(c);
                     return;
                 }
                 else
@@ -184,6 +185,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     {
                         LOGW("Openssl server: next node instantly closed the init with fin");
                         DISCARD_CONTEXT(c);
+                        destroyContext(c);
+
                         return;
                     }
                     cstate->init_sent = true;
@@ -212,6 +215,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     if (!ISALIVE(c))
                     {
                         DISCARD_CONTEXT(c);
+                        destroyContext(c);
+
                         return;
                     }
                 }
@@ -242,6 +247,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         if (!ISALIVE(c))
                         {
                             DISCARD_CONTEXT(c);
+                            destroyContext(c);
+
                             return;
                         }
                     }
@@ -250,6 +257,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(buffer_pools[c->line->tid], buf);
                         DISCARD_CONTEXT(c);
+                        destroyContext(c);
+
                         goto failed_after_establishment;
                     }
                     else
@@ -266,6 +275,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
         // done with socket data
         DISCARD_CONTEXT(c);
+        destroyContext(c);
 
         if (c->first)
         {
@@ -286,24 +296,22 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->ssl = SSL_new(state->ssl_context);
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
-        }
+            destroyContext(c);
+            
+        }else
         if (c->fin)
         {
             if (CSTATE(c)->init_sent)
             {
-                context_t *fail_context_up = newContext(c->line);
-                fail_context_up->fin = true;
-                fail_context_up->src_io = c->src_io;
                 cleanup(self, c);
-                self->up->upStream(self->up, fail_context_up);
+                self->up->upStream(self->up, c);
             }
             else
             {
-
                 cleanup(self, c);
+                destroyLine(c->line);
+                destroyContext(c);
             }
-
-            return;
         }
     }
 
@@ -319,6 +327,7 @@ failed:
     fail_context->fin = true;
     fail_context->src_io = NULL;
     cleanup(self, c);
+    destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
     return;
 }
@@ -346,7 +355,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             if (n > 0)
             {
                 /* consume the waiting bytes that have been used by SSL */
-                
+
                 shiftr(c->payload, n);
                 // memmove(cstate->encrypt_buf, cstate->encrypt_buf + n, cstate->encrypt_len - n);
 
@@ -371,6 +380,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
                         if (!ISALIVE(c))
                         {
                             DISCARD_CONTEXT(c);
+                            destroyContext(c);
+
                             return;
                         }
                     }
@@ -399,6 +410,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
         assert(bufLen(c->payload) == 0);
         DISCARD_CONTEXT(c);
+        destroyContext(c);
 
         return;
     }
@@ -411,7 +423,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            goto failed;
+            cleanup(self, c);
+            self->dw->downStream(self->dw, c);
         }
     }
     return;
@@ -421,11 +434,12 @@ failed_after_establishment:
     fail_context_up->fin = true;
     fail_context_up->src_io = NULL;
     self->up->upStream(self->up, fail_context_up);
-failed:
+
     context_t *fail_context = newContext(c->line);
     fail_context->fin = true;
     fail_context->src_io = c->src_io;
     cleanup(self, c);
+    destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
 
     return;
@@ -471,8 +485,9 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
     oss_server_state_t *state = malloc(sizeof(oss_server_state_t));
     memset(state, 0, sizeof(oss_server_state_t));
-    hssl_ctx_opt_t ssl_param;
-    memset(&ssl_param, 0, sizeof(ssl_param));
+
+    hssl_ctx_opt_t *ssl_param = malloc(sizeof(hssl_ctx_opt_t));
+    memset(ssl_param, 0, sizeof(hssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
@@ -481,30 +496,36 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    if (!getStringFromJsonObject((char **)&(ssl_param.crt_file), settings, "cert-file"))
+    if (!getStringFromJsonObject((char **)&(ssl_param->crt_file), settings, "cert-file"))
     {
         LOGF("JSON Error: OpenSSLServer->settings->cert-file (string field) : The data was empty or invalid.");
         return NULL;
     }
-    if (strlen(ssl_param.crt_file) == 0)
+    if (strlen(ssl_param->crt_file) == 0)
     {
         LOGF("JSON Error: OpenSSLServer->settings->cert-file (string field) : The data was empty.");
         return NULL;
     }
 
-    if (!getStringFromJsonObject((char **)&(ssl_param.key_file), settings, "key-file"))
+    if (!getStringFromJsonObject((char **)&(ssl_param->key_file), settings, "key-file"))
     {
         LOGF("JSON Error: OpenSSLServer->settings->key-file (string field) : The data was empty or invalid.");
         return NULL;
     }
-    if (strlen(ssl_param.key_file) == 0)
+    if (strlen(ssl_param->key_file) == 0)
     {
         LOGF("JSON Error: OpenSSLServer->settings->key-file (string field) : The data was empty.");
         return NULL;
     }
 
-    ssl_param.endpoint = HSSL_SERVER;
-    state->ssl_context = hssl_ctx_new(&ssl_param);
+    ssl_param->endpoint = HSSL_SERVER;
+    state->ssl_context = hssl_ctx_new(ssl_param);
+
+    // dont do that with APPLE TLS -_-
+    free((char *)ssl_param->crt_file);
+    free((char *)ssl_param->key_file);
+    free(ssl_param);
+
     if (state->ssl_context == NULL)
     {
         LOGF("Could not create node ssl context");

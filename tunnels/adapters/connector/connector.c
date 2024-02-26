@@ -1,4 +1,5 @@
 #include "connector.h"
+#include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 
 #define STATE(x) ((connector_state_t *)((x)->state))
@@ -20,7 +21,6 @@ typedef struct connector_con_state_s
     hio_t *io_back;
 
     buffer_pool_t *buffer_pool;
-
     context_queue_t *queue;
     context_t *current_w;
 
@@ -28,19 +28,8 @@ typedef struct connector_con_state_s
     bool established;
 } connector_con_state_t;
 
-static void drain_queue(connector_con_state_t *cstate)
-{
-    context_queue_t *queue = (cstate)->queue;
-    context_t **cw = &((cstate)->current_w);
-    while (contextQueueLen(queue) > 0)
-    {
-        *cw = contextQueuePop(queue);
-        reuseBuffer(cstate->buffer_pool, (*cw)->payload);
-        (*cw)->payload = NULL;
-        destroyContext((*cw));
-        *cw = NULL;
-    }
-}
+#undef hlog
+#define hlog getDnsLogger()
 static bool resolve_domain(socket_context_t *dest)
 {
     struct timeval tv1, tv2;
@@ -67,6 +56,9 @@ static bool resolve_domain(socket_context_t *dest)
     dest->resolved = true;
     return true;
 }
+#undef hlog
+#define hlog getNetworkLogger()
+
 static bool resume_write_queue(connector_con_state_t *cstate)
 {
     context_queue_t *queue = (cstate)->queue;
@@ -201,7 +193,7 @@ void onOutBoundConnected(hio_t *upstream_io)
     self->downStream(self, est_context);
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void connectorUpStream(tunnel_t *self, context_t *c)
 {
     connector_con_state_t *cstate = CSTATE(c);
 
@@ -249,7 +241,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->buffer_pool = buffer_pools[c->line->tid];
             cstate->tunnel = self;
             cstate->line = c->line;
-            cstate->queue = newContextQueue();
+            cstate->queue = newContextQueue(cstate->buffer_pool);
             cstate->write_paused = true;
             cstate->io_back = c->src_io;
 
@@ -263,9 +255,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 {
                     if (!resolve_domain(dest))
                     {
-                        drain_queue(cstate);
                         destroyContextQueue(cstate->queue);
-                        destroyLine(c->line);
                         free(CSTATE(c));
                         CSTATE_MUT(c) = NULL;
                         goto fail;
@@ -279,9 +269,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
-                drain_queue(cstate);
                 destroyContextQueue(cstate->queue);
-                destroyLine(c->line);
                 free(CSTATE(c));
                 CSTATE_MUT(c) = NULL;
                 goto fail;
@@ -311,11 +299,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
-            drain_queue(cstate);
             destroyContextQueue(cstate->queue);
-            destroyLine(c->line);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
+            destroyLine(c->line);
             destroyContext(c);
             hio_close(io);
         }
@@ -328,7 +315,7 @@ fail:
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
 }
-static inline void downStream(tunnel_t *self, context_t *c)
+static void connectorDownStream(tunnel_t *self, context_t *c)
 {
     connector_con_state_t *cstate = CSTATE(c);
 
@@ -344,35 +331,27 @@ static inline void downStream(tunnel_t *self, context_t *c)
             cstate->established = true;
             cstate->write_paused = false;
             self->dw->downStream(self->dw, c);
-            // if ((c->line->chains_state)[self->chain_index] == NULL)
-            // {
-            //     LOGW("Connector: Tcp socket just got closed by downstream before anything happend...");
-            //     return;
-            // }
             resume_write_queue(cstate);
             hio_read(cstate->io_back);
             cstate->io_back = NULL;
             hio_read(cstate->io);
-            return;
         }
-        if (c->fin)
+        else if (c->fin)
         {
             hio_t *io = CSTATE(c)->io;
             hevent_set_userdata(io, NULL);
-            drain_queue(cstate);
             destroyContextQueue(cstate->queue);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             self->dw->downStream(self->dw, c);
-            return;
         }
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 static void on_udp_recv(hio_t *io, void *buf, int readbytes)
 {
-    // printf("on_recvfrom fd=%d readbytes=%d\n", hio_fd(io), readbytes);
-
     connector_con_state_t *cstate = (connector_con_state_t *)(hevent_userdata(io));
 
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
@@ -400,7 +379,7 @@ static void on_udp_recv(hio_t *io, void *buf, int readbytes)
         est_context->src_io = io;
         est_context->dest_ctx.addr.sa = *destaddr;
         est_context->dest_ctx.atype = atype;
-        self->dw->downStream(self->dw, est_context);
+        self->packetDownStream(self, est_context);
         if (hevent_userdata(io) == NULL)
             return;
     }
@@ -411,7 +390,7 @@ static void on_udp_recv(hio_t *io, void *buf, int readbytes)
     context->payload = payload;
     context->dest_ctx.addr.sa = *destaddr;
 
-    self->dw->packetDownStream(self->dw, context);
+    self->packetDownStream(self, context);
 }
 
 static void connectorPacketUpStream(tunnel_t *self, context_t *c)
@@ -429,10 +408,19 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
             {
                 if (!resolve_domain(&(c->dest_ctx)))
                 {
+                    free(CSTATE(c));
+                    CSTATE_MUT(c) = NULL;
                     DISCARD_CONTEXT(c);
                     goto fail;
                 }
             }
+        }
+        if (hio_is_closed(cstate->io))
+        {
+            free(CSTATE(c));
+            CSTATE_MUT(c) = NULL;
+            DISCARD_CONTEXT(c);
+            goto fail;
         }
         hio_set_peeraddr(cstate->io, &(c->dest_ctx.addr.sa), sockaddr_len(&(c->dest_ctx.addr)));
         size_t nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
@@ -440,7 +428,6 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
         {
             assert(false); // should not happen
         }
-
 
         DISCARD_CONTEXT(c);
         destroyContext(c);
@@ -450,8 +437,6 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             assert(c->src_io != NULL);
-            // hio_read_stop(c->src_io);
-
             CSTATE_MUT(c) = malloc(sizeof(connector_con_state_t));
             memset(CSTATE(c), 0, sizeof(connector_con_state_t));
             connector_con_state_t *cstate = CSTATE(c);
@@ -460,7 +445,7 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
             cstate->tunnel = self;
             cstate->line = c->line;
             cstate->write_paused = false;
-            cstate->queue = newContextQueue();
+            cstate->queue = NULL;
             cstate->io_back = c->src_io;
 
             socket_context_t *dest = &(c->dest_ctx);
@@ -473,7 +458,8 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
-                // hio_close(c->src_io);
+                free(CSTATE(c));
+                CSTATE_MUT(c) = NULL;
                 goto fail;
             }
 
@@ -482,7 +468,7 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
 #endif
             sockaddr_u addr;
 
-            sockaddr_set_ipport(&addr, "0.0.0.0",0);
+            sockaddr_set_ipport(&addr, "0.0.0.0", 0);
 
             if (bind(sockfd, &addr.sa, sockaddr_len(&addr)) < 0)
             {
@@ -498,18 +484,16 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
             hevent_set_userdata(upstream_io, cstate);
             hio_setcb_read(upstream_io, on_udp_recv);
             hio_read(upstream_io);
+            destroyContext(c);
         }
         else if (c->fin)
         {
             hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
-            drain_queue(cstate);
-            destroyContextQueue(cstate->queue);
-            destroyLine(c->line);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
+            destroyLine(c->line);
             destroyContext(c);
-
             hio_close(io);
         }
     }
@@ -522,18 +506,16 @@ fail:
     self->dw->downStream(self->dw, fail_context);
 }
 
-static void connectorUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-
-static void connectorDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
 static void connectorPacketDownStream(tunnel_t *self, context_t *c)
 {
-    downStream(self, c);
+    if (c->fin)
+    {
+        hio_t *io = CSTATE(c)->io;
+        hevent_set_userdata(io, NULL);
+        free(CSTATE(c));
+        CSTATE_MUT(c) = NULL;
+    }
+    self->dw->downStream(self->dw, c);
 }
 
 tunnel_t *newConnector(node_instance_context_t *instance_info)

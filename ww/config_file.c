@@ -83,6 +83,8 @@ config_file_t *parseConfigFile(const char *const file_path)
     cJSON *json = cJSON_ParseWithLength(data_json, state->file_prebuffer_size);
     state->root = json;
 
+    free(data_json);
+
     if (json == NULL)
     {
         LOGF("JSON Error: config file \"%s\" could not be parsed", file_path);

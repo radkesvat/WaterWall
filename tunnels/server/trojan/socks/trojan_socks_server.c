@@ -1,5 +1,4 @@
 #include "trojan_socks_server.h"
-#include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "utils/userutils.h"
 #include "utils/stringutils.h"
@@ -40,109 +39,6 @@ typedef struct trojan_socks_server_con_state_s
 
 } trojan_socks_server_con_state_t;
 
-static bool parseUdpPacketAddress(context_t *c)
-{
-    socket_context_t *dest = &(c->dest_ctx);
-    dest->addr.sa.sa_family = AF_INET;
-
-    if (bufLen(c->payload) < 1)
-    {
-        return false;
-    }
-    enum trojan_atyp atyp = (unsigned char)rawBuf(c->payload)[0];
-    shiftr(c->payload, 1);
-    switch (atyp)
-    {
-    case TROJANATYP_IPV4:
-        if (bufLen(c->payload) < 4)
-        {
-            return false;
-        }
-        dest->addr.sa.sa_family = AF_INET;
-        dest->atype = SAT_IPV4;
-        memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 4);
-        shiftr(c->payload, 4);
-        LOGD("TrojanSocksServer: udp ipv4");
-        break;
-    case TROJANATYP_DOMAINNAME:
-        if (bufLen(c->payload) < 1)
-        {
-            return false;
-        }
-        dest->atype = SAT_DOMAINNAME;
-        size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
-        shiftr(c->payload, 1);
-        if (bufLen(c->payload) < addr_len || addr_len > 225)
-        {
-            return false;
-        }
-
-        LOGD("TrojanSocksServer: udp domain %.*s", addr_len, rawBuf(c->payload));
-        if (dest->domain == NULL)
-        {
-            dest->domain = malloc(260);
-        }
-
-        memcpy(dest->domain, rawBuf(c->payload), addr_len);
-        dest->domain[addr_len] = 0;
-        shiftr(c->payload, addr_len);
-
-        break;
-    case TROJANATYP_IPV6:
-        if (bufLen(c->payload) < 16)
-        {
-            return false;
-        }
-        dest->atype = SAT_IPV6;
-        dest->addr.sa.sa_family = AF_INET6;
-        memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 16);
-
-        shiftr(c->payload, 16);
-        LOGD("TrojanSocksServer: udp ipv6");
-
-        break;
-
-    default:
-        LOGD("TrojanSocksServer: udp atyp was incorrect (%02X) ", (unsigned int)(atyp));
-        return false;
-        break;
-    }
-
-    // port(2)
-    if (bufLen(c->payload) < 2)
-    {
-        return false;
-    }
-    uint16_t port = 0;
-    memcpy(&port, rawBuf(c->payload), 2);
-    port = (port << 8) | (port >> 8);
-    sockaddr_set_port(&(dest->addr), port);
-    shiftr(c->payload, 2);
-
-    // len(2) + crlf(2)
-    if (bufLen(c->payload) < 4)
-    {
-        return false;
-    }
-    memcpy(&(c->packet_size), rawBuf(c->payload), 2);
-    shiftr(c->payload, 2 + CRLF_LEN);
-    c->packet_size = (c->packet_size << 8) | (c->packet_size >> 8);
-
-    if (c->packet_size > 8192)
-        return false;
-
-    size_t len = bufLen(c->payload);
-    reserve(c->payload, c->packet_size);
-    setLen(c->payload, len);
-
-    if (len != c->packet_size)
-    {
-        int x = bufLen(c->payload);
-        LOGW("oeuoeuo");
-    }
-
-    return true;
-}
 static void makeUdpPacketAddress(context_t *c)
 {
     uint16_t plen = bufLen(c->payload);
@@ -617,18 +513,28 @@ static inline void upStream(tunnel_t *self, context_t *c)
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
             cstate->udp_buf = newBufferStream(buffer_pools[c->line->tid]);
+            destroyContext(c);
         }
         else if (c->fin)
         {
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
 
             bool init_sent = cstate->init_sent;
+            bool is_udp = cstate->is_udp_forward;
             destroyBufferStream(cstate->udp_buf);
             free(cstate);
             CSTATE_MUT(c) = NULL;
             if (init_sent)
             {
-                self->up->upStream(self->up, c);
+                if (is_udp)
+                    self->up->packetUpStream(self->up, c);
+                else
+                    self->up->upStream(self->up, c);
+            }
+            else
+            {
+                destroyLine(c->line);
+                destroyContext(c);
             }
         }
     }
@@ -641,7 +547,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
     if (c->fin)
     {
         destroyBufferStream(CSTATE(c)->udp_buf);
-
         free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
         self->dw->downStream(self->dw, c);

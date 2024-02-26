@@ -170,7 +170,7 @@ void parseCoreSettings(char *data_json)
     }
 
     assert((settings->threads > 0) && (settings->threads <= 200));
-
+    cJSON_Delete(json);
     // TODO: DNS / API
 }
 

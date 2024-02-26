@@ -28,7 +28,6 @@ typedef struct trojan_auth_server_state_s
 
 typedef struct trojan_auth_server_con_state_s
 {
-    trojan_user_t *t_user;
     bool authenticated;
     bool init_sent;
 
@@ -58,6 +57,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     //  TODO fallback
                     LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
                     DISCARD_CONTEXT(c);
+                    free(CSTATE(c));
+                    CSTATE_MUT(c) = NULL;
                     goto failed;
                 }
                 hash_t kh = calcHashLen(rawBuf(c->payload), sizeof(sha224_hex_t));
@@ -69,6 +70,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     // TODO fallback
                     LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
                     DISCARD_CONTEXT(c);
+                    free(CSTATE(c));
+                    CSTATE_MUT(c) = NULL;
                     goto failed;
                 }
                 trojan_user_t *tuser = (find_result.ref->second);
@@ -78,6 +81,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     // TODO fallback
                     LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
                     DISCARD_CONTEXT(c);
+                    free(CSTATE(c));
+                    CSTATE_MUT(c) = NULL;
                     goto failed;
                 }
                 LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
@@ -85,14 +90,14 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 context_t *init_ctx = newContext(c->line);
                 init_ctx->init = true;
                 init_ctx->src_io = c->src_io;
-
+                cstate->init_sent = true;
                 self->up->upStream(self->up, init_ctx);
                 if (!ISALIVE(c))
                 {
                     DISCARD_CONTEXT(c);
+                    destroyContext(c);
                     return;
                 }
-                cstate->init_sent = true;
 
                 shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
                 self->up->upStream(self->up, c);
@@ -101,6 +106,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
             else
             {
                 DISCARD_CONTEXT(c);
+                free(CSTATE(c));
+                CSTATE_MUT(c) = NULL;
                 goto failed;
             }
         }
@@ -112,6 +119,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = malloc(sizeof(trojan_auth_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_auth_server_con_state_t));
             trojan_auth_server_con_state_t *cstate = CSTATE(c);
+            destroyContext(c);
         }
         else if (c->fin)
         {
@@ -119,8 +127,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             if (init_sent)
-            {
                 self->up->upStream(self->up, c);
+            else
+            {
+                destroyLine(c->line);
+                destroyContext(c);
             }
         }
     }
@@ -136,7 +147,11 @@ failed:
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
-
+    if (c->fin)
+    {
+        free(CSTATE(c));
+        CSTATE_MUT(c) = NULL;
+    }
     self->dw->downStream(self->dw, c);
 
     return;
@@ -219,7 +234,7 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: OpenSSLServer->settings (object field) : The object was empty or invalid.");
+        LOGF("JSON Error: TrojanAuthServer->settings (object field) : The object was empty or invalid.");
         return NULL;
     }
 

@@ -4,8 +4,8 @@
 
 //                                                                       
 //                                                
-//  con <------>  TrojanAuthServer  if(user.found and user.enable)  <------> con
-//                                                
+//  con <------>  TrojanAuthServer  if( is trojan && user.found && user.enable)  <------> con
+//                                  else                                         <------> fallback                               
 //
 //
 

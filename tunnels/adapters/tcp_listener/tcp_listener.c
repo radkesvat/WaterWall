@@ -38,19 +38,7 @@ typedef struct tcp_listener_con_state_s
     bool first_packet_sent;
 } tcp_listener_con_state_t;
 
-static void drain_queue(tcp_listener_con_state_t *cstate)
-{
-    context_queue_t *queue = (cstate)->queue;
-    context_t **cw = &((cstate)->current_w);
-    while (contextQueueLen(queue) > 0)
-    {
-        *cw = contextQueuePop(queue);
-        reuseBuffer(cstate->buffer_pool, (*cw)->payload);
-        (*cw)->payload = NULL;
-        destroyContext((*cw));
-        *cw = NULL;
-    }
-}
+
 
 static bool resume_write_queue(tcp_listener_con_state_t *cstate)
 {
@@ -135,7 +123,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             hio_t *io = CSTATE(c)->io;
             hevent_set_userdata(io, NULL);
-            drain_queue(CSTATE(c));
             destroyContextQueue(CSTATE(c)->queue);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
@@ -192,11 +179,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
         {
             hio_t *io = CSTATE(c)->io;
             hevent_set_userdata(io, NULL);
-            drain_queue(CSTATE(c));
             destroyContextQueue(CSTATE(c)->queue);
-            destroyLine(c->line);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
+            destroyLine(c->line);
             destroyContext(c);
             hio_close(io);
 
@@ -282,19 +268,20 @@ void onInboundConnected(hevent_t *ev)
          SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
 
     tunnel_t *self = data->tunnel;
-
+    free(data);
     line_t *line = newLine(tid);
 
     tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
-    cstate->queue = newContextQueue();
     cstate->line = line;
     cstate->line->loop = loop;
     cstate->buffer_pool = buffer_pools[tid];
+    cstate->queue = newContextQueue(cstate->buffer_pool);
     cstate->io = io;
     cstate->tunnel = self;
     cstate->current_w = NULL;
     cstate->write_paused = false;
     cstate->established = false;
+    cstate->first_packet_sent = false;
     line->chains_state[self->chain_index] = cstate;
 
     hevent_set_userdata(io, cstate);
