@@ -33,10 +33,8 @@ endif()
 target_compile_options(OpenSSLServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(OpenSSLServer PRIVATE STC_STATIC=1 OpenSSLServer_VERSION=0.1)
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
-target_compile_definitions(OpenSSLServer PRIVATE  DEBUG=1)
 
-else()
-target_compile_definitions(OpenSSLServer PRIVATE  NDEBUG=1)
+if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+target_compile_definitions(OpenSSLServer PRIVATE  DEBUG=1)
 
 endif()

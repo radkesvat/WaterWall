@@ -40,6 +40,7 @@ int main(int argc, char **argv)
             getCoreSettings()->network_log_level,
             getCoreSettings()->dns_log_level,
             getCoreSettings()->threads);
+            
 
         free(core_log_file_path);
         free(network_log_file_path);
@@ -67,11 +68,11 @@ int main(int argc, char **argv)
 
             LOGI("Parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
-            LOGD("Spawning accept thread ...", *k.ref);
+            LOGD("Spawning accept thread ...");
             startSocketManager();
-            LOGD("Starting eventloops ...", *k.ref);
+            LOGD("Starting eventloops ...");
             hloop_run(loops[0]);
-            LOGW("MainThread moved out of eventloop", *k.ref);
+            LOGW("MainThread moved out of eventloop");
         }
     }
 }

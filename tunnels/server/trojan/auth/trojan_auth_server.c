@@ -48,59 +48,68 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             if (c->first)
             {
-                // the payload must not come buffeered here (gfw can do this but not the client)
-                // so , if its incomplete we go to fallback!
-                size_t len = bufLen(c->payload);
-                if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
+                // struct timeval tv1, tv2;
+                // gettimeofday(&tv1, NULL);
                 {
-                    // invalid protocol
-                    //  TODO fallback
-                    LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
-                    DISCARD_CONTEXT(c);
-                    free(CSTATE(c));
-                    CSTATE_MUT(c) = NULL;
-                    goto failed;
-                }
-                hash_t kh = calcHashLen(rawBuf(c->payload), sizeof(sha224_hex_t));
 
-                hmap_users_t_iter find_result = hmap_users_t_find(&(state->users), kh);
-                if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
-                {
-                    // user not in database
-                    // TODO fallback
-                    LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
-                    DISCARD_CONTEXT(c);
-                    free(CSTATE(c));
-                    CSTATE_MUT(c) = NULL;
-                    goto failed;
-                }
-                trojan_user_t *tuser = (find_result.ref->second);
-                if (!tuser->user.enable)
-                {
-                    // user disabled
-                    // TODO fallback
-                    LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
-                    DISCARD_CONTEXT(c);
-                    free(CSTATE(c));
-                    CSTATE_MUT(c) = NULL;
-                    goto failed;
-                }
-                LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
-                cstate->authenticated = true;
-                context_t *init_ctx = newContext(c->line);
-                init_ctx->init = true;
-                init_ctx->src_io = c->src_io;
-                cstate->init_sent = true;
-                self->up->upStream(self->up, init_ctx);
-                if (!ISALIVE(c))
-                {
-                    DISCARD_CONTEXT(c);
-                    destroyContext(c);
-                    return;
-                }
+                    // the payload must not come buffeered here (gfw can do this but not the client)
+                    // so , if its incomplete we go to fallback!
+                    size_t len = bufLen(c->payload);
+                    if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
+                    {
+                        // invalid protocol
+                        //  TODO fallback
+                        LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
+                        DISCARD_CONTEXT(c);
+                        free(CSTATE(c));
+                        CSTATE_MUT(c) = NULL;
+                        goto failed;
+                    }
+                    hash_t kh = calcHashLen(rawBuf(c->payload), sizeof(sha224_hex_t));
 
-                shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
-                self->up->upStream(self->up, c);
+                    hmap_users_t_iter find_result = hmap_users_t_find(&(state->users), kh);
+                    if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
+                    {
+                        // user not in database
+                        // TODO fallback
+                        LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
+                        DISCARD_CONTEXT(c);
+                        free(CSTATE(c));
+                        CSTATE_MUT(c) = NULL;
+                        goto failed;
+                    }
+                    trojan_user_t *tuser = (find_result.ref->second);
+                    if (!tuser->user.enable)
+                    {
+                        // user disabled
+                        // TODO fallback
+                        LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
+                        DISCARD_CONTEXT(c);
+                        free(CSTATE(c));
+                        CSTATE_MUT(c) = NULL;
+                        goto failed;
+                    }
+                    LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
+                    cstate->authenticated = true;
+                    context_t *init_ctx = newContext(c->line);
+                    init_ctx->init = true;
+                    init_ctx->src_io = c->src_io;
+                    cstate->init_sent = true;
+                    self->up->upStream(self->up, init_ctx);
+                    if (!ISALIVE(c))
+                    {
+                        DISCARD_CONTEXT(c);
+                        destroyContext(c);
+                        return;
+                    }
+
+                    shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
+                    self->up->upStream(self->up, c);
+                }
+                // gettimeofday(&tv2, NULL);
+
+                // double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec - tv1.tv_sec);
+                // LOGD("Auth: took %lf sec", time_spent);
                 return;
             }
             else

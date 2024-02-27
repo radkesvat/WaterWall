@@ -216,7 +216,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     {
                         DISCARD_CONTEXT(c);
                         destroyContext(c);
-
                         return;
                     }
                 }
@@ -277,9 +276,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
         DISCARD_CONTEXT(c);
         destroyContext(c);
 
-        if (c->first)
-        {
-        }
     }
     else
     {
@@ -355,14 +351,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
             if (n > 0)
             {
                 /* consume the waiting bytes that have been used by SSL */
-
                 shiftr(c->payload, n);
-                // memmove(cstate->encrypt_buf, cstate->encrypt_buf + n, cstate->encrypt_len - n);
-
                 len -= n;
-
-                // cstate->encrypt_buf = (char *)realloc(cstate->encrypt_buf, cstate->encrypt_len);
-
                 /* take the output of the SSL object and queue it for socket write */
                 do
                 {

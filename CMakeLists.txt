@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
 
-
+# set(CMAKE_VERBOSE_MAKEFILE ON CACHE STRING "my configurable string" FORCE)
+# option(CORE_BUILD_RELEASE "compile core for release build"  FALSE)
 # option(CORE_BUILD_RELEASE "compile core for release build"  FALSE)
 # option(WW_BUILD_RELEASE "compile runtime lib for release build"  FALSE)
 # option(NODES_BUILD_RELEASE "compile runtime nodes for release build"  FALSE)
@@ -19,7 +20,7 @@ option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 # create project
 project(Waterwall VERSION 0.1)
 
-
+set(OPENSSL_CONFIGURE_VERBOSE ON)
 
 # file(GLOB_RECURSE ltdlcore RELATIVE ${CMAKE_SOURCE_DIR} "core/libltdl/*.c")
 
@@ -155,6 +156,9 @@ CPMAddPackage(
     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
     OPTIONS
     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+    "OPENSSL_CONFIGURE_VERBOSE ON"
+    "OPENSSL_BUILD_OPTIONS -O3"
+    
 )
 
 # libhv
@@ -165,16 +169,12 @@ CPMAddPackage(
     OPTIONS "WITH_OPENSSL ON" "BUILD_SHARED OFF"
 )
 
-
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Waterwall_VERSION})
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
 
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
+if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
-
-else()
-target_compile_definitions(Waterwall PRIVATE  NDEBUG=1)
 
 endif()
 

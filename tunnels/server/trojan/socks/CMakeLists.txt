@@ -33,10 +33,7 @@ endif()
 target_compile_options(TrojanSocksServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(TrojanSocksServer PRIVATE STC_STATIC=1 TrojanSocksServer_VERSION=0.1)
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
+if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 target_compile_definitions(TrojanSocksServer PRIVATE  DEBUG=1)
-
-else()
-target_compile_definitions(TrojanSocksServer PRIVATE  NDEBUG=1)
 
 endif()

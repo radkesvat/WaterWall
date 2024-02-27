@@ -34,10 +34,7 @@ endif()
 target_compile_options(TrojanAuthServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(TrojanAuthServer PRIVATE STC_STATIC=1 TrojanAuthServer_VERSION=0.1)
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
+if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 target_compile_definitions(TrojanAuthServer PRIVATE  DEBUG=1)
-
-else()
-target_compile_definitions(TrojanAuthServer PRIVATE  NDEBUG=1)
 
 endif()
