@@ -6,8 +6,12 @@
 #include <time.h>
 #include <string.h>
 
+// enable profile to see some time info
+// #define PROFILE 1
+
 #define STATE(x) ((tcp_listener_state_t *)((x)->state))
 #define CSTATE(x) ((tcp_listener_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
+
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
 typedef struct tcp_listener_state_s
@@ -37,8 +41,6 @@ typedef struct tcp_listener_con_state_s
     bool established;
     bool first_packet_sent;
 } tcp_listener_con_state_t;
-
-
 
 static bool resume_write_queue(tcp_listener_con_state_t *cstate)
 {
@@ -116,6 +118,22 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
+#ifdef PROFILE
+        if (c->first)
+        {
+            struct timeval tv1, tv2;
+            gettimeofday(&tv1, NULL);
+            {
+                self->up->upStream(self->up, c);
+            }
+            gettimeofday(&tv2, NULL);
+            double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec - tv1.tv_sec);
+            LOGD("TcpListener: upstream took %d ms", (int)(time_spent * 1000));
+            return;
+        }
+
+#endif
+
     }
     else
     {
@@ -129,7 +147,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
     }
 
+
     self->up->upStream(self->up, c);
+
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)

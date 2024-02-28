@@ -156,9 +156,6 @@ CPMAddPackage(
     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
     OPTIONS
     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-    "OPENSSL_CONFIGURE_VERBOSE ON"
-    "OPENSSL_BUILD_OPTIONS -O3"
-    
 )
 
 # libhv
@@ -173,7 +170,7 @@ target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Wat
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
 
 
-if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 
 endif()

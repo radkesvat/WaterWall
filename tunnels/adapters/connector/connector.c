@@ -6,6 +6,9 @@
 #define CSTATE(x) ((connector_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
+// enable profile to see how much it takes to connect and downstream write
+// #define PROFILE 1
+
 typedef struct connector_state_s
 {
     // settings
@@ -15,6 +18,10 @@ typedef struct connector_state_s
 
 typedef struct connector_con_state_s
 {
+#ifdef PROFILE
+    struct timeval __profile_conenct;
+#endif
+
     tunnel_t *tunnel;
     line_t *line;
     hio_t *io;
@@ -32,8 +39,8 @@ typedef struct connector_con_state_s
 #define hlog getDnsLogger()
 static bool resolve_domain(socket_context_t *dest)
 {
-    struct timeval tv1, tv2;
     uint16_t old_port = sockaddr_port(&(dest->addr));
+    struct timeval tv1, tv2;
     gettimeofday(&tv1, NULL);
     /* resolve domain */
     {
@@ -174,6 +181,14 @@ void onOutBoundConnected(hio_t *upstream_io)
 {
 
     connector_con_state_t *cstate = hevent_userdata(upstream_io);
+#ifdef PROFILE
+    struct timeval tv2;
+    gettimeofday(&tv2, NULL);
+
+    double time_spent = (double)(tv2.tv_usec - (cstate->__profile_conenct).tv_usec) / 1000000 + (double)(tv2.tv_sec - (cstate->__profile_conenct).tv_sec);
+    LOGD("Connector: tcp connect took %d ms", (int)(time_spent * 1000));
+#endif
+
     tunnel_t *self = cstate->tunnel;
     line_t *line = cstate->line;
     hio_setcb_read(upstream_io, on_recv);
@@ -185,7 +200,6 @@ void onOutBoundConnected(hio_t *upstream_io)
          (int)hio_fd(upstream_io),
          SOCKADDR_STR(hio_localaddr(upstream_io), localaddrstr),
          SOCKADDR_STR(hio_peeraddr(upstream_io), peeraddrstr));
-    resume_write_queue(cstate);
 
     context_t *est_context = newContext(line);
     est_context->est = true;
@@ -232,11 +246,14 @@ static void connectorUpStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             assert(c->src_io != NULL);
-            hio_read_stop(c->src_io);
+            // hio_read_stop(c->src_io);
 
             CSTATE_MUT(c) = malloc(sizeof(connector_con_state_t));
             memset(CSTATE(c), 0, sizeof(connector_con_state_t));
             connector_con_state_t *cstate = CSTATE(c);
+#ifdef PROFILE
+            gettimeofday(&(cstate->__profile_conenct), NULL);
+#endif
 
             cstate->buffer_pool = buffer_pools[c->line->tid];
             cstate->tunnel = self;
@@ -246,7 +263,8 @@ static void connectorUpStream(tunnel_t *self, context_t *c)
             cstate->io_back = c->src_io;
 
             socket_context_t *dest = &(c->dest_ctx);
-            // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
+            // sockaddr_set_ipport(&(dest->addr), "127.0.0.1", 443);
+            // dest->protocol = IPPROTO_TCP;
             assert(dest->protocol == IPPROTO_TCP);
             LOGW("Connector: initiating connection");
             if (dest->atype == SAT_DOMAINNAME)
@@ -321,7 +339,19 @@ static void connectorDownStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
+#ifdef PROFILE
+        struct timeval tv1, tv2;
+        gettimeofday(&tv1, NULL);
+        {
+            self->dw->downStream(self->dw, c);
+        }
+        gettimeofday(&tv2, NULL);
+        double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec - tv1.tv_sec);
+        LOGD("Connector: tcp downstream took %d ms", (int)(time_spent * 1000));
+#else
         self->dw->downStream(self->dw, c);
+
+#endif
     }
     else
     {
@@ -330,11 +360,13 @@ static void connectorDownStream(tunnel_t *self, context_t *c)
         {
             cstate->established = true;
             cstate->write_paused = false;
-            self->dw->downStream(self->dw, c);
-            resume_write_queue(cstate);
-            hio_read(cstate->io_back);
-            cstate->io_back = NULL;
             hio_read(cstate->io);
+            resume_write_queue(cstate);
+
+            self->dw->downStream(self->dw, c);
+
+            // hio_read(cstate->io_back);
+            // cstate->io_back = NULL;
         }
         else if (c->fin)
         {
@@ -451,7 +483,6 @@ static void connectorPacketUpStream(tunnel_t *self, context_t *c)
             socket_context_t *dest = &(c->dest_ctx);
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
             assert(dest->protocol == IPPROTO_UDP);
-            LOGW("Connector: initiating connection");
             hloop_t *loop = hevent_loop(c->src_io);
 
             int sockfd = socket(dest->addr.sa.sa_family, SOCK_DGRAM, 0);

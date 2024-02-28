@@ -29,12 +29,19 @@ if(stc_ADDED)
 endif()
 
 
+# add openssl (default version is 3.2)
+CPMAddPackage(
+    NAME openssl-cmake
+    URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
+    OPTIONS
+    "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+)
 
 target_compile_options(OpenSSLServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(OpenSSLServer PRIVATE STC_STATIC=1 OpenSSLServer_VERSION=0.1)
 
 
-if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(OpenSSLServer PRIVATE  DEBUG=1)
 
 endif()

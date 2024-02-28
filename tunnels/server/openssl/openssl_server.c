@@ -134,6 +134,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
                         size_t avail = rCap(buf);
                         n = BIO_read(cstate->wbio, rawBuf(buf), avail);
+                        // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
                         if (n > 0)
                         {
                             setLen(buf, n);
@@ -195,36 +196,42 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             /* The encrypted data is now in the input bio so now we can perform actual
              * read of unencrypted data. */
+            shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+            shiftl(buf, 8192 / 2);
+            setLen(buf, 0);
             do
             {
-                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-                size_t avail = rCap(buf);
-                n = SSL_read(cstate->ssl, rawBuf(buf), avail);
+                size_t avail = rCap(buf) - bufLen(buf);
+                n = SSL_read(cstate->ssl, rawBuf(buf) + bufLen(buf), avail);
                 if (n > 0)
                 {
-                    setLen(buf, n);
-                    context_t *up_ctx = newContext(c->line);
-                    up_ctx->payload = buf;
-                    up_ctx->src_io = c->src_io;
-                    if (!(cstate->first_sent))
-                    {
-                        up_ctx->first = true;
-                        cstate->first_sent = true;
-                    }
-                    self->up->upStream(self->up, up_ctx);
-                    if (!ISALIVE(c))
-                    {
-                        DISCARD_CONTEXT(c);
-                        destroyContext(c);
-                        return;
-                    }
-                }
-                else
-                {
-                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    setLen(buf, bufLen(buf) + n);
                 }
 
             } while (n > 0);
+
+            if (bufLen(buf) > 0)
+            {
+                context_t *up_ctx = newContext(c->line);
+                up_ctx->payload = buf;
+                up_ctx->src_io = c->src_io;
+                if (!(cstate->first_sent))
+                {
+                    up_ctx->first = true;
+                    cstate->first_sent = true;
+                }
+                self->up->upStream(self->up, up_ctx);
+                if (!ISALIVE(c))
+                {
+                    DISCARD_CONTEXT(c);
+                    destroyContext(c);
+                    return;
+                }
+            }
+            else
+            {
+                reuseBuffer(buffer_pools[c->line->tid], buf);
+            }
 
             status = get_sslstatus(cstate->ssl, n);
 
@@ -275,7 +282,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
         // done with socket data
         DISCARD_CONTEXT(c);
         destroyContext(c);
-
     }
     else
     {
@@ -293,9 +299,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             destroyContext(c);
-            
-        }else
-        if (c->fin)
+        }
+        else if (c->fin)
         {
             if (CSTATE(c)->init_sent)
             {
@@ -508,6 +513,8 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         return NULL;
     }
 
+
+    ssl_param->verify_peer = 0; // no mtls
     ssl_param->endpoint = HSSL_SERVER;
     state->ssl_context = hssl_ctx_new(ssl_param);
 

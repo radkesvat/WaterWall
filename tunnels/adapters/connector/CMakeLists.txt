@@ -33,7 +33,7 @@ endif()
 target_compile_options(Connector PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(Connector PRIVATE STC_STATIC=1 Connector_VERSION=0.1)
 
-if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Connector PRIVATE  DEBUG=1)
 
 endif()

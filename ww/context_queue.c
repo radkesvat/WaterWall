@@ -1,7 +1,7 @@
 #include "context_queue.h"
 
 #define i_TYPE queue, context_t *
-#include "stc/queue.h"
+#include "stc/deq.h"
 #define Q_CAP 25
 
 struct context_queue_s
@@ -32,11 +32,11 @@ void destroyContextQueue(context_queue_t *self)
 
 void contextQueuePush(context_queue_t *self, context_t *context)
 {
-    queue_push(&self->q, context);
+    queue_push_back(&self->q, context);
 }
 context_t *contextQueuePop(context_queue_t *self)
 {
-    return queue_pull(&self->q);
+    return queue_pull_front(&self->q);
 }
 size_t contextQueueLen(context_queue_t *self)
 {
