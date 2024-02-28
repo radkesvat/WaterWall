@@ -13,6 +13,7 @@ option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
+option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -92,8 +93,13 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall TrojanSocksServer)
 endif()
 
-
-
+#wolf ssl server
+if (INCLUDE_WOLFSSL_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_WOLFSSL_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/wolfssl)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/wolfssl)
+target_link_libraries(Waterwall WolfSSLServer)
+endif()
 
 
 
@@ -167,7 +173,7 @@ CPMAddPackage(
 )
 
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Waterwall_VERSION})
-target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1)
+target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1 )
 
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

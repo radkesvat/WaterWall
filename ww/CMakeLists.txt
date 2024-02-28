@@ -71,12 +71,12 @@ endif()
 
 
 # add openssl (default version is 3.2)
-# CPMAddPackage(
-#     NAME wolfssl
-#     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
-#     OPTIONS
-#     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-# )
+CPMAddPackage(
+    NAME openssl-cmake
+    URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
+    OPTIONS
+    "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+)
 
 # add libhv
 CPMAddPackage(
@@ -92,7 +92,7 @@ target_compile_definitions(ww PRIVATE STC_STATIC=1 WW_VERSION=0.1)
 target_link_libraries(ww hv_static) 
 
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
 target_compile_definitions(ww PRIVATE  DEBUG=1)
 
 endif()

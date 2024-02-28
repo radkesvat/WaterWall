@@ -30,6 +30,11 @@
 #endif
 
 
+#ifdef INCLUDE_WOLFSSL_SERVER
+#include "tunnels/server/wolfssl/wolfssl_server.h"
+#endif
+
+
 #define USING(x)                                                       \
     do                                                                 \
     {                                                                  \
@@ -64,6 +69,11 @@ void loadStaticTunnelsIntoCore()
 
 #ifdef INCLUDE_CONNECTOR
     USING(Connector);
+#endif
+
+
+#ifdef INCLUDE_WOLFSSL_SERVER
+    USING(WolfSSLServer);
 #endif
 
 
