@@ -6,7 +6,13 @@ add_library(WolfSSLServer STATIC
                  
 )
 
-# target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+#cmake is not able to build faster version of wolfssl yet, we used this:
+# ./configure  --enable-distro --enable-sp=rsa2048,asm --enable-harden --enable-static --enable-fast-rsa --enable-opensslall --enable-opensslextra --enable-tls13 --disable-oldtls --enable-intelasm	--enable-aesni 
+# generate configure with autoreconf -i
+# Note: before configure, add 
+# AC_DEFINE([NO_WOLFSSL_STUB], [1], [Description here])
+# to configure.ac !
+
 
 #ww api
 target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
