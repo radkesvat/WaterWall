@@ -1,6 +1,5 @@
 #pragma once
 #include "api.h"
-#include "hv/hssl.h"
 
 // 
 // con <------>  WolfSSL-server  <------> TLS(con)

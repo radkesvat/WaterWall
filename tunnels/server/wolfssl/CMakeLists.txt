@@ -37,7 +37,6 @@ if(stc_ADDED)
 endif()
 
 
-# add openssl (default version is 3.2)
 CPMAddPackage(
     NAME wolfssl
     VERSION 5.6.6-stable
