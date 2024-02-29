@@ -14,6 +14,7 @@ option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
+option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -101,7 +102,13 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall WolfSSLServer)
 endif()
 
-
+#boring ssl server
+if (INCLUDE_BORINGSSL_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_BORINGSSL_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/boringssl)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/boringssl)
+target_link_libraries(Waterwall BoringSSLServer)
+endif()
 
 #logger tunnel
 if (INCLUDE_LOGGER_TUNNEL)
