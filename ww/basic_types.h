@@ -52,7 +52,7 @@ typedef struct user_stat_s
 typedef struct user_s
 {
     struct cJSON *json;
-    hmutex_t* fsync_lock;
+    hmutex_t *fsync_lock;
     //-----------------
     char *name;
     char *email;
@@ -68,19 +68,40 @@ typedef struct user_s
 
 } user_t;
 
+enum domain_strategy
+{
+    ds_invalid,
+    ds_prefer_ipv4,
+    ds_prefer_ipv6,
+    ds_ipv4_only,
+    ds_ipv6_only
+
+};
+enum dynamic_value_status
+{
+    dvs_empty = 0x0,
+    dvs_constant,
+};
+typedef struct dynamic_value_s
+{
+    enum dynamic_value_status status;
+    size_t value;
+    void *value_ptr;
+
+} dynamic_value_t;
+
 enum socket_address_cmd
 {
     SAC_CONNECT = 0X1,
     SAC_ASSOCIATE = 0X3,
 };
+
 enum socket_address_type
 {
     SAT_IPV4 = 0X1,
     SAT_DOMAINNAME = 0X3,
     SAT_IPV6 = 0X4,
-
 };
-
 
 // all data we need to connect to somewhere
 typedef struct socket_context_s
@@ -91,5 +112,5 @@ typedef struct socket_context_s
     char *domain;
     bool resolved;
     sockaddr_u addr;
+    
 } socket_context_t;
-

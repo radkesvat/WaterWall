@@ -441,19 +441,19 @@ failed_after_establishment:
     return;
 }
 
-static void openSSLUpStream(tunnel_t *self, context_t *c)
+static void wolfSSLUpStream(tunnel_t *self, context_t *c)
 {
     upStream(self, c);
 }
-static void openSSLPacketUpStream(tunnel_t *self, context_t *c)
+static void wolfSSLPacketUpStream(tunnel_t *self, context_t *c)
 {
     upStream(self, c);
 }
-static void openSSLDownStream(tunnel_t *self, context_t *c)
+static void wolfSSLDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
-static void openSSLPacketDownStream(tunnel_t *self, context_t *c)
+static void wolfSSLPacketDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
@@ -598,21 +598,21 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     tunnel_t *t = newTunnel();
     t->state = state;
 
-    t->upStream = &openSSLUpStream;
-    t->packetUpStream = &openSSLPacketUpStream;
-    t->downStream = &openSSLDownStream;
-    t->packetDownStream = &openSSLPacketDownStream;
+    t->upStream = &wolfSSLUpStream;
+    t->packetUpStream = &wolfSSLPacketUpStream;
+    t->downStream = &wolfSSLDownStream;
+    t->packetDownStream = &wolfSSLPacketDownStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }
 
 void apiWolfSSLServer(tunnel_t *self, char *msg)
 {
-    LOGE("openssl-server API NOT IMPLEMENTED"); // TODO
+    LOGE("wolfssl-server API NOT IMPLEMENTED"); // TODO
 }
 
 tunnel_t *destroyWolfSSLServer(tunnel_t *self)
 {
-    LOGE("openssl-server DESTROY NOT IMPLEMENTED"); // TODO
+    LOGE("wolfssl-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }

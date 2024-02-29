@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 char *readFile(const char *const path)
 {
@@ -21,7 +22,12 @@ char *readFile(const char *const path)
     fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
     char *string = malloc(fsize + 1);
-    fread(string, fsize, 1, f);
+    size_t count = fread(string, fsize, 1, f);
+    if (count == 0)
+    {
+        free(string);
+        return NULL;
+    }
     fclose(f);
 
     string[fsize] = 0;
@@ -168,4 +174,74 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     user->enable = enable;
     // TODO
     return user;
+}
+
+dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, char *key, size_t matchers, ...)
+{
+
+    dynamic_value_t result = {0};
+    result.status = dvs_empty;
+
+    if (!cJSON_IsObject(json_obj) || json_obj->child == NULL)
+        return result;
+
+    const cJSON *jstr = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
+    {
+
+        va_list argp;
+        va_start(argp, matchers);
+        for (size_t mi = dvs_constant + 1; mi < matchers + dvs_constant + 1; mi++)
+        {
+            char *matcher = va_arg(argp, char *);
+            if (strcmp(matcher, jstr->valuestring) == 0)
+            {
+                va_end(argp);
+                result.status = mi;
+                return result;
+            }
+        }
+
+        va_end(argp);
+        result.status = dvs_constant;
+        result.value_ptr = malloc(strlen(jstr->valuestring) + 1);
+        strcpy(result.value_ptr, jstr->valuestring);
+    }
+    return result;
+}
+dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, char *key, size_t matchers, ...)
+{
+
+    dynamic_value_t result = {0};
+    result.status = dvs_empty;
+
+    if (!cJSON_IsObject(json_obj) || json_obj->child == NULL)
+        return result;
+
+    const cJSON *jstr = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
+    {
+
+        va_list argp;
+        va_start(argp, matchers);
+        for (size_t mi = dvs_constant + 1; mi < matchers + dvs_constant + 1; mi++)
+        {
+            char *matcher = va_arg(argp, char *);
+            if (strcmp(matcher, jstr->valuestring) == 0)
+            {
+                va_end(argp);
+                result.status = mi;
+                return result;
+            }
+        }
+
+        va_end(argp);
+        result.status = dvs_empty;
+    }
+    else if (cJSON_IsNumber(jstr))
+    {
+        result.status = dvs_constant;
+        result.value = (size_t)jstr->valueint;
+    }
+    return result;
 }

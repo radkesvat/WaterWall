@@ -2,6 +2,9 @@
 
 add_library(Connector STATIC
                     connector.c
+                    tcp.c
+                    udp.c
+                    resolve.c
                  
 )
 
