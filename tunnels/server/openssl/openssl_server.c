@@ -427,12 +427,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
 failed_after_establishment:
     context_t *fail_context_up = newContext(c->line);
     fail_context_up->fin = true;
-    fail_context_up->src_io = NULL;
     self->up->upStream(self->up, fail_context_up);
 
     context_t *fail_context = newContext(c->line);
     fail_context->fin = true;
-    fail_context->src_io = c->src_io;
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);

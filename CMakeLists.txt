@@ -13,6 +13,7 @@ option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
+option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE)
 
@@ -66,6 +67,13 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ada
 target_link_libraries(Waterwall Connector)
 endif()
 
+#tcp connector
+if (INCLUDE_TCPCONNECTOR)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TCPCONNECTOR=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_connector)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_connector)
+target_link_libraries(Waterwall TcpConnector)
+endif()
 
 #openssl server
 if (INCLUDE_OPENSSL_SERVER)
