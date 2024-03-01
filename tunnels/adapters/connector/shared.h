@@ -1,7 +1,5 @@
 #pragma once
 #include "api.h"
-#include "loggers/dns_logger.h"
-#include "loggers/network_logger.h"
 
 #define STATE(x) ((connector_state_t *)((x)->state))
 #define CSTATE(x) ((connector_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
