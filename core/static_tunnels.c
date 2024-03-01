@@ -58,7 +58,6 @@ void loadStaticTunnelsIntoCore()
     USING(LoggerTunnel);
 #endif
 
-
 #ifdef INCLUDE_TROJAN_AUTH_SERVER
     USING(TrojanAuthServer);
 #endif
@@ -70,7 +69,6 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_CONNECTOR
     USING(Connector);
 #endif
-
 
 #ifdef INCLUDE_WOLFSSL_SERVER
     USING(WolfSSLServer);

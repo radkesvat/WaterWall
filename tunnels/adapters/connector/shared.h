@@ -11,7 +11,13 @@
 // enable profile to see how much it takes to connect and downstream write
 // #define PROFILE 1
 
-
+enum connector_dynamic_value_status
+{
+    cdvs_empty = 0x0,
+    cdvs_constant,
+    cdvs_from_source,
+    cdvs_from_dest,
+};
 
 typedef struct connector_state_s
 {
@@ -21,9 +27,10 @@ typedef struct connector_state_s
     bool reuse_addr;
     enum domain_strategy domain_strategy;
 
+    size_t dest_domain_len;
+    enum socket_address_type dest_atype;
     dynamic_value_t dest_addr;
     dynamic_value_t dest_port;
-
 
 } connector_state_t;
 

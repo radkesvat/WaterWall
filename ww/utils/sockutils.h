@@ -1,5 +1,6 @@
 #pragma once
 #include "hv/hsocket.h"
+#include "basic_types.h"
 
 #define CMP(a, b) \
     if (a != b)   \
@@ -23,3 +24,9 @@ inline bool socket_cmp_ipv6(sockaddr_u *addr1, sockaddr_u *addr2)
 #undef CMP
 
 bool socket_cmp_ip(sockaddr_u *addr1, sockaddr_u *addr2);
+
+
+
+void copySocketContextAddr(socket_context_t*dest,socket_context_t**source);
+void copySocketContextPort(socket_context_t *dest, socket_context_t *source);
+enum socket_address_type getHostAddrType(char *host);

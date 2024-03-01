@@ -146,6 +146,68 @@ bool socket_cmp_ip(sockaddr_u *addr1, sockaddr_u *addr2)
     return false;
 }
 
+void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
+{
+    dest->acmd = (*source)->acmd;
+    dest->atype = (*source)->atype;
+
+    switch (dest->atype)
+    {
+    case SAT_IPV4:
+        dest->addr.sa.sa_family = AF_INET;
+        dest->addr.sin.sin_addr = (*source)->addr.sin.sin_addr;
+
+        break;
+
+    case SAT_DOMAINNAME:
+        dest->addr.sa.sa_family = AF_INET;
+        if ((*source)->domain != NULL)
+        {
+            dest->domain = (*source)->domain;
+            (*source)->domain = NULL;
+        }
+
+        break;
+
+    case SAT_IPV6:
+        dest->addr.sa.sa_family = AF_INET6;
+        memcpy(&(dest->addr.sin6.sin6_addr), &((*source)->addr.sin6.sin6_addr), sizeof(struct in6_addr));
+
+        break;
+    }
+}
+
+enum socket_address_type getHostAddrType(char *host)
+{
+    if (is_ipv4(host))
+        return SAT_IPV4;
+    if (is_ipv6(host))
+        return SAT_IPV6;
+    return SAT_DOMAINNAME;
+}
+
+void copySocketContextPort(socket_context_t *dest, socket_context_t *source)
+{
+
+    switch (dest->atype)
+    {
+    case SAT_IPV4:
+        dest->addr.sin.sin_port = source->addr.sin.sin_port;
+        break;
+
+    case SAT_DOMAINNAME:
+        dest->addr.sin.sin_port = source->addr.sin.sin_port;
+        break;
+
+    case SAT_IPV6:
+        dest->addr.sin6.sin6_port = source->addr.sin6.sin6_port;
+        break;
+    default:
+        dest->addr.sin.sin_port = source->addr.sin.sin_port;
+        break;
+    }
+}
+
 struct user_s *parseUserFromJsonObject(const cJSON *user_json)
 {
     if (!cJSON_IsObject(user_json) || user_json->child == NULL)

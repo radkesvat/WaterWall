@@ -1,6 +1,6 @@
 #include "shared.h"
-
-
+#include "utils/sockutils.h"
+#include "loggers/network_logger.h"
 
 static void on_udp_recv(hio_t *io, void *buf, int readbytes)
 {
@@ -51,14 +51,46 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-
         int bytes = bufLen(c->payload);
 
-        if (c->dest_ctx.atype == SAT_DOMAINNAME)
+        socket_context_t final_ctx = {0};
+        // fill the final_ctx address based on settings
         {
-            if (!c->dest_ctx.resolved)
+            socket_context_t *src_ctx = &(c->line->src_ctx);
+            socket_context_t *dest_ctx = &(c->dest_ctx);
+            connector_state_t *state = STATE(self);
+
+            if (state->dest_addr.status == cdvs_from_source)
+                copySocketContextAddr(&final_ctx, &src_ctx);
+            else if (state->dest_addr.status == cdvs_from_dest)
+                copySocketContextAddr(&final_ctx, &dest_ctx);
+            else
             {
-                if (!connectorResolvedomain(&(c->dest_ctx)))
+                final_ctx.atype = state->dest_atype;
+                if (state->dest_atype == SAT_DOMAINNAME)
+                {
+                    final_ctx.domain = malloc(state->dest_domain_len + 1);
+                    memcpy(final_ctx.domain, state->dest_addr.value_ptr, state->dest_domain_len + 1);
+                    final_ctx.resolved = false;
+                    final_ctx.addr.sa.sa_family = AF_INET; // addr resolve will change this
+                }
+                else
+                    sockaddr_set_ip(&(final_ctx.addr), state->dest_addr.value_ptr);
+            }
+
+            if (state->dest_port.status == cdvs_from_source)
+                sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(src_ctx->addr)));
+            else if (state->dest_port.status == cdvs_from_dest)
+                sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(dest_ctx->addr)));
+            else
+                sockaddr_set_port(&(final_ctx.addr), state->dest_port.value);
+        }
+
+        if (final_ctx.atype == SAT_DOMAINNAME)
+        {
+            if (!final_ctx.resolved)
+            {
+                if (!connectorResolvedomain(&(final_ctx)))
                 {
                     free(CSTATE(c));
                     CSTATE_MUT(c) = NULL;
@@ -74,7 +106,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             DISCARD_CONTEXT(c);
             goto fail;
         }
-        hio_set_peeraddr(cstate->io, &(c->dest_ctx.addr.sa), sockaddr_len(&(c->dest_ctx.addr)));
+        hio_set_peeraddr(cstate->io, &(final_ctx.addr.sa), sockaddr_len(&(final_ctx.addr)));
         size_t nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
         if (nwrite >= 0 && nwrite < bytes)
         {
@@ -98,14 +130,56 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             cstate->line = c->line;
             cstate->write_paused = false;
             cstate->queue = NULL;
-            cstate->io_back = c->src_io;
 
-            socket_context_t *dest = &(c->dest_ctx);
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
-            assert(dest->protocol == IPPROTO_UDP);
             hloop_t *loop = hevent_loop(c->src_io);
 
-            int sockfd = socket(dest->addr.sa.sa_family, SOCK_DGRAM, 0);
+            socket_context_t final_ctx = {0};
+            // fill the final_ctx address based on settings
+            {
+                socket_context_t *src_ctx = &(c->line->src_ctx);
+                socket_context_t *dest_ctx = &(c->dest_ctx);
+                connector_state_t *state = STATE(self);
+
+                if (state->dest_addr.status == cdvs_from_source)
+                    copySocketContextAddr(&final_ctx, &src_ctx);
+                else if (state->dest_addr.status == cdvs_from_dest)
+                    copySocketContextAddr(&final_ctx, &dest_ctx);
+                else
+                {
+                    final_ctx.atype = state->dest_atype;
+                    if (state->dest_atype == SAT_DOMAINNAME)
+                    {
+                        final_ctx.domain = malloc(state->dest_domain_len + 1);
+                        memcpy(final_ctx.domain, state->dest_addr.value_ptr, state->dest_domain_len + 1);
+                        final_ctx.resolved = false;
+                        final_ctx.addr.sa.sa_family = AF_INET; // addr resolve will change this
+                    }
+                    else
+                        sockaddr_set_ip(&(final_ctx.addr), state->dest_addr.value_ptr);
+                }
+
+                if (state->dest_port.status == cdvs_from_source)
+                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(src_ctx->addr)));
+                else if (state->dest_port.status == cdvs_from_dest)
+                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(dest_ctx->addr)));
+                else
+                    sockaddr_set_port(&(final_ctx.addr), state->dest_port.value);
+            }
+            if (final_ctx.atype == SAT_DOMAINNAME)
+            {
+                if (!final_ctx.resolved)
+                {
+                    if (!connectorResolvedomain(&(final_ctx)))
+                    {
+                        free(CSTATE(c));
+                        CSTATE_MUT(c) = NULL;
+                        goto fail;
+                    }
+                }
+            }
+
+            int sockfd = socket(final_ctx.addr.sa.sa_family, SOCK_DGRAM, 0);
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");

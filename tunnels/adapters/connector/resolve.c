@@ -1,8 +1,8 @@
 #include "shared.h"
+#include "loggers/dns_logger.h"
 
 
-#undef hlog
-#define hlog getDnsLogger()
+
 bool connectorResolvedomain(socket_context_t *dest)
 {
     uint16_t old_port = sockaddr_port(&(dest->addr));
@@ -29,6 +29,3 @@ bool connectorResolvedomain(socket_context_t *dest)
     dest->resolved = true;
     return true;
 }
-#undef hlog
-#define hlog getNetworkLogger()
-

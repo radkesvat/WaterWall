@@ -1,6 +1,6 @@
 #include "shared.h"
-
-
+#include "utils/sockutils.h"
+#include "loggers/network_logger.h"
 
 static bool resume_write_queue(connector_con_state_t *cstate)
 {
@@ -196,20 +196,48 @@ void connectorUpStream(tunnel_t *self, context_t *c)
             cstate->line = c->line;
             cstate->queue = newContextQueue(cstate->buffer_pool);
             cstate->write_paused = true;
-            cstate->io_back = c->src_io;
 
-            socket_context_t *dest = &(c->dest_ctx);
-            connector_state_t * state - STATE(self);
-            if(state->dest_addr.status == )
-            // sockaddr_set_ipport(&(dest->addr), "127.0.0.1", 443);
-            // dest->protocol = IPPROTO_TCP;
-            assert(dest->protocol == IPPROTO_TCP);
-            LOGW("Connector: initiating connection");
-            if (dest->atype == SAT_DOMAINNAME)
+            socket_context_t final_ctx = {0};
+            //fill the final_ctx address based on settings
             {
-                if (!dest->resolved)
+                socket_context_t *src_ctx = &(c->line->src_ctx);
+                socket_context_t *dest_ctx = &(c->dest_ctx);
+                connector_state_t *state = STATE(self);
+
+                if (state->dest_addr.status == cdvs_from_source)
+                    copySocketContextAddr(&final_ctx, &src_ctx);
+                else if (state->dest_addr.status == cdvs_from_dest)
+                    copySocketContextAddr(&final_ctx, &dest_ctx);
+                else
                 {
-                    if (!connectorResolvedomain(dest))
+                    final_ctx.atype = state->dest_atype;
+                    if (state->dest_atype == SAT_DOMAINNAME)
+                    {
+                        final_ctx.domain = malloc(state->dest_domain_len + 1);
+                        memcpy(final_ctx.domain, state->dest_addr.value_ptr, state->dest_domain_len + 1);
+                        final_ctx.resolved = false;
+                        final_ctx.addr.sa.sa_family = AF_INET; // addr resolve will change this
+                    }
+                    else
+                        sockaddr_set_ip(&(final_ctx.addr), state->dest_addr.value_ptr);
+                }
+
+                if (state->dest_port.status == cdvs_from_source)
+                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(src_ctx->addr)));
+                else if (state->dest_port.status == cdvs_from_dest)
+                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(dest_ctx->addr)));
+                else
+                    sockaddr_set_port(&(final_ctx.addr), state->dest_port.value);
+            }
+
+            // sockaddr_set_ipport(&(final_ctx.addr), "127.0.0.1", 443);
+
+            LOGW("Connector: initiating connection");
+            if (final_ctx.atype == SAT_DOMAINNAME)
+            {
+                if (!final_ctx.resolved)
+                {
+                    if (!connectorResolvedomain(&final_ctx))
                     {
                         destroyContextQueue(cstate->queue);
                         free(CSTATE(c));
@@ -220,8 +248,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
             }
 
             hloop_t *loop = hevent_loop(c->src_io);
-
-            int sockfd = socket(dest->addr.sa.sa_family, SOCK_STREAM, 0);
+            int sockfd = socket(final_ctx.addr.sa.sa_family, SOCK_STREAM, 0);
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
@@ -248,7 +275,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
             hio_t *upstream_io = hio_get(loop, sockfd);
             assert(upstream_io != NULL);
 
-            hio_set_peeraddr(upstream_io, &(dest->addr.sa), sockaddr_len(&(dest->addr)));
+            hio_set_peeraddr(upstream_io, &(final_ctx.addr.sa), sockaddr_len(&(final_ctx.addr)));
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
 
@@ -314,8 +341,6 @@ void connectorDownStream(tunnel_t *self, context_t *c)
 
             self->dw->downStream(self->dw, c);
 
-            // hio_read(cstate->io_back);
-            // cstate->io_back = NULL;
         }
         else if (c->fin)
         {

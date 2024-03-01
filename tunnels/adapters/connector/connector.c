@@ -1,5 +1,7 @@
 #include "connector.h"
 #include "shared.h"
+#include "utils/sockutils.h"
+#include "loggers/network_logger.h"
 
 tunnel_t *newConnector(node_instance_context_t *instance_info)
 {
@@ -28,26 +30,31 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
         // memset set everything to 0...
     }
 
-    state->dest_addr = parseDynamicStrValueFromJsonObject(settings, "address",
+    state->dest_addr = parseDynamicStrValueFromJsonObject(settings, "address",2,
                                                           "src_context->address",
-                                                          "dest_context->address");
+                                                         "dest_context->address");
 
     if (state->dest_addr.status == dvs_empty)
     {
-        LOGF("JSON Error: Connector->settings->address (string field) : The object was empty or invalid.");
+        LOGF("JSON Error: Connector->settings->address (string field) : The vaule was empty or invalid.");
         return NULL;
     }
 
-    state->dest_port = parseDynamicNumericValueFromJsonObject(settings, "port",
+    state->dest_port = parseDynamicNumericValueFromJsonObject(settings, "port",2,
                                                               "src_context->port",
                                                               "dest_context->port");
 
     if (state->dest_port.status == dvs_empty)
     {
-        LOGF("JSON Error: Connector->settings->port (number field) : The object was empty or invalid.");
+        LOGF("JSON Error: Connector->settings->port (number field) : The vaule was empty or invalid.");
         return NULL;
     }
+    if(state->dest_addr.status == dvs_constant){
+        state->dest_atype = getHostAddrType(state->dest_addr.value_ptr); 
+        state->dest_domain_len = strlen(state->dest_addr.value_ptr);
+    }
 
+    
     tunnel_t *t = newTunnel();
     t->state = state;
 
