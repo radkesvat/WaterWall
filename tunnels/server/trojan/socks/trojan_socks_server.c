@@ -565,6 +565,10 @@ static void trojanSocksServerUpStream(tunnel_t *self, context_t *c)
 }
 static void trojanSocksServerPacketUpStream(tunnel_t *self, context_t *c)
 {
+    if (c->init || c->first)
+    {
+        LOGE("TrojanSocksServer: trojan protocol is not meant to work on top of udp"); 
+    }
     upStream(self, c);
 }
 static void trojanSocksServerDownStream(tunnel_t *self, context_t *c)

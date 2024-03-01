@@ -258,6 +258,7 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
     atomic_thread_fence(memory_order_release);
     return t;
 }
+
 void apiTrojanAuthServer(tunnel_t *self, char *msg)
 {
     LOGE("trojan-auth-server API NOT IMPLEMENTED"); // TODO

@@ -1,8 +1,6 @@
 #include "shared.h"
 #include "loggers/dns_logger.h"
 
-
-
 bool connectorResolvedomain(socket_context_t *dest)
 {
     uint16_t old_port = sockaddr_port(&(dest->addr));

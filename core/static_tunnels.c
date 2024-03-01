@@ -29,6 +29,9 @@
 #include "tunnels/adapters/connector/connector.h"
 #endif
 
+#ifdef INCLUDE_TCPCONNECTOR
+#include "tunnels/adapters/tcp_connector/tcp_connector.h"
+#endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
 #include "tunnels/server/wolfssl/wolfssl_server.h"
@@ -68,6 +71,10 @@ void loadStaticTunnelsIntoCore()
 
 #ifdef INCLUDE_CONNECTOR
     USING(Connector);
+#endif
+
+#ifdef INCLUDE_TCPCONNECTOR
+    USING(TcpConnector);
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER

@@ -433,7 +433,6 @@ failed_after_establishment:
 
     context_t *fail_context = newContext(c->line);
     fail_context->fin = true;
-    fail_context->src_io = c->src_io;
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);

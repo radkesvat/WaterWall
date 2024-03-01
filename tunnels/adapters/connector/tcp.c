@@ -239,6 +239,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
                 {
                     if (!connectorResolvedomain(&final_ctx))
                     {
+                        free(final_ctx.domain);
                         destroyContextQueue(cstate->queue);
                         free(CSTATE(c));
                         CSTATE_MUT(c) = NULL;
@@ -305,7 +306,6 @@ void connectorUpStream(tunnel_t *self, context_t *c)
 fail:
     context_t *fail_context = newContext(c->line);
     fail_context->fin = true;
-    fail_context->src_io = c->src_io;
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
 }
