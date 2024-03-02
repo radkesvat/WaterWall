@@ -1,4 +1,5 @@
 #include "trojan_auth_server.h"
+#include "managers/node_manager.h"
 #include "loggers/network_logger.h"
 #include "utils/userutils.h"
 #include "utils/stringutils.h"
@@ -21,7 +22,7 @@
 typedef struct trojan_auth_server_state_s
 {
     config_file_t *config_file;
-
+    tunnel_t *fallback;
     hmap_users_t users;
 
 } trojan_auth_server_state_t;
@@ -60,9 +61,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         // invalid protocol
                         //  TODO fallback
                         LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
-                        DISCARD_CONTEXT(c);
-                        free(CSTATE(c));
-                        CSTATE_MUT(c) = NULL;
+
                         goto failed;
                     }
                     hash_t kh = calcHashLen(rawBuf(c->payload), sizeof(sha224_hex_t));
@@ -73,9 +72,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         // user not in database
                         // TODO fallback
                         LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
-                        DISCARD_CONTEXT(c);
-                        free(CSTATE(c));
-                        CSTATE_MUT(c) = NULL;
+
                         goto failed;
                     }
                     trojan_user_t *tuser = (find_result.ref->second);
@@ -84,9 +81,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         // user disabled
                         // TODO fallback
                         LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
-                        DISCARD_CONTEXT(c);
-                        free(CSTATE(c));
-                        CSTATE_MUT(c) = NULL;
+
                         goto failed;
                     }
                     LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
@@ -114,9 +109,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                DISCARD_CONTEXT(c);
-                free(CSTATE(c));
-                CSTATE_MUT(c) = NULL;
+
                 goto failed;
             }
         }
@@ -133,10 +126,15 @@ static inline void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             bool init_sent = CSTATE(c)->init_sent;
+            bool auth = CSTATE(c)->authenticated;
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             if (init_sent)
-                self->up->upStream(self->up, c);
+                if (auth)
+                    self->up->upStream(self->up, c);
+                else
+                    state->fallback->upStream(state->fallback, c);
+
             else
             {
                 destroyLine(c->line);
@@ -147,10 +145,33 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
     return;
 failed:
+    goto fallback;
+disconnect:
+    DISCARD_CONTEXT(c);
+    free(CSTATE(c));
+    CSTATE_MUT(c) = NULL;
     context_t *reply = newContext(c->line);
     reply->fin = true;
     destroyContext(c);
     self->dw->downStream(self->dw, reply);
+    return;
+fallback:
+    trojan_auth_server_con_state_t *cstate = CSTATE(c);
+    if (!cstate->init_sent)
+    {
+        context_t *init_ctx = newContext(c->line);
+        init_ctx->init = true;
+        init_ctx->src_io = c->src_io;
+        cstate->init_sent = true;
+        state->fallback->upStream(state->fallback, init_ctx);
+        if (!ISALIVE(c))
+        {
+            DISCARD_CONTEXT(c);
+            destroyContext(c);
+            return;
+        }
+    }
+    state->fallback->upStream(state->fallback, c);
     return;
 }
 
@@ -183,9 +204,9 @@ static void trojanAuthServerPacketDownStream(tunnel_t *self, context_t *c)
     downStream(self, c);
 }
 
-static void parse(trojan_auth_server_state_t *state, cJSON *settings)
+static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
 {
-
+    trojan_auth_server_state_t *state = t->state;
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: TrojanAuthServer->Settings (object field) was empty or invalid");
@@ -232,6 +253,32 @@ static void parse(trojan_auth_server_state_t *state, cJSON *settings)
         total_users++;
     }
     LOGI("TrojanAuthServer: %zu users parsed (out of total %zu) and can connect", total_parsed, total_users);
+
+    char *fallback_node = NULL;
+    if (!getStringFromJsonObject(&fallback_node, settings, "fallback"))
+    {
+        LOGW("TrojanAuthServer: no fallback provided in json, standard trojan requires fallback");
+    }
+    else
+    {
+        LOGD("TrojanAuthServer: accessing fallback node");
+
+        hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));
+        node_t *next_node = getNode(hash_next);
+        if (next_node->instance == NULL)
+        {
+            runNode(next_node, chain_index + 1);
+        }
+        else
+        {
+        }
+        state->fallback = next_node->instance;
+
+        if (state->fallback != NULL)
+        {
+            state->fallback->dw = t;
+        }
+    }
 }
 
 tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
@@ -246,26 +293,32 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
         LOGF("JSON Error: TrojanAuthServer->settings (object field) : The object was empty or invalid.");
         return NULL;
     }
-
-    parse(state, settings);
-
     tunnel_t *t = newTunnel();
     t->state = state;
+
     t->upStream = &trojanAuthServerUpStream;
     t->packetUpStream = &trojanAuthServerPacketUpStream;
     t->downStream = &trojanAuthServerDownStream;
     t->packetDownStream = &trojanAuthServerPacketDownStream;
+    parse(t, settings, instance_info->chain_index);
+
     atomic_thread_fence(memory_order_release);
     return t;
 }
 
-void apiTrojanAuthServer(tunnel_t *self, char *msg)
+api_result_t apiTrojanAuthServer(tunnel_t *self, char *msg)
 {
-    LOGE("trojan-auth-server API NOT IMPLEMENTED"); // TODO
+    LOGE("trojan-auth-server API NOT IMPLEMENTED");
+    return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyTrojanAuthServer(tunnel_t *self)
 {
     LOGE("trojan-auth-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
+}
+
+tunnel_metadata_t getMetadataTrojanAuthServer()
+{
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

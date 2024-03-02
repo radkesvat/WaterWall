@@ -436,12 +436,16 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
     return t;
 }
-void apiTcpConnector(tunnel_t *self, char *msg)
+api_result_t apiTcpConnector(tunnel_t *self, char *msg)
 {
-    LOGE("TcpConnector API NOT IMPLEMENTED"); // TODO
+    LOGE("TcpConnector API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
 }
 tunnel_t *destroyTcpConnector(tunnel_t *self)
 {
     LOGE("TcpConnector DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
+}
+tunnel_metadata_t getMetadataTcpConnector()
+{
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }
