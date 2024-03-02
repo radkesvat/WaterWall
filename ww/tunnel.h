@@ -56,13 +56,14 @@ typedef struct context_s
     socket_context_t dest_ctx;
 
     //--------------
-    uint16_t packet_size; //used for packet based protocols 
+    uint16_t packet_size; // used for packet based protocols
     bool init;
     bool est;
     bool first;
     bool fin;
 
 } context_t;
+
 
 typedef struct tunnel_s
 {
@@ -88,8 +89,8 @@ context_t *newContext(line_t *line);
 void destroyContext(context_t *c);
 
 void destroyTunnel(tunnel_t *self);
+
 void chain(tunnel_t *self, tunnel_t *next);
-void destroyChain(tunnel_t *self);
 
 void defaultUpStream(tunnel_t *self, context_t *c);
 void defaultPacketUpStream(tunnel_t *self, context_t *c);

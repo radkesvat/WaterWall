@@ -20,7 +20,7 @@ typedef struct node_manager_s
 
 static node_manager_t *state;
 
-void runNode(node_t *n1,size_t chain_index)
+void runNode(node_t *n1, size_t chain_index)
 {
     if (n1 == NULL)
     {
@@ -33,9 +33,11 @@ void runNode(node_t *n1,size_t chain_index)
 
         if (n2->instance == NULL)
         {
-            runNode(n2,chain_index+1);
+            runNode(n2, chain_index + 1);
         }
 
+        LOGD("Starting node \"%s\"", n1->name);
+        n1->instance_context.chain_index = chain_index;
         n1->instance = n1->lib->creation_proc(&(n1->instance_context));
         if (n1->instance == NULL)
         {
@@ -43,30 +45,31 @@ void runNode(node_t *n1,size_t chain_index)
             exit(1);
         }
 
-        LOGD("Starting node \"%s\"", n1->name);
         n1->instance->chain_index = chain_index;
         chain(n1->instance, n2->instance);
     }
     else
     {
         LOGD("Starting node \"%s\"", n1->name);
+        n1->instance_context.chain_index = chain_index;
         n1->instance = n1->lib->creation_proc(&(n1->instance_context));
         if (n1->instance == NULL)
         {
             LOGF("Node Startup Failure: node (\"%s\") create() returned NULL handle", n1->name);
             exit(1);
         }
+        n1->instance->chain_index = chain_index;
+
     }
 }
- 
 
 static void runNodes()
 {
     c_foreach(p1, map_node_t, state->node_map)
     {
         node_t *n1 = p1.ref->second;
-        if (!(n1 == NULL || n1->instance != NULL || n1->refrenced != 0))
-            runNode(n1,0);
+        if (n1 != NULL && n1->instance == NULL && n1->route_starter == true)
+            runNode(n1, 0);
     }
 }
 
@@ -129,10 +132,10 @@ static void cycleProcess()
         bool found = false;
         c_foreach(n1, map_node_t, state->node_map)
         {
-            if (n1.ref->second->refrenced == 0)
+            if (n1.ref->second->metadata.flags & TFLAG_ROUTE_STARTER == TFLAG_ROUTE_STARTER)
             {
                 found = true;
-                n1.ref->second->listener = true;
+                n1.ref->second->route_starter = true;
             }
         }
         if (!found)
@@ -149,65 +152,68 @@ static void startParsingFiles()
     cJSON_ArrayForEach(node_json, nodes_json)
     {
 
-        node_t *node_instance = malloc(sizeof(node_t));
-        memset(node_instance, 0, sizeof(node_t));
-        if (!getStringFromJsonObject(&(node_instance->name), node_json, "name"))
+        node_t *new_node = malloc(sizeof(node_t));
+        memset(new_node, 0, sizeof(node_t));
+        if (!getStringFromJsonObject(&(new_node->name), node_json, "name"))
         {
             LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid", state->config_file->file_path);
             exit(1);
         }
-        node_instance->hash_name = calcHashLen(node_instance->name, strlen(node_instance->name));
+        new_node->hash_name = calcHashLen(new_node->name, strlen(new_node->name));
 
-        if (!getStringFromJsonObject(&(node_instance->type), node_json, "type"))
+        if (!getStringFromJsonObject(&(new_node->type), node_json, "type"))
         {
             LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid", state->config_file->file_path);
             exit(1);
         }
-        node_instance->hash_type = calcHashLen(node_instance->type, strlen(node_instance->type));
+        new_node->hash_type = calcHashLen(new_node->type, strlen(new_node->type));
 
-        if (getStringFromJsonObject(&(node_instance->next), node_json, "next"))
+        if (getStringFromJsonObject(&(new_node->next), node_json, "next"))
         {
 
-            node_instance->hash_next = calcHashLen(node_instance->next, strlen(node_instance->next));
+            new_node->hash_next = calcHashLen(new_node->next, strlen(new_node->next));
         }
         int int_ver = 0;
         if (getIntFromJsonObject(&int_ver, node_json, "version"))
-            node_instance->version = int_ver;
+            new_node->version = int_ver;
 
         // load lib
-        tunnel_lib_t lib = loadTunnelLibByHash(node_instance->hash_type);
+        tunnel_lib_t lib = loadTunnelLibByHash(new_node->hash_type);
         if (lib.hash_name == 0)
         {
-            LOGF("Node Creation Failure: library \"%s\" (hash: %lx) could not be loaded ", node_instance->type,
-                 node_instance->hash_type);
+            LOGF("Node Creation Failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
+                 new_node->hash_type);
             exit(1);
         }
         else
         {
-            LOGD("\"%s\": library \"%s\" loaded successfully", node_instance->name, node_instance->type);
+            LOGD("\"%s\": library \"%s\" loaded successfully", new_node->name, new_node->type);
         }
+        new_node->metadata = lib.getmetadata_proc();
         struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));
         memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
         *heap_lib = lib;
-        node_instance->lib = heap_lib;
+        new_node->lib = heap_lib;
+
+
 
         cJSON *js_settings = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
 
-        node_instance_context_t node_instance_ctx = {0};
+        node_instance_context_t new_node_ctx = {0};
 
-        node_instance_ctx.node_json = node_json;
-        node_instance_ctx.node_settings_json = js_settings;
-        node_instance_ctx.self_node_handle = node_instance;
-        node_instance_ctx.self_file_handle = state->config_file;
+        new_node_ctx.node_json = node_json;
+        new_node_ctx.node_settings_json = js_settings;
+        new_node_ctx.self_node_handle = new_node;
+        new_node_ctx.self_file_handle = state->config_file;
 
-        node_instance->instance_context = node_instance_ctx;
+        new_node->instance_context = new_node_ctx;
         map_node_t *map = &(state->node_map);
 
-        if (map_node_t_contains(map, node_instance->hash_name))
+        if (map_node_t_contains(map, new_node->hash_name))
         {
-            LOGF("Duplicate node \"%s\" (hash: %lx) ", node_instance->name, node_instance->hash_name);
+            LOGF("Duplicate node \"%s\" (hash: %lx) ", new_node->name, new_node->hash_name);
         }
-        map_node_t_insert(map, node_instance->hash_name, node_instance);
+        map_node_t_insert(map, new_node->hash_name, new_node);
     }
     cycleProcess();
     pathWalk();

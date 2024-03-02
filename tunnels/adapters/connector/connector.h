@@ -7,8 +7,8 @@
 // con <-----/                \----->  Resolve=>  TCP Connect || Udp Associate
 //
 
-#define NODE_TCP_LISTINER
 
 tunnel_t *newConnector(node_instance_context_t *instance_info);
-void apiConnector(tunnel_t *self, char *msg);
+api_result_t apiConnector(tunnel_t *self, char *msg);
 tunnel_t *destroyConnector(tunnel_t *self);
+tunnel_metadata_t getMetadataConnector();

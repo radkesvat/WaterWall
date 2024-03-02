@@ -594,13 +594,18 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
     atomic_thread_fence(memory_order_release);
     return t;
 }
-void apiTrojanSocksServer(tunnel_t *self, char *msg)
+api_result_t apiTrojanSocksServer(tunnel_t *self, char *msg)
 {
-    LOGE("trojan-socks-server API NOT IMPLEMENTED"); // TODO
+    LOGE("trojan-socks-server API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyTrojanSocksServer(tunnel_t *self)
 {
     LOGE("trojan-socks-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
+}
+
+tunnel_metadata_t getMetadataTrojanSocksServer()
+{
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

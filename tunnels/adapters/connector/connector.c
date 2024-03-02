@@ -67,12 +67,16 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
 
     return t;
 }
-void apiConnector(tunnel_t *self, char *msg)
+api_result_t apiConnector(tunnel_t *self, char *msg)
 {
-    LOGE("connector API NOT IMPLEMENTED"); // TODO
+    LOGE("connector API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
 }
 tunnel_t *destroyConnector(tunnel_t *self)
 {
     LOGE("connector DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
+}
+tunnel_metadata_t getMetadataConnector()
+{
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

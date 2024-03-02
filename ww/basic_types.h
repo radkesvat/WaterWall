@@ -68,6 +68,12 @@ typedef struct user_s
 
 } user_t;
 
+typedef struct api_result_s
+{
+    char *result;
+    size_t result_len;
+} api_result_t;
+
 enum domain_strategy
 {
     ds_invalid,

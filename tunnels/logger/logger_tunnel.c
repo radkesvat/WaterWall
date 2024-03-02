@@ -145,13 +145,17 @@ tunnel_t *newLoggerTunnel(node_instance_context_t *instance_info)
     return t;
 }
 
-void apiLoggerTunnel(tunnel_t *self, char *msg)
+api_result_t apiLoggerTunnel(tunnel_t *self, char *msg)
 {
-    LOGE("logger-tunnel API NOT IMPLEMENTED"); // TODO
+    LOGE("logger-tunnel API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyLoggerTunnel(tunnel_t *self)
 {
     LOGE("logger-tunnel DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
+}
+tunnel_metadata_t getMetadataLoggerTunnel()
+{
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

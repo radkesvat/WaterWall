@@ -9,6 +9,8 @@ void chain(tunnel_t *from, tunnel_t *to)
     to->chain_index = from->chain_index + 1;
 }
 
+
+
 line_t *newLine(size_t tid)
 {
     size_t size = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);

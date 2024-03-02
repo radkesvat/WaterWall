@@ -52,18 +52,47 @@ static int on_alpn_select(SSL *ssl,
     }
 
     unsigned int offset = 0;
+    int http_level = 0;
+
     while (offset < inlen)
     {
         LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        offset = offset + 1 + in[offset];
+        if (in[offset] == 2 && http_level < 2)
+        {
+            if (strncmp(&(in[1 + offset]), "h2", 2) == 0)
+            {
+                http_level = 2;
+                *out = &(in[1 + offset]);
+                *outlen = in[0 + offset];
+            }
+        }
+        else if (in[offset] == 8 && http_level < 1)
+        {
+            if (strncmp(&(in[1 + offset]), "http/1.1", 8) == 0)
+            {
+                http_level = 1;
+                *out = &(in[1 + offset]);
+                *outlen = in[0 + offset];
+            }
+        }
 
-        // TODO alpn paths
+        offset = offset + 1 + in[offset];
     }
+    // TODO alpn paths
+    // TODO check if nginx behaviour is different
+    if (http_level > 0)
+    {
+        return SSL_TLSEXT_ERR_OK;
+    }
+    else
+        return SSL_TLSEXT_ERR_ALERT_FATAL;
+
     // selecting first alpn -_-
-    *out = in + 1;
-    *outlen = in[0];
-    return SSL_TLSEXT_ERR_OK;
-    // return SSL_TLSEXT_ERR_NOACK;
+    // *out = in + 1;
+    // *outlen = in[0];
+    // return SSL_TLSEXT_ERR_OK;
+
+    return SSL_TLSEXT_ERR_NOACK;
 }
 
 enum sslstatus
@@ -466,9 +495,11 @@ typedef struct
     short endpoint;
 } ssl_ctx_opt_t;
 
-SSL_CTX* ssl_ctx_new(ssl_ctx_opt_t* param) {
+SSL_CTX *ssl_ctx_new(ssl_ctx_opt_t *param)
+{
     static int s_initialized = 0;
-    if (s_initialized == 0) {
+    if (s_initialized == 0)
+    {
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
         SSL_library_init();
         SSL_load_error_strings();
@@ -479,54 +510,68 @@ SSL_CTX* ssl_ctx_new(ssl_ctx_opt_t* param) {
     }
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_CTX* ctx = SSL_CTX_new(SSLv23_method());
+    SSL_CTX *ctx = SSL_CTX_new(SSLv23_method());
 #else
-    SSL_CTX* ctx = SSL_CTX_new(TLS_method());
+    SSL_CTX *ctx = SSL_CTX_new(TLS_method());
 #endif
-    if (ctx == NULL) return NULL;
+    if (ctx == NULL)
+        return NULL;
     int mode = SSL_VERIFY_NONE;
-    const char* ca_file = NULL;
-    const char* ca_path = NULL;
-    if (param) {
-        if (param->ca_file && *param->ca_file) {
+    const char *ca_file = NULL;
+    const char *ca_path = NULL;
+    if (param)
+    {
+        if (param->ca_file && *param->ca_file)
+        {
             ca_file = param->ca_file;
         }
-        if (param->ca_path && *param->ca_path) {
+        if (param->ca_path && *param->ca_path)
+        {
             ca_path = param->ca_path;
         }
-        if (ca_file || ca_path) {
-            if (!SSL_CTX_load_verify_locations(ctx, ca_file, ca_path)) {
+        if (ca_file || ca_path)
+        {
+            if (!SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
+            {
                 fprintf(stderr, "ssl ca_file/ca_path failed!\n");
                 goto error;
             }
         }
 
-        if (param->crt_file && *param->crt_file) {
-            if (!SSL_CTX_use_certificate_file(ctx, param->crt_file, SSL_FILETYPE_PEM)) {
+        if (param->crt_file && *param->crt_file)
+        {
+            if (!SSL_CTX_use_certificate_file(ctx, param->crt_file, SSL_FILETYPE_PEM))
+            {
                 fprintf(stderr, "ssl crt_file error!\n");
                 goto error;
             }
         }
 
-        if (param->key_file && *param->key_file) {
-            if (!SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM)) {
+        if (param->key_file && *param->key_file)
+        {
+            if (!SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
+            {
                 fprintf(stderr, "ssl key_file error!\n");
                 goto error;
             }
-            if (!SSL_CTX_check_private_key(ctx)) {
+            if (!SSL_CTX_check_private_key(ctx))
+            {
                 fprintf(stderr, "ssl key_file check failed!\n");
                 goto error;
             }
         }
 
-        if (param->verify_peer) {
+        if (param->verify_peer)
+        {
             mode = SSL_VERIFY_PEER;
-            if (param->endpoint == HSSL_SERVER) {
+            if (param->endpoint == HSSL_SERVER)
+            {
                 mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
             }
         }
     }
-    if (mode == SSL_VERIFY_PEER && !ca_file && !ca_path) {
+    if (mode == SSL_VERIFY_PEER && !ca_file && !ca_path)
+    {
         SSL_CTX_set_default_verify_paths(ctx);
     }
 
@@ -605,13 +650,18 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     return t;
 }
 
-void apiWolfSSLServer(tunnel_t *self, char *msg)
+api_result_t apiWolfSSLServer(tunnel_t *self, char *msg)
 {
-    LOGE("wolfssl-server API NOT IMPLEMENTED"); // TODO
+    LOGE("wolfssl-server API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyWolfSSLServer(tunnel_t *self)
 {
     LOGE("wolfssl-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
+}
+
+tunnel_metadata_t getMetadataWolfSSLServer()
+{
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

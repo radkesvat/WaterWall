@@ -51,18 +51,47 @@ static int on_alpn_select(SSL *ssl,
     }
 
     unsigned int offset = 0;
+    int http_level = 0;
+
     while (offset < inlen)
     {
         LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        offset = offset + 1 + in[offset];
+        if (in[offset] == 2 && http_level < 2)
+        {
+            if (strncmp(&(in[1 + offset]), "h2", 2) == 0 && false)
+            {
+                http_level = 2;
+                *out = &(in[1 + offset]);
+                *outlen = in[0 + offset];
+            }
+        }
+        else if (in[offset] == 8 && http_level < 1)
+        {
+            if (strncmp(&(in[1 + offset]), "http/1.1", 8) == 0)
+            {
+                http_level = 1;
+                *out = &(in[1 + offset]);
+                *outlen = in[0 + offset];
+            }
+        }
 
-        // TODO alpn paths
+        offset = offset + 1 + in[offset];
     }
+    // TODO alpn paths
+    // TODO check if nginx behaviour is different
+    if (http_level > 0)
+    {
+        return SSL_TLSEXT_ERR_OK;
+    }
+    else
+        return SSL_TLSEXT_ERR_ALERT_FATAL;
+
     // selecting first alpn -_-
-    *out = in + 1;
-    *outlen = in[0];
-    return SSL_TLSEXT_ERR_OK;
-    // return SSL_TLSEXT_ERR_NOACK;
+    // *out = in + 1;
+    // *outlen = in[0];
+    // return SSL_TLSEXT_ERR_OK;
+
+    return SSL_TLSEXT_ERR_NOACK;
 }
 
 enum sslstatus
@@ -511,7 +540,6 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         return NULL;
     }
 
-
     ssl_param->verify_peer = 0; // no mtls
     ssl_param->endpoint = HSSL_SERVER;
     state->ssl_context = hssl_ctx_new(ssl_param);
@@ -540,13 +568,18 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     return t;
 }
 
-void apiOpenSSLServer(tunnel_t *self, char *msg)
+api_result_t apiOpenSSLServer(tunnel_t *self, char *msg)
 {
-    LOGE("openssl-server API NOT IMPLEMENTED"); // TODO
+    LOGE("openssl-server API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyOpenSSLServer(tunnel_t *self)
 {
     LOGE("openssl-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
+}
+
+tunnel_metadata_t getMetadataOpenSSLServer()
+{
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }
