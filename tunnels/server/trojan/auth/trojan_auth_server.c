@@ -279,6 +279,7 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             state->fallback->dw = t;
         }
     }
+    free(fallback_node);
 }
 
 tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
