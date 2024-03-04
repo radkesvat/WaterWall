@@ -9,8 +9,6 @@ void chain(tunnel_t *from, tunnel_t *to)
     to->chain_index = from->chain_index + 1;
 }
 
-
-
 line_t *newLine(size_t tid)
 {
     size_t size = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
@@ -35,7 +33,7 @@ context_t *newContext(line_t *line)
     context_t *new_ctx = malloc(sizeof(context_t));
     memset(new_ctx, 0, sizeof(context_t));
     new_ctx->line = line;
-
+    line->refc += 1;
     return new_ctx;
 }
 
@@ -44,6 +42,8 @@ void destroyContext(context_t *c)
     assert(c->payload == NULL);
     if (c->dest_ctx.domain != NULL)
         free(c->dest_ctx.domain);
+    c->line->refc += 1;
+
     free(c);
 }
 

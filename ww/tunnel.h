@@ -44,6 +44,7 @@ typedef struct line_s
     socket_context_t src_ctx;
     uint16_t id;
     size_t tid;
+    size_t refc;
     void *chains_state[];
 
 } line_t;
@@ -51,7 +52,7 @@ typedef struct line_s
 typedef struct context_s
 {
     hio_t *src_io;
-    line_t *line;
+    line_t line;
     shift_buffer_t *payload;
     socket_context_t dest_ctx;
 

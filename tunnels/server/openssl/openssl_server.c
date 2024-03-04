@@ -25,7 +25,8 @@ typedef struct oss_server_state_s
     // settings
     char *alpns;
     tunnel_t *fallback;
-    int fallback
+    htimer_t *fallback_timer;
+    int fallback_resist_ms;
 
 } oss_server_state_t;
 
@@ -36,7 +37,7 @@ typedef struct oss_server_con_state_s
 
     bool fallback;
     buffer_stream_t *fallback_buf;
-    context_t * fallback_ctx;
+    context_t *fallback_ctx;
 
     SSL *ssl;
 
@@ -48,6 +49,12 @@ typedef struct oss_server_con_state_s
     bool init_sent;
 
 } oss_server_con_state_t;
+
+typedef struct fallback_timer_event_s
+{
+    tunnel_t *fallback;
+    line_t *line;
+};
 
 static int on_alpn_select(SSL *ssl,
                           const unsigned char **out,
@@ -127,13 +134,42 @@ static enum sslstatus get_sslstatus(SSL *ssl, int n)
 
 static void cleanup(tunnel_t *self, context_t *c)
 {
+
     if (CSTATE(c) != NULL)
     {
+        oss_server_state_t *state = STATE(self);
+        if (state->fallback_timer != NULL)
+        {
+            free(hevent_userdata(state->fallback_timer));
+            htimer_del(state->fallback_timer);
+        }
+
         destroyBufferStream(CSTATE(c)->fallback_buf);
         SSL_free(CSTATE(c)->ssl); /* free the SSL object and its BIO's */
         free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
     }
+}
+static void on_fallback_timer(htimer_t *timer)
+{
+    timer_del(state->fallback_timer);
+    struct fallback_timer_event_s *data = hevent_userdata(state->fallback_timer);
+    oss_server_con_state_t *cstate = data->cstate;
+
+    size_t record_len = bufferStreamLen(cstate->fallback_buf);
+    c->payload = popBuffer(buffer_pools[c->line->tid]);
+    reserve(c->payload, record_len);
+    bufferStreamRead(rawBuf(c->payload), record_len, cstate->fallback_buf);
+    cstate->fallback_ctx = c;
+    htimer_t *reset = htimer_add(loop, on_timer_reset, 1000, 5);
+    hevent_set_userdata(reset, reseted);
+    htimer_add(loop, on_timer_add, 1000, 1);
+
+    free(data);
+    data->fallback->upStream(data->fallback, data->cstate->fallback);
+    printf("time=%llus on_timer_add\n", LLU(hloop_now(hevent_loop(timer))));
+
+    htimer_add(hevent_loop(timer), on_timer_add, 1000, 1);
 }
 
 static inline void upStream(tunnel_t *self, context_t *c)
@@ -220,6 +256,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         init_ctx->src_io = c->src_io;
                         cstate->init_sent = true;
                         state->fallback->upStream(state->fallback, init_ctx);
+
+
                         if (!ISALIVE(c))
                         {
                             // no need to cleanup since the downstream fin did it
@@ -227,13 +265,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                             destroyContext(c);
                             return;
                         }
-                        size_t record_len = bufferStreamLen(cstate->fallback_buf);
-                        DISCARD_CONTEXT(c);
-                        c->payload = popBuffer(buffer_pools[c->line->tid]);
-                        reserve(c->payload, record_len);
-                        bufferStreamRead(rawBuf(c->payload), record_len, cstate->fallback_buf);
-                        cstate->fallback_ctx = c;
-                        htimer_add(loop, on_timer_add, 1000, 1);
 
                         // state->fallback->upStream(state->fallback, c);
                         return;
