@@ -15,10 +15,13 @@ line_t *newLine(size_t tid)
     line_t *result = malloc(size);
     memset(result, 0, size);
     result->tid = tid;
+    result->refc = 1;
     return result;
 }
-void destroyLine(line_t *c)
+static inline void checkLine(line_t *c)
 {
+    if(c->refc > 0) return;
+
     for (size_t i = 0; i < MAX_CHAIN_LEN; i++)
     {
         if (c->chains_state[i] != NULL)
@@ -26,6 +29,12 @@ void destroyLine(line_t *c)
     }
 
     free(c);
+}
+
+void destroyLine(line_t *l)
+{
+    l->refc -= 1;
+    checkLine(l);
 }
 
 context_t *newContext(line_t *line)
@@ -42,7 +51,7 @@ void destroyContext(context_t *c)
     assert(c->payload == NULL);
     if (c->dest_ctx.domain != NULL)
         free(c->dest_ctx.domain);
-    c->line->refc += 1;
+    destroyLine(c->line);
 
     free(c);
 }

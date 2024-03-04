@@ -23,6 +23,7 @@ typedef struct trojan_auth_server_state_s
 {
     config_file_t *config_file;
     tunnel_t *fallback;
+    int fallback_delay;
     hmap_users_t users;
 
 } trojan_auth_server_state_t;
@@ -31,8 +32,43 @@ typedef struct trojan_auth_server_con_state_s
 {
     bool authenticated;
     bool init_sent;
+    context_queue_t *fallback_queue;
+    htimer_t *fallback_timer;
 
 } trojan_auth_server_con_state_t;
+
+struct timer_eventdata
+{
+    tunnel_t *self;
+    context_t *c;
+};
+static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
+{
+    struct timer_eventdata *result = malloc(sizeof(struct timer_eventdata));
+    result->self = self;
+    result->c = c;
+    return result;
+}
+
+static void on_fallback_timer(htimer_t *timer)
+{
+    struct timer_eventdata *data = hevent_userdata(timer);
+    tunnel_t *self = data->self;
+    trojan_auth_server_state_t *state = STATE(self);
+    context_t *c = data->c;
+
+    free(data);
+    htimer_del(timer);
+
+    if (!ISALIVE(c))
+    {
+        if (c->payload != NULL)
+            DISCARD_CONTEXT(c);
+        destroyContext(c);
+        return;
+    }
+    state->fallback->upStream(state->fallback, c);
+}
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
@@ -163,15 +199,31 @@ fallback:
         init_ctx->init = true;
         init_ctx->src_io = c->src_io;
         cstate->init_sent = true;
-        state->fallback->upStream(state->fallback, init_ctx);
-        if (!ISALIVE(c))
+        if (state->fallback_delay <= 0)
         {
-            DISCARD_CONTEXT(c);
-            destroyContext(c);
-            return;
+            state->fallback->upStream(state->fallback, init_ctx);
+            if (!ISALIVE(c))
+            {
+                DISCARD_CONTEXT(c);
+                destroyContext(c);
+                return;
+            }
+        }
+        else
+        {
+            htimer_t *t = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
+            hevent_set_userdata(t, newTimerData(self, init_ctx));
         }
     }
-    state->fallback->upStream(state->fallback, c);
+    if (state->fallback_delay <= 0)
+    {
+        state->fallback->upStream(state->fallback, c);
+    }
+    else
+    {
+        htimer_t *t = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
+        hevent_set_userdata(t, newTimerData(self, c));
+    }
     return;
 }
 
@@ -261,6 +313,11 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
     }
     else
     {
+
+        getIntFromJsonObject(&(state->fallback_delay), settings, "fallback-intence-delay");
+        if (state->fallback_delay < 0)
+            state->fallback_delay = 0;
+
         LOGD("TrojanAuthServer: accessing fallback node");
 
         hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));

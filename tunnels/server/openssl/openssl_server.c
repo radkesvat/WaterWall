@@ -5,7 +5,6 @@
 #include "managers/node_manager.h"
 #include "loggers/network_logger.h"
 #include "utils/jsonutils.h"
-#include "hv/hssl.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -25,8 +24,7 @@ typedef struct oss_server_state_s
     // settings
     char *alpns;
     tunnel_t *fallback;
-    htimer_t *fallback_timer;
-    int fallback_resist_ms;
+    int fallback_delay;
 
 } oss_server_state_t;
 
@@ -38,6 +36,7 @@ typedef struct oss_server_con_state_s
     bool fallback;
     buffer_stream_t *fallback_buf;
     context_t *fallback_ctx;
+    htimer_t *fallback_timer;
 
     SSL *ssl;
 
@@ -50,10 +49,10 @@ typedef struct oss_server_con_state_s
 
 } oss_server_con_state_t;
 
-typedef struct fallback_timer_event_s
+struct timer_eventdata
 {
-    tunnel_t *fallback;
-    line_t *line;
+    tunnel_t *self;
+    oss_server_con_state_t *cstate;
 };
 
 static int on_alpn_select(SSL *ssl,
@@ -134,42 +133,49 @@ static enum sslstatus get_sslstatus(SSL *ssl, int n)
 
 static void cleanup(tunnel_t *self, context_t *c)
 {
-
-    if (CSTATE(c) != NULL)
+    oss_server_con_state_t *cstate = CSTATE(c);
+    if (cstate != NULL)
     {
-        oss_server_state_t *state = STATE(self);
-        if (state->fallback_timer != NULL)
+        if (cstate->fallback_timer != NULL)
         {
-            free(hevent_userdata(state->fallback_timer));
-            htimer_del(state->fallback_timer);
+            destroyContext(cstate->fallback_ctx);
+            free(hevent_userdata(cstate->fallback_timer));
+            htimer_del(cstate->fallback_timer);
         }
 
-        destroyBufferStream(CSTATE(c)->fallback_buf);
-        SSL_free(CSTATE(c)->ssl); /* free the SSL object and its BIO's */
-        free(CSTATE(c));
+        destroyBufferStream(cstate->fallback_buf);
+        SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
+        free(cstate);
         CSTATE_MUT(c) = NULL;
     }
 }
-static void on_fallback_timer(htimer_t *timer)
+static struct timer_eventdata *newTimerData(tunnel_t *self, oss_server_con_state_t *cstate)
 {
-    timer_del(state->fallback_timer);
-    struct fallback_timer_event_s *data = hevent_userdata(state->fallback_timer);
-    oss_server_con_state_t *cstate = data->cstate;
+    struct timer_eventdata *result = malloc(sizeof(struct timer_eventdata));
+    result->self = self;
+    result->cstate = cstate;
+    return result;
+}
 
+static void fallback_write(oss_server_state_t *state, oss_server_con_state_t *cstate)
+{
     size_t record_len = bufferStreamLen(cstate->fallback_buf);
+    context_t *c = cstate->fallback_ctx;
     c->payload = popBuffer(buffer_pools[c->line->tid]);
     reserve(c->payload, record_len);
     bufferStreamRead(rawBuf(c->payload), record_len, cstate->fallback_buf);
-    cstate->fallback_ctx = c;
-    htimer_t *reset = htimer_add(loop, on_timer_reset, 1000, 5);
-    hevent_set_userdata(reset, reseted);
-    htimer_add(loop, on_timer_add, 1000, 1);
-
+    state->fallback->upStream(state->fallback, c);
+}
+static void on_fallback_timer(htimer_t *timer)
+{
+    struct timer_eventdata *data = hevent_userdata(timer);
+    tunnel_t *self = data->self;
+    oss_server_state_t *state = STATE(self);
+    oss_server_con_state_t *cstate = data->cstate;
+    cstate->fallback_timer = NULL;
+    htimer_del(timer);
     free(data);
-    data->fallback->upStream(data->fallback, data->cstate->fallback);
-    printf("time=%llus on_timer_add\n", LLU(hloop_now(hevent_loop(timer))));
-
-    htimer_add(hevent_loop(timer), on_timer_add, 1000, 1);
+    fallback_write(state, cstate);
 }
 
 static inline void upStream(tunnel_t *self, context_t *c)
@@ -187,7 +193,23 @@ static inline void upStream(tunnel_t *self, context_t *c)
         if (cstate->fallback)
         {
             DISCARD_CONTEXT(c);
-            destroyContext(c);
+
+            if (cstate->fallback_timer == NULL)
+            {
+                cstate->fallback_ctx = c;
+                if (state->fallback_delay <= 0)
+                    fallback_write(state, cstate);
+                else
+                {
+                    cstate->fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
+                    hevent_set_userdata(cstate->fallback_timer, newTimerData(self, cstate));
+                }
+            }
+            else
+            {
+                destroyContext(c);
+            }
+
             return;
         }
         enum sslstatus status;
@@ -256,16 +278,22 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         init_ctx->src_io = c->src_io;
                         cstate->init_sent = true;
                         state->fallback->upStream(state->fallback, init_ctx);
-
+                        DISCARD_CONTEXT(c); // payload already buffered
 
                         if (!ISALIVE(c))
                         {
                             // no need to cleanup since the downstream fin did it
-                            DISCARD_CONTEXT(c);
                             destroyContext(c);
                             return;
                         }
-
+                        cstate->fallback_ctx = c;
+                        if (state->fallback_delay <= 0)
+                            fallback_write(state, cstate);
+                        else
+                        {
+                            cstate->fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
+                            hevent_set_userdata(cstate->fallback_timer, newTimerData(self, cstate));
+                        }
                         // state->fallback->upStream(state->fallback, c);
                         return;
                     }
@@ -411,7 +439,13 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            if (CSTATE(c)->init_sent || CSTATE(c)->fallback)
+
+            if (CSTATE(c)->fallback)
+            {
+                cleanup(self, c);
+                state->fallback->upStream(state->fallback, c);
+            }
+            else if (CSTATE(c)->init_sent)
             {
                 cleanup(self, c);
                 self->up->upStream(self->up, c);
@@ -716,7 +750,9 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     }
     else
     {
-        getIntFromJsonObject(&ds, tcp_settings, "domain-strategy");
+        getIntFromJsonObject(&(state->fallback_delay), settings, "fallback-intence-delay");
+        if (state->fallback_delay < 0)
+            state->fallback_delay = 0;
 
         LOGD("OpenSSLServer: accessing fallback node");
 
@@ -728,6 +764,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         }
         else
         {
+            // this is not allowed but it can also work in most contextes
         }
         state->fallback = next_node->instance;
     }

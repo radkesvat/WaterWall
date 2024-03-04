@@ -52,7 +52,7 @@ typedef struct line_s
 typedef struct context_s
 {
     hio_t *src_io;
-    line_t line;
+    line_t* line;
     shift_buffer_t *payload;
     socket_context_t dest_ctx;
 
