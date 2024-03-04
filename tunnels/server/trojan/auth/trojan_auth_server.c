@@ -181,7 +181,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
     return;
 failed:
-    goto fallback;
+    if (state->fallback != NULL)
+        goto fallback;
+
 disconnect:
     DISCARD_CONTEXT(c);
     free(CSTATE(c));
@@ -199,20 +201,13 @@ fallback:
         init_ctx->init = true;
         init_ctx->src_io = c->src_io;
         cstate->init_sent = true;
-        if (state->fallback_delay <= 0)
+
+        state->fallback->upStream(state->fallback, init_ctx);
+        if (!ISALIVE(c))
         {
-            state->fallback->upStream(state->fallback, init_ctx);
-            if (!ISALIVE(c))
-            {
-                DISCARD_CONTEXT(c);
-                destroyContext(c);
-                return;
-            }
-        }
-        else
-        {
-            htimer_t *t = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
-            hevent_set_userdata(t, newTimerData(self, init_ctx));
+            DISCARD_CONTEXT(c);
+            destroyContext(c);
+            return;
         }
     }
     if (state->fallback_delay <= 0)

@@ -68,7 +68,7 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
 {
     // destroyShiftBuffer(b);
     // return;
-    if (b->shadowed)
+    if (*(b->refc) > 1)
     {
         destroyShiftBuffer(b);
         return;

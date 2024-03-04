@@ -15,28 +15,14 @@ extern char *rawBuf(shift_buffer_t *self);
 
 void destroyShiftBuffer(shift_buffer_t *self)
 {
+    *(self->refc) -= 1;
 
-    if (self->shadowed)
+    if (*(self->refc) <= 0)
     {
-        (self->ref)->refc -= 1;
-
-        if ((self->ref)->refc < 0)
-        {
-            free((self->ref)->pbuf);
-            free((self->ref));
-        }
-        free(self);
+        free(self->pbuf);
+        free(self->refc);
     }
-    else
-    {
-        if (self->refc <= 0)
-        {
-            free(self->pbuf);
-            free(self);
-        }
-        else
-            self->refc -= 1;
-    }
+    free(self);
 }
 
 shift_buffer_t *newShiftBuffer(size_t pre_cap)
@@ -49,25 +35,16 @@ shift_buffer_t *newShiftBuffer(size_t pre_cap)
     self->lenpos = pre_cap;
     self->curpos = pre_cap;
     self->cap = pre_cap;
-    self->shadowed = false;
-    self->refc = 0;
-    self->ref = NULL;
+    self->refc = malloc(sizeof(int));
+    *(self->refc) = 1;
     return self;
 }
 
 shift_buffer_t *newShadowShiftBuffer(shift_buffer_t *owner)
 {
-    shift_buffer_t *root = owner;
-    if (root->shadowed == true)
-    {
-        root = root->ref;
-    }
-
-    root->refc += 1;
-    shift_buffer_t *shadow = newShiftBuffer(0);
+    *(owner->refc) += 1;
+    shift_buffer_t *shadow = malloc(sizeof(shift_buffer_t));
     *shadow = *owner;
-    shadow->shadowed = true;
-    shadow->ref = root;
     return shadow;
 }
 
@@ -80,7 +57,7 @@ void reset(shift_buffer_t *self)
 // all caps in this function are REAL
 void expand(shift_buffer_t *self, size_t increase)
 {
-    if (self->refc > 0)
+    if (*(self->refc)> 1)
     {
         LOGF("Expanding a shiftbuffer while it has refs is false assumption!");
         assert(false);
