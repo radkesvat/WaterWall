@@ -1,5 +1,6 @@
 #pragma once
 #include "stddef.h"
+#include "hv/hthread.h"
 
 #ifndef NODES_STATIC
 #if defined(_MSC_VER)
@@ -29,7 +30,8 @@ void createWW(
     size_t threads_count);
 
 
-extern size_t threads;
+extern size_t threads_count;
+extern hthread_t *threads;
 extern struct hloop_s **loops;
 extern struct buffer_pool_s **buffer_pools;
 extern struct socket_manager_s *socket_disp_state;

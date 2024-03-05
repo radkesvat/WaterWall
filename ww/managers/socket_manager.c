@@ -10,6 +10,7 @@
 
 typedef struct socket_manager_s
 {
+    hthread_t accept_thread;
     hmutex_t mutex;
     filters_t filters;
     size_t last_round_tindex;
@@ -75,7 +76,7 @@ static void on_accept_tcp(hio_t *io)
                     result->tunnel = filter->tunnel;
                     ev.userdata = result;
                     state->last_round_tindex++;
-                    if (state->last_round_tindex >= threads)
+                    if (state->last_round_tindex >= threads_count)
                         state->last_round_tindex = 0;
                     hmutex_unlock(&(state->mutex));
                     hloop_post_event(main_loop, &ev);
@@ -196,8 +197,10 @@ void setSocketManager(struct socket_manager_s *new_state)
 
 void startSocketManager()
 {
+    assert(state != NULL);
+
     hloop_t *new_loop = hloop_new(HLOOP_FLAG_AUTO_FREE);
-    hthread_create(accept_thread, new_loop);
+    state->accept_thread = hthread_create(accept_thread, new_loop);
 }
 
 socket_manager_state_t *createSocketManager()

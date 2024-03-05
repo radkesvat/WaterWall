@@ -72,7 +72,14 @@ int main(int argc, char **argv)
             startSocketManager();
             LOGD("Starting eventloops ...");
             hloop_run(loops[0]);
+            for (size_t i = 1; i < threads_count; i++)
+            {
+                hthread_join(threads[i]);
+            }
+            
             LOGW("MainThread moved out of eventloop");
+            hloop_free(&(loops[0]));
+
         }
     }
 }
