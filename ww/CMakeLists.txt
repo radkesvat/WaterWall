@@ -92,7 +92,7 @@ target_compile_definitions(ww PRIVATE STC_STATIC=1 WW_VERSION=0.1)
 target_link_libraries(ww hv_static) 
 
 
-if(CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(ww PRIVATE  DEBUG=1)
 
 endif()
