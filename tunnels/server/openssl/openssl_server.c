@@ -772,6 +772,9 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     ssl_param->verify_peer = 0; // no mtls
     ssl_param->endpoint = HSSL_SERVER;
     state->ssl_context = ssl_ctx_new(ssl_param);
+    // int brotli_alg = TLSEXT_comp_cert_brotli;
+    // SSL_set1_cert_comp_preference(state->ssl_context,&brotli_alg,1);
+    // SSL_compress_certs(state->ssl_context,TLSEXT_comp_cert_brotli);
 
     free((char *)ssl_param->crt_file);
     free((char *)ssl_param->key_file);
@@ -784,6 +787,9 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     }
 
     SSL_CTX_set_alpn_select_cb(state->ssl_context, on_alpn_select, NULL);
+
+
+
 
     tunnel_t *t = newTunnel();
     t->state = state;
