@@ -6,7 +6,7 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
 
-// enable profile to see how much it takes to connect and downstream write
+// enable profile to see how much it takes to connect and downstream write, dns and etc...
 // #define PROFILE 1
 
 enum connector_dynamic_value_status

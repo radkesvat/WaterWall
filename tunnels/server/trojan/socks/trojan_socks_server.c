@@ -33,6 +33,7 @@ typedef struct trojan_socks_server_state_s
 typedef struct trojan_socks_server_con_state_s
 {
     bool init_sent;
+    bool first_sent;
     bool is_udp_forward;
 
     buffer_stream_t *udp_buf;
@@ -372,8 +373,13 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     memcpy(&(c->packet_size), rawBuf(c->payload), 2);
     shiftr(c->payload, 2 + CRLF_LEN);
     c->packet_size = (c->packet_size << 8) | (c->packet_size >> 8);
-
     assert(bufLen(c->payload) == c->packet_size);
+    if (!cstate->first_sent)
+    {
+        c->first = true;
+        cstate->first_sent = true;
+    }
+
     self->up->packetUpStream(self->up, c);
 
     return processUdp(self, cstate, line, src_io);
@@ -422,6 +428,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 }
                 if (dest->protocol == IPPROTO_TCP)
                 {
+                    if (!cstate->first_sent)
+                    {
+                        c->first = true;
+                        cstate->first_sent = true;
+                    }
                     self->up->upStream(self->up, c);
                     return;
                 }
@@ -566,7 +577,7 @@ static void trojanSocksServerPacketUpStream(tunnel_t *self, context_t *c)
 {
     if (c->init || c->first)
     {
-        LOGE("TrojanSocksServer: trojan protocol is not meant to work on top of udp"); 
+        LOGE("TrojanSocksServer: trojan protocol is not meant to work on top of udp");
     }
     upStream(self, c);
 }
@@ -595,7 +606,8 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
 }
 api_result_t apiTrojanSocksServer(tunnel_t *self, char *msg)
 {
-    LOGE("trojan-socks-server API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
+    LOGE("trojan-socks-server API NOT IMPLEMENTED");
+    return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyTrojanSocksServer(tunnel_t *self)
