@@ -18,17 +18,13 @@ line_t *newLine(size_t tid)
     result->refc = 1;
     return result;
 }
-static inline void checkLine(line_t *c)
+static inline void checkLine(line_t *l)
 {
-    if(c->refc > 0) return;
+    if (l->refc > 0)
+        return;
 
-    for (size_t i = 0; i < MAX_CHAIN_LEN; i++)
-    {
-        if (c->chains_state[i] != NULL)
-            return;
-    }
+    free(l);
 
-    free(c);
 }
 
 void destroyLine(line_t *l)

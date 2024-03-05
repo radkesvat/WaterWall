@@ -246,6 +246,7 @@ void tcpConnectorUpStream(tunnel_t *self, context_t *c)
                         goto fail;
                     }
                 }
+                free(final_ctx.domain);
             }
 
             hloop_t *loop = hevent_loop(c->src_io);
@@ -297,7 +298,6 @@ void tcpConnectorUpStream(tunnel_t *self, context_t *c)
             destroyContextQueue(cstate->queue);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
-            destroyLine(c->line);
             destroyContext(c);
             hio_close(io);
         }
@@ -438,7 +438,8 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 }
 api_result_t apiTcpConnector(tunnel_t *self, char *msg)
 {
-    LOGE("TcpConnector API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
+    LOGE("TcpConnector API NOT IMPLEMENTED");
+    return (api_result_t){0}; // TODO
 }
 tunnel_t *destroyTcpConnector(tunnel_t *self)
 {

@@ -145,6 +145,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
             destroyContextQueue(CSTATE(c)->queue);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
+            destroyLine(c->line);
+
         }
     }
 

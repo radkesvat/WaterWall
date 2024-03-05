@@ -198,7 +198,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
             cstate->write_paused = true;
 
             socket_context_t final_ctx = {0};
-            //fill the final_ctx address based on settings
+            // fill the final_ctx address based on settings
             {
                 socket_context_t *src_ctx = &(c->line->src_ctx);
                 socket_context_t *dest_ctx = &(c->dest_ctx);
@@ -246,6 +246,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
                         goto fail;
                     }
                 }
+                free(final_ctx.domain);
             }
 
             hloop_t *loop = hevent_loop(c->src_io);
@@ -297,7 +298,6 @@ void connectorUpStream(tunnel_t *self, context_t *c)
             destroyContextQueue(cstate->queue);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
-            destroyLine(c->line);
             destroyContext(c);
             hio_close(io);
         }
@@ -340,7 +340,6 @@ void connectorDownStream(tunnel_t *self, context_t *c)
             resume_write_queue(cstate);
 
             self->dw->downStream(self->dw, c);
-
         }
         else if (c->fin)
         {

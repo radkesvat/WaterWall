@@ -99,7 +99,9 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
                     goto fail;
                 }
             }
+            free(final_ctx.domain);
         }
+
         if (hio_is_closed(cstate->io))
         {
             free(CSTATE(c));
@@ -174,12 +176,13 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
                     if (!connectorResolvedomain(&(final_ctx)))
                     {
                         free(final_ctx.domain);
-
                         free(CSTATE(c));
                         CSTATE_MUT(c) = NULL;
                         goto fail;
                     }
                 }
+                           free(final_ctx.domain);
+ 
             }
 
             int sockfd = socket(final_ctx.addr.sa.sa_family, SOCK_DGRAM, 0);
@@ -220,7 +223,6 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             hevent_set_userdata(io, NULL);
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
-            destroyLine(c->line);
             destroyContext(c);
             hio_close(io);
         }

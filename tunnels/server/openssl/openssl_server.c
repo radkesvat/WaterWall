@@ -453,7 +453,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
             else
             {
                 cleanup(self, c);
-                destroyLine(c->line);
                 destroyContext(c);
             }
         }
