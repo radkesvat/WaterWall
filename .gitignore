@@ -2,7 +2,7 @@
 node_modules
 /build
 
-/tunnels/server/wolfssl/wolfssl-5.6.6
+/tunnels/client/grpc/generator
 
 
 #compiled bins

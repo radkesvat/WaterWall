@@ -16,6 +16,7 @@ option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE)
+option(INCLUDE_GRPC_CLIENT "link GrpcConnector staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -125,6 +126,19 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/logger)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/logger)
 target_link_libraries(Waterwall LoggerTunnel)
 endif()
+
+
+
+#grpc client
+if (INCLUDE_GRPC_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_GRPC_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/grpc)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/grpc)
+target_link_libraries(Waterwall GrpcClient)
+endif()
+
+
+
 
 # add dependencies
 include(cmake/CPM.cmake)
