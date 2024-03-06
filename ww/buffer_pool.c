@@ -36,13 +36,15 @@ static void reCharge(buffer_pool_t *state)
 
 static void giveMemBackToOs(buffer_pool_t *state)
 {
-    state->chunks -= 1;
+    //
+    // bool realloc_to_base = (state->chunks * GBD_MAX_CAP) == state->len;
 
-    for (size_t i = 0; i < GBD_MAX_CAP; i++)
+    for (size_t i = (state->len - GBD_MAX_CAP); i < state->len; i++)
     {
         destroyShiftBuffer(state->available[i]);
     }
-    state->len -= GBD_MAX_CAP;
+    state->chunks -= 1;
+    state->len -=  GBD_MAX_CAP;
 
     state->available = realloc(state->available, state->chunks * (GBD_MAX_CAP * sizeof(shift_buffer_t *)));
     LOGD("BufferPool freed %d buffers, %zu are in use", GBD_MAX_CAP, state->in_use);
@@ -76,7 +78,7 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
     reset(b);
     state->available[state->len] = b;
     ++(state->len);
-    if ((state->len) == GBD_MAX_CAP && state->chunks > 1)
+    if ((state->chunks > 1) && (state->len) > ((state->chunks - 1) * (GBD_MAX_CAP)) + (GBD_MAX_CAP / 2))
     {
         giveMemBackToOs(state);
     }

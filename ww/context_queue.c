@@ -21,11 +21,15 @@ void destroyContextQueue(context_queue_t *self)
 {
     c_foreach(i, queue, self->q)
     {
-        reuseBuffer(self->pool, (*i.ref)->payload);
-        (*i.ref)->payload = NULL;
+        if ((*i.ref)->payload != NULL)
+        {
+            reuseBuffer(self->pool, (*i.ref)->payload);
+            (*i.ref)->payload = NULL;
+        }
+
         destroyContext((*i.ref));
     }
-    
+
     queue_drop(&self->q);
     free(self);
 }
