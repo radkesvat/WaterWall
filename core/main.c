@@ -13,6 +13,9 @@
 
 int main(int argc, char **argv)
 {
+    // test ASAN works -_-
+    // int test[3] = {0};
+    // printf("hello world %d", test[4]);
 
     initCoreSettings();
     char *core_file_content = readFile(CORE_FILE);
