@@ -2,10 +2,11 @@
 #include "utils/sockutils.h"
 #include "loggers/network_logger.h"
 
-static void on_udp_recv(hio_t *io, void *buf, int readbytes)
+static void on_recv(hio_t *io, void *buf, int readbytes)
 {
     connector_con_state_t *cstate = (connector_con_state_t *)(hevent_userdata(io));
-
+    if (cstate == NULL)
+        return;
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
@@ -215,7 +216,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
 
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
-            hio_setcb_read(upstream_io, on_udp_recv);
+            hio_setcb_read(upstream_io, on_recv);
             hio_read(upstream_io);
             destroyContext(c);
         }

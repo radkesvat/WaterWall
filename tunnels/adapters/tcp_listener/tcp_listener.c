@@ -26,7 +26,6 @@ typedef struct tcp_listener_state_s
     bool fast_open;
     bool no_delay;
 
-
 } tcp_listener_state_t;
 
 typedef struct tcp_listener_con_state_s
@@ -134,7 +133,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
 
 #endif
-
     }
     else
     {
@@ -146,13 +144,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             destroyLine(c->line);
-
         }
     }
 
-
     self->up->upStream(self->up, c);
-
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
@@ -231,10 +226,12 @@ static void tcpListenerPacketDownStream(tunnel_t *self, context_t *c)
     downStream(self, c);
 }
 
+
 static void on_recv(hio_t *io, void *buf, int readbytes)
 {
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *)(hevent_userdata(io));
-
+    if (cstate == NULL)
+        return;
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
@@ -413,7 +410,8 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 
 api_result_t apiTcpListener(tunnel_t *self, char *msg)
 {
-    LOGE("TcpListener API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
+    LOGE("TcpListener API NOT IMPLEMENTED");
+    return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyTcpListener(tunnel_t *self)

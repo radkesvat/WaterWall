@@ -77,7 +77,8 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
 static void on_recv(hio_t *io, void *buf, int readbytes)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *)(hevent_userdata(io));
-
+    if (cstate == NULL)
+        return;
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     reserve(payload, readbytes);
     memcpy(rawBuf(payload), buf, readbytes);
