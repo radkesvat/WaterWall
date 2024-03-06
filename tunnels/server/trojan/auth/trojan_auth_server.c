@@ -95,27 +95,29 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
                     {
                         // invalid protocol
-                        //  TODO fallback
                         LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
-
                         goto failed;
                     }
+                    // save time easily
+                    if (rawBuf(c->payload)[sizeof(sha224_hex_t)] != '\r' || rawBuf(c->payload)[sizeof(sha224_hex_t) + 1] != '\n')
+                    {
+                        LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
+                        goto failed;
+                    }
+
                     hash_t kh = calcHashLen(rawBuf(c->payload), sizeof(sha224_hex_t));
 
                     hmap_users_t_iter find_result = hmap_users_t_find(&(state->users), kh);
                     if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
                     {
                         // user not in database
-                        // TODO fallback
                         LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
-
                         goto failed;
                     }
                     trojan_user_t *tuser = (find_result.ref->second);
                     if (!tuser->user.enable)
                     {
                         // user disabled
-                        // TODO fallback
                         LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
 
                         goto failed;
