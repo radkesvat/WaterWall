@@ -2,10 +2,11 @@ cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
 
 # set(CMAKE_VERBOSE_MAKEFILE ON CACHE STRING "my configurable string" FORCE)
-# option(CORE_BUILD_RELEASE "compile core for release build"  FALSE)
-# option(CORE_BUILD_RELEASE "compile core for release build"  FALSE)
-# option(WW_BUILD_RELEASE "compile runtime lib for release build"  FALSE)
-# option(NODES_BUILD_RELEASE "compile runtime nodes for release build"  FALSE)
+# set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
+# set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
+# set(CMAKE_EXE_LINKER_FLAGS_DEBUG  "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer  -fsanitize=address" CACHE STRING "my configurable string" FORCE)
+
+set(ENABLE_ASAN ON CACHE BOOL "enable address sanitizer" FORCE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
@@ -26,6 +27,7 @@ project(Waterwall VERSION 0.1)
 
 set(OPENSSL_CONFIGURE_VERBOSE ON)
 
+
 # file(GLOB_RECURSE ltdlcore RELATIVE ${CMAKE_SOURCE_DIR} "core/libltdl/*.c")
 
 # add executable
@@ -37,11 +39,10 @@ add_executable(Waterwall core/main.c
 
 
 
+
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
-
-
 
 
 
@@ -200,31 +201,30 @@ CPMAddPackage(
     GITHUB_REPOSITORY ithewei/libhv
     OPTIONS "WITH_OPENSSL ON" "BUILD_SHARED OFF"
 )
+# link dependencies
+target_link_libraries(Waterwall hv_static)
 
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Waterwall_VERSION})
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1 )
-
-
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
-
 endif()
-
 
 add_compile_options(
   $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
 )
 
-
 target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)
+
+if(ENABLE_ASAN)
+target_compile_options(Waterwall PUBLIC -fsanitize=address)
+target_link_options(Waterwall PUBLIC -fsanitize=address)
+endif()
 # target_compile_options(Waterwall PUBLIC -pedantic)
 
 message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
-
-# link dependencies
-target_link_libraries(Waterwall hv_static)
 
 # set_property(TARGET Waterwall PROPERTY C_STANDARD 99)
 # set output path to build/bin/
@@ -235,6 +235,7 @@ set_target_properties(Waterwall
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+
 
 
 # get_target_property(target_options Waterwall COMPILE_OPTIONS)
