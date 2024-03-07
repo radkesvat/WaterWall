@@ -34,15 +34,16 @@ typedef struct oss_server_con_state_s
     bool handshake_completed;
 
     bool fallback;
+    bool fallback_init_sent;
+    bool fallback_first_sent;
     buffer_stream_t *fallback_buf;
-    context_t *fallback_ctx;
-    htimer_t *fallback_timer;
+    line_t *fallback_line;
+    // htimer_t *fallback_timer;
 
     SSL *ssl;
 
     BIO *rbio;
     BIO *wbio;
-    int fd;
 
     bool first_sent;
     bool init_sent;
@@ -52,7 +53,7 @@ typedef struct oss_server_con_state_s
 struct timer_eventdata
 {
     tunnel_t *self;
-    oss_server_con_state_t *cstate;
+    context_t *c;
 };
 
 static int on_alpn_select(SSL *ssl,
@@ -136,31 +137,55 @@ static void cleanup(tunnel_t *self, context_t *c)
     oss_server_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
-        if (cstate->fallback_timer != NULL)
-        {
-            destroyContext(cstate->fallback_ctx);
-            free(hevent_userdata(cstate->fallback_timer));
-            htimer_del(cstate->fallback_timer);
-        }
-
         destroyBufferStream(cstate->fallback_buf);
         SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
         free(cstate);
         CSTATE_MUT(c) = NULL;
     }
 }
-static struct timer_eventdata *newTimerData(tunnel_t *self, oss_server_con_state_t *cstate)
+static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
 {
     struct timer_eventdata *result = malloc(sizeof(struct timer_eventdata));
     result->self = self;
-    result->cstate = cstate;
+    result->c = c;
     return result;
 }
 
-static void fallback_write(oss_server_state_t *state, oss_server_con_state_t *cstate)
+static void fallback_write(tunnel_t *self, context_t *c)
 {
+    if (!ISALIVE(c))
+    {
+        destroyContext(c);
+        return;
+    }
+    assert(c->payload == NULL); // payload must be consumed
+    oss_server_state_t *state = STATE(self);
+    oss_server_con_state_t *cstate = CSTATE(c);
+
+    if (!cstate->fallback_init_sent)
+    {
+        cstate->fallback_init_sent = true;
+
+        context_t *init_ctx = newContext(c->line);
+        init_ctx->init = true;
+        init_ctx->src_io = c->src_io;
+        cstate->init_sent = true;
+        state->fallback->upStream(state->fallback, init_ctx);
+        if (!ISALIVE(c))
+        {
+            destroyContext(c);
+            return;
+        }
+    }
     size_t record_len = bufferStreamLen(cstate->fallback_buf);
-    context_t *c = cstate->fallback_ctx;
+    if (record_len == 0)
+        return;
+    if (!cstate->fallback_first_sent)
+    {
+        c->first = true;
+        cstate->fallback_first_sent = true;
+    }
+
     c->payload = popBuffer(buffer_pools[c->line->tid]);
     reserve(c->payload, record_len);
     bufferStreamRead(rawBuf(c->payload), record_len, cstate->fallback_buf);
@@ -169,13 +194,9 @@ static void fallback_write(oss_server_state_t *state, oss_server_con_state_t *cs
 static void on_fallback_timer(htimer_t *timer)
 {
     struct timer_eventdata *data = hevent_userdata(timer);
-    tunnel_t *self = data->self;
-    oss_server_state_t *state = STATE(self);
-    oss_server_con_state_t *cstate = data->cstate;
-    cstate->fallback_timer = NULL;
+    fallback_write(data->self, data->c);
     htimer_del(timer);
     free(data);
-    fallback_write(state, cstate);
 }
 
 static inline void upStream(tunnel_t *self, context_t *c)
@@ -193,21 +214,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
         if (cstate->fallback)
         {
             DISCARD_CONTEXT(c);
-
-            if (cstate->fallback_timer == NULL)
-            {
-                cstate->fallback_ctx = c;
-                if (state->fallback_delay <= 0)
-                    fallback_write(state, cstate);
-                else
-                {
-                    cstate->fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
-                    hevent_set_userdata(cstate->fallback_timer, newTimerData(self, cstate));
-                }
-            }
+            if (state->fallback_delay <= 0)
+                fallback_write(self, c);
             else
             {
-                destroyContext(c);
+                htimer_t *fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
+                hevent_set_userdata(fallback_timer, newTimerData(self, c));
             }
 
             return;
@@ -224,7 +236,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 /* if BIO write fails, assume unrecoverable */
                 DISCARD_CONTEXT(c);
-                goto failed;
+                goto disconnect;
             }
             shiftr(c->payload, n);
             len -= n;
@@ -260,7 +272,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                             // If BIO_should_retry() is false then the cause is an error condition.
                             DISCARD_CONTEXT(c);
                             reuseBuffer(buffer_pools[c->line->tid], buf);
-                            goto failed;
+                            goto disconnect;
                         }
                         else
                         {
@@ -270,38 +282,22 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                 if (status == SSLSTATUS_FAIL)
                 {
+                    DISCARD_CONTEXT(c); // payload already buffered
+
                     if (state->fallback != NULL)
                     {
                         cstate->fallback = true;
-                        context_t *init_ctx = newContext(c->line);
-                        init_ctx->init = true;
-                        init_ctx->src_io = c->src_io;
-                        cstate->init_sent = true;
-                        state->fallback->upStream(state->fallback, init_ctx);
-                        DISCARD_CONTEXT(c); // payload already buffered
-
-                        if (!ISALIVE(c))
-                        {
-                            // no need to cleanup since the downstream fin did it
-                            destroyContext(c);
-                            return;
-                        }
-                        cstate->fallback_ctx = c;
                         if (state->fallback_delay <= 0)
-                            fallback_write(state, cstate);
+                            fallback_write(self, c);
                         else
                         {
-                            cstate->fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
-                            hevent_set_userdata(cstate->fallback_timer, newTimerData(self, cstate));
+                            htimer_t *fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
+                            hevent_set_userdata(fallback_timer, newTimerData(self, c));
                         }
-                        // state->fallback->upStream(state->fallback, c);
                         return;
                     }
                     else
-                    {
-                        DISCARD_CONTEXT(c);
-                        goto failed;
-                    }
+                        goto disconnect;
                 }
 
                 if (!SSL_is_init_finished(cstate->ssl))
@@ -428,7 +424,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = malloc(sizeof(oss_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(oss_server_con_state_t));
             oss_server_con_state_t *cstate = CSTATE(c);
-            cstate->fd = hio_fd(c->src_io);
             cstate->rbio = BIO_new(BIO_s_mem());
             cstate->wbio = BIO_new(BIO_s_mem());
             cstate->ssl = SSL_new(state->ssl_context);
@@ -442,8 +437,13 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             if (CSTATE(c)->fallback)
             {
-                cleanup(self, c);
-                state->fallback->upStream(state->fallback, c);
+                if (CSTATE(c)->fallback_init_sent)
+                {
+                    cleanup(self, c);
+                    state->fallback->upStream(state->fallback, c);
+                }
+                else
+                    cleanup(self, c);
             }
             else if (CSTATE(c)->init_sent)
             {
@@ -465,7 +465,8 @@ failed_after_establishment:
     fail_context_up->fin = true;
     fail_context_up->src_io = c->src_io;
     self->up->upStream(self->up, fail_context_up);
-failed:
+
+disconnect:
     context_t *fail_context = newContext(c->line);
     fail_context->fin = true;
     fail_context->src_io = NULL;
@@ -787,9 +788,6 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     }
 
     SSL_CTX_set_alpn_select_cb(state->ssl_context, on_alpn_select, NULL);
-
-
-
 
     tunnel_t *t = newTunnel();
     t->state = state;

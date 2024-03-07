@@ -334,7 +334,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         shiftr(c->payload, 1);
         dest->domain = malloc(260);
 
-        LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
+        if (!cstate->first_sent) // print once per connection
+            LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
 
         memcpy(dest->domain, rawBuf(c->payload), domain_len);
         dest->domain[domain_len] = 0;

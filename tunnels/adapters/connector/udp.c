@@ -139,54 +139,12 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             cstate->queue = NULL;
 
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
+
             hloop_t *loop = hevent_loop(c->src_io);
 
+            //udp init packet dose not set target addr
             socket_context_t final_ctx = {0};
-            // fill the final_ctx address based on settings
-            {
-                socket_context_t *src_ctx = &(c->line->src_ctx);
-                socket_context_t *dest_ctx = &(c->dest_ctx);
-                connector_state_t *state = STATE(self);
-
-                if (state->dest_addr.status == cdvs_from_source)
-                    copySocketContextAddr(&final_ctx, &src_ctx);
-                else if (state->dest_addr.status == cdvs_from_dest)
-                    copySocketContextAddr(&final_ctx, &dest_ctx);
-                else
-                {
-                    final_ctx.atype = state->dest_atype;
-                    if (state->dest_atype == SAT_DOMAINNAME)
-                    {
-                        final_ctx.domain = malloc(state->dest_domain_len + 1);
-                        memcpy(final_ctx.domain, state->dest_addr.value_ptr, state->dest_domain_len + 1);
-                        final_ctx.resolved = false;
-                        final_ctx.addr.sa.sa_family = AF_INET; // addr resolve will change this
-                    }
-                    else
-                        sockaddr_set_ip(&(final_ctx.addr), state->dest_addr.value_ptr);
-                }
-
-                if (state->dest_port.status == cdvs_from_source)
-                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(src_ctx->addr)));
-                else if (state->dest_port.status == cdvs_from_dest)
-                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(dest_ctx->addr)));
-                else
-                    sockaddr_set_port(&(final_ctx.addr), state->dest_port.value);
-            }
-            if (final_ctx.atype == SAT_DOMAINNAME)
-            {
-                if (!final_ctx.resolved)
-                {
-                    if (!connectorResolvedomain(&(final_ctx)))
-                    {
-                        free(final_ctx.domain);
-                        free(CSTATE(c));
-                        CSTATE_MUT(c) = NULL;
-                        goto fail;
-                    }
-                }
-                free(final_ctx.domain);
-            }
+            sockaddr_set_ipport(&final_ctx.addr,"0.0.0.0",0);
 
             int sockfd = socket(final_ctx.addr.sa.sa_family, SOCK_DGRAM, 0);
             if (sockfd < 0)

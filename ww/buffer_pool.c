@@ -36,9 +36,6 @@ static void reCharge(buffer_pool_t *state)
 
 static void giveMemBackToOs(buffer_pool_t *state)
 {
-    //
-    // bool realloc_to_base = (state->chunks * GBD_MAX_CAP) == state->len;
-
     for (size_t i = (state->len - GBD_MAX_CAP); i < state->len; i++)
     {
         destroyShiftBuffer(state->available[i]);

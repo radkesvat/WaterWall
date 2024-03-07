@@ -1,6 +1,5 @@
 #pragma once
 #include "api.h"
-#include "hv/hssl.h"
 
 // 
 // con <------>  OpenSSL-server  <------> TLS(con)

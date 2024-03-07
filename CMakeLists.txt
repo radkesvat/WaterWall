@@ -18,6 +18,7 @@ option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE)
 option(INCLUDE_GRPC_CLIENT "link GrpcConnector staticly to the core"  TRUE)
+option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -76,6 +77,15 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_connector)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_connector)
 target_link_libraries(Waterwall TcpConnector)
 endif()
+
+#http2 INCLUDE_HTTP2_SERVER
+if (INCLUDE_OPENSSL_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP2_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http2)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http2)
+target_link_libraries(Waterwall Http2Server)
+endif()
+
 
 #openssl server
 if (INCLUDE_OPENSSL_SERVER)
@@ -194,15 +204,6 @@ CPMAddPackage(
     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
 )
 
-# libhv
-CPMAddPackage(
-    NAME libhv
-    VERSION 1.3.2
-    GITHUB_REPOSITORY ithewei/libhv
-    OPTIONS "WITH_OPENSSL ON" "BUILD_SHARED OFF"
-)
-# link dependencies
-target_link_libraries(Waterwall hv_static)
 
 target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Waterwall_VERSION})
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1 )
@@ -217,7 +218,7 @@ add_compile_options(
 
 target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)
 
-if(ENABLE_ASAN)
+if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_options(Waterwall PUBLIC -fsanitize=address)
 target_link_options(Waterwall PUBLIC -fsanitize=address)
 endif()

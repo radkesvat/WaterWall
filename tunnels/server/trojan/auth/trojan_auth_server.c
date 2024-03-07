@@ -32,8 +32,6 @@ typedef struct trojan_auth_server_con_state_s
 {
     bool authenticated;
     bool init_sent;
-    context_queue_t *fallback_queue;
-    htimer_t *fallback_timer;
 
 } trojan_auth_server_con_state_t;
 
@@ -146,10 +144,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 return;
             }
             else
-            {
-
                 goto failed;
-            }
         }
     }
     else
@@ -172,11 +167,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     self->up->upStream(self->up, c);
                 else
                     state->fallback->upStream(state->fallback, c);
-
             else
-            {
                 destroyContext(c);
-            }
         }
     }
 

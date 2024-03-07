@@ -83,7 +83,16 @@ CPMAddPackage(
     NAME libhv
     VERSION 1.3.2
     GITHUB_REPOSITORY ithewei/libhv
-    OPTIONS "WITH_OPENSSL ON"
+    OPTIONS 
+    "WITH_OPENSSL ON"
+    "WITH_EVPP OFF"
+    "WITH_HTTP OFF"
+    "WITH_HTTP_SERVER OFF"
+    "WITH_HTTP_CLIENT OFF"
+    "BUILD_SHARED OFF"
+    "BUILD_EXAMPLES OFF"
+    
+
 )
 # target_compile_options(hv_static PRIVATE -fPIC) 
 
@@ -93,6 +102,6 @@ target_link_libraries(ww hv_static)
 
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(ww PRIVATE  DEBUG=1)
+target_compile_definitions(ww PRIVATE DEBUG=1)
 
 endif()

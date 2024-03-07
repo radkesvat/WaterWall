@@ -41,7 +41,7 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
 
 bool bufferStreamRead(void *dest, size_t bytes, buffer_stream_t *self)
 {
-    if (self->size < bytes)
+    if (self->size == 0 || self->size < bytes)
         return false;
 
     size_t wi = 0;
@@ -78,7 +78,7 @@ bool bufferStreamRead(void *dest, size_t bytes, buffer_stream_t *self)
 
 uint8_t bufferStreamReadByteAt(buffer_stream_t *self, size_t at)
 {
-    if (self->size < at)
+    if (self->size == 0 || self->size < at)
         return 0;
 
     uint8_t result = 0;

@@ -30,6 +30,7 @@ if(stc_ADDED)
 endif()
 
 
+
 CPMAddPackage(
     NAME nanopb
     GIT_TAG 0.4.8
@@ -37,6 +38,8 @@ CPMAddPackage(
     DOWNLOAD_ONLY True
 
 )
+target_link_libraries(GrpcClient PUBLIC)
+
 # list(APPEND CMAKE_MODULE_PATH ${nanopb_SOURCE_DIR}/extra)
 # find_package(Nanopb REQUIRED)
 # nanopb_generate_cpp(PROTO_SRCS PROTO_HDRS packet.proto)

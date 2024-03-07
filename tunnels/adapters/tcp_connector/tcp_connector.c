@@ -133,7 +133,7 @@ static void onOutBoundConnected(hio_t *upstream_io)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN] = {0};
 
-    LOGD("Connector: connection succeed FD:%x [%s] <= [%s]",
+    LOGD("Connector: connection succeed FD:%x [%s] => [%s]",
          (int)hio_fd(upstream_io),
          SOCKADDR_STR(hio_localaddr(upstream_io), localaddrstr),
          SOCKADDR_STR(hio_peeraddr(upstream_io), peeraddrstr));

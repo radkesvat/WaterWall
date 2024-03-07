@@ -44,6 +44,13 @@ CPMAddPackage(
     OPTIONS
     "WOLFSSL_OPENSSLEXTRA ON"
     "WOLFSSL_OPENSSLALL ON"
+    "WOLFSSL_EXAMPLES OFF"
+    "WOLFSSL_CRYPT_TESTS OFF"
+    "WOLFSSL_EXAMPLES OFF"
+    "WOLFSSL_EXAMPLES OFF"
+
+    
+    "BUILD_SHARED_LIBS OFF"
 )
 
 target_compile_options(WolfSSLServer PRIVATE -ftrack-macro-expansion=0)
