@@ -3,6 +3,7 @@ node_modules
 /build
 
 /tunnels/client/grpc/generator
+/core/texts
 
 
 #compiled bins
