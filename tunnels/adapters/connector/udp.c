@@ -61,8 +61,72 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             DISCARD_CONTEXT(c);
             goto fail;
         }
-        if (c->first)
+
+
+
+        size_t nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
+        if (nwrite >= 0 && nwrite < bytes)
         {
+            assert(false); // should not happen
+        }
+
+        DISCARD_CONTEXT(c);
+        destroyContext(c);
+    }
+    else
+    {
+        if (c->init)
+        {
+            assert(c->src_io != NULL);
+            CSTATE_MUT(c) = malloc(sizeof(connector_con_state_t));
+            memset(CSTATE(c), 0, sizeof(connector_con_state_t));
+            connector_con_state_t *cstate = CSTATE(c);
+
+            cstate->buffer_pool = buffer_pools[c->line->tid];
+            cstate->tunnel = self;
+            cstate->line = c->line;
+            cstate->write_paused = false;
+            cstate->queue = NULL;
+
+            // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
+
+            hloop_t *loop = hevent_loop(c->src_io);
+
+            // udp init packet dose not set target addr
+            sockaddr_u host_addr = {0};
+            sockaddr_set_ipport(&host_addr, "0.0.0.0", 0);
+
+            int sockfd = socket(host_addr.sa.sa_family, SOCK_DGRAM, 0);
+            if (sockfd < 0)
+            {
+                LOGE("Connector: socket fd < 0");
+                free(CSTATE(c));
+                CSTATE_MUT(c) = NULL;
+                goto fail;
+            }
+
+#ifdef OS_UNIX
+            so_reuseaddr(sockfd, 1);
+#endif
+            sockaddr_u addr;
+
+            sockaddr_set_ipport(&addr, "0.0.0.0", 0);
+
+            if (bind(sockfd, &addr.sa, sockaddr_len(&addr)) < 0)
+            {
+                LOGE("UDP bind failed;");
+                closesocket(sockfd);
+                goto fail;
+            }
+
+            hio_t *upstream_io = hio_get(loop, sockfd);
+            assert(upstream_io != NULL);
+
+            cstate->io = upstream_io;
+            hevent_set_userdata(upstream_io, cstate);
+            hio_setcb_read(upstream_io, on_recv);
+            hio_read(upstream_io);
+
             socket_context_t final_ctx = {0};
             // fill the final_ctx address based on settings
             {
@@ -112,70 +176,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
                 free(final_ctx.domain);
             }
             hio_set_peeraddr(cstate->io, &(final_ctx.addr.sa), sockaddr_len(&(final_ctx.addr)));
-        }
 
-        size_t nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
-        if (nwrite >= 0 && nwrite < bytes)
-        {
-            assert(false); // should not happen
-        }
-
-        DISCARD_CONTEXT(c);
-        destroyContext(c);
-    }
-    else
-    {
-        if (c->init)
-        {
-            assert(c->src_io != NULL);
-            CSTATE_MUT(c) = malloc(sizeof(connector_con_state_t));
-            memset(CSTATE(c), 0, sizeof(connector_con_state_t));
-            connector_con_state_t *cstate = CSTATE(c);
-
-            cstate->buffer_pool = buffer_pools[c->line->tid];
-            cstate->tunnel = self;
-            cstate->line = c->line;
-            cstate->write_paused = false;
-            cstate->queue = NULL;
-
-            // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
-
-            hloop_t *loop = hevent_loop(c->src_io);
-
-            //udp init packet dose not set target addr
-            socket_context_t final_ctx = {0};
-            sockaddr_set_ipport(&final_ctx.addr,"0.0.0.0",0);
-
-            int sockfd = socket(final_ctx.addr.sa.sa_family, SOCK_DGRAM, 0);
-            if (sockfd < 0)
-            {
-                LOGE("Connector: socket fd < 0");
-                free(CSTATE(c));
-                CSTATE_MUT(c) = NULL;
-                goto fail;
-            }
-
-#ifdef OS_UNIX
-            so_reuseaddr(sockfd, 1);
-#endif
-            sockaddr_u addr;
-
-            sockaddr_set_ipport(&addr, "0.0.0.0", 0);
-
-            if (bind(sockfd, &addr.sa, sockaddr_len(&addr)) < 0)
-            {
-                LOGE("UDP bind failed;");
-                closesocket(sockfd);
-                goto fail;
-            }
-
-            hio_t *upstream_io = hio_get(loop, sockfd);
-            assert(upstream_io != NULL);
-
-            cstate->io = upstream_io;
-            hevent_set_userdata(upstream_io, cstate);
-            hio_setcb_read(upstream_io, on_recv);
-            hio_read(upstream_io);
             destroyContext(c);
         }
         else if (c->fin)

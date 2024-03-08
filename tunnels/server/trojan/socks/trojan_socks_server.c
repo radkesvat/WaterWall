@@ -325,7 +325,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         dest->atype = SAT_IPV4;
         memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 4);
         shiftr(c->payload, 4);
-        LOGD("TrojanSocksServer: udp ipv4");
+        if (!cstate->first_sent)
+            LOGD("TrojanSocksServer: udp ipv4");
 
         break;
     case TROJANATYP_DOMAINNAME:
@@ -347,7 +348,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         dest->addr.sa.sa_family = AF_INET6;
         memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 16);
         shiftr(c->payload, 16);
-        LOGD("TrojanSocksServer: udp ipv6");
+        if (!cstate->first_sent)
+            LOGD("TrojanSocksServer: udp ipv6");
         break;
 
     default:
@@ -380,6 +382,23 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         c->first = true;
         cstate->first_sent = true;
     }
+    // send init ctx
+    if (!cstate->init_sent)
+    {
+
+        context_t *up_init_ctx = newContext(c->line);
+        up_init_ctx->init = true;
+        up_init_ctx->src_io = c->src_io;
+        up_init_ctx->dest_ctx = c->dest_ctx;
+        c->dest_ctx.domain = NULL; //  domain owned by initctx
+        self->up->packetUpStream(self->up, up_init_ctx);
+        if (!ISALIVE(c))
+        {
+            LOGW("TrojanSocksServer: next node instantly closed the init with fin");
+            return false;
+        }
+        cstate->init_sent = true;
+    }
 
     self->up->packetUpStream(self->up, c);
 
@@ -397,30 +416,31 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 trojan_socks_server_con_state_t *cstate = CSTATE(c);
                 socket_context_t *dest = &(c->dest_ctx);
-                context_t *up_init_ctx = newContext(c->line);
-                up_init_ctx->init = true;
-                up_init_ctx->src_io = c->src_io;
-                up_init_ctx->dest_ctx = c->dest_ctx;
-                c->dest_ctx.domain = NULL; //  move
+
                 if (dest->protocol == IPPROTO_TCP)
                 {
+                    context_t *up_init_ctx = newContext(c->line);
+                    up_init_ctx->init = true;
+                    up_init_ctx->src_io = c->src_io;
+                    up_init_ctx->dest_ctx = c->dest_ctx;
+                    c->dest_ctx.domain = NULL; //  domain owned by initctx
                     self->up->upStream(self->up, up_init_ctx);
+                    if (!ISALIVE(c))
+                    {
+                        LOGW("TrojanSocksServer: next node instantly closed the init with fin");
+                        DISCARD_CONTEXT(c);
+                        destroyContext(c);
+                        return;
+                    }
+                    cstate->init_sent = true;
                 }
                 else if (dest->protocol == IPPROTO_UDP)
                 {
+                    // udp will not call init here since no dest addr is available right now
                     cstate->is_udp_forward = true;
-                    self->up->packetUpStream(self->up, up_init_ctx);
+                    // self->up->packetUpStream(self->up, up_init_ctx);
                 }
 
-                if (!ISALIVE(c))
-                {
-                    LOGW("TrojanSocksServer: next node instantly closed the init with fin");
-                    DISCARD_CONTEXT(c);
-                    destroyContext(c);
-
-                    return;
-                }
-                cstate->init_sent = true;
                 if (bufLen(c->payload) <= 0)
                 {
                     DISCARD_CONTEXT(c);
@@ -446,6 +466,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     {
                         LOGE("TrojanSocksServer: udp packet could not be parsed");
 
+                        if (cstate->init_sent)
                         {
                             context_t *fin_up = newContext(c->line);
                             fin_up->fin = true;
