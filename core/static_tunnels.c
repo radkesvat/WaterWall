@@ -14,16 +14,13 @@
 #include "tunnels/logger/logger_tunnel.h"
 #endif
 
-
 #ifdef INCLUDE_TROJAN_AUTH_SERVER
 #include "tunnels/server/trojan/auth/trojan_auth_server.h"
 #endif
 
-
 #ifdef INCLUDE_TROJAN_SOCKS_SERVER
 #include "tunnels/server/trojan/socks/trojan_socks_server.h"
 #endif
-
 
 #ifdef INCLUDE_CONNECTOR
 #include "tunnels/adapters/connector/connector.h"
@@ -37,14 +34,17 @@
 #include "tunnels/server/wolfssl/wolfssl_server.h"
 #endif
 
+#ifdef INCLUDE_HTTP2_SERVER
+#include "tunnels/server/http2/http2_server.h"
+#endif
 
-#define USING(x)                                                       \
-    do                                                                 \
-    {                                                                  \
-        hash_t h = calcHashLen(#x, strlen(#x));                        \
-        registerStaticLib((tunnel_lib_t){h,                            \
-            new##x, api##x, destroy##x,getMetadata##x}); \
-        LOGD("Imported static tunnel lib%s.a  hash:%lx", #x, h);       \
+#define USING(x)                                                                       \
+    do                                                                                 \
+    {                                                                                  \
+        hash_t h = calcHashLen(#x, strlen(#x));                                        \
+        registerStaticLib((tunnel_lib_t){h,                                            \
+                                         new##x, api##x, destroy##x, getMetadata##x}); \
+        LOGD("Imported static tunnel lib%s.a  hash:%lx", #x, h);                       \
     } while (0)
 
 void loadStaticTunnelsIntoCore()
@@ -81,5 +81,7 @@ void loadStaticTunnelsIntoCore()
     USING(WolfSSLServer);
 #endif
 
-
+#ifdef INCLUDE_HTTP2_SERVER
+    USING(Http2Server);
+#endif
 }

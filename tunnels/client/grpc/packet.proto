@@ -3,6 +3,13 @@
 
 syntax = "proto3";
 
+// The greeter service definition.
+service Greeter {
+  // Sends a greeting
+  rpc SayHello (SimpleMessage) returns (SimpleMessage) {}
+}
+
+
 message SimpleMessage {
     bytes data = 1;
 }

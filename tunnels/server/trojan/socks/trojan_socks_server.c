@@ -305,10 +305,9 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return true;
 
     shift_buffer_t *payload = popBuffer(buffer_pools[line->tid]);
-    reserve(payload, full_len);
+    setLen(payload, full_len);
     bool suc = bufferStreamRead(rawBuf(payload), full_len, bstream);
     assert(suc);
-    setLen(payload, full_len);
 
     context_t *c = newContext(line);
     socket_context_t *dest = &(c->dest_ctx);

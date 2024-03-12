@@ -11,10 +11,7 @@ struct shift_buffer_s
     size_t curpos;
     size_t cap; // half of full cap
     char *pbuf;
-    //========
-    // bool shadowed;
     int* refc;
-    // struct shift_buffer_s* ref;
 };
 typedef struct shift_buffer_s shift_buffer_t;
 

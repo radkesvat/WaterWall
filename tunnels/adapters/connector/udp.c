@@ -8,9 +8,8 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
     if (cstate == NULL)
         return;
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
-    reserve(payload, readbytes);
-    memcpy(rawBuf(payload), buf, readbytes);
     setLen(payload, readbytes);
+    memcpy(rawBuf(payload), buf, readbytes);
 
     tunnel_t *self = (cstate)->tunnel;
     line_t *line = (cstate)->line;

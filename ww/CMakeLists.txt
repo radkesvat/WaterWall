@@ -9,6 +9,7 @@ add_library(ww STATIC
                   buffer_stream.c
                   config_file.c
                   buffer_pool.c
+                  http_def.c
                   utils/utils.c
                   managers/socket_manager.c
                   managers/node_manager.c

@@ -310,6 +310,11 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
 
         hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(hash_next);
+        if (next_node == NULL)
+        {
+            LOGF("TrojanAuthServer: fallback node not found");
+            exit(1);
+        }
         if (next_node->instance == NULL)
         {
             runNode(next_node, chain_index + 1);

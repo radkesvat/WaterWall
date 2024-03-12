@@ -73,14 +73,14 @@ static int on_alpn_select(SSL *ssl,
         LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
         if (in[offset] == 2 && http_level < 2)
         {
-            if (strncmp(&(in[1 + offset]), "h2", 2) == 0 && false)
+            if (strncmp(&(in[1 + offset]), "h2", 2) == 0)
             {
                 http_level = 2;
                 *out = &(in[1 + offset]);
                 *outlen = in[0 + offset];
             }
         }
-        else if (in[offset] == 8 && http_level < 1)
+        else if (in[offset] == 8 && http_level < 1 && false)
         {
             if (strncmp(&(in[1 + offset]), "http/1.1", 8) == 0)
             {
@@ -187,7 +187,7 @@ static void fallback_write(tunnel_t *self, context_t *c)
     }
 
     c->payload = popBuffer(buffer_pools[c->line->tid]);
-    reserve(c->payload, record_len);
+    setLen(c->payload, record_len);
     bufferStreamRead(rawBuf(c->payload), record_len, cstate->fallback_buf);
     state->fallback->upStream(state->fallback, c);
 }
@@ -343,6 +343,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             } while (n > 0);
 
+            status = get_sslstatus(cstate->ssl, n);
+
             if (bufLen(buf) > 0)
             {
                 context_t *up_ctx = newContext(c->line);
@@ -365,8 +367,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 reuseBuffer(buffer_pools[c->line->tid], buf);
             }
-
-            status = get_sslstatus(cstate->ssl, n);
 
             /* Did SSL request to write bytes? This can happen if peer has requested SSL
              * renegotiation. */
@@ -661,7 +661,8 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
 
         if (param->crt_file && *param->crt_file)
         {
-            if (!SSL_CTX_use_certificate_file(ctx, param->crt_file, SSL_FILETYPE_PEM))
+            // openssl forces pem for a chained cert!
+            if (!SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
             {
                 fprintf(stderr, "ssl crt_file error!\n");
                 goto error;
@@ -758,6 +759,12 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
         hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(hash_next);
+        if (next_node == NULL)
+        {
+            LOGF("OpenSSLServer: fallback node not found");
+            exit(1);
+        }
+
         if (next_node->instance == NULL)
         {
             runNode(next_node, instance_info->chain_index + 1);
