@@ -1,4 +1,5 @@
 #include "logger_tunnel.h"
+#include "buffer_pool.h"
 #include "loggers/network_logger.h"
 
 #define STATE(x) ((logger_tunnel_state_t *)((x)->state))
@@ -24,13 +25,21 @@ static inline void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 
-        LOGD("upstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 200) ,rawBuf(c->payload));
+        LOGD("upstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 200), rawBuf(c->payload));
         if (self->up != NULL)
         {
             self->up->upStream(self->up, c);
         }
         else
         {
+            // can use dest to send back something
+            {
+                context_t *reply = newContext(c->line);
+                reply->payload = popBuffer(buffer_pools[c->line->tid]);
+                sprintf(rawBuf(reply->payload), "%s", "salam");
+                setLen(reply->payload, strlen("salam"));
+                self->dw->downStream(self->dw, reply);
+            }
             DISCARD_CONTEXT(c);
             destroyContext(c);
         }
@@ -147,7 +156,8 @@ tunnel_t *newLoggerTunnel(node_instance_context_t *instance_info)
 
 api_result_t apiLoggerTunnel(tunnel_t *self, char *msg)
 {
-    LOGE("logger-tunnel API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
+    LOGE("logger-tunnel API NOT IMPLEMENTED");
+    return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyLoggerTunnel(tunnel_t *self)

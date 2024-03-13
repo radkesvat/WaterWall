@@ -1,7 +1,12 @@
 // A very simple protocol definition, consisting of only
 // one message.
 
+// Nanopub is not a grpc compiler, it will not understand service type!
+// this part is handleded under Http2 node and its settings should let the user
+// to specifiy service name, method, etc...
+
 syntax = "proto3";
+
 
 // The greeter service definition.
 service Greeter {

@@ -2,7 +2,7 @@
 node_modules
 /build
 
-/tunnels/client/grpc/generator
+/tunnels/shared/protobuf/generator
 /core/texts
 
 

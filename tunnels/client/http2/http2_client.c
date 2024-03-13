@@ -1,4 +1,4 @@
-#include "http2_server.h"
+#include "http2_client.h"
 #include "nghttp2/nghttp2.h"
 #include "buffer_stream.h"
 #include "http_def.h"
@@ -7,19 +7,19 @@
 #include "loggers/network_logger.h"
 #include "helpers.h"
 
-#define STATE(x) ((http2_server_state_t *)((x)->state))
-#define CSTATE(x) ((http2_server_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
+#define STATE(x) ((http2_client_state_t *)((x)->state))
+#define CSTATE(x) ((http2_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
-typedef struct http2_server_state_s
+typedef struct http2_client_state_s
 {
     nghttp2_session_callbacks *cbs;
     tunnel_t *fallback;
 
-} http2_server_state_t;
+} http2_client_state_t;
 
-typedef struct http2_server_con_state_s
+typedef struct http2_client_con_state_s
 {
     bool init_sent;
     bool first_sent;
@@ -40,9 +40,9 @@ typedef struct http2_server_con_state_s
     tunnel_t *_self;
     line_t *line;
 
-} http2_server_con_state_t;
+} http2_client_con_state_t;
 
-static void cleanup(http2_server_con_state_t *cstate)
+static void cleanup(http2_client_con_state_t *cstate)
 {
     tunnel_t *self = cstate->_self;
     nghttp2_session_set_user_data(cstate->session, NULL);
@@ -66,7 +66,7 @@ static int on_header_callback(nghttp2_session *session,
     const char *value = (const char *)_value;
     LOGD("%s: %s\n", name, value);
 
-    http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
+    http2_client_con_state_t *cstate = (http2_client_con_state_t *)userdata;
     tunnel_t *self = cstate->_self;
 
     if (*name == ':')
@@ -106,7 +106,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
 {
     if (userdata == NULL)
         return 0;
-    http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
+    http2_client_con_state_t *cstate = (http2_client_con_state_t *)userdata;
     tunnel_t *self = cstate->_self;
     LOGD("on_data_chunk_recv_callback\n");
     LOGD("stream_id=%d length=%d\n", stream_id, (int)len);
@@ -157,7 +157,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
 
     LOGD("on_frame_recv_callback\n");
     print_frame_hd(&frame->hd);
-    http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
+    http2_client_con_state_t *cstate = (http2_client_con_state_t *)userdata;
     tunnel_t *self = cstate->_self;
 
     switch (frame->hd.type)
@@ -221,7 +221,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
 static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
 {
     // HTTP2_MAGIC,HTTP2_SETTINGS,HTTP2_HEADERS
-    http2_server_con_state_t *cstate = ((http2_server_con_state_t *)(((line->chains_state)[self->chain_index])));
+    http2_client_con_state_t *cstate = ((http2_client_con_state_t *)(((line->chains_state)[self->chain_index])));
     if (cstate == NULL)
         return false;
 
@@ -350,10 +350,10 @@ static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
-    http2_server_state_t *state = STATE(self);
+    http2_client_state_t *state = STATE(self);
     if (c->payload != NULL)
     {
-        http2_server_con_state_t *cstate = CSTATE(c);
+        http2_client_con_state_t *cstate = CSTATE(c);
         cstate->state = H2_WANT_RECV;
         size_t len = bufLen(c->payload);
         size_t ret = nghttp2_session_mem_recv(cstate->session, (const uint8_t *)rawBuf(c->payload), len);
@@ -383,10 +383,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(http2_server_con_state_t));
-            memset(CSTATE(c), 0, sizeof(http2_server_con_state_t));
-            http2_server_con_state_t *cstate = CSTATE(c);
-            nghttp2_session_server_new(&cstate->session, state->cbs, cstate);
+            CSTATE_MUT(c) = malloc(sizeof(http2_client_con_state_t));
+            memset(CSTATE(c), 0, sizeof(http2_client_con_state_t));
+            http2_client_con_state_t *cstate = CSTATE(c);
+            nghttp2_session_client_new(&cstate->session, state->cbs, cstate);
             cstate->state = H2_WANT_RECV;
             cstate->stream_id = -1;
             cstate->stream_closed = 0;
@@ -416,7 +416,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 {
     if (c->payload != NULL)
     {
-        http2_server_con_state_t *cstate = CSTATE(c);
+        http2_client_con_state_t *cstate = CSTATE(c);
 
         shift_buffer_t *buf = c->payload;
         c->payload = NULL;
@@ -464,29 +464,29 @@ static inline void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-static void http2ServerUpStream(tunnel_t *self, context_t *c)
+static void Http2ClientUpStream(tunnel_t *self, context_t *c)
 {
     upStream(self, c);
 }
-static void http2ServerPacketUpStream(tunnel_t *self, context_t *c)
+static void Http2ClientPacketUpStream(tunnel_t *self, context_t *c)
 {
-    LOGF("Http2Server: Http2 protocol dose not run on udp");
+    LOGF("Http2Client: Http2 protocol dose not run on udp");
     exit(1);
 }
-static void http2ServerDownStream(tunnel_t *self, context_t *c)
+static void Http2ClientDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
-static void http2ServerPacketDownStream(tunnel_t *self, context_t *c)
+static void Http2ClientPacketDownStream(tunnel_t *self, context_t *c)
 {
-    LOGF("Http2Server: Http2 protocol dose not run on udp");
+    LOGF("Http2Client: Http2 protocol dose not run on udp");
     exit(1);
 }
 
-tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
+tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 {
-    http2_server_state_t *state = malloc(sizeof(http2_server_state_t));
-    memset(state, 0, sizeof(http2_server_state_t));
+    http2_client_state_t *state = malloc(sizeof(http2_client_state_t));
+    memset(state, 0, sizeof(http2_client_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
     nghttp2_session_callbacks_new(&(state->cbs));
@@ -496,28 +496,28 @@ tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
 
     tunnel_t *t = newTunnel();
     t->state = state;
-    t->upStream = &http2ServerUpStream;
-    t->packetUpStream = &http2ServerPacketUpStream;
-    t->downStream = &http2ServerDownStream;
-    t->packetDownStream = &http2ServerPacketDownStream;
+    t->upStream = &Http2ClientUpStream;
+    t->packetUpStream = &Http2ClientPacketUpStream;
+    t->downStream = &Http2ClientDownStream;
+    t->packetDownStream = &Http2ClientPacketDownStream;
 
     atomic_thread_fence(memory_order_release);
     return t;
 }
 
-api_result_t apiHttp2Server(tunnel_t *self, char *msg)
+api_result_t apiHttp2Client(tunnel_t *self, char *msg)
 {
     LOGE("http2-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
-tunnel_t *destroyHttp2Server(tunnel_t *self)
+tunnel_t *destroyHttp2Client(tunnel_t *self)
 {
     LOGE("http2-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 
-tunnel_metadata_t getMetadataHttp2Server()
+tunnel_metadata_t getMetadataHttp2Client()
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

@@ -38,6 +38,11 @@
 #include "tunnels/server/http2/http2_server.h"
 #endif
 
+#ifdef INCLUDE_PROTOBUF_CLIENT
+#include "tunnels/client/protobuf/protobuf_client.h"
+#endif
+
+
 #define USING(x)                                                                       \
     do                                                                                 \
     {                                                                                  \

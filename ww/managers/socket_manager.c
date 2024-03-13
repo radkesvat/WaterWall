@@ -119,7 +119,7 @@ static HTHREAD_ROUTINE(accept_thread)
         socket_filter_option_t option = filter->option;
         uint16_t port_min = option.port_min;
         uint16_t port_max = option.port_max;
-        const char *poroto_str = option.proto == socket_protocol_tcp ? "TCP" : "UDP";
+        const char *proto_str = option.proto == socket_protocol_tcp ? "TCP" : "UDP";
         assert(port_min <= port_max);
 
         if (option.proto == socket_protocol_tcp)
@@ -142,7 +142,7 @@ static HTHREAD_ROUTINE(accept_thread)
                             continue;
                         ports_overlapped[port_min] = 1;
 
-                        LOGI("SocketManager will watch %s:[%u] (%s)", option.host, port_min, poroto_str);
+                        LOGI("SocketManager will watch %s:[%u] (%s)", option.host, port_min, proto_str);
                         filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
 
                         if (filter->listen_io == NULL)
@@ -151,7 +151,7 @@ static HTHREAD_ROUTINE(accept_thread)
                             exit(1);
                         }
 
-                        LOGI("SocketManager will watch %s:[%u - %u] (%s)", option.host, port_min, port_max, poroto_str);
+                        LOGI("SocketManager will watch %s:[%u - %u] (%s)", option.host, port_min, port_max, proto_str);
                     }
                 }
                 else
@@ -160,7 +160,7 @@ static HTHREAD_ROUTINE(accept_thread)
                         continue;
                     ports_overlapped[port_min] = 1;
 
-                    LOGI("SocketManager will watch %s:[%u] (%s)", option.host, port_min, poroto_str);
+                    LOGI("SocketManager will watch %s:[%u] (%s)", option.host, port_min, proto_str);
                     filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
 
                     if (filter->listen_io == NULL)
