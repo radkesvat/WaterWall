@@ -2,7 +2,7 @@
 #include "api.h"
 
 // 
-// con <------>  http2-server  <------> http2 stream (con)
+// con <------>  http2-client  <------> http2 stream (con)
 // 
 //
 

@@ -36,7 +36,7 @@ typedef struct http2_server_con_state_s
     // at least HTTP2_FRAME_HDLEN + GRPC_MESSAGE_HDLEN = 9 + 5 = 14
     unsigned char frame_hdbuf[32];
 
-    // since nghtt2 uses callbacks
+    // since nghttp2 uses callbacks
     tunnel_t *_self;
     line_t *line;
 
@@ -251,7 +251,7 @@ static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
         len = content_length + HTTP2_FRAME_HDLEN;
 
         // HTTP2 DATA framehd
-        cstate->state = H2_SEND_DATA_FRAME_HD;
+        cstate->state = H2_SEND_DATA;
         http2_frame_hd framehd;
         framehd.length = content_length;
         framehd.type = HTTP2_DATA;
@@ -293,38 +293,16 @@ static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
             len += GRPC_MESSAGE_HDLEN;
         }
         http2_frame_hd_pack(&framehd, cstate->frame_hdbuf);
-        shiftl(*buf,len);
+        shiftl(*buf, len);
         memcpy(rawBuf(*buf), cstate->frame_hdbuf, len);
         context_t *answer = newContext(line);
         answer->payload = *buf;
-        self->dw->downStream(self->dw,  answer);
+        self->dw->downStream(self->dw, answer);
         *buf = NULL;
 
         return true;
     }
-    // else if (cstate->state == H2_SEND_DATA_FRAME_HD)
-    // {
-    //     // HTTP2 DATA
-    //     int content_length = bufLen(*buf);
-
-    //     if (content_length == 0)
-    //     {
-    //         // skip send_data
-    //         goto send_done;
-    //     }
-    //     else
-    //     {
-    //         LOGD("HTTP2 SEND_DATA... content_length=%d\n", content_length);
-    //         cstate->state = H2_SEND_DATA;
-
-    //         context_t *answer = newContext(line);
-    //         answer->payload = *buf;
-    //         self->dw->downStream(self->dw, answer);
-    //         *buf = NULL;
-    //         return true;
-    //     }
-    // }
-    else if (cstate->state == H2_SEND_DATA_FRAME_HD)
+    else if (cstate->state == H2_SEND_DATA)
     {
     send_done:
         *buf = NULL;
@@ -427,14 +405,13 @@ static inline void downStream(tunnel_t *self, context_t *c)
         if (cstate->content_type == APPLICATION_GRPC)
         {
             // correct content_type: application/grpc
-             nvs[nvlen++] = make_nv("content-type", http_content_type_str(APPLICATION_GRPC));
+            nvs[nvlen++] = make_nv("content-type", http_content_type_str(APPLICATION_GRPC));
 
             // res->headers["accept-encoding"] = "identity";
             // res->headers["grpc-accept-encoding"] = "identity";
             // res->headers["grpc-status"] = "0";
             // res->status_code = HTTP_STATUS_OK;
         }
-
 
         int flags = NGHTTP2_FLAG_END_HEADERS;
         // we set EOS on DATA frame

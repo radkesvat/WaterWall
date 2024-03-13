@@ -1,4 +1,4 @@
-#include "shared.h"
+#include "types.h"
 #include "loggers/dns_logger.h"
 
 bool tcpConnectorResolvedomain(socket_context_t *dest)
