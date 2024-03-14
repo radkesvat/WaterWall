@@ -468,12 +468,22 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(state->cbs, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, on_frame_recv_callback);
 
+    state->host = "app.launchdarkly.com"
+    state->host_port = 443
+    // state->path = "/sdk/goals/50afa3d7607a72221591aeb73"
+    state->scheme = "https"
+    state->method = GET;
+
+
     tunnel_t *t = newTunnel();
     t->state = state;
     t->upStream = &Http2ClientUpStream;
     t->packetUpStream = &Http2ClientPacketUpStream;
     t->downStream = &Http2ClientDownStream;
     t->packetDownStream = &Http2ClientPacketDownStream;
+
+
+
 
     atomic_thread_fence(memory_order_release);
     return t;
