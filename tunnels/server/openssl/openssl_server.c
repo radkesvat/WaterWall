@@ -747,7 +747,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     char *fallback_node = NULL;
     if (!getStringFromJsonObject(&fallback_node, settings, "fallback"))
     {
-        LOGW("OpenSSLServer: no fallback provided in json, standard trojan requires fallback");
+        LOGW("OpenSSLServer: no fallback provided in json, not recommended");
     }
     else
     {

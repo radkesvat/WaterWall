@@ -35,6 +35,7 @@ CPMAddPackage(
     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
     OPTIONS
     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+    "BUILD_SHARED_LIBS OFF"
 )
 
 target_compile_options(OpenSSLServer PRIVATE -ftrack-macro-expansion=0)
