@@ -23,6 +23,14 @@ static inline void checkLine(line_t *l)
     if (l->refc > 0)
         return;
 
+#ifdef DEBUG
+    // there should not be any conn-state alive at this point
+    for (size_t i = 0; i < MAX_CHAIN_LEN; i++)
+    {
+        assert(l->chains_state[i] == NULL);
+    }
+#endif
+
     free(l);
 
 }
