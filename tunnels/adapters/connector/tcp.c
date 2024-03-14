@@ -182,8 +182,6 @@ void connectorUpStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            assert(c->src_io != NULL);
-            // hio_read_stop(c->src_io);
 
             CSTATE_MUT(c) = malloc(sizeof(connector_con_state_t));
             memset(CSTATE(c), 0, sizeof(connector_con_state_t));
@@ -336,9 +334,11 @@ void connectorDownStream(tunnel_t *self, context_t *c)
         if (c->est)
         {
             cstate->established = true;
-            cstate->write_paused = false;
             hio_read(cstate->io);
-            resume_write_queue(cstate);
+            if (resume_write_queue(cstate))
+                cstate->write_paused = false;
+            else
+                hio_setcb_write(cstate->io, on_write_complete);
 
             self->dw->downStream(self->dw, c);
         }

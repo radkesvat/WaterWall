@@ -76,7 +76,6 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            assert(c->src_io != NULL);
             CSTATE_MUT(c) = malloc(sizeof(connector_con_state_t));
             memset(CSTATE(c), 0, sizeof(connector_con_state_t));
             connector_con_state_t *cstate = CSTATE(c);
