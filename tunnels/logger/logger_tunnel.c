@@ -32,7 +32,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            // can use dest to send back something
+            // send back something
             {
                 context_t *reply = newContext(c->line);
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
@@ -85,6 +85,16 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
+
+            // send back something
+            {
+                context_t *reply = newContext(c->line);
+                reply->payload = popBuffer(buffer_pools[c->line->tid]);
+                sprintf(rawBuf(reply->payload), "%s", "salam");
+                setLen(reply->payload, strlen("salam"));
+                self->up->upStream(self->up, reply);
+            }
+
             DISCARD_CONTEXT(c);
             destroyContext(c);
         }
