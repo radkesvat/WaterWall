@@ -34,15 +34,10 @@ typedef struct oss_client_con_state_s
     SSL *ssl;
     BIO *rbio;
     BIO *wbio;
-    bool first_sent;
-    bool init_sent;
-} oss_client_con_state_t;
+    buffer_pool_t *buffer_pool;
+    context_queue_t *queue;
 
-struct timer_eventdata
-{
-    tunnel_t *self;
-    context_t *c;
-};
+} oss_client_con_state_t;
 
 enum sslstatus
 {
@@ -72,7 +67,9 @@ static void cleanup(tunnel_t *self, context_t *c)
     oss_client_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
-        SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
+        SSL_free(cstate->ssl);                    /* free the SSL object and its BIO's */
+        destroyContextQueue(cstate->queue); /* free the SSL object and its BIO's */
+
         free(cstate);
         CSTATE_MUT(c) = NULL;
     }
@@ -88,185 +85,42 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
         if (!cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, newShadowShiftBuffer(c->payload));
-        }
-        if (cstate->fallback)
-        {
-            DISCARD_CONTEXT(c);
-            if (state->fallback_delay <= 0)
-                fallback_write(self, c);
-            else
-            {
-                htimer_t *fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
-                hevent_set_userdata(fallback_timer, newTimerData(self, c));
-            }
-
+            contextQueuePush(cstate->queue, c);
+            if (c->src_io)
+                hio_read_stop(c->src_io);
             return;
         }
+
         enum sslstatus status;
-        int n;
         size_t len = bufLen(c->payload);
 
         while (len > 0)
         {
-            n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
-
-            if (n <= 0)
-            {
-                /* if BIO write fails, assume unrecoverable */
-                DISCARD_CONTEXT(c);
-                goto disconnect;
-            }
-            shiftr(c->payload, n);
-            len -= n;
-
-            if (!SSL_is_init_finished(cstate->ssl))
-            {
-                n = SSL_accept(cstate->ssl);
-                status = get_sslstatus(cstate->ssl, n);
-
-                /* Did SSL request to write bytes? */
-                if (status == SSLSTATUS_WANT_IO)
-                    do
-                    {
-                        shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-                        size_t avail = rCap(buf);
-                        n = BIO_read(cstate->wbio, rawBuf(buf), avail);
-                        // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
-                        if (n > 0)
-                        {
-                            setLen(buf, n);
-                            context_t *answer = newContext(c->line);
-                            answer->payload = buf;
-                            self->dw->downStream(self->dw, answer);
-                            if (!ISALIVE(c))
-                            {
-                                DISCARD_CONTEXT(c);
-                                destroyContext(c);
-                                return;
-                            }
-                        }
-                        else if (!BIO_should_retry(cstate->wbio))
-                        {
-                            // If BIO_should_retry() is false then the cause is an error condition.
-                            DISCARD_CONTEXT(c);
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
-                            goto disconnect;
-                        }
-                        else
-                        {
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
-                        }
-                    } while (n > 0);
-
-                if (status == SSLSTATUS_FAIL)
-                {
-                    DISCARD_CONTEXT(c); // payload already buffered
-
-                    if (state->fallback != NULL)
-                    {
-                        cstate->fallback = true;
-                        if (state->fallback_delay <= 0)
-                            fallback_write(self, c);
-                        else
-                        {
-                            htimer_t *fallback_timer = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
-                            hevent_set_userdata(fallback_timer, newTimerData(self, c));
-                        }
-                        return;
-                    }
-                    else
-                        goto disconnect;
-                }
-
-                if (!SSL_is_init_finished(cstate->ssl))
-                {
-                    DISCARD_CONTEXT(c);
-                    destroyContext(c);
-                    return;
-                }
-                else
-                {
-                    LOGD("Tls handshake complete");
-                    cstate->handshake_completed = true;
-                    context_t *up_init_ctx = newContext(c->line);
-                    up_init_ctx->init = true;
-                    up_init_ctx->src_io = c->src_io;
-
-                    self->up->upStream(self->up, up_init_ctx);
-                    if (!ISALIVE(c))
-                    {
-                        LOGW("Openssl server: next node instantly closed the init with fin");
-                        DISCARD_CONTEXT(c);
-                        destroyContext(c);
-
-                        return;
-                    }
-                    cstate->init_sent = true;
-                }
-            }
-
-            /* The encrypted data is now in the input bio so now we can perform actual
-             * read of unencrypted data. */
-            shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-            shiftl(buf, 8192 / 2);
-            setLen(buf, 0);
-            do
-            {
-                size_t avail = rCap(buf) - bufLen(buf);
-                n = SSL_read(cstate->ssl, rawBuf(buf) + bufLen(buf), avail);
-                if (n > 0)
-                {
-                    setLen(buf, bufLen(buf) + n);
-                }
-
-            } while (n > 0);
-
+            int n = SSL_write(cstate->ssl, rawBuf(c->payload), len);
             status = get_sslstatus(cstate->ssl, n);
 
-            if (bufLen(buf) > 0)
+            if (n > 0)
             {
-                context_t *up_ctx = newContext(c->line);
-                up_ctx->payload = buf;
-                up_ctx->src_io = c->src_io;
-                if (!(cstate->first_sent))
-                {
-                    up_ctx->first = true;
-                    cstate->first_sent = true;
-                }
-                self->up->upStream(self->up, up_ctx);
-                if (!ISALIVE(c))
-                {
-                    DISCARD_CONTEXT(c);
-                    destroyContext(c);
-                    return;
-                }
-            }
-            else
-            {
-                reuseBuffer(buffer_pools[c->line->tid], buf);
-            }
-
-            /* Did SSL request to write bytes? This can happen if peer has requested SSL
-             * renegotiation. */
-            if (status == SSLSTATUS_WANT_IO)
+                /* consume the waiting bytes that have been used by SSL */
+                shiftr(c->payload, n);
+                len -= n;
+                /* take the output of the SSL object and queue it for socket write */
                 do
                 {
                     shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
                     size_t avail = rCap(buf);
-
                     n = BIO_read(cstate->wbio, rawBuf(buf), avail);
                     if (n > 0)
                     {
                         setLen(buf, n);
-                        context_t *answer = newContext(c->line);
-                        answer->payload = buf;
-                        self->dw->downStream(self->dw, answer);
+                        context_t *send_context = newContext(c->line);
+                        send_context->payload = buf;
+                        send_context->src_io = c->src_io;
+                        self->up->upStream(self->up, send_context);
                         if (!ISALIVE(c))
                         {
                             DISCARD_CONTEXT(c);
                             destroyContext(c);
-
                             return;
                         }
                     }
@@ -275,23 +129,25 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(buffer_pools[c->line->tid], buf);
                         DISCARD_CONTEXT(c);
-                        destroyContext(c);
-
-                        goto failed_after_establishment;
+                        goto failed;
                     }
                     else
                     {
                         reuseBuffer(buffer_pools[c->line->tid], buf);
                     }
                 } while (n > 0);
+            }
 
             if (status == SSLSTATUS_FAIL)
             {
                 DISCARD_CONTEXT(c);
-                goto failed_after_establishment;
+                goto failed;
             }
+
+            if (n == 0)
+                break;
         }
-        // done with socket data
+        assert(bufLen(c->payload) == 0);
         DISCARD_CONTEXT(c);
         destroyContext(c);
     }
@@ -306,46 +162,29 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->rbio = BIO_new(BIO_s_mem());
             cstate->wbio = BIO_new(BIO_s_mem());
             cstate->ssl = SSL_new(state->ssl_context);
-            cstate->fallback_buf = newBufferStream(buffer_pools[c->line->tid]);
-            SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
+            cstate->buffer_pool = buffer_pools[c->line->tid];
+            cstate->queue = newContextQueue(cstate->buffer_pool);
+            SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
-            destroyContext(c);
+            self->up->upStream(self->up, c);
         }
         else if (c->fin)
         {
 
-            if (CSTATE(c)->fallback)
-            {
-                if (CSTATE(c)->fallback_init_sent)
-                {
-                    cleanup(self, c);
-                    state->fallback->upStream(state->fallback, c);
-                }
-                else
-                    cleanup(self, c);
-            }
-            else if (CSTATE(c)->init_sent)
-            {
-                cleanup(self, c);
-                self->up->upStream(self->up, c);
-            }
-            else
-            {
-                cleanup(self, c);
-                destroyContext(c);
-            }
+            cleanup(self, c);
+            destroyContext(c);
+            self->up->upStream(self->up, c);
         }
     }
 
     return;
 
-failed_after_establishment:
+failed:
     context_t *fail_context_up = newContext(c->line);
     fail_context_up->fin = true;
     fail_context_up->src_io = c->src_io;
     self->up->upStream(self->up, fail_context_up);
 
-disconnect:
     context_t *fail_context = newContext(c->line);
     fail_context->fin = true;
     fail_context->src_io = NULL;
@@ -360,91 +199,142 @@ static inline void downStream(tunnel_t *self, context_t *c)
     oss_client_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {
-        // self->dw->downStream(self->dw, ctx);
-        // char buf[DEFAULT_BUF_SIZE];
+        int n;
         enum sslstatus status;
+        // if (!cstate->handshake_completed)
 
-        if (!SSL_is_init_finished(cstate->ssl))
-        {
-            if (cstate->fallback)
-            {
-                self->dw->downStream(self->dw, c);
-                return; // not gona encrypt fall back data
-            }
-            else
-            {
-                LOGF("How it is possilbe to receive data before sending init to upstream?");
-                exit(1);
-            }
-        }
         size_t len = bufLen(c->payload);
-        while (len)
+
+        while (len > 0)
         {
-            int n = SSL_write(cstate->ssl, rawBuf(c->payload), len);
-            status = get_sslstatus(cstate->ssl, n);
+            n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
 
-            if (n > 0)
+            if (n <= 0)
             {
-                /* consume the waiting bytes that have been used by SSL */
-                shiftr(c->payload, n);
-                len -= n;
-                /* take the output of the SSL object and queue it for socket write */
-                do
-                {
-
-                    shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-                    size_t avail = rCap(buf);
-                    n = BIO_read(cstate->wbio, rawBuf(buf), avail);
-                    if (n > 0)
-                    {
-                        setLen(buf, n);
-                        context_t *dw_context = newContext(c->line);
-                        dw_context->payload = buf;
-                        dw_context->src_io = c->src_io;
-                        self->dw->downStream(self->dw, dw_context);
-                        if (!ISALIVE(c))
-                        {
-                            DISCARD_CONTEXT(c);
-                            destroyContext(c);
-
-                            return;
-                        }
-                    }
-                    else if (!BIO_should_retry(cstate->wbio))
-                    {
-                        // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
-                        DISCARD_CONTEXT(c);
-                        goto failed_after_establishment;
-                    }
-                    else
-                    {
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
-                    }
-                } while (n > 0);
-            }
-
-            if (status == SSLSTATUS_FAIL)
-            {
+                /* if BIO write fails, assume unrecoverable */
                 DISCARD_CONTEXT(c);
-                goto failed_after_establishment;
+                goto failed;
             }
+            shiftr(c->payload, n);
+            len -= n;
 
-            if (n == 0)
-                break;
+            if (!cstate->handshake_completed)
+            {
+                n = SSL_do_handshake(cstate->ssl);
+                status = get_sslstatus(cstate->ssl, n);
+
+                /* Did SSL request to write bytes? */
+                if (status == SSLSTATUS_WANT_IO)
+                    do
+                    {
+                        shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                        size_t avail = rCap(buf);
+                        n = BIO_read(cstate->wbio, rawBuf(buf), avail);
+
+                        if (n > 0)
+                        {
+                            setLen(buf, n);
+                            context_t *answer = newContext(c->line);
+                            answer->payload = buf;
+                            self->dw->downStream(self->dw, answer);
+                            if (!ISALIVE(c))
+                            {
+                                DISCARD_CONTEXT(c);
+                                destroyContext(c);
+                                return;
+                            }
+                        }
+                        else if (!BIO_should_retry(cstate->rbio))
+                        {
+                            // If BIO_should_retry() is false then the cause is an error condition.
+                            DISCARD_CONTEXT(c);
+                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            goto failed;
+                        }
+                        else
+                        {
+                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                        }
+                    } while (n > 0);
+
+                if (status == SSLSTATUS_FAIL)
+                {
+                    DISCARD_CONTEXT(c);
+                    goto failed;
+                }
+
+                if (!SSL_is_init_finished(cstate->ssl))
+                {
+                    DISCARD_CONTEXT(c);
+                    destroyContext(c);
+                    return;
+                }
+                else
+                {
+                    LOGD("Tls handshake complete");
+                    cstate->handshake_completed = true;
+                    context_t *dw_est_ctx = newContext(c->line);
+                    dw_est_ctx->est = true;
+                    dw_est_ctx->src_io = c->src_io;
+
+                    self->dw->downStream(self->dw, dw_est_ctx);
+                    if (!ISALIVE(c))
+                    {
+                        LOGW("Openssl client: prev node instantly closed the est with fin");
+                        DISCARD_CONTEXT(c);
+                        destroyContext(c);
+                        return;
+                    }
+                }
+            }
         }
-        assert(bufLen(c->payload) == 0);
-        DISCARD_CONTEXT(c);
-        destroyContext(c);
-
-        return;
     }
     else
     {
         if (c->est)
         {
-            self->dw->downStream(self->dw, c);
-            return;
+            int n;
+            enum sslstatus status;
+
+            if (!cstate->handshake_completed)
+            {
+                n = SSL_do_handshake(cstate->ssl);
+                status = get_sslstatus(cstate->ssl, n);
+
+                /* Did SSL request to write bytes? */
+                if (status == SSLSTATUS_WANT_IO)
+                    do
+                    {
+                        shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                        size_t avail = rCap(buf);
+                        n = BIO_read(cstate->wbio, rawBuf(buf), avail);
+                        if (n > 0)
+                        {
+                            setLen(buf, n);
+                            context_t *handshake_req = newContext(c->line);
+                            handshake_req->payload = buf;
+                            self->up->upStream(self->up, handshake_req);
+                            if (!ISALIVE(c))
+                            {
+                                destroyContext(c);
+                                return;
+                            }
+                        }
+                        else if (!BIO_should_retry(cstate->rbio))
+                        {
+                            // If BIO_should_retry() is false then the cause is an error condition.
+                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            goto failed;
+                        }
+                        else
+                        {
+                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                        }
+                    } while (n > 0);
+
+                if (status == SSLSTATUS_FAIL)
+                    goto failed;
+            }
         }
         else if (c->fin)
         {
@@ -452,9 +342,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
             self->dw->downStream(self->dw, c);
         }
     }
+
     return;
 
-failed_after_establishment:
+failed:
     context_t *fail_context_up = newContext(c->line);
     fail_context_up->fin = true;
     self->up->upStream(self->up, fail_context_up);
@@ -565,7 +456,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
         if (param->verify_peer)
         {
             mode = SSL_VERIFY_PEER;
-            if (param->endpoint == HSSL_client)
+            if (param->endpoint == HSSL_CLIENT)
             {
                 mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
             }
@@ -614,79 +505,47 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
     if (!getBoolFromJsonObject(&(state->verify), settings, "verify"))
     {
-       verify = true;
+        state->verify = true;
     }
 
-    if (!getStringFromJsonObject((char **)&(ssl_param->alpn), settings, "alpn"))
+    if (!getStringFromJsonObject((char **)&(state->alpn), settings, "alpn"))
     {
         LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty or invalid.");
         return NULL;
     }
-    if (strlen(ssl_param->alpn) == 0)
+    if (strlen(state->alpn) == 0)
     {
         LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty.");
         return NULL;
     }
 
-
-    char *fallback_node = NULL;
-    if (!getStringFromJsonObject(&fallback_node, settings, "fallback"))
-    {
-        LOGW("OpenSSLClient: no fallback provided in json, not recommended");
-    }
-    else
-    {
-        getIntFromJsonObject(&(state->fallback_delay), settings, "fallback-intence-delay");
-        if (state->fallback_delay < 0)
-            state->fallback_delay = 0;
-
-        LOGD("OpenSSLClient: accessing fallback node");
-
-        hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));
-        node_t *next_node = getNode(hash_next);
-        if (next_node == NULL)
-        {
-            LOGF("OpenSSLClient: fallback node not found");
-            exit(1);
-        }
-
-        if (next_node->instance == NULL)
-        {
-            runNode(next_node, instance_info->chain_index + 1);
-        }
-        else
-        {
-            // this is not allowed but it can also work in most contextes
-        }
-        state->fallback = next_node->instance;
-    }
-    free(fallback_node);
-
-    ssl_param->verify_peer = 0; // no mtls
-    ssl_param->endpoint = HSSL_client;
+    ssl_param->verify_peer = state->verify ? 1 : 0; // no mtls
+    ssl_param->endpoint = HSSL_CLIENT;
     state->ssl_context = ssl_ctx_new(ssl_param);
-    // int brotli_alg = TLSEXT_comp_cert_brotli;
-    // SSL_set1_cert_comp_preference(state->ssl_context,&brotli_alg,1);
-    // SSL_compress_certs(state->ssl_context,TLSEXT_comp_cert_brotli);
-
-    free((char *)ssl_param->crt_file);
-    free((char *)ssl_param->key_file);
     free(ssl_param);
 
     if (state->ssl_context == NULL)
     {
-        LOGF("Could not create node ssl context");
+        LOGF("OpenSSLClient: Could not create ssl context");
         return NULL;
     }
 
-    SSL_CTX_set_alpn_select_cb(state->ssl_context, on_alpn_select, NULL);
+    SSL_set_tlsext_host_name(state->ssl_context, state->sni);
+
+    size_t alpn_len = strlen(state->alpn);
+    struct
+    {
+        uint8_t len;
+        char alpn_data[];
+    } *ossl_alpn = malloc(1 + alpn_len);
+    ossl_alpn->len = alpn_len;
+    memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
+    SSL_CTX_set_alpn_protos(state->ssl_context, (char*)ossl_alpn, 1);
+    free(ossl_alpn);
 
     tunnel_t *t = newTunnel();
     t->state = state;
-    if (state->fallback != NULL)
-    {
-        state->fallback->dw = t;
-    }
+
     t->upStream = &openSSLUpStream;
     t->packetUpStream = &openSSLPacketUpStream;
     t->downStream = &openSSLDownStream;

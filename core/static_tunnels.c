@@ -10,6 +10,10 @@
 #include "tunnels/server/openssl/openssl_server.h"
 #endif
 
+#ifdef INCLUDE_OPENSSL_CLIENT
+#include "tunnels/client/openssl/openssl_client.h"
+#endif
+
 #ifdef INCLUDE_LOGGER_TUNNEL
 #include "tunnels/logger/logger_tunnel.h"
 #endif
@@ -60,6 +64,10 @@ void loadStaticTunnelsIntoCore()
 
 #ifdef INCLUDE_OPENSSL_SERVER
     USING(OpenSSLServer);
+#endif
+
+#ifdef INCLUDE_OPENSSL_CLIENT
+    USING(OpenSSLClient);
 #endif
 
 #ifdef INCLUDE_LOGGER_TUNNEL

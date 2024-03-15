@@ -10,6 +10,7 @@ set(ENABLE_ASAN ON CACHE BOOL "enable address sanitizer" FORCE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
+option(INCLUDE_OPENSSL_CLIENT "link OpenSSLClient staticly to the core"  TRUE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
@@ -95,6 +96,14 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall OpenSSLServer)
 endif()
 
+#openssl client
+if (INCLUDE_OPENSSL_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_OPENSSL_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/openssl)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/openssl)
+target_link_libraries(Waterwall OpenSSLClient)
+endif()
+
 
 #trojan auth server
 if (INCLUDE_TROJAN_AUTH_SERVER)
@@ -103,7 +112,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/auth)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/socks)
 target_link_libraries(Waterwall TrojanAuthServer)
 endif()
-
 
 
 #trojan socks server
@@ -137,7 +145,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/logger)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/logger)
 target_link_libraries(Waterwall LoggerTunnel)
 endif()
-
 
 
 #protobuf client

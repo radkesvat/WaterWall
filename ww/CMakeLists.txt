@@ -72,12 +72,12 @@ endif()
 
 
 # add openssl (default version is 3.2)
-CPMAddPackage(
-    NAME openssl-cmake
-    URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
-    OPTIONS
-    "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-)
+# CPMAddPackage(
+#     NAME openssl-cmake
+#     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
+#     OPTIONS
+#     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+# )
 
 # add libhv
 CPMAddPackage(
@@ -85,7 +85,7 @@ CPMAddPackage(
     VERSION 1.3.2
     GITHUB_REPOSITORY ithewei/libhv
     OPTIONS 
-    "WITH_OPENSSL ON"
+    "WITH_OPENSSL OFF"
     "WITH_EVPP OFF"
     "WITH_HTTP OFF"
     "WITH_HTTP_SERVER OFF"
