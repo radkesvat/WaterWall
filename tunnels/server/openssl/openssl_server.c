@@ -485,7 +485,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         // char buf[DEFAULT_BUF_SIZE];
         enum sslstatus status;
 
-        if (!SSL_is_init_finished(cstate->ssl))
+        if (!cstate->handshake_completed)
         {
             if (cstate->fallback)
             {
@@ -494,7 +494,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                LOGF("How it is possilbe to receive data before sending init to upstream?");
+                LOGF("How it is possible to receive data before sending init to upstream?");
                 exit(1);
             }
         }
@@ -790,7 +790,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
     if (state->ssl_context == NULL)
     {
-        LOGF("Could not create node ssl context");
+        LOGF("OpenSSLServer: Could not create ssl context");
         return NULL;
     }
 

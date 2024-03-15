@@ -38,6 +38,12 @@ CPMAddPackage(
     "BUILD_SHARED_LIBS OFF"
 )
 
+target_link_libraries(OpenSSLServer 
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    OpenSSL::applink
+)
+
 target_compile_options(OpenSSLServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(OpenSSLServer PRIVATE STC_STATIC=1 OpenSSLServer_VERSION=0.1)
 
