@@ -373,7 +373,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
         if (!SSL_is_init_finished(cstate->ssl))
         {
-            LOGF("How it is possilbe to receive data before sending init to upstream?");
+            LOGF("How it is possible to receive data before sending init to upstream?");
             exit(1);
         }
         size_t len = bufLen(c->payload);
