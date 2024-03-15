@@ -67,7 +67,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     oss_client_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
-        SSL_free(cstate->ssl);                    /* free the SSL object and its BIO's */
+        SSL_free(cstate->ssl);              /* free the SSL object and its BIO's */
         destroyContextQueue(cstate->queue); /* free the SSL object and its BIO's */
 
         free(cstate);
@@ -166,13 +166,14 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->queue = newContextQueue(cstate->buffer_pool);
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
+            SSL_set_tlsext_host_name(cstate->ssl, state->sni);
             self->up->upStream(self->up, c);
         }
         else if (c->fin)
         {
 
             cleanup(self, c);
-            destroyContext(c);
+            destroyContext(c);  
             self->up->upStream(self->up, c);
         }
     }
@@ -530,9 +531,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    SSL_set_tlsext_host_name(state->ssl_context, state->sni);
-
-    size_t alpn_len = strlen(state->alpn);
+        size_t alpn_len = strlen(state->alpn);
     struct
     {
         uint8_t len;
@@ -540,7 +539,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     } *ossl_alpn = malloc(1 + alpn_len);
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context, (char*)ossl_alpn, 1);
+    SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1);
     free(ossl_alpn);
 
     tunnel_t *t = newTunnel();
