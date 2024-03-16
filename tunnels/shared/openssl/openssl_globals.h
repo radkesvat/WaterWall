@@ -76,7 +76,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
         {
             // SSL_CTX_load_verify_file(ctx, ca_path);
 
-            if (!SSL_CTX_load_verify_locations(ctx, ca_path, ca_file))
+            if (!SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
             {
                 fprintf(stderr, "ssl ca_file/ca_path failed!\n");
                 goto error;
@@ -134,7 +134,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
             x = NULL;
         }
 
-            BIO_free(bio);
+        BIO_free(bio);
     }
 
 #ifdef SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER

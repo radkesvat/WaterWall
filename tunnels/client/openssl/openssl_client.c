@@ -73,6 +73,19 @@ static void cleanup(tunnel_t *self, context_t *c)
     }
 }
 
+static void flush_write_queue(tunnel_t *self, context_t *c)
+{
+    oss_client_con_state_t *cstate = CSTATE(c);
+
+    while (contextQueueLen(cstate->queue) > 0)
+    {
+        self->upStream(self, contextQueuePop(cstate->queue));
+
+        if (!ISALIVE(c))
+            return;
+    }
+}
+
 static inline void upStream(tunnel_t *self, context_t *c)
 {
     oss_client_state_t *state = STATE(self);
@@ -84,8 +97,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
         if (!cstate->handshake_completed)
         {
             contextQueuePush(cstate->queue, c);
-            if (c->src_io)
-                hio_read_stop(c->src_io);
             return;
         }
 
@@ -165,13 +176,54 @@ static inline void upStream(tunnel_t *self, context_t *c)
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
+            context_t *clienthello_ctx = newContext(c->line);
             self->up->upStream(self->up, c);
+            if (!ISALIVE(clienthello_ctx))
+            {
+                destroyContext(c);
+                return;
+            }
+
+            // printSSLState(cstate->ssl);
+            int n = SSL_connect(cstate->ssl);
+            // printSSLState(cstate->ssl);
+            enum sslstatus status = get_sslstatus(cstate->ssl, n);
+            /* Did SSL request to write bytes? */
+            if (status == SSLSTATUS_WANT_IO)
+            {
+                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                size_t avail = rCap(buf);
+                n = BIO_read(cstate->wbio, rawBuf(buf), avail);
+                if (n > 0)
+                {
+                    setLen(buf, n);
+                    clienthello_ctx->payload = buf;
+                    clienthello_ctx->first = true;
+                    self->up->upStream(self->up, clienthello_ctx);
+                    if (!ISALIVE(c))
+                    {
+                        destroyContext(c);
+                        return;
+                    }
+                }
+                else if (!BIO_should_retry(cstate->rbio))
+                {
+                    // If BIO_should_retry() is false then the cause is an error condition.
+                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    goto failed;
+                }
+                else
+                {
+                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                }
+            }
+            if (status == SSLSTATUS_FAIL)
+                goto failed;
         }
         else if (c->fin)
         {
 
             cleanup(self, c);
-            destroyContext(c);
             self->up->upStream(self->up, c);
         }
     }
@@ -220,10 +272,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             if (!cstate->handshake_completed)
             {
-                // n = SSL_connect(cstate->ssl);
-                printSSLState(cstate->ssl);
-                n = SSL_do_handshake(cstate->ssl);
-                printSSLState(cstate->ssl);
+                // printSSLState(cstate->ssl);
+                n = SSL_connect(cstate->ssl);
+                // printSSLState(cstate->ssl);
                 status = get_sslstatus(cstate->ssl, n);
 
                 /* Did SSL request to write bytes? */
@@ -281,7 +332,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     context_t *dw_est_ctx = newContext(c->line);
                     dw_est_ctx->est = true;
                     dw_est_ctx->src_io = c->src_io;
-
                     self->dw->downStream(self->dw, dw_est_ctx);
                     if (!ISALIVE(c))
                     {
@@ -290,65 +340,62 @@ static inline void downStream(tunnel_t *self, context_t *c)
                         destroyContext(c);
                         return;
                     }
+                    flush_write_queue(self, c);
+                    // queue is flushed and we are done
+                    DISCARD_CONTEXT(c);
+                    destroyContext(c);
+                    return;
                 }
+            }
+
+            /* The encrypted data is now in the input bio so now we can perform actual
+             * read of unencrypted data. */
+            // shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+            // shiftl(buf, 8192 / 2);
+            // setLen(buf, 0);
+
+            do
+            {
+                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                shiftl(buf, 8192 / 2);
+                setLen(buf, 0);
+                size_t avail = rCap(buf);
+                n = SSL_read(cstate->ssl, rawBuf(buf) + bufLen(buf), avail);
+
+                if (n > 0)
+                {
+                    setLen(buf, n);
+                    context_t *data_ctx = newContext(c->line);
+                    data_ctx->payload = buf;
+                    data_ctx->src_io = c->src_io;
+
+                    self->dw->downStream(self->dw, data_ctx);
+                    if (!ISALIVE(c))
+                    {
+                        DISCARD_CONTEXT(c);
+                        destroyContext(c);
+                        return;
+                    }
+                }
+
+            } while (n > 0);
+
+            status = get_sslstatus(cstate->ssl, n);
+
+            if (status == SSLSTATUS_FAIL)
+            {
+                DISCARD_CONTEXT(c);
+                goto failed;
             }
         }
     }
     else
     {
-        if (c->est)
-        {
-            int n;
-            enum sslstatus status;
-
-            if (!cstate->handshake_completed)
-            {
-                printSSLState(cstate->ssl);
-                n = SSL_do_handshake(cstate->ssl);
-                printSSLState(cstate->ssl);
-
-                status = get_sslstatus(cstate->ssl, n);
-
-                /* Did SSL request to write bytes? */
-                if (status == SSLSTATUS_WANT_IO)
-                    do
-                    {
-                        shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-                        size_t avail = rCap(buf);
-                        n = BIO_read(cstate->wbio, rawBuf(buf), avail);
-                        if (n > 0)
-                        {
-                            setLen(buf, n);
-                            context_t *handshake_req = newContext(c->line);
-                            handshake_req->payload = buf;
-                            self->up->upStream(self->up, handshake_req);
-                            if (!ISALIVE(c))
-                            {
-                                destroyContext(c);
-                                return;
-                            }
-                        }
-                        else if (!BIO_should_retry(cstate->rbio))
-                        {
-                            // If BIO_should_retry() is false then the cause is an error condition.
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
-                            goto failed;
-                        }
-                        else
-                        {
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
-                        }
-                    } while (n > 0);
-
-                if (status == SSLSTATUS_FAIL)
-                    goto failed;
-            }
-        }
-        else if (c->fin)
+        if (c->fin)
         {
             cleanup(self, c);
-            self->dw->downStream(self->dw, c);
         }
+        self->dw->downStream(self->dw, c);
     }
 
     return;
@@ -433,23 +480,22 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     free(ssl_param);
     // SSL_CTX_load_verify_store(state->ssl_context,cacert_bytes);
 
-
     if (state->ssl_context == NULL)
     {
         LOGF("OpenSSLClient: Could not create ssl context");
         return NULL;
     }
-    SSL_CTX_load_verify_file(state->ssl_context,"cacert.pem");
-    // size_t alpn_len = strlen(state->alpn);
-    // struct
-    // {
-    //     uint8_t len;
-    //     char alpn_data[];
-    // } *ossl_alpn = malloc(1 + alpn_len);
-    // ossl_alpn->len = alpn_len;
-    // memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    // SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1);
-    // free(ossl_alpn);
+
+    size_t alpn_len = strlen(state->alpn);
+    struct
+    {
+        uint8_t len;
+        char alpn_data[];
+    } *ossl_alpn = malloc(1 + alpn_len);
+    ossl_alpn->len = alpn_len;
+    memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
+    SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1);
+    free(ossl_alpn);
 
     tunnel_t *t = newTunnel();
     t->state = state;

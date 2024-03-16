@@ -16,7 +16,6 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
-
 typedef struct oss_server_state_s
 {
 
@@ -71,7 +70,7 @@ static int on_alpn_select(SSL *ssl,
     while (offset < inlen)
     {
         LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        if (in[offset] == 2 && http_level < 2)
+        if (in[offset] == 2 && http_level < 2 && false)
         {
             if (strncmp(&(in[1 + offset]), "h2", 2) == 0)
             {
@@ -80,7 +79,7 @@ static int on_alpn_select(SSL *ssl,
                 *outlen = in[0 + offset];
             }
         }
-        else if (in[offset] == 8 && http_level < 1 && false)
+        else if (in[offset] == 8 && http_level < 1)
         {
             if (strncmp(&(in[1 + offset]), "http/1.1", 8) == 0)
             {
@@ -143,8 +142,6 @@ static void cleanup(tunnel_t *self, context_t *c)
         CSTATE_MUT(c) = NULL;
     }
 }
-
-
 
 static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
 {
@@ -332,44 +329,38 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             /* The encrypted data is now in the input bio so now we can perform actual
              * read of unencrypted data. */
-            shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-            shiftl(buf, 8192 / 2);
-            setLen(buf, 0);
+
             do
             {
-                size_t avail = rCap(buf) - bufLen(buf);
+                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                shiftl(buf, 8192 / 2);
+                setLen(buf, 0);
+                size_t avail = rCap(buf);
                 n = SSL_read(cstate->ssl, rawBuf(buf) + bufLen(buf), avail);
+
                 if (n > 0)
                 {
-                    setLen(buf, bufLen(buf) + n);
+                    setLen(buf, n);
+                    context_t *data_ctx = newContext(c->line);
+                    data_ctx->payload = buf;
+                    data_ctx->src_io = c->src_io;
+                    if (!(cstate->first_sent))
+                    {
+                        data_ctx->first = true;
+                        cstate->first_sent = true;
+                    }
+                    self->up->upStream(self->up, data_ctx);
+                    if (!ISALIVE(c))
+                    {
+                        DISCARD_CONTEXT(c);
+                        destroyContext(c);
+                        return;
+                    }
                 }
 
             } while (n > 0);
 
             status = get_sslstatus(cstate->ssl, n);
-
-            if (bufLen(buf) > 0)
-            {
-                context_t *up_ctx = newContext(c->line);
-                up_ctx->payload = buf;
-                up_ctx->src_io = c->src_io;
-                if (!(cstate->first_sent))
-                {
-                    up_ctx->first = true;
-                    cstate->first_sent = true;
-                }
-                self->up->upStream(self->up, up_ctx);
-                if (!ISALIVE(c))
-                {
-                    DISCARD_CONTEXT(c);
-                    destroyContext(c);
-                    return;
-                }
-            }
-            else
-            {
-                reuseBuffer(buffer_pools[c->line->tid], buf);
-            }
 
             /* Did SSL request to write bytes? This can happen if peer has requested SSL
              * renegotiation. */
@@ -482,7 +473,6 @@ disconnect:
 static inline void downStream(tunnel_t *self, context_t *c)
 {
     oss_server_con_state_t *cstate = CSTATE(c);
-
 
     if (c->payload != NULL)
     {
@@ -610,9 +600,6 @@ static void openSSLPacketDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
-
-
-
 
 tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 {
