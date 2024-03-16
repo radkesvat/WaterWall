@@ -21,7 +21,7 @@ int main(int argc, char **argv)
     char *core_file_content = readFile(CORE_FILE);
     if (core_file_content == NULL)
     {
-        fprintf(stderr, "Could not read core file \"%s\" ", CORE_FILE);
+        fprintf(stderr, "Could not read core file \"%s\" \n", CORE_FILE);
         exit(1);
     }
     parseCoreSettings(core_file_content);
