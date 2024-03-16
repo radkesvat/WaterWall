@@ -45,7 +45,7 @@ shift_buffer_t *bufferStreamRead(size_t bytes, buffer_stream_t *self)
         return NULL;
     self->size -= bytes;
 
-    shift_buffer_t *result = NULL;
+    shift_buffer_t *result = queue_pull_front(&self->q);
     size_t available = bufLen(result);
     if (available > bytes)
     {
