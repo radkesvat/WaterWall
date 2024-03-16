@@ -88,7 +88,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
 
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
 
-            hloop_t *loop = hevent_loop(c->src_io);
+            hloop_t *loop = loops[c->line->tid];
 
             // udp init packet dose not set target addr
             sockaddr_u host_addr = {0};

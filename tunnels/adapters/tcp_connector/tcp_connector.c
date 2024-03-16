@@ -247,7 +247,7 @@ void tcpConnectorUpStream(tunnel_t *self, context_t *c)
                 free(final_ctx.domain);
             }
 
-            hloop_t *loop = hevent_loop(c->src_io);
+            hloop_t *loop = loops[c->line->tid];
             int sockfd = socket(final_ctx.addr.sa.sa_family, SOCK_STREAM, 0);
             if (sockfd < 0)
             {
