@@ -304,15 +304,10 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     if (bufferStreamLen(bstream) < full_len)
         return true;
 
-    shift_buffer_t *payload = popBuffer(buffer_pools[line->tid]);
-    setLen(payload, full_len);
-    bool suc = bufferStreamRead(rawBuf(payload), full_len, bstream);
-    assert(suc);
-
     context_t *c = newContext(line);
     socket_context_t *dest = &(c->dest_ctx);
     c->src_io = src_io;
-    c->payload = payload;
+    c->payload = bufferStreamRead(full_len, bstream);
     dest->addr.sa.sa_family = AF_INET;
 
     shiftr(c->payload, 1);
