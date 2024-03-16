@@ -40,6 +40,16 @@ add_executable(Waterwall core/main.c
 )
 
 
+# download CPM.cmake
+file(
+  DOWNLOAD
+  https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.38.7/CPM.cmake
+  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPM.cmake
+)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPM.cmake)
+
+
+
 
 
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -157,9 +167,6 @@ endif()
 
 
 
-
-# add dependencies
-include(cmake/CPM.cmake)
 
 # komihash
 CPMAddPackage(
