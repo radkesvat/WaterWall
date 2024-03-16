@@ -1,12 +1,10 @@
 
 
 add_library(WolfSSLServer STATIC
-      wolfssl_server.c
-      libwolfssl.a
-                 
+      wolfssl_server.c                 
 )
 
-#cmake is not able to build faster version of wolfssl yet, we used this:
+#cmake is not able to build fastest version of wolfssl yet (because all asm options are not provided in cmakelist), we used this:
 # ./configure  --enable-distro --enable-sp=rsa2048,asm --enable-harden --enable-static --enable-fast-rsa --enable-opensslall --enable-opensslextra --enable-tls13 --disable-oldtls --enable-intelasm	--enable-aesni 
 # generate configure with autoreconf -i
 # Note: before configure, add 
@@ -17,7 +15,8 @@ add_library(WolfSSLServer STATIC
 #ww api
 target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WolfSSLServer ww)
-target_link_libraries(WolfSSLServer libwolfssl.a)
+# todo select correct processor
+target_link_libraries(WolfSSLServer libwolfssl_amd64.a)
 # target_compile_options(ww PUBLIC -fPIC)  
 
 # add dependencies
@@ -49,7 +48,6 @@ CPMAddPackage(
     "WOLFSSL_CRYPT_TESTS OFF"
     "WOLFSSL_EXAMPLES OFF"
     "WOLFSSL_EXAMPLES OFF"
-    
     "BUILD_SHARED_LIBS OFF"
 )
 
