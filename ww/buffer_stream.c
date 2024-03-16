@@ -39,39 +39,59 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
     self->size += bufLen(buf);
 }
 
-bool bufferStreamRead(void *dest, size_t bytes, buffer_stream_t *self)
+shift_buffer_t *bufferStreamRead(size_t bytes, buffer_stream_t *self)
 {
     if (self->size == 0 || self->size < bytes)
-        return false;
+        return NULL;
+    self->size -= bytes;
 
-    size_t wi = 0;
-    while (true)
+    shift_buffer_t *result = NULL;
+    size_t available = bufLen(result);
+    if (available > bytes)
     {
-        shift_buffer_t *b = queue_pull_front(&self->q);
-        size_t blen = bufLen(b);
+        shift_buffer_t *shadow = newShadowShiftBuffer(result);
+        setLen(shadow, bytes);
+        shiftr(result, bytes);
+        queue_push_front(&self->q, result);
+        return shadow;
+    }
+    else if (available == bytes)
+    {
 
-        if (blen > bytes)
+        return result;
+    }
+    else
+    {
+        size_t needed = bytes - available;
+        size_t wi = available;
+        uint8_t *dest = rawBuf(result);
+        setLen(result, bytes);
+
+        while (true)
         {
-            memcpy(dest + wi, rawBuf(b), bytes);
-            shiftr(b, bytes);
-            queue_push_front(&self->q, b);
-            self->size -= bytes;
-            return true;
-        }
-        else if (blen == bytes)
-        {
-            memcpy(dest + wi, rawBuf(b), bytes);
-            self->size -= bytes;
-            reuseBuffer(self->pool, b);
-            return true;
-        }
-        else
-        {
-            memcpy(dest + wi, rawBuf(b), blen);
-            wi += blen;
-            bytes -= blen;
-            self->size -= blen;
-            reuseBuffer(self->pool, b);
+            shift_buffer_t *b = queue_pull_front(&self->q);
+            size_t blen = bufLen(b);
+
+            if (blen > needed)
+            {
+                memcpy(dest + wi, rawBuf(b), needed);
+                shiftr(b, needed);
+                queue_push_front(&self->q, b);
+                return result;
+            }
+            else if (blen == needed)
+            {
+                memcpy(dest + wi, rawBuf(b), needed);
+                reuseBuffer(self->pool, b);
+                return result;
+            }
+            else
+            {
+                memcpy(dest + wi, rawBuf(b), blen);
+                wi += blen;
+                needed -= blen;
+                reuseBuffer(self->pool, b);
+            }
         }
     }
 }
