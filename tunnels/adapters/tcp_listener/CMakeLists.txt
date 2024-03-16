@@ -13,7 +13,7 @@ target_link_libraries(TcpListener ww)
 # target_compile_options(ww PUBLIC -fPIC)  
 
 # add dependencies
-include(../../../cmake/CPM.cmake)
+include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
 CPMAddPackage(

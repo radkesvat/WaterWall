@@ -21,7 +21,8 @@ target_link_libraries(WolfSSLServer libwolfssl.a)
 # target_compile_options(ww PUBLIC -fPIC)  
 
 # add dependencies
-include(../../../cmake/CPM.cmake)
+include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
+
 
 
 CPMAddPackage(

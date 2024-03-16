@@ -18,7 +18,7 @@ target_link_libraries(ProtoBufClient PUBLIC ww)
 target_include_directories(ProtoBufClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/protobuf)
 
 # add dependencies
-include(../../../cmake/CPM.cmake)
+include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
 CPMAddPackage(

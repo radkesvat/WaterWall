@@ -11,7 +11,7 @@ target_link_libraries(Http2Server PUBLIC ww)
 target_include_directories(Http2Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/http2)
 
 # add dependencies
-include(../../../cmake/CPM.cmake)
+include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
 CPMAddPackage(

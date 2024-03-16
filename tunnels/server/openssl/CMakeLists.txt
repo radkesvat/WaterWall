@@ -16,7 +16,7 @@ target_include_directories(OpenSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../.
 
 
 # add dependencies
-include(../../../cmake/CPM.cmake)
+include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
 CPMAddPackage(
