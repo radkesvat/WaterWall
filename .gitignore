@@ -4,6 +4,8 @@ node_modules
 
 /tunnels/shared/protobuf/generator
 /core/texts
+gen.py
+cacert.pem
 
 
 #compiled bins

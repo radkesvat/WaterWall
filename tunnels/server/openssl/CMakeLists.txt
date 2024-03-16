@@ -12,6 +12,9 @@ target_include_directories(OpenSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../.
 target_link_libraries(OpenSSLServer ww)
 # target_compile_options(ww PUBLIC -fPIC)  
 
+target_include_directories(OpenSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
+
+
 # add dependencies
 include(../../../cmake/CPM.cmake)
 

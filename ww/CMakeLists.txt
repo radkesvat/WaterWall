@@ -10,6 +10,7 @@ add_library(ww STATIC
                   config_file.c
                   buffer_pool.c
                   http_def.c
+                  cacert.c
                   utils/utils.c
                   managers/socket_manager.c
                   managers/node_manager.c

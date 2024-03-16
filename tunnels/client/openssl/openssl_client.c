@@ -1,10 +1,10 @@
 #include "openssl_client.h"
 #include "buffer_pool.h"
 #include "buffer_stream.h"
-#include "managers/socket_manager.h"
 #include "managers/node_manager.h"
 #include "loggers/network_logger.h"
 #include "utils/jsonutils.h"
+#include "openssl_globals.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -14,8 +14,6 @@
 #define CSTATE(x) ((oss_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
-
-typedef void *ssl_ctx_t; ///> SSL_CTX
 
 typedef struct oss_client_state_s
 {
@@ -173,7 +171,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
 
             cleanup(self, c);
-            destroyContext(c);  
+            destroyContext(c);
             self->up->upStream(self->up, c);
         }
     }
@@ -198,6 +196,7 @@ failed:
 static inline void downStream(tunnel_t *self, context_t *c)
 {
     oss_client_con_state_t *cstate = CSTATE(c);
+
     if (c->payload != NULL)
     {
         int n;
@@ -221,7 +220,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             if (!cstate->handshake_completed)
             {
+                // n = SSL_connect(cstate->ssl);
+                printSSLState(cstate->ssl);
                 n = SSL_do_handshake(cstate->ssl);
+                printSSLState(cstate->ssl);
                 status = get_sslstatus(cstate->ssl, n);
 
                 /* Did SSL request to write bytes? */
@@ -235,9 +237,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
                         if (n > 0)
                         {
                             setLen(buf, n);
-                            context_t *answer = newContext(c->line);
-                            answer->payload = buf;
-                            self->dw->downStream(self->dw, answer);
+                            context_t *req_cont = newContext(c->line);
+                            req_cont->payload = buf;
+                            self->up->upStream(self->up, req_cont);
                             if (!ISALIVE(c))
                             {
                                 DISCARD_CONTEXT(c);
@@ -260,6 +262,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
                 if (status == SSLSTATUS_FAIL)
                 {
+                    int x = SSL_get_verify_result(cstate->ssl);
+                    printSSLError();
                     DISCARD_CONTEXT(c);
                     goto failed;
                 }
@@ -299,7 +303,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             if (!cstate->handshake_completed)
             {
+                printSSLState(cstate->ssl);
                 n = SSL_do_handshake(cstate->ssl);
+                printSSLState(cstate->ssl);
+
                 status = get_sslstatus(cstate->ssl, n);
 
                 /* Did SSL request to write bytes? */
@@ -377,107 +384,6 @@ static void openSSLPacketDownStream(tunnel_t *self, context_t *c)
     downStream(self, c);
 }
 
-typedef struct
-{
-    const char *crt_file;
-    const char *key_file;
-    const char *ca_file;
-    const char *ca_path;
-    short verify_peer;
-    short endpoint; // HSSL_client / HSSL_CLIENT
-} ssl_ctx_opt_t;
-
-static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
-{
-    static int s_initialized = 0;
-    if (s_initialized == 0)
-    {
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-        SSL_library_init();
-        SSL_load_error_strings();
-#else
-        OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
-#endif
-        s_initialized = 1;
-    }
-
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_CTX *ctx = SSL_CTX_new(SSLv23_method());
-#else
-    SSL_CTX *ctx = SSL_CTX_new(TLS_method());
-#endif
-    if (ctx == NULL)
-        return NULL;
-    int mode = SSL_VERIFY_NONE;
-    const char *ca_file = NULL;
-    const char *ca_path = NULL;
-    if (param)
-    {
-        if (param->ca_file && *param->ca_file)
-        {
-            ca_file = param->ca_file;
-        }
-        if (param->ca_path && *param->ca_path)
-        {
-            ca_path = param->ca_path;
-        }
-        if (ca_file || ca_path)
-        {
-            if (!SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
-            {
-                fprintf(stderr, "ssl ca_file/ca_path failed!\n");
-                goto error;
-            }
-        }
-
-        if (param->crt_file && *param->crt_file)
-        {
-            // openssl forces pem for a chained cert!
-            if (!SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
-            {
-                fprintf(stderr, "ssl crt_file error!\n");
-                goto error;
-            }
-        }
-
-        if (param->key_file && *param->key_file)
-        {
-            if (!SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
-            {
-                fprintf(stderr, "ssl key_file error!\n");
-                goto error;
-            }
-            if (!SSL_CTX_check_private_key(ctx))
-            {
-                fprintf(stderr, "ssl key_file check failed!\n");
-                goto error;
-            }
-        }
-
-        if (param->verify_peer)
-        {
-            mode = SSL_VERIFY_PEER;
-            if (param->endpoint == HSSL_CLIENT)
-            {
-                mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-            }
-        }
-    }
-    if (mode == SSL_VERIFY_PEER && !ca_file && !ca_path)
-    {
-        SSL_CTX_set_default_verify_paths(ctx);
-    }
-
-#ifdef SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER
-    SSL_CTX_set_mode(ctx, SSL_CTX_get_mode(ctx) | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-#endif
-    SSL_CTX_set_verify(ctx, mode, NULL);
-    return ctx;
-error:
-    SSL_CTX_free(ctx);
-    return NULL;
-}
-
 tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 {
     oss_client_state_t *state = malloc(sizeof(oss_client_state_t));
@@ -521,26 +427,29 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     }
 
     ssl_param->verify_peer = state->verify ? 1 : 0; // no mtls
-    ssl_param->endpoint = HSSL_CLIENT;
+    ssl_param->endpoint = SSL_CLIENT;
+    // ssl_param->ca_path = "cacert.pem";
     state->ssl_context = ssl_ctx_new(ssl_param);
     free(ssl_param);
+    // SSL_CTX_load_verify_store(state->ssl_context,cacert_bytes);
+
 
     if (state->ssl_context == NULL)
     {
         LOGF("OpenSSLClient: Could not create ssl context");
         return NULL;
     }
-
-        size_t alpn_len = strlen(state->alpn);
-    struct
-    {
-        uint8_t len;
-        char alpn_data[];
-    } *ossl_alpn = malloc(1 + alpn_len);
-    ossl_alpn->len = alpn_len;
-    memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1);
-    free(ossl_alpn);
+    SSL_CTX_load_verify_file(state->ssl_context,"cacert.pem");
+    // size_t alpn_len = strlen(state->alpn);
+    // struct
+    // {
+    //     uint8_t len;
+    //     char alpn_data[];
+    // } *ossl_alpn = malloc(1 + alpn_len);
+    // ossl_alpn->len = alpn_len;
+    // memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
+    // SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1);
+    // free(ossl_alpn);
 
     tunnel_t *t = newTunnel();
     t->state = state;

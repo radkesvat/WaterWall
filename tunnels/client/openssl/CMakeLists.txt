@@ -12,6 +12,9 @@ target_include_directories(OpenSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../.
 target_link_libraries(OpenSSLClient ww)
 # target_compile_options(ww PUBLIC -fPIC)  
 
+target_include_directories(OpenSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
+
+
 # add dependencies
 include(../../../cmake/CPM.cmake)
 

@@ -1,10 +1,11 @@
 #include "openssl_server.h"
 #include "buffer_pool.h"
 #include "buffer_stream.h"
-#include "managers/socket_manager.h"
 #include "managers/node_manager.h"
 #include "loggers/network_logger.h"
 #include "utils/jsonutils.h"
+#include "openssl_globals.h"
+
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -15,7 +16,6 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
-typedef void *ssl_ctx_t; ///> SSL_CTX
 
 typedef struct oss_server_state_s
 {
@@ -143,6 +143,9 @@ static void cleanup(tunnel_t *self, context_t *c)
         CSTATE_MUT(c) = NULL;
     }
 }
+
+
+
 static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
 {
     struct timer_eventdata *result = malloc(sizeof(struct timer_eventdata));
@@ -283,7 +286,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 if (status == SSLSTATUS_FAIL)
                 {
                     DISCARD_CONTEXT(c); // payload already buffered
-
+                    printSSLError();
                     if (state->fallback != NULL)
                     {
                         cstate->fallback = true;
@@ -479,6 +482,8 @@ disconnect:
 static inline void downStream(tunnel_t *self, context_t *c)
 {
     oss_server_con_state_t *cstate = CSTATE(c);
+
+
     if (c->payload != NULL)
     {
         // self->dw->downStream(self->dw, ctx);
@@ -606,106 +611,8 @@ static void openSSLPacketDownStream(tunnel_t *self, context_t *c)
     downStream(self, c);
 }
 
-typedef struct
-{
-    const char *crt_file;
-    const char *key_file;
-    const char *ca_file;
-    const char *ca_path;
-    short verify_peer;
-    short endpoint; // HSSL_SERVER / HSSL_CLIENT
-} ssl_ctx_opt_t;
 
-static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
-{
-    static int s_initialized = 0;
-    if (s_initialized == 0)
-    {
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-        SSL_library_init();
-        SSL_load_error_strings();
-#else
-        OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
-#endif
-        s_initialized = 1;
-    }
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_CTX *ctx = SSL_CTX_new(SSLv23_method());
-#else
-    SSL_CTX *ctx = SSL_CTX_new(TLS_method());
-#endif
-    if (ctx == NULL)
-        return NULL;
-    int mode = SSL_VERIFY_NONE;
-    const char *ca_file = NULL;
-    const char *ca_path = NULL;
-    if (param)
-    {
-        if (param->ca_file && *param->ca_file)
-        {
-            ca_file = param->ca_file;
-        }
-        if (param->ca_path && *param->ca_path)
-        {
-            ca_path = param->ca_path;
-        }
-        if (ca_file || ca_path)
-        {
-            if (!SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
-            {
-                fprintf(stderr, "ssl ca_file/ca_path failed!\n");
-                goto error;
-            }
-        }
-
-        if (param->crt_file && *param->crt_file)
-        {
-            // openssl forces pem for a chained cert!
-            if (!SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
-            {
-                fprintf(stderr, "ssl crt_file error!\n");
-                goto error;
-            }
-        }
-
-        if (param->key_file && *param->key_file)
-        {
-            if (!SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
-            {
-                fprintf(stderr, "ssl key_file error!\n");
-                goto error;
-            }
-            if (!SSL_CTX_check_private_key(ctx))
-            {
-                fprintf(stderr, "ssl key_file check failed!\n");
-                goto error;
-            }
-        }
-
-        if (param->verify_peer)
-        {
-            mode = SSL_VERIFY_PEER;
-            if (param->endpoint == HSSL_SERVER)
-            {
-                mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
-            }
-        }
-    }
-    if (mode == SSL_VERIFY_PEER && !ca_file && !ca_path)
-    {
-        SSL_CTX_set_default_verify_paths(ctx);
-    }
-
-#ifdef SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER
-    SSL_CTX_set_mode(ctx, SSL_CTX_get_mode(ctx) | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-#endif
-    SSL_CTX_set_verify(ctx, mode, NULL);
-    return ctx;
-error:
-    SSL_CTX_free(ctx);
-    return NULL;
-}
 
 tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 {
@@ -778,7 +685,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     free(fallback_node);
 
     ssl_param->verify_peer = 0; // no mtls
-    ssl_param->endpoint = HSSL_SERVER;
+    ssl_param->endpoint = SSL_SERVER;
     state->ssl_context = ssl_ctx_new(ssl_param);
     // int brotli_alg = TLSEXT_comp_cert_brotli;
     // SSL_set1_cert_comp_preference(state->ssl_context,&brotli_alg,1);
