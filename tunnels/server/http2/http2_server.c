@@ -19,16 +19,18 @@ typedef struct http2_server_state_s
 
 } http2_server_state_t;
 
-typedef struct http2_stream_s
+typedef struct http2_server_child_con_state_s
 {
-    struct http2_stream *prev, *next;
+    struct http2_server_child_con_state_s *prev, *next;
     char *request_path;
     int32_t stream_id;
+
+
     line_t *parent;
     line_t *line;
     tunnel_t *tunnel;
 
-} http2_stream_t;
+} http2_server_child_con_state_t;
 
 typedef struct http2_server_con_state_s
 {
@@ -47,7 +49,7 @@ typedef struct http2_server_con_state_s
     // since nghttp2 uses callbacks
     tunnel_t *tunnel;
     line_t *line;
-    http2_stream_t root;
+    http2_server_child_con_state_t root;
 
 } http2_server_con_state_t;
 
@@ -61,7 +63,7 @@ static void cleanup(http2_server_con_state_t *cstate)
 }
 
 static void add_stream(http2_server_con_state_t *cstate,
-                       http2_stream_t *stream)
+                       http2_server_child_con_state_t *stream)
 {
     stream->next = cstate->root.next;
     cstate->root.next = stream;
@@ -72,7 +74,7 @@ static void add_stream(http2_server_con_state_t *cstate,
     }
 }
 static void remove_stream(http2_server_con_state_t *cstate,
-                          http2_stream_t *stream)
+                          http2_server_child_con_state_t *stream)
 {
 
     stream->prev->next = stream->next;
@@ -81,21 +83,24 @@ static void remove_stream(http2_server_con_state_t *cstate,
         stream->next->prev = stream->prev;
     }
 }
-http2_stream_t *
+http2_server_child_con_state_t *
 create_http2_stream(http2_server_con_state_t *cstate, line_t *this_line, tunnel_t *target_tun, int32_t stream_id)
 {
-    http2_stream_t *stream;
-    stream = malloc(sizeof(http2_stream_t));
-    memset(stream, 0, sizeof(http2_stream_t));
+    http2_server_child_con_state_t *stream;
+    stream = malloc(sizeof(http2_server_child_con_state_t));
+    memset(stream, 0, sizeof(http2_server_child_con_state_t));
     stream->stream_id = stream_id;
     stream->parent = this_line;
     stream->line = newLine(this_line->tid);
+    stream->line->chains_state[target_tun->chain_index - 1] = stream;
     stream->tunnel = target_tun;
     add_stream(cstate, stream);
     return stream;
 }
-static void delete_http2_stream_data(http2_stream_t *stream)
+static void delete_http2_stream(http2_server_child_con_state_t *stream)
 {
+
+    stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
 
     destroyLine(stream->line);
     if (stream->request_path)
@@ -103,26 +108,26 @@ static void delete_http2_stream_data(http2_stream_t *stream)
     free(stream);
 }
 
-static int on_begin_headers_callback(nghttp2_session *session,
-                                     const nghttp2_frame *frame,
-                                     void *user_data)
+static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
+                                    uint32_t error_code, void *userdata)
 {
+
     if (userdata == NULL)
         return 0;
 
     http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
     tunnel_t *self = cstate->tunnel;
 
-    http2_stream_t *stream;
+    http2_server_child_con_state_t *stream;
+    (void)error_code;
 
-    if (frame->hd.type != NGHTTP2_HEADERS ||
-        frame->headers.cat != NGHTTP2_HCAT_REQUEST)
+    stream = nghttp2_session_get_stream_user_data(cstate->session, stream_id);
+    if (!stream)
     {
         return 0;
     }
-    stream = create_http2_stream(stream,cstate->line, frame->hd.stream_id);
-    nghttp2_session_set_stream_user_data(session, frame->hd.stream_id,
-                                         stream);
+    remove_stream(cstate, stream);
+    delete_http2_stream(stream);
     return 0;
 }
 
@@ -183,6 +188,12 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
         return 0;
     http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
     tunnel_t *self = cstate->tunnel;
+
+    http2_server_child_con_state_t *stream =
+        nghttp2_session_get_stream_user_data(session, stream_id);
+    if (!stream)
+        return 0;
+
     LOGD("on_data_chunk_recv_callback\n");
     LOGD("stream_id=%d length=%d\n", stream_id, (int)len);
     // LOGD("%.*s\n", (int)len, data);
@@ -205,14 +216,10 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     shiftl(buf, lCap(buf) / 1.25); // use some unused space
     setLen(buf, len);
     memcpy(rawBuf(buf), data, len);
-    context_t *up_data = newContext(cstate->line);
-    up_data->payload = buf;
-    if (!cstate->first_sent)
-    {
-        cstate->first_sent = true;
-        up_data->first = true;
-    }
-    self->up->upStream(self->up, up_data);
+    context_t *stream_data = newContext(stream->line);
+    stream_data->payload = buf;
+  
+    stream->tunnel->upStream(stream->tunnel, stream_data);
     // if (hp->parsed->http_cb)
     // {
     //     hp->parsed->http_cb(hp->parsed, HP_BODY, (const char *)data, len);
@@ -260,49 +267,60 @@ static int on_frame_recv_callback(nghttp2_session *session,
     // {
     //     cstate->parsed->http_cb(cstate->parsed, HP_HEADERS_COMPLETE, NULL, 0);
     // }
-    if (frame->hd.stream_id >= cstate->stream_id)
+
+    if (frame->hd.stream_id > cstate->stream_id)
     {
         cstate->stream_id = frame->hd.stream_id;
         cstate->stream_closed = 0;
-        if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)
-        {
-            LOGD("on_stream_closed stream_id=%d\n", cstate->stream_id);
-            cstate->stream_closed = 1;
-            cstate->frame_type_when_stream_closed = frame->hd.type;
-            if (cstate->state == H2_RECV_HEADERS || cstate->state == H2_RECV_DATA)
-            {
-                //  upsteram end
-                {
-                    context_t *fin_ctx = newContext(cstate->line);
-                    fin_ctx->fin = true;
-                    self->up->upStream(self->up, fin_ctx);
-                }
 
-                context_t *fail_ctx = newContext(cstate->line);
-                fail_ctx->fin = true;
-                cleanup(cstate);
-                self->dw->downStream(self->dw, fail_ctx);
-                return -1;
-
-                //  if (cstate->parsed->http_cb)
-                //  {
-                //      cstate->parsed->http_cb(cstate->parsed, HP_MESSAGE_COMPLETE, NULL, 0);
-                //  }
-            }
-        }
-        else
+        if (frame->hd.type != NGHTTP2_HEADERS ||
+            frame->headers.cat != NGHTTP2_HCAT_REQUEST)
         {
-            cstate->init_sent = true;
-            context_t *init_ctx = newContext(cstate->line);
-            init_ctx->init = true;
-            self->up->upStream(self->up, init_ctx);
+            return 0;
         }
+        http2_server_child_con_state_t *stream = create_http2_stream(cstate, cstate->line, self->up, frame->hd.stream_id);
+        nghttp2_session_set_stream_user_data(session, frame->hd.stream_id,
+                                             stream);
+        context_t *init_ctx = newContext(stream->line);
+        init_ctx->init = true;
+        stream->tunnel->upStream(stream->tunnel, init_ctx);
+
+        // if (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)
+        // {
+        //     LOGD("on_stream_closed stream_id=%d\n", cstate->stream_id);
+
+        //     cstate->stream_closed = 1;
+        //     cstate->frame_type_when_stream_closed = frame->hd.type;
+        //     if (cstate->state == H2_RECV_HEADERS || cstate->state == H2_RECV_DATA)
+        //     {
+        //         // a stream has finished
+        //         // nghttp will call the callback
+
+        //         // //   upsteram end
+        //         // {
+        //         //     context_t *fin_ctx = newContext(cstate->line);
+        //         //     fin_ctx->fin = true;
+        //         //     self->up->upStream(self->up, fin_ctx);
+        //         // }
+
+        //         // context_t *fail_ctx = newContext(cstate->line);
+        //         // fail_ctx->fin = true;
+        //         // cleanup(cstate);
+        //         // self->dw->downStream(self->dw, fail_ctx);
+        //         // return -1;
+
+        //         //  if (cstate->parsed->http_cb)
+        //         //  {
+        //         //      cstate->parsed->http_cb(cstate->parsed, HP_MESSAGE_COMPLETE, NULL, 0);
+        //         //  }
+        //     }
+        // }
     }
 
     return 0;
 }
 
-static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
+static bool trySendResponse(tunnel_t *self, line_t *line, http2_server_child_con_state_t *stream, shift_buffer_t **buf)
 {
     // HTTP2_MAGIC,HTTP2_SETTINGS,HTTP2_HEADERS
     http2_server_con_state_t *cstate = ((http2_server_con_state_t *)(((line->chains_state)[self->chain_index])));
@@ -373,14 +391,14 @@ static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
         framehd.length = bufLen(*buf);
         framehd.type = HTTP2_DATA;
         framehd.flags = flags;
-        framehd.stream_id = cstate->stream_id;
+        framehd.stream_id = stream->stream_id;
         shiftl(*buf, HTTP2_FRAME_HDLEN);
         http2_frame_hd_pack(&framehd, rawBuf(*buf));
         context_t *answer = newContext(line);
         answer->payload = *buf;
         self->dw->downStream(self->dw, answer);
 
-        return true;
+        goto send_done;
     }
     else if (cstate->state == H2_SEND_DATA)
     {
@@ -440,7 +458,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             self->dw->downStream(self->dw, fail_ctx);
             return;
         }
-        while (trySendResponse(self, c->line, NULL))
+        while (trySendResponse(self, c->line, NULL, NULL))
             ;
         destroyContext(c);
     }
@@ -479,9 +497,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
+    http2_server_child_con_state_t *stream = (http2_server_child_con_state_t *)CSTATE(c);
+    http2_server_con_state_t *cstate = stream->parent->chains_state[self->chain_index];
+
     if (c->payload != NULL)
     {
-        http2_server_con_state_t *cstate = CSTATE(c);
         if (!cstate->h2_headers_sent)
         {
             cstate->h2_headers_sent = true;
@@ -509,7 +529,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
         shift_buffer_t *buf = c->payload;
         c->payload = NULL;
-        while (trySendResponse(self, c->line, &buf))
+        while (trySendResponse(self, cstate->line, stream, &buf))
             ;
         assert(buf == NULL);
         destroyContext(c);
@@ -517,8 +537,26 @@ static inline void downStream(tunnel_t *self, context_t *c)
     else
     {
         if (c->fin)
-            cleanup(CSTATE(c));
-        self->dw->downStream(self->dw, c);
+        {
+            remove_stream(cstate, stream);
+            delete_http2_stream(stream);
+            if (nghttp2_session_want_read(cstate->session) == 0 &&
+                nghttp2_session_want_write(cstate->session) == 0)
+            {
+                context_t *fin_ctx = newContext(stream->parent);
+                fin_ctx->fin = true;
+                cleanup(cstate);
+                self->dw->downStream(self->dw, fin_ctx);
+            }
+
+            destroyContext(c);
+            return;
+        }
+        context_t *main_line_ctx = newContext(stream->parent);
+        *main_line_ctx = *c;
+        main_line_ctx->line = stream->parent;
+        destroyContext(c);
+        self->dw->downStream(self->dw, main_line_ctx);
     }
 }
 
