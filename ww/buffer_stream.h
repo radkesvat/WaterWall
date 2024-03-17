@@ -9,7 +9,7 @@ void destroyBufferStream(buffer_stream_t *self);
 
 void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf);
 
-shift_buffer_t *bufferStreamRead(size_t bytes, buffer_stream_t *self);
+shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes);
 
 uint8_t bufferStreamReadByteAt(buffer_stream_t *self, size_t at);
 

@@ -307,7 +307,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     context_t *c = newContext(line);
     socket_context_t *dest = &(c->dest_ctx);
     c->src_io = src_io;
-    c->payload = bufferStreamRead(full_len, bstream);
+    c->payload = bufferStreamRead(bstream,full_len );
     dest->addr.sa.sa_family = AF_INET;
 
     shiftr(c->payload, 1);

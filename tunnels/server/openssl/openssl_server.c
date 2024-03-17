@@ -186,7 +186,7 @@ static void fallback_write(tunnel_t *self, context_t *c)
         cstate->fallback_first_sent = true;
     }
  
-    c->payload = bufferStreamRead(record_len, cstate->fallback_buf);
+    c->payload = bufferStreamRead(cstate->fallback_buf, record_len);
     state->fallback->upStream(state->fallback, c);
 }
 static void on_fallback_timer(htimer_t *timer)

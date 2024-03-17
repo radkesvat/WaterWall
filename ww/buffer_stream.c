@@ -39,7 +39,7 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
     self->size += bufLen(buf);
 }
 
-shift_buffer_t *bufferStreamRead(size_t bytes, buffer_stream_t *self)
+shift_buffer_t *bufferStreamRead(buffer_stream_t *self,size_t bytes )
 {
     if (self->size == 0 || self->size < bytes)
         return NULL;
