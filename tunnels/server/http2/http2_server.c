@@ -19,6 +19,17 @@ typedef struct http2_server_state_s
 
 } http2_server_state_t;
 
+typedef struct http2_stream_s
+{
+    struct http2_stream *prev, *next;
+    char *request_path;
+    int32_t stream_id;
+    line_t *parent;
+    line_t *line;
+    tunnel_t *tunnel;
+
+} http2_stream_t;
+
 typedef struct http2_server_con_state_s
 {
     bool init_sent;
@@ -33,20 +44,86 @@ typedef struct http2_server_con_state_s
     int frame_type_when_stream_closed;
     enum http_content_type content_type;
 
-
     // since nghttp2 uses callbacks
-    tunnel_t *_self;
+    tunnel_t *tunnel;
     line_t *line;
+    http2_stream_t root;
 
 } http2_server_con_state_t;
 
 static void cleanup(http2_server_con_state_t *cstate)
 {
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
     nghttp2_session_set_user_data(cstate->session, NULL);
     nghttp2_session_del(cstate->session);
     cstate->line->chains_state[self->chain_index] = NULL;
     free(cstate);
+}
+
+static void add_stream(http2_server_con_state_t *cstate,
+                       http2_stream_t *stream)
+{
+    stream->next = cstate->root.next;
+    cstate->root.next = stream;
+    stream->prev = &cstate->root;
+    if (stream->next)
+    {
+        stream->next->prev = stream;
+    }
+}
+static void remove_stream(http2_server_con_state_t *cstate,
+                          http2_stream_t *stream)
+{
+
+    stream->prev->next = stream->next;
+    if (stream->next)
+    {
+        stream->next->prev = stream->prev;
+    }
+}
+http2_stream_t *
+create_http2_stream(http2_server_con_state_t *cstate, line_t *this_line, tunnel_t *target_tun, int32_t stream_id)
+{
+    http2_stream_t *stream;
+    stream = malloc(sizeof(http2_stream_t));
+    memset(stream, 0, sizeof(http2_stream_t));
+    stream->stream_id = stream_id;
+    stream->parent = this_line;
+    stream->line = newLine(this_line->tid);
+    stream->tunnel = target_tun;
+    add_stream(cstate, stream);
+    return stream;
+}
+static void delete_http2_stream_data(http2_stream_t *stream)
+{
+
+    destroyLine(stream->line);
+    if (stream->request_path)
+        free(stream->request_path);
+    free(stream);
+}
+
+static int on_begin_headers_callback(nghttp2_session *session,
+                                     const nghttp2_frame *frame,
+                                     void *user_data)
+{
+    if (userdata == NULL)
+        return 0;
+
+    http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
+    tunnel_t *self = cstate->tunnel;
+
+    http2_stream_t *stream;
+
+    if (frame->hd.type != NGHTTP2_HEADERS ||
+        frame->headers.cat != NGHTTP2_HCAT_REQUEST)
+    {
+        return 0;
+    }
+    stream = create_http2_stream(stream,cstate->line, frame->hd.stream_id);
+    nghttp2_session_set_stream_user_data(session, frame->hd.stream_id,
+                                         stream);
+    return 0;
 }
 
 static int on_header_callback(nghttp2_session *session,
@@ -65,7 +142,7 @@ static int on_header_callback(nghttp2_session *session,
     LOGD("%s: %s\n", name, value);
 
     http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
 
     if (*name == ':')
     {
@@ -105,7 +182,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     if (userdata == NULL)
         return 0;
     http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
     LOGD("on_data_chunk_recv_callback\n");
     LOGD("stream_id=%d length=%d\n", stream_id, (int)len);
     // LOGD("%.*s\n", (int)len, data);
@@ -125,7 +202,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     }
 
     shift_buffer_t *buf = popBuffer(buffer_pools[cstate->line->tid]);
-    shiftl(buf, lCap(buf) / 1.25); // use some unsued space
+    shiftl(buf, lCap(buf) / 1.25); // use some unused space
     setLen(buf, len);
     memcpy(rawBuf(buf), data, len);
     context_t *up_data = newContext(cstate->line);
@@ -156,7 +233,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
     LOGD("on_frame_recv_callback\n");
     print_frame_hd(&frame->hd);
     http2_server_con_state_t *cstate = (http2_server_con_state_t *)userdata;
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
 
     switch (frame->hd.type)
     {
@@ -239,14 +316,31 @@ static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
     if (len != 0)
     {
         shift_buffer_t *send_buf = popBuffer(buffer_pools[line->tid]);
-        shiftl(send_buf, lCap(send_buf) / 1.25); // use some unsued space
+        shiftl(send_buf, lCap(send_buf) / 1.25); // use some unused space
         setLen(send_buf, len);
         memcpy(rawBuf(send_buf), data, len);
         context_t *answer = newContext(line);
         answer->payload = send_buf;
         self->dw->downStream(self->dw, answer);
+
+        if (nghttp2_session_want_read(cstate->session) == 0 &&
+            nghttp2_session_want_write(cstate->session) == 0)
+        {
+            if (buf != NULL && *buf != NULL)
+            {
+                reuseBuffer(buffer_pools[line->tid], *buf);
+                *buf = NULL;
+            }
+            context_t *fin_ctx = newContext(line);
+            fin_ctx->fin = true;
+            cleanup(cstate);
+            self->dw->downStream(self->dw, fin_ctx);
+            return false;
+        }
+
         return true;
     }
+
     if (buf == NULL || *buf == NULL || bufLen(*buf) <= 0)
         return false;
 
@@ -285,7 +379,6 @@ static bool trySendResponse(tunnel_t *self, line_t *line, shift_buffer_t **buf)
         context_t *answer = newContext(line);
         answer->payload = *buf;
         self->dw->downStream(self->dw, answer);
-        *buf = NULL;
 
         return true;
     }
@@ -362,7 +455,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->state = H2_WANT_RECV;
             cstate->stream_id = -1;
             cstate->stream_closed = 0;
-            cstate->_self = self;
+            cstate->tunnel = self;
             cstate->line = c->line;
 
             nghttp2_settings_entry settings[] = {

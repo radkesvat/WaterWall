@@ -127,7 +127,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     }
 
     shift_buffer_t *buf = popBuffer(buffer_pools[cstate->line->tid]);
-    shiftl(buf, lCap(buf) / 1.25); // use some unsued space
+    shiftl(buf, lCap(buf) / 1.25); // use some unused space
     setLen(buf, len);
     memcpy(rawBuf(buf), data, len);
     context_t *up_data = newContext(cstate->line);
@@ -235,7 +235,7 @@ static bool trySendRequest(tunnel_t *self, line_t *line, shift_buffer_t **buf)
     if (len != 0)
     {
         shift_buffer_t *send_buf = popBuffer(buffer_pools[line->tid]);
-        shiftl(send_buf, lCap(send_buf) / 1.25); // use some unsued space
+        shiftl(send_buf, lCap(send_buf) / 1.25); // use some unused space
         setLen(send_buf, len);
         memcpy(rawBuf(send_buf), data, len);
         context_t *answer = newContext(line);
@@ -281,7 +281,6 @@ static bool trySendRequest(tunnel_t *self, line_t *line, shift_buffer_t **buf)
         context_t *answer = newContext(line);
         answer->payload = *buf;
         self->dw->downStream(self->dw, answer);
-        *buf = NULL;
 
         return true;
     }
