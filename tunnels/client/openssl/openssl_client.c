@@ -32,7 +32,6 @@ typedef struct oss_client_con_state_s
     SSL *ssl;
     BIO *rbio;
     BIO *wbio;
-    buffer_pool_t *buffer_pool;
     context_queue_t *queue;
 
 } oss_client_con_state_t;
@@ -171,8 +170,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->rbio = BIO_new(BIO_s_mem());
             cstate->wbio = BIO_new(BIO_s_mem());
             cstate->ssl = SSL_new(state->ssl_context);
-            cstate->buffer_pool = buffer_pools[c->line->tid];
-            cstate->queue = newContextQueue(cstate->buffer_pool);
+            cstate->queue = newContextQueue( buffer_pools[c->line->tid]);
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);

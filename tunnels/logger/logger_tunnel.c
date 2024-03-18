@@ -34,14 +34,20 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             // send back something
             {
+
                 context_t *reply = newContext(c->line);
+                DISCARD_CONTEXT(c);
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
-                sprintf(rawBuf(reply->payload), "%s", "salam");
-                setLen(reply->payload, strlen("salam"));
+                sprintf(rawBuf(reply->payload), "%s", "\n\5salam");
+                setLen(reply->payload, strlen("\n\5salam"));
+                // reply->payload = c->payload;
+                // c->payload = NULL;
                 self->dw->downStream(self->dw, reply);
             }
-            DISCARD_CONTEXT(c);
+            context_t *reply = newContext(c->line);
+            reply->fin = true;
             destroyContext(c);
+            self->dw->downStream(self->dw, reply);
         }
     }
     else
@@ -55,10 +61,22 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
+                context_t *replyx = newContext(c->line);
+                replyx->est = true;
+                self->dw->downStream(self->dw, replyx);
+
                 context_t *reply = newContext(c->line);
-                reply->est = true;
-                destroyContext(c);
+                reply->payload = popBuffer(buffer_pools[c->line->tid]);
+                sprintf(rawBuf(reply->payload), "%s", "\n\5salam");
+                setLen(reply->payload, strlen("\n\5salam"));
+                // reply->payload = c->payload;
+                // c->payload = NULL;
                 self->dw->downStream(self->dw, reply);
+
+                context_t *reply2 = newContext(c->line);
+                reply2->fin = true;
+                destroyContext(c);
+                self->dw->downStream(self->dw, reply2);
             }
         }
         if (c->fin)

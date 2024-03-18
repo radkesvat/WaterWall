@@ -7,44 +7,11 @@
 #include "loggers/network_logger.h"
 #include "helpers.h"
 
-#define STATE(x) ((http2_client_state_t *)((x)->state))
-#define CSTATE(x) ((http2_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
 
-typedef struct http2_client_state_s
-{
-    nghttp2_session_callbacks *cbs;
-
-    char *path;
-    char *host; // authority
-    int host_port;
-    char *scheme;
-    http_method method;
-
-} http2_client_state_t;
-
-typedef struct http2_client_con_state_s
-{
-    bool established;
-
-    nghttp2_session *session;
-    http2_session_state state;
-    int error;
-    int stream_id;
-    int stream_closed;
-    int frame_type_when_stream_closed;
-    enum http_content_type content_type;
-
-    // since nghttp2 uses callbacks
-    tunnel_t *_self;
-    line_t *line;
-
-} http2_client_con_state_t;
 
 static void cleanup(http2_client_con_state_t *cstate)
 {
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
     nghttp2_session_set_user_data(cstate->session, NULL);
     nghttp2_session_del(cstate->session);
     cstate->line->chains_state[self->chain_index] = NULL;
@@ -67,7 +34,7 @@ static int on_header_callback(nghttp2_session *session,
     LOGD("%s: %s\n", name, value);
 
     http2_client_con_state_t *cstate = (http2_client_con_state_t *)userdata;
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
 
     if (*name == ':')
     {
@@ -107,7 +74,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     if (userdata == NULL)
         return 0;
     http2_client_con_state_t *cstate = (http2_client_con_state_t *)userdata;
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
     LOGD("on_data_chunk_recv_callback\n");
     LOGD("stream_id=%d length=%d\n", stream_id, (int)len);
     // LOGD("%.*s\n", (int)len, data);
@@ -153,7 +120,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
     LOGD("on_frame_recv_callback\n");
     print_frame_hd(&frame->hd);
     http2_client_con_state_t *cstate = (http2_client_con_state_t *)userdata;
-    tunnel_t *self = cstate->_self;
+    tunnel_t *self = cstate->tunnel;
 
     switch (frame->hd.type)
     {
@@ -314,7 +281,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         http2_client_con_state_t *cstate = CSTATE(c);
-        assert(cstate->established);
 
         cstate->state = H2_SEND_HEADERS;
 
@@ -335,7 +301,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->state = H2_WANT_RECV;
             cstate->stream_id = -1;
             cstate->stream_closed = 0;
-            cstate->_self = self;
+            cstate->tunnel = self;
             cstate->line = c->line;
 
             nghttp2_settings_entry settings[] = {
@@ -361,7 +327,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 
-        assert(cstate->established);
 
         cstate->state = H2_WANT_RECV;
         size_t len = bufLen(c->payload);
@@ -395,7 +360,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
         {
             char authority_addr[320];
 
-            // cstate->established = true;
             nghttp2_nv nvs[15];
             int nvlen = 0;
             if (cstate->content_type == APPLICATION_GRPC)
