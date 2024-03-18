@@ -142,7 +142,7 @@ static HTHREAD_ROUTINE(accept_thread)
                             continue;
                         ports_overlapped[port_min] = 1;
 
-                        LOGI("SocketManager will watch %s:[%u] (%s)", option.host, port_min, proto_str);
+                        LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
                         filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
 
                         if (filter->listen_io == NULL)
@@ -151,7 +151,7 @@ static HTHREAD_ROUTINE(accept_thread)
                             exit(1);
                         }
 
-                        LOGI("SocketManager will watch %s:[%u - %u] (%s)", option.host, port_min, port_max, proto_str);
+                        LOGI("SocketManager: listening on %s:[%u - %u] (%s)", option.host, port_min, port_max, proto_str);
                     }
                 }
                 else
@@ -160,12 +160,12 @@ static HTHREAD_ROUTINE(accept_thread)
                         continue;
                     ports_overlapped[port_min] = 1;
 
-                    LOGI("SocketManager will watch %s:[%u] (%s)", option.host, port_min, proto_str);
+                    LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
                     filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
 
                     if (filter->listen_io == NULL)
                     {
-                        LOGF("filter->listen_io == NULL");
+                        LOGF("SocketManager: stopping due to null socket handle");
                         exit(1);
                     }
                 }
