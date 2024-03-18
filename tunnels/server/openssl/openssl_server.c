@@ -70,7 +70,7 @@ static int on_alpn_select(SSL *ssl,
     while (offset < inlen)
     {
         LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        if (in[offset] == 2 && http_level < 2 && false)
+        if (in[offset] == 2 && http_level < 2 )
         {
             if (strncmp(&(in[1 + offset]), "h2", 2) == 0)
             {
