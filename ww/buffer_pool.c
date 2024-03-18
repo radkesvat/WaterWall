@@ -75,7 +75,7 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
     reset(b);
     state->available[state->len] = b;
     ++(state->len);
-    if ((state->chunks > 1) && (state->len) > ((state->chunks - 1) * (GBD_MAX_CAP)) + (GBD_MAX_CAP / 2))
+    if ((state->chunks > 1) && (state->len) > ((GBD_MAX_CAP)) + (GBD_MAX_CAP / 2))
     {
         giveMemBackToOs(state);
     }
