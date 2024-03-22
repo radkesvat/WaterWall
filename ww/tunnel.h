@@ -52,7 +52,7 @@ typedef struct line_s
 typedef struct context_s
 {
     hio_t *src_io;
-    line_t* line;
+    line_t *line;
     shift_buffer_t *payload;
     socket_context_t dest_ctx;
 
@@ -64,7 +64,6 @@ typedef struct context_s
     bool fin;
 
 } context_t;
-
 
 typedef struct tunnel_s
 {
@@ -83,17 +82,77 @@ typedef struct tunnel_s
 
 tunnel_t *newTunnel();
 
-line_t *newLine(size_t tid);
-void destroyLine(line_t *con);
-
-context_t *newContext(line_t *line);
-void destroyContext(context_t *c);
-
 void destroyTunnel(tunnel_t *self);
-
 void chain(tunnel_t *self, tunnel_t *next);
-
 void defaultUpStream(tunnel_t *self, context_t *c);
 void defaultPacketUpStream(tunnel_t *self, context_t *c);
 void defaultDownStream(tunnel_t *self, context_t *c);
 void defaultPacketDownStream(tunnel_t *self, context_t *c);
+
+extern struct hloop_s **loops; // ww.h runtime api
+inline line_t *newLine(size_t tid)
+{
+    size_t size = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
+    line_t *result = malloc(size);
+    memset(result, 0, size);
+    result->tid = tid;
+    result->refc = 1;
+    result->loop = loops[tid];
+    return result;
+}
+inline void destroyLine(line_t *l)
+{
+    l->refc -= 1;
+    // check line
+    if (l->refc > 0)
+        return;
+
+#ifdef DEBUG
+    // there should not be any conn-state alive at this point
+    for (size_t i = 0; i < MAX_CHAIN_LEN; i++)
+    {
+        assert(l->chains_state[i] == NULL);
+    }
+#endif
+
+    free(l);
+}
+inline void destroyContext(context_t *c)
+{
+    assert(c->payload == NULL);
+    if (c->dest_ctx.domain != NULL)
+        free(c->dest_ctx.domain);
+    destroyLine(c->line);
+
+    free(c);
+}
+inline context_t *newContext(line_t *line)
+{
+    context_t *new_ctx = malloc(sizeof(context_t));
+    memset(new_ctx, 0, sizeof(context_t));
+    new_ctx->line = line;
+    line->refc += 1;
+    return new_ctx;
+}
+inline context_t *copyContext(context_t *c)
+{
+    c->line->refc += 1;
+    context_t *new_ctx = malloc(sizeof(context_t));
+    *new_ctx = *c;
+    c->dest_ctx.domain = NULL; // only move
+
+    return new_ctx;
+}
+inline context_t *newFinContext(line_t *line)
+{
+    context_t *c = newContext(line);
+    c->fin = true;
+    return c;
+}
+
+inline context_t *newInitContext(line_t *line)
+{
+    context_t *c = newContext(line);
+    c->init = true;
+    return c;
+}
