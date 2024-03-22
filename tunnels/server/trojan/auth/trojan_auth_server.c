@@ -122,8 +122,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     }
                     LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
                     cstate->authenticated = true;
-                    context_t *init_ctx = newContext(c->line);
-                    init_ctx->init = true;
+                    context_t *init_ctx = newInitContext(c->line);
                     init_ctx->src_io = c->src_io;
                     cstate->init_sent = true;
                     self->up->upStream(self->up, init_ctx);
@@ -181,8 +180,7 @@ disconnect:
     DISCARD_CONTEXT(c);
     free(CSTATE(c));
     CSTATE_MUT(c) = NULL;
-    context_t *reply = newContext(c->line);
-    reply->fin = true;
+    context_t *reply = newFinContext(c->line);
     destroyContext(c);
     self->dw->downStream(self->dw, reply);
     return;
@@ -190,8 +188,7 @@ fallback:
     trojan_auth_server_con_state_t *cstate = CSTATE(c);
     if (!cstate->init_sent)
     {
-        context_t *init_ctx = newContext(c->line);
-        init_ctx->init = true;
+        context_t *init_ctx = newInitContext(c->line);
         init_ctx->src_io = c->src_io;
         cstate->init_sent = true;
 

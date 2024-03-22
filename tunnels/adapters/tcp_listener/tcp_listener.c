@@ -157,7 +157,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         if (cstate->write_paused)
-        {
+        { 
             if (c->src_io)
                 hio_read_stop(c->src_io);
             contextQueuePush(cstate->queue, c);
@@ -265,8 +265,7 @@ static void on_close(hio_t *io)
     {
         tunnel_t *self = (cstate)->tunnel;
         line_t *line = (cstate)->line;
-        context_t *context = newContext(line);
-        context->fin = true;
+        context_t *context = newFinContext(line);
         context->src_io = io;
         self->upStream(self, context);
     }
@@ -289,10 +288,8 @@ void onInboundConnected(hevent_t *ev)
     tunnel_t *self = data->tunnel;
     free(data);
     line_t *line = newLine(tid);
-
     tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
     cstate->line = line;
-    cstate->line->loop = loop;
     cstate->buffer_pool = buffer_pools[tid];
     cstate->queue = newContextQueue(cstate->buffer_pool);
     cstate->io = io;
@@ -311,8 +308,7 @@ void onInboundConnected(hevent_t *ev)
     // hio_setcb_write(io, on_write_complete); not required here
 
     // send the init packet
-    context_t *context = newContext(line);
-    context->init = true;
+    context_t *context = newInitContext(line);
     context->src_io = io;
     self->upStream(self, context);
     if ((line->chains_state)[0] == NULL)

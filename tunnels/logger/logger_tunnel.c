@@ -44,8 +44,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 // c->payload = NULL;
                 self->dw->downStream(self->dw, reply);
             }
-            context_t *reply = newContext(c->line);
-            reply->fin = true;
+            context_t *reply = newFinContext(c->line);
             destroyContext(c);
             self->dw->downStream(self->dw, reply);
         }
@@ -73,8 +72,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 // c->payload = NULL;
                 self->dw->downStream(self->dw, reply);
 
-                context_t *reply2 = newContext(c->line);
-                reply2->fin = true;
+                context_t *reply2 = newFinContext(c->line);
                 destroyContext(c);
                 self->dw->downStream(self->dw, reply2);
             }

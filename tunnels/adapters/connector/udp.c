@@ -60,8 +60,6 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             goto fail;
         }
 
-
-
         size_t nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
         if (nwrite >= 0 && nwrite < bytes)
         {
@@ -188,10 +186,8 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
     }
     return;
 fail:
-    context_t *fail_context = newContext(c->line);
-    fail_context->fin = true;
+    self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
-    self->dw->downStream(self->dw, fail_context);
 }
 
 void connectorPacketDownStream(tunnel_t *self, context_t *c)

@@ -107,8 +107,7 @@ static void on_close(hio_t *io)
     {
         tunnel_t *self = (cstate)->tunnel;
         line_t *line = (cstate)->line;
-        context_t *context = newContext(line);
-        context->fin = true;
+        context_t *context = newFinContext(line);
         context->src_io = io;
         self->downStream(self, context);
     }
@@ -303,10 +302,8 @@ void connectorUpStream(tunnel_t *self, context_t *c)
     }
     return;
 fail:
-    context_t *fail_context = newContext(c->line);
-    fail_context->fin = true;
+    self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
-    self->dw->downStream(self->dw, fail_context);
 }
 void connectorDownStream(tunnel_t *self, context_t *c)
 {

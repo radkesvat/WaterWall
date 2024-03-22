@@ -207,8 +207,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 {
                     LOGD("Tls handshake complete");
                     cstate->handshake_completed = true;
-                    context_t *up_init_ctx = newContext(c->line);
-                    up_init_ctx->init = true;
+                    context_t *up_init_ctx = newInitContext(c->line);
                     up_init_ctx->src_io = c->src_io;
 
                     self->up->upStream(self->up, up_init_ctx);
@@ -348,13 +347,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
     return;
 
 failed_after_establishment:
-    context_t *fail_context_up = newContext(c->line);
-    fail_context_up->fin = true;
+    context_t *fail_context_up = newFinContext(c->line);
     fail_context_up->src_io = c->src_io;
     self->up->upStream(self->up, fail_context_up);
 failed:
-    context_t *fail_context = newContext(c->line);
-    fail_context->fin = true;
+    context_t *fail_context =newFinContext(c->line);
     fail_context->src_io = NULL;
     cleanup(self, c);
     destroyContext(c);

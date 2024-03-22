@@ -97,18 +97,17 @@ static void on_close(hio_t *io)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *)(hevent_userdata(io));
     if (cstate != NULL)
-        LOGD("Connector received close for FD:%x ",
+        LOGD("TcpConnector received close for FD:%x ",
              (int)hio_fd(io));
     else
-        LOGD("Connector sent close for FD:%x ",
+        LOGD("TcpConnector sent close for FD:%x ",
              (int)hio_fd(io));
 
     if (cstate != NULL)
     {
         tunnel_t *self = (cstate)->tunnel;
         line_t *line = (cstate)->line;
-        context_t *context = newContext(line);
-        context->fin = true;
+        context_t *context = newFinContext(line);
         context->src_io = io;
         self->downStream(self, context);
     }
@@ -302,11 +301,8 @@ void tcpConnectorUpStream(tunnel_t *self, context_t *c)
     }
     return;
 fail:
-    context_t *fail_context = newContext(c->line);
-    fail_context->fin = true;
-
+    self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
-    self->dw->downStream(self->dw, fail_context);
 }
 void tcpConnectorDownStream(tunnel_t *self, context_t *c)
 {
@@ -340,7 +336,6 @@ void tcpConnectorDownStream(tunnel_t *self, context_t *c)
             else
                 hio_setcb_write(cstate->io, on_write_complete);
 
-            
             self->dw->downStream(self->dw, c);
         }
         else if (c->fin)
@@ -363,10 +358,8 @@ void tcpConnectorPacketUpStream(tunnel_t *self, context_t *c)
     {
         DISCARD_CONTEXT(c);
     }
-    context_t *fail_context = newContext(c->line);
-    fail_context->fin = true;
+    self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
-    self->dw->downStream(self->dw, fail_context);
 }
 void tcpConnectorPacketDownStream(tunnel_t *self, context_t *c)
 {

@@ -380,11 +380,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     if (!cstate->init_sent)
     {
 
-        context_t *up_init_ctx = newContext(c->line);
-        up_init_ctx->init = true;
-        up_init_ctx->src_io = c->src_io;
-        up_init_ctx->dest_ctx = c->dest_ctx;
-        c->dest_ctx.domain = NULL; //  domain owned by initctx
+        context_t *up_init_ctx = copyContext(c);
         self->up->packetUpStream(self->up, up_init_ctx);
         if (!ISALIVE(c))
         {
@@ -413,11 +409,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                 if (dest->protocol == IPPROTO_TCP)
                 {
-                    context_t *up_init_ctx = newContext(c->line);
+                    context_t *up_init_ctx = copyContext(c);
                     up_init_ctx->init = true;
-                    up_init_ctx->src_io = c->src_io;
-                    up_init_ctx->dest_ctx = c->dest_ctx;
-                    c->dest_ctx.domain = NULL; //  domain owned by initctx
                     self->up->upStream(self->up, up_init_ctx);
                     if (!ISALIVE(c))
                     {
@@ -462,16 +455,15 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                         if (cstate->init_sent)
                         {
-                            context_t *fin_up = newContext(c->line);
-                            fin_up->fin = true;
+                            context_t *fin_up = newFinContext(c->line);
+
                             self->up->upStream(self->up, fin_up);
                         }
 
                         destroyBufferStream(cstate->udp_buf);
                         free(cstate);
                         CSTATE_MUT(c) = NULL;
-                        context_t *fin_dw = newContext(c->line);
-                        fin_dw->fin = true;
+                        context_t *fin_dw = newFinContext(c->line);
                         destroyContext(c);
                         self->dw->downStream(self->dw, fin_dw);
                     }
@@ -492,8 +484,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 destroyBufferStream(cstate->udp_buf);
                 free(cstate);
                 CSTATE_MUT(c) = NULL;
-                context_t *reply = newContext(c->line);
-                reply->fin = true;
+                context_t *reply = newFinContext(c->line);
                 destroyContext(c);
                 self->dw->downStream(self->dw, reply);
             }

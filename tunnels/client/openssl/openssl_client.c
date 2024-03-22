@@ -64,8 +64,8 @@ static void cleanup(tunnel_t *self, context_t *c)
     oss_client_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
-        SSL_free(cstate->ssl);              /* free the SSL object and its BIO's */
-        destroyContextQueue(cstate->queue); /* free the SSL object and its BIO's */
+        SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
+        destroyContextQueue(cstate->queue);
 
         free(cstate);
         CSTATE_MUT(c) = NULL;
@@ -170,7 +170,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->rbio = BIO_new(BIO_s_mem());
             cstate->wbio = BIO_new(BIO_s_mem());
             cstate->ssl = SSL_new(state->ssl_context);
-            cstate->queue = newContextQueue( buffer_pools[c->line->tid]);
+            cstate->queue = newContextQueue(buffer_pools[c->line->tid]);
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
@@ -229,14 +229,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
     return;
 
 failed:
-    context_t *fail_context_up = newContext(c->line);
-    fail_context_up->fin = true;
+    context_t *fail_context_up = newFinContext(c->line);
     fail_context_up->src_io = c->src_io;
     self->up->upStream(self->up, fail_context_up);
 
-    context_t *fail_context = newContext(c->line);
-    fail_context->fin = true;
-    fail_context->src_io = NULL;
+    context_t *fail_context = newFinContext(c->line);
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
@@ -375,6 +372,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
                         return;
                     }
                 }
+                else
+                {
+                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                }
 
             } while (n > 0);
 
@@ -386,25 +387,28 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 goto failed;
             }
         }
+        // done with socket data
+        DISCARD_CONTEXT(c);
+        destroyContext(c);
     }
     else
     {
         if (c->fin)
         {
             cleanup(self, c);
+            self->dw->downStream(self->dw, c);
         }
-        self->dw->downStream(self->dw, c);
+        else
+            destroyContext(c);
     }
 
     return;
 
 failed:
-    context_t *fail_context_up = newContext(c->line);
-    fail_context_up->fin = true;
+    context_t *fail_context_up = newFinContext(c->line);
     self->up->upStream(self->up, fail_context_up);
 
-    context_t *fail_context = newContext(c->line);
-    fail_context->fin = true;
+    context_t *fail_context = newFinContext(c->line);
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
@@ -492,7 +496,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     } *ossl_alpn = malloc(1 + alpn_len);
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1);
+    SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1 + alpn_len);
     free(ossl_alpn);
 
     tunnel_t *t = newTunnel();
