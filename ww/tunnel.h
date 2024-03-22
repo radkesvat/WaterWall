@@ -156,3 +156,10 @@ inline context_t *newInitContext(line_t *line)
     c->init = true;
     return c;
 }
+inline context_t *switchLine(context_t *c, line_t *line)
+{
+    destroyLine(c->line);
+    line->refc += 1;
+    c->line = line;
+    return c;
+}

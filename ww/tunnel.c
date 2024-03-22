@@ -8,6 +8,7 @@ extern context_t *newContext(line_t *line);
 extern context_t *copyContext(context_t *c);
 extern context_t *newFinContext(line_t *line);
 extern context_t *newInitContext(line_t *line);
+extern context_t *switchLine(context_t *c, line_t *line);
 
 void chain(tunnel_t *from, tunnel_t *to)
 {
