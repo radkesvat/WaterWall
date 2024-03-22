@@ -6,7 +6,7 @@
 #include "grpc_def.h"
 
 #define STATE(x) ((http2_server_state_t *)((x)->state))
-#define CSTATE(x) ((http2_server_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
+#define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
@@ -30,13 +30,6 @@ typedef enum
     H2_RECV_DATA,
 } http2_session_state;
 
-
-typedef struct http2_server_state_s
-{
-    nghttp2_session_callbacks *cbs;
-    tunnel_t *fallback;
-
-} http2_server_state_t;
 
 typedef struct http2_server_child_con_state_s
 {
@@ -63,3 +56,12 @@ typedef struct http2_server_con_state_s
     http2_server_child_con_state_t root;
 
 } http2_server_con_state_t;
+
+
+
+typedef struct http2_server_state_s
+{
+    nghttp2_session_callbacks *cbs;
+    tunnel_t *fallback;
+
+} http2_server_state_t;

@@ -19,7 +19,8 @@ option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE)
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
-option(INCLUDE_PROTOBUF_CLIENT "link ProtoBufConnector staticly to the core"  TRUE)
+option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
+option(INCLUDE_PROTOBUF_CLIENT "link ProtoBufClient staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -97,6 +98,14 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall Http2Server)
 endif()
 
+
+#http2 INCLUDE_HTTP2_CLIENT
+if (INCLUDE_HTTP2_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP2_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/http2)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/http2)
+target_link_libraries(Waterwall Http2Client)
+endif()
 
 #openssl server
 if (INCLUDE_OPENSSL_SERVER)

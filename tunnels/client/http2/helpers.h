@@ -1,63 +1,48 @@
 #pragma once
 
-typedef enum
+#include "types.h"
+
+static nghttp2_nv make_nv(const char *name, const char *value)
 {
-    H2_SEND_MAGIC,
-    H2_SEND_SETTINGS,
-    H2_SEND_PING,
-    H2_SEND_HEADERS,
-    H2_SEND_DATA_FRAME_HD,
-    H2_SEND_DATA,
-    H2_SEND_DONE,
-
-    H2_WANT_SEND,
-    H2_WANT_RECV,
-
-    H2_RECV_SETTINGS,
-    H2_RECV_PING,
-    H2_RECV_HEADERS,
-    H2_RECV_DATA,
-} http2_session_state;
-
-
-
-static nghttp2_nv make_nv(const char* name, const char* value) {
     nghttp2_nv nv;
-    nv.name = (uint8_t*)name;
-    nv.value = (uint8_t*)value;
+    nv.name = (uint8_t *)name;
+    nv.value = (uint8_t *)value;
     nv.namelen = strlen(name);
     nv.valuelen = strlen(value);
     nv.flags = NGHTTP2_NV_FLAG_NONE;
     return nv;
 }
 
-static nghttp2_nv make_nv2(const char* name, const char* value,
-        int namelen, int valuelen) {
+static nghttp2_nv make_nv2(const char *name, const char *value,
+                           int namelen, int valuelen)
+{
     nghttp2_nv nv;
-    nv.name = (uint8_t*)name;
-    nv.value = (uint8_t*)value;
-    nv.namelen = namelen; nv.valuelen = valuelen;
+    nv.name = (uint8_t *)name;
+    nv.value = (uint8_t *)value;
+    nv.namelen = namelen;
+    nv.valuelen = valuelen;
     nv.flags = NGHTTP2_NV_FLAG_NONE;
     return nv;
 }
 
-static void print_frame_hd(const nghttp2_frame_hd* hd) {
+static void print_frame_hd(const nghttp2_frame_hd *hd)
+{
     printd("[frame] length=%d type=%x flags=%x stream_id=%d\n",
-        (int)hd->length, (int)hd->type, (int)hd->flags, hd->stream_id);
+           (int)hd->length, (int)hd->type, (int)hd->flags, hd->stream_id);
 }
 
-static void add_stream(http2_client_con_state_t *cstate,
+static void add_stream(http2_client_con_state_t *con,
                        http2_client_child_con_state_t *stream)
 {
-    stream->next = cstate->root.next;
-    cstate->root.next = stream;
-    stream->prev = &cstate->root;
+    stream->next = con->root.next;
+    con->root.next = stream;
+    stream->prev = &con->root;
     if (stream->next)
     {
         stream->next->prev = stream;
     }
 }
-static void remove_stream(http2_client_con_state_t *cstate,
+static void remove_stream(http2_client_con_state_t *con,
                           http2_client_child_con_state_t *stream)
 {
 
@@ -68,50 +53,132 @@ static void remove_stream(http2_client_con_state_t *cstate,
     }
 }
 
-http2_client_child_con_state_t *
-create_http2_stream(http2_client_con_state_t *cstate, line_t *this_line, tunnel_t *target_tun, int32_t stream_id)
+static http2_client_child_con_state_t *
+create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
 {
-    http2_client_child_con_state_t *stream;
-    stream = malloc(sizeof(http2_client_child_con_state_t));
+    char authority_addr[320];
+    nghttp2_nv nvs[15];
+    int nvlen = 0;
+
+    nvs[nvlen++] = make_nv(":method", http_method_str(con->method));
+    nvs[nvlen++] = make_nv(":path", con->path);
+    nvs[nvlen++] = make_nv(":scheme", con->scheme);
+
+    if (con->host_port == 0 ||
+        con->host_port == DEFAULT_HTTP_PORT ||
+        con->host_port == DEFAULT_HTTPS_PORT)
+    {
+        nvs[nvlen++] = (make_nv(":authority", con->host));
+    }
+    else
+    {
+        snprintf(authority_addr, sizeof(authority_addr), "%s:%d", con->host, con->host_port);
+        nvs[nvlen++] = (make_nv(":authority", authority_addr));
+    }
+    // nvs[nvlen++] = make_nv("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
+    // nvs[nvlen++] = make_nv("Accept-Language", "en,fa;q=0.9,zh-CN;q=0.8,zh;q=0.7");
+    // nvs[nvlen++] = make_nv("Cache-Control", "no-cache");
+    // nvs[nvlen++] = make_nv("Pragma", "no-cache");
+    // nvs[nvlen++] = make_nv("Sec-Ch-Ua", "Chromium\";v=\"122\", Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
+    // nvs[nvlen++] = make_nv("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+    // nvs[nvlen++] = make_nv("Sec-Ch-Ua-Platform", "\"Windows\"");
+
+
+
+
+
+    int flags = NGHTTP2_FLAG_END_HEADERS;
+    con->state = H2_SEND_HEADERS;
+
+    http2_client_child_con_state_t *stream = malloc(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
-    stream->stream_id = stream_id;
-    stream->parent = this_line;
-    stream->line = newLine(this_line->tid);
-    stream->line->chains_state[target_tun->chain_index - 1] = stream;
-    stream->tunnel = target_tun;
-    add_stream(cstate, stream);
+    stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
+    stream->parent = con->line;
+    stream->line = child_line;
+    stream->tunnel = con->tunnel->dw;
+    stream->line->chains_state[stream->tunnel->chain_index + 1] = stream;
+    add_stream(con, stream);
+    nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
+
     return stream;
 }
 static void delete_http2_stream(http2_client_child_con_state_t *stream)
 {
-
-    stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
-
+    stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
     destroyLine(stream->line);
-    if (stream->request_path)
-        free(stream->request_path);
     free(stream);
 }
 
-static void cleanup(http2_client_con_state_t *cstate)
+static void delete_http2_connection(http2_client_con_state_t *con)
 {
-    tunnel_t *self = cstate->tunnel;
+    tunnel_t *self = con->tunnel;
+
+    vec_cons *vector = &(STATE(self)->thread_cpool[con->line->tid].cons);
+    vec_cons_erase_at(vector, vec_cons_find(vector,con));
+
     http2_client_child_con_state_t *stream_i;
-    for (stream_i = cstate->root.next; stream_i;)
+    for (stream_i = con->root.next; stream_i;)
     {
         http2_client_child_con_state_t *next = stream_i->next;
-        context_t *fin_ctx = newContext(stream_i->line);
-        fin_ctx->fin = true;
-        stream_i->tunnel->upStream(stream_i->tunnel, fin_ctx);
+        context_t *fin_ctx = newFinContext(stream_i->line);
         delete_http2_stream(stream_i);
+        stream_i->tunnel->downStream(stream_i->tunnel, fin_ctx);
         stream_i = next;
     }
-
-    nghttp2_session_set_user_data(cstate->session, NULL);
-    nghttp2_session_del(cstate->session);
-    cstate->line->chains_state[self->chain_index] = NULL;
-    free(cstate);
+    nghttp2_session_del(con->session);
+    con->line->chains_state[self->chain_index] = NULL;
+    destroyContextQueue(con->queue);
+    free(con);
 }
 
+static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid)
+{
+    http2_client_state_t *state = STATE(self);
+    http2_client_con_state_t *con = malloc(sizeof(http2_client_con_state_t));
 
+    memset(con, 0, sizeof(http2_client_con_state_t));
+    con->queue = newContextQueue(buffer_pools[tid]);
+    con->path = state->path;
+    con->host = state->host;
+    con->host_port = state->host_port;
+    con->scheme = state->scheme;
+    con->method = HTTP_GET;
+    con->line = newLine(tid);
+    con->tunnel = self;
+    con->line->chains_state[self->chain_index] = con;
+    nghttp2_session_client_new(&con->session, state->cbs, con);
 
+    nghttp2_settings_entry settings[] = {
+        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100}};
+    nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
+
+    con->state = H2_SEND_MAGIC;
+
+    if (state->content_type == APPLICATION_GRPC)
+    {
+        con->method = HTTP_POST;
+    }
+
+    context_t *init_ctx = newInitContext(con->line);
+    self->up->upStream(self->up, init_ctx);
+
+    return con;
+}
+
+static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid)
+{
+    http2_client_state_t *state = STATE(self);
+
+    vec_cons *vector = &(state->thread_cpool[tid].cons);
+    if (vec_cons_size(vector) > 0)
+    {
+        // todo round
+        return (http2_client_con_state_t *)*vec_cons_at(vector, 0);
+    }
+    else
+    {
+        http2_client_con_state_t *con = create_http2_connection(self, tid);
+        vec_cons_push(vector, con);
+        return con;
+    }
+}
