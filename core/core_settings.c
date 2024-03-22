@@ -134,7 +134,7 @@ void parseCoreSettings(char *data_json)
         strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
 
         settings->dns_log_file = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
-        strcpy(settings->log_path, DEFAULT_DNS_LOG_FILE);
+        strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
 
         settings->dns_log_level = malloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
         strcpy(settings->log_path, DEFAULT_DNS_LOG_LEVEL);
