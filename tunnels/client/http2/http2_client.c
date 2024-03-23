@@ -270,14 +270,21 @@ static int on_frame_recv_callback(nghttp2_session *session,
         break;
     }
 
-    if (frame->hd.type != NGHTTP2_HEADERS ||
-        frame->headers.cat != NGHTTP2_HCAT_RESPONSE)
+    if (frame->hd.type & NGHTTP2_HEADERS == NGHTTP2_HEADERS)
     {
-        return 0;
+        if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE)
+        {
+            http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
+            con->handshake_completed = true;
+            flush_write_queue(con);
+        }
+        else if (frame->hd.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM)
+        {
+            http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
+
+            stream->tunnel->downStream(stream->tunnel, newFinContext(stream->line));
+        }
     }
-    http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
-    con->handshake_completed = true;
-    flush_write_queue(con);
 
     return 0;
 }
@@ -337,13 +344,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
             http2_client_con_state_t *con = stream->parent->chains_state[self->chain_index];
             if (con->content_type == APPLICATION_GRPC)
             {
-                sendGrpcFinalData(self, c->line, stream->stream_id);
+                sendGrpcFinalData(self, con->line, stream->stream_id);
             }
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
             delete_http2_stream(stream);
-
 
             if (nghttp2_session_want_read(con->session) == 0 &&
                 nghttp2_session_want_write(con->session) == 0)
@@ -453,6 +459,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     if (getStringFromJsonObject(&content_type_buf, settings, "content-type"))
     {
         state->content_type = http_content_type_enum(content_type_buf);
+        free(content_type_buf);
     }
 
     tunnel_t *t = newTunnel();

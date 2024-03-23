@@ -1,7 +1,5 @@
 #include "protobuf_server.h"
 #include "loggers/network_logger.h"
-
-
 /*
     we shall not use nanopb or any protobuf lib because they need atleast 1 memcopy
     i have read the byte array implemntation of the protoc and
@@ -20,7 +18,6 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
-static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
 
 typedef struct protobuf_server_state_s
 {

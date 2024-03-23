@@ -224,7 +224,7 @@ static bool trySendResponse(tunnel_t *self, line_t *line, size_t stream_id, shif
             }
             context_t *fin_ctx = newFinContext(con->line);
             delete_http2_connection(con);
-            con->tunnel->downStream(con->tunnel, fin_ctx);
+            self->dw->downStream(self->dw, fin_ctx);
             return false;
         }
 

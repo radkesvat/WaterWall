@@ -78,9 +78,12 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
         nvs[nvlen++] = (make_nv(":authority", authority_addr));
     }
 
-    if(con->content_type == APPLICATION_GRPC)
+    int flags = HTTP2_FLAG_END_STREAM;
+
+    if (con->content_type == APPLICATION_GRPC)
     {
-        nvs[nvlen++] = (make_nv("content-type", "authority_addr"));
+        flags = HTTP2_FLAG_NONE;
+        nvs[nvlen++] = (make_nv("content-type", "application/grpc+proto"));
     }
     // nvs[nvlen++] = make_nv("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
     // nvs[nvlen++] = make_nv("Accept-Language", "en,fa;q=0.9,zh-CN;q=0.8,zh;q=0.7");
@@ -90,16 +93,13 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
     nvs[nvlen++] = make_nv("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
     // nvs[nvlen++] = make_nv("Sec-Ch-Ua-Platform", "\"Windows\"");
 
-
-
-
-
-    int flags = NGHTTP2_FLAG_END_HEADERS;
     con->state = H2_SEND_HEADERS;
 
     http2_client_child_con_state_t *stream = malloc(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
-    stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
+    // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
+    stream->stream_id = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen,  stream);
+
     stream->parent = con->line;
     stream->line = child_line;
     stream->tunnel = con->tunnel->dw;
@@ -115,7 +115,6 @@ static void delete_http2_stream(http2_client_child_con_state_t *stream)
     destroyLine(stream->line);
     free(stream);
 }
-
 
 static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid)
 {
@@ -156,7 +155,7 @@ static void delete_http2_connection(http2_client_con_state_t *con)
     tunnel_t *self = con->tunnel;
 
     vec_cons *vector = &(STATE(self)->thread_cpool[con->line->tid].cons);
-    vec_cons_erase_at(vector, vec_cons_find(vector,con));
+    vec_cons_erase_at(vector, vec_cons_find(vector, con));
 
     http2_client_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
