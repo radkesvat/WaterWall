@@ -381,6 +381,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
 
         context_t *up_init_ctx = copyContext(c);
+        up_init_ctx->payload = NULL;
+        up_init_ctx->init = true;
         self->up->packetUpStream(self->up, up_init_ctx);
         if (!ISALIVE(c))
         {
@@ -410,6 +412,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 if (dest->protocol == IPPROTO_TCP)
                 {
                     context_t *up_init_ctx = copyContext(c);
+                    up_init_ctx->payload = NULL;
                     up_init_ctx->init = true;
                     self->up->upStream(self->up, up_init_ctx);
                     if (!ISALIVE(c))
