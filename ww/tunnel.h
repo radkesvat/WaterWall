@@ -137,9 +137,9 @@ inline context_t *newContext(line_t *line)
 
 inline void moveDestCtx(context_t *dest, context_t *from)
 {
-
     dest->dest_ctx = from->dest_ctx;
-    from->dest_ctx = (socket_context_t){0};
+    // from->dest_ctx = (socket_context_t){0};
+    from->dest_ctx.protocol = 0x0; 
 }
 inline context_t *newFinContext(line_t *line)
 {
