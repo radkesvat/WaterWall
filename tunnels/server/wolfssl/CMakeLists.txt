@@ -19,6 +19,9 @@ target_link_libraries(WolfSSLServer ww)
 target_link_libraries(WolfSSLServer libwolfssl_amd64.a)
 # target_compile_options(ww PUBLIC -fPIC)  
 
+target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)
+
+
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
