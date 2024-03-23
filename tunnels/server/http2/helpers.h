@@ -1,6 +1,8 @@
 #pragma once
 #include "types.h"
 
+#define MAX_CONCURRENT_STREAMS 100
+
 static nghttp2_nv make_nv(const char *name, const char *value)
 {
     nghttp2_nv nv;
@@ -62,7 +64,6 @@ create_http2_stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *
     stream->line = newLine(this_line->tid);
     stream->line->chains_state[target_tun->chain_index - 1] = stream;
     stream->tunnel = target_tun;
-    add_stream(con, stream);
     nghttp2_session_set_stream_user_data(con->session, stream_id, stream);
 
     return stream;
@@ -77,6 +78,23 @@ static void delete_http2_stream(http2_server_child_con_state_t *stream)
     free(stream);
 }
 
+static http2_server_con_state_t *create_http2_connection(tunnel_t *self, line_t*line)
+{
+    http2_server_state_t *state = STATE(self);
+    http2_server_con_state_t *con =  malloc(sizeof(http2_server_con_state_t));
+    memset(con, 0, sizeof(http2_server_con_state_t));
+
+    nghttp2_session_server_new(&con->session, state->cbs, con);
+    con->state = H2_WANT_RECV;
+    con->tunnel = self;
+    con->line =  line;
+
+    nghttp2_settings_entry settings[] = {
+        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS}};
+    nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
+    con->state = H2_SEND_SETTINGS;
+    return con;
+}
 static void delete_http2_connection(http2_server_con_state_t *con)
 {
     tunnel_t *self = con->tunnel;
@@ -94,5 +112,4 @@ static void delete_http2_connection(http2_server_con_state_t *con)
     nghttp2_session_del(con->session);
     con->line->chains_state[self->chain_index] = NULL;
     free(con);
-
 }

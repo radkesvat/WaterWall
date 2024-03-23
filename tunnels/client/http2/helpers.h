@@ -2,6 +2,8 @@
 
 #include "types.h"
 
+#define MAX_CONCURRENT_STREAMS 100
+
 static nghttp2_nv make_nv(const char *name, const char *value)
 {
     nghttp2_nv nv;
@@ -75,12 +77,17 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
         snprintf(authority_addr, sizeof(authority_addr), "%s:%d", con->host, con->host_port);
         nvs[nvlen++] = (make_nv(":authority", authority_addr));
     }
+
+    if(con->content_type == APPLICATION_GRPC)
+    {
+        nvs[nvlen++] = (make_nv("content-type", "authority_addr"));
+    }
     // nvs[nvlen++] = make_nv("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
     // nvs[nvlen++] = make_nv("Accept-Language", "en,fa;q=0.9,zh-CN;q=0.8,zh;q=0.7");
     // nvs[nvlen++] = make_nv("Cache-Control", "no-cache");
     // nvs[nvlen++] = make_nv("Pragma", "no-cache");
     // nvs[nvlen++] = make_nv("Sec-Ch-Ua", "Chromium\";v=\"122\", Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
-    // nvs[nvlen++] = make_nv("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+    nvs[nvlen++] = make_nv("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
     // nvs[nvlen++] = make_nv("Sec-Ch-Ua-Platform", "\"Windows\"");
 
 
@@ -98,7 +105,7 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
     stream->tunnel = con->tunnel->dw;
     stream->line->chains_state[stream->tunnel->chain_index + 1] = stream;
     add_stream(con, stream);
-    nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
+    // nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
 
     return stream;
 }
@@ -109,6 +116,41 @@ static void delete_http2_stream(http2_client_child_con_state_t *stream)
     free(stream);
 }
 
+
+static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid)
+{
+    http2_client_state_t *state = STATE(self);
+    http2_client_con_state_t *con = malloc(sizeof(http2_client_con_state_t));
+
+    memset(con, 0, sizeof(http2_client_con_state_t));
+    con->queue = newContextQueue(buffer_pools[tid]);
+    con->content_type = state->content_type;
+    con->path = state->path;
+    con->host = state->host;
+    con->host_port = state->host_port;
+    con->scheme = state->scheme;
+    con->method = HTTP_GET;
+    con->line = newLine(tid);
+    con->tunnel = self;
+    con->line->chains_state[self->chain_index] = con;
+    nghttp2_session_client_new(&con->session, state->cbs, con);
+
+    nghttp2_settings_entry settings[] = {
+        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS}};
+    nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
+
+    con->state = H2_SEND_MAGIC;
+
+    if (state->content_type == APPLICATION_GRPC)
+    {
+        con->method = HTTP_POST;
+    }
+
+    context_t *init_ctx = newInitContext(con->line);
+    self->up->upStream(self->up, init_ctx);
+
+    return con;
+}
 static void delete_http2_connection(http2_client_con_state_t *con)
 {
     tunnel_t *self = con->tunnel;
@@ -129,40 +171,6 @@ static void delete_http2_connection(http2_client_con_state_t *con)
     con->line->chains_state[self->chain_index] = NULL;
     destroyContextQueue(con->queue);
     free(con);
-}
-
-static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid)
-{
-    http2_client_state_t *state = STATE(self);
-    http2_client_con_state_t *con = malloc(sizeof(http2_client_con_state_t));
-
-    memset(con, 0, sizeof(http2_client_con_state_t));
-    con->queue = newContextQueue(buffer_pools[tid]);
-    con->path = state->path;
-    con->host = state->host;
-    con->host_port = state->host_port;
-    con->scheme = state->scheme;
-    con->method = HTTP_GET;
-    con->line = newLine(tid);
-    con->tunnel = self;
-    con->line->chains_state[self->chain_index] = con;
-    nghttp2_session_client_new(&con->session, state->cbs, con);
-
-    nghttp2_settings_entry settings[] = {
-        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100}};
-    nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
-
-    con->state = H2_SEND_MAGIC;
-
-    if (state->content_type == APPLICATION_GRPC)
-    {
-        con->method = HTTP_POST;
-    }
-
-    context_t *init_ctx = newInitContext(con->line);
-    self->up->upStream(self->up, init_ctx);
-
-    return con;
 }
 
 static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid)

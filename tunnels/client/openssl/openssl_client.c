@@ -121,9 +121,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     if (n > 0)
                     {
                         setLen(buf, n);
-                        context_t *send_context = newContext(c->line);
+                        context_t *send_context = newContextFrom(c);
                         send_context->payload = buf;
-                        send_context->src_io = c->src_io;
                         self->up->upStream(self->up, send_context);
                         if (!ISALIVE(c))
                         {
@@ -174,7 +173,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
-            context_t *clienthello_ctx = newContext(c->line);
+            context_t *clienthello_ctx = newContextFrom(c);
             self->up->upStream(self->up, c);
             if (!ISALIVE(clienthello_ctx))
             {
@@ -283,7 +282,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                         if (n > 0)
                         {
                             setLen(buf, n);
-                            context_t *req_cont = newContext(c->line);
+                            context_t *req_cont = newContextFrom(c);
                             req_cont->payload = buf;
                             self->up->upStream(self->up, req_cont);
                             if (!ISALIVE(c))
@@ -324,9 +323,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 {
                     LOGD("Tls handshake complete");
                     cstate->handshake_completed = true;
-                    context_t *dw_est_ctx = newContext(c->line);
+                    context_t *dw_est_ctx = newContextFrom(c);
                     dw_est_ctx->est = true;
-                    dw_est_ctx->src_io = c->src_io;
                     self->dw->downStream(self->dw, dw_est_ctx);
                     if (!ISALIVE(c))
                     {
@@ -360,10 +358,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 if (n > 0)
                 {
                     setLen(buf, n);
-                    context_t *data_ctx = newContext(c->line);
+                    context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload = buf;
-                    data_ctx->src_io = c->src_io;
-
                     self->dw->downStream(self->dw, data_ctx);
                     if (!ISALIVE(c))
                     {

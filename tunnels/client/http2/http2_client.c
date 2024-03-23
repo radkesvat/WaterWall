@@ -340,8 +340,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 sendGrpcFinalData(self, c->line, stream->stream_id);
             }
 
+            nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
             delete_http2_stream(stream);
+
 
             if (nghttp2_session_want_read(con->session) == 0 &&
                 nghttp2_session_want_write(con->session) == 0)

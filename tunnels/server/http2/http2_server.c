@@ -187,6 +187,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
     con->state = H2_SEND_HEADERS;
 
     http2_server_child_con_state_t *stream = create_http2_stream(con, con->line, self->up, frame->hd.stream_id);
+    add_stream(con, stream);
 
     stream->tunnel->upStream(stream->tunnel, newInitContext(stream->line));
 
@@ -319,19 +320,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(http2_server_con_state_t));
-            memset(CSTATE(c), 0, sizeof(http2_server_con_state_t));
-            http2_server_con_state_t *con = CSTATE(c);
-            nghttp2_session_server_new(&con->session, state->cbs, con);
-            con->state = H2_WANT_RECV;
-            con->tunnel = self;
-            con->line = c->line;
-
-            nghttp2_settings_entry settings[] = {
-                {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 100}};
-            nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
-
-            con->state = H2_SEND_SETTINGS;
+            CSTATE_MUT(c) = create_http2_connection(self,c->line);
             destroyContext(c);
         }
         else if (c->fin)
@@ -372,6 +361,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             while (trySendResponse(self, con->line, stream->stream_id, NULL))
                 ;
 
+            nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
             delete_http2_stream(stream);
             if (nghttp2_session_want_read(con->session) == 0 &&

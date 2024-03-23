@@ -256,7 +256,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         if (n > 0)
                         {
                             setLen(buf, n);
-                            context_t *answer = newContext(c->line);
+                            context_t *answer = newContextFrom(c);
                             answer->payload = buf;
                             self->dw->downStream(self->dw, answer);
                             if (!ISALIVE(c))
@@ -338,7 +338,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 if (n > 0)
                 {
                     setLen(buf, n);
-                    context_t *data_ctx = newContext(c->line);
+                    context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload = buf;
                     data_ctx->src_io = c->src_io;
                     if (!(cstate->first_sent))
@@ -371,7 +371,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     if (n > 0)
                     {
                         setLen(buf, n);
-                        context_t *answer = newContext(c->line);
+                        context_t *answer = newContextFrom(c);
                         answer->payload = buf;
                         self->dw->downStream(self->dw, answer);
                         if (!ISALIVE(c))
@@ -508,7 +508,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     if (n > 0)
                     {
                         setLen(buf, n);
-                        context_t *dw_context = newContext(c->line);
+                        context_t *dw_context = newContextFrom(c);
                         dw_context->payload = buf;
                         dw_context->src_io = c->src_io;
                         self->dw->downStream(self->dw, dw_context);

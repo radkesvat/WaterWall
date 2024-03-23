@@ -32,10 +32,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
+            
             // send back something
             {
-
-                context_t *reply = newContext(c->line);
+                context_t *reply = newContextFrom(c);
                 DISCARD_CONTEXT(c);
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
                 sprintf(rawBuf(reply->payload), "%s", "\n\5salam");
@@ -60,21 +60,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                context_t *replyx = newContext(c->line);
+                context_t *replyx = newContextFrom(c);
                 replyx->est = true;
                 self->dw->downStream(self->dw, replyx);
 
-                context_t *reply = newContext(c->line);
-                reply->payload = popBuffer(buffer_pools[c->line->tid]);
-                sprintf(rawBuf(reply->payload), "%s", "\n\5salam");
-                setLen(reply->payload, strlen("\n\5salam"));
-                // reply->payload = c->payload;
-                // c->payload = NULL;
-                self->dw->downStream(self->dw, reply);
 
-                context_t *reply2 = newFinContext(c->line);
-                destroyContext(c);
-                self->dw->downStream(self->dw, reply2);
+
             }
         }
         if (c->fin)
@@ -104,7 +95,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             // send back something
             {
-                context_t *reply = newContext(c->line);
+                context_t *reply = newContextFrom(c);
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
                 sprintf(rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
@@ -126,7 +117,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                context_t *reply = newContext(c->line);
+                context_t *reply = newContextFrom(c);
                 reply->est = true;
                 destroyContext(c);
                 self->up->upStream(self->up, reply);

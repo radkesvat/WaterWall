@@ -35,7 +35,7 @@ typedef struct http2_client_child_con_state_s
 {
     struct http2_client_child_con_state_s *prev, *next;
     int32_t stream_id;
-
+    nghttp2_stream *ng_stream;
     tunnel_t *tunnel;
     line_t *parent;
     line_t *line;
@@ -67,7 +67,7 @@ typedef struct http2_client_con_state_s
 } http2_client_con_state_t;
 
 #define i_type vec_cons
-#define i_key http2_client_con_state_t*
+#define i_key http2_client_con_state_t *
 #define i_use_cmp
 #include "stc/vec.h"
 

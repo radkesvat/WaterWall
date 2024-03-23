@@ -52,29 +52,29 @@ static void makeUdpPacketAddress(context_t *c)
     shiftl(c->payload, 2); // LEN
     writeUI16(c->payload, plen);
 
-    uint16_t port = sockaddr_port(&(c->dest_ctx.addr));
+    uint16_t port = sockaddr_port(&(c->line->dest_ctx.addr));
     port = (port << 8) | (port >> 8);
     shiftl(c->payload, 2); // port
     writeUI16(c->payload, port);
 
-    if (c->dest_ctx.atype == SAT_IPV6)
+    if (c->line->dest_ctx.atype == SAT_IPV6)
     {
         shiftl(c->payload, 16);
-        memcpy(rawBuf(c->payload), &(c->dest_ctx.addr.sin6.sin6_addr), 16);
+        memcpy(rawBuf(c->payload), &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
         shiftl(c->payload, 1);
         writeUI8(c->payload, SAT_IPV6);
     }
-    else if (c->dest_ctx.atype == SAT_DOMAINNAME)
+    else if (c->line->dest_ctx.atype == SAT_DOMAINNAME)
     {
         shiftl(c->payload, 16);
-        memcpy(rawBuf(c->payload), &(c->dest_ctx.addr.sin6.sin6_addr), 16);
+        memcpy(rawBuf(c->payload), &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
         shiftl(c->payload, 1);
         writeUI8(c->payload, SAT_IPV6);
     }
     else
     {
         shiftl(c->payload, 4);
-        memcpy(rawBuf(c->payload), &(c->dest_ctx.addr.sin.sin_addr), 4);
+        memcpy(rawBuf(c->payload), &(c->line->dest_ctx.addr.sin.sin_addr), 4);
         shiftl(c->payload, 1);
         writeUI8(c->payload, SAT_IPV4);
     }
@@ -86,7 +86,7 @@ static bool parseAddress(context_t *c)
     {
         return false;
     }
-    socket_context_t *dest = &(c->dest_ctx);
+    socket_context_t *dest = &(c->line->dest_ctx);
 
     enum trojan_cmd cmd = (unsigned char)rawBuf(c->payload)[0];
     enum trojan_atyp atyp = (unsigned char)rawBuf(c->payload)[1];
@@ -305,7 +305,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return true;
 
     context_t *c = newContext(line);
-    socket_context_t *dest = &(c->dest_ctx);
+    socket_context_t *dest = &(c->line->dest_ctx);
     c->src_io = src_io;
     c->payload = bufferStreamRead(bstream, full_len);
     dest->addr.sa.sa_family = AF_INET;
@@ -380,8 +380,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     if (!cstate->init_sent)
     {
 
-        context_t *up_init_ctx = newContext(c->line);
-        moveDestCtx(up_init_ctx, c);
+        context_t *up_init_ctx = newContextFrom(c);
         up_init_ctx->init = true;
         self->up->packetUpStream(self->up, up_init_ctx);
         if (!ISALIVE(c))
@@ -407,12 +406,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
             if (parseAddress(c))
             {
                 trojan_socks_server_con_state_t *cstate = CSTATE(c);
-                socket_context_t *dest = &(c->dest_ctx);
+                socket_context_t *dest = &(c->line->dest_ctx);
 
                 if (dest->protocol == IPPROTO_TCP)
                 {
-                    context_t *up_init_ctx = newContext(c->line);
-                    moveDestCtx(up_init_ctx, c);
+                    context_t *up_init_ctx = newContextFrom(c);
                     up_init_ctx->init = true;
                     self->up->upStream(self->up, up_init_ctx);
                     if (!ISALIVE(c))
@@ -506,7 +504,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     LOGE("TrojanSocksServer: udp packet could not be parsed");
 
                     {
-                        context_t *fin_up = newContext(c->line);
+                        context_t *fin_up = newContextFrom(c);
                         fin_up->fin = true;
                         self->up->upStream(self->up, fin_up);
                     }
@@ -514,7 +512,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     destroyBufferStream(cstate->udp_buf);
                     free(cstate);
                     CSTATE_MUT(c) = NULL;
-                    context_t *fin_dw = newContext(c->line);
+                    context_t *fin_dw = newContextFrom(c);
                     fin_dw->fin = true;
                     destroyContext(c);
                     self->dw->downStream(self->dw, fin_dw);

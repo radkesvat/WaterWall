@@ -28,8 +28,6 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
         context_t *est_context = newContext(line);
         est_context->est = true;
         est_context->src_io = io;
-        est_context->dest_ctx.addr.sa = *destaddr;
-        est_context->dest_ctx.atype = atype;
         self->packetDownStream(self, est_context);
         if (hevent_userdata(io) == NULL)
             return;
@@ -37,9 +35,7 @@ static void on_recv(hio_t *io, void *buf, int readbytes)
 
     context_t *context = newContext(line);
     context->src_io = io;
-    context->dest_ctx.atype = atype;
     context->payload = payload;
-    context->dest_ctx.addr.sa = *destaddr;
 
     self->packetDownStream(self, context);
 }
@@ -126,7 +122,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             // fill the final_ctx address based on settings
             {
                 socket_context_t *src_ctx = &(c->line->src_ctx);
-                socket_context_t *dest_ctx = &(c->dest_ctx);
+                socket_context_t *dest_ctx = &(c->line->dest_ctx);
                 connector_state_t *state = STATE(self);
 
                 if (state->dest_addr.status == cdvs_from_source)

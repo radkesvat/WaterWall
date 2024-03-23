@@ -198,7 +198,7 @@ void tcpConnectorUpStream(tunnel_t *self, context_t *c)
             // fill the final_ctx address based on settings
             {
                 socket_context_t *src_ctx = &(c->line->src_ctx);
-                socket_context_t *dest_ctx = &(c->dest_ctx);
+                socket_context_t *dest_ctx = &(c->line->dest_ctx);
                 tcp_connector_state_t *state = STATE(self);
 
                 if (state->dest_addr.status == cdvs_from_source)

@@ -42,6 +42,8 @@ typedef struct line_s
 {
     hloop_t *loop;
     socket_context_t src_ctx;
+    socket_context_t dest_ctx;
+
     uint16_t id;
     size_t tid;
     size_t refc;
@@ -54,7 +56,6 @@ typedef struct context_s
     hio_t *src_io;
     line_t *line;
     shift_buffer_t *payload;
-    socket_context_t dest_ctx;
 
     //--------------
     uint16_t packet_size; // used for packet based protocols
@@ -114,14 +115,14 @@ inline void destroyLine(line_t *l)
         assert(l->chains_state[i] == NULL);
     }
 #endif
-
+    if (l->dest_ctx.domain != NULL)
+        free(l->dest_ctx.domain);
     free(l);
 }
 inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
-    if (c->dest_ctx.domain != NULL)
-        free(c->dest_ctx.domain);
+
     destroyLine(c->line);
 
     free(c);
@@ -135,11 +136,17 @@ inline context_t *newContext(line_t *line)
     return new_ctx;
 }
 
-inline void moveDestCtx(context_t *dest, context_t *from)
+inline context_t *newContextFrom(context_t *source)
 {
-    dest->dest_ctx = from->dest_ctx;
-    // from->dest_ctx = (socket_context_t){0};
-    from->dest_ctx.protocol = 0x0; 
+    source->line->refc += 1;
+    context_t *new_ctx = malloc(sizeof(context_t));
+    *new_ctx = *source;
+    new_ctx->payload = NULL;
+    new_ctx->init = false;
+    new_ctx->est = false;
+    new_ctx->first = false;
+    new_ctx->fin = false;
+    return new_ctx;
 }
 inline context_t *newFinContext(line_t *line)
 {
