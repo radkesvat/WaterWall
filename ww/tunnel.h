@@ -134,14 +134,12 @@ inline context_t *newContext(line_t *line)
     line->refc += 1;
     return new_ctx;
 }
-inline context_t *copyContext(context_t *c)
-{
-    c->line->refc += 1;
-    context_t *new_ctx = malloc(sizeof(context_t));
-    *new_ctx = *c;
-    c->dest_ctx.domain = NULL; // only move
 
-    return new_ctx;
+inline void moveDestCtx(context_t *dest, context_t *from)
+{
+
+    dest->dest_ctx = from->dest_ctx;
+    from->dest_ctx = (socket_context_t){0};
 }
 inline context_t *newFinContext(line_t *line)
 {

@@ -307,7 +307,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     context_t *c = newContext(line);
     socket_context_t *dest = &(c->dest_ctx);
     c->src_io = src_io;
-    c->payload = bufferStreamRead(bstream,full_len );
+    c->payload = bufferStreamRead(bstream, full_len);
     dest->addr.sa.sa_family = AF_INET;
 
     shiftr(c->payload, 1);
@@ -380,8 +380,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     if (!cstate->init_sent)
     {
 
-        context_t *up_init_ctx = copyContext(c);
-        up_init_ctx->payload = NULL;
+        context_t *up_init_ctx = newContext(c->line);
+        moveDestCtx(up_init_ctx, c);
         up_init_ctx->init = true;
         self->up->packetUpStream(self->up, up_init_ctx);
         if (!ISALIVE(c))
@@ -411,8 +411,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                 if (dest->protocol == IPPROTO_TCP)
                 {
-                    context_t *up_init_ctx = copyContext(c);
-                    up_init_ctx->payload = NULL;
+                    context_t *up_init_ctx = newContext(c->line);
+                    moveDestCtx(up_init_ctx, c);
                     up_init_ctx->init = true;
                     self->up->upStream(self->up, up_init_ctx);
                     if (!ISALIVE(c))
