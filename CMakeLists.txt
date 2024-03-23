@@ -17,9 +17,10 @@ option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
-option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE)
+option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
+option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_CLIENT "link ProtoBufClient staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
@@ -73,7 +74,6 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ada
 target_link_libraries(Waterwall TcpListener)
 endif()
 
-
 #connector
 if (INCLUDE_CONNECTOR)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_CONNECTOR=1)
@@ -97,7 +97,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http2)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http2)
 target_link_libraries(Waterwall Http2Server)
 endif()
-
 
 #http2 INCLUDE_HTTP2_CLIENT
 if (INCLUDE_HTTP2_CLIENT)
@@ -123,7 +122,6 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall OpenSSLClient)
 endif()
 
-
 #trojan auth server
 if (INCLUDE_TROJAN_AUTH_SERVER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TROJAN_AUTH_SERVER=1)
@@ -131,7 +129,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/auth)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/trojan/socks)
 target_link_libraries(Waterwall TrojanAuthServer)
 endif()
-
 
 #trojan socks server
 if (INCLUDE_TROJAN_SOCKS_SERVER)
@@ -166,6 +163,14 @@ target_link_libraries(Waterwall LoggerTunnel)
 endif()
 
 
+#protobuf server
+if (INCLUDE_PROTOBUF_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_PROTOBUF_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/protobuf)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/protobuf)
+target_link_libraries(Waterwall ProtoBufServer)
+endif()
+
 #protobuf client
 if (INCLUDE_PROTOBUF_CLIENT)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_PROTOBUF_CLIENT=1)
@@ -173,8 +178,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/protobuf)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/protobuf)
 target_link_libraries(Waterwall ProtoBufClient)
 endif()
-
-
 
 
 # komihash

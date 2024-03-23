@@ -4,7 +4,7 @@
 
 add_library(ProtoBufClient STATIC
       protobuf_client.c
-      ../../shared/protobuf/packet.pb.c
+      # ../../shared/protobuf/packet.pb.c
 
 )
 

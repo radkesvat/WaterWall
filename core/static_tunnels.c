@@ -57,9 +57,15 @@
 #include "tunnels/client/http2/http2_client.h"
 #endif
 
+#ifdef INCLUDE_PROTOBUF_SERVER
+#include "tunnels/server/protobuf/protobuf_server.h"
+#endif
+
 #ifdef INCLUDE_PROTOBUF_CLIENT
 #include "tunnels/client/protobuf/protobuf_client.h"
 #endif
+
+
 
 
 void loadStaticTunnelsIntoCore()
@@ -106,8 +112,18 @@ void loadStaticTunnelsIntoCore()
 
 #ifdef INCLUDE_HTTP2_CLIENT
     USING(Http2Client);
-
 #endif
+
+#ifdef INCLUDE_PROTOBUF_SERVER
+    USING(ProtoBufServer);
+#endif
+
+// #ifdef INCLUDE_PROTOBUF_CLIENT
+// #include "tunnels/client/protobuf/protobuf_client.h"
+// #endif
+
+
+
 
 
 }

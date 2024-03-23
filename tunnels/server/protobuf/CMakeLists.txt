@@ -4,7 +4,6 @@
 
 add_library(ProtoBufServer STATIC
       protobuf_server.c
-      ../../shared/packet.pb.c
 )
 
 
@@ -12,6 +11,9 @@ add_library(ProtoBufServer STATIC
 target_include_directories(ProtoBufServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(ProtoBufServer PUBLIC ww)
 # target_compile_options(ww PUBLIC -fPIC)  
+
+target_include_directories(ProtoBufServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/protobuf)
+
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
