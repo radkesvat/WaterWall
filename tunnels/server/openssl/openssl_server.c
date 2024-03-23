@@ -312,7 +312,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     self->up->upStream(self->up, up_init_ctx);
                     if (!ISALIVE(c))
                     {
-                        LOGW("Openssl server: next node instantly closed the init with fin");
+                        LOGW("Openssl Server: next node instantly closed the init with fin");
                         DISCARD_CONTEXT(c);
                         destroyContext(c);
 
