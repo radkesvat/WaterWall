@@ -2,7 +2,7 @@
 
 #include "types.h"
 
-#define MAX_CONCURRENT_STREAMS 100
+#define MAX_CONCURRENT_STREAMS 0xffffffffu
 
 static nghttp2_nv make_nv(const char *name, const char *value)
 {
@@ -132,7 +132,7 @@ static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid
     con->line = newLine(tid);
     con->tunnel = self;
     con->line->chains_state[self->chain_index] = con;
-    nghttp2_session_client_new(&con->session, state->cbs, con);
+    nghttp2_session_client_new2(&con->session, state->cbs, con,state->ngoptions);
 
     nghttp2_settings_entry settings[] = {
         {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS}};

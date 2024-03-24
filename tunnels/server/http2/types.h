@@ -63,5 +63,6 @@ typedef struct http2_server_state_s
 {
     nghttp2_session_callbacks *cbs;
     tunnel_t *fallback;
+    nghttp2_option * ngoptions;
 
 } http2_server_state_t;

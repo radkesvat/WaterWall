@@ -87,5 +87,6 @@ typedef struct http2_client_state_s
     int host_port;
     char *scheme;
     int last_iid;
+    nghttp2_option * ngoptions;
     thread_connection_pool_t thread_cpool[];
 } http2_client_state_t;

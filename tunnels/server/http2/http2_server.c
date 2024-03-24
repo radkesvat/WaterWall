@@ -411,6 +411,10 @@ tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
     nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, on_frame_recv_callback);
     nghttp2_session_callbacks_set_on_stream_close_callback(state->cbs, on_stream_close_callback);
 
+    nghttp2_option_new(&(state->ngoptions));
+    nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions,0xffffffffu);
+    nghttp2_option_set_no_closed_streams(state->ngoptions,1);
+    
     tunnel_t *t = newTunnel();
     t->state = state;
     t->upStream = &http2ServerUpStream;

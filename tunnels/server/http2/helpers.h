@@ -1,7 +1,7 @@
 #pragma once
 #include "types.h"
 
-#define MAX_CONCURRENT_STREAMS 100
+#define MAX_CONCURRENT_STREAMS 0xffffffffu
 
 static nghttp2_nv make_nv(const char *name, const char *value)
 {
@@ -84,7 +84,7 @@ static http2_server_con_state_t *create_http2_connection(tunnel_t *self, line_t*
     http2_server_con_state_t *con =  malloc(sizeof(http2_server_con_state_t));
     memset(con, 0, sizeof(http2_server_con_state_t));
 
-    nghttp2_session_server_new(&con->session, state->cbs, con);
+    nghttp2_session_server_new2(&con->session, state->cbs, con,state->ngoptions);
     con->state = H2_WANT_RECV;
     con->tunnel = self;
     con->line =  line;

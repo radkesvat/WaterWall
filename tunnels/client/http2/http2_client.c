@@ -281,8 +281,10 @@ static int on_frame_recv_callback(nghttp2_session *session,
         else if (frame->hd.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM)
         {
             http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
-
-            stream->tunnel->downStream(stream->tunnel, newFinContext(stream->line));
+            context_t *fin_ctx = newFinContext(stream->line);
+            remove_stream(con, stream);
+            delete_http2_stream(stream);
+            stream->tunnel->downStream(stream->tunnel, fin_ctx);
         }
     }
 
@@ -461,6 +463,12 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
         state->content_type = http_content_type_enum(content_type_buf);
         free(content_type_buf);
     }
+
+    nghttp2_option_new(&(state->ngoptions));
+    nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions,0xffffffffu);
+    nghttp2_option_set_no_closed_streams(state->ngoptions,1);
+    // nghttp2_option_set_no_http_messaging use this with grpc? 
+
 
     tunnel_t *t = newTunnel();
     t->state = state;
