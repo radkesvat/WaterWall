@@ -12,11 +12,11 @@ static void firstCharge(buffer_pool_t *state)
     state->chunks = 1;
     state->available = malloc(state->chunks * (GBD_MAX_CAP * sizeof(shift_buffer_t *)));
 
-    for (size_t i = state->len; i < state->len + count; i++)
+    for (size_t i = 0; i <  count; i++)
     {
         state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
     }
-    state->len += count;
+    state->len = count;
 }
 
 static void reCharge(buffer_pool_t *state)
