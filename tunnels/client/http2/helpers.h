@@ -112,7 +112,6 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
 static void delete_http2_stream(http2_client_child_con_state_t *stream)
 {
     stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
-    destroyLine(stream->line);
     free(stream);
 }
 
@@ -169,6 +168,7 @@ static void delete_http2_connection(http2_client_con_state_t *con)
     nghttp2_session_del(con->session);
     con->line->chains_state[self->chain_index] = NULL;
     destroyContextQueue(con->queue);
+    destroyLine(con->line);
     free(con);
 }
 

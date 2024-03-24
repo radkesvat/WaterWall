@@ -118,9 +118,9 @@ void loadStaticTunnelsIntoCore()
     USING(ProtoBufServer);
 #endif
 
-// #ifdef INCLUDE_PROTOBUF_CLIENT
-// #include "tunnels/client/protobuf/protobuf_client.h"
-// #endif
+#ifdef INCLUDE_PROTOBUF_CLIENT
+    USING(ProtoBufClient);
+#endif
 
 
 
