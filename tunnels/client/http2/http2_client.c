@@ -15,10 +15,9 @@ static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
     endstream_ctx->payload = buf;
     self->up->upStream(self->up, endstream_ctx);
 }
-static bool trySendRequest(tunnel_t *self, line_t *line, size_t stream_id, shift_buffer_t **buf)
+static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t stream_id,hio_t*stream_io, shift_buffer_t *buf)
 {
-
-    http2_client_con_state_t *con = ((http2_client_con_state_t *)(((line->chains_state)[self->chain_index])));
+    line_t *line = con->line;
     if (con == NULL)
         return false;
 
@@ -34,17 +33,18 @@ static bool trySendRequest(tunnel_t *self, line_t *line, size_t stream_id, shift
         memcpy(rawBuf(send_buf), data, len);
         context_t *req = newContext(line);
         req->payload = send_buf;
+        req->src_io = stream_io;
         self->up->upStream(self->up, req);
 
         if (nghttp2_session_want_read(con->session) == 0 &&
             nghttp2_session_want_write(con->session) == 0)
         {
-            if (buf != NULL && *buf != NULL)
+            if (buf != NULL)
             {
-                reuseBuffer(buffer_pools[line->tid], *buf);
-                *buf = NULL;
+                reuseBuffer(buffer_pools[line->tid], buf);
+                buf = NULL;
             }
-            context_t *fin_ctx = newFinContext(con->line);
+            context_t *fin_ctx = newFinContext(line);
             delete_http2_connection(con);
             con->tunnel->up->upStream(con->tunnel->up, fin_ctx);
             return false;
@@ -53,7 +53,7 @@ static bool trySendRequest(tunnel_t *self, line_t *line, size_t stream_id, shift
         return true;
     }
 
-    if (buf == NULL || *buf == NULL || bufLen(*buf) <= 0)
+    if (buf == NULL || bufLen(buf) <= 0)
         return false;
 
     // HTTP2_DATA
@@ -70,34 +70,34 @@ static bool trySendRequest(tunnel_t *self, line_t *line, size_t stream_id, shift
         {
             grpc_message_hd msghd;
             msghd.flags = 0;
-            msghd.length = bufLen(*buf);
+            msghd.length = bufLen(buf);
             LOGD("grpc_message_hd: flags=%d length=%d\n", msghd.flags, msghd.length);
 
             // grpc server send grpc-status in HTTP2 header frame
             flags = HTTP2_FLAG_NONE;
 
-            shiftl(*buf, GRPC_MESSAGE_HDLEN);
+            shiftl(buf, GRPC_MESSAGE_HDLEN);
 
-            grpc_message_hd_pack(&msghd, rawBuf(*buf));
+            grpc_message_hd_pack(&msghd, rawBuf(buf));
         }
         http2_frame_hd framehd;
 
-        framehd.length = bufLen(*buf);
+        framehd.length = bufLen(buf);
         framehd.type = HTTP2_DATA;
         framehd.flags = flags;
         framehd.stream_id = stream_id;
-        shiftl(*buf, HTTP2_FRAME_HDLEN);
-        http2_frame_hd_pack(&framehd, rawBuf(*buf));
-        context_t *answer = newContext(line);
-        answer->payload = *buf;
-        self->up->upStream(self->up, answer);
+        shiftl(buf, HTTP2_FRAME_HDLEN);
+        http2_frame_hd_pack(&framehd, rawBuf(buf));
+        context_t *req = newContext(line);
+        req->payload = buf;
+        req->src_io = stream_io;
+        self->up->upStream(self->up, req);
 
         goto send_done;
     }
     else if (con->state == H2_SEND_DATA)
     {
     send_done:
-        *buf = NULL;
         con->state = H2_SEND_DONE;
     }
 
@@ -112,11 +112,11 @@ static void flush_write_queue(http2_client_con_state_t *con)
     {
         context_t *stream_context = contextQueuePop(con->queue);
         http2_client_child_con_state_t *stream = CSTATE(stream_context);
-
+        stream->io = stream_context->src_io;
         con->state = H2_SEND_HEADERS;
 
         // consumes payload
-        while (trySendRequest(self, con->line, stream->stream_id, &(stream_context->payload)))
+        while (trySendRequest(self, con, stream->stream_id,stream->io, stream_context->payload))
             ;
 
         if (con->line->chains_state[self->chain_index] == NULL)
@@ -225,6 +225,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     memcpy(rawBuf(buf), data, len);
     context_t *dw_data = newContext(stream->line);
     dw_data->payload = buf;
+    dw_data->src_io = con->io;
     stream->tunnel->downStream(stream->tunnel, dw_data);
     // if (hp->parsed->http_cb)
     // {
@@ -298,6 +299,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         http2_client_child_con_state_t *stream = CSTATE(c);
         http2_client_con_state_t *con = stream->parent->chains_state[self->chain_index];
+        stream->io = c->src_io;
         if (!con->handshake_completed)
         {
             contextQueuePush(con->queue, c);
@@ -307,26 +309,26 @@ static inline void upStream(tunnel_t *self, context_t *c)
         con->state = H2_SEND_HEADERS;
 
         // consumes payload
-        while (trySendRequest(self, con->line, stream->stream_id, &(c->payload)))
+        while (trySendRequest(self, con, stream->stream_id,stream->io , c->payload))
             ;
-        assert(c->payload == NULL);
+        c->payload = NULL;
         destroyContext(c);
     }
     else
     {
         if (c->init)
         {
-            http2_client_con_state_t *con = take_http2_connection(self, c->line->tid);
+            http2_client_con_state_t *con = take_http2_connection(self, c->line->tid,NULL);
             if (con->line->chains_state[self->chain_index] == NULL)
             {
                 destroyContext(c);
                 return;
             }
 
-            while (trySendRequest(self, con->line, 0, NULL))
+            while (trySendRequest(self, con, 0, NULL, NULL))
                 ;
 
-            http2_client_child_con_state_t *stream = create_http2_stream(con, c->line);
+            http2_client_child_con_state_t *stream = create_http2_stream(con, c->line,c->src_io);
             CSTATE_MUT(c) = stream;
 
             if (!ISALIVE(c))
@@ -336,7 +338,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 return;
             }
 
-            while (trySendRequest(self, con->line, stream->stream_id, NULL))
+            while (trySendRequest(self, con, stream->stream_id, NULL, NULL))
                 ;
             destroyContext(c);
         }
@@ -371,7 +373,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
 {
     http2_client_state_t *state = STATE(self);
     http2_client_con_state_t *con = CSTATE(c);
-
+    con->io = c->src_io;
+    
     if (c->payload != NULL)
     {
 
@@ -399,7 +402,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
         if (c->fin)
         {
-            delete_http2_connection(CSTATE(c));
+            delete_http2_connection(con);
         }
         else
             destroyContext(c);
@@ -465,10 +468,9 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     }
 
     nghttp2_option_new(&(state->ngoptions));
-    nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions,0xffffffffu);
-    nghttp2_option_set_no_closed_streams(state->ngoptions,1);
-    // nghttp2_option_set_no_http_messaging use this with grpc? 
-
+    nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions, 0xffffffffu);
+    nghttp2_option_set_no_closed_streams(state->ngoptions, 1);
+    // nghttp2_option_set_no_http_messaging use this with grpc?
 
     tunnel_t *t = newTunnel();
     t->state = state;

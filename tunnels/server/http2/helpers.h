@@ -63,6 +63,7 @@ create_http2_stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *
     stream->parent = this_line;
     stream->line = newLine(this_line->tid);
     stream->line->chains_state[target_tun->chain_index - 1] = stream;
+    stream->io = NULL;
     stream->tunnel = target_tun;
     nghttp2_session_set_stream_user_data(con->session, stream_id, stream);
 
@@ -78,7 +79,7 @@ static void delete_http2_stream(http2_server_child_con_state_t *stream)
     free(stream);
 }
 
-static http2_server_con_state_t *create_http2_connection(tunnel_t *self, line_t*line)
+static http2_server_con_state_t *create_http2_connection(tunnel_t *self, line_t*line,hio_t* io)
 {
     http2_server_state_t *state = STATE(self);
     http2_server_con_state_t *con =  malloc(sizeof(http2_server_con_state_t));
@@ -88,6 +89,7 @@ static http2_server_con_state_t *create_http2_connection(tunnel_t *self, line_t*
     con->state = H2_WANT_RECV;
     con->tunnel = self;
     con->line =  line;
+    con->io = io;
 
     nghttp2_settings_entry settings[] = {
         {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS}};

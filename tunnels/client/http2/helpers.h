@@ -56,7 +56,7 @@ static void remove_stream(http2_client_con_state_t *con,
 }
 
 static http2_client_child_con_state_t *
-create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
+create_http2_stream(http2_client_con_state_t *con, line_t *child_line,hio_t*io)
 {
     char authority_addr[320];
     nghttp2_nv nvs[15];
@@ -102,6 +102,7 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line)
 
     stream->parent = con->line;
     stream->line = child_line;
+    stream->io = io;
     stream->tunnel = con->tunnel->dw;
     stream->line->chains_state[stream->tunnel->chain_index + 1] = stream;
     add_stream(con, stream);
@@ -115,7 +116,7 @@ static void delete_http2_stream(http2_client_child_con_state_t *stream)
     free(stream);
 }
 
-static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid)
+static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid,hio_t* io)
 {
     http2_client_state_t *state = STATE(self);
     http2_client_con_state_t *con = malloc(sizeof(http2_client_con_state_t));
@@ -130,6 +131,7 @@ static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid
     con->method = HTTP_GET;
     con->line = newLine(tid);
     con->tunnel = self;
+    con->io = io;
     con->line->chains_state[self->chain_index] = con;
     nghttp2_session_client_new2(&con->session, state->cbs, con,state->ngoptions);
 
@@ -172,7 +174,7 @@ static void delete_http2_connection(http2_client_con_state_t *con)
     free(con);
 }
 
-static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid)
+static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid,hio_t* io)
 {
     http2_client_state_t *state = STATE(self);
 
@@ -184,7 +186,7 @@ static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid)
     }
     else
     {
-        http2_client_con_state_t *con = create_http2_connection(self, tid);
+        http2_client_con_state_t *con = create_http2_connection(self, tid,io);
         vec_cons_push(vector, con);
         return con;
     }

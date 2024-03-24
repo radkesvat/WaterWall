@@ -39,6 +39,7 @@ typedef struct http2_server_child_con_state_s
 
     line_t *parent;
     line_t *line;
+    hio_t* io;
     tunnel_t *tunnel;
 } http2_server_child_con_state_t;
 
@@ -53,6 +54,7 @@ typedef struct http2_server_con_state_s
 
     tunnel_t *tunnel;
     line_t *line;
+    hio_t* io;
     http2_server_child_con_state_t root;
 
 } http2_server_con_state_t;

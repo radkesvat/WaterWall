@@ -39,6 +39,8 @@ typedef struct http2_client_child_con_state_s
     tunnel_t *tunnel;
     line_t *parent;
     line_t *line;
+    hio_t* io;
+
 } http2_client_child_con_state_t;
 
 typedef struct http2_client_con_state_s
@@ -62,6 +64,7 @@ typedef struct http2_client_con_state_s
 
     tunnel_t *tunnel;
     line_t *line;
+    hio_t* io;
     http2_client_child_con_state_t root;
 
 } http2_client_con_state_t;

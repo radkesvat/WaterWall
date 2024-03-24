@@ -32,21 +32,20 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            
+
             // send back something
             {
                 context_t *reply = newContextFrom(c);
-                DISCARD_CONTEXT(c);
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
+                DISCARD_CONTEXT(c);
+                destroyContext(c);
                 sprintf(rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
-                // reply->payload = c->payload;
-                // c->payload = NULL;
                 self->dw->downStream(self->dw, reply);
             }
-            context_t *reply = newFinContext(c->line);
-            destroyContext(c);
-            self->dw->downStream(self->dw, reply);
+            // context_t *reply = newFinContext(c->line);
+            // destroyContext(c);
+            // self->dw->downStream(self->dw, reply);
         }
     }
     else
@@ -61,6 +60,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             else
             {
                 context_t *replyx = newContextFrom(c);
+                destroyContext(c);
                 replyx->est = true;
                 self->dw->downStream(self->dw, replyx);
             }
@@ -72,6 +72,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 self->up->upStream(self->up, c);
             }
+            else
+                destroyContext(c);
         }
     }
 }
