@@ -92,6 +92,8 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(bridge_state_t));
 
     hash_t hash_pairname = calcHashLen(pair_node_name, strlen(pair_node_name));
+    free(pair_node_name);
+    
     node_t *pair_node = getNode(hash_pairname);
     if (pair_node == NULL)
     {

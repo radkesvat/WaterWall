@@ -327,13 +327,16 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         dest->atype = SAT_DOMAINNAME;
         // size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
         shiftr(c->payload, 1);
-        dest->domain = malloc(260);
+        if (dest->domain == NULL)
+        {
+            dest->domain = malloc(260);
 
-        if (!cstate->first_sent) // print once per connection
-            LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
+            if (!cstate->first_sent) // print once per connection
+                LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
 
-        memcpy(dest->domain, rawBuf(c->payload), domain_len);
-        dest->domain[domain_len] = 0;
+            memcpy(dest->domain, rawBuf(c->payload), domain_len);
+            dest->domain[domain_len] = 0;
+        }
         shiftr(c->payload, domain_len);
 
         break;
@@ -368,7 +371,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return false;
     }
     // memcpy(&(c->packet_size), rawBuf(c->payload), 2);
-    shiftr(c->payload, 2 + CRLF_LEN); //(2bytes) packet size already taken 
+    shiftr(c->payload, 2 + CRLF_LEN); //(2bytes) packet size already taken
     // c->packet_size = (c->packet_size << 8) | (c->packet_size >> 8);
 
     assert(bufLen(c->payload) == packet_size);

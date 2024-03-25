@@ -62,8 +62,9 @@ void expand(shift_buffer_t *self, size_t increase)
         LOGF("Expanding a shiftbuffer while it has refs is false assumption!");
         assert(false);
     }
+    const size_t real_cap = self->cap *2;
 
-    size_t newcap = pow(2, ceil(log2((float)(self->cap * 2) + (increase * 2))));
+    size_t newcap = pow(2, ceil(log2((float)(real_cap * 2) + (increase * 2))));
 
     // #ifdef DEBUG
     //     LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, newcap);
@@ -72,7 +73,7 @@ void expand(shift_buffer_t *self, size_t increase)
 
     size_t dif = (newcap / 2) - self->cap;
 
-    memmove(&self->pbuf[dif], &self->pbuf[0], self->cap * 2);
+    memmove(&self->pbuf[dif], &self->pbuf[0], real_cap);
 
     self->curpos += dif;
     self->lenpos += dif;

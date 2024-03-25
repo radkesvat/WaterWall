@@ -63,9 +63,9 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self,size_t bytes )
     else
     {
         size_t needed = bytes - available;
-        size_t wi = available;
-        uint8_t *dest = rawBuf(result);
+        size_t wi = 0;
         setLen(result, bytes);
+        uint8_t *dest = rawBuf(result);
 
         while (true)
         {

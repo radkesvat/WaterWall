@@ -1,7 +1,10 @@
+#include "buffer_pool.h"
 #include <assert.h> // for assert
 #include <stdlib.h>
+#include <malloc.h>
+#ifdef DEBUG
 #include "loggers/network_logger.h"
-#include "buffer_pool.h"
+#endif
 
 #define GBD_MAX_CAP 1024
 #define DEFAULT_BUFFER_SIZE 4096
@@ -49,7 +52,7 @@ static void giveMemBackToOs(buffer_pool_t *state)
     LOGD("BufferPool freed %d buffers, %zu are in use", decrease, state->in_use);
 #endif
 
-    // TODO: call malloc_trim
+    malloc_trim(0); //y tho?
 }
 
 shift_buffer_t *popBuffer(buffer_pool_t *state)
