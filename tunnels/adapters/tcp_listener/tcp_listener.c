@@ -47,19 +47,22 @@ static bool resume_write_queue(tcp_listener_con_state_t *cstate)
     context_queue_t *queue = (cstate)->queue;
     context_t **cw = &((cstate)->current_w);
     hio_t *io = cstate->io;
-    hio_t* last_resumed_io = NULL;
+    hio_t *last_resumed_io = NULL;
     while (contextQueueLen(queue) > 0)
     {
         *cw = contextQueuePop(queue);
         hio_t *upstream_io = (*cw)->src_io;
 
-        if ((*cw)->payload == NULL && last_resumed_io != upstream_io)
+        if ((*cw)->payload == NULL)
         {
             last_resumed_io = upstream_io;
             destroyContext((*cw));
 
-            if (upstream_io)
+            if (upstream_io && last_resumed_io != upstream_io)
+            {
+                last_resumed_io = upstream_io;
                 hio_read(upstream_io);
+            }
             continue;
         }
 
@@ -159,7 +162,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         if (cstate->write_paused)
-        { 
+        {
             if (c->src_io)
                 hio_read_stop(c->src_io);
             contextQueuePush(cstate->queue, c);
@@ -227,7 +230,6 @@ static void tcpListenerPacketDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
-
 
 static void on_recv(hio_t *io, void *buf, int readbytes)
 {

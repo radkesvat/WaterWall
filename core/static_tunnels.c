@@ -67,6 +67,13 @@
 #include "tunnels/client/protobuf/protobuf_client.h"
 #endif
 
+#ifdef INCLUDE_REVERSE_SERVER
+#include "tunnels/server/reverse/reverse_server.h"
+#endif
+
+
+
+
 void loadStaticTunnelsIntoCore()
 {
 #ifdef INCLUDE_TCP_LISTENER
@@ -124,4 +131,11 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_PROTOBUF_CLIENT
     USING(ProtoBufClient);
 #endif
+
+#ifdef INCLUDE_REVERSE_SERVER
+    USING(ReverseServer);
+#endif
+
+
+
 }

@@ -24,6 +24,7 @@ option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_CLIENT "link ProtoBufClient staticly to the core"  TRUE)
+option(INCLUDE_REVERSE_SERVER "link ReverseServer staticly to the core"  TRUE)
 
 # set(CMAKE_BUILD_TYPE Release)
 
@@ -188,6 +189,17 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/protobuf)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/protobuf)
 target_link_libraries(Waterwall ProtoBufClient)
 endif()
+
+
+#protobuf client
+if (INCLUDE_REVERSE_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_REVERSE_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/reverse)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/reverse)
+target_link_libraries(Waterwall ReverseServer)
+endif()
+
+
 
 
 # komihash
