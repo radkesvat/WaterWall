@@ -1,4 +1,5 @@
 #pragma once
+#include "api.h"
 #include "nghttp2/nghttp2.h"
 #include "buffer_stream.h"
 #include "http_def.h"

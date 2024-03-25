@@ -31,7 +31,7 @@ typedef struct protobuf_server_con_state_s
 
 } protobuf_server_con_state_t;
 
-static void upStream(tunnel_t *self, context_t *c);
+static inline void upStream(tunnel_t *self, context_t *c);
 
 static void process(tunnel_t *self, context_t* cin)
 {
@@ -53,7 +53,7 @@ static void process(tunnel_t *self, context_t* cin)
     }
 }
 
-static void upStream(tunnel_t *self, context_t *c)
+static inline void upStream(tunnel_t *self, context_t *c)
 {
 
     if (c->payload != NULL)
