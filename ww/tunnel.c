@@ -1,7 +1,8 @@
 #include "tunnel.h"
 #include "string.h" // memset
 
-extern line_t *newLine(size_t tid);
+extern line_t *newLine(uint16_t tid);
+extern size_t reserveChainStateIndex(line_t *l);
 extern void destroyLine(line_t *con);
 extern void destroyContext(context_t *c);
 extern context_t *newContext(line_t *line);

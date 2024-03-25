@@ -22,9 +22,9 @@ typedef struct line_s
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
 
-    uint16_t id;
-    size_t tid;
-    size_t refc;
+    uint16_t tid;
+    uint16_t refc;
+    uint16_t lcid;
     void *chains_state[];
 
 } line_t;
@@ -39,7 +39,6 @@ typedef struct context_s
     bool est;
     bool first;
     bool fin;
-
 } context_t;
 
 typedef struct tunnel_s
@@ -67,14 +66,20 @@ void defaultDownStream(tunnel_t *self, context_t *c);
 void defaultPacketDownStream(tunnel_t *self, context_t *c);
 
 extern struct hloop_s **loops; // ww.h runtime api
-inline line_t *newLine(size_t tid)
+inline line_t *newLine(uint16_t tid)
 {
     size_t size = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
     line_t *result = malloc(size);
     memset(result, 0, size);
     result->tid = tid;
     result->refc = 1;
+    result->lcid = MAX_CHAIN_LEN - 1;
     result->loop = loops[tid];
+    return result;
+}
+inline size_t reserveChainStateIndex(line_t *l){
+    size_t result = l->lcid;
+    l->lcid -=1;
     return result;
 }
 inline void destroyLine(line_t *l)

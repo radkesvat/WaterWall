@@ -633,7 +633,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     char *fallback_node = NULL;
     if (!getStringFromJsonObject(&fallback_node, settings, "fallback"))
     {
-        LOGW("OpenSSLServer: no fallback provided in json, not recommended");
+        LOGW("OpenSSL Server: no fallback provided in json, not recommended");
     }
     else
     {
@@ -641,13 +641,13 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         if (state->fallback_delay < 0)
             state->fallback_delay = 0;
 
-        LOGD("OpenSSLServer: accessing fallback node");
+        LOGD("OpenSSL Server: accessing fallback node");
 
         hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(hash_next);
         if (next_node == NULL)
         {
-            LOGF("OpenSSLServer: fallback node not found");
+            LOGF("OpenSSL Server: fallback node not found");
             exit(1);
         }
 
@@ -655,10 +655,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         {
             runNode(next_node, instance_info->chain_index + 1);
         }
-        else
-        {
-            // this is not allowed but it can also work in most contextes
-        }
+
         state->fallback = next_node->instance;
     }
     free(fallback_node);
@@ -676,7 +673,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
     if (state->ssl_context == NULL)
     {
-        LOGF("OpenSSLServer: Could not create ssl context");
+        LOGF("OpenSSL Server: Could not create ssl context");
         return NULL;
     }
 
