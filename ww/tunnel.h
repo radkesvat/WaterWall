@@ -129,6 +129,13 @@ inline context_t *newContextFrom(context_t *source)
     new_ctx->fin = false;
     return new_ctx;
 }
+inline context_t *newEstContext(line_t *line)
+{
+    context_t *c = newContext(line);
+    c->est = true;
+    return c;
+}
+
 inline context_t *newFinContext(line_t *line)
 {
     context_t *c = newContext(line);
@@ -144,8 +151,8 @@ inline context_t *newInitContext(line_t *line)
 }
 inline context_t *switchLine(context_t *c, line_t *line)
 {
-    destroyLine(c->line);
     line->refc += 1;
+    destroyLine(c->line);
     c->line = line;
     return c;
 }

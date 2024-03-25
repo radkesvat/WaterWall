@@ -7,6 +7,7 @@ extern void destroyLine(line_t *con);
 extern void destroyContext(context_t *c);
 extern context_t *newContext(line_t *line);
 extern context_t *newContextFrom(context_t *source);
+extern context_t *newEstContext(line_t *line);
 extern context_t *newFinContext(line_t *line);
 extern context_t *newInitContext(line_t *line);
 extern context_t *switchLine(context_t *c, line_t *line);

@@ -63,11 +63,11 @@ static void on_accept_tcp(hio_t *io)
                     }
                     hio_detach(io);
 
-                    hloop_t *main_loop = loops[state->last_round_tindex];
+                    hloop_t *worker_loop = loops[state->last_round_tindex];
 
                     hevent_t ev;
                     memset(&ev, 0, sizeof(ev));
-                    ev.loop = main_loop;
+                    ev.loop = worker_loop;
                     ev.cb = filter->cb;
 
                     socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
@@ -79,7 +79,7 @@ static void on_accept_tcp(hio_t *io)
                     if (state->last_round_tindex >= threads_count)
                         state->last_round_tindex = 0;
                     hmutex_unlock(&(state->mutex));
-                    hloop_post_event(main_loop, &ev);
+                    hloop_post_event(worker_loop, &ev);
 
                     return;
                 }
