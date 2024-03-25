@@ -7,13 +7,15 @@ static bool resume_write_queue(connector_con_state_t *cstate)
     context_queue_t *queue = (cstate)->queue;
     context_t **cw = &((cstate)->current_w);
     hio_t *io = cstate->io;
+    hio_t* last_resumed_io = NULL;
     while (contextQueueLen(queue) > 0)
     {
         *cw = contextQueuePop(queue);
         hio_t *upstream_io = (*cw)->src_io;
 
-        if ((*cw)->payload == NULL)
+        if ((*cw)->payload == NULL && last_resumed_io != upstream_io)
         {
+            last_resumed_io = upstream_io;
             destroyContext((*cw));
 
             if (upstream_io)
