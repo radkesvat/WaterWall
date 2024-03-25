@@ -367,10 +367,11 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
         return false;
     }
-    memcpy(&(c->packet_size), rawBuf(c->payload), 2);
-    shiftr(c->payload, 2 + CRLF_LEN);
-    c->packet_size = (c->packet_size << 8) | (c->packet_size >> 8);
-    assert(bufLen(c->payload) == c->packet_size);
+    // memcpy(&(c->packet_size), rawBuf(c->payload), 2);
+    shiftr(c->payload, 2 + CRLF_LEN); //(2bytes) packet size already taken 
+    // c->packet_size = (c->packet_size << 8) | (c->packet_size >> 8);
+
+    assert(bufLen(c->payload) == packet_size);
     if (!cstate->first_sent)
     {
         c->first = true;

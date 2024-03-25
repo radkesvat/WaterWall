@@ -6,29 +6,7 @@
 #include "buffer_pool.h"
 
 #define MAX_CHAIN_LEN 50
-#define MAX_WAITERS 20
 
-#ifdef DEBUG
-#define NEXT_STATE(x) (x->cur++)
-#elif NDEBUG
-#define NEXT_STATE(x)                    \
-    do                                   \
-    {                                    \
-        (x->cur++);                      \
-        assert(cx->cur < MAX_CHAIN_LEN); \
-    } while (0)
-#endif
-
-#ifdef DEBUG
-#define PREV_STATE(x) (x->cur--)
-#elif NDEBUG
-#define PREV_STATE(x)         \
-    do                        \
-    {                         \
-        (x->cur--);           \
-        assert(cx->cur >= 0); \
-    } while (0)
-#endif
 
 #define DISCARD_CONTEXT(x)                                   \
     do                                                       \
@@ -57,8 +35,6 @@ typedef struct context_s
     line_t *line;
     shift_buffer_t *payload;
 
-    //--------------
-    uint16_t packet_size; // used for packet based protocols
     bool init;
     bool est;
     bool first;
