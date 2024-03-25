@@ -1,6 +1,6 @@
 #include "bridge.h"
+#include "managers/node_manager.h"
 #include "loggers/network_logger.h"
-
 
 #define MAX_PACKET_SIZE 65536
 
@@ -11,155 +11,119 @@
 
 typedef struct bridge_state_s
 {
+    bool initialized;
+    bool mode_upside; // this node is last node of upstream
+    node_t *pair_node;
+    tunnel_t *pair;
 
 } bridge_state_t;
 
 typedef struct bridge_con_state_s
 {
 
-
 } bridge_con_state_t;
 
-
-
+static void secondary_init(tunnel_t *self, bridge_state_t *state)
+{
+    if (state->pair_node->instance == NULL)
+    {
+        LOGF("Bridge: the pair node is not running");
+        exit(1);
+    }
+    if (!state->mode_upside && self->dw != NULL)
+    {
+        LOGF("Bridge: misconfiguration, bridge only exists at  up or down end of a chain");
+        exit(1);
+    }
+    state->pair = state->pair_node->instance;
+    state->initialized = true;
+}
 static void upStream(tunnel_t *self, context_t *c)
 {
-
-    if (c->payload != NULL)
-    {
-
-        // LOGD("upstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 200), rawBuf(c->payload));
-        size_t blen = bufLen(c->payload);
-        size_t calculated_bytes = size_uleb128(blen);
-        shiftl(c->payload, calculated_bytes);
-        write_uleb128(rawBuf(c->payload), blen);
-
-        shiftl(c->payload, 1);
-        writeUI8(c->payload, '\n');
-    }
+    bridge_state_t *state = STATE(self);
+    if (!state->initialized)
+        secondary_init(self,state);
+    if (state->mode_upside)
+        state->pair->downStream(state->pair, c);
     else
-    {
-        if (c->init)
-        {
-            bridge_con_state_t *cstate = malloc(sizeof(bridge_con_state_t));
-            cstate->wanted = 0;
-            cstate->stream_buf = newBufferStream(buffer_pools[c->line->tid]);
-            CSTATE_MUT(c) = cstate;
-        }
-        else if (c->fin)
-        {
-            bridge_con_state_t *cstate = CSTATE(c);
-            destroyBufferStream(cstate->stream_buf);
-            free(cstate);
-            CSTATE_MUT(c) = NULL;
-        }
-    }
-
-    self->up->upStream(self->up, c);
+        self->up->upStream(self->up, c);
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
 
-    if (c->payload != NULL)
-    {
-        // LOGD("upstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 200), rawBuf(c->payload));
-
-        bridge_con_state_t *cstate = CSTATE(c);
-        if (cstate->wanted > 0)
-        {
-            bufferStreamPush(cstate->stream_buf, c->payload);
-            c->payload = NULL;
-            process(self, c);
-            destroyContext(c);
-            return;
-        }
-        else
-        {
-
-            shift_buffer_t *buf = c->payload;
-            if (bufLen(buf) < 2)
-            {
-                DISCARD_CONTEXT(c);
-                destroyContext(c);
-                return;
-            }
-
-            shiftr(buf, 1); // first byte is \n (grpc byte array identifier? always \n? )
-            size_t data_len = 0;
-            size_t bytes_passed = read_uleb128_to_uint64(rawBuf(buf), rawBuf(buf) + bufLen(buf), &data_len);
-            shiftr(buf, bytes_passed);
-            if (data_len > MAX_PACKET_SIZE)
-            {
-                LOGE("ProtoBuf Client: a grpc chunk rejected, size too large");
-                DISCARD_CONTEXT(c);
-                destroyContext(c);
-                return;
-            }
-            if (data_len != bufLen(buf))
-            {
-                cstate->wanted = data_len;
-                bufferStreamPush(cstate->stream_buf, c->payload);
-                c->payload = NULL;
-                destroyContext(c);
-                return;
-            }
-        }
-    }
+    bridge_state_t *state = STATE(self);
+    if (!state->initialized)
+        secondary_init(self,state);
+    if (state->mode_upside)
+        self->dw->downStream(self->dw, c);
     else
+        state->pair->upStream(state->pair, c);
+}
+
+static void BridgeUpStream(tunnel_t *self, context_t *c)
+{
+    upStream(self, c);
+}
+static void BridgePacketUpStream(tunnel_t *self, context_t *c)
+{
+    upStream(self, c);
+}
+static void BridgeDownStream(tunnel_t *self, context_t *c)
+{
+    downStream(self, c);
+}
+static void BridgePacketDownStream(tunnel_t *self, context_t *c)
+{
+    downStream(self, c);
+}
+
+tunnel_t *newBridge(node_instance_context_t *instance_info)
+{
+    const cJSON *settings = instance_info->node_settings_json;
+    char *pair_node_name = NULL;
+    if (!getStringFromJsonObject(&pair_node_name, settings, "pair"))
     {
-        if (c->fin)
-        {
-            bridge_con_state_t *cstate = CSTATE(c);
-            destroyBufferStream(cstate->stream_buf);
-            free(cstate);
-            CSTATE_MUT(c) = NULL;
-        }
+        LOGF("Bridge: \"pair\" is not provided in json");
+        exit(1);
     }
-    self->dw->downStream(self->dw, c);
-}
 
-static void ProtoBufClientUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void ProtoBufClientPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void ProtoBufClientDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void ProtoBufClientPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
+    bridge_state_t *state = malloc(sizeof(bridge_state_t));
+    memset(state, 0, sizeof(bridge_state_t));
 
-tunnel_t *newProtoBufClient(node_instance_context_t *instance_info)
-{
+    hash_t hash_pairname = calcHashLen(pair_node_name, strlen(pair_node_name));
+    node_t *pair_node = getNode(hash_pairname);
+    if (pair_node == NULL)
+    {
+        LOGF("Bridge: pair node \"%s\" not found", pair_node_name);
+        exit(1);
+    }
+    state->pair_node = pair_node;
+
+    state->mode_upside = instance_info->self_node_handle->next == NULL;
+
 
     tunnel_t *t = newTunnel();
-
-    t->upStream = &ProtoBufClientUpStream;
-    t->packetUpStream = &ProtoBufClientPacketUpStream;
-    t->downStream = &ProtoBufClientDownStream;
-    t->packetDownStream = &ProtoBufClientPacketDownStream;
+    t->state = state;
+    t->upStream = &BridgeUpStream;
+    t->packetUpStream = &BridgePacketUpStream;
+    t->downStream = &BridgeDownStream;
+    t->packetDownStream = &BridgePacketDownStream;
     return t;
 }
 
-api_result_t apiProtoBufClient(tunnel_t *self, char *msg)
+api_result_t apiBridge(tunnel_t *self, char *msg)
 {
-    LOGE("protobuf-client API NOT IMPLEMENTED");
+    LOGE("bridge API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
-tunnel_t *destroyProtoBufClient(tunnel_t *self)
+tunnel_t *destroyBridge(tunnel_t *self)
 {
-    LOGE("protobuf-client DESTROY NOT IMPLEMENTED"); // TODO
+    LOGE("bridge DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
-tunnel_metadata_t getMetadataProtoBufClient()
+tunnel_metadata_t getMetadataBridge()
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t){.version = 0001, .flags = TFLAG_ROUTE_STARTER};
 }

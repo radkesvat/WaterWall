@@ -2,7 +2,6 @@
 #include "library_loader.h"
 #include "loggers/core_logger.h"
 
-
 #define USING(x)                                                                       \
     do                                                                                 \
     {                                                                                  \
@@ -11,7 +10,6 @@
                                          new##x, api##x, destroy##x, getMetadata##x}); \
         LOGD("Imported static tunnel lib%s.a  hash:%lx", #x, h);                       \
     } while (0)
-
 
 #ifdef INCLUDE_TCP_LISTENER
 #include "tunnels/adapters/tcp_listener/tcp_listener.h"
@@ -45,6 +43,10 @@
 #include "tunnels/adapters/tcp_connector/tcp_connector.h"
 #endif
 
+#ifdef INCLUDE_BRIDGE
+#include "tunnels/adapters/bridge/bridge.h"
+#endif
+
 #ifdef INCLUDE_WOLFSSL_SERVER
 #include "tunnels/server/wolfssl/wolfssl_server.h"
 #endif
@@ -64,9 +66,6 @@
 #ifdef INCLUDE_PROTOBUF_CLIENT
 #include "tunnels/client/protobuf/protobuf_client.h"
 #endif
-
-
-
 
 void loadStaticTunnelsIntoCore()
 {
@@ -102,6 +101,10 @@ void loadStaticTunnelsIntoCore()
     USING(TcpConnector);
 #endif
 
+#ifdef INCLUDE_BRIDGE
+    USING(Bridge);
+#endif
+
 #ifdef INCLUDE_WOLFSSL_SERVER
     USING(WolfSSLServer);
 #endif
@@ -121,9 +124,4 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_PROTOBUF_CLIENT
     USING(ProtoBufClient);
 #endif
-
-
-
-
-
 }
