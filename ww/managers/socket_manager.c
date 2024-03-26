@@ -1,5 +1,6 @@
-#include "socket_manager.h"
+#include <stdlib.h>
 #include "ww.h"
+#include "socket_manager.h"
 #include "hv/hthread.h"
 #include "loggers/network_logger.h"
 
@@ -120,8 +121,10 @@ static HTHREAD_ROUTINE(accept_thread)
         uint16_t port_min = option.port_min;
         uint16_t port_max = option.port_max;
         const char *proto_str = option.proto == socket_protocol_tcp ? "TCP" : "UDP";
-        if(!port_min <= port_max){
+        if (port_min > port_max)
+        {
             LOGF("SocketManager: port min must be lower than port max");
+            exit(1);
         }
 
         if (option.proto == socket_protocol_tcp)
@@ -133,32 +136,11 @@ static HTHREAD_ROUTINE(accept_thread)
                 LOGF("NO IPTABLE");
                 exit(1);
             }
-            else
+            else if (option.multiport_backend == multiport_backend_sockets)
             {
-
-                if (option.multiport_backend == multiport_backend_sockets)
+                for (size_t p = port_min; p < port_max; p++)
                 {
-                    for (size_t p = port_min; p < port_max; p++)
-                    {
-                        if (ports_overlapped[p] == 1)
-                            continue;
-                        ports_overlapped[port_min] = 1;
-
-                        LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
-                        filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
-
-                        if (filter->listen_io == NULL)
-                        {
-                            LOGF("filter->listen_io == NULL");
-                            exit(1);
-                        }
-
-                        LOGI("SocketManager: listening on %s:[%u - %u] (%s)", option.host, port_min, port_max, proto_str);
-                    }
-                }
-                else
-                {
-                    if (ports_overlapped[port_min] == 1)
+                    if (ports_overlapped[p] == 1)
                         continue;
                     ports_overlapped[port_min] = 1;
 
@@ -167,9 +149,26 @@ static HTHREAD_ROUTINE(accept_thread)
 
                     if (filter->listen_io == NULL)
                     {
-                        LOGF("SocketManager: stopping due to null socket handle");
+                        LOGF("filter->listen_io == NULL");
                         exit(1);
                     }
+
+                    LOGI("SocketManager: listening on %s:[%u - %u] (%s)", option.host, port_min, port_max, proto_str);
+                }
+            }
+            else
+            {
+                if (ports_overlapped[port_min] == 1)
+                    continue;
+                ports_overlapped[port_min] = 1;
+
+                LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
+                filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
+
+                if (filter->listen_io == NULL)
+                {
+                    LOGF("SocketManager: stopping due to null socket handle");
+                    exit(1);
                 }
             }
         }
