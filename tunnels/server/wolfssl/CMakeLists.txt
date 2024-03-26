@@ -19,7 +19,7 @@ add_library(WolfSSLServer STATIC
 target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WolfSSLServer ww)
 # todo select correct processor
-if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "aarch64")
 target_link_libraries(WolfSSLServer libwolfssl_arm64.a)
 else()
 target_link_libraries(WolfSSLServer libwolfssl_amd64.a)
