@@ -42,6 +42,20 @@ typedef struct tcp_listener_con_state_s
     bool first_packet_sent;
 } tcp_listener_con_state_t;
 
+static void cleanup(tcp_listener_con_state_t *cstate)
+{
+    if(cstate->current_w){
+        if (cstate->current_w->payload)
+        {
+            DISCARD_CONTEXT(cstate->current_w);
+        }
+        destroyContext(cstate->current_w);
+        
+    }
+    destroyContextQueue(cstate->queue);
+    free(cstate);
+}
+
 static bool resume_write_queue(tcp_listener_con_state_t *cstate)
 {
     context_queue_t *queue = (cstate)->queue;
@@ -56,6 +70,7 @@ static bool resume_write_queue(tcp_listener_con_state_t *cstate)
         if ((*cw)->payload == NULL)
         {
             destroyContext((*cw));
+            *cw = NULL;
 
             if (upstream_io && last_resumed_io != upstream_io)
             {
@@ -101,7 +116,12 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         context_t *cpy_ctx = (*cw);
         *cw = NULL;
 
-        if (resume_write_queue(cstate))
+        if (contextQueueLen(queue) > 0)
+        {
+            contextQueuePush(cstate->queue, cpy_ctx);
+            resume_write_queue(cstate);
+        }
+        else
         {
             destroyContext(cpy_ctx);
             cstate->write_paused = false;
@@ -109,10 +129,6 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
 
             if (upstream_io)
                 hio_read(upstream_io);
-        }
-        else
-        {
-            contextQueuePush(cstate->queue, cpy_ctx);
         }
     }
 }
@@ -142,12 +158,14 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
-            hio_t *io = CSTATE(c)->io;
+
+            tcp_listener_con_state_t *cstate = CSTATE(c);
+            hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
-            destroyContextQueue(CSTATE(c)->queue);
-            free(CSTATE(c));
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
             destroyLine(c->line);
+            hio_close(io);
         }
     }
 
@@ -199,10 +217,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
         if (c->fin)
         {
-            hio_t *io = CSTATE(c)->io;
+            hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
-            destroyContextQueue(CSTATE(c)->queue);
-            free(CSTATE(c));
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
             destroyLine(c->line);
             destroyContext(c);
@@ -309,6 +326,10 @@ void onInboundConnected(hevent_t *ev)
     hio_setcb_read(io, on_recv);
     hio_setcb_close(io, on_close);
     // hio_setcb_write(io, on_write_complete); not required here
+    if (resume_write_queue(cstate))
+        cstate->write_paused = false;
+    else
+        hio_setcb_write(cstate->io, on_write_complete);
 
     // send the init packet
     context_t *context = newInitContext(line);

@@ -3,6 +3,20 @@
 #include "utils/sockutils.h"
 #include "loggers/network_logger.h"
 
+static void cleanup(tcp_connector_con_state_t *cstate)
+{
+    if (cstate->current_w)
+    {
+        if (cstate->current_w->payload)
+        {
+            DISCARD_CONTEXT(cstate->current_w);
+        }
+        destroyContext(cstate->current_w);
+    }
+    destroyContextQueue(cstate->queue);
+    free(cstate);
+}
+
 static bool resume_write_queue(tcp_connector_con_state_t *cstate)
 {
     context_queue_t *queue = (cstate)->queue;
@@ -17,6 +31,7 @@ static bool resume_write_queue(tcp_connector_con_state_t *cstate)
         if ((*cw)->payload == NULL)
         {
             destroyContext((*cw));
+            *cw = NULL;
 
             if (upstream_io && last_resumed_io != upstream_io)
             {
@@ -62,7 +77,12 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         context_t *cpy_ctx = (*cw);
         *cw = NULL;
 
-        if (resume_write_queue(cstate))
+        if (contextQueueLen(queue) > 0)
+        {
+            contextQueuePush(cstate->queue, cpy_ctx);
+            resume_write_queue(cstate);
+        }
+        else
         {
             destroyContext(cpy_ctx);
             cstate->write_paused = false;
@@ -70,10 +90,6 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
 
             if (upstream_io)
                 hio_read(upstream_io);
-        }
-        else
-        {
-            contextQueuePush(cstate->queue, cpy_ctx);
         }
     }
 }
@@ -296,8 +312,7 @@ void tcpConnectorUpStream(tunnel_t *self, context_t *c)
         {
             hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
-            destroyContextQueue(cstate->queue);
-            free(CSTATE(c));
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
             destroyContext(c);
             hio_close(io);
@@ -344,10 +359,9 @@ void tcpConnectorDownStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            hio_t *io = CSTATE(c)->io;
+            hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
-            destroyContextQueue(cstate->queue);
-            free(CSTATE(c));
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
             self->dw->downStream(self->dw, c);
         }
