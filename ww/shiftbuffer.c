@@ -57,12 +57,12 @@ void reset(shift_buffer_t *self)
 // all caps in this function are REAL
 void expand(shift_buffer_t *self, size_t increase)
 {
-    if (*(self->refc)> 1)
+    if (*(self->refc) > 1)
     {
         LOGF("Expanding a shiftbuffer while it has refs is false assumption!");
         assert(false);
     }
-    const size_t real_cap = self->cap *2;
+    const size_t real_cap = self->cap * 2;
 
     size_t newcap = pow(2, ceil(log2((float)(real_cap * 2) + (increase * 2))));
 

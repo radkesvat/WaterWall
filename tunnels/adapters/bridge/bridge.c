@@ -91,15 +91,14 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
     bridge_state_t *state = malloc(sizeof(bridge_state_t));
     memset(state, 0, sizeof(bridge_state_t));
 
-    hash_t hash_pairname = calcHashLen(pair_node_name, strlen(pair_node_name));
-    free(pair_node_name);
-    
+    hash_t hash_pairname = calcHashLen(pair_node_name, strlen(pair_node_name));    
     node_t *pair_node = getNode(hash_pairname);
     if (pair_node == NULL)
     {
         LOGF("Bridge: pair node \"%s\" not found", pair_node_name);
         exit(1);
     }
+    free(pair_node_name);
     state->pair_node = pair_node;
 
     state->mode_upside = instance_info->self_node_handle->next == NULL;
