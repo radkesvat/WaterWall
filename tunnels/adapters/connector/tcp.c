@@ -101,10 +101,10 @@ static void on_close(hio_t *io)
 {
     connector_con_state_t *cstate = (connector_con_state_t *)(hevent_userdata(io));
     if (cstate != NULL)
-        LOGD("Connector received close for FD:%x ",
+        LOGD("Connector: received close for FD:%x ",
              (int)hio_fd(io));
     else
-        LOGD("Connector sent close for FD:%x ",
+        LOGD("Connector: sent close for FD:%x ",
              (int)hio_fd(io));
 
     if (cstate != NULL)
@@ -234,7 +234,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
 
             // sockaddr_set_ipport(&(final_ctx.addr), "127.0.0.1", 443);
 
-            LOGW("Connector: initiating connection");
+            LOGW("Connector: initiating tcp connection");
             if (final_ctx.atype == SAT_DOMAINNAME)
             {
                 if (!final_ctx.resolved)

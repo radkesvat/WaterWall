@@ -71,7 +71,7 @@ static int on_alpn_select(SSL *ssl,
 
     while (offset < inlen)
     {
-        LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
+        // LOGD("WolfsslServer: client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
         if (in[offset] == 2 && http_level < 2)
         {
             if (strncmp(&(in[1 + offset]), "h2", 2) == 0)
@@ -307,14 +307,14 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    LOGD("Tls handshake complete");
+                    LOGD("WolfsslServer: Tls handshake complete");
                     cstate->handshake_completed = true;
                     context_t *up_init_ctx = newInitContext(c->line);
                     up_init_ctx->src_io = c->src_io;
                     self->up->upStream(self->up, up_init_ctx);
                     if (!ISALIVE(c))
                     {
-                        LOGW("WolfSSL Server: next node instantly closed the init with fin");
+                        LOGW("WolfsslServer: next node instantly closed the init with fin");
                         DISCARD_CONTEXT(c);
                         destroyContext(c);
 
@@ -637,7 +637,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     char *fallback_node = NULL;
     if (!getStringFromJsonObject(&fallback_node, settings, "fallback"))
     {
-        LOGW("WolfSSL Server: no fallback provided in json, not recommended");
+        LOGW("WolfsslServer: no fallback provided in json, not recommended");
     }
     else
     {
@@ -645,13 +645,13 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
         if (state->fallback_delay < 0)
             state->fallback_delay = 0;
 
-        LOGD("WolfSSL Server: accessing fallback node");
+        LOGD("WolfsslServer: accessing fallback node");
 
         hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(hash_next);
         if (next_node == NULL)
         {
-            LOGF("WolfSSL Server: fallback node not found");
+            LOGF("WolfsslServer: fallback node not found");
             exit(1);
         }
 
@@ -677,7 +677,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
     if (state->ssl_context == NULL)
     {
-        LOGF("WolfSSL Server: Could not create ssl context");
+        LOGF("WolfsslServer: Could not create ssl context");
         return NULL;
     }
 

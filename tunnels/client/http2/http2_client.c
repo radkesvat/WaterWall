@@ -24,7 +24,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
     char *data = NULL;
     size_t len;
     len = nghttp2_session_mem_send(con->session, (const uint8_t **)&data);
-    LOGD("nghttp2_session_mem_send %d\n", len);
+    // LOGD("nghttp2_session_mem_send %d\n", len);
     if (len != 0)
     {
         shift_buffer_t *send_buf = popBuffer(buffer_pools[line->tid]);
@@ -65,13 +65,13 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         // HTTP2 DATA framehd
         con->state = H2_SEND_DATA;
 
-        LOGD("HTTP2 SEND_DATA_FRAME_HD...\n");
+        // LOGD("HTTP2 SEND_DATA_FRAME_HD...\n");
         if (con->content_type == APPLICATION_GRPC)
         {
             grpc_message_hd msghd;
             msghd.flags = 0;
             msghd.length = bufLen(buf);
-            LOGD("grpc_message_hd: flags=%d length=%d\n", msghd.flags, msghd.length);
+            // LOGD("grpc_message_hd: flags=%d length=%d\n", msghd.flags, msghd.length);
 
             // grpc server send grpc-status in HTTP2 header frame
             flags = HTTP2_FLAG_NONE;
@@ -101,7 +101,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         con->state = H2_SEND_DONE;
     }
 
-    LOGD("GetSendData %d\n", len);
+    // LOGD("GetSendData %d\n", len);
     return false;
 }
 static void flush_write_queue(http2_client_con_state_t *con)
@@ -156,11 +156,11 @@ static int on_header_callback(nghttp2_session *session,
     if (userdata == NULL)
         return 0;
 
-    LOGD("on_header_callback\n");
+    // LOGD("on_header_callback\n");
     print_frame_hd(&frame->hd);
     const char *name = (const char *)_name;
     const char *value = (const char *)_value;
-    LOGD("%s: %s\n", name, value);
+    // LOGD("%s: %s\n", name, value);
 
     http2_client_con_state_t *con = (http2_client_con_state_t *)userdata;
     tunnel_t *self = con->tunnel;
@@ -201,8 +201,8 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
         nghttp2_session_get_stream_user_data(session, stream_id);
     if (!stream)
         return 0;
-    LOGD("on_data_chunk_recv_callback\n");
-    LOGD("stream_id=%d length=%d\n", stream_id, (int)len);
+    // LOGD("on_data_chunk_recv_callback\n");
+    // LOGD("stream_id=%d length=%d\n", stream_id, (int)len);
     // LOGD("%.*s\n", (int)len, data);
 
     if (con->content_type == APPLICATION_GRPC)

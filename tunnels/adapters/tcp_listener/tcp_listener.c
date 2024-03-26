@@ -55,7 +55,6 @@ static bool resume_write_queue(tcp_listener_con_state_t *cstate)
 
         if ((*cw)->payload == NULL)
         {
-            last_resumed_io = upstream_io;
             destroyContext((*cw));
 
             if (upstream_io && last_resumed_io != upstream_io)
@@ -259,10 +258,10 @@ static void on_close(hio_t *io)
 {
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *)(hevent_userdata(io));
     if (cstate != NULL)
-        LOGD("TcpListener received close for FD:%x ",
+        LOGD("TcpListener: received close for FD:%x ",
              (int)hio_fd(io));
     else
-        LOGD("TcpListener sent close for FD:%x ",
+        LOGD("TcpListener: sent close for FD:%x ",
              (int)hio_fd(io));
 
     if (cstate != NULL)
@@ -284,7 +283,7 @@ void onInboundConnected(hevent_t *ev)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN] = {0};
 
-    LOGD("TcpListener Accepted FD:%x [%s] <= [%s]",
+    LOGD("TcpListener: Accepted FD:%x [%s] <= [%s]",
          (int)hio_fd(io),
          SOCKADDR_STR(hio_localaddr(io), localaddrstr),
          SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
@@ -317,7 +316,7 @@ void onInboundConnected(hevent_t *ev)
     self->upStream(self, context);
     if ((line->chains_state)[0] == NULL)
     {
-        LOGW("Tcp socket just got closed by upstream before anything happend...");
+        LOGW("TcpListener: socket just got closed by upstream before anything happend...");
         return;
     }
     hio_read(io);

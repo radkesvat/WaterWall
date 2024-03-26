@@ -60,27 +60,27 @@ int main(int argc, char **argv)
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {
             // read config file
-            LOGD("Begin parsing config file \"%s\"", *k.ref);
+            LOGD("Core: begin parsing config file \"%s\"", *k.ref);
             config_file_t *cfile = parseConfigFile(*k.ref);
 
             if (cfile == NULL)
             {
-                LOGF("Could not read core file \"%s\" ", *k.ref);
+                LOGF("Core: could not read core file \"%s\" ", *k.ref);
                 exit(1);
             }
 
-            LOGI("Parsing config file \"%s\" complete", *k.ref);
+            LOGI("Core: parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
-            LOGD("Spawning accept thread ...");
+            LOGD("Core: spawning accept thread ...");
             startSocketManager();
-            LOGD("Starting eventloops ...");
+            LOGD("Core: starting eventloops ...");
             hloop_run(loops[0]);
             for (size_t i = 1; i < threads_count; i++)
             {
                 hthread_join(threads[i]);
             }
             
-            LOGW("MainThread moved out of eventloop");
+            LOGW("Core: MainThread moved out of eventloop");
             hloop_free(&(loops[0]));
 
         }

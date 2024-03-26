@@ -34,7 +34,7 @@ static void reCharge(buffer_pool_t *state)
     }
     state->len += increase;
 #ifdef DEBUG
-    LOGD("BufferPool allocated %d new buffers, %zu are in use", increase, state->in_use);
+    LOGD("BufferPool: allocated %d new buffers, %zu are in use", increase, state->in_use);
 #endif
 }
 
@@ -49,7 +49,7 @@ static void giveMemBackToOs(buffer_pool_t *state)
     state->len -= decrease;
 
 #ifdef DEBUG
-    LOGD("BufferPool freed %d buffers, %zu are in use", decrease, state->in_use);
+    LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, state->in_use);
 #endif
 
     malloc_trim(0); //y tho?

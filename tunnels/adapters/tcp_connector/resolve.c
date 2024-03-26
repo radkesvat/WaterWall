@@ -10,7 +10,7 @@ bool tcpConnectorResolvedomain(socket_context_t *dest)
     {
         if (sockaddr_set_ipport(&(dest->addr), dest->domain, old_port) != 0)
         {
-            LOGE("Connector: resolve failed  %s", dest->domain);
+            LOGE("TcpConnector: resolve failed  %s", dest->domain);
             return false;
         }
         else

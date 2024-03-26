@@ -16,7 +16,6 @@ static bool resume_write_queue(tcp_connector_con_state_t *cstate)
 
         if ((*cw)->payload == NULL)
         {
-            last_resumed_io = upstream_io;
             destroyContext((*cw));
 
             if (upstream_io && last_resumed_io != upstream_io)
@@ -102,10 +101,10 @@ static void on_close(hio_t *io)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *)(hevent_userdata(io));
     if (cstate != NULL)
-        LOGD("TcpConnector received close for FD:%x ",
+        LOGD("TcpConnector: received close for FD:%x ",
              (int)hio_fd(io));
     else
-        LOGD("TcpConnector sent close for FD:%x ",
+        LOGD("TcpConnector: sent close for FD:%x ",
              (int)hio_fd(io));
 
     if (cstate != NULL)
@@ -126,7 +125,7 @@ static void onOutBoundConnected(hio_t *upstream_io)
     gettimeofday(&tv2, NULL);
 
     double time_spent = (double)(tv2.tv_usec - (cstate->__profile_conenct).tv_usec) / 1000000 + (double)(tv2.tv_sec - (cstate->__profile_conenct).tv_sec);
-    LOGD("Connector: tcp connect took %d ms", (int)(time_spent * 1000));
+    LOGD("TcpConnector: tcp connect took %d ms", (int)(time_spent * 1000));
 #endif
 
     tunnel_t *self = cstate->tunnel;
@@ -136,7 +135,7 @@ static void onOutBoundConnected(hio_t *upstream_io)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN] = {0};
 
-    LOGD("Connector: connection succeed FD:%x [%s] => [%s]",
+    LOGD("TcpConnector: connection succeed FD:%x [%s] => [%s]",
          (int)hio_fd(upstream_io),
          SOCKADDR_STR(hio_localaddr(upstream_io), localaddrstr),
          SOCKADDR_STR(hio_peeraddr(upstream_io), peeraddrstr));
@@ -234,7 +233,7 @@ void tcpConnectorUpStream(tunnel_t *self, context_t *c)
 
             // sockaddr_set_ipport(&(final_ctx.addr), "127.0.0.1", 443);
 
-            LOGW("Connector: initiating connection");
+            LOGW("TcpConnector: initiating connection");
             if (final_ctx.atype == SAT_DOMAINNAME)
             {
                 if (!final_ctx.resolved)
@@ -323,7 +322,7 @@ void tcpConnectorDownStream(tunnel_t *self, context_t *c)
         }
         gettimeofday(&tv2, NULL);
         double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec - tv1.tv_sec);
-        LOGD("Connector: tcp downstream took %d ms", (int)(time_spent * 1000));
+        LOGD("TcpConnector: tcp downstream took %d ms", (int)(time_spent * 1000));
 #else
         self->dw->downStream(self->dw, c);
 

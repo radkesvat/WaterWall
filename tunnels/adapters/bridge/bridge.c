@@ -2,7 +2,6 @@
 #include "managers/node_manager.h"
 #include "loggers/network_logger.h"
 
-#define MAX_PACKET_SIZE 65536
 
 #define STATE(x) ((bridge_state_t *)((x)->state))
 #define CSTATE(x) ((bridge_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
@@ -32,7 +31,7 @@ static void secondary_init(tunnel_t *self, bridge_state_t *state)
     }
     if (!state->mode_upside && self->dw != NULL)
     {
-        LOGF("Bridge: misconfiguration, bridge only exists at  up or down end of a chain");
+        LOGF("Bridge: misconfiguration, bridge only exists at the start or end of a chain");
         exit(1);
     }
     state->pair = state->pair_node->instance;

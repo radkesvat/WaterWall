@@ -321,14 +321,14 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    LOGD("Tls handshake complete");
+                    LOGD("OpensslClient: Tls handshake complete");
                     cstate->handshake_completed = true;
                     context_t *dw_est_ctx = newContextFrom(c);
                     dw_est_ctx->est = true;
                     self->dw->downStream(self->dw, dw_est_ctx);
                     if (!ISALIVE(c))
                     {
-                        LOGW("Openssl client: prev node instantly closed the est with fin");
+                        LOGW("OpensslClient: prev node instantly closed the est with fin");
                         DISCARD_CONTEXT(c);
                         destroyContext(c);
                         return;

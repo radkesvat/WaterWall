@@ -36,12 +36,12 @@ void runNode(node_t *n1, size_t chain_index)
             runNode(n2, chain_index + 1);
         }
 
-        LOGD("Starting node \"%s\"", n1->name);
+        LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
         n1->instance = n1->lib->creation_proc(&(n1->instance_context));
         if (n1->instance == NULL)
         {
-            LOGF("Node Startup Failure: node (\"%s\") create() returned NULL handle", n1->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
             exit(1);
         }
 
@@ -50,12 +50,12 @@ void runNode(node_t *n1, size_t chain_index)
     }
     else
     {
-        LOGD("Starting node \"%s\"", n1->name);
+        LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
         n1->instance = n1->lib->creation_proc(&(n1->instance_context));
         if (n1->instance == NULL)
         {
-            LOGF("Node Startup Failure: node (\"%s\") create() returned NULL handle", n1->name);
+            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
             exit(1);
         }
         n1->instance->chain_index = chain_index;
@@ -181,7 +181,7 @@ static void startParsingFiles()
         tunnel_lib_t lib = loadTunnelLibByHash(new_node->hash_type);
         if (lib.hash_name == 0)
         {
-            LOGF("Node Creation Failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
+            LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
                  new_node->hash_type);
             exit(1);
         }
@@ -211,7 +211,8 @@ static void startParsingFiles()
 
         if (map_node_t_contains(map, new_node->hash_name))
         {
-            LOGF("Duplicate node \"%s\" (hash: %lx) ", new_node->name, new_node->hash_name);
+            LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", new_node->name, new_node->hash_name);
+            exit(1);
         }
         map_node_t_insert(map, new_node->hash_name, new_node);
     }

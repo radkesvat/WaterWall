@@ -71,8 +71,9 @@
 #include "tunnels/server/reverse/reverse_server.h"
 #endif
 
-
-
+#ifdef INCLUDE_REVERSE_CLIENT
+#include "tunnels/client/reverse/reverse_client.h"
+#endif
 
 void loadStaticTunnelsIntoCore()
 {
@@ -136,6 +137,8 @@ void loadStaticTunnelsIntoCore()
     USING(ReverseServer);
 #endif
 
-
+#ifdef INCLUDE_REVERSE_CLIENT
+    USING(ReverseClient);
+#endif
 
 }
