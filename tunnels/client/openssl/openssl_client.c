@@ -227,7 +227,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed:
+failed:;
     context_t *fail_context_up = newFinContext(c->line);
     fail_context_up->src_io = c->src_io;
     self->up->upStream(self->up, fail_context_up);
@@ -400,7 +400,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed:
+failed:;
     context_t *fail_context_up = newFinContext(c->line);
     self->up->upStream(self->up, fail_context_up);
 

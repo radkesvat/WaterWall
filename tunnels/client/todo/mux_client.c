@@ -265,7 +265,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     // extract header correctly even if buffering is required
     // without blocking the flow!
-process:
+process:;
     if (bufLen(c->payload) <= 0)
     {
         DISCARD_CONTEXT(c);

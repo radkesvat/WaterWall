@@ -172,11 +172,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
 
     return;
-failed:
+failed:;
     if (state->fallback != NULL)
         goto fallback;
 
-disconnect:
+disconnect:;
     DISCARD_CONTEXT(c);
     free(CSTATE(c));
     CSTATE_MUT(c) = NULL;
@@ -184,7 +184,7 @@ disconnect:
     destroyContext(c);
     self->dw->downStream(self->dw, reply);
     return;
-fallback:
+fallback:;
     trojan_auth_server_con_state_t *cstate = CSTATE(c);
     if (!cstate->init_sent)
     {

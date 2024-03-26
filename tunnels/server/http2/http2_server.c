@@ -277,7 +277,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
     }
     else if (con->state == H2_SEND_DATA)
     {
-    send_done:
+    send_done:;
         con->state = H2_SEND_DONE;
     }
 

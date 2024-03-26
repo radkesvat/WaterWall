@@ -181,7 +181,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
         }
     }
     return;
-fail:
+fail:;
     self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
 }
