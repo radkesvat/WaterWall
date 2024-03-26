@@ -120,7 +120,9 @@ static HTHREAD_ROUTINE(accept_thread)
         uint16_t port_min = option.port_min;
         uint16_t port_max = option.port_max;
         const char *proto_str = option.proto == socket_protocol_tcp ? "TCP" : "UDP";
-        assert(port_min <= port_max);
+        if(!port_min <= port_max){
+            LOGF("SocketManager: port min must be lower than port max");
+        }
 
         if (option.proto == socket_protocol_tcp)
         {

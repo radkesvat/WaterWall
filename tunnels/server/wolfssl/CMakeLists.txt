@@ -6,17 +6,25 @@ add_library(WolfSSLServer STATIC
 
 #cmake is not able to build fastest version of wolfssl yet (because all asm options are not provided in cmakelist), we used this:
 # ./configure  --enable-distro --enable-sp=rsa2048,asm --enable-harden --enable-static --enable-fast-rsa --enable-opensslall --enable-opensslextra --enable-tls13 --disable-oldtls --enable-intelasm	--enable-aesni 
-# generate configure with autoreconf -i
+# generate configure with autoreconf -i  (sudo apt-get install autoconf) (sudo apt-get install libtool-bin)
 # Note: before configure, add 
 # AC_DEFINE([NO_WOLFSSL_STUB], [1], [Description here])
 # to configure.ac !
+
+# if compiling for ARM: ./configure  --enable-distro --enable-sp=rsa2048,asm --enable-harden --enable-static --enable-fast-rsa --enable-opensslall --enable-opensslextra --enable-tls13 --disable-oldtls
+# /src/.libs/libwolfssl.a
 
 
 #ww api
 target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WolfSSLServer ww)
 # todo select correct processor
+if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+target_link_libraries(WolfSSLServer libwolfssl_arm64.a)
+else()
 target_link_libraries(WolfSSLServer libwolfssl_amd64.a)
+endif()
+
 # target_compile_options(ww PUBLIC -fPIC)  
 
 target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)
