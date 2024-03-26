@@ -51,9 +51,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         reverse_client_con_state_t *ucstate = CSTATE_U(c);
-                DISCARD_CONTEXT(c);
-        destroyContext(c);
-        return;
 
         if (ucstate->pair_connected)
         {
@@ -100,6 +97,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                     destroy_cstate(ucstate);
+                destroyContext(c);
+                
                 initiateConnect(self);
             }
 
@@ -164,7 +163,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
-    state->max_cons = min(max(1, state->max_cons),128);
+    state->max_cons = min(max(threads_count*2, state->max_cons),128);
     state->connection_per_thread = 1;
 
     // we are always the first line creator so its easy to get the positon independent index here

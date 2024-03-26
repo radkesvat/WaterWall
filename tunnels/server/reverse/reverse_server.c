@@ -90,6 +90,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     else
                         qcons_push(&(this_tb->d_cons), q_dcs);
                 }
+                destroyContext(c);
+
             }
         }
     }
@@ -159,13 +161,14 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     if (q_ucs == ucstate)
                     {
                         this_tb->u_count -= 1;
-
                         destroy_cstate(ucstate);
                         break;
                     }
                     else
                         qcons_push(&(this_tb->u_cons), q_ucs);
                 }
+                destroyContext(c);
+
             }
         }
     }

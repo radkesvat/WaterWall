@@ -37,8 +37,8 @@ static void do_connect(hevent_t *ev)
     struct connect_arg *cg = hevent_userdata(ev);
     tunnel_t *self = cg->t;
     reverse_client_state_t *state = STATE(self);
-
     reverse_client_con_state_t *cstate = create_cstate(cg->tid);
+    free(cg);
     (cstate->u->chains_state)[state->chain_index_pi] = cstate;
     (cstate->d->chains_state)[state->chain_index_pi] = cstate;
     self->up->upStream(self->up, newInitContext(cstate->u));
