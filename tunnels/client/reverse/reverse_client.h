@@ -2,7 +2,7 @@
 #include "api.h"
 
 
-// con 1  <------>  Reverse(server)  <------>  con 2
+// con 2  <------>  Reverse(Client)  <------>  con 1
 
 
 

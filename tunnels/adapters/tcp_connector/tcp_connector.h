@@ -2,10 +2,11 @@
 #include "api.h"
 
 
-// con <-----\                /----->  Resolve=>  TCP Connect || Udp Associate
-// con <------>  TcpConnector   <------>  Resolve=>  TCP Connect || Udp Associate
-// con <-----/                \----->  Resolve=>  TCP Connect || Udp Associate
+// con <-----\                    /----->  Resolve=>  TCP Connect
+// con <------>   TcpConnector   <------>  Resolve=>  TCP Connect
+// con <-----/                    \----->  Resolve=>  TCP Connect
 //
+
 
 #define NODE_TCP_LISTINER
 
