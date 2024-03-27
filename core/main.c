@@ -11,6 +11,32 @@
 
 #define CORE_FILE "core.json"
 
+#ifdef OS_LINUX
+#include <sys/resource.h>
+static void increaseFileLimit()
+{
+
+    struct rlimit rlim;
+    // Get the current limit
+    if (getrlimit(RLIMIT_NOFILE, &rlim) == -1)
+    {
+        LOGF("getrlimit");
+        exit(EXIT_FAILURE);
+    }
+    LOGD("File limit  %lu -> %lu", (unsigned long)rlim.rlim_cur,(unsigned long)rlim.rlim_max);
+    // Set the hard limit to the maximum allowed value
+    rlim.rlim_cur = rlim.rlim_max;
+    // Apply the new limit
+    if (setrlimit(RLIMIT_NOFILE, &rlim) == -1)
+    {
+        LOGF("setrlimit");
+        exit(EXIT_FAILURE);
+    }
+}
+#else
+static void increaseFileLimit() { (void)(0); }
+#endif
+
 int main(int argc, char **argv)
 {
     // test ASAN works -_-
@@ -26,7 +52,7 @@ int main(int argc, char **argv)
     }
     parseCoreSettings(core_file_content);
 
-    //  [Logger setup]
+    //  [Runtime setup]
     {
         hv_mkdir_p(getCoreSettings()->log_path);
         char *core_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->core_log_file);
@@ -43,7 +69,6 @@ int main(int argc, char **argv)
             getCoreSettings()->network_log_level,
             getCoreSettings()->dns_log_level,
             getCoreSettings()->threads);
-            
 
         free(core_log_file_path);
         free(network_log_file_path);
@@ -51,11 +76,11 @@ int main(int argc, char **argv)
     }
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
-
+    increaseFileLimit();
     loadStaticTunnelsIntoCore();
 
     //  [Parse ConfigFiles]
-    //  TODO this currently only runs 1 config file
+    //  TODO this currently runs only 1 config file
     {
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {
@@ -75,14 +100,12 @@ int main(int argc, char **argv)
             startSocketManager();
             LOGD("Core: starting eventloops ...");
             hloop_run(loops[0]);
+            LOGW("Core: MainThread moved out of eventloop");
+            hloop_free(&(loops[0]));
             for (size_t i = 1; i < threads_count; i++)
             {
                 hthread_join(threads[i]);
             }
-            
-            LOGW("Core: MainThread moved out of eventloop");
-            hloop_free(&(loops[0]));
-
         }
     }
 }
