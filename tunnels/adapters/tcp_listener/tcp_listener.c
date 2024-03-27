@@ -44,13 +44,13 @@ typedef struct tcp_listener_con_state_s
 
 static void cleanup(tcp_listener_con_state_t *cstate)
 {
-    if(cstate->current_w){
+    if (cstate->current_w)
+    {
         if (cstate->current_w->payload)
         {
             DISCARD_CONTEXT(cstate->current_w);
         }
         destroyContext(cstate->current_w);
-        
     }
     destroyContextQueue(cstate->queue);
     free(cstate);
@@ -290,7 +290,7 @@ static void on_close(hio_t *io)
         self->upStream(self, context);
     }
 }
-void onInboundConnected(hevent_t *ev)
+void on_inbound_connected(hevent_t *ev)
 {
     hloop_t *loop = ev->loop;
     socket_accept_result_t *data = (socket_accept_result_t *)hevent_userdata(ev);
@@ -300,13 +300,7 @@ void onInboundConnected(hevent_t *ev)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN] = {0};
 
-    LOGD("TcpListener: Accepted FD:%x [%s] <= [%s]",
-         (int)hio_fd(io),
-         SOCKADDR_STR(hio_localaddr(io), localaddrstr),
-         SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
-
     tunnel_t *self = data->tunnel;
-    free(data);
     line_t *line = newLine(tid);
     tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
     cstate->line = line;
@@ -319,8 +313,20 @@ void onInboundConnected(hevent_t *ev)
     cstate->established = false;
     cstate->first_packet_sent = false;
     line->chains_state[self->chain_index] = cstate;
-
+    line->src_ctx.protocol = data->proto;
+    line->src_ctx.addr.sa = *hio_peeraddr(io);
+    sockaddr_set_port(&(line->src_ctx.addr), data->realport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->realport);
+    line->src_ctx.atype = line->src_ctx.addr.sa.sa_family == AF_INET ? SAT_IPV4 : SAT_IPV6;
     hevent_set_userdata(io, cstate);
+
+    struct sockaddr log_localaddr = *hio_localaddr(io);
+    sockaddr_set_port((sockaddr_u *)&(log_localaddr), data->realport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->realport);
+
+    LOGD("TcpListener: Accepted FD:%x [%s] <= [%s]",
+         (int)hio_fd(io),
+         SOCKADDR_STR(&log_localaddr, localaddrstr),
+         SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+    free(data);
 
     // io->upstream_io = NULL;
     hio_setcb_read(io, on_recv);
@@ -363,6 +369,8 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         return NULL;
     }
 
+    int multiport_backend = multiport_backend_nothing;
+
     const cJSON *port = cJSON_GetObjectItemCaseSensitive(settings, "port");
     if ((cJSON_IsNumber(port) && (port->valuedouble != 0)))
     {
@@ -372,7 +380,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     }
     else
     {
-
+        multiport_backend = multiport_backend_default;
         if (cJSON_IsArray(port))
         {
             const cJSON *port_minmax;
@@ -399,6 +407,12 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 
                 i++;
             }
+
+            dynamic_value_t dy_mb = parseDynamicStrValueFromJsonObject(settings, "multiport-backend", 2, "iptables", "socket");
+            if (dy_mb.status == 2)
+                multiport_backend == multiport_backend_iptables;
+            if (dy_mb.status == 3)
+                multiport_backend == multiport_backend_sockets;
         }
         else
         {
@@ -412,11 +426,11 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     filter_opt.port_min = STATE(t)->port_min;
     filter_opt.port_max = STATE(t)->port_max;
     filter_opt.proto = socket_protocol_tcp;
-    filter_opt.multiport_backend = multiport_backend_nothing;
+    filter_opt.multiport_backend = multiport_backend;
     filter_opt.white_list_raddr = NULL;
     filter_opt.black_list_raddr = NULL;
 
-    registerSocketAcceptor(t, filter_opt, onInboundConnected);
+    registerSocketAcceptor(t, filter_opt, on_inbound_connected);
 
     t->upStream = &tcpListenerUpStream;
     t->packetUpStream = &tcpListenerPacketUpStream;

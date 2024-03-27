@@ -117,7 +117,7 @@ static void cycleProcess()
                     LOGF("Node Map Failure: no more than 1 node can be chained to node (\"%s\")", n2.ref->second->name);
                     exit(1);
                 }
-                LOGD("(\"%s\").next -> (\"%s\") ", n1.ref->second->name, n2.ref->second->name);
+                LOGD("%-17s -> %s", n1.ref->second->name, n2.ref->second->name);
 
                 found = true;
             }
@@ -187,7 +187,7 @@ static void startParsingFiles()
         }
         else
         {
-            LOGD("\"%s\": library \"%s\" loaded successfully", new_node->name, new_node->type);
+            LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
         }
         new_node->metadata = lib.getmetadata_proc();
         struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));

@@ -14,6 +14,7 @@ typedef enum
 typedef enum
 {
     multiport_backend_nothing,
+    multiport_backend_default,
     multiport_backend_iptables,
     multiport_backend_sockets
 } multiport_backend_t;
@@ -39,6 +40,7 @@ typedef struct socket_accept_result_s
     tunnel_t *tunnel;
     socket_protocol_t proto;
     size_t tid;
+    uint16_t realport;
 
 } socket_accept_result_t;
 

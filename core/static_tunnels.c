@@ -8,7 +8,7 @@
         hash_t h = calcHashLen(#x, strlen(#x));                                        \
         registerStaticLib((tunnel_lib_t){h,                                            \
                                          new##x, api##x, destroy##x, getMetadata##x}); \
-        LOGD("Imported static tunnel lib%s.a  hash:%lx", #x, h);                       \
+        LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                    \
     } while (0)
 
 #ifdef INCLUDE_TCP_LISTENER
