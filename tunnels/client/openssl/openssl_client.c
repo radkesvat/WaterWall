@@ -188,7 +188,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             /* Did SSL request to write bytes? */
             if (status == SSLSTATUS_WANT_IO)
             {
-                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                shift_buffer_t *buf = popBuffer(buffer_pools[clienthello_ctx->line->tid]);
                 size_t avail = rCap(buf);
                 n = BIO_read(cstate->wbio, rawBuf(buf), avail);
                 if (n > 0)
@@ -197,21 +197,17 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     clienthello_ctx->payload = buf;
                     clienthello_ctx->first = true;
                     self->up->upStream(self->up, clienthello_ctx);
-                    if (!ISALIVE(c))
-                    {
-                        destroyContext(c);
-                        return;
-                    }
+
                 }
                 else if (!BIO_should_retry(cstate->rbio))
                 {
                     // If BIO_should_retry() is false then the cause is an error condition.
-                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    reuseBuffer(buffer_pools[clienthello_ctx->line->tid], buf);
                     goto failed;
                 }
                 else
                 {
-                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    reuseBuffer(buffer_pools[clienthello_ctx->line->tid], buf);
                 }
             }
             if (status == SSLSTATUS_FAIL)
