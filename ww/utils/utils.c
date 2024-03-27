@@ -5,6 +5,7 @@
 #include "sockutils.h"
 #include "userutils.h"
 #include "hashutils.h"
+#include "procutils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -306,4 +307,34 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, ch
         result.value = (size_t)jstr->valueint;
     }
     return result;
+}
+
+// blocking io
+cmdresult_t execCmd(const char *str)
+{
+    FILE *fp;
+    cmdresult_t result = (cmdresult_t){{0}, -1};
+    char *buf = &(result.output[0]);
+    int i = 0;
+    /* Open the command for reading. */
+    fp = popen(str, "r");
+    if (fp == NULL)
+    {
+        printf("Failed to run command \"%s\"\n", str);
+        return (cmdresult_t){{0}, -1};
+    }
+
+    int read = fscanf(fp, "%2047s", buf);
+    result.exit_code = pclose(fp);
+
+    return result;
+    /* close */
+    // return 0 == pclose(fp);
+}
+bool check_installed(const char *app)
+{
+    char b[300];
+    sprintf(b, "dpkg-query -W --showformat='${Status}\n' %s|grep \"install ok install\"", app);
+    cmdresult_t result = execCmd(b);
+    return (result.exit_code == 0 && strlen(result.output) > 0);
 }
