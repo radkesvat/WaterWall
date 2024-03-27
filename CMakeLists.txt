@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
 
+set(CMAKE_C_STANDARD 17  CACHE INTERNAL  "C standard version" FORCE)
+set(CMAKE_CXX_STANDARD 17 CACHE INTERNAL  "CXX standard version" FORCE)
+set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
+
 # set(CMAKE_VERBOSE_MAKEFILE ON CACHE STRING "my configurable string" FORCE)
 # set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
 # set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
@@ -25,9 +30,7 @@ option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_CLIENT "link ProtoBufClient staticly to the core"  TRUE)
 option(INCLUDE_REVERSE_SERVER "link ReverseServer staticly to the core"  TRUE)
-option(INCLUDE_REVERSE_CLIENT "link CLIENT staticly to the core"  TRUE)
-
-# set(CMAKE_BUILD_TYPE Release)
+option(INCLUDE_REVERSE_CLIENT "link ReverseClient staticly to the core"  TRUE)
 
 
 # create project
@@ -53,8 +56,6 @@ file(
   ${CMAKE_BINARY_DIR}/cmake/CPM.cmake
 )
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-
 
 
 
@@ -274,15 +275,14 @@ add_compile_options(
 target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)
 
 if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_options(Waterwall PUBLIC -fsanitize=address)
-target_link_options(Waterwall PUBLIC -fsanitize=address)
+  target_compile_options(Waterwall PUBLIC -fsanitize=address)
+  target_link_options(Waterwall PUBLIC -fsanitize=address)
 endif()
 # target_compile_options(Waterwall PUBLIC -pedantic)
 
 message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
-# set_property(TARGET Waterwall PROPERTY C_STANDARD 99)
 # set output path to build/bin/
 
 set_target_properties(Waterwall
