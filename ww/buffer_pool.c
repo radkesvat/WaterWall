@@ -2,6 +2,7 @@
 #include <assert.h> // for assert
 #include <stdlib.h>
 #include <malloc.h>
+#include <string.h>
 #ifdef DEBUG
 #include "loggers/network_logger.h"
 #endif
