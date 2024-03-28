@@ -10,24 +10,24 @@ typedef uint64_t hash_t;
 
 typedef struct ud_s
 {
-    _Atomic uint64_t u;
-    _Atomic uint64_t d;
+    atomic_ullong u;
+    atomic_ullong d;
 } ud_t;
 
 typedef union
 {
     ud_t max;
-    _Atomic uint64_t max_total;
+    atomic_ullong max_total;
 } traffic_limit_t;
 
 typedef struct user_limit_s
 {
     traffic_limit_t traffic;
     ud_t bandwidth;
-    _Atomic uint64_t ip;
-    _Atomic uint64_t devices;
-    _Atomic uint64_t cons_in;
-    _Atomic uint64_t cons_out;
+    atomic_ullong ip;
+    atomic_ullong devices;
+    atomic_ullong cons_in;
+    atomic_ullong cons_out;
 } user_limit_t;
 
 typedef struct user_time_info_s
@@ -35,17 +35,17 @@ typedef struct user_time_info_s
     datetime_t create_date;
     datetime_t first_usage_date;
     datetime_t expire_date;
-    _Atomic bool since_first_use;
+    atomic_bool since_first_use;
 } user_time_info_t;
 
 typedef struct user_stat_s
 {
     ud_t speed;
     ud_t traffic;
-    _Atomic uint64_t ips;
-    _Atomic uint64_t devices;
-    _Atomic uint64_t cons_in;
-    _Atomic uint64_t cons_out;
+    atomic_ullong ips;
+    atomic_ullong devices;
+    atomic_ullong cons_in;
+    atomic_ullong cons_out;
 
 } user_stat_t;
 
@@ -61,7 +61,7 @@ typedef struct user_s
     int gid;   // group id
     hash_t hash_uid;
 
-    _Atomic bool enable;
+    atomic_bool enable;
     user_limit_t limit;
     user_time_info_t timeinfo;
     user_stat_t stats;

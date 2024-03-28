@@ -29,8 +29,8 @@ typedef struct thread_box_s
 
 typedef struct reverse_server_state_s
 {
-    _Atomic size_t u_available;
-    _Atomic size_t d_available;
+    atomic_size_t u_available;
+    atomic_size_t d_available;
 
     size_t chain_index_u;
     size_t chain_index_d;

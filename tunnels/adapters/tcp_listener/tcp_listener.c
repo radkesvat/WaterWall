@@ -410,9 +410,9 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 
             dynamic_value_t dy_mb = parseDynamicStrValueFromJsonObject(settings, "multiport-backend", 2, "iptables", "socket");
             if (dy_mb.status == 2)
-                multiport_backend == multiport_backend_iptables;
+                multiport_backend = multiport_backend_iptables;
             if (dy_mb.status == 3)
-                multiport_backend == multiport_backend_sockets;
+                multiport_backend = multiport_backend_sockets;
         }
         else
         {

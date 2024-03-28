@@ -10,7 +10,7 @@ typedef struct buffer_pool_s
     shift_buffer_t **available;
     size_t len;
 #ifdef DEBUG
-    _Atomic size_t in_use;
+    atomic_size_t in_use;
 #endif
 } buffer_pool_t;
 
