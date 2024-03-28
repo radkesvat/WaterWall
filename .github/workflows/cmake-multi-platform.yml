@@ -61,7 +61,6 @@ jobs:
         choco install nasm
         echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         fi
-      shell: bash
 
 
     - name: Configure CMake
