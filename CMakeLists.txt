@@ -289,7 +289,7 @@ target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 endif()
 
 add_compile_options(
-  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> /experimental:c11atomics
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
 )
 
