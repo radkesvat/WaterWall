@@ -132,7 +132,7 @@ static void cycleProcess()
         bool found = false;
         c_foreach(n1, map_node_t, state->node_map)
         {
-            if (n1.ref->second->metadata.flags & TFLAG_ROUTE_STARTER == TFLAG_ROUTE_STARTER)
+            if ((n1.ref->second->metadata.flags & TFLAG_ROUTE_STARTER) == TFLAG_ROUTE_STARTER)
             {
                 found = true;
                 n1.ref->second->route_starter = true;

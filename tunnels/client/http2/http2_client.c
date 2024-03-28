@@ -271,7 +271,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
         break;
     }
 
-    if (frame->hd.type & NGHTTP2_HEADERS == NGHTTP2_HEADERS)
+    if ((frame->hd.type & NGHTTP2_HEADERS) == NGHTTP2_HEADERS)
     {
         if (frame->headers.cat == NGHTTP2_HCAT_RESPONSE)
         {
@@ -279,7 +279,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
             con->handshake_completed = true;
             flush_write_queue(con);
         }
-        else if (frame->hd.flags & HTTP2_FLAG_END_STREAM == HTTP2_FLAG_END_STREAM)
+        else if ((frame->hd.flags & HTTP2_FLAG_END_STREAM) == HTTP2_FLAG_END_STREAM)
         {
             http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
             context_t *fin_ctx = newFinContext(stream->line);

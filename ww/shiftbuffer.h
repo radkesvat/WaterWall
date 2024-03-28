@@ -53,11 +53,11 @@ inline void consume(shift_buffer_t *self, size_t bytes)
     setLen(self, bufLen(self) - bytes);
 }
 
-inline char *rawBuf(shift_buffer_t *self) {return &(self->pbuf[self->curpos]); }
+inline unsigned  char *rawBuf(shift_buffer_t *self) {return &(self->pbuf[self->curpos]); }
 
 
 
-void writeRaw(shift_buffer_t *self, char* buffer, size_t len);
+void writeRaw(shift_buffer_t *self, unsigned  char* buffer, size_t len);
 
 void writeI32(shift_buffer_t *self, int32_t data);
 void writeUI32(shift_buffer_t *self, uint32_t data);

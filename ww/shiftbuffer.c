@@ -12,7 +12,7 @@ extern size_t bufLen(shift_buffer_t *self);
 extern void setLen(shift_buffer_t *self, size_t bytes);
 extern void reserve(shift_buffer_t *self, size_t bytes);
 extern void consume(shift_buffer_t *self, size_t bytse);
-extern char *rawBuf(shift_buffer_t *self);
+extern unsigned char *rawBuf(shift_buffer_t *self);
 
 void destroyShiftBuffer(shift_buffer_t *self)
 {
@@ -73,7 +73,7 @@ void expand(shift_buffer_t *self, size_t increase)
         size_t new_realcap = pow(2, ceil(log2((float)(realcap * 2) + (increase * 2))));
         self->pbuf = malloc(new_realcap);
         size_t dif = (new_realcap / 2) - self->cap;
-        memcpy(&(self->pbuf[dif]), &(old_buf[0]), realcap);        
+        memcpy(&(self->pbuf[dif]), &(old_buf[0]), realcap);
         self->curpos += dif;
         self->lenpos += dif;
         self->cap = new_realcap / 2;
@@ -113,7 +113,7 @@ void shiftr(shift_buffer_t *self, size_t bytes)
     self->curpos += bytes;
 }
 
-void writeRaw(shift_buffer_t *self, char *buffer, size_t len)
+void writeRaw(shift_buffer_t *self, unsigned char *buffer, size_t len)
 {
     memcpy(rawBuf(self), buffer, len);
 }
