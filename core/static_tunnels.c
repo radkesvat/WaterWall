@@ -152,7 +152,7 @@ void loadStaticTunnelsIntoCore()
 #endif
 
 #ifdef INCLUDE_HEADER_SERVER
-    USING(HeaderClient);
+    USING(HeaderServer);
 #endif
 
 #ifdef INCLUDE_HEADER_CLIENT
