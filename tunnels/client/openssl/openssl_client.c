@@ -488,7 +488,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     } *ossl_alpn = malloc(1 + alpn_len);
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context, (char *)ossl_alpn, 1 + alpn_len);
+    SSL_CTX_set_alpn_protos(state->ssl_context,(const unsigned char *)ossl_alpn, 1 + alpn_len);
     free(ossl_alpn);
 
     tunnel_t *t = newTunnel();

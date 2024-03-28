@@ -21,5 +21,5 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b);
 #ifdef DEBUG
 static inline void oneDetached(buffer_pool_t *state) { state->in_use -= 1; }
 #else
-static inline void oneDetached(buffer_pool_t *state) { (void *)state; }
+static inline void oneDetached(buffer_pool_t *state) { (void)state; }
 #endif

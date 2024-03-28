@@ -49,7 +49,7 @@ typedef struct http2_client_con_state_s
     nghttp2_session *session;
     http2_session_state state;
     context_queue_t *queue;
-
+    size_t childs_added;   
     int error;
     int frame_type_when_stream_closed;
     bool handshake_completed;

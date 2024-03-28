@@ -3,6 +3,7 @@
 #include "types.h"
 
 #define MAX_CONCURRENT_STREAMS 0xffffffffu
+#define MAX_CHILD_PER_STREAM 200
 
 static nghttp2_nv make_nv(const char *name, const char *value)
 {
@@ -56,7 +57,7 @@ static void remove_stream(http2_client_con_state_t *con,
 }
 
 static http2_client_child_con_state_t *
-create_http2_stream(http2_client_con_state_t *con, line_t *child_line,hio_t*io)
+create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io)
 {
     char authority_addr[320];
     nghttp2_nv nvs[15];
@@ -98,7 +99,7 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line,hio_t*io)
     http2_client_child_con_state_t *stream = malloc(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
-    stream->stream_id = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen,  stream);
+    stream->stream_id = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
 
     stream->parent = con->line;
     stream->line = child_line;
@@ -116,7 +117,7 @@ static void delete_http2_stream(http2_client_child_con_state_t *stream)
     free(stream);
 }
 
-static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid,hio_t* io)
+static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid, hio_t *io)
 {
     http2_client_state_t *state = STATE(self);
     http2_client_con_state_t *con = malloc(sizeof(http2_client_con_state_t));
@@ -133,7 +134,7 @@ static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid
     con->tunnel = self;
     con->io = io;
     con->line->chains_state[self->chain_index] = con;
-    nghttp2_session_client_new2(&con->session, state->cbs, con,state->ngoptions);
+    nghttp2_session_client_new2(&con->session, state->cbs, con, state->ngoptions);
 
     nghttp2_settings_entry settings[] = {
         {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS}};
@@ -174,19 +175,32 @@ static void delete_http2_connection(http2_client_con_state_t *con)
     free(con);
 }
 
-static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid,hio_t* io)
+static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid, hio_t *io)
 {
     http2_client_state_t *state = STATE(self);
 
     vec_cons *vector = &(state->thread_cpool[tid].cons);
+
     if (vec_cons_size(vector) > 0)
     {
-        // todo round
-        return (http2_client_con_state_t *)*vec_cons_at(vector, 0);
+        // http2_client_con_state_t * con = *vec_cons_at(vector, round_index);
+        c_foreach(k, vec_cons, vector)
+        {
+            if ((*k.ref)->childs_added < MAX_CHILD_PER_STREAM)
+            {
+                (*k.ref)->childs_added +=1;
+                return (*k.ref);
+
+            }
+        }
+        vec_cons_pop(vector);
+        http2_client_con_state_t *con = create_http2_connection(self, tid, io);
+        vec_cons_push(vector, con);
+        return con;
     }
     else
     {
-        http2_client_con_state_t *con = create_http2_connection(self, tid,io);
+        http2_client_con_state_t *con = create_http2_connection(self, tid, io);
         vec_cons_push(vector, con);
         return con;
     }

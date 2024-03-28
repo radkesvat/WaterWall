@@ -72,7 +72,7 @@ static int on_alpn_select(SSL *ssl,
         // LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
         if (in[offset] == 2 && http_level < 2)
         {
-            if (strncmp(&(in[1 + offset]), "h2", 2) == 0)
+            if (strncmp((const char *)&(in[1 + offset]), "h2", 2) == 0)
             {
                 http_level = 2;
                 *out = &(in[1 + offset]);
@@ -81,7 +81,7 @@ static int on_alpn_select(SSL *ssl,
         }
         else if (in[offset] == 8 && http_level < 1)
         {
-            if (strncmp(&(in[1 + offset]), "http/1.1", 8) == 0)
+            if (strncmp((const char *)&(in[1 + offset]), "http/1.1", 8) == 0)
             {
                 http_level = 1;
                 *out = &(in[1 + offset]);
