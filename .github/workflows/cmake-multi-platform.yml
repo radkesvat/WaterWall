@@ -8,10 +8,20 @@ on:
   pull_request:
     branches: [ "main" ]
 
+
 jobs:
+  install_deps:
+      runs-on: windows-latest
+      steps:
+      - uses: actions/checkout@v3
+      - name: install packages
+        run: |
+          choco install nasm
+          echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: configure
+        run: cmake -G "Visual Studio 16 2019" [...]
   build:
     runs-on: ${{ matrix.os }}
-
     strategy:
       # Set fail-fast to false to ensure that feedback is delivered for all matrix combinations. Consider changing this to true when your workflow is stable.
       fail-fast: false
