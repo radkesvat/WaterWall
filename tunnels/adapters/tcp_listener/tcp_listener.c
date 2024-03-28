@@ -315,8 +315,6 @@ void on_inbound_connected(hevent_t *ev)
     line->chains_state[self->chain_index] = cstate;
     line->src_ctx.protocol = data->proto;
     line->src_ctx.addr.sa = *hio_peeraddr(io);
-    line->dest_ctx.addr.sa.sa_family = AF_INET;
-
     sockaddr_set_port(&(line->src_ctx.addr), data->realport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->realport);
     line->src_ctx.atype = line->src_ctx.addr.sa.sa_family == AF_INET ? SAT_IPV4 : SAT_IPV6;
     hevent_set_userdata(io, cstate);

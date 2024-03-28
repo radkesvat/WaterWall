@@ -75,6 +75,9 @@ inline line_t *newLine(uint16_t tid)
     result->refc = 1;
     result->lcid = MAX_CHAIN_LEN - 1;
     result->loop = loops[tid];
+    result->loop = loops[tid];
+    result->dest_ctx.addr.sa.sa_family = AF_INET;
+    result->src_ctx.addr.sa.sa_family = AF_INET;
     return result;
 }
 inline size_t reserveChainStateIndex(line_t *l){
