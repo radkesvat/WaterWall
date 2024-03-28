@@ -59,13 +59,37 @@ static void upStream(tunnel_t *self, context_t *c)
             (void)(0);
             break;
         }
+        self->up->upStream(self->up, newInitContext(c->line));
+    }
+    else if (c->init)
+    {
+        CSTATE_MUT(c) = (header_server_con_state_t *)0x1;
+        destroyContext(c);
+        return;
+    }
+    else if (c->fin)
+    {
+        CSTATE_MUT(c) = NULL;
+        self->up->upStream(self->up, c);
+        return;
     }
 
+    if (!ISALIVE(c))
+    {
+        DISCARD_CONTEXT(c);
+        self->up->upStream(self->up, newFinContext(c->line));
+        self->dw->downStream(self->dw, newFinContext(c->line));
+        destroyContext(c);
+        return;
+    }
     self->up->upStream(self->up, c);
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
+
+    if (c->fin)
+        CSTATE_MUT(c) = NULL;
 
     self->dw->downStream(self->dw, c);
 }
