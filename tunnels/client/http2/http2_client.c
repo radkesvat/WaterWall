@@ -15,7 +15,7 @@ static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
     endstream_ctx->payload = buf;
     self->up->upStream(self->up, endstream_ctx);
 }
-static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t stream_id,hio_t*stream_io, shift_buffer_t *buf)
+static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t stream_id, hio_t *stream_io, shift_buffer_t *buf)
 {
     line_t *line = con->line;
     if (con == NULL)
@@ -34,6 +34,11 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         context_t *req = newContext(line);
         req->payload = send_buf;
         req->src_io = stream_io;
+        if (!con->first_sent)
+        {
+            con->first_sent = true;
+            req->first = true;
+        }
         self->up->upStream(self->up, req);
 
         if (nghttp2_session_want_read(con->session) == 0 &&
@@ -116,7 +121,7 @@ static void flush_write_queue(http2_client_con_state_t *con)
         con->state = H2_SEND_HEADERS;
 
         // consumes payload
-        while (trySendRequest(self, con, stream->stream_id,stream->io, stream_context->payload))
+        while (trySendRequest(self, con, stream->stream_id, stream->io, stream_context->payload))
             ;
 
         if (con->line->chains_state[self->chain_index] == NULL)
@@ -309,7 +314,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         con->state = H2_SEND_HEADERS;
 
         // consumes payload
-        while (trySendRequest(self, con, stream->stream_id,stream->io , c->payload))
+        while (trySendRequest(self, con, stream->stream_id, stream->io, c->payload))
             ;
         c->payload = NULL;
         destroyContext(c);
@@ -318,7 +323,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            http2_client_con_state_t *con = take_http2_connection(self, c->line->tid,NULL);
+            http2_client_con_state_t *con = take_http2_connection(self, c->line->tid, NULL);
             if (con->line->chains_state[self->chain_index] == NULL)
             {
                 destroyContext(c);
@@ -328,7 +333,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             while (trySendRequest(self, con, 0, NULL, NULL))
                 ;
 
-            http2_client_child_con_state_t *stream = create_http2_stream(con, c->line,c->src_io);
+            http2_client_child_con_state_t *stream = create_http2_stream(con, c->line, c->src_io);
             CSTATE_MUT(c) = stream;
 
             if (!ISALIVE(c))
@@ -374,7 +379,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     http2_client_state_t *state = STATE(self);
     http2_client_con_state_t *con = CSTATE(c);
     con->io = c->src_io;
-    
+
     if (c->payload != NULL)
     {
 

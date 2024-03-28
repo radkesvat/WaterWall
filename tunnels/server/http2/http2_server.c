@@ -116,7 +116,11 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     context_t *stream_data = newContext(stream->line);
     stream_data->payload = buf;
     stream_data->src_io = con->io;
-
+    if (!stream->first_sent)
+    {
+        stream->first_sent = true;
+        stream_data->first = true;
+    }
     stream->tunnel->upStream(stream->tunnel, stream_data);
     // if (hp->parsed->http_cb)
     // {
@@ -195,7 +199,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
     return 0;
 }
 
-static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_t stream_id,hio_t*stream_io, shift_buffer_t *buf)
+static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_t stream_id, hio_t *stream_io, shift_buffer_t *buf)
 {
     line_t *line = con->line;
     // http2_server_con_state_t *con = ((http2_server_con_state_t *)(((line->chains_state)[self->chain_index])));
@@ -314,7 +318,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             return;
         }
 
-        while (trySendResponse(self, con, 0,NULL, NULL))
+        while (trySendResponse(self, con, 0, NULL, NULL))
             ;
         destroyContext(c);
     }
@@ -322,7 +326,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = create_http2_connection(self, c->line,c->src_io);
+            CSTATE_MUT(c) = create_http2_connection(self, c->line, c->src_io);
             destroyContext(c);
         }
         else if (c->fin)
@@ -342,7 +346,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         con->state = H2_SEND_HEADERS;
-        while (trySendResponse(self, con, stream->stream_id,stream->io, c->payload))
+        while (trySendResponse(self, con, stream->stream_id, stream->io, c->payload))
             ;
         c->payload = NULL;
         destroyContext(c);
@@ -359,7 +363,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
                 nghttp2_submit_headers(con->session, flags, stream->stream_id, NULL, NULL, 0, NULL);
-            while (trySendResponse(self, con, stream->stream_id,NULL, NULL))
+            while (trySendResponse(self, con, stream->stream_id, NULL, NULL))
                 ;
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);

@@ -61,6 +61,7 @@ typedef struct http2_client_con_state_s
     int host_port;
     const char *scheme;
     bool init_sent;
+    bool first_sent;
 
     tunnel_t *tunnel;
     line_t *line;

@@ -37,7 +37,7 @@ typedef struct http2_server_child_con_state_s
     struct http2_server_child_con_state_s *prev, *next;
     char *request_path;
     int32_t stream_id;
-
+    bool first_sent;
     line_t *parent;
     line_t *line;
     hio_t* io;

@@ -184,7 +184,7 @@ static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid, 
     if (vec_cons_size(vector) > 0)
     {
         // http2_client_con_state_t * con = *vec_cons_at(vector, round_index);
-        c_foreach(k, vec_cons, vector)
+        c_foreach(k, vec_cons, *vector)
         {
             if ((*k.ref)->childs_added < MAX_CHILD_PER_STREAM)
             {
