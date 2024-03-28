@@ -56,6 +56,7 @@ jobs:
 
 
     - name: install packages
+      if: matrix.os == 'windows-latest'
       run: |
         if [ "$RUNNER_OS" == "Windows" ]; then
         choco install nasm
@@ -63,6 +64,7 @@ jobs:
       shell: bash
       
     - name: set path
+      if: matrix.os == 'windows-latest'
       run: |
         if ( $RUNNER_OS -eq "Windows" ){
           echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
