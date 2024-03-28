@@ -35,7 +35,7 @@ shift_buffer_t *newShiftBuffer(size_t pre_cap)
     self->lenpos = pre_cap;
     self->curpos = pre_cap;
     self->cap = pre_cap;
-    self->refc = malloc(sizeof(int));
+    self->refc = malloc(sizeof(unsigned int));
     *(self->refc) = 1;
     return self;
 }
@@ -59,26 +59,38 @@ void expand(shift_buffer_t *self, size_t increase)
 {
     if (*(self->refc) > 1)
     {
-        LOGF("Expanding a shiftbuffer while it has refs is false assumption!");
-        assert(false);
+        // LOGF("Expanding a shiftbuffer while it has refs is false assumption!");
+        // assert(false);
+
+        // detach!
+        *(self->refc) -= 1;
+        self->refc = malloc(sizeof(unsigned int));
+        *(self->refc) = 1;
+
+        char *old_buf = self->pbuf;
+        const size_t realcap = self->cap * 2;
+        size_t new_realcap = pow(2, ceil(log2((float)(realcap * 2) + (increase * 2))));
+        self->pbuf = malloc(new_realcap);
+        size_t dif = (new_realcap / 2) - self->cap;
+        memcpy(&(self->pbuf[dif]), &(old_buf[0]), realcap);        
+        self->curpos += dif;
+        self->lenpos += dif;
+        self->cap = new_realcap / 2;
     }
-    const size_t real_cap = self->cap * 2;
-
-    size_t newcap = pow(2, ceil(log2((float)(real_cap * 2) + (increase * 2))));
-
-    // #ifdef DEBUG
-    //     LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, newcap);
-    // #endif
-    self->pbuf = realloc(self->pbuf, newcap);
-
-    size_t dif = (newcap / 2) - self->cap;
-
-    memmove(&self->pbuf[dif], &self->pbuf[0], real_cap);
-
-    self->curpos += dif;
-    self->lenpos += dif;
-
-    self->cap = newcap / 2;
+    else
+    {
+        const size_t realcap = self->cap * 2;
+        size_t new_realcap = pow(2, ceil(log2((float)(realcap * 2) + (increase * 2))));
+        // #ifdef DEBUG
+        //     LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, new_realcap);
+        // #endif
+        self->pbuf = realloc(self->pbuf, new_realcap);
+        size_t dif = (new_realcap / 2) - self->cap;
+        memmove(&self->pbuf[dif], &self->pbuf[0], realcap);
+        self->curpos += dif;
+        self->lenpos += dif;
+        self->cap = new_realcap / 2;
+    }
 }
 
 void shiftl(shift_buffer_t *self, size_t bytes)

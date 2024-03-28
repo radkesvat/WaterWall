@@ -11,7 +11,7 @@ struct shift_buffer_s
     size_t curpos;
     size_t cap; // half of full cap
     char *pbuf;
-    int* refc;
+    unsigned int* refc;
 };
 typedef struct shift_buffer_s shift_buffer_t;
 
@@ -44,8 +44,8 @@ inline void setLen(shift_buffer_t *self, size_t bytes)
 
 inline void reserve(shift_buffer_t *self, size_t bytes)
 {
-    if (bufLen(self) < bytes)
-        setLen(self, bytes);
+    if (rCap(self) < bytes)
+        expand(self, (bytes - rCap(self)));
 }
 
 inline void consume(shift_buffer_t *self, size_t bytes)
