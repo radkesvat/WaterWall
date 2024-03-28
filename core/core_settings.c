@@ -1,7 +1,6 @@
 #include "core_settings.h"
 #include "utils/jsonutils.h"
 #include "hv/hsysinfo.h"
-#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <assert.h> // for assert

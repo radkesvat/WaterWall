@@ -7,6 +7,7 @@
 #include "hashutils.h"
 #include "procutils.h"
 #include <stdio.h>
+#define NOMINMAX
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>

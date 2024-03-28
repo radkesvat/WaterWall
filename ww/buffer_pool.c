@@ -1,6 +1,5 @@
 #include "buffer_pool.h"
 #include <assert.h> // for assert
-#include <stdlib.h>
 #include <malloc.h>
 #include <string.h>
 #ifdef DEBUG

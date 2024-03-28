@@ -3,6 +3,7 @@
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
 #include <string.h> // memmove,memcpy
+#define NOMINMAX
 #include <stdlib.h> // free
 
 extern size_t lCap(shift_buffer_t *self);
