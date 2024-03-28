@@ -47,7 +47,6 @@ target_link_libraries(OpenSSLServer
     OpenSSL::applink
 )
 
-target_compile_options(OpenSSLServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(OpenSSLServer PRIVATE STC_STATIC=1 OpenSSLServer_VERSION=0.1)
 
 

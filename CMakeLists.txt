@@ -31,7 +31,8 @@ option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_CLIENT "link ProtoBufClient staticly to the core"  TRUE)
 option(INCLUDE_REVERSE_SERVER "link ReverseServer staticly to the core"  TRUE)
 option(INCLUDE_REVERSE_CLIENT "link ReverseClient staticly to the core"  TRUE)
-
+# option(INCLUDE_HEADER_SERVER "link HeaderServer staticly to the core"  TRUE)
+option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
 
 # create project
 project(Waterwall VERSION 0.1)
@@ -103,7 +104,7 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ada
 target_link_libraries(Waterwall TcpConnector)
 endif()
 
-#http2 INCLUDE_HTTP2_SERVER
+#http2 server
 if (INCLUDE_OPENSSL_SERVER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP2_SERVER=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http2)
@@ -111,7 +112,7 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall Http2Server)
 endif()
 
-#http2 INCLUDE_HTTP2_CLIENT
+#http2 client
 if (INCLUDE_HTTP2_CLIENT)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP2_CLIENT=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/http2)
@@ -210,6 +211,17 @@ target_link_libraries(Waterwall ReverseClient)
 endif()
 
 
+#reverse client
+if (INCLUDE_HEADER_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_HEADER_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
+target_link_libraries(Waterwall HeaderClient)
+endif()
+
+
+
+
 # komihash
 CPMAddPackage(
   NAME komihash
@@ -272,7 +284,6 @@ add_compile_options(
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
 )
 
-target_compile_options(Waterwall PUBLIC -ftrack-macro-expansion=0)
 
 if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_options(Waterwall PUBLIC -fsanitize=address)

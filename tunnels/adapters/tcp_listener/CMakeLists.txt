@@ -30,7 +30,6 @@ endif()
 
 
 
-target_compile_options(TcpListener PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(TcpListener PRIVATE STC_STATIC=1 TcpListener_VERSION=0.1)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

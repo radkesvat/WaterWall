@@ -39,7 +39,6 @@ CPMAddPackage(
 
 )
 
-target_compile_options(BoringSSLServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(BoringSSLServer PRIVATE STC_STATIC=1 BoringSSLServer_VERSION=0.1)
 
 

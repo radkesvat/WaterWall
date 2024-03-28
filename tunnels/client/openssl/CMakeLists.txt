@@ -47,7 +47,6 @@ target_link_libraries(OpenSSLClient
     OpenSSL::applink
 )
 
-target_compile_options(OpenSSLClient PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(OpenSSLClient PRIVATE STC_STATIC=1 OpenSSLClient_VERSION=0.1)
 
 

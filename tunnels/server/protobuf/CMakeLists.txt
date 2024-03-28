@@ -33,14 +33,14 @@ endif()
 
 
 
-CPMAddPackage(
-    NAME nanopb
-    GIT_TAG 0.4.8
-    GITHUB_REPOSITORY nanopb/nanopb
-    DOWNLOAD_ONLY True
+# CPMAddPackage(
+#     NAME nanopb
+#     GIT_TAG 0.4.8
+#     GITHUB_REPOSITORY nanopb/nanopb
+#     DOWNLOAD_ONLY True
 
-)
-target_link_libraries(ProtoBufServer PUBLIC)
+# )
+# target_link_libraries(ProtoBufServer PUBLIC)
 
 # list(APPEND CMAKE_MODULE_PATH ${nanopb_SOURCE_DIR}/extra)
 # find_package(Nanopb REQUIRED)
@@ -48,14 +48,13 @@ target_link_libraries(ProtoBufServer PUBLIC)
 # target_include_directories(ProtoBufServer PUBLIC ${nanopb_INCLUDE_DIRS})
 # target_sources(ProtoBufServer PUBLIC ${PROTO_SRCS} ${PROTO_HDRS})
 
-target_compile_options(ProtoBufServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(ProtoBufServer PRIVATE STC_STATIC=1 ProtoBufServer_VERSION=0.1)
-target_include_directories(ProtoBufServer PUBLIC ${nanopb_SOURCE_DIR})
-target_sources(ProtoBufServer PUBLIC  ${nanopb_SOURCE_DIR}/pb_decode.c
-                        ${nanopb_SOURCE_DIR}/pb_common.c
-                        ${nanopb_SOURCE_DIR}/pb_encode.c
+# target_include_directories(ProtoBufServer PUBLIC ${nanopb_SOURCE_DIR})
+# target_sources(ProtoBufServer PUBLIC  ${nanopb_SOURCE_DIR}/pb_decode.c
+#                         ${nanopb_SOURCE_DIR}/pb_common.c
+#                         ${nanopb_SOURCE_DIR}/pb_encode.c
                         
- )
+#  )
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(ProtoBufServer PRIVATE  DEBUG=1)

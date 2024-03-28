@@ -30,7 +30,6 @@ endif()
 
 
 
-target_compile_options(Bridge PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(Bridge PRIVATE STC_STATIC=1 Bridge_VERSION=0.1)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

@@ -30,7 +30,6 @@ endif()
 
 
 
-target_compile_options(LoggerTunnel PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(LoggerTunnel PRIVATE STC_STATIC=1 LoggerTunnel_VERSION=0.1)
 
 if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")

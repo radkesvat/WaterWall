@@ -30,7 +30,6 @@ endif()
 
 
 
-target_compile_options(ReverseClient PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(ReverseClient PRIVATE STC_STATIC=1 ReverseClient_VERSION=0.1)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")

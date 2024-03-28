@@ -62,7 +62,6 @@ CPMAddPackage(
     "BUILD_SHARED_LIBS OFF"
 )
 
-target_compile_options(WolfSSLServer PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(WolfSSLServer PRIVATE STC_STATIC=1 WolfSSLServer_VERSION=0.1)
 
 

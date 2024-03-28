@@ -31,7 +31,6 @@ endif()
 
 
 
-target_compile_options(TcpConnector PRIVATE -ftrack-macro-expansion=0)
 target_compile_definitions(TcpConnector PRIVATE STC_STATIC=1 TcpConnector_VERSION=0.1)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
