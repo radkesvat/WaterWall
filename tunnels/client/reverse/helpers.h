@@ -8,7 +8,8 @@
 #define CSTATE_D_MUT(x) ((x)->line->chains_state)[state->chain_index_pi]
 #define CSTATE_U_MUT(x) ((x)->line->chains_state)[state->chain_index_pi]
 #define ISALIVE(x) (((((x)->line->chains_state)[state->chain_index_pi])) != NULL)
-
+#undef max
+#undef min
 static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
 static inline size_t max(size_t x, size_t y) { return (((x) < (y)) ? (y) : (x)); }
 

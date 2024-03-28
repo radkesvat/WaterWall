@@ -9,6 +9,8 @@
 #define GBD_MAX_CAP 1024
 #define DEFAULT_BUFFER_SIZE 4096
 
+#undef max
+#undef min
 static inline size_t max(size_t x, size_t y) { return (((x) < (y)) ? (y) : (x)); }
 static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
 

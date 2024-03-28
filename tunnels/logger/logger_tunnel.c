@@ -7,6 +7,7 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
+#undef min
 static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
 
 typedef struct logger_tunnel_state_s
