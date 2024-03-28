@@ -31,7 +31,7 @@ option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_CLIENT "link ProtoBufClient staticly to the core"  TRUE)
 option(INCLUDE_REVERSE_SERVER "link ReverseServer staticly to the core"  TRUE)
 option(INCLUDE_REVERSE_CLIENT "link ReverseClient staticly to the core"  TRUE)
-# option(INCLUDE_HEADER_SERVER "link HeaderServer staticly to the core"  TRUE)
+option(INCLUDE_HEADER_SERVER "link HeaderServer staticly to the core"  TRUE)
 option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
 
 # create project
@@ -210,14 +210,23 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall ReverseClient)
 endif()
 
+#header server 
+if (INCLUDE_HEADER_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_HEADER_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/header)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/header)
+target_link_libraries(Waterwall HeaderServer)
+endif()
 
-#reverse client
+
+#header client
 if (INCLUDE_HEADER_CLIENT)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_HEADER_CLIENT=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
 target_link_libraries(Waterwall HeaderClient)
 endif()
+
 
 
 

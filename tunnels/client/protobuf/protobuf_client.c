@@ -18,6 +18,7 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
+
 typedef struct protobuf_client_state_s
 {
 
@@ -30,6 +31,11 @@ typedef struct protobuf_client_con_state_s
 
 } protobuf_client_con_state_t;
 
+static void cleanup(protobuf_client_con_state_t *cstate)
+{
+    destroyBufferStream(cstate->stream_buf);
+    free(cstate);
+}
 static void downStream(tunnel_t *self, context_t *c);
 
 static void process(tunnel_t *self, context_t *cin)
@@ -57,8 +63,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-
-        // LOGD("upstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 200), rawBuf(c->payload));
         size_t blen = bufLen(c->payload);
         size_t calculated_bytes = size_uleb128(blen);
         shiftl(c->payload, calculated_bytes);
@@ -79,12 +83,10 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             protobuf_client_con_state_t *cstate = CSTATE(c);
-            destroyBufferStream(cstate->stream_buf);
-            free(cstate);
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
         }
     }
-
     self->up->upStream(self->up, c);
 }
 
@@ -93,8 +95,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        // LOGD("upstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 200), rawBuf(c->payload));
-
         protobuf_client_con_state_t *cstate = CSTATE(c);
         if (cstate->wanted > 0)
         {
@@ -111,6 +111,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
             if (bufLen(buf) < 2)
             {
                 DISCARD_CONTEXT(c);
+                cleanup(cstate);
+                self->dw->downStream(self->dw, newFinContext(c->line));
+                self->up->upStream(self->up, newFinContext(c->line));
                 destroyContext(c);
                 return;
             }
@@ -121,8 +124,11 @@ static inline void downStream(tunnel_t *self, context_t *c)
             shiftr(buf, bytes_passed);
             if (data_len > MAX_PACKET_SIZE)
             {
-                LOGE("ProtoBuf Client: a grpc chunk rejected, size too large");
+                LOGE("ProtoBufServer: rejected, size too large");
                 DISCARD_CONTEXT(c);
+                cleanup(cstate);
+                self->dw->downStream(self->dw, newFinContext(c->line));
+                self->up->upStream(self->up, newFinContext(c->line));
                 destroyContext(c);
                 return;
             }
@@ -131,6 +137,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 cstate->wanted = data_len;
                 bufferStreamPush(cstate->stream_buf, c->payload);
                 c->payload = NULL;
+                if (data_len >= bufLen(buf))
+                    process(self, c);
                 destroyContext(c);
                 return;
             }
@@ -140,12 +148,11 @@ static inline void downStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
-            protobuf_client_con_state_t *cstate = CSTATE(c);
-            destroyBufferStream(cstate->stream_buf);
-            free(cstate);
+            cleanup(CSTATE(c));
             CSTATE_MUT(c) = NULL;
         }
     }
+
     self->dw->downStream(self->dw, c);
 }
 
@@ -175,6 +182,8 @@ tunnel_t *newProtoBufClient(node_instance_context_t *instance_info)
     t->packetUpStream = &ProtoBufClientPacketUpStream;
     t->downStream = &ProtoBufClientDownStream;
     t->packetDownStream = &ProtoBufClientPacketDownStream;
+    atomic_thread_fence(memory_order_release);
+
     return t;
 }
 

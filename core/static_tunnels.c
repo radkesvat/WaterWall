@@ -75,6 +75,16 @@
 #include "tunnels/client/reverse/reverse_client.h"
 #endif
 
+#ifdef INCLUDE_HEADER_SERVER
+#include "tunnels/server/header/header_server.h"
+#endif
+
+#ifdef INCLUDE_HEADER_CLIENT
+#include "tunnels/client/header/header_client.h"
+#endif
+
+
+
 void loadStaticTunnelsIntoCore()
 {
 #ifdef INCLUDE_TCP_LISTENER
@@ -140,5 +150,16 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_REVERSE_CLIENT
     USING(ReverseClient);
 #endif
+
+#ifdef INCLUDE_HEADER_SERVER
+    USING(HeaderClient);
+#endif
+
+#ifdef INCLUDE_HEADER_CLIENT
+    USING(HeaderClient);
+#endif
+
+
+
 
 }
