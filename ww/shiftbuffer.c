@@ -120,34 +120,34 @@ void writeRaw(shift_buffer_t *self, unsigned char *buffer, size_t len)
 
 void writeI32(shift_buffer_t *self, int32_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(data));
+    writeRaw(self, (char *)&data, sizeof(int32_t));
 }
 
 void writeUI32(shift_buffer_t *self, uint32_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(data));
+    writeRaw(self, (char *)&data, sizeof(uint32_t));
 }
 
 void writeI16(shift_buffer_t *self, int16_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(data));
+    writeRaw(self, (char *)&data, sizeof(int16_t));
 }
 
 void writeUI16(shift_buffer_t *self, uint16_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(data));
+    writeRaw(self, (char *)&data, sizeof(uint16_t));
 }
 
 void writeUI8(shift_buffer_t *self, uint8_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(data));
+    writeRaw(self, (char *)&data, sizeof(uint8_t));
 }
 
 void readUI8(shift_buffer_t *self, uint8_t *dest)
 {
-    memcpy(dest, rawBuf(self), sizeof(dest));
+    memcpy(dest, rawBuf(self), sizeof(uint8_t));
 }
 void readUI16(shift_buffer_t *self, uint16_t *dest)
 {
-    memcpy(dest, rawBuf(self), sizeof(dest));
+    memcpy(dest, rawBuf(self), sizeof(uint16_t));
 }
