@@ -112,7 +112,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
 static void flush_write_queue(http2_client_con_state_t *con)
 {
     tunnel_t *self = con->tunnel;
-
+    context_t *g = newContext(con->line);
     while (contextQueueLen(con->queue) > 0)
     {
         context_t *stream_context = contextQueuePop(con->queue);
@@ -124,9 +124,10 @@ static void flush_write_queue(http2_client_con_state_t *con)
         while (trySendRequest(self, con, stream->stream_id, stream->io, stream_context->payload))
             ;
 
-        if (con->line->chains_state[self->chain_index] == NULL)
-            return;
+        if (!ISALIVE(g))
+            break;
     }
+    destroyContext(g);
 }
 static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
                                     uint32_t error_code, void *userdata)
@@ -283,6 +284,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
             http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
             con->handshake_completed = true;
             flush_write_queue(con);
+            stream->tunnel->downStream(stream->tunnel, newEstContext(stream->line));
         }
         else if ((frame->hd.flags & HTTP2_FLAG_END_STREAM) == HTTP2_FLAG_END_STREAM)
         {
@@ -324,17 +326,32 @@ static inline void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             http2_client_con_state_t *con = take_http2_connection(self, c->line->tid, NULL);
-            if (con->line->chains_state[self->chain_index] == NULL)
+            context_t *g = newContext(con->line);
+
+            if (!con->init_sent)
             {
-                destroyContext(c);
-                return;
+                con->init_sent = true;
+                self->up->upStream(self->up, newInitContext(con->line));
+                if (!ISALIVE(g))
+                {
+                    destroyContext(g);
+                    destroyContext(c);
+                    return;
+                }
             }
 
             while (trySendRequest(self, con, 0, NULL, NULL))
                 ;
 
+            if (!ISALIVE(g))
+            {
+                destroyContext(g);
+                destroyContext(c);
+                return;
+            }
             http2_client_child_con_state_t *stream = create_http2_stream(con, c->line, c->src_io);
             CSTATE_MUT(c) = stream;
+            destroyContext(g);
 
             if (!ISALIVE(c))
             {

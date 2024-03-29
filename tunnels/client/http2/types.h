@@ -7,11 +7,6 @@
 #include "grpc_def.h"
 #include "loggers/network_logger.h"
 
-#define STATE(x) ((http2_client_state_t *)((x)->state))
-#define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
-
 typedef enum
 {
     H2_SEND_MAGIC,

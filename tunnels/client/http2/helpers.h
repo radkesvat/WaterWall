@@ -5,6 +5,13 @@
 #define MAX_CONCURRENT_STREAMS 0xffffffffu
 #define MAX_CHILD_PER_STREAM 200
 
+
+#define STATE(x) ((http2_client_state_t *)((x)->state))
+#define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))
+#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
+#define ISALIVE(x) (CSTATE(x) != NULL)
+
+
 static nghttp2_nv make_nv(const char *name, const char *value)
 {
     nghttp2_nv nv;
@@ -146,9 +153,6 @@ static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid
     {
         con->method = HTTP_POST;
     }
-
-    context_t *init_ctx = newInitContext(con->line);
-    self->up->upStream(self->up, init_ctx);
 
     return con;
 }
