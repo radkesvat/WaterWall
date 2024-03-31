@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versio
 # set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
 # set(CMAKE_EXE_LINKER_FLAGS_DEBUG  "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer  -fsanitize=address" CACHE STRING "my configurable string" FORCE)
 
-set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
+set(ENABLE_ASAN ON CACHE BOOL "enable address sanitizer" FORCE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)

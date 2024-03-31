@@ -177,7 +177,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             self->up->upStream(self->up, c);
             if (!ISALIVE(clienthello_ctx))
             {
-                destroyContext(c);
+                destroyContext(clienthello_ctx);
                 return;
             }
 
