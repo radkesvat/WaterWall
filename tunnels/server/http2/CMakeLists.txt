@@ -33,6 +33,8 @@ CPMAddPackage(
     OPTIONS 
     "BUILD_STATIC_LIBS ON"
     "BUILD_TESTING OFF"
+    # "ENABLE_DEBUG ON "
+         
 
 )
 

@@ -31,10 +31,13 @@ typedef struct http2_client_child_con_state_s
     struct http2_client_child_con_state_s *prev, *next;
     int32_t stream_id;
     nghttp2_stream *ng_stream;
+
+    shift_buffer_t *temp_buf;
+    size_t bytes_needed;
     tunnel_t *tunnel;
     line_t *parent;
     line_t *line;
-    hio_t* io;
+    hio_t *io;
 
 } http2_client_child_con_state_t;
 
@@ -44,7 +47,7 @@ typedef struct http2_client_con_state_s
     nghttp2_session *session;
     http2_session_state state;
     context_queue_t *queue;
-    size_t childs_added;   
+    size_t childs_added;
     int error;
     int frame_type_when_stream_closed;
     bool handshake_completed;
@@ -60,7 +63,7 @@ typedef struct http2_client_con_state_s
 
     tunnel_t *tunnel;
     line_t *line;
-    hio_t* io;
+    hio_t *io;
     http2_client_child_con_state_t root;
 
 } http2_client_con_state_t;
@@ -86,6 +89,6 @@ typedef struct http2_client_state_s
     int host_port;
     char *scheme;
     int last_iid;
-    nghttp2_option * ngoptions;
+    nghttp2_option *ngoptions;
     thread_connection_pool_t thread_cpool[];
 } http2_client_state_t;

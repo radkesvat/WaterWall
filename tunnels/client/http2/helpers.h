@@ -3,14 +3,12 @@
 #include "types.h"
 
 #define MAX_CONCURRENT_STREAMS 0xffffffffu
-#define MAX_CHILD_PER_STREAM 200
-
+#define MAX_CHILD_PER_STREAM 3
 
 #define STATE(x) ((http2_client_state_t *)((x)->state))
 #define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
-
 
 static nghttp2_nv make_nv(const char *name, const char *value)
 {
@@ -120,6 +118,8 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
 }
 static void delete_http2_stream(http2_client_child_con_state_t *stream)
 {
+    if(stream->temp_buf != NULL)
+        reuseBuffer(buffer_pools[stream->line->tid],stream->temp_buf);
     stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
     free(stream);
 }
@@ -168,8 +168,10 @@ static void delete_http2_connection(http2_client_con_state_t *con)
     {
         http2_client_child_con_state_t *next = stream_i->next;
         context_t *fin_ctx = newFinContext(stream_i->line);
+        tunnel_t *dest = stream_i->tunnel;
         delete_http2_stream(stream_i);
-        stream_i->tunnel->downStream(stream_i->tunnel, fin_ctx);
+        CSTATE_MUT(fin_ctx) = NULL;
+        dest->downStream(dest, fin_ctx);
         stream_i = next;
     }
     nghttp2_session_del(con->session);
@@ -192,9 +194,8 @@ static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid, 
         {
             if ((*k.ref)->childs_added < MAX_CHILD_PER_STREAM)
             {
-                (*k.ref)->childs_added +=1;
+                (*k.ref)->childs_added += 1;
                 return (*k.ref);
-
             }
         }
         vec_cons_pop(vector);

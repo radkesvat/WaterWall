@@ -72,6 +72,8 @@ create_http2_stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *
 static void delete_http2_stream(http2_server_child_con_state_t *stream)
 {
 
+    if(stream->temp_buf != NULL)
+        reuseBuffer(buffer_pools[stream->line->tid],stream->temp_buf);
     stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
     destroyLine(stream->line);
     if (stream->request_path)
@@ -79,16 +81,16 @@ static void delete_http2_stream(http2_server_child_con_state_t *stream)
     free(stream);
 }
 
-static http2_server_con_state_t *create_http2_connection(tunnel_t *self, line_t*line,hio_t* io)
+static http2_server_con_state_t *create_http2_connection(tunnel_t *self, line_t *line, hio_t *io)
 {
     http2_server_state_t *state = STATE(self);
-    http2_server_con_state_t *con =  malloc(sizeof(http2_server_con_state_t));
+    http2_server_con_state_t *con = malloc(sizeof(http2_server_con_state_t));
     memset(con, 0, sizeof(http2_server_con_state_t));
 
-    nghttp2_session_server_new2(&con->session, state->cbs, con,state->ngoptions);
+    nghttp2_session_server_new2(&con->session, state->cbs, con, state->ngoptions);
     con->state = H2_WANT_RECV;
     con->tunnel = self;
-    con->line =  line;
+    con->line = line;
     con->io = io;
 
     nghttp2_settings_entry settings[] = {
@@ -104,14 +106,17 @@ static void delete_http2_connection(http2_server_con_state_t *con)
     for (stream_i = con->root.next; stream_i;)
     {
         context_t *fin_ctx = newFinContext(stream_i->line);
-
         http2_server_child_con_state_t *next = stream_i->next;
+        tunnel_t *dest = stream_i->tunnel;
         delete_http2_stream(stream_i);
-        stream_i->tunnel->upStream(stream_i->tunnel, fin_ctx);
+        CSTATE_MUT(fin_ctx) = NULL;
+        dest->upStream(dest, fin_ctx);
         stream_i = next;
     }
 
     nghttp2_session_del(con->session);
+
     con->line->chains_state[self->chain_index] = NULL;
     free(con);
 }
+static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }

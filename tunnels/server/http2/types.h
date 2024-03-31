@@ -38,6 +38,9 @@ typedef struct http2_server_child_con_state_s
     char *request_path;
     int32_t stream_id;
     bool first_sent;
+    
+    shift_buffer_t* temp_buf;
+    size_t bytes_needed;
     line_t *parent;
     line_t *line;
     hio_t* io;
@@ -52,6 +55,7 @@ typedef struct http2_server_con_state_s
     int error;
     int frame_type_when_stream_closed;
     enum http_content_type content_type;
+
 
     tunnel_t *tunnel;
     line_t *line;
