@@ -127,6 +127,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             protobuf_server_con_state_t *cstate = malloc(sizeof(protobuf_server_con_state_t));
             cstate->wanted = 0;
+            cstate->first_sent = false;
             cstate->stream_buf = newBufferStream(buffer_pools[c->line->tid]);
             CSTATE_MUT(c) = cstate;
         }
