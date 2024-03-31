@@ -124,7 +124,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             shiftr(buf, bytes_passed);
             if (data_len > MAX_PACKET_SIZE)
             {
-                LOGE("ProtoBufServer: rejected, size too large");
+                LOGE("ProtoBufServer: rejected, size too large %zu (%zu passed %d left)",data_len,bytes_passed,(int)(bufLen(buf)));
                 DISCARD_CONTEXT(c);
                 cleanup(cstate);
                 CSTATE_MUT(c) = NULL;
