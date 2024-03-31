@@ -138,29 +138,6 @@ static void flush_write_queue(http2_client_con_state_t *con)
     }
     destroyContext(g);
 }
-static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
-                                    uint32_t error_code, void *userdata)
-{
-
-    if (userdata == NULL)
-        return 0;
-
-    http2_client_con_state_t *con = (http2_client_con_state_t *)userdata;
-    tunnel_t *self = con->tunnel;
-
-    http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, stream_id);
-
-    if (!stream)
-    {
-        return 0;
-    }
-    context_t *fin_ctx = newFinContext(stream->line);
-    remove_stream(con, stream);
-    delete_http2_stream(stream);
-    stream->tunnel->downStream(stream->tunnel, fin_ctx);
-
-    return 0;
-}
 
 static int on_header_callback(nghttp2_session *session,
                               const nghttp2_frame *frame,
@@ -326,6 +303,8 @@ static int on_frame_recv_callback(nghttp2_session *session,
         remove_stream(con, stream);
         delete_http2_stream(stream);
         dest->downStream(dest, fc);
+
+        return 0;
     }
 
     if ((frame->hd.type & NGHTTP2_HEADERS) == NGHTTP2_HEADERS)
@@ -336,18 +315,6 @@ static int on_frame_recv_callback(nghttp2_session *session,
             con->handshake_completed = true;
             flush_write_queue(con);
             stream->tunnel->downStream(stream->tunnel, newEstContext(stream->line));
-        }
-        else if ((frame->hd.flags & HTTP2_FLAG_END_STREAM) == HTTP2_FLAG_END_STREAM)
-        {
-            http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
-            if (stream == NULL)
-                return 0;
-            context_t *fin_ctx = newFinContext(stream->line);
-            tunnel_t *dest = stream->tunnel;
-            remove_stream(con, stream);
-            delete_http2_stream(stream);
-            CSTATE_MUT(fin_ctx) = NULL;
-            dest->downStream(dest, fin_ctx);
         }
     }
 
@@ -383,6 +350,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             http2_client_con_state_t *con = take_http2_connection(self, c->line->tid, NULL);
             http2_client_child_con_state_t *stream = create_http2_stream(con, c->line, c->src_io);
             CSTATE_MUT(c) = stream;
+            nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
 
             if (!con->init_sent)
             {
@@ -402,13 +370,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     return;
                 }
 
-            if (con->childs_added >= MAX_CHILD_PER_STREAM && con->root.next == NULL && ISALIVE(c))
-            {
-                context_t *fin_ctx = newFinContext(con->line);
-                delete_http2_connection(con);
-                con->tunnel->up->upStream(con->tunnel->up, fin_ctx);
-            }
-
             destroyContext(c);
         }
         else if (c->fin)
@@ -422,14 +383,15 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
+            if (con->root.next == NULL && ISALIVE(c))
+            {
+                context_t *con_fc = newFinContext(con->line);
+                tunnel_t *con_dest = con->tunnel->up;
+                delete_http2_connection(con);
+                con_dest->upStream(con_dest, con_fc);
+            }
             delete_http2_stream(stream);
             CSTATE_MUT(c) = NULL;
-            if (con->childs_added >= MAX_CHILD_PER_STREAM && con->root.next == NULL && ISALIVE(c))
-            {
-                context_t *fin_ctx = newFinContext(con->line);
-                delete_http2_connection(con);
-                con->tunnel->up->upStream(con->tunnel->up, fin_ctx);
-            }
 
             destroyContext(c);
             return;
@@ -452,6 +414,11 @@ static inline void downStream(tunnel_t *self, context_t *c)
         assert(ret == len);
         DISCARD_CONTEXT(c);
 
+        if (!ISALIVE(c))
+        {
+            destroyContext(c);
+            return;
+        }
         while (trySendRequest(self, con, 0, NULL, NULL))
             if (!ISALIVE(c))
             {
@@ -459,6 +426,13 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 return;
             }
 
+        if (con->root.next == NULL)
+        {
+            context_t *con_fc = newFinContext(con->line);
+            tunnel_t *con_dest = con->tunnel->up;
+            delete_http2_connection(con);
+            con_dest->upStream(con_dest, con_fc);
+        }
         // if (con->childs_added >= MAX_CHILD_PER_STREAM && con->root.next == NULL && ISALIVE(c))
         // {
         //     context_t *fin_ctx = newFinContext(con->line);
@@ -486,8 +460,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
         {
             delete_http2_connection(con);
         }
-        else
-            destroyContext(c);
+
+        destroyContext(c);
     }
 }
 
@@ -520,7 +494,6 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     nghttp2_session_callbacks_set_on_header_callback(state->cbs, on_header_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(state->cbs, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, on_frame_recv_callback);
-    nghttp2_session_callbacks_set_on_stream_close_callback(state->cbs, on_stream_close_callback);
 
     for (size_t i = 0; i < threads_count; i++)
     {

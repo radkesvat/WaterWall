@@ -100,7 +100,6 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
     // nvs[nvlen++] = make_nv("Sec-Ch-Ua-Platform", "\"Windows\"");
 
     con->state = H2_SEND_HEADERS;
-
     http2_client_child_con_state_t *stream = malloc(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
@@ -118,8 +117,8 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
 }
 static void delete_http2_stream(http2_client_child_con_state_t *stream)
 {
-    if(stream->temp_buf != NULL)
-        reuseBuffer(buffer_pools[stream->line->tid],stream->temp_buf);
+    if (stream->temp_buf != NULL)
+        reuseBuffer(buffer_pools[stream->line->tid], stream->temp_buf);
     stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
     free(stream);
 }
@@ -161,7 +160,9 @@ static void delete_http2_connection(http2_client_con_state_t *con)
     tunnel_t *self = con->tunnel;
 
     vec_cons *vector = &(STATE(self)->thread_cpool[con->line->tid].cons);
-    vec_cons_erase_at(vector, vec_cons_find(vector, con));
+    vec_cons_iter it = vec_cons_find(vector, con);
+    if (it.ref != vec_cons_end(vector).ref)
+        vec_cons_erase_at(vector, it);
 
     http2_client_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
@@ -184,7 +185,7 @@ static void delete_http2_connection(http2_client_con_state_t *con)
 static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid, hio_t *io)
 {
     http2_client_state_t *state = STATE(self);
-
+    return create_http2_connection(self, tid, io);
     vec_cons *vector = &(state->thread_cpool[tid].cons);
 
     if (vec_cons_size(vector) > 0)

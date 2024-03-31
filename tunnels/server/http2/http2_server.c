@@ -4,30 +4,6 @@
 #include "helpers.h"
 #include "loggers/network_logger.h"
 
-static int on_stream_close_callback(nghttp2_session *session, int32_t stream_id,
-                                    uint32_t error_code, void *userdata)
-{
-
-    if (userdata == NULL)
-        return 0;
-
-    http2_server_con_state_t *con = (http2_server_con_state_t *)userdata;
-    tunnel_t *self = con->tunnel;
-
-    http2_server_child_con_state_t *stream;
-    (void)error_code;
-
-    stream = nghttp2_session_get_stream_user_data(con->session, stream_id);
-    if (!stream)
-    {
-        return 0;
-    }
-
-    remove_stream(con, stream);
-    delete_http2_stream(stream);
-    return 0;
-}
-
 static int on_header_callback(nghttp2_session *session,
                               const nghttp2_frame *frame,
                               const uint8_t *_name, size_t namelen,
@@ -218,7 +194,7 @@ static int on_frame_recv_callback(nghttp2_session *session,
         remove_stream(con, stream);
         delete_http2_stream(stream);
         dest->upStream(dest, fc);
-
+        return 0;
     }
 
     if (frame->hd.type != NGHTTP2_HEADERS ||
@@ -423,12 +399,18 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
                 nghttp2_submit_headers(con->session, flags, stream->stream_id, NULL, NULL, 0, NULL);
-            while (trySendResponse(self, con, stream->stream_id, NULL, NULL))
-                ;
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
             delete_http2_stream(stream);
+
+            while (trySendResponse(self, con, 0, NULL, NULL))
+                if (!ISALIVE(c))
+                {
+                    destroyContext(c);
+                    return;
+                }
+
             if (nghttp2_session_want_read(con->session) == 0 &&
                 nghttp2_session_want_write(con->session) == 0)
             {
@@ -474,7 +456,6 @@ tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
     nghttp2_session_callbacks_set_on_header_callback(state->cbs, on_header_callback);
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(state->cbs, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, on_frame_recv_callback);
-    nghttp2_session_callbacks_set_on_stream_close_callback(state->cbs, on_stream_close_callback);
 
     nghttp2_option_new(&(state->ngoptions));
     nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions, 0xffffffffu);
