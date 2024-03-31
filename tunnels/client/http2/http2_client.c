@@ -302,6 +302,8 @@ static int on_frame_recv_callback(nghttp2_session *session,
         tunnel_t *dest = stream->tunnel;
         remove_stream(con, stream);
         delete_http2_stream(stream);
+        CSTATE_MUT(fc) = NULL;
+
         dest->downStream(dest, fc);
 
         return 0;

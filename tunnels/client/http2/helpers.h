@@ -3,7 +3,7 @@
 #include "types.h"
 
 #define MAX_CONCURRENT_STREAMS 0xffffffffu
-#define MAX_CHILD_PER_STREAM 3
+#define MAX_CHILD_PER_STREAM 400
 
 #define STATE(x) ((http2_client_state_t *)((x)->state))
 #define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))
