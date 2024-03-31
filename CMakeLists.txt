@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
 
-set(CMAKE_C_STANDARD 17  CACHE INTERNAL  "C standard version" FORCE)
-set(CMAKE_CXX_STANDARD 17 CACHE INTERNAL  "CXX standard version" FORCE)
+set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
+set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL  "CXX standard version" FORCE)
 set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 
