@@ -104,11 +104,12 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
     stream->stream_id = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
-
+    stream->chunkbs = newBufferStream(buffer_pools[con->line->tid]);
     stream->parent = con->line;
     stream->line = child_line;
     stream->io = io;
     stream->tunnel = con->tunnel->dw;
+
     stream->line->chains_state[stream->tunnel->chain_index + 1] = stream;
     add_stream(con, stream);
     // nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
@@ -117,8 +118,8 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
 }
 static void delete_http2_stream(http2_client_child_con_state_t *stream)
 {
-    if (stream->temp_buf != NULL)
-        reuseBuffer(buffer_pools[stream->line->tid], stream->temp_buf);
+   
+    destroyBufferStream(stream->chunkbs);
     stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
     free(stream);
 }

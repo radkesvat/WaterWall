@@ -32,8 +32,9 @@ typedef struct http2_client_child_con_state_s
     int32_t stream_id;
     nghttp2_stream *ng_stream;
 
-    shift_buffer_t *temp_buf;
+    buffer_stream_t *chunkbs; //used for grpc
     size_t bytes_needed;
+
     tunnel_t *tunnel;
     line_t *parent;
     line_t *line;

@@ -200,48 +200,33 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
     if (con->content_type == APPLICATION_GRPC)
     {
 
-        if (stream->temp_buf == NULL)
+        shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
+        shiftl(buf, lCap(buf) / 1.25); // use some unused space
+        setLen(buf, len);
+        memcpy(rawBuf(buf), data, len);
+        bufferStreamPush(stream->chunkbs, buf);
+
+        while (true)
         {
-            // grpc_message_hd
-            if (len < GRPC_MESSAGE_HDLEN)
-                return 0;
-
-            grpc_message_hd msghd;
-            grpc_message_hd_unpack(&msghd, data);
-            // LOGD("grpc_message_hd: flags=%d length=%d\n", msghd.flags, msghd.length);
-            data += GRPC_MESSAGE_HDLEN;
-            len -= GRPC_MESSAGE_HDLEN;
-            // LOGD("%.*s\n", (int)len, data);
-
-            shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
-            shiftl(buf, lCap(buf) / 1.25); // use some unused space
-            setLen(buf, msghd.length);
-            memcpy(rawBuf(buf), data, len);
-
-            if (msghd.length > len)
+            if (stream->bytes_needed == 0 && bufferStreamLen(stream->chunkbs) >= GRPC_MESSAGE_HDLEN)
             {
-                stream->temp_buf = buf;
-                stream->bytes_needed = msghd.length - len;
-                return 0;
+                shift_buffer_t *gheader_buf = bufferStreamRead(stream->chunkbs, GRPC_MESSAGE_HDLEN);
+                grpc_message_hd msghd;
+                grpc_message_hd_unpack(&msghd, rawBuf(gheader_buf));
+                stream->bytes_needed = msghd.length;
+                reuseBuffer(buffer_pools[con->line->tid], gheader_buf);
             }
-            context_t *stream_data = newContext(stream->line);
-            stream_data->payload = buf;
-            stream_data->src_io = con->io;
-            stream->tunnel->downStream(stream->tunnel, stream_data);
-        }
-        else
-        {
-            memcpy(rawBuf(stream->temp_buf) + (bufLen(stream->temp_buf) - stream->bytes_needed), data, len);
-            stream->bytes_needed -= len;
-            if (stream->bytes_needed == 0)
+            if (stream->bytes_needed > 0 && bufferStreamLen(stream->chunkbs) >= stream->bytes_needed)
             {
+                shift_buffer_t *gdata_buf = bufferStreamRead(stream->chunkbs, stream->bytes_needed);
+                stream->bytes_needed = 0;
                 context_t *stream_data = newContext(stream->line);
-                stream_data->payload = stream->temp_buf;
+                stream_data->payload = gdata_buf;
                 stream_data->src_io = con->io;
-                stream->temp_buf = NULL;
-
                 stream->tunnel->downStream(stream->tunnel, stream_data);
+                continue;
             }
+            break;
         }
     }
     else

@@ -60,6 +60,7 @@ create_http2_stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *
     stream = malloc(sizeof(http2_server_child_con_state_t));
     memset(stream, 0, sizeof(http2_server_child_con_state_t));
     stream->stream_id = stream_id;
+    stream->chunkbs = newBufferStream(buffer_pools[this_line->tid]);
     stream->parent = this_line;
     stream->line = newLine(this_line->tid);
     stream->line->chains_state[target_tun->chain_index - 1] = stream;
@@ -72,9 +73,10 @@ create_http2_stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *
 static void delete_http2_stream(http2_server_child_con_state_t *stream)
 {
 
-    if(stream->temp_buf != NULL)
-        reuseBuffer(buffer_pools[stream->line->tid],stream->temp_buf);
+
+
     stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
+    destroyBufferStream(stream->chunkbs);
     destroyLine(stream->line);
     if (stream->request_path)
         free(stream->request_path);
