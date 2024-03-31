@@ -98,7 +98,7 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self,size_t bytes )
     }
 }
 
-uint8_t bufferStreamReadByteAt(buffer_stream_t *self, size_t at)
+uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
 {
     if (self->size == 0 || self->size < at)
         return 0;

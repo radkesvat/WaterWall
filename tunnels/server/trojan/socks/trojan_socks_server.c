@@ -236,7 +236,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     if (bufferStreamLen(bstream) <= 0)
         return true;
 
-    uint8_t atype = bufferStreamReadByteAt(bstream, 0);
+    uint8_t atype = bufferStreamViewByteAt(bstream, 0);
     uint16_t packet_size = 0;
     uint16_t full_len = 0;
     uint8_t domain_len = 0;
@@ -250,8 +250,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
             return true;
 
         {
-            uint8_t packet_size_H = bufferStreamReadByteAt(bstream, 1 + 4 + 2);
-            uint8_t packet_size_L = bufferStreamReadByteAt(bstream, 1 + 4 + 2 + 1);
+            uint8_t packet_size_H = bufferStreamViewByteAt(bstream, 1 + 4 + 2);
+            uint8_t packet_size_L = bufferStreamViewByteAt(bstream, 1 + 4 + 2 + 1);
             packet_size = (packet_size_H << 8) | packet_size_L;
             if (packet_size > 8192)
                 return false;
@@ -264,13 +264,13 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         //  1   | x(1) + x |   2      |   2    |    2
         if (bufferStreamLen(bstream) < 1 + 1 + 2 + 2 + 2)
             return true;
-        domain_len = bufferStreamReadByteAt(bstream, 1);
+        domain_len = bufferStreamViewByteAt(bstream, 1);
 
         if (bufferStreamLen(bstream) < 1 + 1 + domain_len + 2 + 2 + 2)
             return true;
         {
-            uint8_t packet_size_H = bufferStreamReadByteAt(bstream, 1 + 1 + domain_len + 2);
-            uint8_t packet_size_L = bufferStreamReadByteAt(bstream, 1 + 1 + domain_len + 2 + 1);
+            uint8_t packet_size_H = bufferStreamViewByteAt(bstream, 1 + 1 + domain_len + 2);
+            uint8_t packet_size_L = bufferStreamViewByteAt(bstream, 1 + 1 + domain_len + 2 + 1);
             packet_size = (packet_size_H << 8) | packet_size_L;
             if (packet_size > 8192)
                 return false;
@@ -286,8 +286,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
             return true;
         {
 
-            uint8_t packet_size_H = bufferStreamReadByteAt(bstream, 1 + 16 + 2);
-            uint8_t packet_size_L = bufferStreamReadByteAt(bstream, 1 + 16 + 2 + 1);
+            uint8_t packet_size_H = bufferStreamViewByteAt(bstream, 1 + 16 + 2);
+            uint8_t packet_size_L = bufferStreamViewByteAt(bstream, 1 + 16 + 2 + 1);
             packet_size = (packet_size_H << 8) | packet_size_L;
             if (packet_size > 8192)
                 return false;

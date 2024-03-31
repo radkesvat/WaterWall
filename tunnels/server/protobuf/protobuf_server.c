@@ -85,6 +85,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 DISCARD_CONTEXT(c);
                 cleanup(cstate);
+                CSTATE_MUT(c) = NULL;
+
                 self->up->upStream(self->up, newFinContext(c->line));
                 self->dw->downStream(self->dw, newFinContext(c->line));
                 destroyContext(c);
@@ -100,6 +102,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 LOGE("ProtoBufServer: rejected, size too large");
                 DISCARD_CONTEXT(c);
                 cleanup(cstate);
+                CSTATE_MUT(c) = NULL;
+
                 self->up->upStream(self->up, newFinContext(c->line));
                 self->dw->downStream(self->dw, newFinContext(c->line));
                 destroyContext(c);
