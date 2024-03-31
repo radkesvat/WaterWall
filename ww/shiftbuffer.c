@@ -12,6 +12,8 @@ extern size_t bufLen(shift_buffer_t *self);
 extern void setLen(shift_buffer_t *self, size_t bytes);
 extern void reserve(shift_buffer_t *self, size_t bytes);
 extern void consume(shift_buffer_t *self, size_t bytse);
+extern void shiftl(shift_buffer_t *self, size_t bytes);
+extern void shiftr(shift_buffer_t *self, size_t bytes);
 extern unsigned char *rawBuf(shift_buffer_t *self);
 
 void destroyShiftBuffer(shift_buffer_t *self)
@@ -94,24 +96,6 @@ void expand(shift_buffer_t *self, size_t increase)
     }
 }
 
-void shiftl(shift_buffer_t *self, size_t bytes)
-{
-    if (lCap(self) < bytes)
-        expand(self, (bytes - lCap(self)));
-
-    self->curpos -= bytes;
-}
-
-void shiftr(shift_buffer_t *self, size_t bytes)
-{
-#ifdef DEBUG_BUILD
-    assert(self->curpos + bytes <= self->lenpos);
-#endif
-
-    if (rCap(self) < bytes)
-        expand(self, (bytes - rCap(self)));
-    self->curpos += bytes;
-}
 
 void writeRaw(shift_buffer_t *self, unsigned char *buffer, size_t len)
 {

@@ -25,13 +25,25 @@ void reset(shift_buffer_t *self);
 
 
 void expand(shift_buffer_t *self, size_t increase);
-void shiftl(shift_buffer_t *self, size_t bytes);
-void shiftr(shift_buffer_t *self, size_t bytes);
 
 
 //  how many bytes we can fill without realloc
 inline size_t lCap(shift_buffer_t *self) { return self->curpos; }
 inline size_t rCap(shift_buffer_t *self) { return (self->cap * 2 - self->curpos); }
+inline void shiftl(shift_buffer_t *self, size_t bytes)
+{
+    if (lCap(self) < bytes)
+        expand(self, (bytes - lCap(self)));
+    self->curpos -= bytes;
+}
+
+inline void shiftr(shift_buffer_t *self, size_t bytes)
+{
+    if (rCap(self) < bytes)
+        expand(self, (bytes - rCap(self)));
+    self->curpos += bytes;
+}
+
 
 inline size_t bufLen(shift_buffer_t *self) { return self->lenpos - self->curpos; }
 
