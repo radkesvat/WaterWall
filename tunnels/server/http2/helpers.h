@@ -73,8 +73,6 @@ create_http2_stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *
 static void delete_http2_stream(http2_server_child_con_state_t *stream)
 {
 
-
-
     stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
     destroyBufferStream(stream->chunkbs);
     destroyLine(stream->line);

@@ -224,7 +224,9 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
                 stream_data->payload = gdata_buf;
                 stream_data->src_io = con->io;
                 stream->tunnel->downStream(stream->tunnel, stream_data);
-                continue;
+
+                if (nghttp2_session_get_stream_user_data(session, stream_id))
+                    continue;
             }
             break;
         }

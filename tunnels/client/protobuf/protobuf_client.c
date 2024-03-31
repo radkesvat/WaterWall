@@ -18,7 +18,6 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
-
 typedef struct protobuf_client_state_s
 {
 
@@ -128,7 +127,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 LOGE("ProtoBufServer: rejected, size too large");
                 DISCARD_CONTEXT(c);
                 cleanup(cstate);
-                 CSTATE_MUT(c) = NULL;
+                CSTATE_MUT(c) = NULL;
 
                 self->dw->downStream(self->dw, newFinContext(c->line));
                 self->up->upStream(self->up, newFinContext(c->line));
