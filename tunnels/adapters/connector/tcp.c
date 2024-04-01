@@ -250,7 +250,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
 
             // sockaddr_set_ipport(&(final_ctx.addr), "127.0.0.1", 443);
 
-            LOGW("Connector: initiating tcp connection");
+            LOGD("Connector: initiating tcp connection");
             if (final_ctx.atype == SAT_DOMAINNAME)
             {
                 if (!final_ctx.resolved)

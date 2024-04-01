@@ -45,20 +45,6 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         }
         self->up->upStream(self->up, req);
 
-        // if (nghttp2_session_want_read(con->session) == 0 &&
-        //     nghttp2_session_want_write(con->session) == 0)
-        // {
-        //     if (buf != NULL)
-        //     {
-        //         reuseBuffer(buffer_pools[line->tid], buf);
-        //         buf = NULL;
-        //     }
-        //     context_t *fin_ctx = newFinContext(line);
-        //     delete_http2_connection(con);
-        //     con->tunnel->up->upStream(con->tunnel->up, fin_ctx);
-        //     return false;
-        // }
-
         return true;
     }
     assert(len >= 0);
@@ -372,7 +358,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
-            if (con->root.next == NULL && ISALIVE(c))
+            if (con->root.next == NULL && con->childs_added >= MAX_CHILD_PER_STREAM && ISALIVE(c))
             {
                 context_t *con_fc = newFinContext(con->line);
                 tunnel_t *con_dest = con->tunnel->up;
@@ -415,31 +401,15 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 return;
             }
 
-        if (con->root.next == NULL)
+        if (con->root.next == NULL && con->childs_added >= MAX_CHILD_PER_STREAM && ISALIVE(c))
         {
             context_t *con_fc = newFinContext(con->line);
             tunnel_t *con_dest = con->tunnel->up;
             delete_http2_connection(con);
             con_dest->upStream(con_dest, con_fc);
         }
-        // if (con->childs_added >= MAX_CHILD_PER_STREAM && con->root.next == NULL && ISALIVE(c))
-        // {
-        //     context_t *fin_ctx = newFinContext(con->line);
-        //     delete_http2_connection(con);
-        //     con->tunnel->up->upStream(con->tunnel->up, fin_ctx);
-        // }
 
-        if (!ISALIVE(c))
-        {
-            destroyContext(c);
-            return;
-        }
 
-        // {
-        //     context_t *fin_ctx = newFinContext(con->line);
-        //     delete_http2_connection(con);
-        //     con->tunnel->upStream(con->tunnel, fin_ctx);
-        // }
         destroyContext(c);
     }
     else

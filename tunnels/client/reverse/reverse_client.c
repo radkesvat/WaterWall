@@ -159,12 +159,12 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(reverse_client_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
-    getIntFromJsonObject(&(state->max_cons), settings, "max-connections");
+    getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
 
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
-    state->max_cons = min(max(threads_count*2, state->max_cons),128);
-    state->connection_per_thread = 1;
+    state->min_unused_cons = min(max(threads_count*2, state->min_unused_cons),128);
+    state->connection_per_thread =  state->min_unused_cons / threads_count;
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l = newLine(0);

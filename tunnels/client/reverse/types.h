@@ -29,6 +29,6 @@ typedef struct reverse_client_state_s
     size_t connection_per_thread;
 
     // settings
-    int max_cons;
+    int min_unused_cons;
 
 } reverse_client_state_t;

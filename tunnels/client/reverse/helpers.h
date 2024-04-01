@@ -8,6 +8,7 @@
 #define CSTATE_D_MUT(x) ((x)->line->chains_state)[state->chain_index_pi]
 #define CSTATE_U_MUT(x) ((x)->line->chains_state)[state->chain_index_pi]
 #define ISALIVE(x) (((((x)->line->chains_state)[state->chain_index_pi])) != NULL)
+#define PRECONNECT_DELAY 100
 #undef max
 #undef min
 static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
@@ -33,9 +34,8 @@ static void destroy_cstate(reverse_client_con_state_t *cstate)
 
     free(cstate);
 }
-static void do_connect(hevent_t *ev)
+static void do_connect(struct connect_arg *cg)
 {
-    struct connect_arg *cg = hevent_userdata(ev);
     tunnel_t *self = cg->t;
     reverse_client_state_t *state = STATE(self);
     reverse_client_con_state_t *cstate = create_cstate(cg->tid);
@@ -45,24 +45,40 @@ static void do_connect(hevent_t *ev)
     self->up->upStream(self->up, newInitContext(cstate->u));
 }
 
+static void connect_timer_finished(htimer_t *timer)
+{
+    do_connect(hevent_userdata(timer));
+    htimer_del(timer);
+}
+static void before_connect(hevent_t *ev)
+{
+    struct connect_arg *cg = hevent_userdata(ev);
+    htimer_t *connect_timer = htimer_add(loops[cg->tid], connect_timer_finished, PRECONNECT_DELAY, 1);
+    hevent_set_userdata(connect_timer, cg);
+}
+
 static void initiateConnect(tunnel_t *t)
 {
-    if (STATE(t)->unused_cons >= STATE(t)->max_cons)
+    if (STATE(t)->unused_cons >= STATE(t)->min_unused_cons)
         return;
 
-    int tid = atomic_fetch_add_explicit(&(STATE(t)->round_index), 1, memory_order_relaxed);
-
-    if(tid >= threads_count)
+    int tid = 0;
+    if (threads_count > 0)
     {
-        atomic_store_explicit(&(STATE(t)->round_index), 0, memory_order_relaxed);
-        tid = 0;
+        tid = atomic_fetch_add_explicit(&(STATE(t)->round_index), 1, memory_order_relaxed);
+
+        if (tid >= threads_count)
+        {
+            atomic_store_explicit(&(STATE(t)->round_index), 0, memory_order_relaxed);
+            tid = 0;
+        }
     }
 
     hloop_t *worker_loop = loops[tid];
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
     ev.loop = worker_loop;
-    ev.cb = do_connect;
+    ev.cb = before_connect;
     struct connect_arg *cg = malloc(sizeof(struct connect_arg));
     cg->t = t;
     cg->tid = tid;
