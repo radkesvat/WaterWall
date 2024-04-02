@@ -303,7 +303,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         http2_client_child_con_state_t *stream = CSTATE(c);
         http2_client_con_state_t *con = stream->parent->chains_state[self->chain_index];
-        stream->io = c->src_io;
+        stream->io = c->src_io ? c->src_io : stream->io;
         if (!con->handshake_completed)
         {
             contextQueuePush(con->queue, c);
@@ -378,7 +378,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 {
     http2_client_state_t *state = STATE(self);
     http2_client_con_state_t *con = CSTATE(c);
-    con->io = c->src_io;
+    con->io = c->src_io ? c->src_io : con->io;
 
     if (c->payload != NULL)
     {
@@ -408,7 +408,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
             delete_http2_connection(con);
             con_dest->upStream(con_dest, con_fc);
         }
-
 
         destroyContext(c);
     }
