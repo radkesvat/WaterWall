@@ -119,7 +119,8 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         if (contextQueueLen(queue) > 0)
         {
             contextQueuePush(cstate->queue, cpy_ctx);
-            resume_write_queue(cstate);
+            if (resume_write_queue(cstate))
+                hio_setcb_write(io, NULL);
         }
         else
         {
@@ -191,7 +192,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             int nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
             if (nwrite >= 0 && nwrite < bytes)
             {
-                cstate->write_paused = true;    
+                cstate->write_paused = true;
                 if (c->src_io)
                     hio_read_stop(c->src_io);
                 hio_setcb_write(cstate->io, on_write_complete);

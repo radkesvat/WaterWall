@@ -80,7 +80,8 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         if (contextQueueLen(queue) > 0)
         {
             contextQueuePush(cstate->queue, cpy_ctx);
-            resume_write_queue(cstate);
+            if (resume_write_queue(cstate))
+                hio_setcb_write(io, NULL);
         }
         else
         {
