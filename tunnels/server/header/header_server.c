@@ -25,6 +25,7 @@ typedef struct header_server_state_s
 
 typedef struct header_server_con_state_s
 {
+    bool init_sent;
 
 } header_server_con_state_t;
 
@@ -59,29 +60,33 @@ static void upStream(tunnel_t *self, context_t *c)
             (void)(0);
             break;
         }
+        CSTATE(c)->init_sent = true;
         self->up->upStream(self->up, newInitContext(c->line));
+        if (!ISALIVE(c))
+        {
+            DISCARD_CONTEXT(c);
+            destroyContext(c);
+            return;
+        }
     }
     else if (c->init)
     {
-        CSTATE_MUT(c) = (header_server_con_state_t *)0x1;
+        header_server_con_state_t *cstate = malloc(sizeof(header_server_con_state_t));
+        cstate->init_sent = false;
+        CSTATE_MUT(c) = cstate;
         destroyContext(c);
         return;
     }
     else if (c->fin)
     {
+        bool send_fin = CSTATE(c)->init_sent;
+        free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
-        self->up->upStream(self->up, c);
+        if (send_fin)
+            self->up->upStream(self->up, c);
         return;
     }
 
-    if (!ISALIVE(c))
-    {
-        DISCARD_CONTEXT(c);
-        self->up->upStream(self->up, newFinContext(c->line));
-        self->dw->downStream(self->dw, newFinContext(c->line));
-        destroyContext(c);
-        return;
-    }
     self->up->upStream(self->up, c);
 }
 
@@ -89,7 +94,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
 {
 
     if (c->fin)
+    {
+        bool send_fin = CSTATE(c)->init_sent;
+        free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
+
+    }
 
     self->dw->downStream(self->dw, c);
 }
