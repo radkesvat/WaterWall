@@ -95,10 +95,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     if (c->fin)
     {
-        bool send_fin = CSTATE(c)->init_sent;
         free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
-
     }
 
     self->dw->downStream(self->dw, c);
