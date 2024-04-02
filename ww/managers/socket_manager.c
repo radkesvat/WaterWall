@@ -3,6 +3,7 @@
 #include "utils/procutils.h"
 #include "hv/hthread.h"
 #include "loggers/network_logger.h"
+#include <signal.h>
 
 #define i_key socket_filter_t *
 #define i_type filters_t
@@ -19,8 +20,10 @@ typedef struct socket_manager_s
     filters_t filters;
     size_t last_round_tindex;
     bool iptables_installed;
+    bool ip6tables_installed;
     bool lsof_installed;
     bool iptable_cleaned;
+    bool iptables_used;
 
 } socket_manager_state_t;
 
@@ -80,6 +83,19 @@ static bool reset_iptables()
 
     return execCmd("iptables -t nat -F").exit_code == 0 && execCmd("iptables -t nat -X").exit_code == 0;
 }
+static void exit_hook()
+{
+    if (state->iptables_used)
+        reset_iptables();
+}
+static void sig_handler(int signum)
+{
+    signal(signum, SIG_DFL);
+    if (signum == SIGTERM || signum == SIGINT)
+    {
+        exit(0); // exit hook gets called
+    }
+}
 
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
@@ -120,7 +136,7 @@ static void on_accept_tcp(hio_t *io)
 
                 if (option.multiport_backend == multiport_backend_iptables)
                 {
-                    unsigned char pbuf[28]= {0};
+                    unsigned char pbuf[28] = {0};
                     int size = 16; // todo ipv6 value is 28
                     if (getsockopt(hio_fd(io), SOL_IP, SO_ORIGINAL_DST, &(pbuf[0]), &size) < 0)
                     {
@@ -130,7 +146,7 @@ static void on_accept_tcp(hio_t *io)
                         return;
                     }
 
-                    result->realport = (pbuf[2]<< 8) |  pbuf[3] ;
+                    result->realport = (pbuf[2] << 8) | pbuf[3];
                 }
 
                 if (option.no_delay)
@@ -214,7 +230,7 @@ static HTHREAD_ROUTINE(accept_thread)
                 }
                 if (port_min == port_max)
                     goto singleport;
-
+                state->iptables_used = true;
                 if (!state->iptable_cleaned)
                 {
                     if (!reset_iptables())
@@ -328,6 +344,25 @@ socket_manager_state_t *createSocketManager()
 
     state->iptables_installed = check_installed("iptables");
     state->lsof_installed = check_installed("lsof");
+#if SUPOPRT_V6
+    state->ip6tables_installed = check_installed("ip6tables");
+#endif
+
+    if (signal(SIGTERM, sig_handler) == SIG_ERR)
+    {
+        perror("Error setting SIGTERM signal handler");
+        exit(1);
+    }
+    if (signal(SIGINT, sig_handler) == SIG_ERR)
+    {
+        perror("Error setting SIGINT signal handler");
+        exit(1);
+    }
+    if (atexit(exit_hook) != 0)
+    {
+        perror("Error setting ATEXIT hook");
+        exit(1);
+    }
 
     return state;
 }

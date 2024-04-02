@@ -309,11 +309,27 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     goto failed;
                 }
 
+                /* Did SSL request to write bytes? */
+                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                size_t avail = rCap(buf);
+                n = BIO_read(cstate->wbio, rawBuf(buf), avail);
+                if (n > 0)
+                {
+                    setLen(buf, n);
+                    context_t *data_ctx = newContext(c->line);
+                    data_ctx->payload = buf;
+                    self->up->upStream(self->up, data_ctx);
+                }
+                else
+                {
+                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                }
+
                 if (!SSL_is_init_finished(cstate->ssl))
                 {
-                    DISCARD_CONTEXT(c);
-                    destroyContext(c);
-                    return;
+                    //     DISCARD_CONTEXT(c);
+                    //     destroyContext(c);
+                    //     return;
                 }
                 else
                 {
@@ -331,10 +347,14 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     }
                     flush_write_queue(self, c);
                     // queue is flushed and we are done
-                    DISCARD_CONTEXT(c);
-                    destroyContext(c);
-                    return;
+                    // DISCARD_CONTEXT(c);
+                    // destroyContext(c);
+                    // return;
                 }
+
+                DISCARD_CONTEXT(c);
+                destroyContext(c);
+                return;
             }
 
             /* The encrypted data is now in the input bio so now we can perform actual
@@ -467,7 +487,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    ssl_param->verify_peer = state->verify ? 1 : 0; // no mtls
+    ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint = SSL_CLIENT;
     // ssl_param->ca_path = "cacert.pem";
     state->ssl_context = ssl_ctx_new(ssl_param);
@@ -488,7 +508,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     } *ossl_alpn = malloc(1 + alpn_len);
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context,(const unsigned char *)ossl_alpn, 1 + alpn_len);
+    SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *)ossl_alpn, 1 + alpn_len);
     free(ossl_alpn);
 
     tunnel_t *t = newTunnel();

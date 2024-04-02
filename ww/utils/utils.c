@@ -335,7 +335,7 @@ cmdresult_t execCmd(const char *str)
 bool check_installed(const char *app)
 {
     char b[300];
-    sprintf(b, "dpkg-query -W --showformat='${Status}\n' %s|grep \"install ok install\"", app);
+    sprintf(b, "command -v %s", app);
     cmdresult_t result = execCmd(b);
     return (result.exit_code == 0 && strlen(result.output) > 0);
 }
