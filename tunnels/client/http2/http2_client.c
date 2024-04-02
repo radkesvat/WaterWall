@@ -483,6 +483,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     nghttp2_option_new(&(state->ngoptions));
     nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions, 0xffffffffu);
     nghttp2_option_set_no_closed_streams(state->ngoptions, 1);
+    nghttp2_option_set_no_http_messaging(state->ngoptions, 1);
     // nghttp2_option_set_no_http_messaging use this with grpc?
 
     tunnel_t *t = newTunnel();

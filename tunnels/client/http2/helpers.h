@@ -84,11 +84,12 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
         nvs[nvlen++] = (make_nv(":authority", authority_addr));
     }
 
-    int flags = HTTP2_FLAG_END_STREAM;
+    //HTTP2_FLAG_END_STREAM;
+    int flags = NGHTTP2_FLAG_END_HEADERS;
 
     if (con->content_type == APPLICATION_GRPC)
     {
-        flags = HTTP2_FLAG_NONE;
+        // flags = HTTP2_FLAG_NONE;
         nvs[nvlen++] = (make_nv("content-type", "application/grpc+proto"));
     }
     // nvs[nvlen++] = make_nv("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
@@ -118,7 +119,7 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
 }
 static void delete_http2_stream(http2_client_child_con_state_t *stream)
 {
-   
+
     destroyBufferStream(stream->chunkbs);
     stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
     free(stream);
@@ -185,8 +186,9 @@ static void delete_http2_connection(http2_client_con_state_t *con)
 
 static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid, hio_t *io)
 {
+
     http2_client_state_t *state = STATE(self);
-    // return create_http2_connection(self, tid, io);
+    return create_http2_connection(self, tid, io);
     vec_cons *vector = &(state->thread_cpool[tid].cons);
 
     if (vec_cons_size(vector) > 0)

@@ -191,7 +191,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             int nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
             if (nwrite >= 0 && nwrite < bytes)
             {
-                cstate->write_paused = true;
+                cstate->write_paused = true;    
                 if (c->src_io)
                     hio_read_stop(c->src_io);
                 hio_setcb_write(cstate->io, on_write_complete);
