@@ -33,40 +33,43 @@ static void upStream(tunnel_t *self, context_t *c)
 {
     header_server_state_t *state = STATE(self);
 
-    if (c->payload != NULL && c->first)
+    if (c->payload != NULL)
     {
-
-        shift_buffer_t *buf = c->payload;
-        if (bufLen(buf) < 2)
+        if (c->first)
         {
-            DISCARD_CONTEXT(c);
-            self->up->upStream(self->up, newFinContext(c->line));
-            self->dw->downStream(self->dw, newFinContext(c->line));
-            destroyContext(c);
-            return;
-        }
 
-        uint16_t port = 0;
-        switch ((enum header_dynamic_value_status)state->data.status)
-        {
-        case hdvs_dest_port:
+            shift_buffer_t *buf = c->payload;
+            if (bufLen(buf) < 2)
+            {
+                DISCARD_CONTEXT(c);
+                self->up->upStream(self->up, newFinContext(c->line));
+                self->dw->downStream(self->dw, newFinContext(c->line));
+                destroyContext(c);
+                return;
+            }
 
-            readUI16(buf, &port);
-            sockaddr_set_port(&(c->line->dest_ctx.addr), port);
-            shiftr(c->payload, sizeof(uint16_t));
-            break;
+            uint16_t port = 0;
+            switch ((enum header_dynamic_value_status)state->data.status)
+            {
+            case hdvs_dest_port:
 
-        default:
-            (void)(0);
-            break;
-        }
-        CSTATE(c)->init_sent = true;
-        self->up->upStream(self->up, newInitContext(c->line));
-        if (!ISALIVE(c))
-        {
-            DISCARD_CONTEXT(c);
-            destroyContext(c);
-            return;
+                readUI16(buf, &port);
+                sockaddr_set_port(&(c->line->dest_ctx.addr), port);
+                shiftr(c->payload, sizeof(uint16_t));
+                break;
+
+            default:
+                (void)(0);
+                break;
+            }
+            CSTATE(c)->init_sent = true;
+            self->up->upStream(self->up, newInitContext(c->line));
+            if (!ISALIVE(c))
+            {
+                DISCARD_CONTEXT(c);
+                destroyContext(c);
+                return;
+            }
         }
     }
     else if (c->init)

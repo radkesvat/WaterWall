@@ -3,7 +3,7 @@
 #include "utils/sockutils.h"
 #include "loggers/network_logger.h"
 
-static void cleanup(tcp_listener_con_state_t *cstate)
+static void cleanup(tcp_connector_con_state_t *cstate)
 {
     hio_t *last_resumed_io = NULL;
 

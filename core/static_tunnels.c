@@ -87,6 +87,9 @@
 #include "tunnels/client/preconnect/preconnect_client.h"
 #endif
 
+#ifdef INCLUDE_PRECONNECT_SERVER
+#include "tunnels/server/preconnect/preconnect_server.h"
+#endif
 
 
 void loadStaticTunnelsIntoCore()
@@ -167,5 +170,8 @@ void loadStaticTunnelsIntoCore()
     USING(PreConnectClient);
 #endif
 
+#ifdef INCLUDE_PRECONNECT_SERVER
+    USING(PreConnectServer);
+#endif
 
 }
