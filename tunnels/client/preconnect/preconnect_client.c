@@ -13,11 +13,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         preconnect_client_con_state_t *cstate = CSTATE(c);
         switch (cstate->mode)
         {
-            LOGF("PreConnectClient: invalid behaviour from behind node (no init)");
-            DISCARD_CONTEXT(c);
-            destroyContext(c);
-            break;
-
+    
         case connected_direct:
             self->up->upStream(self->up, c);
             break;

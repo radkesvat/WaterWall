@@ -36,7 +36,7 @@ char *readFile(const char *const path)
     return string;
 }
 
-bool writeFile(const char *const path, char *data, size_t len)
+bool writeFile(const char *const path,const char *data, size_t len)
 {
     FILE *f = fopen(path, "wb");
 
@@ -240,7 +240,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     return user;
 }
 
-dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, char *key, size_t matchers, ...)
+dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj,const char *key, size_t matchers, ...)
 {
 
     dynamic_value_t result = {0};
@@ -273,7 +273,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, char *
     }
     return result;
 }
-dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, char *key, size_t matchers, ...)
+dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj,const char *key, size_t matchers, ...)
 {
 
     dynamic_value_t result = {0};

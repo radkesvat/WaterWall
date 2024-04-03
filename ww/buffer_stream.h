@@ -2,6 +2,17 @@
 
 #include "buffer_pool.h"
 
+#define i_TYPE queue, shift_buffer_t *
+#include "stc/deq.h"
+#define Q_CAP 25
+
+struct buffer_stream_s
+{
+    buffer_pool_t *pool;
+    queue q;
+    size_t size;
+};
+
 typedef struct buffer_stream_s buffer_stream_t;
 
 buffer_stream_t *newBufferStream(buffer_pool_t *pool);
