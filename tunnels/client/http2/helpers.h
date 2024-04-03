@@ -3,7 +3,7 @@
 #include "types.h"
 
 #define MAX_CONCURRENT_STREAMS 0xffffffffu
-#define MAX_CHILD_PER_STREAM 1000
+#define MAX_CHILD_PER_STREAM 30
 
 #define STATE(x) ((http2_client_state_t *)((x)->state))
 #define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))
@@ -188,7 +188,7 @@ static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid, 
 {
 
     http2_client_state_t *state = STATE(self);
-    return create_http2_connection(self, tid, io);
+    // return create_http2_connection(self, tid, io);
     vec_cons *vector = &(state->thread_cpool[tid].cons);
 
     if (vec_cons_size(vector) > 0)

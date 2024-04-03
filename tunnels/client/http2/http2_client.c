@@ -299,11 +299,13 @@ static int on_frame_recv_callback(nghttp2_session *session,
 static inline void upStream(tunnel_t *self, context_t *c)
 {
     http2_client_state_t *state = STATE(self);
+
     if (c->payload != NULL)
     {
         http2_client_child_con_state_t *stream = CSTATE(c);
         http2_client_con_state_t *con = stream->parent->chains_state[self->chain_index];
         stream->io = c->src_io ? c->src_io : stream->io;
+
         if (!con->handshake_completed)
         {
             contextQueuePush(con->queue, c);
@@ -311,10 +313,13 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
 
         con->state = H2_SEND_HEADERS;
-
         // consumes payload
         while (trySendRequest(self, con, stream->stream_id, stream->io, c->payload))
-            ;
+            if (!ISALIVE(c))
+            {
+                destroyContext(c);
+                return;
+            }
         c->payload = NULL;
         destroyContext(c);
     }
@@ -394,6 +399,15 @@ static inline void downStream(tunnel_t *self, context_t *c)
             destroyContext(c);
             return;
         }
+
+        if (ret != len)
+        {
+            delete_http2_connection(con);
+            self->dw->downStream(self->dw, newFinContext(c->line));
+            destroyContext(c);
+            return;
+        }
+
         while (trySendRequest(self, con, 0, NULL, NULL))
             if (!ISALIVE(c))
             {
