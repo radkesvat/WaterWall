@@ -46,11 +46,29 @@ static void cleanup(tcp_listener_con_state_t *cstate)
 {
     if (cstate->current_w)
     {
+        if (cstate->current_w->src_io)
+        {
+            hio_read(cstate->current_w->src_io);
+        }
         if (cstate->current_w->payload)
         {
             DISCARD_CONTEXT(cstate->current_w);
         }
+
         destroyContext(cstate->current_w);
+    }
+    while (contextQueueLen(cstate->queue) > 0)
+    {
+        context_t *cw = contextQueuePop(cstate->queue);
+        if (cw->src_io)
+        {
+            hio_read(cstate->current_w->src_io);
+        }
+        if (cw->payload)
+        {
+            DISCARD_CONTEXT(cstate->current_w);
+        }
+        destroyContext(cw);
     }
     destroyContextQueue(cstate->queue);
     free(cstate);
@@ -70,7 +88,7 @@ static bool resume_write_queue(tcp_listener_con_state_t *cstate)
         {
             destroyContext(cw);
 
-            if (upstream_io && last_resumed_io != upstream_io)
+            if (upstream_io != NULL && (last_resumed_io != upstream_io))
             {
                 last_resumed_io = upstream_io;
                 hio_read(upstream_io);
@@ -104,7 +122,7 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
 
     if (hio_write_is_complete(io))
     {
-        hio_setcb_write(io, NULL);
+        hio_setcb_write(cstate->io, NULL);
         cstate->write_paused = false;
         context_t *cw = cstate->current_w;
         cstate->current_w = NULL;

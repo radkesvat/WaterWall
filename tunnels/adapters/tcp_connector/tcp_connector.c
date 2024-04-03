@@ -7,11 +7,29 @@ static void cleanup(tcp_connector_con_state_t *cstate)
 {
     if (cstate->current_w)
     {
+        if (cstate->current_w->src_io)
+        {
+            hio_read(cstate->current_w->src_io);
+        }
         if (cstate->current_w->payload)
         {
             DISCARD_CONTEXT(cstate->current_w);
         }
+
         destroyContext(cstate->current_w);
+    }
+    while (contextQueueLen(cstate->queue) > 0)
+    {
+        context_t *cw = contextQueuePop(cstate->queue);
+        if (cw->src_io)
+        {
+            hio_read(cw->src_io);
+        }
+        if (cw->payload)
+        {
+            DISCARD_CONTEXT(cw);
+        }
+        destroyContext(cw);
     }
     destroyContextQueue(cstate->queue);
     free(cstate);
@@ -31,7 +49,7 @@ static bool resume_write_queue(tcp_connector_con_state_t *cstate)
         {
             destroyContext(cw);
 
-            if (upstream_io && last_resumed_io != upstream_io)
+            if (upstream_io != NULL && (last_resumed_io != upstream_io))
             {
                 last_resumed_io = upstream_io;
                 hio_read(upstream_io);
