@@ -33,6 +33,8 @@ option(INCLUDE_REVERSE_SERVER "link ReverseServer staticly to the core"  TRUE)
 option(INCLUDE_REVERSE_CLIENT "link ReverseClient staticly to the core"  TRUE)
 option(INCLUDE_HEADER_SERVER "link HeaderServer staticly to the core"  TRUE)
 option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
+option(INCLUDE_PRECONNECT_CLIENT "link PreConnectClient staticly to the core"  TRUE)
+
 
 # create project
 project(Waterwall VERSION 0.1)
@@ -227,7 +229,13 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall HeaderClient)
 endif()
 
-
+#preconnect client
+if (INCLUDE_PRECONNECT_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_PRECONNECT_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/preconnect)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/preconnect)
+target_link_libraries(Waterwall PreConnectClient)
+endif()
 
 
 

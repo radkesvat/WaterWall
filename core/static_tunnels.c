@@ -83,6 +83,10 @@
 #include "tunnels/client/header/header_client.h"
 #endif
 
+#ifdef INCLUDE_PRECONNECT_CLIENT
+#include "tunnels/client/preconnect/preconnect_client.h"
+#endif
+
 
 
 void loadStaticTunnelsIntoCore()
@@ -159,7 +163,9 @@ void loadStaticTunnelsIntoCore()
     USING(HeaderClient);
 #endif
 
-
+#ifdef INCLUDE_PRECONNECT_CLIENT
+    USING(PreConnectClient);
+#endif
 
 
 }
