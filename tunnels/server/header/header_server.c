@@ -84,6 +84,8 @@ static void upStream(tunnel_t *self, context_t *c)
         CSTATE_MUT(c) = NULL;
         if (send_fin)
             self->up->upStream(self->up, c);
+        else
+            destroyContext(c);
         return;
     }
 
