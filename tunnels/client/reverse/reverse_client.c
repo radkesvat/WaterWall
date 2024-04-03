@@ -29,8 +29,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
             context_t *fc = switchLine(c, dcstate->u);
             destroy_cstate(dcstate);
             self->up->upStream(self->up, fc);
-            atomic_fetch_add_explicit(&(STATE(self)->reverse_cons), -1, memory_order_relaxed);
-            LOGD("ReverseClient: disconnected, unused: %d active: %d", STATE(self)->unused_cons, STATE(self)->reverse_cons);
+            unsigned int rcs = atomic_fetch_add_explicit(&(STATE(self)->reverse_cons), -1, memory_order_relaxed);
+            LOGD("ReverseClient: disconnected, unused: %d active: %d", STATE(self)->unused_cons, rcs - 1);
         }
         else if (c->est)
         {
@@ -46,7 +46,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 static inline void downStream(tunnel_t *self, context_t *c)
 {
     reverse_client_state_t *state = STATE(self);
-        unsigned int tid = c->line->tid;
+    unsigned int tid = c->line->tid;
 
     if (c->payload != NULL)
     {
@@ -98,7 +98,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 else
                     destroy_cstate(ucstate);
                 destroyContext(c);
-                
+
                 initiateConnect(self);
             }
 
@@ -163,8 +163,8 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
-    state->min_unused_cons = min(max(threads_count*2, state->min_unused_cons),128);
-    state->connection_per_thread =  state->min_unused_cons / threads_count;
+    state->min_unused_cons = min(max(threads_count * 2, state->min_unused_cons), 128);
+    state->connection_per_thread = state->min_unused_cons / threads_count;
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l = newLine(0);

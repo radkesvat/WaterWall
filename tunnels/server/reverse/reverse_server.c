@@ -190,7 +190,7 @@ static void reverseServerPacketDownStream(tunnel_t *self, context_t *c)
     downStream(self, c);
 }
 
-tunnel_t *newReverseServer(node_instance_context_t *instan0ce_info)
+tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 {
 
     reverse_server_state_t *state = malloc(sizeof(reverse_server_state_t) + (threads_count * sizeof(thread_box_t)));

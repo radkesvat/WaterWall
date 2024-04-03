@@ -319,17 +319,16 @@ static inline void upStream(tunnel_t *self, context_t *c)
             destroyContext(c);
             return;
         }
+        
+        if (ret != len)
+        {
+            delete_http2_connection(con);
+            self->dw->downStream(self->dw,newFinContext(c->line));
+            destroyContext(c);
+            return;
+        }
 
-        assert(ret == len);
-        // {
-        //     // TODO  not http2 -> fallback
-        //     context_t *fin_ctx = newFinContext(con->line);
-        //     delete_http2_connection(CSTATE(c));
-        //     destroyContext(c);
-        //     self->dw->downStream(self->dw, fin_ctx);
-
-        //     return;
-        // }
+    
 
         while (trySendResponse(self, con, 0, NULL, NULL))
             if (!ISALIVE(c))
