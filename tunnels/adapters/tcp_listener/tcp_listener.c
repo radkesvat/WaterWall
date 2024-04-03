@@ -62,11 +62,11 @@ static void cleanup(tcp_listener_con_state_t *cstate)
         context_t *cw = contextQueuePop(cstate->queue);
         if (cw->src_io)
         {
-            hio_read(cstate->current_w->src_io);
+            hio_read(cw->src_io);
         }
         if (cw->payload)
         {
-            DISCARD_CONTEXT(cstate->current_w);
+            DISCARD_CONTEXT(cw);
         }
         destroyContext(cw);
     }
