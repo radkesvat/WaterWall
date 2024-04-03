@@ -359,7 +359,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 {
     http2_server_child_con_state_t *stream = (http2_server_child_con_state_t *)CSTATE(c);
     http2_server_con_state_t *con = stream->parent->chains_state[self->chain_index];
-    stream->io = c->src_io ? c->src_io : stream->io;
+    stream->io = c->src_io;
 
     if (c->payload != NULL)
     {

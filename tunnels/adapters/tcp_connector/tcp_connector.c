@@ -3,12 +3,15 @@
 #include "utils/sockutils.h"
 #include "loggers/network_logger.h"
 
-static void cleanup(tcp_connector_con_state_t *cstate)
+static void cleanup(tcp_listener_con_state_t *cstate)
 {
+    hio_t *last_resumed_io = NULL;
+
     if (cstate->current_w)
     {
-        if (cstate->current_w->src_io)
+        if (cstate->current_w->src_io != NULL && !hio_is_closed(cstate->current_w->src_io))
         {
+            last_resumed_io = cstate->current_w->src_io;
             hio_read(cstate->current_w->src_io);
         }
         if (cstate->current_w->payload)
@@ -18,12 +21,17 @@ static void cleanup(tcp_connector_con_state_t *cstate)
 
         destroyContext(cstate->current_w);
     }
+
     while (contextQueueLen(cstate->queue) > 0)
     {
         context_t *cw = contextQueuePop(cstate->queue);
-        if (cw->src_io)
+        if (cw->src_io != NULL && !hio_is_closed(cw->src_io))
         {
-            hio_read(cw->src_io);
+            if (last_resumed_io != cw->src_io)
+            {
+                last_resumed_io = cw->src_io;
+                hio_read(cw->src_io);
+            }
         }
         if (cw->payload)
         {

@@ -3,7 +3,7 @@
 #include "hv/hsocket.h"
 #include "loggers/network_logger.h"
 
-#define MAX_PACKET_SIZE 65536
+#define MAX_PACKET_SIZE 65535
 
 #define STATE(x) ((header_client_state_t *)((x)->state))
 #define CSTATE(x) ((header_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
@@ -56,19 +56,19 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void HeaderClientUpStream(tunnel_t *self, context_t *c)
+static void headerClientUpStream(tunnel_t *self, context_t *c)
 {
     upStream(self, c);
 }
-static void HeaderClientPacketUpStream(tunnel_t *self, context_t *c)
+static void headerClientPacketUpStream(tunnel_t *self, context_t *c)
 {
     upStream(self, c);
 }
-static void HeaderClientDownStream(tunnel_t *self, context_t *c)
+static void headerClientDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
-static void HeaderClientPacketDownStream(tunnel_t *self, context_t *c)
+static void headerClientPacketDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
@@ -83,10 +83,10 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
                                                          "src_context->port");
     tunnel_t *t = newTunnel();
     t->state = state;
-    t->upStream = &HeaderClientUpStream;
-    t->packetUpStream = &HeaderClientPacketUpStream;
-    t->downStream = &HeaderClientDownStream;
-    t->packetDownStream = &HeaderClientPacketDownStream;
+    t->upStream = &headerClientUpStream;
+    t->packetUpStream = &headerClientPacketUpStream;
+    t->downStream = &headerClientDownStream;
+    t->packetDownStream = &headerClientPacketDownStream;
     atomic_thread_fence(memory_order_release);
 
     return t;
@@ -94,13 +94,13 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 
 api_result_t apiHeaderClient(tunnel_t *self, char *msg)
 {
-    LOGE("protobuf-client API NOT IMPLEMENTED");
+    LOGE("header-client API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyHeaderClient(tunnel_t *self)
 {
-    LOGE("protobuf-client DESTROY NOT IMPLEMENTED"); // TODO
+    LOGE("header-client DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataHeaderClient()

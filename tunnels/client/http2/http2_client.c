@@ -304,7 +304,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         http2_client_child_con_state_t *stream = CSTATE(c);
         http2_client_con_state_t *con = stream->parent->chains_state[self->chain_index];
-        stream->io = c->src_io ? c->src_io : stream->io;
+        stream->io = c->src_io;
 
         if (!con->handshake_completed)
         {
@@ -383,7 +383,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 {
     http2_client_state_t *state = STATE(self);
     http2_client_con_state_t *con = CSTATE(c);
-    con->io = c->src_io ? c->src_io : con->io;
+    con->io = c->src_io;
 
     if (c->payload != NULL)
     {
