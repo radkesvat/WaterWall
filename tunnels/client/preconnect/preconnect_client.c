@@ -69,7 +69,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, c);
                 break;
 
-            case connected_pair:
+            case connected_pair:;
                 line_t *u_line = dcon->u;
                 (dcon->u->chains_state)[self->chain_index] = NULL;
                 destroy_cstate(dcon);
@@ -129,7 +129,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 self->dw->downStream(self->dw, c);
                 break;
 
-            case connected_pair:
+            case connected_pair:;
                 line_t *d_line = ucon->d;
                 (ucon->d->chains_state)[self->chain_index] = NULL;
                 destroy_cstate(ucon);
