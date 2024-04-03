@@ -123,7 +123,3 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
     return 0;
 }
 
-size_t bufferStreamLen(buffer_stream_t *self)
-{
-    return self->size;
-}

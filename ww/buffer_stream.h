@@ -13,4 +13,4 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes);
 
 uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at);
 
-size_t bufferStreamLen(buffer_stream_t *self);
+static inline size_t bufferStreamLen(buffer_stream_t *self) { return self->size; }
