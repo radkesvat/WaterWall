@@ -40,7 +40,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
                 DISCARD_CONTEXT(c);
                 destroyContext(c);
-                sprintf(rawBuf(reply->payload), "%s", "salam");
+                sprintf((char*)rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
                 self->dw->downStream(self->dw, reply);
             }
@@ -97,7 +97,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             {
                 context_t *reply = newContextFrom(c);
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
-                sprintf(rawBuf(reply->payload), "%s", "salam");
+                sprintf((char*)rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
                 self->up->upStream(self->up, reply);
             }

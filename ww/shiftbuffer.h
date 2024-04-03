@@ -65,7 +65,7 @@ inline void consume(shift_buffer_t *self, size_t bytes)
     setLen(self, bufLen(self) - bytes);
 }
 
-inline unsigned  char *rawBuf(shift_buffer_t *self) {return &(self->pbuf[self->curpos]); }
+inline unsigned  char *rawBuf(shift_buffer_t *self) {return (unsigned  char *)&(self->pbuf[self->curpos]); }
 
 
 
