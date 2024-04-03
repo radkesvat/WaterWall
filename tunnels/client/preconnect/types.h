@@ -33,7 +33,7 @@ typedef struct thread_box_s
 
 typedef struct preconnect_client_state_s
 {
-    atomic_uint preconnect_cons;
+    atomic_uint active_cons;
     atomic_uint unused_cons;
 
     atomic_uint round_index;

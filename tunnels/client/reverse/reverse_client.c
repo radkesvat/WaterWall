@@ -107,8 +107,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
         else if (c->est)
         {
             CSTATE_U(c)->established = true;
-            atomic_fetch_add_explicit(&(STATE(self)->unused_cons), 1, memory_order_relaxed);
-            LOGI("ReverseClient: connected,    unused: %d active: %d", STATE(self)->unused_cons, STATE(self)->reverse_cons);
+            unsigned int unused = atomic_fetch_add_explicit(&(STATE(self)->unused_cons), 1, memory_order_relaxed);
+            LOGI("ReverseClient: connected,    unused: %d active: %d", unused+1, STATE(self)->reverse_cons);
             destroyContext(c);
             initiateConnect(self);
         }
