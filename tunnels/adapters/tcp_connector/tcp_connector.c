@@ -113,9 +113,9 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         }
         else
         {
-            destroyContext(cw);
-            if (upstream_io)
+            if (upstream_io != NULL && hio_exists(cw->line->loop, cw->fd) && !hio_is_closed(upstream_io))
                 hio_read(upstream_io);
+            destroyContext(cw);
         }
     }
 }

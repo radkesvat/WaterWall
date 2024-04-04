@@ -9,7 +9,7 @@ static void cleanup(connector_con_state_t *cstate)
     if (cstate->current_w)
     {
         if (cstate->current_w->src_io != NULL &&
-            hio_exists(cstate->current_w->line->loop,cstate->current_w->fd) &&
+            hio_exists(cstate->current_w->line->loop, cstate->current_w->fd) &&
             !hio_is_closed(cstate->current_w->src_io))
         {
             last_resumed_io = cstate->current_w->src_io;
@@ -111,9 +111,9 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         }
         else
         {
-            destroyContext(cw);
-            if (upstream_io)
+            if (upstream_io != NULL && hio_exists(cw->line->loop, cw->fd) && !hio_is_closed(upstream_io))
                 hio_read(upstream_io);
+            destroyContext(cw);
         }
     }
 }

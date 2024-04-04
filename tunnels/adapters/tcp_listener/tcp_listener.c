@@ -49,7 +49,7 @@ static void cleanup(tcp_listener_con_state_t *cstate)
     if (cstate->current_w)
     {
         if (cstate->current_w->src_io != NULL &&
-            hio_exists(cstate->current_w->line->loop,cstate->current_w->fd) &&
+            hio_exists(cstate->current_w->line->loop, cstate->current_w->fd) &&
             !hio_is_closed(cstate->current_w->src_io))
         {
             last_resumed_io = cstate->current_w->src_io;
@@ -152,9 +152,10 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
         }
         else
         {
-            destroyContext(cw);
-            if (upstream_io)
+            if (upstream_io != NULL && hio_exists(cw->line->loop, cw->fd) && !hio_is_closed(upstream_io))
                 hio_read(upstream_io);
+            destroyContext(cw);
+            
         }
     }
 }
@@ -344,12 +345,14 @@ void on_inbound_connected(hevent_t *ev)
     line->chains_state[self->chain_index] = cstate;
     line->src_ctx.protocol = data->proto;
     line->src_ctx.addr.sa = *hio_peeraddr(io);
-    sockaddr_set_port(&(line->src_ctx.addr), data->realport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->realport);
+
+    // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->real_localport);
+    sockaddr_set_port(&(line->src_ctx.addr), data->real_localport);
     line->src_ctx.atype = line->src_ctx.addr.sa.sa_family == AF_INET ? SAT_IPV4 : SAT_IPV6;
     hevent_set_userdata(io, cstate);
 
     struct sockaddr log_localaddr = *hio_localaddr(io);
-    sockaddr_set_port((sockaddr_u *)&(log_localaddr), data->realport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->realport);
+    sockaddr_set_port((sockaddr_u *)&(log_localaddr), data->real_localport);
 
     LOGD("TcpListener: Accepted FD:%x [%s] <= [%s]",
          (int)hio_fd(io),
