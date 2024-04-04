@@ -76,8 +76,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
             case connected_pair:;
                 line_t *u_line = dcon->u;
                 (dcon->u->chains_state)[self->chain_index] = NULL;
+                context_t * fctx =  switchLine(c, u_line); // created here to prevent destruction of line
                 destroy_cstate(dcon);
-                self->up->upStream(self->up, switchLine(c, u_line));
+                self->up->upStream(self->up,fctx);
                 break;
             case notconnected:
             default:
@@ -122,10 +123,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
         const unsigned int tid = c->line->tid;
         thread_box_t *this_tb = &(state->threads[tid]);
         preconnect_client_con_state_t *ucon = CSTATE(c);
-        CSTATE_MUT(c) = NULL;
 
         if (c->fin)
         {
+            CSTATE_MUT(c) = NULL;
 
             switch (ucon->mode)
             {
@@ -144,8 +145,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 break;
 
             case notconnected:
-                atomic_fetch_add_explicit(&(state->unused_cons), -1, memory_order_relaxed);
-                remove_connection(this_tb, ucon);
+                if (ucon->prev != NULL)
+                {
+                    // fin after est
+                    atomic_fetch_add_explicit(&(state->unused_cons), -1, memory_order_relaxed);
+                    remove_connection(this_tb, ucon);
+                }
                 destroy_cstate(ucon);
                 destroyContext(c);
                 break;
@@ -246,5 +251,5 @@ tunnel_t *destroyPreConnectClient(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataPreConnectClient()
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = TFLAG_ROUTE_STARTER};
+    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }
