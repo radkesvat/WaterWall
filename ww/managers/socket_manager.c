@@ -12,12 +12,13 @@
 
 #define SUPOPRT_V6 false
 #define SO_ORIGINAL_DST 80
+#define FILERS_LEVELS 4
 
 typedef struct socket_manager_s
 {
     hthread_t accept_thread;
     hmutex_t mutex;
-    filters_t filters;
+    filters_t filters[FILERS_LEVELS];
     size_t last_round_tindex;
     bool iptables_installed;
     bool ip6tables_installed;
@@ -105,49 +106,42 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     filter->option = option;
     filter->cb = cb;
     filter->listen_io = NULL;
+    unsigned int pirority = 0;
+    if (option.multiport_backend == multiport_backend_nothing)
+        pirority++;
+    if (option.white_list_raddr != NULL)
+        pirority++;
+    if (option.black_list_raddr != NULL)
+        pirority++;
+
     hmutex_lock(&(state->mutex));
-    filters_t_push(&state->filters, filter);
+    filters_t_push(&(state->filters[pirority]), filter);
     hmutex_unlock(&(state->mutex));
 }
 
-static void on_accept_tcp(hio_t *io)
+static void on_accept(hio_t *io, bool tcp, uint16_t port_found)
 {
-    // socket_manager_state_t *state = hevent_userdata(io);
+
     hmutex_lock(&(state->mutex));
+    sockaddr_u *laddr = (sockaddr_u *)hio_localaddr(io);
+    uint16_t socket_port = port_found == 0 ? sockaddr_port(laddr) : port_found;
 
-    c_foreach(k, filters_t, state->filters)
+    for (int ri = (FILERS_LEVELS - 1); ri >= 0; ri--)
     {
-        socket_filter_t *filter = *(k.ref);
-        socket_filter_option_t option = filter->option;
-        uint16_t port_min = option.port_min;
-        uint16_t port_max = option.port_max;
-
-        sockaddr_u *laddr = (sockaddr_u *)hio_localaddr(io);
-        uint16_t socket_port = sockaddr_port(laddr);
-
-        if (option.proto == socket_protocol_tcp)
+        c_foreach(k, filters_t, state->filters[ri])
         {
+            socket_filter_t *filter = *(k.ref);
+            socket_filter_option_t option = filter->option;
+            uint16_t port_min = option.port_min;
+            uint16_t port_max = option.port_max;
 
+            // if (option.proto == socket_protocol_tcp)
+            
             // single port or multi port per socket
             if (port_min <= socket_port && port_max >= socket_port)
             {
                 socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
-                result->realport = 0;
-
-                if (option.multiport_backend == multiport_backend_iptables)
-                {
-                    unsigned char pbuf[28] = {0};
-                    int size = 16; // todo ipv6 value is 28
-                    if (getsockopt(hio_fd(io), SOL_IP, SO_ORIGINAL_DST, &(pbuf[0]), &size) < 0)
-                    {
-                        LOGE("SocketManger: multiport failure getting origin port");
-                        free(result);
-                        hmutex_unlock(&(state->mutex));
-                        return;
-                    }
-
-                    result->realport = (pbuf[2] << 8) | pbuf[3];
-                }
+                result->real_localport = socket_port;
 
                 if (option.no_delay)
                 {
@@ -190,6 +184,32 @@ static void on_accept_tcp(hio_t *io)
     hio_close(io);
 }
 
+static void on_accept_tcp_single(hio_t *io)
+{
+    on_accept(io, true, 0);
+}
+
+static void on_accept_tcp_multi_iptable(hio_t *io)
+{
+    unsigned char pbuf[28] = {0};
+    socklen_t size = 16; // todo ipv6 value is 28
+    if (getsockopt(hio_fd(io), SOL_IP, SO_ORIGINAL_DST, &(pbuf[0]), &size) < 0)
+    {
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN] = {0};
+
+        LOGE("SocketManger: multiport failure getting origin port!\ntid=%ld connfd=%d [%s] <= [%s]\n",
+             (long)hv_gettid(),
+             (int)hio_fd(io),
+             SOCKADDR_STR(hio_localaddr(io), localaddrstr),
+             SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+        hio_close(io);
+        return;
+    }
+
+    on_accept(io, true, (pbuf[2] << 8) | pbuf[3]);
+}
+
 static HTHREAD_ROUTINE(accept_thread)
 {
     hloop_t *loop = (hloop_t *)userdata;
@@ -197,116 +217,119 @@ static HTHREAD_ROUTINE(accept_thread)
     uint8_t ports_overlapped[65536] = {0};
     hmutex_lock(&(state->mutex));
 
-    c_foreach(k, filters_t, state->filters)
+    for (int ri = (FILERS_LEVELS - 1); ri >= 0; ri--)
     {
-        socket_filter_t *filter = *(k.ref);
-        if (filter->option.multiport_backend == multiport_backend_default)
+        c_foreach(k, filters_t, state->filters[ri])
         {
-            if (state->iptables_installed)
-                filter->option.multiport_backend = multiport_backend_iptables;
-            else
-                filter->option.multiport_backend = multiport_backend_sockets;
-        }
-        socket_filter_option_t option = filter->option;
-        uint16_t port_min = option.port_min;
-        uint16_t port_max = option.port_max;
-        const char *proto_str = option.proto == socket_protocol_tcp ? "TCP" : "UDP";
-        if (port_min > port_max)
-        {
-            LOGF("SocketManager: port min must be lower than port max");
-            exit(1);
-        }
-
-        if (option.proto == socket_protocol_tcp)
-        {
-
-            if (option.multiport_backend == multiport_backend_iptables)
+            socket_filter_t *filter = *(k.ref);
+            if (filter->option.multiport_backend == multiport_backend_default)
             {
-                if (!state->iptables_installed)
-                {
+                if (state->iptables_installed)
+                    filter->option.multiport_backend = multiport_backend_iptables;
+                else
+                    filter->option.multiport_backend = multiport_backend_sockets;
+            }
+            socket_filter_option_t option = filter->option;
+            uint16_t port_min = option.port_min;
+            uint16_t port_max = option.port_max;
+            const char *proto_str = option.proto == socket_protocol_tcp ? "TCP" : "UDP";
+            if (port_min > port_max)
+            {
+                LOGF("SocketManager: port min must be lower than port max");
+                exit(1);
+            }
 
-                    LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
-                    exit(1);
-                }
-                if (port_min == port_max)
-                    goto singleport;
-                state->iptables_used = true;
-                if (!state->iptable_cleaned)
+            if (option.proto == socket_protocol_tcp)
+            {
+
+                if (option.multiport_backend == multiport_backend_iptables)
                 {
-                    if (!reset_iptables())
+                    if (!state->iptables_installed)
                     {
-                        LOGF("SocketManager: could not clear iptables rusles");
+
+                        LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
                         exit(1);
                     }
-                    state->iptable_cleaned = true;
-                }
-                uint16_t main_port = port_min;
-                // select main port
-                {
-                    for (size_t i = 0; i <= port_max - port_min; i++)
+                    if (port_min == port_max)
+                        goto singleport;
+                    state->iptables_used = true;
+                    if (!state->iptable_cleaned)
                     {
-                        if (ports_overlapped[main_port] == 1)
-                            continue;
-                        filter->listen_io = hloop_create_tcp_server(loop, option.host, main_port, on_accept_tcp);
-                        if (filter->listen_io != NULL)
+                        if (!reset_iptables())
                         {
-                            ports_overlapped[main_port] = 1;
-                            break;
+                            LOGF("SocketManager: could not clear iptables rusles");
+                            exit(1);
                         }
-                        main_port++;
+                        state->iptable_cleaned = true;
                     }
+                    uint16_t main_port = port_min;
+                    // select main port
+                    {
+                        for (size_t i = 0; i <= port_max - port_min; i++)
+                        {
+                            if (ports_overlapped[main_port] == 1)
+                                continue;
+                            filter->listen_io = hloop_create_tcp_server(loop, option.host, main_port, on_accept_tcp_multi_iptable);
+                            if (filter->listen_io != NULL)
+                            {
+                                ports_overlapped[main_port] = 1;
+                                break;
+                            }
+                            main_port++;
+                        }
+                        if (filter->listen_io == NULL)
+                        {
+                            LOGF("SocketManager: stopping due to null socket handle");
+                            exit(1);
+                        }
+                    }
+                    redirect_port_range_tcp(port_min, port_max, main_port);
+                    LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", option.host, port_min, port_max, main_port, proto_str);
+                }
+                else if (option.multiport_backend == multiport_backend_sockets)
+                {
+                    if (port_min == port_max)
+                        goto singleport;
+                    for (size_t p = port_min; p < port_max; p++)
+                    {
+                        if (ports_overlapped[p] == 1)
+                            continue;
+                        ports_overlapped[port_min] = 1;
+
+                        LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
+                        filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp_single);
+
+                        if (filter->listen_io == NULL)
+                        {
+                            LOGF("filter->listen_io == NULL");
+                            exit(1);
+                        }
+
+                        LOGI("SocketManager: listening on %s:[%u - %u] (%s)", option.host, port_min, port_max, proto_str);
+                    }
+                }
+                else
+                {
+                singleport:;
+                    if (ports_overlapped[port_min] == 1)
+                        continue;
+                    ports_overlapped[port_min] = 1;
+
+                    LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
+                    filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp_single);
+
                     if (filter->listen_io == NULL)
                     {
                         LOGF("SocketManager: stopping due to null socket handle");
                         exit(1);
                     }
                 }
-                redirect_port_range_tcp(port_min, port_max, main_port);
-                LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", option.host, port_min, port_max, main_port, proto_str);
-            }
-            else if (option.multiport_backend == multiport_backend_sockets)
-            {
-                if (port_min == port_max)
-                    goto singleport;
-                for (size_t p = port_min; p < port_max; p++)
-                {
-                    if (ports_overlapped[p] == 1)
-                        continue;
-                    ports_overlapped[port_min] = 1;
-
-                    LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
-                    filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
-
-                    if (filter->listen_io == NULL)
-                    {
-                        LOGF("filter->listen_io == NULL");
-                        exit(1);
-                    }
-
-                    LOGI("SocketManager: listening on %s:[%u - %u] (%s)", option.host, port_min, port_max, proto_str);
-                }
             }
             else
             {
-            singleport:;
-                if (ports_overlapped[port_min] == 1)
-                    continue;
-                ports_overlapped[port_min] = 1;
-
-                LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
-                filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp);
-
-                if (filter->listen_io == NULL)
-                {
-                    LOGF("SocketManager: stopping due to null socket handle");
-                    exit(1);
-                }
+                // TODO UDP
+                exit(1);
             }
-        }
-        else
-        {
-            // TODO UDP
-            exit(1);
         }
     }
     hmutex_unlock(&(state->mutex));
@@ -339,7 +362,11 @@ socket_manager_state_t *createSocketManager()
     assert(state == NULL);
     state = malloc(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
-    state->filters = filters_t_init();
+    for (size_t i = 0; i < FILERS_LEVELS; i++)
+    {
+        state->filters[i] = filters_t_init();
+    }
+
     hmutex_init(&state->mutex);
 
     state->iptables_installed = check_installed("iptables");

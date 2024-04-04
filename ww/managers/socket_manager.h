@@ -40,7 +40,7 @@ typedef struct socket_accept_result_s
     tunnel_t *tunnel;
     socket_protocol_t proto;
     size_t tid;
-    uint16_t realport;
+    uint16_t real_localport;
 
 } socket_accept_result_t;
 
