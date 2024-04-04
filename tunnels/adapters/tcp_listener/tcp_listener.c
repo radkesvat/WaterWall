@@ -48,7 +48,9 @@ static void cleanup(tcp_listener_con_state_t *cstate)
 
     if (cstate->current_w)
     {
-        if (cstate->current_w->src_io != NULL && !hio_is_closed(cstate->current_w->src_io))
+        if (cstate->current_w->src_io != NULL &&
+            hio_exists(cstate->current_w->line->loop,cstate->current_w->fd) &&
+            !hio_is_closed(cstate->current_w->src_io))
         {
             last_resumed_io = cstate->current_w->src_io;
             hio_read(cstate->current_w->src_io);
@@ -219,7 +221,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 hio_setcb_write(cstate->io, on_write_complete);
 
                 if (c->src_io)
+                {
+                    c->fd = hio_fd(c->src_io);
                     hio_read_stop(c->src_io);
+                }
             }
             else
             {

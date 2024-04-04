@@ -35,6 +35,7 @@ typedef struct context_s
     line_t *line;
     shift_buffer_t *payload;
 
+    int fd;    
     bool init;
     bool est;
     bool first;
