@@ -17,6 +17,14 @@ add_library(ww STATIC
                   loggers/core_logger.c
                   loggers/network_logger.c
                   loggers/dns_logger.c
+                  ipcalc/ipcalc-geoip.c
+                  ipcalc/ipcalc-maxmind.c
+                  ipcalc/ipcalc-reverse.c
+                  ipcalc/ipcalc-utils.c
+                  ipcalc/ipcalc.c
+                  ipcalc/ipv6.c
+                  ipcalc/netsplit.c
+
   
 )
 
