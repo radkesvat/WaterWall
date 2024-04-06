@@ -92,15 +92,14 @@ void createWW(
     threads = (hthread_t *)malloc(sizeof(hthread_t) * threads_count);
     
     loops = (hloop_t **)malloc(sizeof(hloop_t *) * threads_count);
-    for (int i = 1; i < threads_count; ++i)
+    for (int i = 0; i < threads_count; ++i)
     {
         loops[i] = hloop_new(HLOOP_FLAG_AUTO_FREE);
         threads[i] = hthread_create(worker_thread, loops[i]);
     }
-    loops[0] = hloop_new(HLOOP_FLAG_AUTO_FREE);
-    threads[0] = 0x0;
+ 
 
-    buffer_pools = (struct buffer_pool_s **)malloc(sizeof(struct buffer_pool_s *) * threads_count);
+    buffer_pools = (void **)malloc(sizeof(struct buffer_pool_s *) * threads_count);
 
     for (int i = 0; i < threads_count; ++i)
     {

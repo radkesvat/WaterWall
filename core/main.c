@@ -96,16 +96,9 @@ int main(int argc, char **argv)
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
-            LOGD("Core: spawning accept thread ...");
-            startSocketManager();
             LOGD("Core: starting eventloops ...");
-            hloop_run(loops[0]);
+            startSocketManager();
             LOGW("Core: MainThread moved out of eventloop");
-            hloop_free(&(loops[0]));
-            for (size_t i = 1; i < threads_count; i++)
-            {
-                hthread_join(threads[i]);
-            }
         }
     }
 }

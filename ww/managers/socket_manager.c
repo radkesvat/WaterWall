@@ -163,8 +163,8 @@ static void on_accept(hio_t *io, bool tcp, uint16_t port_found)
                 state->last_round_tindex++;
                 if (state->last_round_tindex >= threads_count)
                     state->last_round_tindex = 0;
-                hmutex_unlock(&(state->mutex));
                 hloop_post_event(worker_loop, &ev);
+                hmutex_unlock(&(state->mutex));
 
                 return;
             }
@@ -353,8 +353,9 @@ void setSocketManager(struct socket_manager_s *new_state)
 void startSocketManager()
 {
     assert(state != NULL);
-    hloop_t *new_loop = hloop_new(HLOOP_FLAG_AUTO_FREE);
-    state->accept_thread = hthread_create(accept_thread, new_loop);
+    hloop_t *accept_thread_loop = hloop_new(HLOOP_FLAG_AUTO_FREE);
+    accept_thread(accept_thread_loop);
+    // state->accept_thread = hthread_create(accept_thread, new_loop);
 }
 
 socket_manager_state_t *createSocketManager()

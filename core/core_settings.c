@@ -156,9 +156,11 @@ void parseCoreSettings(char *data_json)
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
         if (!getIntFromJsonObject(&(settings->threads), misc_obj, "threads"))
         {
-            settings->threads = get_ncpu();
+            settings->threads = 0;
             printf("Threads unspecified in json (misc), fallback to cpu cores: %d\n", settings->threads);
         }
+        if (settings->threads <= 0)
+            settings->threads = get_ncpu();
     }
     else
     {
