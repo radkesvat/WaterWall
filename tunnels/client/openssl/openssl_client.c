@@ -456,18 +456,18 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: OpenSSLClient->settings (object field) : The object was empty or invalid.");
+        LOGF("JSON Error: OpenSSLClient->settings (object field) : The object was empty or invalid");
         return NULL;
     }
 
     if (!getStringFromJsonObject(&(state->sni), settings, "sni"))
     {
-        LOGF("JSON Error: OpenSSLClient->settings->sni (string field) : The data was empty or invalid.");
+        LOGF("JSON Error: OpenSSLClient->settings->sni (string field) : The data was empty or invalid");
         return NULL;
     }
     if (strlen(state->sni) == 0)
     {
-        LOGF("JSON Error: OpenSSLClient->settings->sni (string field) : The data was empty.");
+        LOGF("JSON Error: OpenSSLClient->settings->sni (string field) : The data was empty");
         return NULL;
     }
 
@@ -478,12 +478,12 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
     if (!getStringFromJsonObject((char **)&(state->alpn), settings, "alpn"))
     {
-        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty or invalid.");
+        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty or invalid");
         return NULL;
     }
     if (strlen(state->alpn) == 0)
     {
-        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty.");
+        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty");
         return NULL;
     }
 

@@ -608,29 +608,29 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: WolfSSLServer->settings (object field) : The object was empty or invalid.");
+        LOGF("JSON Error: WolfSSLServer->settings (object field) : The object was empty or invalid");
         return NULL;
     }
 
     if (!getStringFromJsonObject((char **)&(ssl_param->crt_file), settings, "cert-file"))
     {
-        LOGF("JSON Error: WolfSSLServer->settings->cert-file (string field) : The data was empty or invalid.");
+        LOGF("JSON Error: WolfSSLServer->settings->cert-file (string field) : The data was empty or invalid");
         return NULL;
     }
     if (strlen(ssl_param->crt_file) == 0)
     {
-        LOGF("JSON Error: WolfSSLServer->settings->cert-file (string field) : The data was empty.");
+        LOGF("JSON Error: WolfSSLServer->settings->cert-file (string field) : The data was empty");
         return NULL;
     }
 
     if (!getStringFromJsonObject((char **)&(ssl_param->key_file), settings, "key-file"))
     {
-        LOGF("JSON Error: WolfSSLServer->settings->key-file (string field) : The data was empty or invalid.");
+        LOGF("JSON Error: WolfSSLServer->settings->key-file (string field) : The data was empty or invalid");
         return NULL;
     }
     if (strlen(ssl_param->key_file) == 0)
     {
-        LOGF("JSON Error: WolfSSLServer->settings->key-file (string field) : The data was empty.");
+        LOGF("JSON Error: WolfSSLServer->settings->key-file (string field) : The data was empty");
         return NULL;
     }
 

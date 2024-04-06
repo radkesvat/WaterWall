@@ -410,7 +410,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: TcpConnector->settings (object field) : The object was empty or invalid.");
+        LOGF("JSON Error: TcpConnector->settings (object field) : The object was empty or invalid");
         return NULL;
     }
 
@@ -435,7 +435,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
     if (state->dest_addr.status == dvs_empty)
     {
-        LOGF("JSON Error: TcpConnector->settings->address (string field) : The vaule was empty or invalid.");
+        LOGF("JSON Error: TcpConnector->settings->address (string field) : The vaule was empty or invalid");
         return NULL;
     }
 
@@ -445,7 +445,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
     if (state->dest_port.status == dvs_empty)
     {
-        LOGF("JSON Error: TcpConnector->settings->port (number field) : The vaule was empty or invalid.");
+        LOGF("JSON Error: TcpConnector->settings->port (number field) : The vaule was empty or invalid");
         return NULL;
     }
     if (state->dest_addr.status == dvs_constant)

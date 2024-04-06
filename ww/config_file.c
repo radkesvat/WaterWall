@@ -98,7 +98,7 @@ config_file_t *parseConfigFile(const char *const file_path)
 
     if (!getStringFromJsonObject((&state->name), json, "name"))
     {
-        LOGF("JSON Error: config file \"%s\" -> name (string field) the value was empty or invalid ", file_path);
+        LOGF("JSON Error: config file \"%s\" -> name (string field) the value was empty or invalid", file_path);
         exit(1);
     }
 

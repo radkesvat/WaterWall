@@ -168,19 +168,19 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void ProtoBufServerUpStream(tunnel_t *self, context_t *c)
+static void protoBufServerUpStream(tunnel_t *self, context_t *c)
 {
     upStream(self, c);
 }
-static void ProtoBufServerPacketUpStream(tunnel_t *self, context_t *c)
+static void protoBufServerPacketUpStream(tunnel_t *self, context_t *c)
 {
     upStream(self, c);
 }
-static void ProtoBufServerDownStream(tunnel_t *self, context_t *c)
+static void protoBufServerDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
-static void ProtoBufServerPacketDownStream(tunnel_t *self, context_t *c)
+static void protoBufServerPacketDownStream(tunnel_t *self, context_t *c)
 {
     downStream(self, c);
 }
@@ -190,10 +190,10 @@ tunnel_t *newProtoBufServer(node_instance_context_t *instance_info)
 
     tunnel_t *t = newTunnel();
 
-    t->upStream = &ProtoBufServerUpStream;
-    t->packetUpStream = &ProtoBufServerPacketUpStream;
-    t->downStream = &ProtoBufServerDownStream;
-    t->packetDownStream = &ProtoBufServerPacketDownStream;
+    t->upStream = &protoBufServerUpStream;
+    t->packetUpStream = &protoBufServerPacketUpStream;
+    t->downStream = &protoBufServerDownStream;
+    t->packetDownStream = &protoBufServerPacketDownStream;
     atomic_thread_fence(memory_order_release);
 
     return t;

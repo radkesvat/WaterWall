@@ -1,10 +1,9 @@
 #pragma once
 #include "api.h"
 
-// 
-// con <------>  ProtoBufClient(encode / decode) <-------> con
-// 
-//
+//      ---->               encode               ---->
+// con                  (protocolbuffers)               con
+//      <----               decode               <---- 
 
 tunnel_t *newProtoBufClient(node_instance_context_t *instance_info);
 api_result_t apiProtoBufClient(tunnel_t *self, char *msg);

@@ -337,7 +337,7 @@ process:;
     hmap_iio_iter f_iter = hmap_iio_find(&state->dw_cons, id);
     if (f_iter.ref == hmap_iio_end(&state->dw_cons).ref)
     {
-        LOGE("MuxDownStream: Invalid child id.");
+        LOGE("MuxDownStream: Invalid child id");
         goto process;
     }
     line_t *con = f_iter.ref->second;

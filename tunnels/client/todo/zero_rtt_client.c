@@ -149,7 +149,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     // dont pass fin packet, just re connect
     if (c->fin)
     {
-        LOGW("zerortt reconnecting.",NULL);
+        LOGW("zerortt reconnecting",NULL);
         cstate->paused = true;
 
         context_t *forward = newContext(cstate->dw);

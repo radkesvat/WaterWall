@@ -474,14 +474,14 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 
     if (!getStringFromJsonObject(&(state->host), settings, "host"))
     {
-        LOGF("JSON Error: Http2Client->settings->host (string field) : The data was empty or invalid.");
+        LOGF("JSON Error: Http2Client->settings->host (string field) : The data was empty or invalid");
         return NULL;
     }
     getStringFromJsonObjectOrDefault(&(state->path), settings, "path", "/");
 
     if (!getIntFromJsonObject(&(state->host_port), settings, "port"))
     {
-        LOGF("JSON Error: Http2Client->settings->port (number field) : The data was empty or invalid.");
+        LOGF("JSON Error: Http2Client->settings->port (number field) : The data was empty or invalid");
         return NULL;
     }
 

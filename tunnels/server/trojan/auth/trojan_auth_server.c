@@ -338,7 +338,7 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: TrojanAuthServer->settings (object field) : The object was empty or invalid.");
+        LOGF("JSON Error: TrojanAuthServer->settings (object field) : The object was empty or invalid");
         return NULL;
     }
     tunnel_t *t = newTunnel();
