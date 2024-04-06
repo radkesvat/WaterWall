@@ -1,10 +1,24 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
+project(Waterwall VERSION 0.1)
+
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
 set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL  "CXX standard version" FORCE)
 set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  include(CheckIPOSupported)
+  check_ipo_supported()
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(CMAKE_C_COMPILE_OPTIONS_IPO  "-flto")
+    set(CMAKE_CXX_COMPILE_OPTIONS_IPO  "-flto")
+  endif()
+endif()
+
 
 # set(CMAKE_VERBOSE_MAKEFILE ON CACHE STRING "my configurable string" FORCE)
 # set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
@@ -36,8 +50,7 @@ option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_CLIENT "link PreConnectClient staticly to the core"  TRUE)
 
 
-# create project
-project(Waterwall VERSION 0.1)
+
 
 set(OPENSSL_CONFIGURE_VERBOSE ON)
 
@@ -248,19 +261,6 @@ CPMAddPackage(
 )
 if(komihash_ADDED)
   target_include_directories(Waterwall PUBLIC ${komihash_SOURCE_DIR})
-endif()
-
-
-# stc - cstdlib
-CPMAddPackage(
-  NAME stc
-  GIT_REPOSITORY https://github.com/stclib/STC
-  GIT_TAG 09790f024ad29fca6fe60528461eeb589d4a917b
-  DOWNLOAD_ONLY True
-)
-if(stc_ADDED)
-  target_include_directories(Waterwall PUBLIC ${stc_SOURCE_DIR}/include)
-  # target_sources(Waterwall PUBLIC ${stc_SOURCE_DIR}/core/libstc.c)
 endif()
 
 
