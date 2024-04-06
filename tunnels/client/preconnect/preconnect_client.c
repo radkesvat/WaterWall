@@ -220,8 +220,8 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 
     getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
 
-    state->min_unused_cons = min(max(threads_count * 2, state->min_unused_cons), 128);
-    state->connection_per_thread = state->min_unused_cons / threads_count;
+    state->min_unused_cons = min(max(threads_count * 2, state->min_unused_cons), 9999999);
+    state->connection_per_thread = min(4,state->min_unused_cons / threads_count);
 
     tunnel_t *t = newTunnel();
     t->state = state;
