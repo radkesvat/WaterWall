@@ -160,3 +160,6 @@ inline context_t *switchLine(context_t *c, line_t *line)
     c->line = line;
     return c;
 }
+
+static inline line_t * lockLine(line_t *line){line->refc++; return line;}
+static inline void unLockLine(line_t *line){destroyLine(line);}

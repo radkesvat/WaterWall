@@ -77,7 +77,8 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             cstate->tunnel = self;
             cstate->line = c->line;
             cstate->write_paused = false;
-            cstate->queue = NULL;
+            cstate->data_queue = NULL;
+            cstate->finished_queue = NULL;
 
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
 

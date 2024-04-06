@@ -4,15 +4,16 @@
 #ifdef DEBUG
 #include "hv/hatomic.h"
 #endif
-
-typedef struct buffer_pool_s
+struct buffer_pool_s
 {
     shift_buffer_t **available;
-    size_t len;
+    unsigned int len;
 #ifdef DEBUG
     atomic_size_t in_use;
 #endif
-} buffer_pool_t;
+};
+
+typedef struct buffer_pool_s buffer_pool_t;
 
 buffer_pool_t *createBufferPool();
 shift_buffer_t *popBuffer(buffer_pool_t *state);

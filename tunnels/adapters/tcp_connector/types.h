@@ -44,8 +44,8 @@ typedef struct tcp_connector_con_state_s
     hio_t *io_back;
 
     buffer_pool_t *buffer_pool;
-    context_queue_t *queue;
-    context_t *current_w;
+    context_queue_t *data_queue;
+    context_queue_t *finished_queue;
 
     bool write_paused;
     bool established;

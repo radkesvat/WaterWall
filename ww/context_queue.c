@@ -43,10 +43,9 @@ void contextQueuePush(context_queue_t *self, context_t *context)
 context_t *contextQueuePop(context_queue_t *self)
 {
     context_t *context = queue_pull_front(&self->q);
-    if (context->src_io && !hio_exists(context->line->loop, context->fd))
-    {
+
+    if (context->fd == 0 || !hio_exists(context->line->loop, context->fd) || hio_is_closed(context->src_io))
         context->src_io = NULL;
-    }
 
     return context;
 }
