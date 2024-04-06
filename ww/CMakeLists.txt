@@ -57,7 +57,7 @@ CPMAddPackage(
 
 if(stc_ADDED)
   target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
-  target_sources(ww PUBLIC ${stc_SOURCE_DIR}/src/libstc.c)
+  target_sources(ww PRIVATE ${stc_SOURCE_DIR}/src/libstc.c)
 
 endif()
 
@@ -74,7 +74,7 @@ CPMAddPackage(
 )
 if(cjson_ADDED)
   target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
-  target_sources(ww PUBLIC ${cjson_SOURCE_DIR}/cJSON.c)
+  target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 
 endif()
 
@@ -105,6 +105,12 @@ CPMAddPackage(
 
 )
 # target_compile_options(hv_static PRIVATE -fPIC) 
+# message( FATAL_ERROR "Y" )
+
+if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  target_compile_options(ww PUBLIC -fsanitize=address)
+  target_link_options(ww PUBLIC -fsanitize=address)
+endif()
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 target_compile_options(ww PRIVATE -ftrack-macro-expansion=0)

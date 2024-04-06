@@ -109,22 +109,22 @@ void writeI32(shift_buffer_t *self, int32_t data)
 
 void writeUI32(shift_buffer_t *self, uint32_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(uint32_t));
+    writeRaw(self, (unsigned char *)&data, sizeof(uint32_t));
 }
 
 void writeI16(shift_buffer_t *self, int16_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(int16_t));
+    writeRaw(self, (unsigned char *)&data, sizeof(int16_t));
 }
 
 void writeUI16(shift_buffer_t *self, uint16_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(uint16_t));
+    writeRaw(self, (unsigned char *)&data, sizeof(uint16_t));
 }
 
 void writeUI8(shift_buffer_t *self, uint8_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(uint8_t));
+    writeRaw(self, (unsigned char *)&data, sizeof(uint8_t));
 }
 
 void readUI8(shift_buffer_t *self, uint8_t *dest)

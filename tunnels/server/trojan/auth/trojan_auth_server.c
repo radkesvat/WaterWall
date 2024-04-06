@@ -273,11 +273,11 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             memset(tuser, 0, sizeof(trojan_user_t));
             tuser->user = *user;
             free(user);
-            sha224(tuser->user.uid, strlen(tuser->user.uid), &(tuser->hash_user[0]));
+            sha224((uint8_t*)tuser->user.uid, strlen(tuser->user.uid), &(tuser->hash_user[0]));
 
             for (int i = 0; i < sizeof(sha224_t); i++)
             {
-                sprintf(&(tuser->hash_hexed_user[i * 2]), "%02x", (unsigned char)(tuser->hash_user[i]));
+                sprintf((char*)&(tuser->hash_hexed_user[i * 2]), "%02x", (unsigned char)(tuser->hash_user[i]));
             }
             // 640f8fd293ea546e483060cce622d7f9ab96026d6af84a4333f486f9
             LOGD("TrojanAuthServer: user \"%s\" parsed, sha224: %.12s...", tuser->user.name, tuser->hash_hexed_user);

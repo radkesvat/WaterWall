@@ -8,7 +8,7 @@ bool connectorResolvedomain(socket_context_t *dest)
     struct timeval tv1, tv2;
     gettimeofday(&tv1, NULL);
 #endif
-    assert( dest->domain != NULL);
+    assert(dest->domain != NULL);
     /* resolve domain */
     {
         if (sockaddr_set_ipport(&(dest->addr), dest->domain, old_port) != 0)

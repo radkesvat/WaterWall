@@ -32,10 +32,6 @@ endif()
 
 target_compile_definitions(LoggerTunnel PRIVATE STC_STATIC=1 LoggerTunnel_VERSION=0.1)
 
-if(NOT CMAKE_BUILD_TYPE STREQUAL "RELEASE")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(LoggerTunnel PRIVATE  DEBUG=1)
-
-else()
-target_compile_definitions(LoggerTunnel PRIVATE  NDEBUG=1)
-
 endif()

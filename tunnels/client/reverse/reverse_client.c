@@ -164,7 +164,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
     state->min_unused_cons = min(max(threads_count * 2, state->min_unused_cons), 128);
-    state->connection_per_thread = state->min_unused_cons / threads_count;
+    state->connection_per_thread = min(4,state->min_unused_cons / threads_count);
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l = newLine(0);

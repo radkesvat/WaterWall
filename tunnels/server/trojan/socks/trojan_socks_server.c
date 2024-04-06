@@ -46,7 +46,7 @@ static void makeUdpPacketAddress(context_t *c)
     assert(plen < 8192);
 
     shiftl(c->payload, CRLF_LEN);
-    writeRaw(c->payload, "\r\n", 2);
+    writeRaw(c->payload, (unsigned char*)"\r\n", 2);
 
     plen = (plen << 8) | (plen >> 8);
     shiftl(c->payload, 2); // LEN
@@ -390,13 +390,18 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         if (!ISALIVE(c))
         {
             LOGW("TrojanSocksServer: next node instantly closed the init with fin");
-            return false;
+            return true;
         }
         cstate->init_sent = true;
     }
 
     self->up->packetUpStream(self->up, c);
 
+    // line is alvie because caller is holding a context, but still  fin could received
+    // and state is gone
+    if(line->chains_state[self->chain_index] == NULL){
+        return true;
+    }
     return processUdp(self, cstate, line, src_io);
 }
 
@@ -560,7 +565,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
         }
     }
-    return;
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
