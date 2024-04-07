@@ -132,6 +132,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
+                LOGW("reverseServer: no peer left, waiting tid: %d",c->line->tid);
                 reverse_server_con_state_t *ucstate = create_cstate(true, c->line);
                 CSTATE_U_MUT(c) = ucstate;
                 qcons_push(&(this_tb->u_cons), ucstate);
