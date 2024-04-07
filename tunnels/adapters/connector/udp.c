@@ -84,7 +84,6 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
 
             hloop_t *loop = loops[c->line->tid];
 
-            // udp init packet dose not set target addr
             sockaddr_u host_addr = {0};
             sockaddr_set_ipport(&host_addr, "0.0.0.0", 0);
 
