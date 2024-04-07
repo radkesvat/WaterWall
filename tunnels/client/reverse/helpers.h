@@ -57,10 +57,11 @@ static void before_connect(hevent_t *ev)
     hevent_set_userdata(connect_timer, cg);
 }
 
-static void initiateConnect(tunnel_t *t,int tid)
+static void initiateConnect(tunnel_t *t, int tid)
 {
     if (STATE(t)->unused_cons[tid] >= STATE(t)->min_unused_cons)
         return;
+    STATE(t)->unused_cons[tid] += 1;
 
     // int tid = 0;
     // if (threads_count > 0)
