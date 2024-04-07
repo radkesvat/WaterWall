@@ -78,7 +78,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
 
             if (!SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
             {
-                fprintf(stderr, "ssl ca_file/ca_path failed!\n");
+                LOGE("OpenSSL Error: ssl ca_file/ca_path failed");
                 goto error;
             }
         }
@@ -88,7 +88,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
             // openssl forces pem for a chained cert!
             if (!SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
             {
-                fprintf(stderr, "ssl crt_file error!\n");
+                LOGE("OpenSSL Error: ssl crt_file error");
                 goto error;
             }
         }
@@ -97,12 +97,12 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
         {
             if (!SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
             {
-                fprintf(stderr, "ssl key_file error!\n");
+                LOGE("OpenSSL Error: ssl key_file error");
                 goto error;
             }
             if (!SSL_CTX_check_private_key(ctx))
             {
-                fprintf(stderr, "ssl key_file check failed!\n");
+                LOGE("OpenSSL Error: ssl key_file check failed");
                 goto error;
             }
         }

@@ -237,13 +237,11 @@ static inline void downStream(tunnel_t *self, context_t *c)
         if (c->fin)
         {
             hio_t *io = cstate->io;
-            LOGE("fin id: %d",hio_fd(io));
             cleanup(cstate);
             CSTATE_MUT(c) = NULL;
             destroyLine(c->line);
             destroyContext(c);
             hio_close(io);
-            
 
             return;
         }
@@ -344,8 +342,8 @@ void on_inbound_connected(hevent_t *ev)
     struct sockaddr log_localaddr = *hio_localaddr(io);
     sockaddr_set_port((sockaddr_u *)&(log_localaddr), data->real_localport);
 
-    LOGD("TcpListener: Accepted FD:%x :%x  [%s] <= [%s]",
-         (int)hio_fd(io),cstate,
+    LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]",
+         (int)hio_fd(io), 
          SOCKADDR_STR(&log_localaddr, localaddrstr),
          SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     free(data);
@@ -365,11 +363,10 @@ void on_inbound_connected(hevent_t *ev)
     self->upStream(self, context);
     if ((line->chains_state)[0] == NULL)
     {
-        LOGW("TcpListener: socket just got closed by upstream before anything happend...");
+        LOGW("TcpListener: socket just got closed by upstream before anything happend");
         return;
     }
     hio_read(io);
-
 }
 
 tunnel_t *newTcpListener(node_instance_context_t *instance_info)
@@ -381,14 +378,14 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 
     if (!(cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: TcpListener->settings (object field) : The object was empty or invalid.");
+        LOGF("JSON Error: TcpListener->settings (object field) : The object was empty or invalid");
         return NULL;
     }
     getBoolFromJsonObject(&(STATE(t)->no_delay), settings, "nodelay");
 
     if (!getStringFromJsonObject(&(STATE(t)->address), settings, "address"))
     {
-        LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid.");
+        LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid");
         return NULL;
     }
 
@@ -413,8 +410,8 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
             {
                 if (!(cJSON_IsNumber(port_minmax) && (port_minmax->valuedouble != 0)))
                 {
-                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
-                    LOGF("JSON Error: MultiPort parsing failed.");
+                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid");
+                    LOGF("JSON Error: MultiPort parsing failed");
                     return NULL;
                 }
                 if (i == 0)
@@ -423,8 +420,8 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
                     STATE(t)->port_max = port_minmax->valuedouble;
                 else
                 {
-                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
-                    LOGF("JSON Error: MultiPort port range has more data than expected.");
+                    LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid");
+                    LOGF("JSON Error: MultiPort port range has more data than expected");
                     return NULL;
                 }
 
@@ -439,18 +436,77 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         }
         else
         {
-            LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid.");
+            LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid");
             return NULL;
         }
     }
-
     socket_filter_option_t filter_opt = {0};
+
+    filter_opt.white_list_raddr = NULL;
+    const cJSON *wlist = cJSON_GetObjectItemCaseSensitive(settings, "whitelist");
+    if (cJSON_IsArray(wlist))
+    {
+        size_t len = cJSON_GetArraySize(wlist);
+        if (len > 0)
+        {
+            char **list = malloc(sizeof(char *) * (len + 1));
+            memset(list, 0, sizeof(char *) * (len + 1));
+            list[len] = 0x0;
+            int i = 0;
+            const cJSON *list_item = NULL;
+            cJSON_ArrayForEach(list_item, wlist)
+            {
+                int list_item_len = 0;
+                if (!getStringFromJson(&(list[i]), list_item) || (list_item_len = strlen(list[i])) < 4)
+                {
+                    LOGF("JSON Error: TcpListener->settings->whitelist (array of strings field) index %d : The data was empty or invalid", i);
+                    exit(1);
+                }
+                char *slash = strchr(list[i], '/');
+                if (slash == NULL)
+                {
+                    LOGF("Value Error: whitelist %d : Subnet prefix is missing in ip. \"%s\" + /xx", i, list[i]);
+                    exit(1);
+                }
+                *slash = '\0';
+                if (!is_ipaddr(list[i]))
+                {
+                    LOGF("Value Error: whitelist %d : \"%s\" is not a valid ip address", i, list[i]);
+                    exit(1);
+                }
+
+                bool is_v4 = is_ipv4(list[i]);
+                *slash = '/';
+
+                char *subnet_part = slash + 1;
+                int prefix_length = atoi(subnet_part);
+
+                if (is_v4 && (prefix_length < 0 || prefix_length > 32))
+                {
+                    LOGF("Value Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", list[i], prefix_length);
+                    exit(1);
+                }
+                if (!is_v4 && (prefix_length < 0 || prefix_length > 128))
+                {
+                    LOGF("Value Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128", list[i], prefix_length);
+                    exit(1);
+                }
+                if (prefix_length > 0 && slash + 2 + (int)(log10(prefix_length)) < list[i] + list_item_len)
+                {
+                    LOGW("the value \"%s\" looks incorrect, it has more data than ip/prefix", list[i]);
+                }
+                i++;
+            }
+
+            filter_opt.white_list_raddr = list;
+        }
+    }
+
     filter_opt.host = STATE(t)->address;
     filter_opt.port_min = STATE(t)->port_min;
     filter_opt.port_max = STATE(t)->port_max;
     filter_opt.proto = socket_protocol_tcp;
     filter_opt.multiport_backend = multiport_backend;
-    filter_opt.white_list_raddr = NULL;
     filter_opt.black_list_raddr = NULL;
 
     registerSocketAcceptor(t, filter_opt, on_inbound_connected);

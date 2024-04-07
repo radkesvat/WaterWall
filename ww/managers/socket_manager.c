@@ -225,13 +225,12 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     hmutex_unlock(&(state->mutex));
 }
 
-static void on_accept(hio_t *io, bool tcp, uint16_t port_found)
+static void on_accept(hio_t *io, bool tcp, uint16_t socket_local_port)
 {
 
     hmutex_lock(&(state->mutex));
     sockaddr_u *laddr = (sockaddr_u *)hio_localaddr(io);
     sockaddr_u *paddr = (sockaddr_u *)hio_peeraddr(io);
-    uint16_t socket_port = port_found == 0 ? sockaddr_port(laddr) : port_found;
 
     for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
     {
@@ -245,7 +244,7 @@ static void on_accept(hio_t *io, bool tcp, uint16_t port_found)
             // if (option.proto == socket_protocol_tcp)
 
             // single port or multi port per socket
-            if (port_min <= socket_port && port_max >= socket_port)
+            if (port_min <= socket_local_port && port_max >= socket_local_port)
             {
                 if (option.white_list_raddr != NULL)
                 {
@@ -278,7 +277,7 @@ static void on_accept(hio_t *io, bool tcp, uint16_t port_found)
                 }
 
                 socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
-                result->real_localport = socket_port;
+                result->real_localport = socket_local_port;
 
                 if (option.no_delay)
                 {
@@ -323,7 +322,7 @@ static void on_accept(hio_t *io, bool tcp, uint16_t port_found)
 
 static void on_accept_tcp_single(hio_t *io)
 {
-    on_accept(io, true, 0);
+    on_accept(io, true, sockaddr_port((sockaddr_u *)hio_localaddr(io)));
 }
 
 static void on_accept_tcp_multi_iptable(hio_t *io)
