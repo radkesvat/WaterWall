@@ -36,7 +36,7 @@ char *readFile(const char *const path)
     return string;
 }
 
-bool writeFile(const char *const path,const char *data, size_t len)
+bool writeFile(const char *const path, const char *data, size_t len)
 {
     FILE *f = fopen(path, "wb");
 
@@ -79,6 +79,23 @@ bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
     }
 }
 
+bool getBoolFromJsonObjectOrDefault(bool *dest, const cJSON *json_obj, const char *key, bool def)
+{
+    assert(dest != NULL);
+    const cJSON *jbool = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    if (cJSON_IsBool(jbool))
+    {
+
+        *dest = cJSON_IsTrue(jbool);
+        return true;
+    }
+    else
+    {
+        *dest = def;
+        return false;
+    }
+}
+
 bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
 {
 
@@ -96,6 +113,21 @@ bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
     }
 }
 
+bool getStringFromJson(char **dest, const cJSON *json_str_node)
+{
+    assert(*dest == NULL);
+    if (cJSON_IsString(json_str_node) && (json_str_node->valuestring != NULL))
+    {
+
+        *dest = malloc(strlen(json_str_node->valuestring) + 1);
+        strcpy(*dest, json_str_node->valuestring);
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
 bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key)
 {
 
@@ -240,7 +272,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     return user;
 }
 
-dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj,const char *key, size_t matchers, ...)
+dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...)
 {
 
     dynamic_value_t result = {0};
@@ -273,7 +305,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj,const c
     }
     return result;
 }
-dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj,const char *key, size_t matchers, ...)
+dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...)
 {
 
     dynamic_value_t result = {0};
