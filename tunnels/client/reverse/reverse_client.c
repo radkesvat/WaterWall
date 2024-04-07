@@ -92,13 +92,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                if (ucstate->established)
-                {
-                    destroy_cstate(ucstate);
-                    state->unused_cons[tid] -= 1;
-                }
-                else
-                    destroy_cstate(ucstate);
+                destroy_cstate(ucstate);
+                state->unused_cons[tid] -= 1;
                 destroyContext(c);
             }
             initiateConnect(self, tid);
