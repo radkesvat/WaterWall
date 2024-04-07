@@ -1,5 +1,6 @@
 #pragma once
 #include "hv/hlog.h"
+#include <stdbool.h>
 
 
 
@@ -30,4 +31,4 @@
 logger_t *getNetworkLogger();
 void setNetworkLogger(logger_t * newlogger);
 
-logger_t * createNetworkLogger(const char * log_file,const char* log_level);
+logger_t * createNetworkLogger(const char * log_file,const char* log_level, bool console);

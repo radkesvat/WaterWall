@@ -1,5 +1,6 @@
 #pragma once
 #include "hv/hlog.h"
+#include <stdbool.h>
 
 
 
@@ -31,4 +32,4 @@
 logger_t *getDnsLogger();
 void setDnsLogger(logger_t * newlogger);
 
-logger_t * createDnsLogger(const char * log_file,const char* log_level);
+logger_t * createDnsLogger(const char * log_file,const char* log_level, bool console);

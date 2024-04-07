@@ -1,5 +1,6 @@
 #pragma once
 #include "hv/hlog.h"
+#include <stdbool.h>
 
 #if !defined(ANDROID) || !defined(__ANDROID__)
 #undef hlog
@@ -21,9 +22,8 @@
 #endif // android
 
 
-void core_logger_handle(int loglevel, const char *buf, int len);
 
 logger_t *getCoreLogger();
 void setCoreLogger(logger_t * newlogger);
 
-logger_t * createCoreLogger(const char * log_file,const char* log_level);
+logger_t * createCoreLogger(const char * log_file,const char* log_level, bool console);

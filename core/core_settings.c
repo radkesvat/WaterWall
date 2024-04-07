@@ -7,10 +7,15 @@
 
 #define DEFAULT_CORE_LOG_LEVEL "INFO"
 #define DEFAULT_CORE_LOG_FILE "core.json"
+#define DEFAULT_CORE_ENABLE_CONSOLE true
+
 #define DEFAULT_NETWORK_LOG_LEVEL "INFO"
 #define DEFAULT_NETWORK_LOG_FILE "network.json"
+#define DEFAULT_NETWORK_ENABLE_CONSOLE true
+
 #define DEFAULT_DNS_LOG_LEVEL "INFO"
 #define DEFAULT_DNS_LOG_FILE "dns.json"
+#define DEFAULT_DNS_ENABLE_CONSOLE true
 
 #define DEFAULT_LIBS_PATH "libs/"
 #define DEFAULT_LOG_PATH "log/"
@@ -28,6 +33,7 @@ static void parseLogSection(const cJSON *log_obj)
 
             getStringFromJsonObjectOrDefault(&(settings->core_log_level), core_obj, "loglevel", DEFAULT_CORE_LOG_LEVEL);
             getStringFromJsonObjectOrDefault(&(settings->core_log_file), core_obj, "file", DEFAULT_CORE_LOG_FILE);
+            getBoolFromJsonObjectOrDefault(&(settings->core_log_console), core_obj, "console", DEFAULT_CORE_ENABLE_CONSOLE);
         }
         else
         {
@@ -35,6 +41,7 @@ static void parseLogSection(const cJSON *log_obj)
             strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
             settings->core_log_file = malloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
             strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
+            settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
         }
     }
 
@@ -45,6 +52,8 @@ static void parseLogSection(const cJSON *log_obj)
 
             getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "loglevel", DEFAULT_NETWORK_LOG_LEVEL);
             getStringFromJsonObjectOrDefault(&(settings->network_log_file), network_obj, "file", DEFAULT_NETWORK_LOG_FILE);
+            getBoolFromJsonObjectOrDefault(&(settings->network_log_console), network_obj, "console", DEFAULT_NETWORK_ENABLE_CONSOLE);
+
         }
         else
         {
@@ -52,6 +61,8 @@ static void parseLogSection(const cJSON *log_obj)
             strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
             settings->network_log_file = malloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
             strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
+            settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
+
         }
     }
 
@@ -61,6 +72,8 @@ static void parseLogSection(const cJSON *log_obj)
         {
             getStringFromJsonObjectOrDefault(&(settings->dns_log_level), dns_obj, "loglevel", DEFAULT_DNS_LOG_LEVEL);
             getStringFromJsonObjectOrDefault(&(settings->dns_log_file), dns_obj, "file", DEFAULT_DNS_LOG_FILE);
+            getBoolFromJsonObjectOrDefault(&(settings->dns_log_console), dns_obj, "console", DEFAULT_DNS_ENABLE_CONSOLE);
+
         }
         else
         {
@@ -68,6 +81,8 @@ static void parseLogSection(const cJSON *log_obj)
             strcpy(settings->dns_log_level, DEFAULT_DNS_LOG_LEVEL);
             settings->dns_log_file = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
             strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
+            settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
+
         }
     }
 }
@@ -120,11 +135,15 @@ void parseCoreSettings(char *data_json)
         settings->log_path = malloc(strlen(DEFAULT_LOG_PATH) + 1);
         strcpy(settings->log_path, DEFAULT_LOG_PATH);
 
+
         settings->core_log_file = malloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
         strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
 
         settings->core_log_level = malloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
         strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
+
+        settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
+
 
         settings->network_log_file = malloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
         strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
@@ -132,11 +151,17 @@ void parseCoreSettings(char *data_json)
         settings->network_log_level = malloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
         strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
 
+        settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
+
+
         settings->dns_log_file = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
         strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
 
         settings->dns_log_level = malloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
         strcpy(settings->log_path, DEFAULT_DNS_LOG_LEVEL);
+
+        settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
+
     }
 
     const cJSON *inc_array = cJSON_GetObjectItemCaseSensitive(json, "configs");

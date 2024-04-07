@@ -135,7 +135,7 @@ static void logfile_write(logger_t *logger, const char *buf, int len)
     }
 }
 
-void core_logger_handle(int loglevel, const char *buf, int len)
+static void core_logger_handle_with_stdstream(int loglevel, const char *buf, int len)
 {
     if (loglevel == LOG_LEVEL_ERROR || loglevel == LOG_LEVEL_FATAL)
         stderr_logger(loglevel, buf, len);
@@ -144,22 +144,31 @@ void core_logger_handle(int loglevel, const char *buf, int len)
     logfile_write(logger, buf, len);
 }
 
+static void core_logger_handle(int loglevel, const char *buf, int len)
+{
+    logfile_write(logger, buf, len);
+}
+
 logger_t *getCoreLogger()
 {
     return logger;
 }
-void setCoreLogger(logger_t *newlogger){
+void setCoreLogger(logger_t *newlogger)
+{
     assert(logger == NULL);
     logger = newlogger;
-
 }
 
-logger_t *createCoreLogger(const char *log_file, const char *log_level)
+logger_t *createCoreLogger(const char *log_file, const char *log_level, bool console)
 {
     assert(logger == NULL);
     logger = logger_create();
     logger_set_file(logger, log_file);
-    logger_set_handler(logger, core_logger_handle);
+    if (console)
+        logger_set_handler(logger, core_logger_handle_with_stdstream);
+    else
+        logger_set_handler(logger, core_logger_handle);
+
     logger_set_level_by_str(logger, log_level);
     atexit(destroy_core_logger);
     return logger;

@@ -59,8 +59,7 @@ int main(int argc, char **argv)
         char *network_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->network_log_file);
         char *dns_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->dns_log_file);
 
-        logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
-        logger_set_handler(hv_default_logger(), core_logger_handle);
+
         createWW(
             core_log_file_path,
             network_log_file_path,
@@ -68,6 +67,9 @@ int main(int argc, char **argv)
             getCoreSettings()->core_log_level,
             getCoreSettings()->network_log_level,
             getCoreSettings()->dns_log_level,
+            getCoreSettings()->core_log_console,
+            getCoreSettings()->network_log_console,
+            getCoreSettings()->dns_log_console,
             getCoreSettings()->threads);
 
         free(core_log_file_path);
@@ -98,7 +100,8 @@ int main(int argc, char **argv)
             runConfigFile(cfile);
             LOGD("Core: starting eventloops ...");
             startSocketManager();
-            LOGW("Core: MainThread moved out of eventloop");
+            runMainThread();
+            LOGW("Core: Eventloops are finished");
         }
     }
 }

@@ -135,7 +135,7 @@ static void logfile_write(logger_t *logger, const char *buf, int len)
     }
 }
 
-void dns_logger_handle(int loglevel, const char *buf, int len)
+static void dns_logger_handle_with_stdstream(int loglevel, const char *buf, int len)
 {
     if (loglevel == LOG_LEVEL_ERROR || loglevel == LOG_LEVEL_FATAL)
         stderr_logger(loglevel, buf, len);
@@ -144,6 +144,10 @@ void dns_logger_handle(int loglevel, const char *buf, int len)
     logfile_write(logger, buf, len);
 }
 
+static void dns_logger_handle(int loglevel, const char *buf, int len)
+{
+    logfile_write(logger, buf, len);
+}
 
 logger_t *getDnsLogger()
 {
@@ -155,12 +159,16 @@ void setDnsLogger(logger_t *newlogger){
 
 }
 
-logger_t *createDnsLogger(const char *log_file, const char *log_level)
+logger_t *createDnsLogger(const char *log_file, const char *log_level, bool console)
 {
     assert(logger == NULL);
     logger = logger_create();
     logger_set_file(logger, log_file);
-    logger_set_handler(logger, dns_logger_handle);
+    if (console)
+        logger_set_handler(logger, dns_logger_handle_with_stdstream);
+    else
+        logger_set_handler(logger, dns_logger_handle);
+
     logger_set_level_by_str(logger, log_level);
     atexit(destroy_dns_logger);
     return logger;

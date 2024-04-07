@@ -27,8 +27,12 @@ void createWW(
     char *core_log_level,
     char *network_log_level,
     char *dns_log_level,
-    size_t threads_count);
+    bool core_log_console,
+    bool network_log_console,
+    bool dns_log_console,
+    size_t _threads_count);
 
+void runMainThread();
 
 extern size_t threads_count;
 extern hthread_t *threads;

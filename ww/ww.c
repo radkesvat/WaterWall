@@ -8,15 +8,15 @@
 #include "managers/socket_manager.h"
 #include "managers/node_manager.h"
 
-size_t threads_count;
-hthread_t *threads;
-struct hloop_s **loops;
-struct buffer_pool_s **buffer_pools;
-struct socket_manager_s *socekt_manager;
-struct node_manager_s *node_manager;
-logger_t *core_logger;
-logger_t *network_logger;
-logger_t *dns_logger;
+size_t threads_count                    = 0;
+hthread_t *threads                      = NULL;
+struct hloop_s **loops                  = NULL;
+struct buffer_pool_s **buffer_pools     = NULL;
+struct socket_manager_s *socekt_manager = NULL;
+struct node_manager_s *node_manager     = NULL;
+logger_t *core_logger                   = NULL;
+logger_t *network_logger                = NULL;
+logger_t *dns_logger                    = NULL;
 
 struct ww_runtime_state_s
 {
@@ -65,6 +65,16 @@ struct ww_runtime_state_s *getWW()
     return state;
 }
 
+void runMainThread()
+{
+    hloop_run(loops[0]);
+    hloop_free(&loops[0]);
+    for (size_t i = 1; i < threads_count; i++)
+    {
+        hthread_join(threads[i]);
+    }
+}
+
 static HTHREAD_ROUTINE(worker_thread)
 {
     hloop_t *loop = (hloop_t *)userdata;
@@ -81,25 +91,32 @@ void createWW(
     char *core_log_level,
     char *network_log_level,
     char *dns_log_level,
+    bool core_log_console,
+    bool network_log_console,
+    bool dns_log_console,
     size_t _threads_count)
 {
 
-    core_logger = createCoreLogger(core_log_file_path, core_log_level);
-    network_logger = createNetworkLogger(network_log_file_path, network_log_level);
-    dns_logger = createDnsLogger(dns_log_file_path, dns_log_level);
+    if (core_log_file_path)
+        core_logger = createCoreLogger(core_log_file_path, core_log_level, core_log_console);
+    if (network_log_file_path)
+        network_logger = createNetworkLogger(network_log_file_path, network_log_level, network_log_console);
+    if (dns_log_file_path)
+        dns_logger = createDnsLogger(dns_log_file_path, dns_log_level, dns_log_console);
 
     threads_count = _threads_count;
     threads = (hthread_t *)malloc(sizeof(hthread_t) * threads_count);
-    
+
     loops = (hloop_t **)malloc(sizeof(hloop_t *) * threads_count);
-    for (int i = 0; i < threads_count; ++i)
+    for (int i = 1; i < threads_count; ++i)
     {
         loops[i] = hloop_new(HLOOP_FLAG_AUTO_FREE);
         threads[i] = hthread_create(worker_thread, loops[i]);
     }
- 
+    loops[0] = hloop_new(HLOOP_FLAG_AUTO_FREE);
+    threads[0] = 0x0;
 
-    buffer_pools = (void **)malloc(sizeof(struct buffer_pool_s *) * threads_count);
+    buffer_pools = (struct buffer_pool_s **)malloc(sizeof(struct buffer_pool_s *) * threads_count);
 
     for (int i = 0; i < threads_count; ++i)
     {
