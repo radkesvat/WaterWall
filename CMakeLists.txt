@@ -267,19 +267,19 @@ endif()
 
 
 
-# cJson
-CPMAddPackage(
-    NAME cjson
-    VERSION 1.7.17
-    GITHUB_REPOSITORY DaveGamble/cJSON
-    OPTIONS "BUILD_SHARED_LIBS OFF" "BUILD_SHARED_AND_STATIC_LIBS On"
-    DOWNLOAD_ONLY True
+# # cJson
+# CPMAddPackage(
+#     NAME cjson
+#     VERSION 1.7.17
+#     GITHUB_REPOSITORY DaveGamble/cJSON
+#     OPTIONS "BUILD_SHARED_LIBS OFF" "BUILD_SHARED_AND_STATIC_LIBS On"
+#     DOWNLOAD_ONLY True
 
-)
-if(cjson_ADDED)
-  target_include_directories(Waterwall PUBLIC ${cjson_SOURCE_DIR})
-  target_sources(Waterwall PUBLIC ${cjson_SOURCE_DIR}/cJSON.c)
-endif()
+# )
+# if(cjson_ADDED)
+#   target_include_directories(Waterwall PUBLIC ${cjson_SOURCE_DIR})
+#   target_sources(Waterwall PUBLIC ${cjson_SOURCE_DIR}/cJSON.c)
+# endif()
 
 
 
