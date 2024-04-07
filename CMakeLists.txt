@@ -11,6 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versio
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   include(CheckIPOSupported)
   check_ipo_supported()
+  cmake_policy(SET CMP0069 NEW) 
+  set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
   if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
