@@ -22,7 +22,6 @@ typedef struct reverse_client_con_state_s
 typedef struct reverse_client_state_s
 {
     atomic_uint reverse_cons;
-    atomic_uint unused_cons;
     atomic_uint round_index;
 
     size_t chain_index_pi;
@@ -30,5 +29,7 @@ typedef struct reverse_client_state_s
 
     // settings
     int min_unused_cons;
+    atomic_uint unused_cons[];
+
 
 } reverse_client_state_t;

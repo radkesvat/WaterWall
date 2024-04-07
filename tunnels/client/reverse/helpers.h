@@ -57,22 +57,22 @@ static void before_connect(hevent_t *ev)
     hevent_set_userdata(connect_timer, cg);
 }
 
-static void initiateConnect(tunnel_t *t)
+static void initiateConnect(tunnel_t *t,int tid)
 {
-    if (STATE(t)->unused_cons >= STATE(t)->min_unused_cons)
+    if (STATE(t)->unused_cons[tid] >= STATE(t)->min_unused_cons)
         return;
 
-    int tid = 0;
-    if (threads_count > 0)
-    {
-        tid = atomic_fetch_add_explicit(&(STATE(t)->round_index), 1, memory_order_relaxed);
+    // int tid = 0;
+    // if (threads_count > 0)
+    // {
+    //     tid = atomic_fetch_add_explicit(&(STATE(t)->round_index), 1, memory_order_relaxed);
 
-        if (tid >= threads_count)
-        {
-            atomic_store_explicit(&(STATE(t)->round_index), 0, memory_order_relaxed);
-            tid = 0;
-        }
-    }
+    //     if (tid >= threads_count)
+    //     {
+    //         atomic_store_explicit(&(STATE(t)->round_index), 0, memory_order_relaxed);
+    //         tid = 0;
+    //     }
+    // }
 
     hloop_t *worker_loop = loops[tid];
     hevent_t ev;

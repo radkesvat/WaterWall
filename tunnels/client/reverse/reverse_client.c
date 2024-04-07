@@ -28,9 +28,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
             (dcstate->u->chains_state)[state->chain_index_pi] = NULL;
             context_t *fc = switchLine(c, dcstate->u);
             destroy_cstate(dcstate);
-            self->up->upStream(self->up, fc);
             unsigned int rcs = atomic_fetch_add_explicit(&(STATE(self)->reverse_cons), -1, memory_order_relaxed);
-            LOGD("ReverseClient: disconnected, unused: %d active: %d", STATE(self)->unused_cons, rcs - 1);
+            LOGD("ReverseClient: disconnected, tid: %d unused: %d active: %d", fc->line->tid, STATE(self)->unused_cons[tid], rcs - 1);
+            self->up->upStream(self->up, fc);
         }
         else if (c->est)
         {
@@ -67,10 +67,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             ucstate->pair_connected = true;
             c->first = true;
-            atomic_fetch_add_explicit(&(STATE(self)->unused_cons), -1, memory_order_relaxed);
+            atomic_fetch_add_explicit(&(STATE(self)->unused_cons[tid]), -1, memory_order_relaxed);
             atomic_fetch_add_explicit(&(STATE(self)->reverse_cons), 1, memory_order_relaxed);
             self->dw->downStream(self->dw, switchLine(c, CSTATE_U(c)->d));
-            initiateConnect(self);
+            initiateConnect(self, tid);
         }
     }
     else
@@ -81,6 +81,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
             reverse_client_con_state_t *ucstate = CSTATE_U(c);
             CSTATE_U_MUT(c) = NULL;
             (ucstate->d->chains_state)[state->chain_index_pi] = NULL;
+            LOGD("ReverseClient: disconnected, tid: %d unused: %d active: %d", c->line->tid, STATE(self)->unused_cons[tid], STATE(self)->reverse_cons);
+
             if (ucstate->pair_connected)
             {
                 atomic_fetch_add_explicit(&(STATE(self)->reverse_cons), -1, memory_order_relaxed);
@@ -93,24 +95,22 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 if (ucstate->established)
                 {
                     destroy_cstate(ucstate);
-                    atomic_fetch_add_explicit(&(STATE(self)->unused_cons), -1, memory_order_relaxed);
+                    atomic_fetch_add_explicit(&(STATE(self)->unused_cons[tid]), -1, memory_order_relaxed);
                 }
                 else
                     destroy_cstate(ucstate);
                 destroyContext(c);
 
-                initiateConnect(self);
+                initiateConnect(self, tid);
             }
-
-            LOGD("ReverseClient: disconnected, unused: %d active: %d", STATE(self)->unused_cons, STATE(self)->reverse_cons);
         }
         else if (c->est)
         {
             CSTATE_U(c)->established = true;
-            unsigned int unused = atomic_fetch_add_explicit(&(STATE(self)->unused_cons), 1, memory_order_relaxed);
-            LOGI("ReverseClient: connected,    unused: %d active: %d", unused+1, STATE(self)->reverse_cons);
+            unsigned int unused = atomic_fetch_add_explicit(&(STATE(self)->unused_cons[tid]), 1, memory_order_relaxed);
+            LOGI("ReverseClient: connected,    tid: %d unused: %d active: %d", tid, unused + 1, STATE(self)->reverse_cons);
             destroyContext(c);
-            initiateConnect(self);
+            initiateConnect(self, tid);
         }
         else
         {
@@ -144,7 +144,7 @@ static void start_reverse_celint(htimer_t *timer)
 
         for (size_t ci = 0; ci < cpt; ci++)
         {
-            initiateConnect(t);
+            initiateConnect(t, i);
         }
     }
 
@@ -155,8 +155,8 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     const size_t start_delay_ms = 150;
 
-    reverse_client_state_t *state = malloc(sizeof(reverse_client_state_t));
-    memset(state, 0, sizeof(reverse_client_state_t));
+    reverse_client_state_t *state = malloc(sizeof(reverse_client_state_t) + (sizeof(atomic_uint) * threads_count));
+    memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(atomic_uint) * threads_count));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
@@ -164,7 +164,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
     state->min_unused_cons = min(max(threads_count * 2, state->min_unused_cons), 128);
-    state->connection_per_thread = min(4,state->min_unused_cons / threads_count);
+    state->connection_per_thread = min(4, state->min_unused_cons / threads_count);
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l = newLine(0);
