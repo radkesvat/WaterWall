@@ -6,7 +6,10 @@
 // dest must be pre-allocated
 bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key);
 bool getBoolFromJsonObjectOrDefault(bool *dest, const cJSON *json_obj, const char *key,bool def);
+
 bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key);
+bool getIntFromJsonObjectOrDefault(int *dest, const cJSON *json_obj, const char *key,int def);
+
 // will allocate dest because it knows the string-len
 bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key);
 bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key, const char *def);

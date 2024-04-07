@@ -69,7 +69,6 @@ bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
     const cJSON *jbool = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsBool(jbool))
     {
-
         *dest = cJSON_IsTrue(jbool);
         return true;
     }
@@ -85,7 +84,6 @@ bool getBoolFromJsonObjectOrDefault(bool *dest, const cJSON *json_obj, const cha
     const cJSON *jbool = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsBool(jbool))
     {
-
         *dest = cJSON_IsTrue(jbool);
         return true;
     }
@@ -98,17 +96,31 @@ bool getBoolFromJsonObjectOrDefault(bool *dest, const cJSON *json_obj, const cha
 
 bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
 {
-
     assert(dest != NULL);
     const cJSON *jnumber = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsNumber(jnumber))
     {
-
         *dest = jnumber->valueint;
         return true;
     }
     else
     {
+        return false;
+    }
+}
+
+bool getIntFromJsonObjectOrDefault(int *dest, const cJSON *json_obj, const char *key, int def)
+{
+    assert(dest != NULL);
+    const cJSON *jnumber = cJSON_GetObjectItemCaseSensitive(json_obj, key);
+    if (cJSON_IsNumber(jnumber))
+    {
+        *dest = jnumber->valueint;
+        return true;
+    }
+    else
+    {
+        *dest = def;
         return false;
     }
 }
