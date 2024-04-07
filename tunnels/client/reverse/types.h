@@ -29,7 +29,7 @@ typedef struct reverse_client_state_s
 
     // settings
     int min_unused_cons;
-    uint32_t unused_cons[];
+    unsigned int unused_cons[];
 
 
 } reverse_client_state_t;
