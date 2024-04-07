@@ -47,7 +47,8 @@ int main(int argc, char **argv)
     char *core_file_content = readFile(CORE_FILE);
     if (core_file_content == NULL)
     {
-        fprintf(stderr, "Could not read core file \"%s\" \n", CORE_FILE);
+        fprintf(stderr, "Waterwall version %s\n Could not read core settings file \"%s\" \n", 
+        TOSTRING(WATERWALL_VERSION),CORE_FILE);
         exit(1);
     }
     parseCoreSettings(core_file_content);
@@ -59,6 +60,9 @@ int main(int argc, char **argv)
         char *network_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->network_log_file);
         char *dns_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->dns_log_file);
 
+        // libhv has a separate logger, we forward it to the core logger
+        logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
+        logger_set_handler(hv_default_logger(), getCoreLoggerHandle(getCoreSettings()->core_log_console));
 
         createWW(
             core_log_file_path,
