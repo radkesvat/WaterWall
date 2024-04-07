@@ -71,10 +71,7 @@ static void cleanup(tcp_listener_con_state_t *cstate)
             last_resumed_io = cw->src_io;
             hio_read(cw->src_io);
         }
-        if (cw->payload)
-        {
-            DISCARD_CONTEXT(cw);
-        }
+
         destroyContext(cw);
     }
 
