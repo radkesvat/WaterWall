@@ -149,6 +149,14 @@ static void core_logger_handle(int loglevel, const char *buf, int len)
     logfile_write(logger, buf, len);
 }
 
+core_logger_handle_t getCoreLoggerHandle(bool console)
+{
+    if (console)
+        return  core_logger_handle_with_stdstream;
+    else
+        return core_logger_handle;
+}
+
 logger_t *getCoreLogger()
 {
     return logger;

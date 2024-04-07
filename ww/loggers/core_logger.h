@@ -21,6 +21,8 @@
 #endif
 #endif // android
 
+typedef void (*core_logger_handle_t)(int, const char *, int);
+core_logger_handle_t getCoreLoggerHandle(bool console);
 
 
 logger_t *getCoreLogger();
