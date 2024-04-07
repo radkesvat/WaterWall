@@ -84,7 +84,7 @@ typedef struct http2_client_state_s
 {
     nghttp2_session_callbacks *cbs;
     enum http_content_type content_type;
-
+    uint32_t concurrency;
     char *path;
     char *host; // authority
     int host_port;

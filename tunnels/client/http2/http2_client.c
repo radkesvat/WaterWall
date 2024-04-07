@@ -363,7 +363,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
-            if (con->root.next == NULL && con->childs_added >= MAX_CHILD_PER_STREAM && ISALIVE(c))
+            if (con->root.next == NULL && con->childs_added >= state->concurrency && ISALIVE(c))
             {
                 context_t *con_fc = newFinContext(con->line);
                 tunnel_t *con_dest = con->tunnel->up;
@@ -415,7 +415,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 return;
             }
 
-        if (con->root.next == NULL && con->childs_added >= MAX_CHILD_PER_STREAM && ISALIVE(c))
+        if (con->root.next == NULL && con->childs_added >= state->concurrency && ISALIVE(c))
         {
             context_t *con_fc = newFinContext(con->line);
             tunnel_t *con_dest = con->tunnel->up;
@@ -493,6 +493,9 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
         state->content_type = http_content_type_enum(content_type_buf);
         free(content_type_buf);
     }
+
+    getIntFromJsonObjectOrDefault(&(state->concurrency), settings,"concurrency",30);
+    
 
     nghttp2_option_new(&(state->ngoptions));
     nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions, 0xffffffffu);

@@ -3,7 +3,6 @@
 #include "types.h"
 
 #define MAX_CONCURRENT_STREAMS 0xffffffffu
-#define MAX_CHILD_PER_STREAM 30
 
 #define STATE(x) ((http2_client_state_t *)((x)->state))
 #define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))
@@ -196,7 +195,7 @@ static http2_client_con_state_t *take_http2_connection(tunnel_t *self, int tid, 
         // http2_client_con_state_t * con = *vec_cons_at(vector, round_index);
         c_foreach(k, vec_cons, *vector)
         {
-            if ((*k.ref)->childs_added < MAX_CHILD_PER_STREAM)
+            if ((*k.ref)->childs_added < state->concurrency)
             {
                 (*k.ref)->childs_added += 1;
                 return (*k.ref);
