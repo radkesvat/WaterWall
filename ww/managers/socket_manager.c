@@ -271,7 +271,7 @@ static void on_accept(hio_t *io, bool tcp, uint16_t socket_local_port)
                             break;
 
                         i++;
-                    } while (cur = option.white_list_raddr[i]);
+                    } while ((cur = option.white_list_raddr[i]));
                     if (!matches)
                         continue;
                 }

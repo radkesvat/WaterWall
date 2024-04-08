@@ -3,6 +3,7 @@
 #include "helpers.h"
 
 #define MAX_CHUNK_SIZE 8100
+#define DEFAULT_CONCURRENCY 50 //50 cons will be muxed into 1
 
 static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
 {
@@ -494,7 +495,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
         free(content_type_buf);
     }
 
-    getIntFromJsonObjectOrDefault(&(state->concurrency), settings,"concurrency",30);
+    getIntFromJsonObjectOrDefault(&(state->concurrency), settings,"concurrency",DEFAULT_CONCURRENCY);
     
 
     nghttp2_option_new(&(state->ngoptions));

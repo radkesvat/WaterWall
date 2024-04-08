@@ -104,7 +104,7 @@ void writeRaw(shift_buffer_t *self, unsigned char *buffer, size_t len)
 
 void writeI32(shift_buffer_t *self, int32_t data)
 {
-    writeRaw(self, (char *)&data, sizeof(int32_t));
+    writeRaw(self, (unsigned char *)&data, sizeof(int32_t));
 }
 
 void writeUI32(shift_buffer_t *self, uint32_t data)
