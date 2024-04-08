@@ -10,26 +10,13 @@ add_library(ProtoBufServer STATIC
 #ww api
 target_include_directories(ProtoBufServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(ProtoBufServer PUBLIC ww)
-# target_compile_options(ww PUBLIC -fPIC)  
+
 
 target_include_directories(ProtoBufServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/protobuf)
 
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-
-CPMAddPackage(
-  NAME stc
-  GIT_REPOSITORY https://github.com/stclib/STC
-  GIT_TAG 09790f024ad29fca6fe60528461eeb589d4a917b
-  DOWNLOAD_ONLY True
-)
-
-
-if(stc_ADDED)
-  target_include_directories(ProtoBufServer PUBLIC ${stc_SOURCE_DIR}/include)
-endif()
 
 
 
@@ -48,7 +35,7 @@ endif()
 # target_include_directories(ProtoBufServer PUBLIC ${nanopb_INCLUDE_DIRS})
 # target_sources(ProtoBufServer PUBLIC ${PROTO_SRCS} ${PROTO_HDRS})
 
-target_compile_definitions(ProtoBufServer PRIVATE STC_STATIC=1 ProtoBufServer_VERSION=0.1)
+target_compile_definitions(ProtoBufServer PRIVATE ProtoBufServer_VERSION=0.1)
 # target_include_directories(ProtoBufServer PUBLIC ${nanopb_SOURCE_DIR})
 # target_sources(ProtoBufServer PUBLIC  ${nanopb_SOURCE_DIR}/pb_decode.c
 #                         ${nanopb_SOURCE_DIR}/pb_common.c

@@ -1,7 +1,7 @@
 
 
-add_library(WolfSSLServer STATIC
-      wolfssl_server.c                 
+add_library(WolfSSLClient STATIC
+      wolfssl_client.c                 
 )
 
 #cmake is not able to build fastest version of wolfssl yet (because all asm options are not provided in cmakelist), we used this:
@@ -16,18 +16,19 @@ add_library(WolfSSLServer STATIC
 
 
 #ww api
-target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
-target_link_libraries(WolfSSLServer ww)
+target_include_directories(WolfSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
+target_link_libraries(WolfSSLClient ww)
 # todo select correct processor
 if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "aarch64")
-target_link_libraries(WolfSSLServer libwolfssl_arm64.a)
+target_link_libraries(WolfSSLClient libwolfssl_arm64.a)
 else()
-target_link_libraries(WolfSSLServer libwolfssl_amd64.a)
+target_link_libraries(WolfSSLClient libwolfssl_amd64.a)
 endif()
 
 
 
-target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)
+target_include_directories(WolfSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)
+target_link_directories(WolfSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)
 
 
 # add dependencies
@@ -48,11 +49,11 @@ CPMAddPackage(
     "BUILD_SHARED_LIBS OFF"
 )
 
-target_compile_definitions(WolfSSLServer PRIVATE  WolfSSLServer_VERSION=0.1)
+target_compile_definitions(WolfSSLClient PRIVATE WolfSSLClient_VERSION=0.1)
 
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(WolfSSLServer PRIVATE  DEBUG=1)
+target_compile_definitions(WolfSSLClient PRIVATE  DEBUG=1)
 endif()
 
-target_include_directories(WolfSSLServer PRIVATE $<TARGET_PROPERTY:wolfssl,INTERFACE_INCLUDE_DIRECTORIES>)
+target_include_directories(WolfSSLClient PRIVATE $<TARGET_PROPERTY:wolfssl,INTERFACE_INCLUDE_DIRECTORIES>)
