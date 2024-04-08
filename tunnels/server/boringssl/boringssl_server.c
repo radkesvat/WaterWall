@@ -544,7 +544,6 @@
 
 // void apiBoringSSLServer(tunnel_t *self, char *msg)
 // {
-//     LOGE("openssl-server API NOT IMPLEMENTED");return (api_result_t){0}; // TODO
 // }
 
 tunnel_t *destroyBoringSSLServer(tunnel_t *self)

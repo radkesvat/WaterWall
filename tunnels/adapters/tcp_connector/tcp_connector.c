@@ -465,7 +465,6 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 }
 api_result_t apiTcpConnector(tunnel_t *self, char *msg)
 {
-    LOGE("TcpConnector API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 tunnel_t *destroyTcpConnector(tunnel_t *self)
