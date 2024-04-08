@@ -216,13 +216,11 @@ tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 
 api_result_t apiReverseServer(tunnel_t *self, char *msg)
 {
-    LOGE("reverseServer API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyReverseServer(tunnel_t *self)
 {
-    LOGE("reverseServer DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataReverseServer()

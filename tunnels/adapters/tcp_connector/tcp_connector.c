@@ -470,7 +470,6 @@ api_result_t apiTcpConnector(tunnel_t *self, char *msg)
 }
 tunnel_t *destroyTcpConnector(tunnel_t *self)
 {
-    LOGE("TcpConnector DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataTcpConnector()

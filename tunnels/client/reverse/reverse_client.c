@@ -102,7 +102,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         {
             CSTATE_U(c)->established = true;
             // unused_cons[tid] += 1;
-            LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons, STATE(self)->reverse_cons);
+            LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid], STATE(self)->reverse_cons);
             destroyContext(c);
             initiateConnect(self, tid);
         }
@@ -183,13 +183,11 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
 api_result_t apiReverseClient(tunnel_t *self, char *msg)
 {
-    LOGE("reverseClient API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyReverseClient(tunnel_t *self)
 {
-    LOGE("reverseClient DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataReverseClient()

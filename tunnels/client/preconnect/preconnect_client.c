@@ -240,13 +240,11 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 
 api_result_t apiPreConnectClient(tunnel_t *self, char *msg)
 {
-    LOGE("preConnectClient API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyPreConnectClient(tunnel_t *self)
 {
-    LOGE("preConnectClient DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataPreConnectClient()

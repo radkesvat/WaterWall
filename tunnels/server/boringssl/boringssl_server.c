@@ -549,6 +549,5 @@
 
 tunnel_t *destroyBoringSSLServer(tunnel_t *self)
 {
-    LOGE("openssl-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }

@@ -109,13 +109,11 @@ tunnel_t *newPreConnectServer(node_instance_context_t *instance_info)
 
 api_result_t apiPreConnectServer(tunnel_t *self, char *msg)
 {
-    LOGE("preconnect-client API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyPreConnectServer(tunnel_t *self)
 {
-    LOGE("preconnect-client DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataPreConnectServer()

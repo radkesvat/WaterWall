@@ -524,13 +524,11 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
 api_result_t apiOpenSSLClient(tunnel_t *self, char *msg)
 {
-    LOGE("openssl-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyOpenSSLClient(tunnel_t *self)
 {
-    LOGE("openssl-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 

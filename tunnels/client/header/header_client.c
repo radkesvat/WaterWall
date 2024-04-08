@@ -94,13 +94,11 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 
 api_result_t apiHeaderClient(tunnel_t *self, char *msg)
 {
-    LOGE("header-client API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyHeaderClient(tunnel_t *self)
 {
-    LOGE("header-client DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataHeaderClient()

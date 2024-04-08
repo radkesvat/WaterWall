@@ -145,13 +145,11 @@ tunnel_t *newHeaderServer(node_instance_context_t *instance_info)
 
 api_result_t apiHeaderServer(tunnel_t *self, char *msg)
 {
-    LOGE("header-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyHeaderServer(tunnel_t *self)
 {
-    LOGE("header-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataHeaderServer()

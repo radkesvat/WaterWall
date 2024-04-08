@@ -622,13 +622,11 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
 }
 api_result_t apiTrojanSocksServer(tunnel_t *self, char *msg)
 {
-    LOGE("trojan-socks-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyTrojanSocksServer(tunnel_t *self)
 {
-    LOGE("trojan-socks-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 

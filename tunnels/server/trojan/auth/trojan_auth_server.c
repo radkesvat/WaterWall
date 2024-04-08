@@ -356,13 +356,11 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 
 api_result_t apiTrojanAuthServer(tunnel_t *self, char *msg)
 {
-    LOGE("trojan-auth-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyTrojanAuthServer(tunnel_t *self)
 {
-    LOGE("trojan-auth-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 

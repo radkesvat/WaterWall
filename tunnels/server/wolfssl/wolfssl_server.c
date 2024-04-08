@@ -699,13 +699,11 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
 api_result_t apiWolfSSLServer(tunnel_t *self, char *msg)
 {
-    LOGE("wolfssl-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyWolfSSLServer(tunnel_t *self)
 {
-    LOGE("wolfssl-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 

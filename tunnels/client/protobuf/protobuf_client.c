@@ -191,13 +191,11 @@ tunnel_t *newProtoBufClient(node_instance_context_t *instance_info)
 
 api_result_t apiProtoBufClient(tunnel_t *self, char *msg)
 {
-    LOGE("protobuf-client API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyProtoBufClient(tunnel_t *self)
 {
-    LOGE("protobuf-client DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataProtoBufClient()

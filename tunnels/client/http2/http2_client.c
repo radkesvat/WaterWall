@@ -516,13 +516,11 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 
 api_result_t apiHttp2Client(tunnel_t *self, char *msg)
 {
-    LOGE("http2-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyHttp2Client(tunnel_t *self)
 {
-    LOGE("http2-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 

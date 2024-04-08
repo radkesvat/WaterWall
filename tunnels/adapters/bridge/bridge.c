@@ -114,13 +114,11 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
 
 api_result_t apiBridge(tunnel_t *self, char *msg)
 {
-    LOGE("bridge API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyBridge(tunnel_t *self)
 {
-    LOGE("bridge DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 tunnel_metadata_t getMetadataBridge()
