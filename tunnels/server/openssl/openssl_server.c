@@ -388,8 +388,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(buffer_pools[c->line->tid], buf);
                         DISCARD_CONTEXT(c);
-                        destroyContext(c);
-
                         goto failed_after_establishment;
                     }
                     else
@@ -695,13 +693,11 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
 api_result_t apiOpenSSLServer(tunnel_t *self, char *msg)
 {
-    LOGE("openssl-server API NOT IMPLEMENTED");
     return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyOpenSSLServer(tunnel_t *self)
 {
-    LOGE("openssl-server DESTROY NOT IMPLEMENTED"); // TODO
     return NULL;
 }
 

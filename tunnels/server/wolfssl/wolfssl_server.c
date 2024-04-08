@@ -391,7 +391,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(buffer_pools[c->line->tid], buf);
                         DISCARD_CONTEXT(c);
-                        destroyContext(c);
 
                         goto failed_after_establishment;
                     }
