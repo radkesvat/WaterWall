@@ -20,16 +20,23 @@ static void increaseFileLimit()
     // Get the current limit
     if (getrlimit(RLIMIT_NOFILE, &rlim) == -1)
     {
-        LOGF("getrlimit");
+        LOGF("Core: getrlimit failed");
         exit(EXIT_FAILURE);
     }
-    LOGD("File limit  %lu -> %lu", (unsigned long)rlim.rlim_cur,(unsigned long)rlim.rlim_max);
+    if ((unsigned long)rlim.rlim_max < 8192)
+    {
+        LOGW("Core: Maximum allowed open files limit is %lu which is below 8192 !\n if you are running as a server then \
+        you might experince time-outs if this limits gets reached, depends on how many clients are connected to the server simultaneously\
+        ", (unsigned long)rlim.rlim_max);
+    }
+    else
+        LOGD("Core: File limit  %lu -> %lu", (unsigned long)rlim.rlim_cur, (unsigned long)rlim.rlim_max);
     // Set the hard limit to the maximum allowed value
     rlim.rlim_cur = rlim.rlim_max;
     // Apply the new limit
     if (setrlimit(RLIMIT_NOFILE, &rlim) == -1)
     {
-        LOGF("setrlimit");
+        LOGF("Core: setrlimit failed");
         exit(EXIT_FAILURE);
     }
 }
@@ -47,8 +54,8 @@ int main(int argc, char **argv)
     char *core_file_content = readFile(CORE_FILE);
     if (core_file_content == NULL)
     {
-        fprintf(stderr, "Waterwall version %s\n Could not read core settings file \"%s\" \n", 
-        TOSTRING(WATERWALL_VERSION),CORE_FILE);
+        fprintf(stderr, "Waterwall version %s\n Could not read core settings file \"%s\" \n",
+                TOSTRING(WATERWALL_VERSION), CORE_FILE);
         exit(1);
     }
     parseCoreSettings(core_file_content);
