@@ -36,6 +36,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
+        self->up->upStream(self->up, c);
     }
     else if (c->init)
     {
@@ -58,7 +59,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
         return;
     }
-    self->up->upStream(self->up, c);
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
@@ -66,7 +66,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     if (c->fin)
     {
-        free(cstate);
+        free(CSTATE(c));
         CSTATE_MUT(c) = NULL;
     }
 
