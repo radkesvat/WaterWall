@@ -79,15 +79,6 @@ if(cjson_ADDED)
 endif()
 
 
-
-# add openssl (default version is 3.2)
-# CPMAddPackage(
-#     NAME openssl-cmake
-#     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
-#     OPTIONS
-#     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-# )
-
 # add libhv
 CPMAddPackage(
     NAME libhv
@@ -105,6 +96,7 @@ CPMAddPackage(
 
 )
 # target_compile_options(hv_static PRIVATE -fPIC) 
+# target_compile_options(ww PUBLIC -fPIC)  
 # message( FATAL_ERROR "Y" )
 
 if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -113,10 +105,10 @@ if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-target_compile_options(ww PRIVATE -ftrack-macro-expansion=0)
+target_compile_options(ww PUBLIC -ftrack-macro-expansion=0)
 endif()
 
-target_compile_definitions(ww PRIVATE STC_STATIC=1 WW_VERSION=0.1)
+target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 target_link_libraries(ww hv_static) 
 
 

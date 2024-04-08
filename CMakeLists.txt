@@ -40,6 +40,7 @@ option(INCLUDE_OPENSSL_CLIENT "link OpenSSLClient staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
+option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  TRUE)
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
@@ -49,6 +50,7 @@ option(INCLUDE_REVERSE_SERVER "link ReverseServer staticly to the core"  TRUE)
 option(INCLUDE_REVERSE_CLIENT "link ReverseClient staticly to the core"  TRUE)
 option(INCLUDE_HEADER_SERVER "link HeaderServer staticly to the core"  TRUE)
 option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
+option(INCLUDE_PRECONNECT_SERVER "link PreConnectServer staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_CLIENT "link PreConnectClient staticly to the core"  TRUE)
 
 
@@ -177,6 +179,14 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall WolfSSLServer)
 endif()
 
+#wolf ssl client
+if (INCLUDE_WOLFSSL_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_WOLFSSL_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/wolfssl)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/wolfssl)
+target_link_libraries(Waterwall WolfSSLClient)
+endif()
+
 #boring ssl server
 if (INCLUDE_BORINGSSL_SERVER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_BORINGSSL_SERVER=1)
@@ -244,6 +254,14 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall HeaderClient)
 endif()
 
+#preconnect server
+if (INCLUDE_PRECONNECT_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_PRECONNECT_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/preconnect)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/preconnect)
+target_link_libraries(Waterwall PreConnectServer)
+endif()
+
 #preconnect client
 if (INCLUDE_PRECONNECT_CLIENT)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_PRECONNECT_CLIENT=1)
@@ -292,7 +310,7 @@ CPMAddPackage(
 )
 
 
-target_compile_definitions(Waterwall PUBLIC STC_STATIC=1 WATERWALL_VERSION=${Waterwall_VERSION})
+target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
 target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1 )
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
