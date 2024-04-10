@@ -257,6 +257,8 @@ static int on_frame_recv_callback(nghttp2_session *session,
         con->state = H2_RECV_SETTINGS;
         break;
     case NGHTTP2_PING:
+        LOGW("Http2Client: GOT PING");
+        con->no_ping_ack = false;
         con->state = H2_RECV_PING;
         break;
     case NGHTTP2_RST_STREAM:

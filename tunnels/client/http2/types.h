@@ -61,7 +61,8 @@ typedef struct http2_client_con_state_s
     const char *scheme;
     bool init_sent;
     bool first_sent;
-
+    bool no_ping_ack;
+    htimer_t* ping_timer;
     tunnel_t *tunnel;
     line_t *line;
     hio_t *io;
