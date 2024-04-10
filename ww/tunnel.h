@@ -7,7 +7,6 @@
 
 #define MAX_CHAIN_LEN 50
 
-
 #define DISCARD_CONTEXT(x)                                   \
     do                                                       \
     {                                                        \
@@ -35,7 +34,7 @@ typedef struct context_s
     line_t *line;
     shift_buffer_t *payload;
 
-    int fd;    
+    int fd;
     bool init;
     bool est;
     bool first;
@@ -81,9 +80,10 @@ inline line_t *newLine(uint16_t tid)
     result->src_ctx.addr.sa.sa_family = AF_INET;
     return result;
 }
-inline size_t reserveChainStateIndex(line_t *l){
+inline size_t reserveChainStateIndex(line_t *l)
+{
     size_t result = l->lcid;
-    l->lcid -=1;
+    l->lcid -= 1;
     return result;
 }
 inline void destroyLine(line_t *l)
@@ -161,5 +161,9 @@ inline context_t *switchLine(context_t *c, line_t *line)
     return c;
 }
 
-static inline line_t * lockLine(line_t *line){line->refc++; return line;}
-static inline void unLockLine(line_t *line){destroyLine(line);}
+static inline line_t *lockLine(line_t *line)
+{
+    line->refc++;
+    return line;
+}
+static inline void unLockLine(line_t *line) { destroyLine(line); }

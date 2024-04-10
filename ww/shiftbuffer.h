@@ -3,7 +3,12 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <string.h> // memmove,memcpy
+#include <stdlib.h> // free
 
+#if defined(DEBUG) && !defined(hlog)
+#include "loggers/network_logger.h" //some logs needs to be printed on debug mode
+#endif
 
 struct shift_buffer_s
 {
@@ -11,7 +16,7 @@ struct shift_buffer_s
     size_t curpos;
     size_t cap; // half of full cap
     char *pbuf;
-    unsigned int* refc;
+    unsigned int *refc;
 };
 typedef struct shift_buffer_s shift_buffer_t;
 
@@ -22,10 +27,8 @@ shift_buffer_t *newShadowShiftBuffer(shift_buffer_t *owner);
 
 void reset(shift_buffer_t *self);
 
-
-
+void detachWithSize(shift_buffer_t *self, size_t newsize);
 void expand(shift_buffer_t *self, size_t increase);
-
 
 //  how many bytes we can fill without realloc
 inline size_t lCap(shift_buffer_t *self) { return self->curpos; }
@@ -43,7 +46,6 @@ inline void shiftr(shift_buffer_t *self, size_t bytes)
         expand(self, (bytes - rCap(self)));
     self->curpos += bytes;
 }
-
 
 inline size_t bufLen(shift_buffer_t *self) { return self->lenpos - self->curpos; }
 
@@ -65,17 +67,51 @@ inline void consume(shift_buffer_t *self, size_t bytes)
     setLen(self, bufLen(self) - bytes);
 }
 
-inline unsigned  char *rawBuf(shift_buffer_t *self) {return (unsigned  char *)&(self->pbuf[self->curpos]); }
+inline const void *rawBuf(shift_buffer_t *self) { return (void *)&(self->pbuf[self->curpos]); }
+inline unsigned char *rawBufMut(shift_buffer_t *self)
+{
+#ifdef DEBUG
+    if (*(self->refc) > 1)
+        LOGW("writing to a buffer with (refs > 1) is dangerous, do a full copy in this case");
+#endif
+    return (void*)&(self->pbuf[self->curpos]);
+}
 
+inline void writeRaw(shift_buffer_t *restrict self, const void *restrict buffer, size_t len)
+{
+    memcpy(rawBufMut(self), buffer, len);
+}
 
+inline void writeI32(shift_buffer_t *self, int32_t data)
+{
+    writeRaw(self, &data, sizeof(int32_t));
+}
 
-void writeRaw(shift_buffer_t *self, unsigned char* buffer, size_t len);
+inline void writeUI32(shift_buffer_t *self, uint32_t data)
+{
+    writeRaw(self, &data, sizeof(uint32_t));
+}
 
-void writeI32(shift_buffer_t *self, int32_t data);
-void writeUI32(shift_buffer_t *self, uint32_t data);
-void writeI16(shift_buffer_t *self, int16_t data);
-void writeUI16(shift_buffer_t *self, uint16_t data);
-void writeUI8(shift_buffer_t *self, uint8_t data);
-void readUI8(shift_buffer_t *self, uint8_t *dest);
-void readUI16(shift_buffer_t *self, uint16_t* dest);
+inline void writeI16(shift_buffer_t *self, int16_t data)
+{
+    writeRaw(self, &data, sizeof(int16_t));
+}
 
+inline void writeUI16(shift_buffer_t *self, uint16_t data)
+{
+    writeRaw(self, &data, sizeof(uint16_t));
+}
+
+inline void writeUI8(shift_buffer_t *self, uint8_t data)
+{
+    writeRaw(self, &data, sizeof(uint8_t));
+}
+
+inline void readUI8(shift_buffer_t *self, uint8_t *dest)
+{
+    memcpy(dest, rawBuf(self), sizeof(uint8_t));
+}
+inline void readUI16(shift_buffer_t *self, uint16_t *dest)
+{
+    memcpy(dest, rawBuf(self), sizeof(uint16_t));
+}

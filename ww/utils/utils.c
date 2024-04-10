@@ -170,6 +170,8 @@ bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const 
     return true;
 }
 
+// memory behind these pointers are not being mutated, but i prefere using restrict
+// when 2 arguments are same pointer types, if it dose not make the code invalid
 extern bool socket_cmp_ipv4(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2);
 extern bool socket_cmp_ipv6(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2);
 bool socket_cmp_ip(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2)
