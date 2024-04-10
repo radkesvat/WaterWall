@@ -57,7 +57,7 @@ CPMAddPackage(
 
 if(stc_ADDED)
   target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
-  target_sources(ww PRIVATE ${stc_SOURCE_DIR}/src/libstc.c)
+  # target_sources(ww PRIVATE ${stc_SOURCE_DIR}/src/libstc.c)
 
 endif()
 
@@ -98,6 +98,9 @@ CPMAddPackage(
 # target_compile_options(hv_static PRIVATE -fPIC) 
 # target_compile_options(ww PUBLIC -fPIC)  
 # message( FATAL_ERROR "Y" )
+
+# target_compile_options(ww PUBLIC -pg)
+# target_link_options(ww PUBLIC -pg)
 
 if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_options(ww PUBLIC -fsanitize=address)
