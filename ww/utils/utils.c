@@ -170,9 +170,9 @@ bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const 
     return true;
 }
 
-extern bool socket_cmp_ipv4(sockaddr_u *addr1, sockaddr_u *addr2);
-extern bool socket_cmp_ipv6(sockaddr_u *addr1, sockaddr_u *addr2);
-bool socket_cmp_ip(sockaddr_u *addr1, sockaddr_u *addr2)
+extern bool socket_cmp_ipv4(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2);
+extern bool socket_cmp_ipv6(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2);
+bool socket_cmp_ip(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2)
 {
 
     if (addr1->sa.sa_family != addr2->sa.sa_family)

@@ -6,8 +6,10 @@
 #include "loggers/network_logger.h"
 #endif
 
-#define GBD_MAX_CAP 1024
-#define DEFAULT_BUFFER_SIZE 4096
+// this is a fair value for a server, for clients 50 or 100 is enough
+#define BUFFERPOOL_ROW_WIDTH 1024
+
+#define DEFAULT_BUFFER_SIZE 8192
 
 #undef max
 #undef min
@@ -17,19 +19,19 @@ static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y));
 static void firstCharge(buffer_pool_t *state)
 {
     // state->chunks = 1;
-    state->available = malloc(2 * GBD_MAX_CAP * sizeof(shift_buffer_t *));
+    state->available = malloc(2 * BUFFERPOOL_ROW_WIDTH * sizeof(shift_buffer_t *));
 
-    for (size_t i = 0; i < GBD_MAX_CAP; i++)
+    for (size_t i = 0; i < BUFFERPOOL_ROW_WIDTH; i++)
     {
         state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
     }
-    state->len = GBD_MAX_CAP;
+    state->len = BUFFERPOOL_ROW_WIDTH;
 }
 
 static void reCharge(buffer_pool_t *state)
 {
 
-    const size_t increase = min((2 * GBD_MAX_CAP - state->len), GBD_MAX_CAP);
+    const size_t increase = min((2 * BUFFERPOOL_ROW_WIDTH - state->len), BUFFERPOOL_ROW_WIDTH);
     for (size_t i = state->len; i < (state->len + increase); i++)
     {
         state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
@@ -42,7 +44,7 @@ static void reCharge(buffer_pool_t *state)
 
 static void giveMemBackToOs(buffer_pool_t *state)
 {
-    const size_t decrease = min(state->len, GBD_MAX_CAP);
+    const size_t decrease = min(state->len, BUFFERPOOL_ROW_WIDTH);
 
     for (size_t i = state->len - decrease; i < state->len; i++)
     {
@@ -54,7 +56,7 @@ static void giveMemBackToOs(buffer_pool_t *state)
     LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, state->in_use);
 #endif
 
-    malloc_trim(0); //y tho?
+    malloc_trim(0); // y tho?
 }
 
 shift_buffer_t *popBuffer(buffer_pool_t *state)
@@ -88,7 +90,7 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
     reset(b);
     state->available[state->len] = b;
     ++(state->len);
-    if (state->len > GBD_MAX_CAP + (GBD_MAX_CAP / 2))
+    if (state->len > BUFFERPOOL_ROW_WIDTH + (BUFFERPOOL_ROW_WIDTH / 2))
     {
         giveMemBackToOs(state);
     }

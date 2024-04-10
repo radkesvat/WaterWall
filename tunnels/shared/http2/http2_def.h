@@ -45,7 +45,7 @@ typedef struct {
     int                 stream_id;
 } http2_frame_hd;
 
-static inline void http2_frame_hd_pack(const http2_frame_hd* hd, unsigned char* buf) {
+static inline void http2_frame_hd_pack(const http2_frame_hd* restrict hd, unsigned char* restrict buf) {
     // hton
     int length = hd->length;
     int stream_id = hd->stream_id;
@@ -61,7 +61,7 @@ static inline void http2_frame_hd_pack(const http2_frame_hd* hd, unsigned char* 
     *p++ =  stream_id        & 0xFF;
 }
 
-static inline void http2_frame_hd_unpack(const unsigned char* buf, http2_frame_hd* hd) {
+static inline void http2_frame_hd_unpack(const unsigned char* restrict buf, http2_frame_hd*restrict hd) {
     // ntoh
     const unsigned char* p = buf;
     hd->length  = *p++ << 16;

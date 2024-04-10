@@ -77,7 +77,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
         shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
         shiftl(buf, lCap(buf) / 1.25); // use some unused space
         setLen(buf, len);
-        memcpy(rawBuf(buf), data, len);
+        writeRaw(buf,data,len);
         bufferStreamPush(stream->chunkbs, buf);
 
         while (true)
@@ -115,7 +115,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
         shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
         shiftl(buf, lCap(buf) / 1.25); // use some unused space
         setLen(buf, len);
-        memcpy(rawBuf(buf), data, len);
+        writeRaw(buf,data,len);
         context_t *stream_data = newContext(stream->line);
         stream_data->payload = buf;
         stream_data->src_io = con->io;
@@ -228,7 +228,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
         shift_buffer_t *send_buf = popBuffer(buffer_pools[line->tid]);
         shiftl(send_buf, lCap(send_buf) / 1.25); // use some unused space
         setLen(send_buf, len);
-        memcpy(rawBuf(send_buf), data, len);
+        writeRaw(send_buf,data,len);
         context_t *response_data = newContext(line);
         response_data->payload = send_buf;
         response_data->src_io = stream_io;
@@ -275,7 +275,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
 
             shiftl(buf, GRPC_MESSAGE_HDLEN);
 
-            grpc_message_hd_pack(&msghd, rawBuf(buf));
+            grpc_message_hd_pack(&msghd, rawBufMut(buf));
         }
 
         http2_frame_hd framehd;
@@ -284,7 +284,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
         framehd.flags = flags;
         framehd.stream_id = stream_id;
         shiftl(buf, HTTP2_FRAME_HDLEN);
-        http2_frame_hd_pack(&framehd, rawBuf(buf));
+        http2_frame_hd_pack(&framehd, rawBufMut(buf));
         context_t *response_data = newContext(line);
         response_data->payload = buf;
         response_data->src_io = stream_io;

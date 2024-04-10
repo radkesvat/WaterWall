@@ -65,7 +65,7 @@ static void upStream(tunnel_t *self, context_t *c)
         size_t blen = bufLen(c->payload);
         size_t calculated_bytes = size_uleb128(blen);
         shiftl(c->payload, calculated_bytes);
-        write_uleb128(rawBuf(c->payload), blen);
+        write_uleb128(rawBufMut(c->payload), blen);
 
         shiftl(c->payload, 1);
         writeUI8(c->payload, '\n');

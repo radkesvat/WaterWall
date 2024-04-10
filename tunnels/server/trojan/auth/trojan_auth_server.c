@@ -97,7 +97,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         goto failed;
                     }
                     // save time easily
-                    if (rawBuf(c->payload)[sizeof(sha224_hex_t)] != '\r' || rawBuf(c->payload)[sizeof(sha224_hex_t) + 1] != '\n')
+                    if (((unsigned char*)rawBuf(c->payload))[sizeof(sha224_hex_t)] != '\r' ||
+                     ((unsigned char*)rawBuf(c->payload))[sizeof(sha224_hex_t) + 1] != '\n')
                     {
                         LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
                         goto failed;

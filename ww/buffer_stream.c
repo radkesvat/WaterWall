@@ -1,7 +1,5 @@
 #include "buffer_stream.h"
 
-
-
 #undef max
 #undef min
 static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
@@ -32,7 +30,7 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
     self->size += bufLen(buf);
 }
 
-shift_buffer_t *bufferStreamRead(buffer_stream_t *self,size_t bytes )
+shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
 {
     if (self->size == 0 || self->size < bytes)
         return NULL;
@@ -58,7 +56,7 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self,size_t bytes )
         size_t needed = bytes - available;
         size_t wi = available;
         setLen(result, bytes);
-        uint8_t *dest = rawBuf(result);
+        uint8_t *dest = rawBufMut(result);
 
         while (true)
         {
@@ -103,7 +101,7 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
 
         if (at < blen)
         {
-            result = rawBuf(b)[at];
+            result = ((uint8_t *)rawBuf(b))[at];
             return result;
         }
         else
@@ -113,4 +111,3 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
     }
     return 0;
 }
-

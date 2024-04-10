@@ -42,7 +42,6 @@ static void upStream(tunnel_t *self, context_t *c)
             if (bufLen(buf) < 2)
             {
                 DISCARD_CONTEXT(c);
-                self->up->upStream(self->up, newFinContext(c->line));
                 self->dw->downStream(self->dw, newFinContext(c->line));
                 destroyContext(c);
                 return;
@@ -56,12 +55,21 @@ static void upStream(tunnel_t *self, context_t *c)
                 readUI16(buf, &port);
                 sockaddr_set_port(&(c->line->dest_ctx.addr), port);
                 shiftr(c->payload, sizeof(uint16_t));
+                if (port < 10)
+                {
+                    DISCARD_CONTEXT(c);
+                    self->dw->downStream(self->dw, newFinContext(c->line));
+                    destroyContext(c);
+                    return;
+                }
+
                 break;
 
             default:
                 (void)(0);
                 break;
             }
+
             CSTATE(c)->init_sent = true;
             self->up->upStream(self->up, newInitContext(c->line));
             if (!ISALIVE(c))

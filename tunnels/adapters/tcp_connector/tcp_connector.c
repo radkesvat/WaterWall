@@ -75,7 +75,7 @@ static bool resume_write_queue(tcp_connector_con_state_t *cstate)
     return true;
 }
 
-static void on_write_complete(hio_t *io, const void *buf, int writebytes)
+static void on_write_complete(hio_t * restrict io, const void * restrict buf, int writebytes)
 {
     // resume the read on other end of the connection
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *)(hevent_userdata(io));
@@ -112,14 +112,14 @@ static void on_write_complete(hio_t *io, const void *buf, int writebytes)
     }
 }
 
-static void on_recv(hio_t *io, void *buf, int readbytes)
+static void on_recv(hio_t * restrict io, void * restrict buf, int readbytes)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *)(hevent_userdata(io));
     if (cstate == NULL)
         return;
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     setLen(payload, readbytes);
-    memcpy(rawBuf(payload), buf, readbytes);
+    writeRaw(payload,buf,readbytes);
 
     tunnel_t *self = (cstate)->tunnel;
     line_t *line = (cstate)->line;

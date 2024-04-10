@@ -46,7 +46,7 @@ static void makeUdpPacketAddress(context_t *c)
     assert(plen < 8192);
 
     shiftl(c->payload, CRLF_LEN);
-    writeRaw(c->payload, (unsigned char*)"\r\n", 2);
+    writeRaw(c->payload, (unsigned char *)"\r\n", 2);
 
     plen = (plen << 8) | (plen >> 8);
     shiftl(c->payload, 2); // LEN
@@ -60,21 +60,23 @@ static void makeUdpPacketAddress(context_t *c)
     if (c->line->dest_ctx.atype == SAT_IPV6)
     {
         shiftl(c->payload, 16);
-        memcpy(rawBuf(c->payload), &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
+        writeRaw(c->payload, &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
         shiftl(c->payload, 1);
         writeUI8(c->payload, SAT_IPV6);
     }
     else if (c->line->dest_ctx.atype == SAT_DOMAINNAME)
     {
         shiftl(c->payload, 16);
-        memcpy(rawBuf(c->payload), &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
+        writeRaw(c->payload, &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
+
         shiftl(c->payload, 1);
         writeUI8(c->payload, SAT_IPV6);
     }
     else
     {
         shiftl(c->payload, 4);
-        memcpy(rawBuf(c->payload), &(c->line->dest_ctx.addr.sin.sin_addr), 4);
+        writeRaw(c->payload, &(c->line->dest_ctx.addr.sin.sin_addr), 4);
+
         shiftl(c->payload, 1);
         writeUI8(c->payload, SAT_IPV4);
     }
@@ -88,8 +90,8 @@ static bool parseAddress(context_t *c)
     }
     socket_context_t *dest = &(c->line->dest_ctx);
 
-    enum trojan_cmd cmd = (unsigned char)rawBuf(c->payload)[0];
-    enum trojan_atyp atyp = (unsigned char)rawBuf(c->payload)[1];
+    enum trojan_cmd cmd = ((unsigned char *)rawBuf(c->payload))[0];
+    enum trojan_atyp atyp = ((unsigned char *)rawBuf(c->payload))[1];
     shiftr(c->payload, 2);
 
     dest->acmd = (enum socket_address_cmd)(cmd);
@@ -123,7 +125,7 @@ static bool parseAddress(context_t *c)
             {
                 return false;
             }
-            size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
+            size_t addr_len = ((unsigned char *)rawBuf(c->payload))[0];
             shiftr(c->payload, 1);
             if (bufLen(c->payload) < addr_len || addr_len > 225)
             {
@@ -188,7 +190,7 @@ static bool parseAddress(context_t *c)
             {
                 return false;
             }
-            size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
+            size_t addr_len = ((unsigned char *)rawBuf(c->payload))[0];
             shiftr(c->payload, 1);
             if (bufLen(c->payload) < addr_len || addr_len > 225)
             {
@@ -399,7 +401,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
     // line is alvie because caller is holding a context, but still  fin could received
     // and state is gone
-    if(line->chains_state[self->chain_index] == NULL){
+    if (line->chains_state[self->chain_index] == NULL)
+    {
         return true;
     }
     return processUdp(self, cstate, line, src_io);

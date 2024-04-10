@@ -16,8 +16,8 @@ helper functions for unsigned little endian base 128  encode / decode
    read to avoid const-vs-non-const problems.  */
 
 static inline size_t
-read_uleb128_to_uint64(const unsigned char *buf, const unsigned char *buf_end,
-                       uint64_t *r)
+read_uleb128_to_uint64(const unsigned char *restrict buf, const unsigned char *restrict buf_end,
+                       uint64_t *restrict r)
 {
     const unsigned char *p = buf;
     unsigned int shift = 0;
@@ -40,7 +40,6 @@ read_uleb128_to_uint64(const unsigned char *buf, const unsigned char *buf_end,
     return p - buf;
 }
 
-
 // writes and moves to right, use size_uleb128 to calculate the len before write
 static inline void
 write_uleb128(unsigned char *p, size_t val)
@@ -56,7 +55,6 @@ write_uleb128(unsigned char *p, size_t val)
     } while (val);
 }
 
-
 /**
  * Get size of unsigned LEB128 data
  * @val: value
@@ -67,11 +65,13 @@ write_uleb128(unsigned char *p, size_t val)
  * the number of bytes required.
  */
 static inline size_t
-size_uleb128(unsigned long val) {
-  size_t count = 0;
-  do {
-    val >>= 7;
-    ++count;
-  } while (val != 0);
-  return count;
+size_uleb128(unsigned long val)
+{
+    size_t count = 0;
+    do
+    {
+        val >>= 7;
+        ++count;
+    } while (val != 0);
+    return count;
 }

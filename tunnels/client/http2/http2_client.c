@@ -3,7 +3,7 @@
 #include "helpers.h"
 
 #define MAX_CHUNK_SIZE 8100
-#define DEFAULT_CONCURRENCY 50 //50 cons will be muxed into 1
+#define DEFAULT_CONCURRENCY 50 // 50 cons will be muxed into 1
 
 static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
 {
@@ -15,7 +15,7 @@ static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
     framehd.type = HTTP2_DATA;
     framehd.flags = HTTP2_FLAG_END_STREAM;
     framehd.stream_id = stream_id;
-    http2_frame_hd_pack(&framehd, rawBuf(buf));
+    http2_frame_hd_pack(&framehd, rawBufMut(buf));
     context_t *endstream_ctx = newContext(line);
     endstream_ctx->payload = buf;
     self->up->upStream(self->up, endstream_ctx);
@@ -35,7 +35,8 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         shift_buffer_t *send_buf = popBuffer(buffer_pools[line->tid]);
         shiftl(send_buf, lCap(send_buf) / 1.25); // use some unused space
         setLen(send_buf, len);
-        memcpy(rawBuf(send_buf), data, len);
+        writeRaw(send_buf, data, len);
+
         context_t *req = newContext(line);
         req->payload = send_buf;
         req->src_io = stream_io;
@@ -76,7 +77,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
 
             shiftl(buf, GRPC_MESSAGE_HDLEN);
 
-            grpc_message_hd_pack(&msghd, rawBuf(buf));
+            grpc_message_hd_pack(&msghd, rawBufMut(buf));
         }
         http2_frame_hd framehd;
 
@@ -85,7 +86,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         framehd.flags = flags;
         framehd.stream_id = stream_id;
         shiftl(buf, HTTP2_FRAME_HDLEN);
-        http2_frame_hd_pack(&framehd, rawBuf(buf));
+        http2_frame_hd_pack(&framehd, rawBufMut(buf));
         context_t *req = newContext(line);
         req->payload = buf;
         req->src_io = stream_io;
@@ -190,7 +191,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
         shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
         shiftl(buf, lCap(buf) / 1.25); // use some unused space
         setLen(buf, len);
-        memcpy(rawBuf(buf), data, len);
+        writeRaw(buf, data, len);
         bufferStreamPush(stream->chunkbs, buf);
 
         while (true)
@@ -223,7 +224,7 @@ static int on_data_chunk_recv_callback(nghttp2_session *session,
         shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
         shiftl(buf, lCap(buf) / 1.25); // use some unused space
         setLen(buf, len);
-        memcpy(rawBuf(buf), data, len);
+        writeRaw(buf, data, len);
         context_t *stream_data = newContext(stream->line);
         stream_data->payload = buf;
         stream_data->src_io = con->io;
@@ -495,8 +496,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
         free(content_type_buf);
     }
 
-    getIntFromJsonObjectOrDefault(&(state->concurrency), settings,"concurrency",DEFAULT_CONCURRENCY);
-    
+    getIntFromJsonObjectOrDefault(&(state->concurrency), settings, "concurrency", DEFAULT_CONCURRENCY);
 
     nghttp2_option_new(&(state->ngoptions));
     nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions, 0xffffffffu);
