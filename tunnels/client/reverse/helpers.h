@@ -8,7 +8,8 @@
 #define CSTATE_D_MUT(x) ((x)->line->chains_state)[state->chain_index_pi]
 #define CSTATE_U_MUT(x) ((x)->line->chains_state)[state->chain_index_pi]
 #define ISALIVE(x) (((((x)->line->chains_state)[state->chain_index_pi])) != NULL)
-#define PRECONNECT_DELAY 100
+#define PRECONNECT_DELAY_SHORT 10
+#define PRECONNECT_DELAY_HIGH 1500
 #undef max
 #undef min
 static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
@@ -53,7 +54,7 @@ static void connect_timer_finished(htimer_t *timer)
 static void before_connect(hevent_t *ev)
 {
     struct connect_arg *cg = hevent_userdata(ev);
-    htimer_t *connect_timer = htimer_add(loops[cg->tid], connect_timer_finished, PRECONNECT_DELAY, 1);
+    htimer_t *connect_timer = htimer_add(loops[cg->tid], connect_timer_finished, cg->delay, 1);
     hevent_set_userdata(connect_timer, cg);
 }
 
@@ -61,7 +62,8 @@ static void initiateConnect(tunnel_t *t, int tid)
 {
     if (STATE(t)->unused_cons[tid] >= STATE(t)->connection_per_thread)
         return;
-    STATE(t)->unused_cons[tid] += 1;
+    bool more_delay = STATE(t)->unused_cons[tid] <= 0;
+    // STATE(t)->unused_cons[tid] += 1;
 
     // int tid = 0;
     // if (threads_count > 0)
@@ -83,6 +85,7 @@ static void initiateConnect(tunnel_t *t, int tid)
     struct connect_arg *cg = malloc(sizeof(struct connect_arg));
     cg->t = t;
     cg->tid = tid;
+    cg->delay = more_delay?PRECONNECT_DELAY_HIGH:PRECONNECT_DELAY_SHORT;
     ev.userdata = cg;
     hloop_post_event(worker_loop, &ev);
 }

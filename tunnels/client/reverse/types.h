@@ -6,6 +6,7 @@
 struct connect_arg
 {
     unsigned int tid;
+    int delay;
     tunnel_t *t;
 };
 
@@ -13,7 +14,8 @@ typedef struct reverse_client_con_state_s
 {
     bool pair_connected;
     bool established;
-    bool first_sent;
+    bool first_sent_u;
+    bool first_sent_d;
     line_t *u;
     line_t *d;
 

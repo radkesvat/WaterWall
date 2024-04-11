@@ -7,13 +7,33 @@
 static void flush_write_queue(tunnel_t *self, reverse_server_con_state_t *cstate)
 {
 
-    while (contextQueueLen(cstate->uqueue) > 0)
-    {
-        self->dw->downStream(self->dw, switchLine(contextQueuePop(cstate->uqueue), cstate->d));
+    if (contextQueueLen(cstate->uqueue) > 0)
+        while (contextQueueLen(cstate->uqueue) > 0)
+        {
+            if (!cstate->signal_sent)
+            {
+                cstate->signal_sent = true;
+                context_t *c = switchLine(contextQueuePop(cstate->uqueue), cstate->d);
+                shiftl(c->payload, 1);
+                writeUI8(c->payload, 0xFF);
+                self->dw->downStream(self->dw, c);
+            }
+            else
+                self->dw->downStream(self->dw, switchLine(contextQueuePop(cstate->uqueue), cstate->d));
 
-        // 1 context is stalled form the caller, so this will not be read after free
-        if (cstate->d->chains_state[STATE(self)->chain_index_d] == NULL)
-            return;
+            // 1 context is held by the caller, so this will not be read after free
+            if (cstate->d->chains_state[STATE(self)->chain_index_d] == NULL)
+                return;
+        }
+    else
+    {
+        cstate->signal_sent = true;
+        shift_buffer_t *buf = popBuffer(buffer_pools[cstate->d->tid]);
+        shiftl(buf, 1);
+        writeUI8(buf, 0xFF);
+        context_t *c = newContext(cstate->d);
+        c->payload = buf;
+        self->dw->downStream(self->dw, c);
     }
 }
 
@@ -28,7 +48,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
         else
         {
             // a real pair will not send that before it receives something
-            DISCARD_CONTEXT(c);
+            reuseBuffer(buffer_pools[c->line->tid], c->payload);
+            c->payload = NULL;
             destroyContext(c);
         }
     }
@@ -43,23 +64,20 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             if (this_tb->u_count > 0)
             {
-                reverse_server_con_state_t *ucstate = qcons_pull(&this_tb->u_cons);
+                reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
+                remove_connection_u(this_tb, ucstate);
                 ucstate->d = c->line;
                 ucstate->paired = true;
-                ucstate->samethread = true;
                 CSTATE_D_MUT(c) = ucstate;
-                this_tb->u_count -= 1;
                 self->up->upStream(self->up, newEstContext(ucstate->u));
                 self->dw->downStream(self->dw, newEstContext(c->line));
                 flush_write_queue(self, ucstate);
-
             }
             else
             {
                 reverse_server_con_state_t *dcstate = create_cstate(false, c->line);
                 CSTATE_D_MUT(c) = dcstate;
-                qcons_push(&(this_tb->d_cons), dcstate);
-                this_tb->d_count += 1;
+                add_connection_d(this_tb, dcstate);
             }
             destroyContext(c);
         }
@@ -77,21 +95,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                size_t len = qcons_size(&(this_tb->d_cons));
-                while (len--)
-                {
-                    reverse_server_con_state_t *q_dcs = qcons_pull(&(this_tb->d_cons));
-                    if (q_dcs == dcstate)
-                    {
-                        this_tb->d_count -= 1;
-                        destroy_cstate(dcstate);
-                        break;
-                    }
-                    else
-                        qcons_push(&(this_tb->d_cons), q_dcs);
-                }
+                remove_connection_d(this_tb, dcstate);
+                destroy_cstate(dcstate);
                 destroyContext(c);
-
             }
         }
     }
@@ -120,23 +126,40 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             if (this_tb->d_count > 0)
             {
-                reverse_server_con_state_t *dcstate = qcons_pull(&this_tb->d_cons);
+
+                reverse_server_con_state_t *dcstate = this_tb->d_cons_root.next;
+                remove_connection_d(this_tb, dcstate);
                 dcstate->u = c->line;
                 dcstate->paired = true;
-                dcstate->samethread = true;
                 CSTATE_U_MUT(c) = dcstate;
                 (dcstate->d->chains_state)[state->chain_index_d] = dcstate;
-                this_tb->d_count -= 1;
                 self->up->upStream(self->up, newEstContext(c->line));
+                if (CSTATE_U(c) == NULL)
+                {
+                    destroyContext(c);
+                    return;
+                }
                 self->dw->downStream(self->dw, newEstContext(dcstate->d));
+                if (CSTATE_U(c) == NULL)
+                {
+                    destroyContext(c);
+                    return;
+                }
+
+                dcstate->signal_sent = true;
+                shift_buffer_t *buf = popBuffer(buffer_pools[dcstate->d->tid]);
+                shiftl(buf, 1);
+                writeUI8(buf, 0xFF);
+                context_t *c = newContext(dcstate->d);
+                c->payload = buf;
+                self->dw->downStream(self->dw, c);
             }
             else
             {
-                LOGW("reverseServer: no peer left, waiting tid: %d",c->line->tid);
+                LOGW("reverseServer: no peer left, waiting tid: %d", c->line->tid);
                 reverse_server_con_state_t *ucstate = create_cstate(true, c->line);
                 CSTATE_U_MUT(c) = ucstate;
-                qcons_push(&(this_tb->u_cons), ucstate);
-                this_tb->u_count += 1;
+                add_connection_u(this_tb, ucstate);
             }
             destroyContext(c);
         }
@@ -155,21 +178,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                size_t len = qcons_size(&(this_tb->u_cons));
-                while (len--)
-                {
-                    reverse_server_con_state_t *q_ucs = qcons_pull(&(this_tb->u_cons));
-                    if (q_ucs == ucstate)
-                    {
-                        this_tb->u_count -= 1;
-                        destroy_cstate(ucstate);
-                        break;
-                    }
-                    else
-                        qcons_push(&(this_tb->u_cons), q_ucs);
-                }
-                destroyContext(c);
 
+                remove_connection_u(this_tb, ucstate);
+                destroy_cstate(ucstate);
+                destroyContext(c);
             }
         }
     }
@@ -196,12 +208,6 @@ tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 
     reverse_server_state_t *state = malloc(sizeof(reverse_server_state_t) + (threads_count * sizeof(thread_box_t)));
     memset(state, 0, sizeof(reverse_server_state_t) + (threads_count * sizeof(thread_box_t)));
-
-    for (size_t i = 0; i < threads_count; i++)
-    {
-        state->threads[i].d_cons = qcons_with_capacity(64);
-        state->threads[i].u_cons = qcons_with_capacity(64);
-    }
 
     tunnel_t *t = newTunnel();
     t->state = state;

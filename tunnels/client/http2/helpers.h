@@ -3,7 +3,7 @@
 #include "types.h"
 
 #define MAX_CONCURRENT_STREAMS 0xffffffffu
-#define PING_INTERVAL 2500
+#define PING_INTERVAL 5000
 
 #define STATE(x) ((http2_client_state_t *)((x)->state))
 #define CSTATE(x) ((void *)((((x)->line->chains_state)[self->chain_index])))

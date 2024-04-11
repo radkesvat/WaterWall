@@ -10,9 +10,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         reverse_client_con_state_t *dcstate = CSTATE_D(c);
-        if (!dcstate->first_sent)
+        if (!dcstate->first_sent_u)
         {
-            dcstate->first_sent = true;
+            dcstate->first_sent_u = true;
             c->first = true;
         }
         self->up->upStream(self->up, switchLine(c, dcstate->u));
@@ -54,23 +54,50 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
         if (ucstate->pair_connected)
         {
-            self->dw->downStream(self->dw, switchLine(c, CSTATE_U(c)->d));
+            if (!ucstate->first_sent_d)
+            {
+                ucstate->first_sent_d = true;
+                context_t *turned = switchLine(c, ucstate->d);
+                turned->first = true;
+                self->dw->downStream(self->dw, turned);
+            }
+            else
+                self->dw->downStream(self->dw, switchLine(c, ucstate->d));
         }
         else
         {
             state->unused_cons[tid] -= 1;
             atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
             self->dw->downStream(self->dw, newInitContext(ucstate->d));
-            if (!ISALIVE(c))
+            if (CSTATE_U(c) == NULL)
             {
-                DISCARD_CONTEXT(c);
+                reuseBuffer(buffer_pools[c->line->tid], c->payload);
+                c->payload = NULL;
                 destroyContext(c);
                 return;
             }
             ucstate->pair_connected = true;
-            c->first = true;
-            self->dw->downStream(self->dw, switchLine(c, CSTATE_U(c)->d));
-            initiateConnect(self, tid);
+
+            // first byte is 0xFF a signal from reverse server
+            uint8_t check = 0x0;
+            readUI8(c->payload, &check);
+            assert(check == (unsigned char)0xFF);
+            shiftr(c->payload, 1);
+            if (bufLen(c->payload) <= 0)
+            {
+                initiateConnect(self, tid);
+                reuseBuffer(buffer_pools[c->line->tid], c->payload);
+                c->payload = NULL;
+                destroyContext(c);
+                return;
+            }
+            else
+            {
+                ucstate->first_sent_d = true;
+                c->first = true;
+                self->dw->downStream(self->dw, switchLine(c, ucstate->d));
+                initiateConnect(self, tid);
+            }
         }
     }
     else
@@ -84,27 +111,28 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             if (ucstate->pair_connected)
             {
-                const  unsigned int old_reverse_cons = atomic_fetch_add_explicit(&(state->reverse_cons), -1, memory_order_relaxed);
+                const unsigned int old_reverse_cons = atomic_fetch_add_explicit(&(state->reverse_cons), -1, memory_order_relaxed);
                 LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid], old_reverse_cons - 1);
                 context_t *fc = switchLine(c, ucstate->d);
                 destroy_cstate(ucstate);
                 self->dw->downStream(self->dw, fc);
+                initiateConnect(self, tid);
             }
             else
             {
                 destroy_cstate(ucstate);
-                state->unused_cons[tid] -= 1;
+                if (state->unused_cons[tid] > 0)
+                    state->unused_cons[tid] -= 1;
                 LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                      atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
 
                 destroyContext(c);
             }
-            initiateConnect(self, tid);
         }
         else if (c->est)
         {
             CSTATE_U(c)->established = true;
-            // unused_cons[tid] += 1;
+            state->unused_cons[tid] += 1;
             LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                  atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
             destroyContext(c);

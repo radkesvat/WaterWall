@@ -10,6 +10,54 @@
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
 
+
+static void add_connection_u(thread_box_t *box,
+                           reverse_server_con_state_t *con)
+{
+    con->next = box->u_cons_root.next;
+    box->u_cons_root.next = con;
+    con->prev = &box->u_cons_root;
+    if (con->next)
+    {
+        con->next->prev = con;
+    }
+    box->u_count += 1;
+}
+static void remove_connection_u(thread_box_t *box, reverse_server_con_state_t *con)
+{
+    con->prev->next = con->next;
+    if (con->next)
+    {
+        con->next->prev = con->prev;
+    }
+    box->u_count -= 1;
+}
+
+
+static void add_connection_d(thread_box_t *box,
+                           reverse_server_con_state_t *con)
+{
+    con->next = box->d_cons_root.next;
+    box->d_cons_root.next = con;
+    con->prev = &box->d_cons_root;
+    if (con->next)
+    {
+        con->next->prev = con;
+    }
+    box->d_count += 1;
+}
+static void remove_connection_d(thread_box_t *box, reverse_server_con_state_t *con)
+{
+    con->prev->next = con->next;
+    if (con->next)
+    {
+        con->next->prev = con->prev;
+    }
+    box->d_count -= 1;
+}
+
+
+
 static reverse_server_con_state_t *create_cstate(bool isup, line_t *line)
 {
     reverse_server_con_state_t *cstate = malloc(sizeof(reverse_server_con_state_t));

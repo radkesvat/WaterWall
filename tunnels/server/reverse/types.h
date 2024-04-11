@@ -5,25 +5,23 @@
 
 typedef struct reverse_server_con_state_s
 {
+    struct reverse_server_con_state_s *prev, *next;
     bool paired;
-    bool samethread;
+    bool signal_sent;
     context_queue_t *uqueue;
-
     line_t *u;
     line_t *d;
 
 } reverse_server_con_state_t;
 
-#define i_TYPE qcons, reverse_server_con_state_t *
-#define i_use_cmp
-#include "stc/queue.h"
+
 
 typedef struct thread_box_s
 {
     size_t d_count;
-    qcons d_cons;
     size_t u_count;
-    qcons u_cons;
+    reverse_server_con_state_t d_cons_root;
+    reverse_server_con_state_t u_cons_root;
 
 } thread_box_t;
 
