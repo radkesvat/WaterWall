@@ -6,7 +6,7 @@
 static inline void upStream(tunnel_t *self, context_t *c)
 {
 
-    reverse_client_state_t *state = state;
+    reverse_client_state_t *state = STATE(self);
     if (c->payload != NULL)
     {
         reverse_client_con_state_t *dcstate = CSTATE_D(c);
@@ -45,7 +45,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
-    reverse_client_state_t *state = state;
+    reverse_client_state_t *state = STATE(self);
     unsigned int tid = c->line->tid;
 
     if (c->payload != NULL)
