@@ -58,6 +58,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
+            state->unused_cons[tid] -= 1;
+            atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
             self->dw->downStream(self->dw, newInitContext(ucstate->d));
             if (!ISALIVE(c))
             {
@@ -67,8 +69,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             ucstate->pair_connected = true;
             c->first = true;
-            state->unused_cons[tid] -= 1;
-            atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
             self->dw->downStream(self->dw, switchLine(c, CSTATE_U(c)->d));
             initiateConnect(self, tid);
         }

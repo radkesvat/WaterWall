@@ -59,7 +59,7 @@ static void before_connect(hevent_t *ev)
 
 static void initiateConnect(tunnel_t *t, int tid)
 {
-    if (STATE(t)->unused_cons[tid] >= STATE(t)->min_unused_cons)
+    if (STATE(t)->unused_cons[tid] >= STATE(t)->connection_per_thread)
         return;
     STATE(t)->unused_cons[tid] += 1;
 
