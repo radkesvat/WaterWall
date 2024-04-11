@@ -178,7 +178,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-
                 remove_connection_u(this_tb, ucstate);
                 destroy_cstate(ucstate);
                 destroyContext(c);

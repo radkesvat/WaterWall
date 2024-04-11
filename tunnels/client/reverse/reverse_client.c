@@ -116,7 +116,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 context_t *fc = switchLine(c, ucstate->d);
                 destroy_cstate(ucstate);
                 self->dw->downStream(self->dw, fc);
-                initiateConnect(self, tid);
             }
             else
             {
@@ -125,6 +124,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     state->unused_cons[tid] -= 1;
                 LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                      atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+                initiateConnect(self, tid);
 
                 destroyContext(c);
             }
