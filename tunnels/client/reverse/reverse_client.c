@@ -66,9 +66,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            state->unused_cons[tid] -= 1;
+            ucstate->pair_connected = true;
+            if (state->unused_cons[tid] > 0)
+                state->unused_cons[tid] -= 1;
             atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
             self->dw->downStream(self->dw, newInitContext(ucstate->d));
+            
             if (CSTATE_U(c) == NULL)
             {
                 reuseBuffer(buffer_pools[c->line->tid], c->payload);
@@ -76,7 +79,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
-            ucstate->pair_connected = true;
 
             // first byte is 0xFF a signal from reverse server
             uint8_t check = 0x0;
