@@ -82,8 +82,8 @@ endif()
 # add libhv
 CPMAddPackage(
     NAME libhv
-    VERSION 1.3.2
-    GITHUB_REPOSITORY ithewei/libhv
+    GIT_TAG HEAD
+    GITHUB_REPOSITORY radkesvat/libhv
     OPTIONS 
     "WITH_OPENSSL OFF"
     "WITH_EVPP OFF"
