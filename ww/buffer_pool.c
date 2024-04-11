@@ -87,7 +87,7 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
 #ifdef DEBUG
     state->in_use -= 1;
 #endif
-    reset(b);
+    reset(b,DEFAULT_BUFFER_SIZE);
     state->available[state->len] = b;
     ++(state->len);
     if (state->len > BUFFERPOOL_ROW_WIDTH + (BUFFERPOOL_ROW_WIDTH / 2))

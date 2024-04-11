@@ -12,57 +12,58 @@
 
 struct shift_buffer_s
 {
-    size_t lenpos;
-    size_t curpos;
-    size_t cap; // half of full cap
-    char *pbuf;
+    unsigned int lenpos;
+    unsigned int curpos;
+    unsigned int cap; // half of full cap
+    unsigned int full_cap; 
     unsigned int *refc;
+    char *pbuf;
 };
 typedef struct shift_buffer_s shift_buffer_t;
 
 void destroyShiftBuffer(shift_buffer_t *self);
 
-shift_buffer_t *newShiftBuffer(size_t pre_cap);
+shift_buffer_t *newShiftBuffer(unsigned int pre_cap);
 shift_buffer_t *newShadowShiftBuffer(shift_buffer_t *owner);
 
-void reset(shift_buffer_t *self);
+void reset(shift_buffer_t *self,unsigned int cap);
 
-void detachWithSize(shift_buffer_t *self, size_t newsize);
-void expand(shift_buffer_t *self, size_t increase);
+void detachWithSize(shift_buffer_t *self, unsigned int newsize);
+void expand(shift_buffer_t *self, unsigned int increase);
 
 //  how many bytes we can fill without realloc
-inline size_t lCap(shift_buffer_t *self) { return self->curpos; }
-inline size_t rCap(shift_buffer_t *self) { return (self->cap * 2 - self->curpos); }
-inline void shiftl(shift_buffer_t *self, size_t bytes)
+inline unsigned int lCap(shift_buffer_t *self) { return self->curpos; }
+inline unsigned int rCap(shift_buffer_t *self) { return (self->full_cap - self->curpos); }
+inline void shiftl(shift_buffer_t *self, unsigned int bytes)
 {
     if (lCap(self) < bytes)
         expand(self, (bytes - lCap(self)));
     self->curpos -= bytes;
 }
 
-inline void shiftr(shift_buffer_t *self, size_t bytes)
+inline void shiftr(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)
         expand(self, (bytes - rCap(self)));
     self->curpos += bytes;
 }
 
-inline size_t bufLen(shift_buffer_t *self) { return self->lenpos - self->curpos; }
+inline unsigned int bufLen(shift_buffer_t *self) { return self->lenpos - self->curpos; }
 
-inline void setLen(shift_buffer_t *self, size_t bytes)
+inline void setLen(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)
         expand(self, (bytes - rCap(self)));
     self->lenpos = self->curpos + bytes;
 }
 
-inline void reserve(shift_buffer_t *self, size_t bytes)
+inline void reserve(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)
         expand(self, (bytes - rCap(self)));
 }
 
-inline void consume(shift_buffer_t *self, size_t bytes)
+inline void consume(shift_buffer_t *self, unsigned int bytes)
 {
     setLen(self, bufLen(self) - bytes);
 }
@@ -77,7 +78,7 @@ inline unsigned char *rawBufMut(shift_buffer_t *self)
     return (void*)&(self->pbuf[self->curpos]);
 }
 
-inline void writeRaw(shift_buffer_t *restrict self, const void *restrict buffer, size_t len)
+inline void writeRaw(shift_buffer_t *restrict self, const void *restrict buffer, unsigned int len)
 {
     memcpy(rawBufMut(self), buffer, len);
 }
