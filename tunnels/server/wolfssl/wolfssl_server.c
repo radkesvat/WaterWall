@@ -26,6 +26,7 @@ typedef struct wssl_server_state_s
     char *alpns;
     tunnel_t *fallback;
     int fallback_delay;
+    bool anti_tit; // solve tls in tls using paddings
 
 } wssl_server_state_t;
 
@@ -48,6 +49,7 @@ typedef struct wssl_server_con_state_s
 
     bool first_sent;
     bool init_sent;
+    int reply_sent_tit;
 
 } wssl_server_con_state_t;
 
@@ -469,12 +471,12 @@ disconnect:;
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
+    wssl_server_state_t *state = STATE(self);
     wssl_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        // self->dw->downStream(self->dw, ctx);
-        // char buf[DEFAULT_BUF_SIZE];
+
         enum sslstatus status;
 
         if (!cstate->handshake_completed)
@@ -662,6 +664,12 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
         state->fallback = next_node->instance;
     }
     free(fallback_node);
+
+    getBoolFromJsonObjectOrDefault(&(state->anti_tit), settings, "anti-tls-in-tls", false);
+    if (state->anti_tit)
+    {
+        LOGF("WolfsslServer: anti tls in tls is not currently supported for wolfssl, use other ssl backend");
+    }
 
     ssl_param->verify_peer = 0; // no mtls
     ssl_param->endpoint = SSL_SERVER;

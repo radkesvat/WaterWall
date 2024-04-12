@@ -24,6 +24,7 @@ typedef struct oss_server_state_s
     char *alpns;
     tunnel_t *fallback;
     int fallback_delay;
+    bool anti_tit; // solve tls in tls using paddings
 
 } oss_server_state_t;
 
@@ -46,6 +47,7 @@ typedef struct oss_server_con_state_s
 
     bool first_sent;
     bool init_sent;
+    int reply_sent_tit;
 
 } oss_server_con_state_t;
 
@@ -129,6 +131,12 @@ static enum sslstatus get_sslstatus(SSL *ssl, int n)
     default:
         return SSLSTATUS_FAIL;
     }
+}
+
+static size_t padding_decision_cb(SSL *ssl, int type, size_t len, void *arg)
+{
+    oss_server_con_state_t *cstate = arg;
+    return cstate->reply_sent_tit < 10 ? (16 * 200) : 0;
 }
 
 static void cleanup(tunnel_t *self, context_t *c)
@@ -420,6 +428,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->fallback_buf = newBufferStream(buffer_pools[c->line->tid]);
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
+            if (state->anti_tit)
+            {
+                if (1 != SSL_set_record_padding_callback(cstate->ssl, padding_decision_cb))
+                    LOGW("OpensslServer: Could not set ssl padding");
+                SSL_set_record_padding_callback_arg(cstate->ssl, cstate);
+            }
             destroyContext(c);
         }
         else if (c->fin)
@@ -465,12 +479,20 @@ disconnect:;
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
+    oss_server_state_t *state = STATE(self);
     oss_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        // self->dw->downStream(self->dw, ctx);
-        // char buf[DEFAULT_BUF_SIZE];
+        if (state->anti_tit && isAuthenticated(c->line))
+        {
+            // if (cstate->reply_sent_tit <= 1)
+                cstate->reply_sent_tit += 1;
+            // this crashes ... openssl said this can be set to null again but seems not :(
+            // if (1 != SSL_set_record_padding_callback(cstate->ssl, NULL))
+            //     LOGW("OpensslServer: Could not set ssl padding");
+        }
+
         enum sslstatus status;
 
         if (!cstate->handshake_completed)
@@ -657,6 +679,8 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         state->fallback = next_node->instance;
     }
     free(fallback_node);
+
+    getBoolFromJsonObjectOrDefault(&(state->anti_tit), settings, "anti-tls-in-tls", false);
 
     ssl_param->verify_peer = 0; // no mtls
     ssl_param->endpoint = SSL_SERVER;
