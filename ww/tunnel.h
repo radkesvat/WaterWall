@@ -24,6 +24,8 @@ typedef struct line_s
     uint16_t tid;
     uint16_t refc;
     uint16_t lcid;
+    uint8_t auth_cur;
+    uint8_t auth_max;
     void *chains_state[];
 
 } line_t;
@@ -167,3 +169,8 @@ static inline line_t *lockLine(line_t *line)
     return line;
 }
 static inline void unLockLine(line_t *line) { destroyLine(line); }
+
+static inline void markAuthenticationNodePresence(line_t *line) { line->auth_max += 1; }
+static inline void markAuthenticated(line_t *line) { line->auth_cur += 1; }
+static inline bool isAuthenticated(line_t *line) { return line->auth_cur > 0; }
+static inline bool isFullyAuthenticated(line_t *line) { return line->auth_cur >=  line->auth_max; }
