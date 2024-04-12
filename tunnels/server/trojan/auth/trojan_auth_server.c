@@ -123,6 +123,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     }
                     LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
                     cstate->authenticated = true;
+                    markAuthenticated(c->line);
                     context_t *init_ctx = newInitContext(c->line);
                     init_ctx->src_io = c->src_io;
                     cstate->init_sent = true;
@@ -154,6 +155,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = malloc(sizeof(trojan_auth_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_auth_server_con_state_t));
             trojan_auth_server_con_state_t *cstate = CSTATE(c);
+            markAuthenticationNodePresence(c->line);
             destroyContext(c);
         }
         else if (c->fin)
