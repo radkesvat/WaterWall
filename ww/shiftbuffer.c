@@ -78,8 +78,8 @@ void reset(shift_buffer_t *self, unsigned int cap)
 
     if (self->cap != cap)
     {
-        unsigned int real_cap = cap * 2;
         free(self->pbuf);
+        unsigned int real_cap = cap * 2;
         self->pbuf = malloc(real_cap);
         self->cap = cap;
         self->full_cap = real_cap;
@@ -110,6 +110,8 @@ void expand(shift_buffer_t *self, unsigned int increase)
         unsigned int dif = (new_realcap / 2) - self->cap;
         if (keep)
             memcpy(&(self->pbuf[dif]), &(old_buf[0]), realcap);
+
+        free(old_buf);
         self->curpos += dif;
         self->lenpos += dif;
         self->cap = new_realcap / 2;
@@ -122,7 +124,13 @@ void expand(shift_buffer_t *self, unsigned int increase)
         // #ifdef DEBUG
         //     LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase, new_realcap);
         // #endif
-        self->pbuf = keep ? realloc(self->pbuf, new_realcap) : malloc(new_realcap);
+        if (keep)
+            self->pbuf = realloc(self->pbuf, new_realcap);
+        else
+        {
+            free(self->pbuf);
+            self->pbuf = malloc(new_realcap);
+        }
         unsigned int dif = (new_realcap / 2) - self->cap;
         self->curpos += dif;
         self->lenpos += dif;
