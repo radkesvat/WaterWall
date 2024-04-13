@@ -16,12 +16,20 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (CSTATE(x) != NULL)
 
+typedef struct
+{
+    char *name;
+    int name_length;
+    tunnel_t *next;
+} alpn_item_t;
+
 typedef struct oss_server_state_s
 {
-
     ssl_ctx_t ssl_context;
+    alpn_item_t *alpns;
+    int alpns_length;
+
     // settings
-    char *alpns;
     tunnel_t *fallback;
     int fallback_delay;
     bool anti_tit; // solve tls in tls using paddings
@@ -65,48 +73,25 @@ static int on_alpn_select(SSL *ssl,
                           void *arg)
 {
     assert(inlen != 0);
-
+    oss_server_state_t *state = arg;
     unsigned int offset = 0;
-    int http_level = 0;
-
     while (offset < inlen)
     {
-        // LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        if (in[offset] == 2 && http_level < 2)
+        LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
+        for (int i = 0; i < state->alpns_length; i++)
         {
-            if (strncmp((const char *)&(in[1 + offset]), "h2", 2) == 0)
+            if (0 == strncmp((const char *)&(in[1 + offset]),  state->alpns[i].name,
+            state->alpns[i].name_length < in[offset] ? state->alpns[i].name_length : in[offset]))
             {
-                http_level = 2;
                 *out = &(in[1 + offset]);
                 *outlen = in[0 + offset];
+                return SSL_TLSEXT_ERR_OK;
             }
-        }
-        else if (in[offset] == 8 && http_level < 1)
-        {
-            if (strncmp((const char *)&(in[1 + offset]), "http/1.1", 8) == 0)
-            {
-                http_level = 1;
-                *out = &(in[1 + offset]);
-                *outlen = in[0 + offset];
-            }
+
         }
 
         offset = offset + 1 + in[offset];
     }
-    // TODO alpn paths
-    // TODO check if nginx behaviour is different
-    if (http_level > 0)
-    {
-        return SSL_TLSEXT_ERR_OK;
-    }
-    else
-        return SSL_TLSEXT_ERR_ALERT_FATAL;
-
-    // selecting first alpn -_-
-    // *out = in + 1;
-    // *outlen = in[0];
-    // return SSL_TLSEXT_ERR_OK;
-
     return SSL_TLSEXT_ERR_NOACK;
 }
 
@@ -447,7 +432,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     state->fallback->upStream(state->fallback, c);
                 }
                 else
+                {
                     cleanup(self, c);
+                    destroyContext(c);
+                }
             }
             else if (CSTATE(c)->init_sent)
             {
@@ -487,7 +475,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         if (state->anti_tit && isAuthenticated(c->line))
         {
             // if (cstate->reply_sent_tit <= 1)
-                cstate->reply_sent_tit += 1;
+            cstate->reply_sent_tit += 1;
             // this crashes ... openssl said this can be set to null again but seems not :(
             // if (1 != SSL_set_record_padding_callback(cstate->ssl, NULL))
             //     LOGW("OpensslServer: Could not set ssl padding");
@@ -650,6 +638,33 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         return NULL;
     }
 
+    const cJSON *aplns_array = cJSON_GetObjectItemCaseSensitive(settings, "alpns");
+    if (cJSON_IsArray(aplns_array))
+    {
+        size_t len = cJSON_GetArraySize(aplns_array);
+        state->alpns = malloc(len * sizeof(alpn_item_t));
+        memset(state->alpns, 0, len * sizeof(alpn_item_t));
+
+        int i = 0;
+        const cJSON *alpn_item;
+        // multi port given
+        cJSON_ArrayForEach(alpn_item, aplns_array)
+        {
+            if (cJSON_IsObject(alpn_item))
+            {
+                if (!getStringFromJsonObject(&(state->alpns[i].name), alpn_item, "value"))
+                {
+                    LOGF("JSON Error: OpensslServer->settigs->alpns[%d]->value (object field) : The data was empty or invalid", i);
+                    return NULL;
+                }
+                state->alpns[i].name_length = strlen(state->alpns[i].name);
+                // todo route next parse
+                i++;
+            }
+        }
+        state->alpns_length = i;
+    }
+
     char *fallback_node = NULL;
     if (!getStringFromJsonObject(&fallback_node, settings, "fallback"))
     {
@@ -679,7 +694,6 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         state->fallback = next_node->instance;
     }
     free(fallback_node);
-
     getBoolFromJsonObjectOrDefault(&(state->anti_tit), settings, "anti-tls-in-tls", false);
 
     ssl_param->verify_peer = 0; // no mtls
@@ -699,7 +713,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    SSL_CTX_set_alpn_select_cb(state->ssl_context, on_alpn_select, NULL);
+    SSL_CTX_set_alpn_select_cb(state->ssl_context, on_alpn_select, state);
 
     tunnel_t *t = newTunnel();
     t->state = state;
