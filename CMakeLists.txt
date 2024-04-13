@@ -9,10 +9,10 @@ set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  include(CheckIPOSupported)
-  check_ipo_supported()
   cmake_policy(SET CMP0069 NEW) 
   set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+  include(CheckIPOSupported)
+  check_ipo_supported()
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
   if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -20,6 +20,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(CMAKE_CXX_COMPILE_OPTIONS_IPO  "-flto")
   endif()
 endif()
+
+
 
 
 # set(CMAKE_VERBOSE_MAKEFILE ON CACHE STRING "my configurable string" FORCE)
