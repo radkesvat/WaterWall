@@ -2,7 +2,6 @@
 #include "types.h"
 #include "helpers.h"
 
-#define MAX_CHUNK_SIZE 8100
 #define DEFAULT_CONCURRENCY 50 // 50 cons will be muxed into 1
 
 static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)

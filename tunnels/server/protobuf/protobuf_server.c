@@ -11,7 +11,7 @@
 // #include "packet.pb.h"
 #include "uleb128.h"
 
-#define MAX_PACKET_SIZE 65535
+#define MAX_PACKET_SIZE 65536 * 16
 
 #define STATE(x) ((protobuf_server_state_t *)((x)->state))
 #define CSTATE(x) ((protobuf_server_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
