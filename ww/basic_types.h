@@ -116,6 +116,8 @@ typedef struct socket_context_s
     enum socket_address_cmd acmd;
     enum socket_address_type atype;
     char *domain;
+    unsigned int *domain_len;
+    bool domain_is_constant_memory;
     bool resolved;
     sockaddr_u addr;
     

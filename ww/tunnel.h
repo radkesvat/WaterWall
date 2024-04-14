@@ -5,7 +5,7 @@
 #include "hv/hloop.h"
 #include "buffer_pool.h"
 
-#define MAX_CHAIN_LEN 50
+#define MAX_CHAIN_LEN 30
 
 #define DISCARD_CONTEXT(x)                                   \
     do                                                       \
@@ -15,27 +15,28 @@
         x->payload = NULL;                                   \
     } while (0)
 
+// no memset 0
 typedef struct line_s
 {
     hloop_t *loop;
-    socket_context_t src_ctx;
-    socket_context_t dest_ctx;
-
     uint16_t tid;
     uint16_t refc;
     uint16_t lcid;
     uint8_t auth_cur;
     uint8_t auth_max;
+
+    socket_context_t src_ctx;
+    socket_context_t dest_ctx;
     void *chains_state[];
 
 } line_t;
 
+// no memset 0
 typedef struct context_s
 {
-    hio_t *src_io;
     line_t *line;
+    hio_t *src_io;
     shift_buffer_t *payload;
-
     int fd;
     bool init;
     bool est;
@@ -72,14 +73,17 @@ inline line_t *newLine(uint16_t tid)
 {
     size_t size = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
     line_t *result = malloc(size);
-    memset(result, 0, size);
+    // memset(result, 0, size);
     result->tid = tid;
     result->refc = 1;
     result->lcid = MAX_CHAIN_LEN - 1;
+    result->auth_cur = 0;
+    result->auth_max = 0;
     result->loop = loops[tid];
-    result->loop = loops[tid];
-    result->dest_ctx.addr.sa.sa_family = AF_INET;
-    result->src_ctx.addr.sa.sa_family = AF_INET;
+    result->chains_state = {0};
+    // to set a port we need to know the AF family, default v4
+    result->dest_ctx.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}};
+    result->src_ctx.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}};
     return result;
 }
 inline size_t reserveChainStateIndex(line_t *l)
@@ -101,24 +105,26 @@ inline void destroyLine(line_t *l)
     {
         assert(l->chains_state[i] == NULL);
     }
+
+    if (l->dest_ctx.domain != NULL && !l->dest_ctx.domain_is_constant_memory)
+        assert(l->dest_ctx.domain == NULL);
+
 #endif
-    if (l->dest_ctx.domain != NULL)
-        free(l->dest_ctx.domain);
+
+    // if (l->dest_ctx.domain != NULL && !l->dest_ctx.domain_is_constant_memory)
+    //     free(l->dest_ctx.domain);
     free(l);
 }
 inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
-
     destroyLine(c->line);
-
     free(c);
 }
 inline context_t *newContext(line_t *line)
 {
     context_t *new_ctx = malloc(sizeof(context_t));
-    memset(new_ctx, 0, sizeof(context_t));
-    new_ctx->line = line;
+    *new_ctx = (context_t){.line = line}; // yes, everything else is zero
     line->refc += 1;
     return new_ctx;
 }
@@ -173,4 +179,4 @@ static inline void unLockLine(line_t *line) { destroyLine(line); }
 static inline void markAuthenticationNodePresence(line_t *line) { line->auth_max += 1; }
 static inline void markAuthenticated(line_t *line) { line->auth_cur += 1; }
 static inline bool isAuthenticated(line_t *line) { return line->auth_cur > 0; }
-static inline bool isFullyAuthenticated(line_t *line) { return line->auth_cur >=  line->auth_max; }
+static inline bool isFullyAuthenticated(line_t *line) { return line->auth_cur >= line->auth_max; }

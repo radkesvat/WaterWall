@@ -212,7 +212,7 @@ void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
         if ((*source)->domain != NULL)
         {
             dest->domain = (*source)->domain;
-            (*source)->domain = NULL;
+            // (*source)->domain = NULL; // this copies the pointer and the caller is awair
         }
 
         break;

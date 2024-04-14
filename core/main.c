@@ -28,7 +28,8 @@ int main(int argc, char **argv)
         exit(1);
     }
     parseCoreSettings(core_file_content);
-
+    free(core_file_content);
+    
     //  [Runtime setup]
     {
         hv_mkdir_p(getCoreSettings()->log_path);
@@ -72,7 +73,7 @@ int main(int argc, char **argv)
 
             if (cfile == NULL)
             {
-                LOGF("Core: could not read core file \"%s\" ", *k.ref);
+                LOGF("Core: could not read file \"%s\" ", *k.ref);
                 exit(1);
             }
 
