@@ -1,36 +1,36 @@
 #include "socket_manager.h"
-#include "ww.h"
-#include "utils/procutils.h"
 #include "hv/hthread.h"
 #include "loggers/network_logger.h"
+#include "utils/procutils.h"
+#include "ww.h"
 #include <signal.h>
 
-#define i_key socket_filter_t *
-#define i_type filters_t
-#define i_use_cmp // enable sorting/searhing using default <, == operators
+#define i_key     socket_filter_t *
+#define i_type    filters_t
+#define i_use_cmp // NOLINT
 #include "stc/vec.h"
 
-#define SUPOPRT_V6 false
+#define SUPOPRT_V6      false
 #define SO_ORIGINAL_DST 80
-#define FILTERS_LEVELS 4
+#define FILTERS_LEVELS  4
 
 typedef struct socket_manager_s
 {
     hthread_t accept_thread;
-    hmutex_t mutex;
+    hmutex_t  mutex;
     filters_t filters[FILTERS_LEVELS];
-    size_t last_round_tindex;
-    bool iptables_installed;
-    bool ip6tables_installed;
-    bool lsof_installed;
-    bool iptable_cleaned;
-    bool iptables_used;
+    uint16_t  last_round_tindex;
+    bool      iptables_installed;
+    bool      ip6tables_installed;
+    bool      lsof_installed;
+    bool      iptable_cleaned;
+    bool      iptables_used;
 
 } socket_manager_state_t;
 
 static socket_manager_state_t *state = NULL;
 
-static bool redirect_port_range_tcp(unsigned int pmin, unsigned int pmax, unsigned int to)
+static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
     char b[300];
 #if SUPOPRT_V6
@@ -42,7 +42,7 @@ static bool redirect_port_range_tcp(unsigned int pmin, unsigned int pmax, unsign
     return execCmd(b).exit_code == 0;
 }
 
-static bool redirect_port_range_udp(unsigned int pmin, unsigned int pmax, unsigned int to)
+static bool redirectPortRangeUdp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
     char b[300];
 #if SUPOPRT_V6
@@ -52,7 +52,7 @@ static bool redirect_port_range_udp(unsigned int pmin, unsigned int pmax, unsign
     sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
     return execCmd(b).exit_code == 0;
 }
-static bool redirect_port_tcp(unsigned int port, unsigned int to)
+static bool redirectPortTcp(unsigned int port, unsigned int to)
 {
     char b[300];
 #if SUPOPRT_V6
@@ -63,7 +63,7 @@ static bool redirect_port_tcp(unsigned int port, unsigned int to)
     return execCmd(b).exit_code == 0;
 }
 
-static bool redirect_port_udp(unsigned int port, unsigned int to)
+static bool redirectPortUdp(unsigned int port, unsigned int to)
 {
     char b[300];
 #if SUPOPRT_V6
@@ -74,7 +74,7 @@ static bool redirect_port_udp(unsigned int port, unsigned int to)
     return execCmd(b).exit_code == 0;
 }
 
-static bool reset_iptables()
+static bool resetIptables()
 {
     LOGD("SocketManager: clearing iptables nat rules");
 #if SUPOPRT_V6
@@ -84,56 +84,61 @@ static bool reset_iptables()
 
     return execCmd("iptables -t nat -F").exit_code == 0 && execCmd("iptables -t nat -X").exit_code == 0;
 }
-static void exit_hook()
+static void exitHook()
 {
     if (state->iptables_used)
-        reset_iptables();
+    {
+        resetIptables();
+    }
 }
-static void sig_handler(int signum)
+static void signalHandler(int signum)
 {
     signal(signum, SIG_DFL);
     if (signum == SIGTERM || signum == SIGINT)
     {
-        exit(0); // exit hook gets called
+        exit(0); // exit hook gets called NOLINT
     }
 }
 
-int checkIPRange(bool ipver6, const struct in6_addr testAddr, const struct in6_addr base_addr, const struct in6_addr subnet_mask)
+int checkIPRange(bool ipver6, const struct in6_addr test_addr, const struct in6_addr base_addr,
+                 const struct in6_addr subnet_mask)
 {
-    struct in6_addr resultAddr;
+    struct in6_addr result_addr;
 
     if (ipver6)
     {
         // IPv6 addresses
         for (int i = 0; i < 16; i++)
         {
-            resultAddr.s6_addr[i] = base_addr.s6_addr[i] & subnet_mask.s6_addr[i];
+            result_addr.s6_addr[i] = base_addr.s6_addr[i] & subnet_mask.s6_addr[i];
         }
-        if (memcmp(&testAddr, &resultAddr, sizeof(struct in6_addr)) == 0)
+        if (memcmp(&test_addr, &result_addr, sizeof(struct in6_addr)) == 0)
+        {
             return 1;
-        else
-            return 0;
+        }
+        return 0;
     }
-    else
+
+    // IPv4 addresses
+    uint32_t base_addr_32 = ntohl(*((uint32_t *) base_addr.s6_addr));
+    uint32_t test_addr_32 = ntohl(*((uint32_t *) test_addr.s6_addr));
+    uint32_t mask_addr32  = ntohl(*((uint32_t *) subnet_mask.s6_addr));
+
+    uint32_t result_addr32 = base_addr_32 & mask_addr32;
+
+    if ((test_addr_32 & mask_addr32) == result_addr32)
     {
-        // IPv4 addresses
-        uint32_t baseAddr32 = ntohl(*((uint32_t *)base_addr.s6_addr));
-        uint32_t testAddr32 = ntohl(*((uint32_t *)testAddr.s6_addr));
-        uint32_t mask_addr32 = ntohl(*((uint32_t *)subnet_mask.s6_addr));
-
-        uint32_t result_addr32 = baseAddr32 & mask_addr32;
-
-        if ((testAddr32 & mask_addr32) == result_addr32)
-            return 1;
-        else
-            return 0;
+        return 1;
     }
+
+    return 0;
 }
-int parseIPWithSubnetMask(const char *input, struct in6_addr *base_addr, struct in6_addr *subnet_mask)
+int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask)
 {
     char *slash;
-    char *ip_part, *subnet_part;
-    char input_copy[strlen(input) + 1];
+    char *ip_part;
+    char *subnet_part;
+    char  input_copy[strlen(input) + 1];
     strcpy(input_copy, input);
 
     slash = strchr(input_copy, '/');
@@ -143,8 +148,8 @@ int parseIPWithSubnetMask(const char *input, struct in6_addr *base_addr, struct 
         return -1;
     }
 
-    *slash = '\0';
-    ip_part = input_copy;
+    *slash      = '\0';
+    ip_part     = input_copy;
     subnet_part = slash + 1;
 
     if (inet_pton(AF_INET, ip_part, base_addr) == 1)
@@ -159,7 +164,8 @@ int parseIPWithSubnetMask(const char *input, struct in6_addr *base_addr, struct 
         uint32_t mask;
         if (sizeof(unsigned long long) == 8)
         {
-            mask = htonl(0xFFFFFFFF & ((unsigned long long)0x00000000FFFFFFFF << (unsigned long long)(32 - prefix_length)));
+            mask = htonl(0xFFFFFFFF &
+                         ((unsigned long long) 0x00000000FFFFFFFF << (unsigned long long) (32 - prefix_length)));
         }
         else
         {
@@ -168,7 +174,9 @@ int parseIPWithSubnetMask(const char *input, struct in6_addr *base_addr, struct 
                 mask = htonl(0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length)));
             }
             else
+            {
                 mask = 0;
+            }
         }
         struct in_addr mask_addr = {.s_addr = mask};
         memcpy(subnet_mask, &mask_addr, 4);
@@ -187,8 +195,8 @@ int parseIPWithSubnetMask(const char *input, struct in6_addr *base_addr, struct 
         int i;
         for (i = 0; i < 16; i++)
         {
-            int bits = prefix_length >= 8 ? 8 : prefix_length;
-            ((uint8_t *)subnet_mask)[i] = bits == 0 ? 0 : (0xFF << (8 - bits));
+            int bits                     = prefix_length >= 8 ? 8 : prefix_length;
+            ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (0xFF << (8 - bits));
             prefix_length -= bits;
         }
         // struct in6_addr mask_addr;
@@ -208,143 +216,251 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
 {
 
     socket_filter_t *filter = malloc(sizeof(socket_filter_t));
-    filter->tunnel = tunnel;
-    filter->option = option;
-    filter->cb = cb;
-    filter->listen_io = NULL;
-    unsigned int pirority = 0;
+    filter->tunnel          = tunnel;
+    filter->option          = option;
+    filter->cb              = cb;
+    filter->listen_io       = NULL;
+    unsigned int pirority   = 0;
     if (option.multiport_backend == multiport_backend_nothing)
+    {
         pirority++;
+    }
     if (option.white_list_raddr != NULL)
+    {
         pirority++;
+    }
     if (option.black_list_raddr != NULL)
+    {
         pirority++;
+    }
 
     hmutex_lock(&(state->mutex));
     filters_t_push(&(state->filters[pirority]), filter);
     hmutex_unlock(&(state->mutex));
 }
 
-static void on_accept(hio_t *io, bool tcp, uint16_t socket_local_port)
+static void distributeSocket(hio_t *io, socket_filter_t *filter, uint16_t local_port, bool no_delay)
 {
+    socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
+    result->real_localport         = local_port;
 
+    if (no_delay)
+    {
+        tcp_nodelay(hio_fd(io), 1);
+    }
+
+    hio_detach(io);
+    hloop_t *worker_loop = loops[state->last_round_tindex];
+    hevent_t ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.loop        = worker_loop;
+    ev.cb          = filter->cb;
+    result->tid    = state->last_round_tindex;
+    result->io     = io;
+    result->tunnel = filter->tunnel;
+    ev.userdata    = result;
+    state->last_round_tindex++;
+    if (state->last_round_tindex >= workers_count)
+    {
+        state->last_round_tindex = 0;
+    }
+    hloop_post_event(worker_loop, &ev);
+}
+static void noSocketConsumerFound(hio_t *io)
+{
+    char localaddrstr[SOCKADDR_STRLEN] = {0};
+    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+
+    LOGE("SocketManager: Couldnot find consumer for socket FD:%x [%s] <= [%s]", (int) hio_fd(io),
+         SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+    hio_close(io);
+}
+static bool checkIpIsWhiteList(sockaddr_u *paddr, char **white_list_raddr)
+{
+    bool  matches = false;
+    int   i       = 0;
+    char *cur     = white_list_raddr[i];
+    do
+    {
+        struct in6_addr ip_strbuf     = {0};
+        struct in6_addr mask_stripbuf = {0};
+        parseIPWithSubnetMask(&ip_strbuf, cur, &mask_stripbuf);
+        struct in6_addr test_addr = {0};
+        if (paddr->sa.sa_family == AF_INET)
+        {
+            memcpy(&test_addr, &paddr->sin.sin_addr, 4);
+            matches = checkIPRange(false, test_addr, ip_strbuf, mask_stripbuf);
+        }
+        else
+        {
+            memcpy(&test_addr, &paddr->sin6.sin6_addr, 16);
+            matches = checkIPRange(true, test_addr, ip_strbuf, mask_stripbuf);
+        }
+        if (matches)
+        {
+            return true;
+        }
+        i++;
+    } while ((cur = white_list_raddr[i]));
+
+    return false;
+}
+
+static void distributeTcpSocket(hio_t *io, uint16_t local_port)
+{
     hmutex_lock(&(state->mutex));
-    sockaddr_u *laddr = (sockaddr_u *)hio_localaddr(io);
-    sockaddr_u *paddr = (sockaddr_u *)hio_peeraddr(io);
+    sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
 
     for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
-            socket_filter_t *filter = *(k.ref);
-            socket_filter_option_t option = filter->option;
-            uint16_t port_min = option.port_min;
-            uint16_t port_max = option.port_max;
-
-            // if (option.proto == socket_protocol_tcp)
+            socket_filter_t       *filter   = *(k.ref);
+            socket_filter_option_t option   = filter->option;
+            uint16_t               port_min = option.port_min;
+            uint16_t               port_max = option.port_max;
 
             // single port or multi port per socket
-            if (port_min <= socket_local_port && port_max >= socket_local_port)
+            if (port_min > local_port || port_max < local_port)
             {
-                if (option.white_list_raddr != NULL)
-                {
-                    bool matches = false;
-                    int i = 0;
-                    char *cur = option.white_list_raddr[i];
-                    do
-                    {
-                        struct in6_addr ip_strbuf = {0};
-                        struct in6_addr mask_stripbuf = {0};
-                        parseIPWithSubnetMask(cur, &ip_strbuf, &mask_stripbuf);
-                        struct in6_addr testAddr = {0};
-                        if (paddr->sa.sa_family == AF_INET)
-                        {
-                            memcpy(&testAddr, &paddr->sin.sin_addr, 4);
-                            matches = checkIPRange(false, testAddr, ip_strbuf, mask_stripbuf);
-                        }
-                        else
-                        {
-                            memcpy(&testAddr, &paddr->sin6.sin6_addr, 16);
-                            matches = checkIPRange(true, testAddr, ip_strbuf, mask_stripbuf);
-                        }
-                        if (matches)
-                            break;
-
-                        i++;
-                    } while ((cur = option.white_list_raddr[i]));
-                    if (!matches)
-                        continue;
-                }
-
-                socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
-                result->real_localport = socket_local_port;
-
-                if (option.no_delay)
-                {
-                    tcp_nodelay(hio_fd(io), 1);
-                }
-
-                hio_detach(io);
-
-                hloop_t *worker_loop = loops[state->last_round_tindex];
-
-                hevent_t ev;
-                memset(&ev, 0, sizeof(ev));
-                ev.loop = worker_loop;
-                ev.cb = filter->cb;
-
-                result->tid = state->last_round_tindex;
-                result->io = io;
-                result->tunnel = filter->tunnel;
-                ev.userdata = result;
-                state->last_round_tindex++;
-                if (state->last_round_tindex >= threads_count)
-                    state->last_round_tindex = 0;
-                hloop_post_event(worker_loop, &ev);
-                hmutex_unlock(&(state->mutex));
-
-                return;
+                continue;
             }
+            if (option.white_list_raddr != NULL)
+            {
+                if (! checkIpIsWhiteList(paddr, option.white_list_raddr))
+                {
+                    continue;
+                }
+            }
+
+            distributeSocket(io, filter, local_port, option.no_delay);
+            hmutex_unlock(&(state->mutex));
+            return;
         }
     }
 
     hmutex_unlock(&(state->mutex));
-
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN] = {0};
-
-    LOGE("SocketManager: Couldnot find consumer for socket FD:%x [%s] <= [%s]",
-         (int)hio_fd(io),
-         SOCKADDR_STR(hio_localaddr(io), localaddrstr),
-         SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
-    hio_close(io);
+    noSocketConsumerFound(io);
 }
 
-static void on_accept_tcp_single(hio_t *io)
+static void onAcceptTcpSinplePort(hio_t *io)
 {
-    on_accept(io, true, sockaddr_port((sockaddr_u *)hio_localaddr(io)));
+    distributeTcpSocket(io, sockaddr_port((sockaddr_u *) hio_localaddr(io)));
 }
 
-static void on_accept_tcp_multi_iptable(hio_t *io)
+static void onAcceptTcpMultiPort(hio_t *io)
 {
     unsigned char pbuf[28] = {0};
-    socklen_t size = 16; // todo ipv6 value is 28
+    socklen_t     size     = 16; // todo ipv6 value is 28
     if (getsockopt(hio_fd(io), SOL_IP, SO_ORIGINAL_DST, &(pbuf[0]), &size) < 0)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
-        char peeraddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGE("SocketManger: multiport failure getting origin port FD:%x [%s] <= [%s]",
-             (int)hio_fd(io),
-             SOCKADDR_STR(hio_localaddr(io), localaddrstr),
-             SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+        LOGE("SocketManger: multiport failure getting origin port FD:%x [%s] <= [%s]", (int) hio_fd(io),
+             SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
         hio_close(io);
         return;
     }
 
-    on_accept(io, true, (pbuf[2] << 8) | pbuf[3]);
+    distributeTcpSocket(io, (pbuf[2] << 8) | pbuf[3]);
 }
-static void listen_tcp(hloop_t *loop, uint8_t *ports_overlapped)
+
+static multiport_backend_t getDefaultMultiPortBackend()
+{
+    if (state->iptables_installed)
+    {
+        return multiport_backend_iptables;
+    }
+    return multiport_backend_sockets;
+}
+
+static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
+                                       uint8_t *ports_overlapped, uint16_t port_max)
+{
+    if (! state->iptables_installed)
+    {
+        LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
+        exit(1);
+    }
+    state->iptables_used = true;
+    if (! state->iptable_cleaned)
+    {
+        if (! resetIptables())
+        {
+            LOGF("SocketManager: could not clear iptables rusles");
+            exit(1);
+        }
+        state->iptable_cleaned = true;
+    }
+    uint16_t main_port = port_max;
+    // select main port
+    {
+        do
+        {
+            if (ports_overlapped[main_port] != 1)
+            {
+                filter->listen_io           = hloop_create_tcp_server(loop, host, main_port, onAcceptTcpMultiPort);
+                ports_overlapped[main_port] = 1;
+                if (filter->listen_io != NULL)
+                {
+                    break;
+                }
+
+                main_port--;
+            }
+        } while (main_port >= port_min);
+
+        if (filter->listen_io == NULL)
+        {
+            LOGF("SocketManager: stopping due to null socket handle");
+            exit(1);
+        }
+    }
+    redirectPortRangeTcp(port_min, port_max, main_port);
+    LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", host, port_min, port_max, main_port, "TCP");
+}
+static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
+                                      uint8_t *ports_overlapped, uint16_t port_max)
+{
+    for (uint16_t p = port_min; p < port_max; p++)
+    {
+        if (ports_overlapped[p] == 1)
+        {
+            LOGW("SocketManager: Couldnot listen on %s:[%u] , skipped...", host, p, "TCP");
+            continue;
+        }
+        ports_overlapped[p] = 1;
+
+        filter->listen_io = hloop_create_tcp_server(loop, host, p, onAcceptTcpSinplePort);
+
+        if (filter->listen_io == NULL)
+        {
+            LOGW("SocketManager: Couldnot listen on %s:[%u] , skipped...", host, p, "TCP");
+            continue;
+        }
+
+        LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
+    }
+}
+static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+                                uint8_t *ports_overlapped)
+{
+    if (ports_overlapped[port] == 1)
+    {
+        return;
+    }
+    ports_overlapped[port] = 1;
+    LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
+    filter->listen_io = hloop_create_tcp_server(loop, host, port, onAcceptTcpSinplePort);
+
+    if (filter->listen_io == NULL)
+    {
+        LOGF("SocketManager: stopping due to null socket handle");
+        exit(1);
+    }
+}
+static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
     {
@@ -353,107 +469,34 @@ static void listen_tcp(hloop_t *loop, uint8_t *ports_overlapped)
             socket_filter_t *filter = *(k.ref);
             if (filter->option.multiport_backend == multiport_backend_default)
             {
-                if (state->iptables_installed)
-                    filter->option.multiport_backend = multiport_backend_iptables;
-                else
-                    filter->option.multiport_backend = multiport_backend_sockets;
+                filter->option.multiport_backend = getDefaultMultiPortBackend();
             }
-            socket_filter_option_t option = filter->option;
-            uint16_t port_min = option.port_min;
-            uint16_t port_max = option.port_max;
-            const char *proto_str = option.proto == socket_protocol_tcp ? "TCP" : "UDP";
+
+            socket_filter_option_t option   = filter->option;
+            uint16_t               port_min = option.port_min;
+            uint16_t               port_max = option.port_max;
             if (port_min > port_max)
             {
                 LOGF("SocketManager: port min must be lower than port max");
                 exit(1);
             }
-
+            else if (port_min == port_max)
+            {
+                option.multiport_backend == multiport_backend_nothing;
+            }
             if (option.proto == socket_protocol_tcp)
             {
                 if (option.multiport_backend == multiport_backend_iptables)
                 {
-                    if (!state->iptables_installed)
-                    {
-
-                        LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
-                        exit(1);
-                    }
-                    if (port_min == port_max)
-                        goto singleport;
-                    state->iptables_used = true;
-                    if (!state->iptable_cleaned)
-                    {
-                        if (!reset_iptables())
-                        {
-                            LOGF("SocketManager: could not clear iptables rusles");
-                            exit(1);
-                        }
-                        state->iptable_cleaned = true;
-                    }
-                    uint16_t main_port = port_max;
-                    // select main port
-                    {
-                        do
-                        {
-                            if (ports_overlapped[main_port] != 1)
-                            {
-                                filter->listen_io = hloop_create_tcp_server(loop, option.host, main_port, on_accept_tcp_multi_iptable);
-                                ports_overlapped[main_port] = 1;
-                                if (filter->listen_io != NULL)
-                                    break;
-
-                                main_port--;
-                            }
-                        } while (main_port >= port_min);
-
-                        if (filter->listen_io == NULL)
-                        {
-                            LOGF("SocketManager: stopping due to null socket handle");
-                            exit(1);
-                        }
-                    }
-                    redirect_port_range_tcp(port_min, port_max, main_port);
-                    LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", option.host, port_min, port_max, main_port, proto_str);
+                    listenTcpMultiPortIptables(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }
                 else if (option.multiport_backend == multiport_backend_sockets)
                 {
-                    if (port_min == port_max)
-                        goto singleport;
-                    for (size_t p = port_min; p < port_max; p++)
-                    {
-                        if (ports_overlapped[p] == 1)
-                        {
-                            LOGW("SocketManager: Couldnot listen on %s:[%u] , skipped...", option.host, p, proto_str);
-                            continue;
-                        }
-                        ports_overlapped[p] = 1;
-
-                        filter->listen_io = hloop_create_tcp_server(loop, option.host, p, on_accept_tcp_single);
-
-                        if (filter->listen_io == NULL)
-                        {
-                            LOGW("SocketManager: Couldnot listen on %s:[%u] , skipped...", option.host, p, proto_str);
-                            continue;
-                        }
-
-                        LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, p, proto_str);
-                    }
+                    listenTcpMultiPortSockets(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }
                 else
                 {
-                singleport:;
-                    if (ports_overlapped[port_min] == 1)
-                        continue;
-                    ports_overlapped[port_min] = 1;
-
-                    LOGI("SocketManager: listening on %s:[%u] (%s)", option.host, port_min, proto_str);
-                    filter->listen_io = hloop_create_tcp_server(loop, option.host, port_min, on_accept_tcp_single);
-
-                    if (filter->listen_io == NULL)
-                    {
-                        LOGF("SocketManager: stopping due to null socket handle");
-                        exit(1);
-                    }
+                    listenTcpSinglePort(loop, filter, option.host, port_min, ports_overlapped);
                 }
             }
         }
@@ -462,12 +505,12 @@ static void listen_tcp(hloop_t *loop, uint8_t *ports_overlapped)
 
 static HTHREAD_ROUTINE(accept_thread)
 {
-    hloop_t *loop = (hloop_t *)userdata;
+    hloop_t *loop = (hloop_t *) userdata;
 
     hmutex_lock(&(state->mutex));
     {
         uint8_t ports_overlapped[65536] = {0};
-        listen_tcp(loop, ports_overlapped);
+        listenTcp(loop, ports_overlapped);
     }
 
     hmutex_unlock(&(state->mutex));
@@ -509,22 +552,22 @@ socket_manager_state_t *createSocketManager()
     hmutex_init(&state->mutex);
 
     state->iptables_installed = check_installed("iptables");
-    state->lsof_installed = check_installed("lsof");
+    state->lsof_installed     = check_installed("lsof");
 #if SUPOPRT_V6
     state->ip6tables_installed = check_installed("ip6tables");
 #endif
 
-    if (signal(SIGTERM, sig_handler) == SIG_ERR)
+    if (signal(SIGTERM, signalHandler) == SIG_ERR)
     {
         perror("Error setting SIGTERM signal handler");
         exit(1);
     }
-    if (signal(SIGINT, sig_handler) == SIG_ERR)
+    if (signal(SIGINT, signalHandler) == SIG_ERR)
     {
         perror("Error setting SIGINT signal handler");
         exit(1);
     }
-    if (atexit(exit_hook) != 0)
+    if (atexit(exitHook) != 0)
     {
         perror("Error setting ATEXIT hook");
         exit(1);

@@ -41,6 +41,6 @@ typedef struct preconnect_client_state_s
 
     // settings
     int min_unused_cons;
-    thread_box_t threads[];
+    thread_box_t workers[];
 
 } preconnect_client_state_t;

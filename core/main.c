@@ -1,17 +1,14 @@
 #include "api.h"
-#include "utils/fileutils.h"
-#include "utils/stringutils.h"
-#include "managers/socket_manager.h"
-#include "managers/node_manager.h"
 #include "core_settings.h"
-#include "static_tunnels.h"
+#include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
-#include "loggers/core_logger.h"
+#include "managers/node_manager.h"
+#include "managers/socket_manager.h"
+#include "static_tunnels.h"
+#include "utils/fileutils.h"
 
 #define CORE_FILE "core.json"
-
-
 
 int main(int argc, char **argv)
 {
@@ -29,33 +26,29 @@ int main(int argc, char **argv)
     }
     parseCoreSettings(core_file_content);
     free(core_file_content);
-    
+
     //  [Runtime setup]
     {
         hv_mkdir_p(getCoreSettings()->log_path);
-        char *core_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->core_log_file);
-        char *network_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->network_log_file);
-        char *dns_log_file_path = concat(getCoreSettings()->log_path, getCoreSettings()->dns_log_file);
 
-        // libhv has a separate logger, we forward it to the core logger
+        // libhv has a separate logger, we attach it to the core logger
         logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
         logger_set_handler(hv_default_logger(), getCoreLoggerHandle(getCoreSettings()->core_log_console));
 
-        createWW(
-            core_log_file_path,
-            network_log_file_path,
-            dns_log_file_path,
-            getCoreSettings()->core_log_level,
-            getCoreSettings()->network_log_level,
-            getCoreSettings()->dns_log_level,
-            getCoreSettings()->core_log_console,
-            getCoreSettings()->network_log_console,
-            getCoreSettings()->dns_log_console,
-            getCoreSettings()->threads);
+        ww_construction_data_t runtime_data = {
+            .workers_count       = getCoreSettings()->workers_count,
+            .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreLoggerFullPath(),
+                                                                .log_level     = getCoreSettings()->core_log_level,
+                                                                .log_console   = getCoreSettings()->core_log_console},
+            .network_logger_data = (logger_construction_data_t){.log_file_path = getNetworkLoggerFullPath(),
+                                                                .log_level     = getCoreSettings()->network_log_level,
+                                                                .log_console   = getCoreSettings()->network_log_level},
+            .dns_logger_data     = (logger_construction_data_t){.log_file_path = getDnsLoggerFullPath(),
+                                                                .log_level     = getCoreSettings()->dns_log_level,
+                                                                .log_console   = getCoreSettings()->dns_log_console},
+        };
 
-        free(core_log_file_path);
-        free(network_log_file_path);
-        free(dns_log_file_path);
+        createWW(runtime_data);
     }
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
@@ -79,10 +72,10 @@ int main(int argc, char **argv)
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
-            LOGD("Core: starting eventloops ...");
-            startSocketManager();
-            runMainThread();
-            LOGW("Core: Eventloops are finished");
+            break;
         }
     }
+    LOGD("Core: starting eventloops ...");
+    startSocketManager();
+    runMainThread();
 }

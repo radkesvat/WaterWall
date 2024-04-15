@@ -56,7 +56,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     else
     {
         const unsigned int tid = c->line->tid;
-        thread_box_t *this_tb = &(state->threads[tid]);
+        thread_box_t *this_tb = &(state->workers[tid]);
         if (c->init)
         {
             if (state->chain_index_d == 0)
@@ -118,7 +118,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     else
     {
         const unsigned int tid = c->line->tid;
-        thread_box_t *this_tb = &(state->threads[tid]);
+        thread_box_t *this_tb = &(state->workers[tid]);
         if (c->init)
         {
             if (state->chain_index_u == 0)
@@ -205,8 +205,8 @@ static void reverseServerPacketDownStream(tunnel_t *self, context_t *c)
 tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 {
 
-    reverse_server_state_t *state = malloc(sizeof(reverse_server_state_t) + (threads_count * sizeof(thread_box_t)));
-    memset(state, 0, sizeof(reverse_server_state_t) + (threads_count * sizeof(thread_box_t)));
+    reverse_server_state_t *state = malloc(sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
+    memset(state, 0, sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
 
     tunnel_t *t = newTunnel();
     t->state = state;

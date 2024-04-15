@@ -1,20 +1,20 @@
 #include "node_manager.h"
-#include "loggers/core_logger.h"
-#include "utils/jsonutils.h"
-#include "utils/hashutils.h"
 #include "config_file.h"
 #include "library_loader.h"
+#include "loggers/core_logger.h"
+#include "utils/hashutils.h"
+#include "utils/jsonutils.h"
 
 #define i_type map_node_t
-#define i_key hash_t
-#define i_val node_t *
+#define i_key  hash_t
+#define i_val  node_t *
 
 #include "stc/hmap.h"
 
 typedef struct node_manager_s
 {
     config_file_t *config_file;
-    map_node_t node_map;
+    map_node_t     node_map;
 
 } node_manager_t;
 
@@ -38,7 +38,7 @@ void runNode(node_t *n1, size_t chain_index)
 
         LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
-        n1->instance = n1->lib->creation_proc(&(n1->instance_context));
+        n1->instance                     = n1->lib->creation_proc(&(n1->instance_context));
         if (n1->instance == NULL)
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
@@ -52,14 +52,13 @@ void runNode(node_t *n1, size_t chain_index)
     {
         LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
-        n1->instance = n1->lib->creation_proc(&(n1->instance_context));
+        n1->instance                     = n1->lib->creation_proc(&(n1->instance_context));
         if (n1->instance == NULL)
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
             exit(1);
         }
         n1->instance->chain_index = chain_index;
-
     }
 }
 
@@ -69,7 +68,9 @@ static void runNodes()
     {
         node_t *n1 = p1.ref->second;
         if (n1 != NULL && n1->instance == NULL && n1->route_starter == true)
+        {
             runNode(n1, 0);
+        }
     }
 }
 
@@ -84,10 +85,12 @@ static void pathWalk()
         while (true)
         {
             if (n1->hash_next == 0)
+            {
                 break;
+            }
             c++;
             node_t *n2 = getNode(n1->hash_next);
-            n1 = n2;
+            n1         = n2;
             if (c > 200)
             {
                 LOGF("Node Map Failure: circular reference deteceted");
@@ -104,7 +107,9 @@ static void cycleProcess()
 
         hash_t next_hash = n1.ref->second->hash_next;
         if (next_hash == 0)
+        {
             continue;
+        }
 
         bool found = false;
         c_foreach(n2, map_node_t, state->node_map)
@@ -122,9 +127,10 @@ static void cycleProcess()
                 found = true;
             }
         }
-        if (!found)
+        if (! found)
         {
-            LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", n1.ref->second->name, n1.ref->second->next);
+            LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", n1.ref->second->name,
+                 n1.ref->second->next);
             exit(1);
         }
     }
@@ -134,11 +140,11 @@ static void cycleProcess()
         {
             if ((n1.ref->second->metadata.flags & TFLAG_ROUTE_STARTER) == TFLAG_ROUTE_STARTER)
             {
-                found = true;
+                found                         = true;
                 n1.ref->second->route_starter = true;
             }
         }
-        if (!found)
+        if (! found)
         {
             LOGW("Node Map has detecetd 0 listener nodes...");
         }
@@ -148,34 +154,37 @@ static void cycleProcess()
 static void startParsingFiles()
 {
     cJSON *nodes_json = state->config_file->nodes;
-    cJSON *node_json = NULL;
+    cJSON *node_json  = NULL;
     cJSON_ArrayForEach(node_json, nodes_json)
     {
 
         node_t *new_node = malloc(sizeof(node_t));
         memset(new_node, 0, sizeof(node_t));
-        if (!getStringFromJsonObject(&(new_node->name), node_json, "name"))
+        if (! getStringFromJsonObject(&(new_node->name), node_json, "name"))
         {
-            LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid", state->config_file->file_path);
+            LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
+                 state->config_file->file_path);
             exit(1);
         }
         new_node->hash_name = calcHashLen(new_node->name, strlen(new_node->name));
 
-        if (!getStringFromJsonObject(&(new_node->type), node_json, "type"))
+        if (! getStringFromJsonObject(&(new_node->type), node_json, "type"))
         {
-            LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid", state->config_file->file_path);
+            LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
+                 state->config_file->file_path);
             exit(1);
         }
         new_node->hash_type = calcHashLen(new_node->type, strlen(new_node->type));
 
         if (getStringFromJsonObject(&(new_node->next), node_json, "next"))
         {
-
             new_node->hash_next = calcHashLen(new_node->next, strlen(new_node->next));
         }
         int int_ver = 0;
         if (getIntFromJsonObject(&int_ver, node_json, "version"))
+        {
             new_node->version = int_ver;
+        }
 
         // load lib
         tunnel_lib_t lib = loadTunnelLibByHash(new_node->hash_type);
@@ -189,25 +198,23 @@ static void startParsingFiles()
         {
             LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
         }
-        new_node->metadata = lib.getmetadata_proc();
+        new_node->metadata            = lib.getmetadata_proc();
         struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));
         memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
-        *heap_lib = lib;
+        *heap_lib     = lib;
         new_node->lib = heap_lib;
-
-
 
         cJSON *js_settings = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
 
         node_instance_context_t new_node_ctx = {0};
 
-        new_node_ctx.node_json = node_json;
+        new_node_ctx.node_json          = node_json;
         new_node_ctx.node_settings_json = js_settings;
-        new_node_ctx.self_node_handle = new_node;
-        new_node_ctx.self_file_handle = state->config_file;
+        new_node_ctx.self_node_handle   = new_node;
+        new_node_ctx.self_file_handle   = state->config_file;
 
         new_node->instance_context = new_node_ctx;
-        map_node_t *map = &(state->node_map);
+        map_node_t *map            = &(state->node_map);
 
         if (map_node_t_contains(map, new_node->hash_name))
         {
@@ -225,7 +232,9 @@ node_t *getNode(hash_t hash_node_name)
 {
     map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
     if (iter.ref == map_node_t_end(&(state->node_map)).ref)
+    {
         return NULL;
+    }
     return (iter.ref->second);
 }
 
@@ -233,8 +242,9 @@ static tunnel_t *getTunnel(hash_t hash_node_name)
 {
     map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
     if (iter.ref == map_node_t_end(&(state->node_map)).ref)
+    {
         return NULL;
-
+    }
     return (iter.ref->second)->instance;
 }
 

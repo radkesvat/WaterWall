@@ -4,53 +4,43 @@
 
 struct logger_s
 {
-    logger_handler handler;
-    unsigned int bufsize;
-    char *buf;
+    logger_handler     handler;
+    unsigned long long bufsize;
+    char              *buf;
 
-    int level;
-    int enable_color;
+    int  level;
+    int  enable_color;
     char format[64];
 
     // for file logger
-    char filepath[256];
+    char               filepath[256];
     unsigned long long max_filesize;
-    int remain_days;
-    int enable_fsync;
-    FILE *fp_;
-    char cur_logfile[256];
-    time_t last_logfile_ts;
-    int can_write_cnt;
+    long               remain_days;
+    int                enable_fsync;
+    FILE              *fp_;
+    char               cur_logfile[256];
+    time_t             last_logfile_ts;
+    long long          can_write_cnt;
 
     hmutex_t mutex_; // thread-safe
 };
 
-static logger_t *logger = NULL;
-static int s_gmtoff = 28800; // 8*3600
+static logger_t     *logger   = NULL;
+#define S_GMTOFF 28800 // 8*3600
 
-static void destroy_dns_logger(void)
-{
-    if (logger)
-    {
-        logger_fsync(logger);
-        logger_destroy(logger);
-        logger = NULL;
-    }
-}
-static void logfile_name(const char *filepath, time_t ts, char *buf, int len)
+
+static void generateLogFileName(const char *filepath, time_t ts, char *buf, int len)
 {
     struct tm *tm = localtime(&ts);
-    snprintf(buf, len, "%s.%04d%02d%02d.log",
-             filepath,
-             tm->tm_year + 1900,
-             tm->tm_mon + 1,
-             tm->tm_mday);
+    snprintf(buf, len, "%s.%04d%02d%02d.log", filepath, tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
 }
 
-static FILE *logfile_shift(logger_t *logger)
+static FILE *logFileShift(logger_t *logger)
 {
-    time_t ts_now = time(NULL);
-    int interval_days = logger->last_logfile_ts == 0 ? 0 : (ts_now + s_gmtoff) / SECONDS_PER_DAY - (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY;
+    time_t ts_now        = time(NULL);
+    long   interval_days = logger->last_logfile_ts == 0 ? 0
+                                                        : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
+                                                            (logger->last_logfile_ts + S_GMTOFF) / SECONDS_PER_DAY;
     if (logger->fp_ == NULL || interval_days > 0)
     {
         // close old logfile
@@ -70,10 +60,10 @@ static FILE *logfile_shift(logger_t *logger)
             if (interval_days >= logger->remain_days)
             {
                 // remove [today-interval_days, today-remain_days] logfile
-                for (int i = interval_days; i >= logger->remain_days; --i)
+                for (long i = interval_days; i >= logger->remain_days; --i)
                 {
                     time_t ts_rm = ts_now - i * SECONDS_PER_DAY;
-                    logfile_name(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
+                    generateLogFileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                     remove(rm_logfile);
                 }
             }
@@ -81,7 +71,7 @@ static FILE *logfile_shift(logger_t *logger)
             {
                 // remove today-remain_days logfile
                 time_t ts_rm = ts_now - logger->remain_days * SECONDS_PER_DAY;
-                logfile_name(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
+                generateLogFileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                 remove(rm_logfile);
             }
         }
@@ -90,8 +80,8 @@ static FILE *logfile_shift(logger_t *logger)
     // open today logfile
     if (logger->fp_ == NULL)
     {
-        logfile_name(logger->filepath, ts_now, logger->cur_logfile, sizeof(logger->cur_logfile));
-        logger->fp_ = fopen(logger->cur_logfile, "a");
+        generateLogFileName(logger->filepath, ts_now, logger->cur_logfile, sizeof(logger->cur_logfile));
+        logger->fp_             = fopen(logger->cur_logfile, "a");
         logger->last_logfile_ts = ts_now;
     }
 
@@ -99,7 +89,7 @@ static FILE *logfile_shift(logger_t *logger)
     if (logger->fp_ && --logger->can_write_cnt < 0)
     {
         fseek(logger->fp_, 0, SEEK_END);
-        long filesize = ftell(logger->fp_);
+        unsigned long long filesize = ftell(logger->fp_);
         if (filesize > logger->max_filesize)
         {
             fclose(logger->fp_);
@@ -115,16 +105,26 @@ static FILE *logfile_shift(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt = (logger->max_filesize - filesize) / logger->bufsize;
+            logger->can_write_cnt =
+                ((long long) logger->max_filesize - (long long) filesize) / (long long) logger->bufsize;
         }
     }
 
     return logger->fp_;
 }
 
-static void logfile_write(logger_t *logger, const char *buf, int len)
+static void destroyDnsLogger(void)
 {
-    FILE *fp = logfile_shift(logger);
+    if (logger)
+    {
+        logger_fsync(logger);
+        logger_destroy(logger);
+        logger = NULL;
+    }
+}
+static void logFileWrite(logger_t *logger, const char *buf, int len)
+{
+    FILE *fp = logFileShift(logger);
     if (fp)
     {
         fwrite(buf, 1, len, fp);
@@ -135,41 +135,50 @@ static void logfile_write(logger_t *logger, const char *buf, int len)
     }
 }
 
-static void dns_logger_handle_with_stdstream(int loglevel, const char *buf, int len)
+
+static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     if (loglevel == LOG_LEVEL_ERROR || loglevel == LOG_LEVEL_FATAL)
+    {
         stderr_logger(loglevel, buf, len);
+    }
     else
+    {
         stdout_logger(loglevel, buf, len);
-    logfile_write(logger, buf, len);
+    }
+    logFileWrite(logger, buf, len);
 }
 
-static void dns_logger_handle(int loglevel, const char *buf, int len)
+static void dnsLoggerHandle(int loglevel, const char *buf, int len)
 {
-    logfile_write(logger, buf, len);
+    (void) loglevel;
+    logFileWrite(logger, buf, len);
 }
 
 logger_t *getDnsLogger()
 {
     return logger;
 }
-void setDnsLogger(logger_t *newlogger){
+void setDnsLogger(logger_t *newlogger)
+{
     assert(logger == NULL);
     logger = newlogger;
-
 }
 
-logger_t *createDnsLogger(const char *log_file, const char *log_level, bool console)
+logger_t *createDnsLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
     logger = logger_create();
     logger_set_file(logger, log_file);
     if (console)
-        logger_set_handler(logger, dns_logger_handle_with_stdstream);
+    {
+        logger_set_handler(logger, dnsLoggerHandleWithStdStream);
+    }
     else
-        logger_set_handler(logger, dns_logger_handle);
+    {
+        logger_set_handler(logger, dnsLoggerHandle);
+    }
 
-    logger_set_level_by_str(logger, log_level);
-    atexit(destroy_dns_logger);
+    atexit(destroyDnsLogger);
     return logger;
 }

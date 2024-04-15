@@ -461,7 +461,7 @@ static void http2ClientPacketDownStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 {
-    http2_client_state_t *state = malloc(sizeof(http2_client_state_t) + (threads_count * sizeof(thread_connection_pool_t)));
+    http2_client_state_t *state = malloc(sizeof(http2_client_state_t) + (workers_count * sizeof(thread_connection_pool_t)));
     memset(state, 0, sizeof(http2_client_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
@@ -470,7 +470,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(state->cbs, on_data_chunk_recv_callback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, on_frame_recv_callback);
 
-    for (size_t i = 0; i < threads_count; i++)
+    for (size_t i = 0; i < workers_count; i++)
     {
         state->thread_cpool[i] = (thread_connection_pool_t){.round_index = 0, .cons = vec_cons_with_capacity(8)};
     }

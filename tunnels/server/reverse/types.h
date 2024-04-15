@@ -33,6 +33,6 @@ typedef struct reverse_server_state_s
     size_t chain_index_u;
     size_t chain_index_d;
 
-    thread_box_t threads[];
+    thread_box_t workers[];
 
 } reverse_server_state_t;

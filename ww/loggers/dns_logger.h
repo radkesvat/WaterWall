@@ -4,7 +4,7 @@
 
 #if !defined(ANDROID) || !defined(__ANDROID__)
 #undef hlog
-#define hlog getNetworkLogger() // NOLINT
+#define hlog getDnsLogger() // NOLINT
 
 // GET RID OF ISO C99 WARNING IN DEBUG MODE
 #ifdef DEBUG
@@ -21,11 +21,11 @@
 #endif
 #endif // android
 
-logger_t *getNetworkLogger();
-void setNetworkLogger(logger_t * newlogger);
-logger_t *createNetworkLogger(const char *log_file, bool console);
+logger_t *getDnsLogger();
+void setDnsLogger(logger_t * newlogger);
+logger_t *createDnsLogger(const char *log_file, bool console);
 
 
-static inline void setNetworkLoggerLevelByStr(const char *log_level){
-    logger_set_level_by_str(getNetworkLogger(), log_level);
+static inline void setDnsLoggerLevelByStr(const char *log_level){
+    logger_set_level_by_str(getDnsLogger(), log_level);
 }

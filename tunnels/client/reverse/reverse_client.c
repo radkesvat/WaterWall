@@ -166,7 +166,7 @@ static void reverseClientPacketDownStream(tunnel_t *self, context_t *c)
 static void start_reverse_celint(htimer_t *timer)
 {
     tunnel_t *t = hevent_userdata(timer);
-    for (int i = 0; i < threads_count; i++)
+    for (int i = 0; i < workers_count; i++)
     {
         const int cpt = STATE(t)->connection_per_thread;
 
@@ -183,16 +183,16 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     const size_t start_delay_ms = 150;
 
-    reverse_client_state_t *state = malloc(sizeof(reverse_client_state_t) + (sizeof(atomic_uint) * threads_count));
-    memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(atomic_uint) * threads_count));
+    reverse_client_state_t *state = malloc(sizeof(reverse_client_state_t) + (sizeof(atomic_uint) * workers_count));
+    memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(atomic_uint) * workers_count));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
 
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
-    state->min_unused_cons = min(max(threads_count * 4, state->min_unused_cons), 128);
-    state->connection_per_thread = min(4, state->min_unused_cons / threads_count);
+    state->min_unused_cons = min(max(workers_count * 4, state->min_unused_cons), 128);
+    state->connection_per_thread = min(4, state->min_unused_cons / workers_count);
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l = newLine(0);

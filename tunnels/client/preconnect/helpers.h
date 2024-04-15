@@ -78,11 +78,11 @@ static void initiateConnect(tunnel_t *t)
         return;
 
     int tid = 0;
-    if (threads_count > 0)
+    if (workers_count > 0)
     {
         tid = atomic_fetch_add_explicit(&(STATE(t)->round_index), 1, memory_order_relaxed);
 
-        if (tid >= threads_count)
+        if (tid >= workers_count)
         {
             atomic_store_explicit(&(STATE(t)->round_index), 0, memory_order_relaxed);
             tid = 0;

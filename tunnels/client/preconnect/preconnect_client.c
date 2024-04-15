@@ -32,7 +32,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     else
     {
         const unsigned int tid = c->line->tid;
-        thread_box_t *this_tb = &(state->threads[tid]);
+        thread_box_t *this_tb = &(state->workers[tid]);
         if (c->init)
         {
 
@@ -121,7 +121,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     else
     {
         const unsigned int tid = c->line->tid;
-        thread_box_t *this_tb = &(state->threads[tid]);
+        thread_box_t *this_tb = &(state->workers[tid]);
         preconnect_client_con_state_t *ucon = CSTATE(c);
 
         if (c->fin)
@@ -198,7 +198,7 @@ static void preConnectClientPacketDownStream(tunnel_t *self, context_t *c)
 static void start_preconnect(htimer_t *timer)
 {
     tunnel_t *t = hevent_userdata(timer);
-    for (int i = 0; i < threads_count; i++)
+    for (int i = 0; i < workers_count; i++)
     {
         const int cpt = STATE(t)->connection_per_thread;
 
@@ -214,14 +214,14 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 {
     const size_t start_delay_ms = 150;
 
-    preconnect_client_state_t *state = malloc(sizeof(preconnect_client_state_t) + (threads_count * sizeof(thread_box_t)));
-    memset(state, 0, sizeof(preconnect_client_state_t) + (threads_count * sizeof(thread_box_t)));
+    preconnect_client_state_t *state = malloc(sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
+    memset(state, 0, sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
 
-    state->min_unused_cons = min(max(threads_count * 2, state->min_unused_cons), 9999999);
-    state->connection_per_thread = min(4,state->min_unused_cons / threads_count);
+    state->min_unused_cons = min(max(workers_count * 2, state->min_unused_cons), 9999999);
+    state->connection_per_thread = min(4,state->min_unused_cons / workers_count);
 
     tunnel_t *t = newTunnel();
     t->state = state;
