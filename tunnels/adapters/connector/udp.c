@@ -2,6 +2,18 @@
 #include "types.h"
 #include "utils/sockutils.h"
 
+static void cleanup(connector_con_state_t *cstate)
+{
+    connector_state_t *state = STATE(cstate->tunnel);
+    if (state->dest_addr.status == cdvs_constant)
+    {
+
+    }else if (state->dest_addr.status > cdvs_constant){
+        free(cstate->line->dest_ctx)
+    }
+
+    free(cstate);
+}
 static void onUdpRecv(hio_t *io, void *buf, int readbytes)
 {
     connector_con_state_t *cstate = (connector_con_state_t *) (hevent_userdata(io));
@@ -19,11 +31,11 @@ static void onUdpRecv(hio_t *io, void *buf, int readbytes)
 
     if (destaddr->sa_family == AF_INET6)
     {
-        atype = SAT_IPV6;
+        atype = kSatIpV6;
     }
     else
     {
-        atype = SAT_IPV4;
+        atype = kSatIpV4;
     }
 
     if (! cstate->established)
@@ -52,11 +64,11 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        int bytes = bufLen(c->payload);
+        unsigned int bytes = bufLen(c->payload);
 
         if (hio_is_closed(cstate->io))
         {
-            free(CSTATE(c));
+            cleanup(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             DISCARD_CONTEXT(c);
             goto fail;
@@ -97,7 +109,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
-                free(CSTATE(c));
+                cleanup(CSTATE(c));
                 CSTATE_MUT(c) = NULL;
                 goto fail;
             }
@@ -124,7 +136,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             hio_setcb_read(upstream_io, onUdpRecv);
             hio_read(upstream_io);
 
-            socket_context_t resolved_dest_context = {0};
+            socket_context_t* resolved_dest_context;
             // fill the resolved_dest_context address based on settings
             {
                 socket_context_t  *src_ctx  = &(c->line->src_ctx);
@@ -132,18 +144,23 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
                 connector_state_t *state    = STATE(self);
 
                 if (state->dest_addr.status == cdvs_from_source)
-                    copySocketContextAddr(&resolved_dest_context, &src_ctx);
+                {
+                    resolved_dest_context = src_ctx;
+                    // copySocketContextAddr(&resolved_dest_context, &src_ctx);
+                }
                 else if (state->dest_addr.status == cdvs_from_dest)
-                    copySocketContextAddr(&resolved_dest_context, &dest_ctx);
+                {
+                    resolved_dest_context = dest_ctx;
+                    // copySocketContextAddr(&resolved_dest_context, &dest_ctx);
+                }
                 else
                 {
                     resolved_dest_context.atype = state->dest_atype;
-                    if (state->dest_atype == SAT_DOMAINNAME)
+                    if (state->dest_atype == kSatDomainName)
                     {
-                        resolved_dest_context.domain                    = state->dest_addr.value_ptr;
-                        resolved_dest_context.domain_len                = state->dest_domain_len;
-                        resolved_dest_context.domain_is_constant_memory = true;
-                        resolved_dest_context.resolved                  = false;
+                        resolved_dest_context.domain     = state->dest_addr.value_ptr;
+                        resolved_dest_context.domain_len = state->dest_domain_len;
+                        resolved_dest_context.resolved   = false;
                     }
                     else
                         sockaddr_set_ip(&(resolved_dest_context.addr), state->dest_addr.value_ptr);
@@ -157,14 +174,14 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
                     sockaddr_set_port(&(resolved_dest_context.addr), state->dest_port.value);
             }
 
-            if (resolved_dest_context.atype == SAT_DOMAINNAME)
+            if (resolved_dest_context.atype == kSatDomainName)
             {
                 if (! resolved_dest_context.resolved)
                 {
                     if (! connectorResolvedomain(&(resolved_dest_context)))
                     {
                         free(resolved_dest_context.domain);
-                        free(CSTATE(c));
+                        cleanup(CSTATE(c));
                         CSTATE_MUT(c) = NULL;
                         DISCARD_CONTEXT(c);
                         goto fail;
@@ -180,7 +197,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
         {
             hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
-            free(CSTATE(c));
+            cleanup(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             destroyContext(c);
             hio_close(io);
@@ -198,7 +215,7 @@ void connectorPacketDownStream(tunnel_t *self, context_t *c)
     {
         hio_t *io = CSTATE(c)->io;
         hevent_set_userdata(io, NULL);
-        free(CSTATE(c));
+        cleanup(CSTATE(c));
         CSTATE_MUT(c) = NULL;
     }
     self->dw->downStream(self->dw, c);

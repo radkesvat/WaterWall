@@ -76,17 +76,17 @@ typedef struct api_result_s
 
 enum domain_strategy
 {
-    ds_invalid,
-    ds_prefer_ipv4,
-    ds_prefer_ipv6,
-    ds_ipv4_only,
-    ds_ipv6_only
+    kDsInvalid,
+    kDsPreferIpV4,
+    kDsPreferIpV6,
+    kDsOnlyIpV4,
+    kDsOnlyIpV6
 
 };
 enum dynamic_value_status
 {
-    dvs_empty = 0x0,
-    dvs_constant,
+    kDvsEmpty = 0x0,
+    kDvsConstant,
 };
 typedef struct dynamic_value_s
 {
@@ -98,15 +98,15 @@ typedef struct dynamic_value_s
 
 enum socket_address_cmd
 {
-    SAC_CONNECT = 0X1,
-    SAC_ASSOCIATE = 0X3,
+    kSacConnect = 0X1,
+    kSacAssociate = 0X3,
 };
 
 enum socket_address_type
 {
-    SAT_IPV4 = 0X1,
-    SAT_DOMAINNAME = 0X3,
-    SAT_IPV6 = 0X4,
+    kSatIpV4 = 0X1,
+    kSatDomainName = 0X3,
+    kSatIpV6 = 0X4,
 };
 
 // all data we need to connect to somewhere
@@ -117,7 +117,6 @@ typedef struct socket_context_s
     enum socket_address_type atype;
     char *domain;
     unsigned int *domain_len;
-    bool domain_is_constant_memory;
     bool resolved;
     sockaddr_u addr;
     

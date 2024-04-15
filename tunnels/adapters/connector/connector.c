@@ -34,7 +34,7 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
                                                           "src_context->address",
                                                          "dest_context->address");
 
-    if (state->dest_addr.status == dvs_empty)
+    if (state->dest_addr.status == kDvsEmpty)
     {
         LOGF("JSON Error: Connector->settings->address (string field) : The vaule was empty or invalid");
         return NULL;
@@ -44,12 +44,12 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
                                                               "src_context->port",
                                                               "dest_context->port");
 
-    if (state->dest_port.status == dvs_empty)
+    if (state->dest_port.status == kDvsEmpty)
     {
         LOGF("JSON Error: Connector->settings->port (number field) : The vaule was empty or invalid");
         return NULL;
     }
-    if(state->dest_addr.status == dvs_constant){
+    if(state->dest_addr.status == kDvsConstant){
         state->dest_atype = getHostAddrType(state->dest_addr.value_ptr); 
         state->dest_domain_len = strlen(state->dest_addr.value_ptr);
     }

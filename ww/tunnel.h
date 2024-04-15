@@ -108,10 +108,10 @@ inline void destroyLine(line_t *l)
         assert(l->chains_state[i] == NULL);
     }
 
-    if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_is_constant_memory)
-    {
-        assert(l->dest_ctx.domain == NULL);
-    }
+    // if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_is_constant_memory)
+    // {
+    //     assert(l->dest_ctx.domain == NULL);
+    // }
 #endif
 
     // if (l->dest_ctx.domain != NULL && !l->dest_ctx.domain_is_constant_memory)

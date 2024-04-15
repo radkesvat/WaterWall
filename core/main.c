@@ -10,7 +10,7 @@
 
 #define CORE_FILE "core.json"
 
-int main(int argc, char **argv)
+int main(void)
 {
     // test ASAN works -_-
     // int test[3] = {0};
@@ -56,7 +56,7 @@ int main(int argc, char **argv)
     loadStaticTunnelsIntoCore();
 
     //  [Parse ConfigFiles]
-    //  TODO this currently runs only 1 config file
+    //  TODO (config file) this currently runs only 1 config file
     {
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {

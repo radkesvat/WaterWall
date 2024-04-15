@@ -248,7 +248,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
                 else
                 {
                     final_ctx.atype = state->dest_atype;
-                    if (state->dest_atype == SAT_DOMAINNAME)
+                    if (state->dest_atype == kSatDomainName)
                     {
                         final_ctx.domain = malloc(state->dest_domain_len + 1);
                         memcpy(final_ctx.domain, state->dest_addr.value_ptr, state->dest_domain_len + 1);
@@ -270,7 +270,7 @@ void connectorUpStream(tunnel_t *self, context_t *c)
             // sockaddr_set_ipport(&(final_ctx.addr), "127.0.0.1", 443);
 
             LOGD("Connector: initiating tcp connection");
-            if (final_ctx.atype == SAT_DOMAINNAME)
+            if (final_ctx.atype == kSatDomainName)
             {
                 if (!final_ctx.resolved)
                 {

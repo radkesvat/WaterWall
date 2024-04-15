@@ -333,7 +333,7 @@ void on_inbound_connected(hevent_t *ev)
 
     // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->real_localport);
     sockaddr_set_port(&(line->src_ctx.addr), data->real_localport);
-    line->src_ctx.atype = line->src_ctx.addr.sa.sa_family == AF_INET ? SAT_IPV4 : SAT_IPV6;
+    line->src_ctx.atype = line->src_ctx.addr.sa.sa_family == AF_INET ? kSatIpV4 : kSatIpV6;
     hevent_set_userdata(io, cstate);
 
     struct sockaddr log_localaddr = *hio_localaddr(io);

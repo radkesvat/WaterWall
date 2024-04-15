@@ -1,6 +1,5 @@
 #include "sync_dns.h"
 #include "loggers/dns_logger.h"
-#include "types.h"
 
 static inline bool resolve(socket_context_t *dest)
 {
@@ -17,7 +16,7 @@ static inline bool resolve(socket_context_t *dest)
             LOGE("Connector: resolve failed  %s", dest->domain);
             return false;
         }
-        if (logger_will_write_level(LOG_LEVEL_INFO))
+        if (logger_will_write_level(getDnsLogger(), (log_level_e)LOG_LEVEL_INFO))
         {
             char ip[60];
             sockaddr_str(&(dest->addr), ip, 60);
@@ -34,9 +33,9 @@ static inline bool resolve(socket_context_t *dest)
     return true;
 }
 
-bool resolveContextSync(socekt_context_t *s_ctx)
+bool resolveContextSync(socket_context_t *s_ctx)
 {
     // please check these before calling this function -> more performance
-    assert(s_ctx.atype == SAT_DOMAINNAME && s_ctx.resolved == false && dest->domain != NULL);
+    assert(s_ctx.atype == kSatDomainName && s_ctx.resolved == false && dest->domain != NULL);
     return resolve(s_ctx);
 }

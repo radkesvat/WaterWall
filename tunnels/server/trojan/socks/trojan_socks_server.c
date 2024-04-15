@@ -57,20 +57,20 @@ static void makeUdpPacketAddress(context_t *c)
     shiftl(c->payload, 2); // port
     writeUI16(c->payload, port);
 
-    if (c->line->dest_ctx.atype == SAT_IPV6)
+    if (c->line->dest_ctx.atype == kSatIpV6)
     {
         shiftl(c->payload, 16);
         writeRaw(c->payload, &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
         shiftl(c->payload, 1);
-        writeUI8(c->payload, SAT_IPV6);
+        writeUI8(c->payload, kSatIpV6);
     }
-    else if (c->line->dest_ctx.atype == SAT_DOMAINNAME)
+    else if (c->line->dest_ctx.atype == kSatDomainName)
     {
         shiftl(c->payload, 16);
         writeRaw(c->payload, &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
 
         shiftl(c->payload, 1);
-        writeUI8(c->payload, SAT_IPV6);
+        writeUI8(c->payload, kSatIpV6);
     }
     else
     {
@@ -78,7 +78,7 @@ static void makeUdpPacketAddress(context_t *c)
         writeRaw(c->payload, &(c->line->dest_ctx.addr.sin.sin_addr), 4);
 
         shiftl(c->payload, 1);
-        writeUI8(c->payload, SAT_IPV4);
+        writeUI8(c->payload, kSatIpV4);
     }
 }
 
@@ -318,7 +318,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
     case TROJANATYP_IPV4:
         dest->addr.sa.sa_family = AF_INET;
-        dest->atype = SAT_IPV4;
+        dest->atype = kSatIpV4;
         memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 4);
         shiftr(c->payload, 4);
         if (!cstate->first_sent)
@@ -326,7 +326,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
         break;
     case TROJANATYP_DOMAINNAME:
-        dest->atype = SAT_DOMAINNAME;
+        dest->atype = kSatDomainName;
         // size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
         shiftr(c->payload, 1);
         if (dest->domain == NULL)
@@ -343,7 +343,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
         break;
     case TROJANATYP_IPV6:
-        dest->atype = SAT_IPV6;
+        dest->atype = kSatIpV6;
         dest->addr.sa.sa_family = AF_INET6;
         memcpy(&(dest->addr.sin.sin_addr), rawBuf(c->payload), 16);
         shiftr(c->payload, 16);

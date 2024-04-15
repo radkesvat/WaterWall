@@ -201,13 +201,13 @@ void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
 
     switch (dest->atype)
     {
-    case SAT_IPV4:
+    case kSatIpV4:
         dest->addr.sa.sa_family = AF_INET;
         dest->addr.sin.sin_addr = (*source)->addr.sin.sin_addr;
 
         break;
 
-    case SAT_DOMAINNAME:
+    case kSatDomainName:
         dest->addr.sa.sa_family = AF_INET;
         if ((*source)->domain != NULL)
         {
@@ -217,7 +217,7 @@ void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
 
         break;
 
-    case SAT_IPV6:
+    case kSatIpV6:
         dest->addr.sa.sa_family = AF_INET6;
         memcpy(&(dest->addr.sin6.sin6_addr), &((*source)->addr.sin6.sin6_addr), sizeof(struct in6_addr));
 
@@ -228,10 +228,10 @@ void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
 enum socket_address_type getHostAddrType(char *host)
 {
     if (is_ipv4(host))
-        return SAT_IPV4;
+        return kSatIpV4;
     if (is_ipv6(host))
-        return SAT_IPV6;
-    return SAT_DOMAINNAME;
+        return kSatIpV6;
+    return kSatDomainName;
 }
 
 void copySocketContextPort(socket_context_t *dest, socket_context_t *source)
@@ -239,15 +239,15 @@ void copySocketContextPort(socket_context_t *dest, socket_context_t *source)
 
     switch (dest->atype)
     {
-    case SAT_IPV4:
+    case kSatIpV4:
         dest->addr.sin.sin_port = source->addr.sin.sin_port;
         break;
 
-    case SAT_DOMAINNAME:
+    case kSatDomainName:
         dest->addr.sin.sin_port = source->addr.sin.sin_port;
         break;
 
-    case SAT_IPV6:
+    case kSatIpV6:
         dest->addr.sin6.sin6_port = source->addr.sin6.sin6_port;
         break;
     default:
@@ -290,7 +290,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
 {
 
     dynamic_value_t result = {0};
-    result.status = dvs_empty;
+    result.status = kDvsEmpty;
 
     if (!cJSON_IsObject(json_obj) || json_obj->child == NULL)
         return result;
@@ -301,7 +301,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
 
         va_list argp;
         va_start(argp, matchers);
-        for (size_t mi = dvs_constant + 1; mi < matchers + dvs_constant + 1; mi++)
+        for (size_t mi = kDvsConstant + 1; mi < matchers + kDvsConstant + 1; mi++)
         {
             char *matcher = va_arg(argp, char *);
             if (strcmp(matcher, jstr->valuestring) == 0)
@@ -313,7 +313,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
         }
 
         va_end(argp);
-        result.status = dvs_constant;
+        result.status = kDvsConstant;
         result.value_ptr = malloc(strlen(jstr->valuestring) + 1);
         strcpy(result.value_ptr, jstr->valuestring);
     }
@@ -323,7 +323,7 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
 {
 
     dynamic_value_t result = {0};
-    result.status = dvs_empty;
+    result.status = kDvsEmpty;
 
     if (!cJSON_IsObject(json_obj) || json_obj->child == NULL)
         return result;
@@ -334,7 +334,7 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
 
         va_list argp;
         va_start(argp, matchers);
-        for (size_t mi = dvs_constant + 1; mi < matchers + dvs_constant + 1; mi++)
+        for (size_t mi = kDvsConstant + 1; mi < matchers + kDvsConstant + 1; mi++)
         {
             char *matcher = va_arg(argp, char *);
             if (strcmp(matcher, jstr->valuestring) == 0)
@@ -346,11 +346,11 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
         }
 
         va_end(argp);
-        result.status = dvs_empty;
+        result.status = kDvsEmpty;
     }
     else if (cJSON_IsNumber(jstr))
     {
-        result.status = dvs_constant;
+        result.status = kDvsConstant;
         result.value = (size_t)jstr->valueint;
     }
     return result;
