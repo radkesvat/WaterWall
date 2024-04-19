@@ -94,7 +94,7 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 
 api_result_t apiHeaderClient(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyHeaderClient(tunnel_t *self)

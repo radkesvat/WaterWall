@@ -20,7 +20,7 @@ static void cleanup(tcp_connector_con_state_t *cstate)
         }
         if (cw->payload)
         {
-            DISCARD_CONTEXT(cw);
+            reuseContextBuffer(cw);
         }
         destroyContext(cw);
     }
@@ -389,7 +389,7 @@ void tcpConnectorPacketUpStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        DISCARD_CONTEXT(c);
+        reuseContextBuffer(c);
     }
     self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
@@ -465,7 +465,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 }
 api_result_t apiTcpConnector(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 tunnel_t *destroyTcpConnector(tunnel_t *self)
 {

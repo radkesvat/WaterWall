@@ -217,7 +217,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
 api_result_t apiReverseClient(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyReverseClient(tunnel_t *self)

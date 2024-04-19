@@ -32,63 +32,66 @@
 #ifndef SHA2_H
 #define SHA2_H
 
-#define SHA224_DIGEST_SIZE ( 224 / 8)
-#define SHA256_DIGEST_SIZE ( 256 / 8)
-#define SHA384_DIGEST_SIZE ( 384 / 8)
-#define SHA512_DIGEST_SIZE ( 512 / 8)
+#define SHA224_DIGEST_SIZE (224 / 8)
+#define SHA256_DIGEST_SIZE (256 / 8)
+#define SHA384_DIGEST_SIZE (384 / 8)
+#define SHA512_DIGEST_SIZE (512 / 8)
 
-#define SHA256_BLOCK_SIZE  ( 512 / 8)
-#define SHA512_BLOCK_SIZE  (1024 / 8)
-#define SHA384_BLOCK_SIZE  SHA512_BLOCK_SIZE
-#define SHA224_BLOCK_SIZE  SHA256_BLOCK_SIZE
+#define SHA256_BLOCK_SIZE (512 / 8)
+#define SHA512_BLOCK_SIZE (1024 / 8)
+#define SHA384_BLOCK_SIZE SHA512_BLOCK_SIZE
+#define SHA224_BLOCK_SIZE SHA256_BLOCK_SIZE
 
 #ifndef SHA2_TYPES
 #define SHA2_TYPES
-typedef unsigned char uint8;
-typedef unsigned int  uint32;
+typedef unsigned char      uint8;
+typedef unsigned int       uint32;
 typedef unsigned long long uint64;
 #endif
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-typedef struct {
-    uint64 tot_len;
-    uint64 len;
-    uint8 block[2 * SHA256_BLOCK_SIZE];
-    uint32 h[8];
-} sha256_ctx;
+    typedef struct
+    {
+        uint64 tot_len;
+        uint64 len;
+        uint8  block[2 * SHA256_BLOCK_SIZE];
+        uint32 h[8];
+    } sha256_ctx;
 
-typedef struct {
-    uint64 tot_len;
-    uint64 len;
-    uint8 block[2 * SHA512_BLOCK_SIZE];
-    uint64 h[8];
-} sha512_ctx;
+    typedef struct
+    {
+        uint64 tot_len;
+        uint64 len;
+        uint8  block[2 * SHA512_BLOCK_SIZE];
+        uint64 h[8];
+    } sha512_ctx;
 
-typedef sha512_ctx sha384_ctx;
-typedef sha256_ctx sha224_ctx;
+    typedef sha512_ctx sha384_ctx;
+    typedef sha256_ctx sha224_ctx;
 
-void sha224_init(sha224_ctx *ctx);
-void sha224_update(sha224_ctx *ctx, const uint8 *message, uint64 len);
-void sha224_final(sha224_ctx *ctx, uint8 *digest);
-void sha224(const uint8 *message, uint64 len, uint8 *digest);
+    void sha224Init(sha224_ctx *ctx);
+    void sha224Update(sha224_ctx *ctx, const uint8 *message, uint64 len);
+    void sha224Final(sha224_ctx *ctx, uint8 *digest);
+    void sha224(const uint8 *message, uint64 len, uint8 *digest);
 
-void sha256_init(sha256_ctx * ctx);
-void sha256_update(sha256_ctx *ctx, const uint8 *message, uint64 len);
-void sha256_final(sha256_ctx *ctx, uint8 *digest);
-void sha256(const uint8 *message, uint64 len, uint8 *digest);
+    void sha256Init(sha256_ctx *ctx);
+    void sha256Update(sha256_ctx *ctx, const uint8 *message, uint64 len);
+    void sha256Final(sha256_ctx *ctx, uint8 *digest);
+    void sha256(const uint8 *message, uint64 len, uint8 *digest);
 
-void sha384_init(sha384_ctx *ctx);
-void sha384_update(sha384_ctx *ctx, const uint8 *message, uint64 len);
-void sha384_final(sha384_ctx *ctx, uint8 *digest);
-void sha384(const uint8 *message, uint64 len, uint8 *digest);
+    void sha384Init(sha384_ctx *ctx);
+    void sha384Update(sha384_ctx *ctx, const uint8 *message, uint64 len);
+    void sha384Final(sha384_ctx *ctx, uint8 *digest);
+    void sha384(const uint8 *message, uint64 len, uint8 *digest);
 
-void sha512_init(sha512_ctx *ctx);
-void sha512_update(sha512_ctx *ctx, const uint8 *message, uint64 len);
-void sha512_final(sha512_ctx *ctx, uint8 *digest);
-void sha512(const uint8 *message, uint64 len, uint8 *digest);
+    void sha512Init(sha512_ctx *ctx);
+    void sha512Update(sha512_ctx *ctx, const uint8 *message, uint64 len);
+    void sha512Final(sha512_ctx *ctx, uint8 *digest);
+    void sha512(const uint8 *message, uint64 len, uint8 *digest);
 
 #ifdef __cplusplus
 }

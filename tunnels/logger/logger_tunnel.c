@@ -38,7 +38,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 context_t *reply = newContextFrom(c);
                 reply->payload = popBuffer(buffer_pools[c->line->tid]);
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 destroyContext(c);
                 sprintf((char*)rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
@@ -102,7 +102,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, reply);
             }
 
-            DISCARD_CONTEXT(c);
+            reuseContextBuffer(c);
             destroyContext(c);
         }
     }
@@ -173,7 +173,7 @@ tunnel_t *newLoggerTunnel(node_instance_context_t *instance_info)
 
 api_result_t apiLoggerTunnel(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyLoggerTunnel(tunnel_t *self)

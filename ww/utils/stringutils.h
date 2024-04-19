@@ -5,4 +5,4 @@
 #endif
 #define TOSTRING(x) STRINGIFY(x)
 
-char* concat(const char *s1, const char *s2);
+char *concat(const char *s1, const char *s2);

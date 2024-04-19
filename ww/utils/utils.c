@@ -1,30 +1,32 @@
 #include "basic_types.h"
-#include "stringutils.h"
-#include "jsonutils.h"
 #include "fileutils.h"
-#include "sockutils.h"
-#include "userutils.h"
 #include "hashutils.h"
+#include "jsonutils.h"
 #include "procutils.h"
+#include "sockutils.h"
+#include "stringutils.h"
+#include "userutils.h"
 #include <stdio.h>
 #define NOMINMAX
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
 
 char *readFile(const char *const path)
 {
     FILE *f = fopen(path, "rb");
 
-    if (!f)
+    if (! f)
+    {
         return NULL;
+    }
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
-    char *string = malloc(fsize + 1);
-    size_t count = fread(string, fsize, 1, f);
+    char * string = malloc(fsize + 1);
+    size_t count  = fread(string, fsize, 1, f);
     if (count == 0)
     {
         free(string);
@@ -40,8 +42,10 @@ bool writeFile(const char *const path, const char *data, size_t len)
 {
     FILE *f = fopen(path, "wb");
 
-    if (!f)
+    if (! f)
+    {
         return false;
+    }
 
     fseek(f, 0, SEEK_SET);
 
@@ -64,7 +68,6 @@ char *concat(const char *s1, const char *s2)
 
 bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
 {
-
     assert(dest != NULL);
     const cJSON *jbool = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsBool(jbool))
@@ -72,10 +75,7 @@ bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
         *dest = cJSON_IsTrue(jbool);
         return true;
     }
-    else
-    {
-        return false;
-    }
+    return false;
 }
 
 bool getBoolFromJsonObjectOrDefault(bool *dest, const cJSON *json_obj, const char *key, bool def)
@@ -87,11 +87,8 @@ bool getBoolFromJsonObjectOrDefault(bool *dest, const cJSON *json_obj, const cha
         *dest = cJSON_IsTrue(jbool);
         return true;
     }
-    else
-    {
-        *dest = def;
-        return false;
-    }
+    *dest = def;
+    return false;
 }
 
 bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
@@ -103,10 +100,7 @@ bool getIntFromJsonObject(int *dest, const cJSON *json_obj, const char *key)
         *dest = jnumber->valueint;
         return true;
     }
-    else
-    {
-        return false;
-    }
+    return false;
 }
 
 bool getIntFromJsonObjectOrDefault(int *dest, const cJSON *json_obj, const char *key, int def)
@@ -118,11 +112,8 @@ bool getIntFromJsonObjectOrDefault(int *dest, const cJSON *json_obj, const char 
         *dest = jnumber->valueint;
         return true;
     }
-    else
-    {
-        *dest = def;
-        return false;
-    }
+    *dest = def;
+    return false;
 }
 
 bool getStringFromJson(char **dest, const cJSON *json_str_node)
@@ -135,10 +126,7 @@ bool getStringFromJson(char **dest, const cJSON *json_str_node)
         strcpy(*dest, json_str_node->valuestring);
         return true;
     }
-    else
-    {
-        return false;
-    }
+    return false;
 }
 bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key)
 {
@@ -152,16 +140,13 @@ bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key
         strcpy(*dest, jstr->valuestring);
         return true;
     }
-    else
-    {
-        return false;
-    }
+    return false;
 }
 
 bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key, const char *def)
 {
     assert(def != NULL);
-    if (!getStringFromJsonObject(dest, json_obj, key))
+    if (! getStringFromJsonObject(dest, json_obj, key))
     {
         *dest = malloc(strlen(def) + 1);
         strcpy(*dest, def);
@@ -170,38 +155,38 @@ bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const 
     return true;
 }
 
-// memory behind these pointers are not being mutated, but i prefere using restrict
-// when 2 arguments are same pointer types, if it dose not make the code invalid
-extern bool socket_cmp_ipv4(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2);
-extern bool socket_cmp_ipv6(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2);
-bool socket_cmp_ip(sockaddr_u *restrict addr1, sockaddr_u *restrict addr2)
+extern bool socketCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
+extern bool socketCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
+bool        socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
 {
 
     if (addr1->sa.sa_family != addr2->sa.sa_family)
+    {
         return false;
-
+    }
     if (addr1->sa.sa_family == AF_INET)
     {
-        return socket_cmp_ipv4(addr1, addr2);
-    }
-    else if (addr1->sa.sa_family == AF_INET6)
-    {
-        return socket_cmp_ipv6(addr1, addr2);
+        return socketCmpIPV4(addr1, addr2);
     }
 
-    assert(!"unknown sa_family");
+    if (addr1->sa.sa_family == AF_INET6)
+    {
+        return socketCmpIPV6(addr1, addr2);
+    }
+
+    assert(! "unknown sa_family");
 
     return false;
 }
 
 void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
 {
-    dest->acmd = (*source)->acmd;
+    dest->acmd  = (*source)->acmd;
     dest->atype = (*source)->atype;
 
     switch (dest->atype)
     {
-    case kSatIpV4:
+    case kSatIPV4:
         dest->addr.sa.sa_family = AF_INET;
         dest->addr.sin.sin_addr = (*source)->addr.sin.sin_addr;
 
@@ -217,7 +202,7 @@ void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
 
         break;
 
-    case kSatIpV6:
+    case kSatIPV6:
         dest->addr.sa.sa_family = AF_INET6;
         memcpy(&(dest->addr.sin6.sin6_addr), &((*source)->addr.sin6.sin6_addr), sizeof(struct in6_addr));
 
@@ -228,9 +213,13 @@ void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
 enum socket_address_type getHostAddrType(char *host)
 {
     if (is_ipv4(host))
-        return kSatIpV4;
+    {
+        return kSatIPV4;
+    }
     if (is_ipv6(host))
-        return kSatIpV6;
+    {
+        return kSatIPV6;
+    }
     return kSatDomainName;
 }
 
@@ -239,28 +228,24 @@ void copySocketContextPort(socket_context_t *dest, socket_context_t *source)
 
     switch (dest->atype)
     {
-    case kSatIpV4:
-        dest->addr.sin.sin_port = source->addr.sin.sin_port;
-        break;
-
+    case kSatIPV4:
     case kSatDomainName:
-        dest->addr.sin.sin_port = source->addr.sin.sin_port;
-        break;
-
-    case kSatIpV6:
-        dest->addr.sin6.sin6_port = source->addr.sin6.sin6_port;
-        break;
     default:
         dest->addr.sin.sin_port = source->addr.sin.sin_port;
+        break;
+
+    case kSatIPV6:
+        dest->addr.sin6.sin6_port = source->addr.sin6.sin6_port;
         break;
     }
 }
 
 struct user_s *parseUserFromJsonObject(const cJSON *user_json)
 {
-    if (!cJSON_IsObject(user_json) || user_json->child == NULL)
+    if (! cJSON_IsObject(user_json) || user_json->child == NULL)
+    {
         return NULL;
-
+    }
     user_t *user = malloc(sizeof(user_t));
     memset(user, 0, sizeof(user_t));
 
@@ -268,21 +253,21 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     getStringFromJsonObjectOrDefault(&(user->email), user_json, "email", "EMPTY_EMAIL");
     getStringFromJsonObjectOrDefault(&(user->notes), user_json, "notes", "EMTPY_NOTES");
 
-    if (!getStringFromJsonObject(&(user->uid), user_json, "uid"))
+    if (! getStringFromJsonObject(&(user->uid), user_json, "uid"))
     {
         free(user);
         return NULL;
     }
-    user->hash_uid = calcHashLen(user->uid, strlen(user->uid));
+    user->hash_uid = CALC_HASH_BYTES(user->uid, strlen(user->uid));
 
     bool enable;
-    if (!getBoolFromJsonObject(&(enable), user_json, "enable"))
+    if (! getBoolFromJsonObject(&(enable), user_json, "enable"))
     {
         free(user);
         return NULL;
     }
     user->enable = enable;
-    // TODO
+    // TODO (parse user) parse more fields from user like limits/dates/etc..
     return user;
 }
 
@@ -290,10 +275,12 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
 {
 
     dynamic_value_t result = {0};
-    result.status = kDvsEmpty;
+    result.status          = kDvsEmpty;
 
-    if (!cJSON_IsObject(json_obj) || json_obj->child == NULL)
+    if (! cJSON_IsObject(json_obj) || json_obj->child == NULL)
+    {
         return result;
+    }
 
     const cJSON *jstr = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
@@ -313,7 +300,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
         }
 
         va_end(argp);
-        result.status = kDvsConstant;
+        result.status    = kDvsConstant;
         result.value_ptr = malloc(strlen(jstr->valuestring) + 1);
         strcpy(result.value_ptr, jstr->valuestring);
     }
@@ -323,11 +310,12 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
 {
 
     dynamic_value_t result = {0};
-    result.status = kDvsEmpty;
+    result.status          = kDvsEmpty;
 
-    if (!cJSON_IsObject(json_obj) || json_obj->child == NULL)
+    if (! cJSON_IsObject(json_obj) || json_obj->child == NULL)
+    {
         return result;
-
+    }
     const cJSON *jstr = cJSON_GetObjectItemCaseSensitive(json_obj, key);
     if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
     {
@@ -351,7 +339,7 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
     else if (cJSON_IsNumber(jstr))
     {
         result.status = kDvsConstant;
-        result.value = (size_t)jstr->valueint;
+        result.value  = (size_t) jstr->valueint;
     }
     return result;
 }
@@ -359,10 +347,10 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
 // blocking io
 cmdresult_t execCmd(const char *str)
 {
-    FILE *fp;
+    FILE *      fp;
     cmdresult_t result = (cmdresult_t){{0}, -1};
-    char *buf = &(result.output[0]);
-    int i = 0;
+    char *      buf    = &(result.output[0]);
+    int         i      = 0;
     /* Open the command for reading. */
     fp = popen(str, "r");
     if (fp == NULL)
@@ -371,14 +359,14 @@ cmdresult_t execCmd(const char *str)
         return (cmdresult_t){{0}, -1};
     }
 
-    int read = fscanf(fp, "%2047s", buf);
+    int read         = fscanf(fp, "%2047s", buf);
     result.exit_code = pclose(fp);
 
     return result;
     /* close */
     // return 0 == pclose(fp);
 }
-bool check_installed(const char *app)
+bool checkCommandAvailable(const char *app)
 {
     char b[300];
     sprintf(b, "command -v %s", app);

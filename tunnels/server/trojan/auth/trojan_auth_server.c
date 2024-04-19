@@ -1,20 +1,16 @@
 #include "trojan_auth_server.h"
-#include "managers/node_manager.h"
-#include "loggers/network_logger.h"
-#include "utils/userutils.h"
-#include "utils/stringutils.h"
 #include "hv/hatomic.h"
+#include "loggers/network_logger.h"
+#include "managers/node_manager.h"
+#include "utils/stringutils.h"
+#include "utils/userutils.h"
 
-#define STATE(x) ((trojan_auth_server_state_t *)((x)->state))
-#define CSTATE(x) ((trojan_auth_server_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
 
-#define i_type hmap_users_t
-#define i_key hash_t
-#define i_val trojan_user_t *
+#define i_type hmap_users_t    // NOLINT
+#define i_key  hash_t          // NOLINT
+#define i_val  trojan_user_t * // NOLINT
 
-#define VEC_CAP 100
+#define VEC_CAP  100
 #define CRLF_LEN 2
 
 #include "stc/hmap.h"
@@ -22,9 +18,9 @@
 typedef struct trojan_auth_server_state_s
 {
     config_file_t *config_file;
-    tunnel_t *fallback;
-    int fallback_delay;
-    hmap_users_t users;
+    tunnel_t *     fallback;
+    int            fallback_delay;
+    hmap_users_t   users;
 
 } trojan_auth_server_state_t;
 
@@ -37,31 +33,33 @@ typedef struct trojan_auth_server_con_state_s
 
 struct timer_eventdata
 {
-    tunnel_t *self;
+    tunnel_t * self;
     context_t *c;
 };
 static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
 {
     struct timer_eventdata *result = malloc(sizeof(struct timer_eventdata));
-    result->self = self;
-    result->c = c;
+    result->self                   = self;
+    result->c                      = c;
     return result;
 }
 
-static void on_fallback_timer(htimer_t *timer)
+static void onFallbackTimer(htimer_t *timer)
 {
-    struct timer_eventdata *data = hevent_userdata(timer);
-    tunnel_t *self = data->self;
+    struct timer_eventdata *    data  = hevent_userdata(timer);
+    tunnel_t *                  self  = data->self;
     trojan_auth_server_state_t *state = STATE(self);
-    context_t *c = data->c;
+    context_t *                 c     = data->c;
 
     free(data);
     htimer_del(timer);
 
-    if (!ISALIVE(c))
+    if (! ISALIVE(c))
     {
         if (c->payload != NULL)
-            DISCARD_CONTEXT(c);
+        {
+            reuseContextBuffer(c);
+        }
         destroyContext(c);
         return;
     }
@@ -79,74 +77,72 @@ static inline void upStream(tunnel_t *self, context_t *c)
             self->up->upStream(self->up, c);
             return;
         }
-        else
+
+        if (c->first)
         {
-            if (c->first)
+            // struct timeval tv1, tv2;
+            // gettimeofday(&tv1, NULL);
             {
-                // struct timeval tv1, tv2;
-                // gettimeofday(&tv1, NULL);
+
+                // the payload must not come buffeered here (gfw can do this but not the client)
+                // so , if its incomplete we go to fallback!
+                size_t len = bufLen(c->payload);
+                if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
                 {
-
-                    // the payload must not come buffeered here (gfw can do this but not the client)
-                    // so , if its incomplete we go to fallback!
-                    size_t len = bufLen(c->payload);
-                    if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
-                    {
-                        // invalid protocol
-                        LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
-                        goto failed;
-                    }
-                    // save time easily
-                    if (((unsigned char*)rawBuf(c->payload))[sizeof(sha224_hex_t)] != '\r' ||
-                     ((unsigned char*)rawBuf(c->payload))[sizeof(sha224_hex_t) + 1] != '\n')
-                    {
-                        LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
-                        goto failed;
-                    }
-
-                    hash_t kh = calcHashLen(rawBuf(c->payload), sizeof(sha224_hex_t));
-
-                    hmap_users_t_iter find_result = hmap_users_t_find(&(state->users), kh);
-                    if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
-                    {
-                        // user not in database
-                        LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
-                        goto failed;
-                    }
-                    trojan_user_t *tuser = (find_result.ref->second);
-                    if (!tuser->user.enable)
-                    {
-                        // user disabled
-                        LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
-
-                        goto failed;
-                    }
-                    LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
-                    cstate->authenticated = true;
-                    markAuthenticated(c->line);
-                    context_t *init_ctx = newInitContext(c->line);
-                    init_ctx->src_io = c->src_io;
-                    cstate->init_sent = true;
-                    self->up->upStream(self->up, init_ctx);
-                    if (!ISALIVE(c))
-                    {
-                        DISCARD_CONTEXT(c);
-                        destroyContext(c);
-                        return;
-                    }
-
-                    shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
-                    self->up->upStream(self->up, c);
+                    // invalid protocol
+                    LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
+                    goto failed;
                 }
-                // gettimeofday(&tv2, NULL);
+                // save time easily
+                if (((unsigned char *) rawBuf(c->payload))[sizeof(sha224_hex_t)] != '\r' ||
+                    ((unsigned char *) rawBuf(c->payload))[sizeof(sha224_hex_t) + 1] != '\n')
+                {
+                    LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
+                    goto failed;
+                }
 
-                // double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec - tv1.tv_sec);
-                // LOGD("Auth: took %lf sec", time_spent);
-                return;
+                hash_t kh = CALC_HASH_BYTES(rawBuf(c->payload), sizeof(sha224_hex_t));
+
+                hmap_users_t_iter find_result = hmap_users_t_find(&(state->users), kh);
+                if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
+                {
+                    // user not in database
+                    LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
+                    goto failed;
+                }
+                trojan_user_t *tuser = (find_result.ref->second);
+                if (! tuser->user.enable)
+                {
+                    // user disabled
+                    LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
+
+                    goto failed;
+                }
+                LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
+                cstate->authenticated = true;
+                markAuthenticated(c->line);
+                context_t *init_ctx = newInitContext(c->line);
+                init_ctx->src_io    = c->src_io;
+                cstate->init_sent   = true;
+                self->up->upStream(self->up, init_ctx);
+                if (! ISALIVE(c))
+                {
+                    reuseContextBuffer(c);
+                    destroyContext(c);
+                    return;
+                }
+
+                shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
+                self->up->upStream(self->up, c);
             }
-            else
-                goto failed;
+            // gettimeofday(&tv2, NULL);
+
+            // double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec -
+            // tv1.tv_sec); LOGD("Auth: took %lf sec", time_spent);
+            return;
         }
+
+        goto failed;
     }
     else
     {
@@ -161,44 +157,54 @@ static inline void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             bool init_sent = CSTATE(c)->init_sent;
-            bool auth = CSTATE(c)->authenticated;
+            bool auth      = CSTATE(c)->authenticated;
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             if (init_sent)
+            {
                 if (auth)
+                {
                     self->up->upStream(self->up, c);
+                }
                 else
+                {
                     state->fallback->upStream(state->fallback, c);
+                }
+            }
             else
+            {
                 destroyContext(c);
+            }
         }
     }
 
     return;
 failed:;
     if (state->fallback != NULL)
+    {
         goto fallback;
+    }
 
 disconnect:;
-    DISCARD_CONTEXT(c);
+    reuseContextBuffer(c);
     free(CSTATE(c));
-    CSTATE_MUT(c) = NULL;
+    CSTATE_MUT(c)    = NULL;
     context_t *reply = newFinContext(c->line);
     destroyContext(c);
     self->dw->downStream(self->dw, reply);
     return;
 fallback:;
     trojan_auth_server_con_state_t *cstate = CSTATE(c);
-    if (!cstate->init_sent)
+    if (! cstate->init_sent)
     {
         context_t *init_ctx = newInitContext(c->line);
-        init_ctx->src_io = c->src_io;
-        cstate->init_sent = true;
+        init_ctx->src_io    = c->src_io;
+        cstate->init_sent   = true;
 
         state->fallback->upStream(state->fallback, init_ctx);
-        if (!ISALIVE(c))
+        if (! ISALIVE(c))
         {
-            DISCARD_CONTEXT(c);
+            reuseContextBuffer(c);
             destroyContext(c);
             return;
         }
@@ -209,10 +215,9 @@ fallback:;
     }
     else
     {
-        htimer_t *t = htimer_add(c->line->loop, on_fallback_timer, state->fallback_delay, 1);
+        htimer_t *t = htimer_add(c->line->loop, onFallbackTimer, state->fallback_delay, 1);
         hevent_set_userdata(t, newTimerData(self, c));
     }
-    return;
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
@@ -223,8 +228,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
         CSTATE_MUT(c) = NULL;
     }
     self->dw->downStream(self->dw, c);
-
-    return;
 }
 
 static void trojanAuthServerUpStream(tunnel_t *self, context_t *c)
@@ -247,13 +250,13 @@ static void trojanAuthServerPacketDownStream(tunnel_t *self, context_t *c)
 static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
 {
     trojan_auth_server_state_t *state = t->state;
-    if (!(cJSON_IsObject(settings) && settings->child != NULL))
+    if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: TrojanAuthServer->Settings (object field) was empty or invalid");
         exit(1);
     }
     const cJSON *users_array = cJSON_GetObjectItemCaseSensitive(settings, "users");
-    if (!(cJSON_IsArray(users_array) && users_array->child != NULL))
+    if (! (cJSON_IsArray(users_array) && users_array->child != NULL))
     {
         LOGF("JSON Error: TrojanAuthServer->Settings->Users (array field) was empty or invalid");
         exit(1);
@@ -261,7 +264,7 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
     cJSON *element = NULL;
 
     unsigned int total_parsed = 0;
-    unsigned int total_users = 0;
+    unsigned int total_users  = 0;
     cJSON_ArrayForEach(element, users_array)
     {
         user_t *user = parseUserFromJsonObject(element);
@@ -276,16 +279,16 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             memset(tuser, 0, sizeof(trojan_user_t));
             tuser->user = *user;
             free(user);
-            sha224((uint8_t*)tuser->user.uid, strlen(tuser->user.uid), &(tuser->hash_user[0]));
+            sha224((uint8_t *) tuser->user.uid, strlen(tuser->user.uid), &(tuser->hash_user[0]));
 
             for (int i = 0; i < sizeof(sha224_t); i++)
             {
-                sprintf((char*)&(tuser->hash_hexed_user[i * 2]), "%02x", (unsigned char)(tuser->hash_user[i]));
+                sprintf((char *) &(tuser->hash_hexed_user[i * 2]), "%02x", (tuser->hash_user[i]));
             }
             // 640f8fd293ea546e483060cce622d7f9ab96026d6af84a4333f486f9
             LOGD("TrojanAuthServer: user \"%s\" parsed, sha224: %.12s...", tuser->user.name, tuser->hash_hexed_user);
 
-            tuser->komihash_of_hex = calcHashLen(tuser->hash_hexed_user, sizeof(sha224_hex_t));
+            tuser->komihash_of_hex = CALC_HASH_BYTES(tuser->hash_hexed_user, sizeof(sha224_hex_t));
 
             hmap_users_t_push(&(state->users), (hmap_users_t_value){tuser->komihash_of_hex, tuser});
         }
@@ -295,7 +298,7 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
     LOGI("TrojanAuthServer: %zu users parsed (out of total %zu) and can connect", total_parsed, total_users);
 
     char *fallback_node = NULL;
-    if (!getStringFromJsonObject(&fallback_node, settings, "fallback"))
+    if (! getStringFromJsonObject(&fallback_node, settings, "fallback"))
     {
         LOGW("TrojanAuthServer: no fallback provided in json, standard trojan requires fallback");
     }
@@ -304,11 +307,13 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
 
         getIntFromJsonObject(&(state->fallback_delay), settings, "fallback-intence-delay");
         if (state->fallback_delay < 0)
+        {
             state->fallback_delay = 0;
+        }
 
         LOGD("TrojanAuthServer: accessing fallback node");
 
-        hash_t hash_next = calcHashLen(fallback_node, strlen(fallback_node));
+        hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(hash_next);
         if (next_node == NULL)
         {
@@ -336,20 +341,20 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 {
     trojan_auth_server_state_t *state = malloc(sizeof(trojan_auth_server_state_t));
     memset(state, 0, sizeof(trojan_auth_server_state_t));
-    state->users = hmap_users_t_with_capacity(VEC_CAP);
+    state->users    = hmap_users_t_with_capacity(VEC_CAP);
     cJSON *settings = instance_info->node_settings_json;
 
-    if (!(cJSON_IsObject(settings) && settings->child != NULL))
+    if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: TrojanAuthServer->settings (object field) : The object was empty or invalid");
         return NULL;
     }
     tunnel_t *t = newTunnel();
-    t->state = state;
+    t->state    = state;
 
-    t->upStream = &trojanAuthServerUpStream;
-    t->packetUpStream = &trojanAuthServerPacketUpStream;
-    t->downStream = &trojanAuthServerDownStream;
+    t->upStream         = &trojanAuthServerUpStream;
+    t->packetUpStream   = &trojanAuthServerPacketUpStream;
+    t->downStream       = &trojanAuthServerDownStream;
     t->packetDownStream = &trojanAuthServerPacketDownStream;
     parse(t, settings, instance_info->chain_index);
 
@@ -357,13 +362,17 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
     return t;
 }
 
-api_result_t apiTrojanAuthServer(tunnel_t *self, char *msg)
+api_result_t apiTrojanAuthServer(tunnel_t *self, const char *msg)
 {
-    return (api_result_t){0}; // TODO
+
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0}; // TODO(root):
 }
 
 tunnel_t *destroyTrojanAuthServer(tunnel_t *self)
 {
+    (void) self;
     return NULL;
 }
 

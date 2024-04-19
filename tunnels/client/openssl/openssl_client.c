@@ -126,7 +126,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         self->up->upStream(self->up, send_context);
                         if (!ISALIVE(c))
                         {
-                            DISCARD_CONTEXT(c);
+                            reuseContextBuffer(c);
                             destroyContext(c);
                             return;
                         }
@@ -135,7 +135,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(buffer_pools[c->line->tid], buf);
-                        DISCARD_CONTEXT(c);
+                        reuseContextBuffer(c);
                         goto failed;
                     }
                     else
@@ -147,7 +147,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             if (status == SSLSTATUS_FAIL)
             {
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 goto failed;
             }
 
@@ -155,7 +155,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 break;
         }
         assert(bufLen(c->payload) == 0);
-        DISCARD_CONTEXT(c);
+        reuseContextBuffer(c);
         destroyContext(c);
     }
     else
@@ -254,7 +254,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             if (n <= 0)
             {
                 /* if BIO write fails, assume unrecoverable */
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 goto failed;
             }
             shiftr(c->payload, n);
@@ -283,7 +283,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                             self->up->upStream(self->up, req_cont);
                             if (!ISALIVE(c))
                             {
-                                DISCARD_CONTEXT(c);
+                                reuseContextBuffer(c);
                                 destroyContext(c);
                                 return;
                             }
@@ -291,7 +291,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                         else if (!BIO_should_retry(cstate->rbio))
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
-                            DISCARD_CONTEXT(c);
+                            reuseContextBuffer(c);
                             reuseBuffer(buffer_pools[c->line->tid], buf);
                             goto failed;
                         }
@@ -305,7 +305,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 {
                     int x = SSL_get_verify_result(cstate->ssl);
                     printSSLError();
-                    DISCARD_CONTEXT(c);
+                    reuseContextBuffer(c);
                     goto failed;
                 }
 
@@ -327,7 +327,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
                 if (!SSL_is_init_finished(cstate->ssl))
                 {
-                    //     DISCARD_CONTEXT(c);
+                    //     reuseContextBuffer(c);
                     //     destroyContext(c);
                     //     return;
                 }
@@ -341,18 +341,18 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     if (!ISALIVE(c))
                     {
                         LOGW("OpensslClient: prev node instantly closed the est with fin");
-                        DISCARD_CONTEXT(c);
+                        reuseContextBuffer(c);
                         destroyContext(c);
                         return;
                     }
                     flush_write_queue(self, c);
                     // queue is flushed and we are done
-                    // DISCARD_CONTEXT(c);
+                    // reuseContextBuffer(c);
                     // destroyContext(c);
                     // return;
                 }
 
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }
@@ -379,7 +379,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     self->dw->downStream(self->dw, data_ctx);
                     if (!ISALIVE(c))
                     {
-                        DISCARD_CONTEXT(c);
+                        reuseContextBuffer(c);
                         destroyContext(c);
                         return;
                     }
@@ -395,12 +395,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             if (status == SSLSTATUS_FAIL)
             {
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 goto failed;
             }
         }
         // done with socket data
-        DISCARD_CONTEXT(c);
+        reuseContextBuffer(c);
         destroyContext(c);
     }
     else
@@ -524,7 +524,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
 api_result_t apiOpenSSLClient(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyOpenSSLClient(tunnel_t *self)

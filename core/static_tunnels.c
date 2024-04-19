@@ -5,7 +5,7 @@
 #define USING(x)                                                                       \
     do                                                                                 \
     {                                                                                  \
-        hash_t h = calcHashLen(#x, strlen(#x));                                        \
+        hash_t h = CALC_HASH_BYTES(#x, strlen(#x));                                        \
         registerStaticLib((tunnel_lib_t){h,                                            \
                                          new##x, api##x, destroy##x, getMetadata##x}); \
         LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                    \

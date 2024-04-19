@@ -31,11 +31,11 @@ static void onUdpRecv(hio_t *io, void *buf, int readbytes)
 
     if (destaddr->sa_family == AF_INET6)
     {
-        atype = kSatIpV6;
+        atype = kSatIPV6;
     }
     else
     {
-        atype = kSatIpV4;
+        atype = kSatIPV4;
     }
 
     if (! cstate->established)
@@ -70,7 +70,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
         {
             cleanup(CSTATE(c));
             CSTATE_MUT(c) = NULL;
-            DISCARD_CONTEXT(c);
+            reuseContextBuffer(c);
             goto fail;
         }
 
@@ -80,7 +80,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
             assert(false); // should not happen
         }
 
-        DISCARD_CONTEXT(c);
+        reuseContextBuffer(c);
         destroyContext(c);
     }
     else
@@ -183,7 +183,7 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
                         free(resolved_dest_context.domain);
                         cleanup(CSTATE(c));
                         CSTATE_MUT(c) = NULL;
-                        DISCARD_CONTEXT(c);
+                        reuseContextBuffer(c);
                         goto fail;
                     }
                 }

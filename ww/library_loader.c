@@ -3,18 +3,19 @@
 #include "loggers/core_logger.h"
 #include <string.h>
 
-#define i_key tunnel_lib_t
-#define i_type vec_static_libs
+#define i_key  tunnel_lib_t // NOLINT
+#define i_type vec_static_libs // NOLINT
 #include "stc/vec.h"
 
 static struct
 {
-    const char *search_path;
+    const char *    search_path;
     vec_static_libs slibs;
-} *state;
+} * state;
 
 static tunnel_lib_t dynLoadTunnelLib(hash_t hname)
 {
+    (void) hname;
     LOGF("dynLoadTunnelLib not implemented");
     return (tunnel_lib_t){0};
 }
@@ -36,7 +37,7 @@ tunnel_lib_t loadTunnelLibByHash(hash_t hname)
 }
 tunnel_lib_t loadTunnelLib(const char *name)
 {
-    hash_t hname = calcHashLen(name, strlen(name));
+    hash_t hname = CALC_HASH_BYTES(name, strlen(name));
     return loadTunnelLibByHash(hname);
 }
 

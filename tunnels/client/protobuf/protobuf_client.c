@@ -109,7 +109,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             shift_buffer_t *buf = c->payload;
             if (bufLen(buf) < 2)
             {
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 cleanup(cstate);
                 CSTATE_MUT(c) = NULL;
                 self->dw->downStream(self->dw, newFinContext(c->line));
@@ -125,7 +125,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             if (data_len > MAX_PACKET_SIZE)
             {
                 LOGE("ProtoBufServer: rejected, size too large %zu (%zu passed %d left)",data_len,bytes_passed,(int)(bufLen(buf)));
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 cleanup(cstate);
                 CSTATE_MUT(c) = NULL;
 
@@ -191,7 +191,7 @@ tunnel_t *newProtoBufClient(node_instance_context_t *instance_info)
 
 api_result_t apiProtoBufClient(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyProtoBufClient(tunnel_t *self)

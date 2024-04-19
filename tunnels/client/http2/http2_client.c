@@ -395,7 +395,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         size_t len = bufLen(c->payload);
         size_t ret = nghttp2_session_mem_recv2(con->session, (const uint8_t *)rawBuf(c->payload), len);
         assert(ret == len);
-        DISCARD_CONTEXT(c);
+        reuseContextBuffer(c);
 
         if (!ISALIVE(c))
         {
@@ -518,7 +518,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 
 api_result_t apiHttp2Client(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyHttp2Client(tunnel_t *self)

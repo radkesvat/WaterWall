@@ -75,7 +75,7 @@ create_http2_stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io
     nvs[nvlen++] = make_nv(":scheme", con->scheme);
 
     if (con->host_port == 0 ||
-        con->host_port == DEFAULT_HTTP_PORT ||
+        con->host_port == DEFAULT_kHTTP_PORT ||
         con->host_port == DEFAULT_HTTPS_PORT)
     {
         nvs[nvlen++] = (make_nv(":authority", con->host));
@@ -139,7 +139,7 @@ static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid
     con->host = state->host;
     con->host_port = state->host_port;
     con->scheme = state->scheme;
-    con->method = HTTP_GET;
+    con->method = kHTTP_GET;
     con->line = newLine(tid);
     con->ping_timer = htimer_add(con->line->loop, on_ping_timer, PING_INTERVAL, INFINITE);
     con->tunnel = self;
@@ -158,7 +158,7 @@ static http2_client_con_state_t *create_http2_connection(tunnel_t *self, int tid
 
     if (state->content_type == APPLICATION_GRPC)
     {
-        con->method = HTTP_POST;
+        con->method = kHTTP_POST;
     }
 
     return con;

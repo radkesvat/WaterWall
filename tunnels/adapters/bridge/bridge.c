@@ -90,7 +90,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
     bridge_state_t *state = malloc(sizeof(bridge_state_t));
     memset(state, 0, sizeof(bridge_state_t));
 
-    hash_t hash_pairname = calcHashLen(pair_node_name, strlen(pair_node_name));    
+    hash_t hash_pairname = CALC_HASH_BYTES(pair_node_name, strlen(pair_node_name));    
     node_t *pair_node = getNode(hash_pairname);
     if (pair_node == NULL)
     {
@@ -114,7 +114,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
 
 api_result_t apiBridge(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyBridge(tunnel_t *self)

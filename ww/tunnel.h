@@ -4,16 +4,13 @@
 #include "buffer_pool.h"
 #include "hv/hatomic.h"
 #include "hv/hloop.h"
+#include "ww.h"
 
 #define MAX_CHAIN_LEN 30
 
-#define DISCARD_CONTEXT(x)                                                                                             \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        assert((x)->payload != NULL);                                                                                  \
-        reuseBuffer(buffer_pools[(x)->line->tid], (x)->payload);                                                       \
-        (x)->payload = NULL;                                                                                           \
-    } while (0)
+#define STATE(x)      ((void *) ((x)->state))
+#define CSTATE(x)     ((void *) ((((x)->line->chains_state)[self->chain_index])))
+#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
 typedef struct line_s
 {
@@ -23,17 +20,18 @@ typedef struct line_s
     uint16_t lcid;
     uint8_t  auth_cur;
     uint8_t  auth_max;
+    bool     root_alive;
 
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
-    void            *chains_state[];
+    void *           chains_state[];
 
 } line_t;
 
 typedef struct context_s
 {
-    line_t         *line;
-    hio_t          *src_io;
+    line_t *        line;
+    hio_t *         src_io;
     shift_buffer_t *payload;
     int             fd;
     bool            init;
@@ -42,16 +40,18 @@ typedef struct context_s
     bool            fin;
 } context_t;
 
+typedef void (*TunnelFlowRoutine)(struct tunnel_s *self, context_t *c);
+
 typedef struct tunnel_s
 {
-    void            *state;
-    hloop_t        **loops;
+    void *           state;
+    hloop_t **       loops;
     struct tunnel_s *dw, *up;
 
-    void (*upStream)(struct tunnel_s *self, context_t *c);
-    void (*packetUpStream)(struct tunnel_s *self, context_t *c);
-    void (*downStream)(struct tunnel_s *self, context_t *c);
-    void (*packetDownStream)(struct tunnel_s *self, context_t *c);
+    TunnelFlowRoutine upStream;
+    TunnelFlowRoutine packetUpStream;
+    TunnelFlowRoutine downStream;
+    TunnelFlowRoutine packetDownStream;
 
     size_t chain_index;
 
@@ -66,8 +66,7 @@ void defaultPacketUpStream(tunnel_t *self, context_t *c);
 void defaultDownStream(tunnel_t *self, context_t *c);
 void defaultPacketDownStream(tunnel_t *self, context_t *c);
 
-extern struct hloop_s **loops; // ww.h runtime api
-inline line_t          *newLine(uint16_t tid)
+inline line_t *newLine(uint16_t tid)
 {
     size_t  size   = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
     line_t *result = malloc(size);
@@ -113,6 +112,12 @@ inline void destroyLine(line_t *l)
     //     assert(l->dest_ctx.domain == NULL);
     // }
 #endif
+    assert(l->src_ctx.domain == NULL); // impossible (hopefully)
+
+    if (l->dest_ctx.domain != NULL)
+    {
+        free(l->dest_ctx.domain);
+    }
 
     // if (l->dest_ctx.domain != NULL && !l->dest_ctx.domain_is_constant_memory)
     //     free(l->dest_ctx.domain);
@@ -171,11 +176,15 @@ inline context_t *switchLine(context_t *c, line_t *line)
     c->line = line;
     return c;
 }
-
-static inline line_t *lockLine(line_t *line)
+static inline bool isAlive(line_t *line)
+{
+    return line->root_alive;
+}
+// when you don't have a context from a line, you cant guess the line is free()ed or not
+// so you should use locks
+static inline void lockLine(line_t *line)
 {
     line->refc++;
-    return line;
 }
 static inline void unLockLine(line_t *line)
 {
@@ -197,4 +206,29 @@ static inline bool isAuthenticated(line_t *line)
 static inline bool isFullyAuthenticated(line_t *line)
 {
     return line->auth_cur >= line->auth_max;
+}
+
+static inline void reuseContextBuffer(context_t *c)
+{
+    assert(c->payload != NULL);
+    reuseBuffer(buffer_pools[c->line->tid], c->payload);
+    c->payload = NULL;
+}
+
+static inline void allocateDomainBuffer(socket_context_t *scontext)
+{
+    if (scontext->domain != NULL)
+    {
+        scontext->domain = malloc(256);
+#ifdef DEBUG
+        memset(&(scontext->domain), 0xEE, 256);
+#endif
+    }
+}
+// len is max 255 since it is 8bit
+static inline void setSocketContextDomain(socket_context_t *restrict scontext, char *restrict domain, uint8_t len)
+{
+    assert(scontext->domain != NULL);
+    domain[len] = 0x0;
+    memcpy(scontext->domain, domain, len);
 }

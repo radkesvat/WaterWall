@@ -38,4 +38,3 @@ typedef struct node_s
     struct tunnel_s *instance;
 
 } node_t;
-

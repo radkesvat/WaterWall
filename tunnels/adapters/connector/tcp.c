@@ -20,7 +20,7 @@ static void cleanup(connector_con_state_t *cstate)
         }
         if (cw->payload)
         {
-            DISCARD_CONTEXT(cw);
+            reuseContextBuffer(cw);
         }
         destroyContext(cw);
     }

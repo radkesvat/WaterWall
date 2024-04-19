@@ -9,21 +9,21 @@
 
 typedef enum
 {
-    H2_SEND_MAGIC,
-    H2_SEND_SETTINGS,
-    H2_SEND_PING,
-    H2_SEND_HEADERS,
-    H2_SEND_DATA_FRAME_HD,
-    H2_SEND_DATA,
-    H2_SEND_DONE,
+    kH2SendMagic,
+    kH2SendSettings,
+    kH2SendPing,
+    kH2SendHeaders,
+    kH2SendDataFrameHd,
+    kH2SendData,
+    kH2SendDone,
 
-    H2_WANT_SEND,
-    H2_WANT_RECV,
+    kH2WantSend,
+    kH2WantRecv,
 
-    H2_RECV_SETTINGS,
-    H2_RECV_PING,
-    H2_RECV_HEADERS,
-    H2_RECV_DATA,
+    kH2RecvSettings,
+    kH2RecvPing,
+    kH2RecvHeaders,
+    kH2RecvData,
 } http2_session_state;
 
 typedef struct http2_client_child_con_state_s
@@ -70,9 +70,9 @@ typedef struct http2_client_con_state_s
 
 } http2_client_con_state_t;
 
-#define i_type vec_cons
-#define i_key http2_client_con_state_t *
-#define i_use_cmp
+#define i_type vec_cons //NOLINT
+#define i_key http2_client_con_state_t * //NOLINT
+#define i_use_cmp //NOLINT
 #include "stc/vec.h"
 
 typedef struct thread_connection_pool_s

@@ -1,7 +1,7 @@
 #pragma once
 
-#define i_type vec_config_path_t
-#define i_key  char *
+#define i_type vec_config_path_t // NOLINT
+#define i_key  char *            // NOLINT
 #include "stc/vec.h"
 
 struct core_settings_s

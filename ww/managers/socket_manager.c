@@ -5,9 +5,9 @@
 #include "ww.h"
 #include <signal.h>
 
-#define i_key     socket_filter_t *
-#define i_type    filters_t
-#define i_use_cmp // NOLINT
+#define i_key     socket_filter_t * // NOLINT
+#define i_type    filters_t         // NOLINT
+#define i_use_cmp                   // NOLINT
 #include "stc/vec.h"
 
 #define SUPOPRT_V6      false
@@ -221,7 +221,7 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     filter->cb              = cb;
     filter->listen_io       = NULL;
     unsigned int pirority   = 0;
-    if (option.multiport_backend == multiport_backend_nothing)
+    if (option.multiport_backend == kMultiportBackendNothing)
     {
         pirority++;
     }
@@ -275,7 +275,7 @@ static void noSocketConsumerFound(hio_t *io)
          SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     hio_close(io);
 }
-static bool checkIpIsWhiteList(sockaddr_u *paddr, char **white_list_raddr)
+static bool checkIpIsWhiteList(sockaddr_u *addr, char **white_list_raddr)
 {
     bool  matches = false;
     int   i       = 0;
@@ -286,14 +286,14 @@ static bool checkIpIsWhiteList(sockaddr_u *paddr, char **white_list_raddr)
         struct in6_addr mask_stripbuf = {0};
         parseIPWithSubnetMask(&ip_strbuf, cur, &mask_stripbuf);
         struct in6_addr test_addr = {0};
-        if (paddr->sa.sa_family == AF_INET)
+        if (addr->sa.sa_family == AF_INET)
         {
-            memcpy(&test_addr, &paddr->sin.sin_addr, 4);
+            memcpy(&test_addr, &addr->sin.sin_addr, 4);
             matches = checkIPRange(false, test_addr, ip_strbuf, mask_stripbuf);
         }
         else
         {
-            memcpy(&test_addr, &paddr->sin6.sin6_addr, 16);
+            memcpy(&test_addr, &addr->sin6.sin6_addr, 16);
             matches = checkIPRange(true, test_addr, ip_strbuf, mask_stripbuf);
         }
         if (matches)
@@ -315,7 +315,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
-            socket_filter_t       *filter   = *(k.ref);
+            socket_filter_t *      filter   = *(k.ref);
             socket_filter_option_t option   = filter->option;
             uint16_t               port_min = option.port_min;
             uint16_t               port_max = option.port_max;
@@ -370,9 +370,9 @@ static multiport_backend_t getDefaultMultiPortBackend()
 {
     if (state->iptables_installed)
     {
-        return multiport_backend_iptables;
+        return kMultiportBackendIptables;
     }
-    return multiport_backend_sockets;
+    return kMultiportBackendSockets;
 }
 
 static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
@@ -443,8 +443,7 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
     }
 }
-static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
-                                uint8_t *ports_overlapped)
+static void listenTcpSinglePort(hloop_t *loop,socket_filter_t *filter, char *host, uint16_t port, uint8_t *ports_overlapped)
 {
     if (ports_overlapped[port] == 1)
     {
@@ -467,7 +466,7 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
         c_foreach(k, filters_t, state->filters[ri])
         {
             socket_filter_t *filter = *(k.ref);
-            if (filter->option.multiport_backend == multiport_backend_default)
+            if (filter->option.multiport_backend == kMultiportBackendDefault)
             {
                 filter->option.multiport_backend = getDefaultMultiPortBackend();
             }
@@ -482,15 +481,15 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
             }
             else if (port_min == port_max)
             {
-                option.multiport_backend == multiport_backend_nothing;
+                option.multiport_backend == kMultiportBackendNothing;
             }
-            if (option.proto == socket_protocol_tcp)
+            if (option.proto == kSocketProtocolTcp)
             {
-                if (option.multiport_backend == multiport_backend_iptables)
+                if (option.multiport_backend == kMultiportBackendIptables)
                 {
                     listenTcpMultiPortIptables(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }
-                else if (option.multiport_backend == multiport_backend_sockets)
+                else if (option.multiport_backend == kMultiportBackendSockets)
                 {
                     listenTcpMultiPortSockets(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }
@@ -503,7 +502,7 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
     }
 }
 
-static HTHREAD_ROUTINE(accept_thread)
+static HTHREAD_ROUTINE(accept_thread) //NOLINT
 {
     hloop_t *loop = (hloop_t *) userdata;
 
@@ -551,10 +550,10 @@ socket_manager_state_t *createSocketManager()
 
     hmutex_init(&state->mutex);
 
-    state->iptables_installed = check_installed("iptables");
-    state->lsof_installed     = check_installed("lsof");
+    state->iptables_installed = checkCommandAvailable("iptables");
+    state->lsof_installed     = checkCommandAvailable("lsof");
 #if SUPOPRT_V6
-    state->ip6tables_installed = check_installed("ip6tables");
+    state->ip6tables_installed = checkCommandAvailable("ip6tables");
 #endif
 
     if (signal(SIGTERM, signalHandler) == SIG_ERR)

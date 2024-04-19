@@ -5,9 +5,9 @@
 #include "utils/hashutils.h"
 #include "utils/jsonutils.h"
 
-#define i_type map_node_t
-#define i_key  hash_t
-#define i_val  node_t *
+#define i_type map_node_t // NOLINT
+#define i_key  hash_t     // NOLINT
+#define i_val  node_t *   // NOLINT
 
 #include "stc/hmap.h"
 
@@ -166,7 +166,7 @@ static void startParsingFiles()
                  state->config_file->file_path);
             exit(1);
         }
-        new_node->hash_name = calcHashLen(new_node->name, strlen(new_node->name));
+        new_node->hash_name = CALC_HASH_BYTES(new_node->name, strlen(new_node->name));
 
         if (! getStringFromJsonObject(&(new_node->type), node_json, "type"))
         {
@@ -174,11 +174,11 @@ static void startParsingFiles()
                  state->config_file->file_path);
             exit(1);
         }
-        new_node->hash_type = calcHashLen(new_node->type, strlen(new_node->type));
+        new_node->hash_type = CALC_HASH_BYTES(new_node->type, strlen(new_node->type));
 
         if (getStringFromJsonObject(&(new_node->next), node_json, "next"))
         {
-            new_node->hash_next = calcHashLen(new_node->next, strlen(new_node->next));
+            new_node->hash_next = CALC_HASH_BYTES(new_node->next, strlen(new_node->next));
         }
         int int_ver = 0;
         if (getIntFromJsonObject(&int_ver, node_json, "version"))
@@ -212,9 +212,8 @@ static void startParsingFiles()
         new_node_ctx.node_settings_json = js_settings;
         new_node_ctx.self_node_handle   = new_node;
         new_node_ctx.self_file_handle   = state->config_file;
-
-        new_node->instance_context = new_node_ctx;
-        map_node_t *map            = &(state->node_map);
+        new_node->instance_context      = new_node_ctx;
+        map_node_t *map                 = &(state->node_map);
 
         if (map_node_t_contains(map, new_node->hash_name))
         {

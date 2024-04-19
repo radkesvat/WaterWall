@@ -41,7 +41,7 @@ static void upStream(tunnel_t *self, context_t *c)
             shift_buffer_t *buf = c->payload;
             if (bufLen(buf) < 2)
             {
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 self->dw->downStream(self->dw, newFinContext(c->line));
                 destroyContext(c);
                 return;
@@ -57,7 +57,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 shiftr(c->payload, sizeof(uint16_t));
                 if (port < 10)
                 {
-                    DISCARD_CONTEXT(c);
+                    reuseContextBuffer(c);
                     self->dw->downStream(self->dw, newFinContext(c->line));
                     destroyContext(c);
                     return;
@@ -74,7 +74,7 @@ static void upStream(tunnel_t *self, context_t *c)
             self->up->upStream(self->up, newInitContext(c->line));
             if (!ISALIVE(c))
             {
-                DISCARD_CONTEXT(c);
+                reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }
@@ -153,7 +153,7 @@ tunnel_t *newHeaderServer(node_instance_context_t *instance_info)
 
 api_result_t apiHeaderServer(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyHeaderServer(tunnel_t *self)

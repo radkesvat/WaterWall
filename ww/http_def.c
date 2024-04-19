@@ -10,76 +10,77 @@ static int strstartswith(const char* str, const char* start) {
     return *start == '\0';
 }
 
-const char* http_status_str(enum http_status status) {
+const char* httpStatusStr(enum http_status status) {
     switch (status) {
-#define XX(num, name, string) case HTTP_STATUS_##name: return #string;
+#define XX(num, name, string) case kHttpStatus##name: return #string;
     HTTP_STATUS_MAP(XX)
 #undef XX
     default: return "<unknown>";
     }
 }
 
-const char* http_method_str(enum http_method method) {
+
+const char* httpMethodStr(enum http_method method) {
     switch (method) {
-#define XX(num, name, string) case HTTP_##name: return #string;
+#define XX(num, name, string) case kHttp##name: return #string;
     HTTP_METHOD_MAP(XX)
 #undef XX
     default: return "<unknown>";
     }
 }
 
-const char* http_content_type_str(enum http_content_type type) {
+const char* httpContentTypeStr(enum http_content_type type) {
     switch (type) {
-#define XX(name, string, suffix) case name: return #string;
+#define XX(name, string, suffix) case k##name: return #string;
     HTTP_CONTENT_TYPE_MAP(XX)
 #undef XX
     default: return "<unknown>";
     }
 }
 
-enum http_status http_status_enum(const char* str) {
+enum http_status httpStatusEnum(const char* str) {
 #define XX(num, name, string) \
     if (strcmp(str, #string) == 0) { \
-        return HTTP_STATUS_##name; \
+        return kHttpStatus##name; \
     }
     HTTP_STATUS_MAP(XX)
 #undef XX
-    return HTTP_CUSTOM_STATUS;
+    return kHttpCustomStatus;
 }
 
-enum http_method http_method_enum(const char* str) {
+enum http_method httpMethodEnum(const char* str) {
 #define XX(num, name, string) \
     if (strcmp(str, #string) == 0) { \
-        return HTTP_##name; \
+        return kHttp##name; \
     }
     HTTP_METHOD_MAP(XX)
 #undef XX
-    return HTTP_CUSTOM_METHOD;
+    return kHttpCustomMethod;
 }
 
-enum http_content_type http_content_type_enum(const char* str) {
+enum http_content_type httpContentTypeEnum(const char* str) {
     if (!str || !*str) {
-        return CONTENT_TYPE_NONE;
+        return kContentTypeNone;
     }
 #define XX(name, string, suffix) \
     if (strstartswith(str, #string)) { \
-        return name; \
+        return k##name; \
     }
     HTTP_CONTENT_TYPE_MAP(XX)
 #undef XX
-    return CONTENT_TYPE_UNDEFINED;
+    return kContentTypeUndefined;
 }
 
-const char* http_content_type_suffix(enum http_content_type type) {
+const char* httpContentTypeSuffix(enum http_content_type type) {
     switch (type) {
-#define XX(name, string, suffix) case name: return #suffix;
+#define XX(name, string, suffix) case k##name: return #suffix;
     HTTP_CONTENT_TYPE_MAP(XX)
 #undef XX
     default: return "<unknown>";
     }
 }
 
-const char* http_content_type_str_by_suffix(const char* str) {
+const char* httpContentTypeStrBySuffix(const char* str) {
     if (!str || !*str) {
         return "";
     }
@@ -92,15 +93,15 @@ const char* http_content_type_str_by_suffix(const char* str) {
     return "";
 }
 
-enum http_content_type http_content_type_enum_by_suffix(const char* str) {
+enum http_content_type httpContentTypeEnumBySuffix(const char* str) {
     if (!str || !*str) {
-        return CONTENT_TYPE_NONE;
+        return kContentTypeNone;
     }
 #define XX(name, string, suffix) \
     if (strcmp(str, #suffix) == 0) { \
-        return name; \
+        return k##name; \
     }
     HTTP_CONTENT_TYPE_MAP(XX)
 #undef XX
-    return CONTENT_TYPE_UNDEFINED;
+    return kContentTypeUndefined;
 }

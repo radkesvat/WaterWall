@@ -1,5 +1,5 @@
-#include "hv/hplatform.h"
 #include "config_file.h"
+#include "hv/hplatform.h"
 #include "loggers/core_logger.h"
 #include "utils/fileutils.h"
 
@@ -8,11 +8,17 @@ void destroyConfigFile(config_file_t *state)
     cJSON_Delete(state->root);
 
     if (state->file_path != NULL)
+    {
         free(state->file_path);
+    }
     if (state->name != NULL)
+    {
         free(state->name);
+    }
     if (state->author != NULL)
+    {
         free(state->author);
+    }
     hmutex_destroy(&(state->guard));
 
     free(state);
@@ -29,13 +35,15 @@ void releaseUpdateLock(config_file_t *state)
 // only use if you acquired lock before
 void unsafeCommitChanges(config_file_t *state)
 {
-    char *string = cJSON_PrintBuffered(state->root, (state->file_prebuffer_size) * 2, true);
-    size_t len = strlen(string);
+    char *    string      = cJSON_PrintBuffered(state->root, (int) ((state->file_prebuffer_size) * 2), true);
+    size_t    len         = strlen(string);
     const int max_retries = 3;
     for (size_t i = 0; i < max_retries; i++)
     {
         if (writeFile(state->file_path, string, len))
+        {
             return;
+        }
         LOGE("WriteFile Error: could not write to \"%s\". retry...", state->file_path);
     }
     LOGE("WriteFile Error: giving up writing to config file \"%s\"", state->file_path);
@@ -73,7 +81,7 @@ config_file_t *parseConfigFile(const char *const file_path)
 
     char *data_json = readFile(file_path);
 
-    if (!data_json)
+    if (! data_json)
     {
         LOGF("File Error: config file \"%s\" could not be read", file_path);
         exit(1);
@@ -82,7 +90,6 @@ config_file_t *parseConfigFile(const char *const file_path)
 
     cJSON *json = cJSON_ParseWithLength(data_json, state->file_prebuffer_size);
     state->root = json;
-
 
     if (json == NULL)
     {
@@ -96,7 +103,7 @@ config_file_t *parseConfigFile(const char *const file_path)
     }
     free(data_json);
 
-    if (!getStringFromJsonObject((&state->name), json, "name"))
+    if (! getStringFromJsonObject((&state->name), json, "name"))
     {
         LOGF("JSON Error: config file \"%s\" -> name (string field) the value was empty or invalid", file_path);
         exit(1);
@@ -107,7 +114,7 @@ config_file_t *parseConfigFile(const char *const file_path)
     getIntFromJsonObject(&(state->core_minimum_version), json, "core-minimum-version");
     getBoolFromJsonObject(&(state->encrypted), json, "encrypted");
     cJSON *nodes = cJSON_GetObjectItemCaseSensitive(json, "nodes");
-    if (!(cJSON_IsArray(nodes) && nodes->child != NULL))
+    if (! (cJSON_IsArray(nodes) && nodes->child != NULL))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes (array field) the array was empty or invalid", file_path);
         exit(1);
@@ -115,4 +122,3 @@ config_file_t *parseConfigFile(const char *const file_path)
     state->nodes = nodes;
     return state;
 }
-

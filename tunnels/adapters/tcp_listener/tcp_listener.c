@@ -58,7 +58,7 @@ static void cleanup(tcp_listener_con_state_t *cstate)
         }
         if (cw->payload)
         {
-            DISCARD_CONTEXT(cw);
+            reuseContextBuffer(cw);
         }
         destroyContext(cw);
     }
@@ -333,7 +333,7 @@ void on_inbound_connected(hevent_t *ev)
 
     // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u *)hio_localaddr(io)) : data->real_localport);
     sockaddr_set_port(&(line->src_ctx.addr), data->real_localport);
-    line->src_ctx.atype = line->src_ctx.addr.sa.sa_family == AF_INET ? kSatIpV4 : kSatIpV6;
+    line->src_ctx.atype = line->src_ctx.addr.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     hevent_set_userdata(io, cstate);
 
     struct sockaddr log_localaddr = *hio_localaddr(io);
@@ -519,7 +519,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 
 api_result_t apiTcpListener(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyTcpListener(tunnel_t *self)

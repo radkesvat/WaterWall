@@ -11,12 +11,7 @@
 // #include "packet.pb.h"
 #include "uleb128.h"
 
-#define MAX_PACKET_SIZE 65536 * 16
-
-#define STATE(x) ((protobuf_server_state_t *)((x)->state))
-#define CSTATE(x) ((protobuf_server_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
+#define MAX_PACKET_SIZE (65536 * 1)
 
 typedef struct protobuf_server_state_s
 {
@@ -26,8 +21,8 @@ typedef struct protobuf_server_state_s
 typedef struct protobuf_server_con_state_s
 {
     buffer_stream_t *stream_buf;
-    size_t wanted;
-    bool first_sent;
+    size_t           wanted;
+    bool             first_sent;
 
 } protobuf_server_con_state_t;
 
@@ -36,86 +31,64 @@ static void cleanup(protobuf_server_con_state_t *cstate)
     destroyBufferStream(cstate->stream_buf);
     free(cstate);
 }
-static inline void upStream(tunnel_t *self, context_t *c);
 
-static void process(tunnel_t *self, context_t *cin)
+static inline void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upstream, TunnelFlowRoutine downstream)
 {
-    protobuf_server_con_state_t *cstate = CSTATE(cin);
-    buffer_stream_t *bstream = cstate->stream_buf;
-    if (bufferStreamLen(bstream) < cstate->wanted || cstate->wanted <= 0)
-        return;
-
-    context_t *c = newContextFrom(cin);
-    c->payload = bufferStreamRead(bstream, cstate->wanted);
-    if (!cstate->first_sent)
-    {
-        cstate->first_sent = true;
-        c->first = true;
-    }
-    self->up->upStream(self->up, c);
-    cstate->wanted = 0;
-
-    if (bufferStreamLen(bstream) > 0)
-    {
-        context_t *c_left = newContextFrom(cin);
-        c_left->payload = bufferStreamRead(bstream, bufferStreamLen(bstream));
-        self->upStream(self, c_left);
-    }
-}
-
-static inline void upStream(tunnel_t *self, context_t *c)
-{
+    protobuf_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        protobuf_server_con_state_t *cstate = CSTATE(c);
-        if (cstate->wanted > 0)
-        {
-            bufferStreamPush(cstate->stream_buf, c->payload);
-            c->payload = NULL;
-            process(self, c);
-            destroyContext(c);
-            return;
-        }
-        else
-        {
+        buffer_stream_t *bstream = cstate->stream_buf;
 
-            shift_buffer_t *buf = c->payload;
-            if (bufLen(buf) < 2)
+        bufferStreamPush(cstate->stream_buf, c->payload);
+        c->payload = NULL;
+
+        while (true)
+        {
+            if (bufferStreamLen(bstream) < 2)
             {
-                DISCARD_CONTEXT(c);
-                cleanup(cstate);
-                CSTATE_MUT(c) = NULL;
-
-                self->up->upStream(self->up, newFinContext(c->line));
-                self->dw->downStream(self->dw, newFinContext(c->line));
                 destroyContext(c);
                 return;
             }
+            unsigned int  read_len = (bufferStreamLen(bstream) >= 4 ? 4 : 2);
+            unsigned char uleb_encoded_buf[4];
+            bufferStreamViewBytesAt(bstream, uleb_encoded_buf, 1, read_len);
 
-            shiftr(buf, 1); // first byte is \n (grpc byte array identifier? always \n? )
-            size_t data_len = 0;
-            size_t bytes_passed = read_uleb128_to_uint64(rawBuf(buf), rawBuf(buf) + bufLen(buf), &data_len);
-            shiftr(buf, bytes_passed);
+            size_t data_len     = 0;
+            size_t bytes_passed = readUleb128ToUint64(uleb_encoded_buf, uleb_encoded_buf + read_len, &data_len);
+            if (data_len == 0)
+            {
+                if (uleb_encoded_buf[0] = 0x0)
+                {
+                    // invalid
+                    goto disconnect;
+                }
+
+                // keep waiting for more data to come
+                destroyContext(c);
+                return;
+            }
             if (data_len > MAX_PACKET_SIZE)
             {
-                LOGE("ProtoBufServer: rejected, size too large %zu (%zu passed %d left)",data_len,bytes_passed,(int)(bufLen(buf)));
-                DISCARD_CONTEXT(c);
-                cleanup(cstate);
-                CSTATE_MUT(c) = NULL;
-
-                self->up->upStream(self->up, newFinContext(c->line));
-                self->dw->downStream(self->dw, newFinContext(c->line));
+                // overflow
+                goto disconnect;
+            }
+            if (! (bufferStreamLen(bstream) >= 1 + bytes_passed + data_len))
+            {
                 destroyContext(c);
                 return;
             }
-            if (data_len != bufLen(buf))
+            context_t *upstream_ctx = newContextFrom(c);
+            upstream_ctx->payload   = bufferStreamRead(cstate->stream_buf, 1 + bytes_passed + data_len);
+            shiftr(upstream_ctx->payload, 1 + bytes_passed);
+            if (! cstate->first_sent)
             {
-                cstate->wanted = data_len;
-                bufferStreamPush(cstate->stream_buf, c->payload);
-                c->payload = NULL;
-                if (data_len >= bufLen(buf))
-                    process(self, c);
+                upstream_ctx->first = true;
+                cstate->first_sent  = true;
+            }
+            upstream(self->up, upstream_ctx);
+            if (! isAlive(c->line))
+            {
                 destroyContext(c);
                 return;
             }
@@ -125,87 +98,94 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            protobuf_server_con_state_t *cstate = malloc(sizeof(protobuf_server_con_state_t));
-            cstate->wanted = 0;
+            cstate             = malloc(sizeof(protobuf_server_con_state_t));
+            cstate->wanted     = 0;
             cstate->first_sent = false;
             cstate->stream_buf = newBufferStream(buffer_pools[c->line->tid]);
-            CSTATE_MUT(c) = cstate;
+            CSTATE_MUT(c)      = cstate;
         }
         else if (c->fin)
         {
-            cleanup(CSTATE(c));
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
         }
+        upstream(self->up, c);
     }
-    if (c->first)
-        CSTATE(c)->first_sent = true;
 
-    self->up->upStream(self->up, c);
+    return;
+disconnect:
+    cleanup(cstate);
+    CSTATE_MUT(c) = NULL;
+    upstream(self->up, newFinContext(c->line));
+    downstream(self->dw, newFinContext(c->line));
+    destroyContext(c);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static inline void downStream(tunnel_t *self, context_t *c, TunnelFlowRoutine downstream)
 {
 
     if (c->payload != NULL)
     {
-        size_t blen = bufLen(c->payload);
+        size_t blen             = bufLen(c->payload);
         size_t calculated_bytes = size_uleb128(blen);
-        shiftl(c->payload, calculated_bytes);
-        write_uleb128(rawBufMut(c->payload), blen);
-
-        shiftl(c->payload, 1);
+        shiftl(c->payload, calculated_bytes + 1);
+        write_uleb128(rawBufMut(c->payload) + 1, blen);
         writeUI8(c->payload, '\n');
     }
     else
     {
         if (c->fin)
         {
-            protobuf_server_con_state_t *cstate = CSTATE(c);
+            protobuf_server_con_state_t *cstate = cstate;
             cleanup(cstate);
             CSTATE_MUT(c) = NULL;
         }
     }
-    self->dw->downStream(self->dw, c);
+    downstream(self->dw, c);
 }
 
 static void protoBufServerUpStream(tunnel_t *self, context_t *c)
 {
-    upStream(self, c);
+    upStream(self, c, self->up->upStream, self->dw->downStream);
 }
 static void protoBufServerPacketUpStream(tunnel_t *self, context_t *c)
 {
-    upStream(self, c);
+    upStream(self, c, self->up->packetUpStream, self->dw->packetDownStream);
 }
 static void protoBufServerDownStream(tunnel_t *self, context_t *c)
 {
-    downStream(self, c);
+    downStream(self, c, self->dw->downStream);
 }
 static void protoBufServerPacketDownStream(tunnel_t *self, context_t *c)
 {
-    downStream(self, c);
+    downStream(self, c, self->dw->packetDownStream);
 }
 
 tunnel_t *newProtoBufServer(node_instance_context_t *instance_info)
 {
 
+    (void) instance_info;
     tunnel_t *t = newTunnel();
 
-    t->upStream = &protoBufServerUpStream;
-    t->packetUpStream = &protoBufServerPacketUpStream;
-    t->downStream = &protoBufServerDownStream;
+    t->upStream         = &protoBufServerUpStream;
+    t->packetUpStream   = &protoBufServerPacketUpStream;
+    t->downStream       = &protoBufServerDownStream;
     t->packetDownStream = &protoBufServerPacketDownStream;
     atomic_thread_fence(memory_order_release);
 
     return t;
 }
 
-api_result_t apiProtoBufServer(tunnel_t *self, char *msg)
+api_result_t apiProtoBufServer(tunnel_t *self, const char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyProtoBufServer(tunnel_t *self)
 {
+    (void) (self);
     return NULL;
 }
 tunnel_metadata_t getMetadataProtoBufServer()

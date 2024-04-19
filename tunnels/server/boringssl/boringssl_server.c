@@ -116,7 +116,7 @@
 //             if (n <= 0)
 //             {
 //                 /* if BIO write fails, assume unrecoverable */
-//                 DISCARD_CONTEXT(c);
+//                 reuseContextBuffer(c);
 //                 goto failed;
 //             }
 //             shiftr(c->payload, n);
@@ -143,7 +143,7 @@
 //                             self->dw->downStream(self->dw, answer);
 //                             if (!ISALIVE(c))
 //                             {
-//                                 DISCARD_CONTEXT(c);
+//                                 reuseContextBuffer(c);
 //                                 destroyContext(c);
 //                                 return;
 //                             }
@@ -151,7 +151,7 @@
 //                         else if (!BIO_should_retry(cstate->wbio))
 //                         {
 //                             // If BIO_should_retry() is false then the cause is an error condition.
-//                             DISCARD_CONTEXT(c);
+//                             reuseContextBuffer(c);
 //                             reuseBuffer(buffer_pools[c->line->tid], buf);
 //                             goto failed;
 //                         }
@@ -163,13 +163,13 @@
 
 //                 if (status == SSLSTATUS_FAIL)
 //                 {
-//                     DISCARD_CONTEXT(c);
+//                     reuseContextBuffer(c);
 //                     goto failed;
 //                 }
 
 //                 if (!SSL_is_init_finished(cstate->ssl))
 //                 {
-//                     DISCARD_CONTEXT(c);
+//                     reuseContextBuffer(c);
 //                     destroyContext(c);
 //                     return;
 //                 }
@@ -185,7 +185,7 @@
 //                     if (!ISALIVE(c))
 //                     {
 //                         LOGW("Openssl server: next node instantly closed the init with fin");
-//                         DISCARD_CONTEXT(c);
+//                         reuseContextBuffer(c);
 //                         destroyContext(c);
 
 //                         return;
@@ -223,7 +223,7 @@
 //                 self->up->upStream(self->up, up_ctx);
 //                 if (!ISALIVE(c))
 //                 {
-//                     DISCARD_CONTEXT(c);
+//                     reuseContextBuffer(c);
 //                     destroyContext(c);
 //                     return;
 //                 }
@@ -252,7 +252,7 @@
 //                         self->dw->downStream(self->dw, answer);
 //                         if (!ISALIVE(c))
 //                         {
-//                             DISCARD_CONTEXT(c);
+//                             reuseContextBuffer(c);
 //                             destroyContext(c);
 
 //                             return;
@@ -262,7 +262,7 @@
 //                     {
 //                         // If BIO_should_retry() is false then the cause is an error condition.
 //                         reuseBuffer(buffer_pools[c->line->tid], buf);
-//                         DISCARD_CONTEXT(c);
+//                         reuseContextBuffer(c);
 //                         destroyContext(c);
 
 //                         goto failed_after_establishment;
@@ -275,12 +275,12 @@
 
 //             if (status == SSLSTATUS_FAIL)
 //             {
-//                 DISCARD_CONTEXT(c);
+//                 reuseContextBuffer(c);
 //                 goto failed_after_establishment;
 //             }
 //         }
 //         // done with socket data
-//         DISCARD_CONTEXT(c);
+//         reuseContextBuffer(c);
 //         destroyContext(c);
 //     }
 //     else
@@ -374,7 +374,7 @@
 //                         self->dw->downStream(self->dw, dw_context);
 //                         if (!ISALIVE(c))
 //                         {
-//                             DISCARD_CONTEXT(c);
+//                             reuseContextBuffer(c);
 //                             destroyContext(c);
 
 //                             return;
@@ -384,7 +384,7 @@
 //                     {
 //                         // If BIO_should_retry() is false then the cause is an error condition.
 //                         reuseBuffer(buffer_pools[c->line->tid], buf);
-//                         DISCARD_CONTEXT(c);
+//                         reuseContextBuffer(c);
 //                         goto failed_after_establishment;
 //                     }
 //                     else
@@ -396,7 +396,7 @@
 
 //             if (status == SSLSTATUS_FAIL)
 //             {
-//                 DISCARD_CONTEXT(c);
+//                 reuseContextBuffer(c);
 //                 goto failed_after_establishment;
 //             }
 
@@ -404,7 +404,7 @@
 //                 break;
 //         }
 //         assert(bufLen(c->payload) == 0);
-//         DISCARD_CONTEXT(c);
+//         reuseContextBuffer(c);
 //         destroyContext(c);
 
 //         return;

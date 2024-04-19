@@ -1,4 +1,7 @@
 #pragma once
 
-char *readFile(const char *const path);
-bool writeFile(const char *const path,const char *data, size_t len);
+#include <stdbool.h>
+#include <stddef.h>
+
+char *readFile(const char *path);
+bool  writeFile(const char *path, const char *data, size_t len);

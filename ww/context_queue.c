@@ -1,20 +1,20 @@
 #include "context_queue.h"
 
-#define i_TYPE queue, context_t *
+#define i_TYPE queue, context_t * // NOLINT
 #include "stc/deq.h"
 #define Q_CAP 25
 
 struct context_queue_s
 {
-    queue q;
+    queue          q;
     buffer_pool_t *pool;
 };
 
 context_queue_t *newContextQueue(buffer_pool_t *pool)
 {
     context_queue_t *cb = malloc(sizeof(context_queue_t));
-    cb->q = queue_with_capacity(Q_CAP);
-    cb->pool = pool;
+    cb->q               = queue_with_capacity(Q_CAP);
+    cb->pool            = pool;
     return cb;
 }
 void destroyContextQueue(context_queue_t *self)
@@ -26,7 +26,6 @@ void destroyContextQueue(context_queue_t *self)
             reuseBuffer(self->pool, (*i.ref)->payload);
             (*i.ref)->payload = NULL;
         }
-
         destroyContext((*i.ref));
     }
 
@@ -37,15 +36,19 @@ void destroyContextQueue(context_queue_t *self)
 void contextQueuePush(context_queue_t *self, context_t *context)
 {
     if (context->src_io)
+    {
         context->fd = hio_fd(context->src_io);
+    }
     queue_push_back(&self->q, context);
 }
 context_t *contextQueuePop(context_queue_t *self)
 {
     context_t *context = queue_pull_front(&self->q);
 
-    if (context->fd == 0 || !hio_exists(context->line->loop, context->fd) || hio_is_closed(context->src_io))
+    if (context->fd == 0 || ! hio_exists(context->line->loop, context->fd) || hio_is_closed(context->src_io))
+    {
         context->src_io = NULL;
+    }
 
     return context;
 }

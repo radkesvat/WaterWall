@@ -15,7 +15,5 @@ typedef struct tunnel_lib_s
 } tunnel_lib_t;
 
 tunnel_lib_t loadTunnelLib(const char *name);
-tunnel_lib_t loadTunnelLibByHash(hash_t hash);
-
-void registerStaticLib(tunnel_lib_t lib);
-
+tunnel_lib_t loadTunnelLibByHash(hash_t hname);
+void         registerStaticLib(tunnel_lib_t lib);

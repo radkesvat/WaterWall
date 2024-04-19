@@ -240,7 +240,7 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 
 api_result_t apiPreConnectClient(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyPreConnectClient(tunnel_t *self)

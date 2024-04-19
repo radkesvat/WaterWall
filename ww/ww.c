@@ -64,7 +64,7 @@ struct ww_runtime_state_s *getWW()
     return state;
 }
 
-void runMainThread()
+_Noreturn void runMainThread()
 {
     hloop_run(loops[0]);
     hloop_free(&loops[0]);
@@ -72,9 +72,11 @@ void runMainThread()
     {
         hthread_join(workers[i]);
     }
+    LOGF("WW: all eventloops exited");
+    exit(0);
 }
 
-static HTHREAD_ROUTINE(worker_thread)
+static HTHREAD_ROUTINE(worker_thread) //NOLINT
 {
     hloop_t *loop = (hloop_t *) userdata;
     hloop_run(loop);
@@ -83,7 +85,7 @@ static HTHREAD_ROUTINE(worker_thread)
     return 0;
 }
 
-_Noreturn void createWW(ww_construction_data_t runtime_data)
+void createWW(ww_construction_data_t runtime_data)
 {
     if (runtime_data.core_logger_data.log_file_path)
     {

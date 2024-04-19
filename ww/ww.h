@@ -1,6 +1,6 @@
 #pragma once
 #include "hv/hthread.h"
-#include "stddef.h"
+#include <stddef.h>
 
 #ifndef NODES_STATIC
 #if defined(_MSC_VER)

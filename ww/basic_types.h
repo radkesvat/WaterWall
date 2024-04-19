@@ -1,10 +1,10 @@
 #pragma once
 
+#include "hv/hatomic.h"
+#include "hv/hmutex.h"
 #include "hv/hplatform.h"
 #include "hv/hsocket.h"
 #include "hv/htime.h"
-#include "hv/hatomic.h"
-#include "hv/hmutex.h"
 
 typedef uint64_t hash_t;
 
@@ -14,34 +14,33 @@ typedef struct ud_s
     atomic_ullong d;
 } ud_t;
 
-typedef union
-{
-    ud_t max;
+typedef union {
+    ud_t          max;
     atomic_ullong max_total;
 } traffic_limit_t;
 
 typedef struct user_limit_s
 {
     traffic_limit_t traffic;
-    ud_t bandwidth;
-    atomic_ullong ip;
-    atomic_ullong devices;
-    atomic_ullong cons_in;
-    atomic_ullong cons_out;
+    ud_t            bandwidth;
+    atomic_ullong   ip;
+    atomic_ullong   devices;
+    atomic_ullong   cons_in;
+    atomic_ullong   cons_out;
 } user_limit_t;
 
 typedef struct user_time_info_s
 {
-    datetime_t create_date;
-    datetime_t first_usage_date;
-    datetime_t expire_date;
+    datetime_t  create_date;
+    datetime_t  first_usage_date;
+    datetime_t  expire_date;
     atomic_bool since_first_use;
 } user_time_info_t;
 
 typedef struct user_stat_s
 {
-    ud_t speed;
-    ud_t traffic;
+    ud_t          speed;
+    ud_t          traffic;
     atomic_ullong ips;
     atomic_ullong devices;
     atomic_ullong cons_in;
@@ -52,25 +51,25 @@ typedef struct user_stat_s
 typedef struct user_s
 {
     struct cJSON *json;
-    hmutex_t *fsync_lock;
+    hmutex_t *    fsync_lock;
     //-----------------
-    char *name;
-    char *email;
-    char *notes;
-    char *uid; // unique id
-    int gid;   // group id
+    char * name;
+    char * email;
+    char * notes;
+    char * uid; // unique id
+    int    gid; // group id
     hash_t hash_uid;
 
-    atomic_bool enable;
-    user_limit_t limit;
+    atomic_bool      enable;
+    user_limit_t     limit;
     user_time_info_t timeinfo;
-    user_stat_t stats;
+    user_stat_t      stats;
 
 } user_t;
 
 typedef struct api_result_s
 {
-    char *result;
+    char * result;
     size_t result_len;
 } api_result_t;
 
@@ -91,33 +90,33 @@ enum dynamic_value_status
 typedef struct dynamic_value_s
 {
     enum dynamic_value_status status;
-    size_t value;
-    void *value_ptr;
+    size_t                    value;
+    void *                    value_ptr;
 
 } dynamic_value_t;
 
 enum socket_address_cmd
 {
-    kSacConnect = 0X1,
+    kSacConnect   = 0X1,
     kSacAssociate = 0X3,
 };
 
 enum socket_address_type
 {
-    kSatIpV4 = 0X1,
+    kSatIPV4       = 0X1,
     kSatDomainName = 0X3,
-    kSatIpV6 = 0X4,
+    kSatIPV6       = 0X4,
 };
 
 // all data we need to connect to somewhere
 typedef struct socket_context_s
 {
-    uint8_t protocol; // IPPROTO_X
-    enum socket_address_cmd acmd;
+    uint8_t                  protocol; // IPPROTO_X
+    enum socket_address_cmd  acmd;
     enum socket_address_type atype;
-    char *domain;
-    unsigned int *domain_len;
-    bool resolved;
-    sockaddr_u addr;
-    
+    char *                   domain;
+    unsigned int             domain_len;
+    bool                     resolved;
+    sockaddr_u               addr;
+
 } socket_context_t;

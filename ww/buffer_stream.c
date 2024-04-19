@@ -2,24 +2,27 @@
 
 #undef max
 #undef min
-static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
-static inline size_t max(size_t x, size_t y) { return (((x) > (y)) ? (x) : (y)); }
+static inline size_t min(size_t x, size_t y)
+{
+    return (((x) < (y)) ? (x) : (y));
+}
+static inline size_t max(size_t x, size_t y)
+{
+    return (((x) > (y)) ? (x) : (y));
+}
 
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 {
     buffer_stream_t *bs = malloc(sizeof(buffer_stream_t));
-    bs->q = queue_with_capacity(Q_CAP);
-    bs->pool = pool;
-    bs->size = 0;
+    bs->q               = queue_with_capacity(Q_CAP);
+    bs->pool            = pool;
+    bs->size            = 0;
     return bs;
 }
 
 void destroyBufferStream(buffer_stream_t *self)
 {
-    c_foreach(i, queue, self->q)
-    {
-        reuseBuffer(self->pool, *i.ref);
-    }
+    c_foreach(i, queue, self->q) { reuseBuffer(self->pool, *i.ref); }
     queue_drop(&self->q);
     free(self);
 }
@@ -32,82 +35,106 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
 
 shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
 {
-    if (self->size == 0 || self->size < bytes)
+    assert(self->size >= bytes);
+    if (self->size == 0)
+    {
         return NULL;
+    }
     self->size -= bytes;
 
-    shift_buffer_t *result = queue_pull_front(&self->q);
-    size_t available = bufLen(result);
+    shift_buffer_t *result    = queue_pull_front(&self->q);
+    size_t          available = bufLen(result);
     if (available > bytes)
     {
-        shift_buffer_t *shadow = newShadowShiftBuffer(result);
+        shift_buffer_t *shadow = newShallowShiftBuffer(result);
         setLen(shadow, bytes);
         shiftr(result, bytes);
         queue_push_front(&self->q, result);
         return shadow;
     }
-    else if (available == bytes)
+    if (available == bytes)
     {
-
         return result;
     }
-    else
+
+    size_t needed = bytes - available;
+    size_t wi     = available;
+    setLen(result, bytes);
+    uint8_t *dest = rawBufMut(result);
+
+    while (true)
     {
-        size_t needed = bytes - available;
-        size_t wi = available;
-        setLen(result, bytes);
-        uint8_t *dest = rawBufMut(result);
+        shift_buffer_t *b    = queue_pull_front(&self->q);
+        size_t          blen = bufLen(b);
 
-        while (true)
+        if (blen > needed)
         {
-            shift_buffer_t *b = queue_pull_front(&self->q);
-            size_t blen = bufLen(b);
-
-            if (blen > needed)
-            {
-                memcpy(dest + wi, rawBuf(b), needed);
-                shiftr(b, needed);
-                queue_push_front(&self->q, b);
-                return result;
-            }
-            else if (blen == needed)
-            {
-                memcpy(dest + wi, rawBuf(b), needed);
-                reuseBuffer(self->pool, b);
-                return result;
-            }
-            else
-            {
-                memcpy(dest + wi, rawBuf(b), blen);
-                wi += blen;
-                needed -= blen;
-                reuseBuffer(self->pool, b);
-            }
+            memcpy(dest + wi, rawBuf(b), needed);
+            shiftr(b, needed);
+            queue_push_front(&self->q, b);
+            return result;
         }
+        if (blen == needed)
+        {
+            memcpy(dest + wi, rawBuf(b), needed);
+            reuseBuffer(self->pool, b);
+            return result;
+        }
+
+        memcpy(dest + wi, rawBuf(b), blen);
+        wi += blen;
+        needed -= blen;
+        reuseBuffer(self->pool, b);
     }
 }
 
 uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
 {
-    if (self->size == 0 || self->size < at)
-        return 0;
+    assert(self->size > at && self->size != 0);
 
     uint8_t result = 0;
     c_foreach(i, queue, self->q)
     {
 
-        shift_buffer_t *b = *i.ref;
-        size_t blen = bufLen(b);
+        shift_buffer_t *b    = *i.ref;
+        size_t          blen = bufLen(b);
 
         if (at < blen)
         {
-            result = ((uint8_t *)rawBuf(b))[at];
+            result = ((uint8_t *) rawBuf(b))[at];
             return result;
         }
-        else
-        {
-            at -= blen;
-        }
+
+        at -= blen;
     }
     return 0;
+}
+
+// todo (test) this can be implemented incorrectly, you didn't write unit tests -> you choosed to suffer
+void bufferStreamViewBytesAt(buffer_stream_t *self, uint8_t *buf, size_t at, size_t len)
+{
+    assert(self->size >= (at + len) && self->size != 0);
+    unsigned int i = 0;
+    c_foreach(qi, queue, self->q)
+    {
+
+        shift_buffer_t *b    = *qi.ref;
+        size_t          blen = bufLen(b);
+
+        while (at < blen)
+        {
+            if (len - i <= blen - at)
+            {
+                memcpy(buf + i, rawBuf(b), len - i);
+                return;
+            }
+            buf[i++] = ((uint8_t *) rawBuf(b))[at++];
+            if (i == len)
+            {
+                return;
+            }
+        }
+
+        at -= blen;
+    }
 }

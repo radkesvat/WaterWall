@@ -17,13 +17,7 @@ add_library(ww STATIC
                   loggers/core_logger.c
                   loggers/network_logger.c
                   loggers/dns_logger.c
-                  ipcalc/ipcalc-geoip.c
-                  ipcalc/ipcalc-maxmind.c
-                  ipcalc/ipcalc-reverse.c
-                  ipcalc/ipcalc-utils.c
-                  ipcalc/ipcalc.c
-                  ipcalc/ipv6.c
-                  ipcalc/netsplit.c
+
 
   
 )
@@ -107,9 +101,10 @@ if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_link_options(ww PUBLIC -fsanitize=address)
 endif()
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-target_compile_options(ww PUBLIC -ftrack-macro-expansion=0)
-endif()
+# clang-tidy dose not like this even if cc = gcc
+# if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+# target_compile_options(ww PUBLIC -ftrack-macro-expansion=0)
+# endif()
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 target_link_libraries(ww hv_static) 

@@ -6,35 +6,46 @@
 #include "loggers/network_logger.h"
 #endif
 
-// this is a fair value for a server, for clients 50 or 100 is enough
-#define BUFFERPOOL_ROW_WIDTH 1024
+#define LOW_MEMORY     0 // no preallocation (very small)
+#define MED1_MEMORY    1 // APPROX 10MB per thread
+#define MED2_MEMORY    2 // APPROX 20MB per thread
+#define HIG1_MEMORY    3 // APPROX 28MB per thread
+#define HIG2_MEMORY    4 // APPROX 36MB per thread
+#define MEMORY_PROFILE HIG2_MEMORY
 
-#define DEFAULT_BUFFER_SIZE 8192
+#define EVP_READ_BUFSIZE         (1U << 15) // 32K
+#define BUFFERPOOL_CONTAINER_LEN (50 + (250 * MEMORY_PROFILE))
+#define BUFFER_SIZE              ((MEMORY_PROFILE < MED2_MEMORY) ? 0 : EVP_READ_BUFSIZE)
 
 #undef max
 #undef min
-static inline size_t max(size_t x, size_t y) { return (((x) < (y)) ? (y) : (x)); }
-static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
+static inline size_t max(size_t x, size_t y)
+{
+    return (((x) < (y)) ? (y) : (x));
+}
+static inline size_t min(size_t x, size_t y)
+{
+    return (((x) < (y)) ? (x) : (y));
+}
 
 static void firstCharge(buffer_pool_t *state)
 {
     // state->chunks = 1;
-    state->available = malloc(2 * BUFFERPOOL_ROW_WIDTH * sizeof(shift_buffer_t *));
+    state->available = malloc(2 * BUFFERPOOL_CONTAINER_LEN * sizeof(shift_buffer_t *));
 
-    for (size_t i = 0; i < BUFFERPOOL_ROW_WIDTH; i++)
+    for (size_t i = 0; i < BUFFERPOOL_CONTAINER_LEN; i++)
     {
-        state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
+        state->available[i] = newShiftBuffer(BUFFER_SIZE);
     }
-    state->len = BUFFERPOOL_ROW_WIDTH;
+    state->len = BUFFERPOOL_CONTAINER_LEN;
 }
 
 static void reCharge(buffer_pool_t *state)
 {
-
-    const size_t increase = min((2 * BUFFERPOOL_ROW_WIDTH - state->len), BUFFERPOOL_ROW_WIDTH);
+    const size_t increase = min((2 * BUFFERPOOL_CONTAINER_LEN - state->len), BUFFERPOOL_CONTAINER_LEN);
     for (size_t i = state->len; i < (state->len + increase); i++)
     {
-        state->available[i] = newShiftBuffer(DEFAULT_BUFFER_SIZE);
+        state->available[i] = newShiftBuffer(BUFFER_SIZE);
     }
     state->len += increase;
 #ifdef DEBUG
@@ -44,7 +55,7 @@ static void reCharge(buffer_pool_t *state)
 
 static void giveMemBackToOs(buffer_pool_t *state)
 {
-    const size_t decrease = min(state->len, BUFFERPOOL_ROW_WIDTH);
+    const size_t decrease = min(state->len, BUFFERPOOL_CONTAINER_LEN);
 
     for (size_t i = state->len - decrease; i < state->len; i++)
     {
@@ -61,7 +72,7 @@ static void giveMemBackToOs(buffer_pool_t *state)
 
 shift_buffer_t *popBuffer(buffer_pool_t *state)
 {
-    // return newShiftBuffer(DEFAULT_BUFFER_SIZE);
+    // return newShiftBuffer(BUFFER_SIZE);
     if (state->len <= 0)
     {
         reCharge(state);
@@ -87,10 +98,10 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
 #ifdef DEBUG
     state->in_use -= 1;
 #endif
-    reset(b,DEFAULT_BUFFER_SIZE);
+    reset(b, BUFFER_SIZE);
     state->available[state->len] = b;
     ++(state->len);
-    if (state->len > BUFFERPOOL_ROW_WIDTH + (BUFFERPOOL_ROW_WIDTH / 2))
+    if (state->len > BUFFERPOOL_CONTAINER_LEN + (BUFFERPOOL_CONTAINER_LEN / 2))
     {
         giveMemBackToOs(state);
     }
@@ -102,7 +113,7 @@ buffer_pool_t *createBufferPool()
     memset(state, 0, sizeof(buffer_pool_t));
 
     state->available = 0;
-    state->len = 0;
+    state->len       = 0;
 #ifdef DEBUG
     state->in_use = 0;
 #endif

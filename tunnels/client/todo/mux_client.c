@@ -14,9 +14,9 @@
 // 2 bytes id 2 bytes hsize
 #define HEADER_SIZE 4
 
-#define i_type hmap_iio
-#define i_key uint16_t
-#define i_val line_t *
+#define i_type hmap_iio //NOLINT
+#define i_key uint16_t //NOLINT
+#define i_val line_t * //NOLINT
 
 #include "stc/hmap.h"
 
@@ -167,7 +167,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         // is from a destroyed previous mux line
         LOGW("A destroyedLine's dw_cons is talking to MuxUpStream");
-        DISCARD_CONTEXT(c);
+        reuseContextBuffer(c);
         c->payload = NULL;
         c->fin = true;
         self->dw->downStream(self->dw, c);
@@ -268,7 +268,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 process:;
     if (bufLen(c->payload) <= 0)
     {
-        DISCARD_CONTEXT(c);
+        reuseContextBuffer(c);
         destroyContext(c);
         return;
     }
@@ -288,7 +288,7 @@ process:;
         else
         {
             // shadow buffer
-            shift_buffer_t *copybuf = newShadowShiftBuffer(c->payload);
+            shift_buffer_t *copybuf = newShallowShiftBuffer(c->payload);
             setLen(copybuf, up_state->bytes_left);
 
             context_t *ctx = newContext(state->up_cons[up_id].current_child);

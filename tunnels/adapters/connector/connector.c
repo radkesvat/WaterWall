@@ -69,7 +69,7 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
 }
 api_result_t apiConnector(tunnel_t *self, char *msg)
 {
-    return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
 }
 tunnel_t *destroyConnector(tunnel_t *self)
 {

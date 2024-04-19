@@ -9,15 +9,15 @@
 
 enum
 {
-    SSL_SERVER = 0,
-    SSL_CLIENT = 1,
+    kSslServer = 0,
+    kSslClient = 1,
 };
 
-static int openssL_lib_initialized = false;
+static int openssl_lib_initialized = false;
 
-static void openssl_global_init()
+static void opensslGlobalInit()
 {
-    if (openssL_lib_initialized == 0)
+    if (openssl_lib_initialized == 0)
     {
         // #if OPENSSL_VERSION_NUMBER < 0x10100000L
         //         SSL_library_init();
@@ -33,7 +33,7 @@ static void openssl_global_init()
 #if OPENSSL_VERSION_MAJOR < 3
         ERR_load_BIO_strings(); // deprecated since OpenSSL 3.0
 #endif
-        openssL_lib_initialized = 1;
+        openssl_lib_initialized = 1;
     }
 }
 
@@ -43,14 +43,14 @@ typedef struct
     const char *key_file;
     const char *ca_file;
     const char *ca_path;
-    short verify_peer;
-    short endpoint; // HSSL_client / HSSL_CLIENT
+    short       verify_peer;
+    short       endpoint; // HSSL_client / HSSL_CLIENT
 } ssl_ctx_opt_t;
 typedef void *ssl_ctx_t; ///> SSL_CTX
 
-static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
+static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
 {
-    openssl_global_init();
+    opensslGlobalInit();
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_CTX *ctx = SSL_CTX_new(SSLv23_method());
@@ -59,7 +59,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
 #endif
     if (ctx == NULL)
         return NULL;
-    int mode = SSL_VERIFY_NONE;
+    int         mode    = SSL_VERIFY_NONE;
     const char *ca_file = NULL;
     const char *ca_path = NULL;
     if (param)
@@ -76,7 +76,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
         {
             // SSL_CTX_load_verify_file(ctx, ca_path);
 
-            if (!SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
+            if (! SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
             {
                 LOGE("OpenSSL Error: ssl ca_file/ca_path failed");
                 goto error;
@@ -86,7 +86,7 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
         if (param->crt_file && *param->crt_file)
         {
             // openssl forces pem for a chained cert!
-            if (!SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
+            if (! SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
             {
                 LOGE("OpenSSL Error: ssl crt_file error");
                 goto error;
@@ -95,12 +95,12 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
 
         if (param->key_file && *param->key_file)
         {
-            if (!SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
+            if (! SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
             {
                 LOGE("OpenSSL Error: ssl key_file error");
                 goto error;
             }
-            if (!SSL_CTX_check_private_key(ctx))
+            if (! SSL_CTX_check_private_key(ctx))
             {
                 LOGE("OpenSSL Error: ssl key_file check failed");
                 goto error;
@@ -116,12 +116,12 @@ static ssl_ctx_t ssl_ctx_new(ssl_ctx_opt_t *param)
             }
         }
     }
-    if (mode == SSL_VERIFY_PEER && !ca_file && !ca_path)
+    if (mode == SSL_VERIFY_PEER && ! ca_file && ! ca_path)
     {
         // SSL_CTX_set_default_verify_paths(ctx);
         // alternative: use the boundeled cacert.pem
         BIO *bio = BIO_new(BIO_s_mem());
-        int n = BIO_write(bio, cacert_bytes, cacert_len);
+        int  n   = BIO_write(bio, cacert_bytes, cacert_len);
         assert(n == cacert_len);
         X509 *x = NULL;
         while (true)
@@ -149,7 +149,7 @@ error:
     return NULL;
 }
 
-static void printSSLState(const SSL *s)
+static void printSSLState()
 {
     const char *current_state = SSL_state_string_long(s);
     LOGD("%s", current_state);
@@ -160,9 +160,11 @@ static void printSSLError()
 {
     BIO *bio = BIO_new(BIO_s_mem());
     ERR_print_errors(bio);
-    char *buf = NULL;
+    char * buf = NULL;
     size_t len = BIO_get_mem_data(bio, &buf);
     if (len > 0)
+    {
         LOGE("%.*s", len, buf);
+    }
     BIO_free(bio);
 }
