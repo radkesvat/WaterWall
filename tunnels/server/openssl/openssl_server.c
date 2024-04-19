@@ -13,16 +13,16 @@
 
 typedef struct
 {
-    char *    name;
-    int       name_length;
-    tunnel_t *next;
+    char *       name;
+    unsigned int name_length;
+    tunnel_t *   next;
 } alpn_item_t;
 
 typedef struct oss_server_state_s
 {
     ssl_ctx_t    ssl_context;
     alpn_item_t *alpns;
-    int          alpns_length;
+    unsigned int alpns_length;
 
     // settings
     tunnel_t *fallback;
@@ -183,11 +183,11 @@ static void onFallbackTimer(htimer_t *timer)
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
-    oss_server_state_t *state = STATE(self);
+    oss_server_state_t *    state  = STATE(self);
+    oss_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        oss_server_con_state_t *cstate = CSTATE(c);
 
         if (! cstate->handshake_completed)
         {
@@ -414,8 +414,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             if (state->anti_tit)
             {
-                if (1 != SSL_set_record_padding_callback(cstate->ssl, padding_decision_cb))
+                if (1 != SSL_set_record_padding_callback(cstate->ssl, paddingDecisionCb))
+                {
                     LOGW("OpensslServer: Could not set ssl padding");
+                }
                 SSL_set_record_padding_callback_arg(cstate->ssl, cstate);
             }
             destroyContext(c);
@@ -423,9 +425,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
 
-            if (CSTATE(c)->fallback)
+            if (cstate->fallback)
             {
-                if (CSTATE(c)->fallback_init_sent)
+                if (cstate->fallback_init_sent)
                 {
                     cleanup(self, c);
                     state->fallback->upStream(state->fallback, c);
@@ -436,7 +438,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                 }
             }
-            else if (CSTATE(c)->init_sent)
+            else if (cstate->init_sent)
             {
                 cleanup(self, c);
                 self->up->upStream(self->up, c);
@@ -545,7 +547,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
             }
 
             if (n == 0)
+            {
                 break;
+            }
         }
         assert(bufLen(c->payload) == 0);
         reuseContextBuffer(c);
@@ -559,7 +563,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         self->dw->downStream(self->dw, c);
         return;
     }
-    else if (c->fin)
+    if (c->fin)
     {
         cleanup(self, c);
         self->dw->downStream(self->dw, c);
@@ -726,7 +730,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     return t;
 }
 
-api_result_t apiOpenSSLServer(tunnel_t *self, char *msg)
+api_result_t apiOpenSSLServer(tunnel_t *self,const char *msg)
 {
     (void) (self);
     (void) (msg);
