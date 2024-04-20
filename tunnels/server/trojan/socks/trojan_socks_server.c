@@ -52,7 +52,7 @@ static void makeUdpPacketAddress(context_t *c)
     shiftl(c->payload, 2); // port
     writeUI16(c->payload, port);
 
-    switch (c->line->dest_ctx.atype)
+    switch (c->line->dest_ctx.address_type)
     {
     case kSatIPV6:
         shiftl(c->payload, 16);
@@ -80,7 +80,7 @@ static bool parseAddress(context_t *c)
     enum trojan_cmd   command      = ((unsigned char *) rawBuf(c->payload))[0];
     enum trojan_atyp  address_type = ((unsigned char *) rawBuf(c->payload))[1];
     dest_context->acmd             = (enum socket_address_cmd)(command);
-    dest_context->atype            = (enum socket_address_type)(address_type);
+    dest_context->address_type            = (enum socket_address_type)(address_type);
     shiftr(c->payload, 2);
 
     switch (command)
@@ -205,11 +205,11 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return true;
     }
 
-    uint8_t  atype       = bufferStreamViewByteAt(bstream, 0);
+    uint8_t  address_type       = bufferStreamViewByteAt(bstream, 0);
     uint16_t packet_size = 0;
     uint16_t full_len    = 0;
     uint8_t  domain_len  = 0;
-    switch (atype)
+    switch (address_type)
     {
     case kTrojanatypIpV4:
         // address_type | DST.ADDR | DST.PORT | Length |  CRLF   | Payload
@@ -297,11 +297,11 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
     shiftr(c->payload, 1);
 
-    switch (atype)
+    switch (address_type)
     {
     case kTrojanatypIpV4:
         dest_context->addr.sa.sa_family = AF_INET;
-        dest_context->atype             = kSatIPV4;
+        dest_context->address_type             = kSatIPV4;
         memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 4);
         shiftr(c->payload, 4);
         if (! cstate->first_sent)
@@ -311,7 +311,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
         break;
     case kTrojanatypDomainname:
-        dest_context->atype = kSatDomainName;
+        dest_context->address_type = kSatDomainName;
         // size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
         shiftr(c->payload, 1);
         if (dest_context->domain == NULL)
@@ -330,7 +330,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
         break;
     case kTrojanatypIpV6:
-        dest_context->atype             = kSatIPV6;
+        dest_context->address_type             = kSatIPV6;
         dest_context->addr.sa.sa_family = AF_INET6;
         memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 16);
         shiftr(c->payload, 16);

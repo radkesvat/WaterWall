@@ -12,6 +12,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern void socketAddrCopy(const sockaddr_u *restrict dest, const sockaddr_u *restrict source);
+extern bool socketCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
+extern bool socketCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
+extern void allocateDomainBuffer(socket_context_t *scontext);
+extern void setSocketContextDomain(socket_context_t *restrict scontext, char *restrict domain, uint8_t len);
+
 char *readFile(const char *const path)
 {
     FILE *f = fopen(path, "rb");
@@ -155,9 +161,7 @@ bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const 
     return true;
 }
 
-extern bool socketCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
-extern bool socketCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
-bool        socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
+bool socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
 {
 
     if (addr1->sa.sa_family != addr2->sa.sa_family)
@@ -179,32 +183,54 @@ bool        socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *rest
     return false;
 }
 
-void copySocketContextAddr(socket_context_t *dest, socket_context_t **source)
+void copySocketContextAddr(socket_context_t *dest, const socket_context_t *const source)
 {
-    dest->acmd  = (*source)->acmd;
-    dest->atype = (*source)->atype;
-
-    switch (dest->atype)
+    dest->address_protocol = source->address_protocol;
+    dest->address_type  = source->address_type;
+    switch (dest->address_type)
     {
     case kSatIPV4:
         dest->addr.sa.sa_family = AF_INET;
-        dest->addr.sin.sin_addr = (*source)->addr.sin.sin_addr;
+        dest->addr.sin.sin_addr = source->addr.sin.sin_addr;
 
         break;
 
     case kSatDomainName:
         dest->addr.sa.sa_family = AF_INET;
-        if ((*source)->domain != NULL)
+        if (source->domain != NULL)
         {
-            dest->domain = (*source)->domain;
-            // (*source)->domain = NULL; // this copies the pointer and the caller is awair
+            if (source->domain_constant)
+            {
+                if (dest->domain && ! dest->domain_constant)
+                {
+                    free(dest->domain);
+                }
+                dest->domain_constant = true;
+                dest->domain          = source->domain;
+                dest->domain_len      = source->domain_len;
+            }
+            else
+            {
+                if (dest->domain && dest->domain_constant)
+                {
+                    dest->domain_constant = false;
+                    allocateDomainBuffer(dest);
+                }
+                setSocketContextDomain(dest, source->domain, source->domain_len);
+            }
+            if (source->domain_resolved)
+            {
+                dest->domain_resolved = true;
+                socketAddrCopy(&(dest->addr), &(source->addr));
+            }
+
         }
 
         break;
 
     case kSatIPV6:
         dest->addr.sa.sa_family = AF_INET6;
-        memcpy(&(dest->addr.sin6.sin6_addr), &((*source)->addr.sin6.sin6_addr), sizeof(struct in6_addr));
+        memcpy(&(dest->addr.sin6.sin6_addr), &(source->addr.sin6.sin6_addr), sizeof(struct in6_addr));
 
         break;
     }
@@ -225,19 +251,23 @@ enum socket_address_type getHostAddrType(char *host)
 
 void copySocketContextPort(socket_context_t *dest, socket_context_t *source)
 {
+    // this is supposed to work for both ipv4/6
+    dest->addr.sin.sin_port = source->addr.sin.sin_port;
 
-    switch (dest->atype)
-    {
-    case kSatIPV4:
-    case kSatDomainName:
-    default:
-        dest->addr.sin.sin_port = source->addr.sin.sin_port;
-        break;
+    // alternative:
 
-    case kSatIPV6:
-        dest->addr.sin6.sin6_port = source->addr.sin6.sin6_port;
-        break;
-    }
+    // switch (dest->address_type)
+    // {
+    // case kSatIPV4:
+    // case kSatDomainName:
+    // default:
+    //     dest->addr.sin.sin_port = source->addr.sin.sin_port;
+    //     break;
+
+    // case kSatIPV6:
+    //     dest->addr.sin6.sin6_port = source->addr.sin6.sin6_port;
+    //     break;
+    // }
 }
 
 struct user_s *parseUserFromJsonObject(const cJSON *user_json)

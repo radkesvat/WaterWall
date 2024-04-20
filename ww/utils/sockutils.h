@@ -2,13 +2,18 @@
 #include "basic_types.h"
 #include "hv/hsocket.h"
 
-#define CMP(a, b)                                                                                                      \
-    if ((a) != (b))                                                                                                    \
-    return false
+inline void socketAddrCopy(const sockaddr_u *restrict dest, const sockaddr_u *restrict source)
+{
+    if (source->sa.sa_family == AF_INET)
+    {
+        memcpy(dest->sin.sin_addr.s_addr, source->sin.sin_addr.s_addr, sizeof(source->sin.sin_addr.s_addr));
+        return;
+    }
+    memcpy(dest->sin6.sin6_addr.s6_addr, source->sin6.sin6_addr.s6_addr, sizeof(source->sin6.sin6_addr.s6_addr));
+}
 
 inline bool socketCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
 {
-
     return (addr1->sin.sin_addr.s_addr == addr2->sin.sin_addr.s_addr);
 }
 
@@ -17,17 +22,39 @@ inline bool socketCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *re
     int r = memcmp(addr1->sin6.sin6_addr.s6_addr, addr2->sin6.sin6_addr.s6_addr, sizeof(addr1->sin6.sin6_addr.s6_addr));
     if (r != 0)
     {
-        return r;
+        return false;
     }
-    CMP(addr1->sin6.sin6_flowinfo, addr2->sin6.sin6_flowinfo);
-    CMP(addr1->sin6.sin6_scope_id, addr2->sin6.sin6_scope_id);
-    return false;
+    if (addr1->sin6.sin6_flowinfo != addr2->sin6.sin6_flowinfo)
+    {
+        return false;
+    }
+    if (addr1->sin6.sin6_scope_id, addr2->sin6.sin6_scope_id)
+    {
+        return false;
+    }
+    return true;
 }
 
-#undef CMP
-
-bool socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
-
-void                     copySocketContextAddr(socket_context_t *dest, socket_context_t **source);
+bool                     socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
+void                     copySocketContextAddr(socket_context_t *dest, const socket_context_t *source);
 void                     copySocketContextPort(socket_context_t *dest, socket_context_t *source);
 enum socket_address_type getHostAddrType(char *host);
+
+inline void allocateDomainBuffer(socket_context_t *scontext)
+{
+    if (scontext->domain != NULL)
+    {
+        scontext->domain = malloc(256);
+#ifdef DEBUG
+        memset(&(scontext->domain), 0xEE, 256);
+#endif
+    }
+}
+// len is max 255 since it is 8bit
+inline void setSocketContextDomain(socket_context_t *restrict scontext, char *restrict domain, uint8_t len)
+{
+    assert(scontext->domain != NULL);
+    domain[len] = 0x0;
+    memcpy(scontext->domain, domain, len);
+    scontext->domain_len = len;
+}

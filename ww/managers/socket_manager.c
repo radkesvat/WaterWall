@@ -483,7 +483,7 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
             {
                 option.multiport_backend == kMultiportBackendNothing;
             }
-            if (option.proto == kSocketProtocolTcp)
+            if (option.proto == kSapTcp)
             {
                 if (option.multiport_backend == kMultiportBackendIptables)
                 {

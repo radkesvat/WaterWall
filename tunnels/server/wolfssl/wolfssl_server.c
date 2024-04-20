@@ -26,7 +26,6 @@ typedef struct wssl_server_state_s
     ssl_ctx_t    ssl_context;
     alpn_item_t *alpns;
     unsigned int alpns_length;
-
     // settings
     tunnel_t *fallback;
     int       fallback_delay;
@@ -43,16 +42,12 @@ typedef struct wssl_server_con_state_s
     bool             fallback_first_sent;
     buffer_stream_t *fallback_buf;
     line_t *         fallback_line;
-    // htimer_t *fallback_timer;
-
-    SSL *ssl;
-
-    BIO *rbio;
-    BIO *wbio;
-
-    bool first_sent;
-    bool init_sent;
-    int  reply_sent_tit;
+    SSL *            ssl;
+    BIO *            rbio;
+    BIO *            wbio;
+    bool             first_sent;
+    bool             init_sent;
+    int              reply_sent_tit;
 
 } wssl_server_con_state_t;
 
@@ -110,7 +105,7 @@ static enum sslstatus getSslstatus(SSL *ssl, int n)
     }
 }
 
-// todo (tls in tls padding) wolfssl dose not support it but since its standard in tls 1.3, there must be a way 
+// todo (tls in tls padding) wolfssl dose not support it but since its standard in tls 1.3, there must be a way
 // static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
 // {
 //     (void) ssl;
@@ -584,7 +579,6 @@ failed_after_establishment:;
     self->dw->downStream(self->dw, fail_context);
 }
 
-
 tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 {
     wssl_server_state_t *state = malloc(sizeof(wssl_server_state_t));
@@ -712,10 +706,10 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     t->state    = state;
     if (state->fallback != NULL)
     {
-        state->fallback->dw = t;
+        chainDown(t,state->fallback);
     }
-    t->upStream         = &upStream;
-    t->downStream       = &downStream;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }

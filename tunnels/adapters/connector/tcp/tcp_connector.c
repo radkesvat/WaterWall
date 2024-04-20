@@ -3,7 +3,7 @@
 #include "types.h"
 #include "utils/sockutils.h"
 
-static void cleanup(tcp_connector_con_state_t *cstate)
+static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
 {
     if (cstate->io)
     {
@@ -20,10 +20,11 @@ static void cleanup(tcp_connector_con_state_t *cstate)
             last_resumed_io = cw->src_io;
             hio_read(cw->src_io);
         }
-        if (cw->payload)
+        if (write_queue)
         {
-            reuseContextBuffer(cw);
+            hio_write(cstate->io, rawBuf(cw->payload), bufLen(cw->payload));
         }
+        reuseContextBuffer(cw);
         destroyContext(cw);
     }
 
@@ -233,8 +234,8 @@ void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-
-            CSTATE_MUT(c) = malloc(sizeof(tcp_connector_con_state_t));
+            tcp_connector_state_t *state = STATE(self);
+            CSTATE_MUT(c)                = malloc(sizeof(tcp_connector_con_state_t));
             memset(CSTATE(c), 0, sizeof(tcp_connector_con_state_t));
             tcp_connector_con_state_t *cstate = CSTATE(c);
 #ifdef PROFILE
@@ -248,77 +249,52 @@ void upStream(tunnel_t *self, context_t *c)
             cstate->finished_queue = newContextQueue(cstate->buffer_pool);
             cstate->write_paused   = true;
 
-            socket_context_t final_ctx = {0};
-            // fill the final_ctx address based on settings
+            socket_context_t *dest_ctx = &(c->line->dest_ctx);
+            socket_context_t *src_ctx  = &(c->line->src_ctx);
+            switch (state->dest_addr_selected.status)
             {
-                socket_context_t *     src_ctx  = &(c->line->src_ctx);
-                socket_context_t *     dest_ctx = &(c->line->dest_ctx);
-                tcp_connector_state_t *state    = STATE(self);
-
-                if (state->dest_addr.status == kCdvsFromSource)
-                {
-                    copySocketContextAddr(&final_ctx, &src_ctx);
-                }
-                else if (state->dest_addr.status == kCdvsFromDest)
-                {
-                    copySocketContextAddr(&final_ctx, &dest_ctx);
-                }
-                else
-                {
-                    final_ctx.atype = state->dest_atype;
-                    if (state->dest_atype == kSatDomainName)
-                    {
-                        final_ctx.domain = malloc(state->dest_domain_len + 1);
-                        memcpy(final_ctx.domain, state->dest_addr.value_ptr, state->dest_domain_len + 1);
-                        final_ctx.resolved          = false;
-                        final_ctx.addr.sa.sa_family = AF_INET; // addr resolve will change this
-                    }
-                    else
-                    {
-                        sockaddr_set_ip(&(final_ctx.addr), state->dest_addr.value_ptr);
-                    }
-                }
-
-                if (state->dest_port.status == kCdvsFromSource)
-                {
-                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(src_ctx->addr)));
-                }
-                else if (state->dest_port.status == kCdvsFromDest)
-                {
-                    sockaddr_set_port(&(final_ctx.addr), sockaddr_port(&(dest_ctx->addr)));
-                }
-                else
-                {
-                    sockaddr_set_port(&(final_ctx.addr), state->dest_port.value);
-                }
+            case kCdvsFromSource:
+                copySocketContextAddr(&dest_ctx, &src_ctx);
+                break;
+            case kCdvsConstant:
+                copySocketContextAddr(&dest_ctx, &(state->constant_dest_addr));
+                break;
+            default:
+            case kCdvsFromDest:
+                break;
+            }
+            switch (state->dest_port_selected.status)
+            {
+            case kCdvsFromSource:
+                copySocketContextPort(&dest_ctx, &src_ctx);
+                break;
+            case kCdvsConstant:
+                copySocketContextPort(&dest_ctx, &(state->constant_dest_addr));
+                break;
+            default:
+            case kCdvsFromDest:
+                break;
             }
 
-            // sockaddr_set_ipport(&(final_ctx.addr), "127.0.0.1", 443);
+            // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
+            // LOGD("TcpConnector: initiating connection");
 
-            LOGD("TcpConnector: initiating connection");
-            if (final_ctx.atype == kSatDomainName)
+            if (dest_ctx->address_type == kSatDomainName && ! dest_ctx->domain_resolved)
             {
-                if (! final_ctx.resolved)
+                if (! resolveContextSync(dest_ctx))
                 {
-                    if (! tcpConnectorResolvedomain(&final_ctx))
-                    {
-                        free(final_ctx.domain);
-                        cleanup(cstate);
-
-                        CSTATE_MUT(c) = NULL;
-                        goto fail;
-                    }
+                    cleanup(cstate, false);
+                    CSTATE_MUT(c) = NULL;
+                    goto fail;
                 }
-                free(final_ctx.domain);
             }
-            tcp_connector_state_t *state = STATE(self);
 
             hloop_t *loop   = loops[c->line->tid];
-            int      sockfd = socket(final_ctx.addr.sa.sa_family, SOCK_STREAM, 0);
+            int      sockfd = socket(dest_ctx->addr.sa.sa_family, SOCK_STREAM, 0);
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
-                cleanup(cstate);
+                cleanup(cstate, false);
                 CSTATE_MUT(c) = NULL;
                 goto fail;
             }
@@ -340,7 +316,7 @@ void upStream(tunnel_t *self, context_t *c)
             hio_t *upstream_io = hio_get(loop, sockfd);
             assert(upstream_io != NULL);
 
-            hio_set_peeraddr(upstream_io, &(final_ctx.addr.sa), sockaddr_len(&(final_ctx.addr)));
+            hio_set_peeraddr(upstream_io, &(dest_ctx->addr.sa), sockaddr_len(&(dest_ctx->addr)));
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
 
@@ -351,9 +327,9 @@ void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            hio_t *io = cstate->io;
-            cleanup(cstate);
+            hio_t *io     = cstate->io;
             CSTATE_MUT(c) = NULL;
+            cleanup(cstate, true);
             destroyContext(c);
             hio_close(io);
         }
@@ -402,7 +378,7 @@ void downStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            cleanup(cstate);
+            cleanup(cstate, false);
             CSTATE_MUT(c) = NULL;
             self->dw->downStream(self->dw, c);
         }
@@ -421,42 +397,38 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    const cJSON *tcp_settings = cJSON_GetObjectItemCaseSensitive(settings, "tcp");
-    if ((cJSON_IsObject(tcp_settings) && settings->child != NULL))
-    {
-        getBoolFromJsonObject(&(state->tcp_no_delay), tcp_settings, "nodelay");
-        getBoolFromJsonObject(&(state->tcp_fast_open), tcp_settings, "fastopen");
-        getBoolFromJsonObject(&(state->reuse_addr), tcp_settings, "reuseaddr");
-        int ds = 0;
-        getIntFromJsonObject(&ds, tcp_settings, "domain-strategy");
-        state->domain_strategy = ds;
-    }
-    else
-    {
-        // memset set everything to 0...
-    }
+    getBoolFromJsonObjectOrDefault(&(state->tcp_no_delay), settings, "nodelay", true);
+    getBoolFromJsonObjectOrDefault(&(state->tcp_fast_open), settings, "fastopen", false);
+    getBoolFromJsonObjectOrDefault(&(state->reuse_addr), settings, "reuseaddr", false);
+    getIntFromJsonObjectOrDefault(&(state->domain_strategy), settings, "domain-strategy", 0);
 
-    state->dest_addr =
+    state->dest_addr_selected =
         parseDynamicStrValueFromJsonObject(settings, "address", 2, "src_context->address", "dest_context->address");
 
-    if (state->dest_addr.status == kDvsEmpty)
+    if (state->dest_addr_selected.status == kDvsEmpty)
     {
         LOGF("JSON Error: TcpConnector->settings->address (string field) : The vaule was empty or invalid");
         return NULL;
     }
+    if (state->dest_addr_selected.status == kDvsConstant)
+    {
+        state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
+        allocateDomainBuffer(&(state->constant_dest_addr));
+        setSocketContextDomain(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+                               strlen(state->dest_addr_selected.value_ptr));
+    }
 
-    state->dest_port =
+    state->dest_port_selected =
         parseDynamicNumericValueFromJsonObject(settings, "port", 2, "src_context->port", "dest_context->port");
 
-    if (state->dest_port.status == kDvsEmpty)
+    if (state->dest_port_selected.status == kDvsEmpty)
     {
         LOGF("JSON Error: TcpConnector->settings->port (number field) : The vaule was empty or invalid");
         return NULL;
     }
-    if (state->dest_addr.status == kDvsConstant)
+    if (state->dest_port_selected.status == kDvsConstant)
     {
-        state->dest_atype      = getHostAddrType(state->dest_addr.value_ptr);
-        state->dest_domain_len = strlen(state->dest_addr.value_ptr);
+        sockaddr_set_port(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
 
     tunnel_t *t   = newTunnel();
@@ -465,7 +437,6 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     t->downStream = &downStream;
 
     atomic_thread_fence(memory_order_release);
-
     return t;
 }
 api_result_t apiTcpConnector(tunnel_t *self, const char *msg)

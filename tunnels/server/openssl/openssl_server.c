@@ -41,16 +41,12 @@ typedef struct oss_server_con_state_s
     bool             fallback_first_sent;
     buffer_stream_t *fallback_buf;
     line_t *         fallback_line;
-    // htimer_t *fallback_timer;
-
-    SSL *ssl;
-
-    BIO *rbio;
-    BIO *wbio;
-
-    bool first_sent;
-    bool init_sent;
-    int  reply_sent_tit;
+    SSL *            ssl;
+    BIO *            rbio;
+    BIO *            wbio;
+    bool             first_sent;
+    bool             init_sent;
+    int              reply_sent_tit;
 
 } oss_server_con_state_t;
 
@@ -60,10 +56,10 @@ struct timer_eventdata
     context_t *c;
 };
 
-static int onAlpnSelect(SSL *ssl,const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen,
-                        void *arg)
+static int onAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in,
+                        unsigned int inlen, void *arg)
 {
-    (void)ssl;
+    (void) ssl;
     assert(inlen != 0);
     oss_server_state_t *state  = arg;
     unsigned int        offset = 0;
@@ -586,7 +582,6 @@ failed_after_establishment:;
     self->dw->downStream(self->dw, fail_context);
 }
 
-
 tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 {
     oss_server_state_t *state = malloc(sizeof(oss_server_state_t));
@@ -709,10 +704,10 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     t->state    = state;
     if (state->fallback != NULL)
     {
-        state->fallback->dw = t;
+        chainDown(t,state->fallback);
     }
-    t->upStream         = &upStream;
-    t->downStream       = &downStream;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }
@@ -721,13 +716,12 @@ api_result_t apiOpenSSLServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0}; // TODO(root):
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyOpenSSLServer(tunnel_t *self)
 {
     (void) (self);
-
     return NULL;
 }
 

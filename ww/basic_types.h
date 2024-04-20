@@ -103,18 +103,19 @@ enum socket_address_type
 
 enum socket_address_protocol
 {
-    kSapTcp = 0X1,
-    kSapUdp = 0X3,
+    kSapTcp = IPPROTO_TCP,
+    kSapUdp = IPPROTO_UDP,
 };
 
 // all data we need to connect to somewhere
 typedef struct socket_context_s
 {
-    enum socket_address_protocol aproto;
-    enum socket_address_type     atype;
+    enum socket_address_protocol address_protocol;
+    enum socket_address_type     address_type;
+    sockaddr_u                   addr;
     char *                       domain;
     unsigned int                 domain_len;
-    bool                         resolved;
-    sockaddr_u                   addr;
-
+    bool                         domain_constant;
+    enum domain_strategy         domain_strategy;
+    bool                         domain_resolved;
 } socket_context_t;

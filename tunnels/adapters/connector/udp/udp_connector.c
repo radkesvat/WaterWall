@@ -2,40 +2,33 @@
 #include "types.h"
 #include "utils/sockutils.h"
 
-static void cleanup(connector_con_state_t *cstate)
+static void cleanup(udp_connector_con_state_t *cstate)
 {
-    connector_state_t *state = STATE(cstate->tunnel);
-    if (state->dest_addr.status == cdvs_constant)
-    {
-
-    }else if (state->dest_addr.status > cdvs_constant){
-        free(cstate->line->dest_ctx)
-    }
-
+    udp_connector_state_t *state = STATE(cstate->tunnel);
     free(cstate);
 }
-static void onUdpRecv(hio_t *io, void *buf, int readbytes)
+static void onRecv(hio_t *io, void *buf, int readbytes)
 {
-    connector_con_state_t *cstate = (connector_con_state_t *) (hevent_userdata(io));
+    udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (hevent_userdata(io));
 
     shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
     setLen(payload, readbytes);
     writeRaw(payload, buf, readbytes);
 
     tunnel_t *self = (cstate)->tunnel;
-    line_t   *line = (cstate)->line;
+    line_t *  line = (cstate)->line;
 
     struct sockaddr *destaddr = hio_peeraddr(io);
 
-    enum socket_address_type atype;
+    enum socket_address_type address_type;
 
     if (destaddr->sa_family == AF_INET6)
     {
-        atype = kSatIPV6;
+        address_type = kSatIPV6;
     }
     else
     {
-        atype = kSatIPV4;
+        address_type = kSatIPV4;
     }
 
     if (! cstate->established)
@@ -58,9 +51,9 @@ static void onUdpRecv(hio_t *io, void *buf, int readbytes)
     self->packetDownStream(self, context);
 }
 
-void connectorPacketUpStream(tunnel_t *self, context_t *c)
+void upStream(tunnel_t *self, context_t *c)
 {
-    connector_con_state_t *cstate = CSTATE(c);
+    udp_connector_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
@@ -87,21 +80,17 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(connector_con_state_t));
-            memset(CSTATE(c), 0, sizeof(connector_con_state_t));
-            connector_con_state_t *cstate = CSTATE(c);
+            udp_connector_state_t *state = STATE(self);
 
-            cstate->buffer_pool    = buffer_pools[c->line->tid];
-            cstate->tunnel         = self;
-            cstate->line           = c->line;
-            cstate->write_paused   = false;
-            cstate->data_queue     = NULL;
-            cstate->finished_queue = NULL;
+            CSTATE_MUT(c) = malloc(sizeof(udp_connector_con_state_t));
+            memset(CSTATE(c), 0, sizeof(udp_connector_con_state_t));
+            udp_connector_con_state_t *cstate = CSTATE(c);
 
+            cstate->buffer_pool = buffer_pools[c->line->tid];
+            cstate->tunnel      = self;
+            cstate->line        = c->line;
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
-
-            hloop_t *loop = loops[c->line->tid];
-
+            hloop_t *  loop      = loops[c->line->tid];
             sockaddr_u host_addr = {0};
             sockaddr_set_ipport(&host_addr, "0.0.0.0", 0);
 
@@ -133,63 +122,46 @@ void connectorPacketUpStream(tunnel_t *self, context_t *c)
 
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
-            hio_setcb_read(upstream_io, onUdpRecv);
+            hio_setcb_read(upstream_io, onRecv);
             hio_read(upstream_io);
 
-            socket_context_t* resolved_dest_context;
-            // fill the resolved_dest_context address based on settings
+            socket_context_t *dest_ctx = &(c->line->dest_ctx);
+            socket_context_t *src_ctx  = &(c->line->src_ctx);
+            switch (state->dest_addr_selected.status)
             {
-                socket_context_t  *src_ctx  = &(c->line->src_ctx);
-                socket_context_t  *dest_ctx = &(c->line->dest_ctx);
-                connector_state_t *state    = STATE(self);
-
-                if (state->dest_addr.status == cdvs_from_source)
-                {
-                    resolved_dest_context = src_ctx;
-                    // copySocketContextAddr(&resolved_dest_context, &src_ctx);
-                }
-                else if (state->dest_addr.status == cdvs_from_dest)
-                {
-                    resolved_dest_context = dest_ctx;
-                    // copySocketContextAddr(&resolved_dest_context, &dest_ctx);
-                }
-                else
-                {
-                    resolved_dest_context.atype = state->dest_atype;
-                    if (state->dest_atype == kSatDomainName)
-                    {
-                        resolved_dest_context.domain     = state->dest_addr.value_ptr;
-                        resolved_dest_context.domain_len = state->dest_domain_len;
-                        resolved_dest_context.resolved   = false;
-                    }
-                    else
-                        sockaddr_set_ip(&(resolved_dest_context.addr), state->dest_addr.value_ptr);
-                }
-
-                if (state->dest_port.status == cdvs_from_source)
-                    sockaddr_set_port(&(resolved_dest_context.addr), sockaddr_port(&(src_ctx->addr)));
-                else if (state->dest_port.status == cdvs_from_dest)
-                    sockaddr_set_port(&(resolved_dest_context.addr), sockaddr_port(&(dest_ctx->addr)));
-                else
-                    sockaddr_set_port(&(resolved_dest_context.addr), state->dest_port.value);
+            case kCdvsFromSource:
+                copySocketContextAddr(&dest_ctx, &src_ctx);
+                break;
+            case kCdvsConstant:
+                copySocketContextAddr(&dest_ctx, &(state->constant_dest_addr));
+                break;
+            default:
+            case kCdvsFromDest:
+                break;
+            }
+            switch (state->dest_port_selected.status)
+            {
+            case kCdvsFromSource:
+                copySocketContextPort(&dest_ctx, &src_ctx);
+                break;
+            case kCdvsConstant:
+                copySocketContextPort(&dest_ctx, &(state->constant_dest_addr));
+                break;
+            default:
+            case kCdvsFromDest:
+                break;
             }
 
-            if (resolved_dest_context.atype == kSatDomainName)
+            if (dest_ctx->address_type == kSatDomainName && ! dest_ctx->domain_resolved)
             {
-                if (! resolved_dest_context.resolved)
+                if (! resolveContextSync(dest_ctx))
                 {
-                    if (! connectorResolvedomain(&(resolved_dest_context)))
-                    {
-                        free(resolved_dest_context.domain);
-                        cleanup(CSTATE(c));
-                        CSTATE_MUT(c) = NULL;
-                        reuseContextBuffer(c);
-                        goto fail;
-                    }
+                    cleanup(CSTATE(c));
+                    CSTATE_MUT(c) = NULL;
+                    goto fail;
                 }
-                free(resolved_dest_context.domain);
             }
-            hio_set_peeraddr(cstate->io, &(resolved_dest_context.addr.sa), sockaddr_len(&(resolved_dest_context.addr)));
+            hio_set_peeraddr(cstate->io, &(dest_ctx->addr.sa), sockaddr_len(&(dest_ctx->addr)));
 
             destroyContext(c);
         }
@@ -209,91 +181,82 @@ fail:;
     destroyContext(c);
 }
 
-void connectorPacketDownStream(tunnel_t *self, context_t *c)
+void downStream(tunnel_t *self, context_t *c)
 {
+    udp_connector_con_state_t *cstate = CSTATE(c);
+
     if (c->fin)
     {
-        hio_t *io = CSTATE(c)->io;
+        hio_t *io = cstate->io;
         hevent_set_userdata(io, NULL);
-        cleanup(CSTATE(c));
+        cleanup(cstate);
         CSTATE_MUT(c) = NULL;
     }
     self->dw->downStream(self->dw, c);
 }
 
-
-
-tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
+tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
 {
-    tcp_connector_state_t *state = malloc(sizeof(tcp_connector_state_t));
-    memset(state, 0, sizeof(tcp_connector_state_t));
+    udp_connector_state_t *state = malloc(sizeof(udp_connector_state_t));
+    memset(state, 0, sizeof(udp_connector_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: TcpConnector->settings (object field) : The object was empty or invalid");
+        LOGF("JSON Error: UdpConnector->settings (object field) : The object was empty or invalid");
         return NULL;
     }
+    
+    getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
 
-    const cJSON *tcp_settings = cJSON_GetObjectItemCaseSensitive(settings, "tcp");
-    if ((cJSON_IsObject(tcp_settings) && settings->child != NULL))
-    {
-        getBoolFromJsonObject(&(state->tcp_no_delay), tcp_settings, "nodelay");
-        getBoolFromJsonObject(&(state->tcp_fast_open), tcp_settings, "fastopen");
-        getBoolFromJsonObject(&(state->reuse_addr), tcp_settings, "reuseaddr");
-        int ds = 0;
-        getIntFromJsonObject(&ds, tcp_settings, "domain-strategy");
-        state->domain_strategy = ds;
-    }
-    else
-    {
-        // memset set everything to 0...
-    }
-
-    state->dest_addr =
+    state->dest_addr_selected =
         parseDynamicStrValueFromJsonObject(settings, "address", 2, "src_context->address", "dest_context->address");
 
-    if (state->dest_addr.status == kDvsEmpty)
+    if (state->dest_addr_selected.status == kDvsEmpty)
     {
-        LOGF("JSON Error: TcpConnector->settings->address (string field) : The vaule was empty or invalid");
+        LOGF("JSON Error: UdpConnector->settings->address (string field) : The vaule was empty or invalid");
         return NULL;
     }
+    if (state->dest_addr_selected.status == kDvsConstant)
+    {
+        state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
+        allocateDomainBuffer(&(state->constant_dest_addr));
+        setSocketContextDomain(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+                               strlen(state->dest_addr_selected.value_ptr));
+    }
 
-    state->dest_port =
+    state->dest_port_selected =
         parseDynamicNumericValueFromJsonObject(settings, "port", 2, "src_context->port", "dest_context->port");
 
-    if (state->dest_port.status == kDvsEmpty)
+    if (state->dest_port_selected.status == kDvsEmpty)
     {
-        LOGF("JSON Error: TcpConnector->settings->port (number field) : The vaule was empty or invalid");
+        LOGF("JSON Error: UdpConnector->settings->port (number field) : The vaule was empty or invalid");
         return NULL;
     }
-    if (state->dest_addr.status == kDvsConstant)
+    if (state->dest_port_selected.status == kDvsConstant)
     {
-        state->dest_atype      = getHostAddrType(state->dest_addr.value_ptr);
-        state->dest_domain_len = strlen(state->dest_addr.value_ptr);
+        sockaddr_set_port(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
-
     tunnel_t *t   = newTunnel();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
     atomic_thread_fence(memory_order_release);
-
     return t;
 }
-api_result_t apiTcpConnector(tunnel_t *self, const char *msg)
+api_result_t apiUdpConnector(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
     return (api_result_t){0};
 }
-tunnel_t *destroyTcpConnector(tunnel_t *self)
+tunnel_t *destroyUdpConnector(tunnel_t *self)
 {
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataTcpConnector()
+tunnel_metadata_t getMetadataUdpConnector()
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

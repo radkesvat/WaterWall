@@ -6,7 +6,7 @@
 #include "hv/hloop.h"
 #include "ww.h"
 
-#define MAX_CHAIN_LEN 30
+#define MAX_CHAIN_LEN (16 * 2)
 
 #define STATE(x)      ((void *) ((x)->state))
 #define CSTATE(x)     ((void *) ((((x)->line->chains_state)[self->chain_index])))
@@ -20,7 +20,7 @@ typedef struct line_s
     uint16_t lcid;
     uint8_t  auth_cur;
     uint8_t  auth_max;
-    bool     root_alive;
+    bool     alive;
 
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
@@ -42,7 +42,7 @@ typedef struct context_s
 
 struct tunnel_s;
 
-typedef void(*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
+typedef void (*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
 
 struct tunnel_s
 {
@@ -62,6 +62,8 @@ tunnel_t *newTunnel();
 
 void destroyTunnel(tunnel_t *self);
 void chain(tunnel_t *from, tunnel_t *to);
+void chainDown(tunnel_t *from, tunnel_t *to);
+void chainUp(tunnel_t *from, tunnel_t *to);
 void defaultUpStream(tunnel_t *self, context_t *c);
 void defaultDownStream(tunnel_t *self, context_t *c);
 
@@ -77,6 +79,7 @@ inline line_t *newLine(uint16_t tid)
         .auth_cur = 0,
         .auth_max = 0,
         .loop     = loops[tid],
+        .alive    = true,
         // to set a port we need to know the AF family, default v4
         .dest_ctx = (socket_context_t){.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
         .src_ctx  = (socket_context_t){.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
@@ -84,13 +87,13 @@ inline line_t *newLine(uint16_t tid)
     memset(&(result->chains_state), 0, MAX_CHAIN_LEN);
     return result;
 }
-inline size_t reserveChainStateIndex(line_t *l)
+inline uint8_t reserveChainStateIndex(line_t *l)
 {
-    size_t result = l->lcid;
+    uint8_t result = l->lcid;
     l->lcid -= 1;
     return result;
 }
-inline void destroyLine(line_t *l)
+static inline void internalUnRefLine(line_t *l)
 {
     l->refc -= 1;
     // check line
@@ -99,33 +102,38 @@ inline void destroyLine(line_t *l)
         return;
     }
 
-#ifdef DEBUG
+    assert(l->alive == false);
+
     // there should not be any conn-state alive at this point
     for (size_t i = 0; i < MAX_CHAIN_LEN; i++)
     {
         assert(l->chains_state[i] == NULL);
     }
 
-#endif
-    assert(l->src_ctx.domain == NULL); // impossible (hopefully)
+    assert(l->src_ctx.domain == NULL); // impossible (source domain?)
 
-    if (l->dest_ctx.domain != NULL)
+    if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_constant)
     {
         free(l->dest_ctx.domain);
     }
 
     free(l);
 }
+inline void destroyLine(line_t *l)
+{
+    l->alive = false;
+    internalUnRefLine(l);
+}
 inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
-    destroyLine(c->line);
+    internalUnRefLine(c->line);
     free(c);
 }
 inline context_t *newContext(line_t *line)
 {
     context_t *new_ctx = malloc(sizeof(context_t));
-    *new_ctx           = (context_t){.line = line}; // yes, everything else is zero
+    *new_ctx           = (context_t){.line = line};
     line->refc += 1;
     return new_ctx;
 }
@@ -134,12 +142,7 @@ inline context_t *newContextFrom(context_t *source)
 {
     source->line->refc += 1;
     context_t *new_ctx = malloc(sizeof(context_t));
-    *new_ctx           = *source;
-    new_ctx->payload   = NULL;
-    new_ctx->init      = false;
-    new_ctx->est       = false;
-    new_ctx->first     = false;
-    new_ctx->fin       = false;
+    *new_ctx           = (context_t){.line = source->line, .src_io = source->src_io};
     return new_ctx;
 }
 inline context_t *newEstContext(line_t *line)
@@ -165,63 +168,45 @@ inline context_t *newInitContext(line_t *line)
 inline context_t *switchLine(context_t *c, line_t *line)
 {
     line->refc += 1;
-    destroyLine(c->line);
+    internalUnRefLine(c->line);
     c->line = line;
     return c;
 }
-static inline bool isAlive(line_t *line)
+inline bool isAlive(line_t *line)
 {
-    return line->root_alive;
+    return line->alive;
 }
 // when you don't have a context from a line, you cant guess the line is free()ed or not
-// so you should use locks
-static inline void lockLine(line_t *line)
+// so you should use locks before losing the last context
+inline void lockLine(line_t *line)
 {
     line->refc++;
 }
-static inline void unLockLine(line_t *line)
+inline void unLockLine(line_t *line)
 {
     destroyLine(line);
 }
 
-static inline void markAuthenticationNodePresence(line_t *line)
+inline void markAuthenticationNodePresence(line_t *line)
 {
     line->auth_max += 1;
 }
-static inline void markAuthenticated(line_t *line)
+inline void markAuthenticated(line_t *line)
 {
     line->auth_cur += 1;
 }
-static inline bool isAuthenticated(line_t *line)
+inline bool isAuthenticated(line_t *line)
 {
     return line->auth_cur > 0;
 }
-static inline bool isFullyAuthenticated(line_t *line)
+inline bool isFullyAuthenticated(line_t *line)
 {
     return line->auth_cur >= line->auth_max;
 }
 
-static inline void reuseContextBuffer(context_t *c)
+inline void reuseContextBuffer(context_t *c)
 {
     assert(c->payload != NULL);
     reuseBuffer(buffer_pools[c->line->tid], c->payload);
     c->payload = NULL;
-}
-
-static inline void allocateDomainBuffer(socket_context_t *scontext)
-{
-    if (scontext->domain != NULL)
-    {
-        scontext->domain = malloc(256);
-#ifdef DEBUG
-        memset(&(scontext->domain), 0xEE, 256);
-#endif
-    }
-}
-// len is max 255 since it is 8bit
-static inline void setSocketContextDomain(socket_context_t *restrict scontext, char *restrict domain, uint8_t len)
-{
-    assert(scontext->domain != NULL);
-    domain[len] = 0x0;
-    memcpy(scontext->domain, domain, len);
 }

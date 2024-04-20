@@ -64,7 +64,7 @@ enum http_parser_state {
   XX(412, PreconditionFailed,             Precondition Failed)                  \
   XX(413, PayloadTooLarge,               Payload Too Large)                     \
   XX(414, UriTooLong,                    URI Too Long)                          \
-  XX(415, UnsupportedMediaType,          Unsupported Media Type)                \
+  XX(415, UnsupportedMediaddress_type,          Unsupported Media Type)                \
   XX(416, RangeNotSatisfiable,           Range Not Satisfiable)                 \
   XX(417, ExpectationFailed,              Expectation Failed)                   \
   XX(421, MisdirectedRequest,             Misdirected Request)                  \

@@ -1,41 +1,36 @@
 #include "sync_dns.h"
 #include "loggers/dns_logger.h"
 
-static inline bool resolve(socket_context_t *dest)
+bool resolveContextSync(socket_context_t *sctx)
 {
+    // please check these before calling this function -> more performance
+    assert(sctx->address_type == kSatDomainName && sctx->domain_resolved == false && sctx->domain != NULL);
     // we need to get and set port again because resolved ip can be v6/v4 which have different sizes
-    uint16_t old_port = sockaddr_port(&(dest->addr));
+    uint16_t old_port = sockaddr_port(&(sctx->addr));
 #ifdef PROFILE
     struct timeval tv1, tv2;
     gettimeofday(&tv1, NULL);
 #endif
     /* resolve domain */
     {
-        if (sockaddr_set_ip_port(&(dest->addr), dest->domain, old_port) != 0)
+        if (sockaddr_set_ip_port(&(sctx->addr), sctx->domain, old_port) != 0)
         {
-            LOGE("Connector: resolve failed  %s", dest->domain);
+            LOGE("SyncDns: resolve failed  %s", sctx->domain);
             return false;
         }
-        if (logger_will_write_level(getDnsLogger(), (log_level_e)LOG_LEVEL_INFO))
+        if (logger_will_write_level(getDnsLogger(), (log_level_e) LOG_LEVEL_INFO))
         {
-            char ip[60];
-            sockaddr_str(&(dest->addr), ip, 60);
-            LOGI("Connector: %s resolved to %s", dest->domain, ip);
+            char ip[64];
+            sockaddr_str(&(sctx->addr), ip, 64);
+            LOGI("SyncDns: %s resolved to %s", sctx->domain, ip);
         }
     }
 #ifdef PROFILE
     gettimeofday(&tv2, NULL);
     double time_spent = (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 + (double) (tv2.tv_sec - tv1.tv_sec);
-    LOGD("Connector: dns resolve took %lf sec", time_spent);
+    LOGD("SyncDns: dns resolve took %lf sec", time_spent);
 #endif
 
-    dest->resolved = true;
+    sctx->domain_resolved = true;
     return true;
-}
-
-bool resolveContextSync(socket_context_t *s_ctx)
-{
-    // please check these before calling this function -> more performance
-    assert(s_ctx.atype == kSatDomainName && s_ctx.resolved == false && dest->domain != NULL);
-    return resolve(s_ctx);
 }
