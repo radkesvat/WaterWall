@@ -11,7 +11,7 @@
 // #include "packet.pb.h"
 #include "uleb128.h"
 
-#define MAX_PACKET_SIZE 65536 * 16
+#define MAX_PACKET_SIZE (65536 * 16)
 
 #define STATE(x) ((protobuf_client_state_t *)((x)->state))
 #define CSTATE(x) ((protobuf_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
@@ -41,8 +41,9 @@ static void process(tunnel_t *self, context_t *cin)
 {
     protobuf_client_con_state_t *cstate = CSTATE(cin);
     buffer_stream_t *bstream = cstate->stream_buf;
-    if (bufferStreamLen(bstream) < cstate->wanted || cstate->wanted <= 0)
+    if (bufferStreamLen(bstream) < cstate->wanted || cstate->wanted <= 0) {
         return;
+}
 
     context_t *c = newContextFrom(cin);
     c->payload = bufferStreamRead(bstream, cstate->wanted);
@@ -103,9 +104,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
             destroyContext(c);
             return;
         }
-        else
-        {
-
+        
+        
             shift_buffer_t *buf = c->payload;
             if (bufLen(buf) < 2)
             {
@@ -140,11 +140,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 bufferStreamPush(cstate->stream_buf, c->payload);
                 c->payload = NULL;
                 if (data_len >= bufLen(buf))
-                    process(self, c);
+  {                   process(self, c);
+}
                 destroyContext(c);
                 return;
             }
-        }
+       
     }
     else
     {
@@ -158,40 +159,22 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void protoBufClientUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void protoBufClientPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void protoBufClientDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void protoBufClientPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
 
 tunnel_t *newProtoBufClient(node_instance_context_t *instance_info)
 {
 
     tunnel_t *t = newTunnel();
 
-    t->upStream = &protoBufClientUpStream;
-    t->packetUpStream = &protoBufClientPacketUpStream;
-    t->downStream = &protoBufClientDownStream;
-    t->packetDownStream = &protoBufClientPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
     atomic_thread_fence(memory_order_release);
 
     return t;
 }
 
-api_result_t apiProtoBufClient(tunnel_t *self, char *msg)
+api_result_t apiProtoBufClient(tunnel_t *self, const char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO(root): 
 }
 
 tunnel_t *destroyProtoBufClient(tunnel_t *self)

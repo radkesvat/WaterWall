@@ -40,31 +40,30 @@ typedef struct context_s
     bool            fin;
 } context_t;
 
-typedef void (*TunnelFlowRoutine)(struct tunnel_s *self, context_t *c);
+struct tunnel_s;
 
-typedef struct tunnel_s
+typedef void(*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
+
+struct tunnel_s
 {
     void *           state;
     hloop_t **       loops;
     struct tunnel_s *dw, *up;
 
     TunnelFlowRoutine upStream;
-    TunnelFlowRoutine packetUpStream;
     TunnelFlowRoutine downStream;
-    TunnelFlowRoutine packetDownStream;
 
-    size_t chain_index;
+    uint8_t chain_index;
+};
 
-} tunnel_t;
+typedef struct tunnel_s tunnel_t;
 
 tunnel_t *newTunnel();
 
 void destroyTunnel(tunnel_t *self);
-void chain(tunnel_t *self, tunnel_t *next);
+void chain(tunnel_t *from, tunnel_t *to);
 void defaultUpStream(tunnel_t *self, context_t *c);
-void defaultPacketUpStream(tunnel_t *self, context_t *c);
 void defaultDownStream(tunnel_t *self, context_t *c);
-void defaultPacketDownStream(tunnel_t *self, context_t *c);
 
 inline line_t *newLine(uint16_t tid)
 {
@@ -107,10 +106,6 @@ inline void destroyLine(line_t *l)
         assert(l->chains_state[i] == NULL);
     }
 
-    // if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_is_constant_memory)
-    // {
-    //     assert(l->dest_ctx.domain == NULL);
-    // }
 #endif
     assert(l->src_ctx.domain == NULL); // impossible (hopefully)
 
@@ -119,8 +114,6 @@ inline void destroyLine(line_t *l)
         free(l->dest_ctx.domain);
     }
 
-    // if (l->dest_ctx.domain != NULL && !l->dest_ctx.domain_is_constant_memory)
-    //     free(l->dest_ctx.domain);
     free(l);
 }
 inline void destroyContext(context_t *c)

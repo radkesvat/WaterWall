@@ -1,5 +1,6 @@
 #pragma once
 #include "types.h"
+#include "utils/mathutils.h"
 #include "loggers/network_logger.h"
 
 #define STATE(x) ((preconnect_client_state_t *)((x)->state))
@@ -7,10 +8,6 @@
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 #define ISALIVE(x) (((((x)->line->chains_state)[self->chain_index])) != NULL)
 #define PRECONNECT_DELAY 100
-#undef max
-#undef min
-static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
-static inline size_t max(size_t x, size_t y) { return (((x) < (y)) ? (y) : (x)); }
 
 static void add_connection(thread_box_t *box,
                            preconnect_client_con_state_t *con)

@@ -141,7 +141,7 @@
 //                             context_t *answer = newContext(c->line);
 //                             answer->payload = buf;
 //                             self->dw->downStream(self->dw, answer);
-//                             if (!ISALIVE(c))
+//                             if (!isAlive(c->line))
 //                             {
 //                                 reuseContextBuffer(c);
 //                                 destroyContext(c);
@@ -182,7 +182,7 @@
 //                     up_init_ctx->src_io = c->src_io;
 
 //                     self->up->upStream(self->up, up_init_ctx);
-//                     if (!ISALIVE(c))
+//                     if (!isAlive(c->line))
 //                     {
 //                         LOGW("Openssl server: next node instantly closed the init with fin");
 //                         reuseContextBuffer(c);
@@ -221,7 +221,7 @@
 //                     cstate->first_sent = true;
 //                 }
 //                 self->up->upStream(self->up, up_ctx);
-//                 if (!ISALIVE(c))
+//                 if (!isAlive(c->line))
 //                 {
 //                     reuseContextBuffer(c);
 //                     destroyContext(c);
@@ -250,7 +250,7 @@
 //                         context_t *answer = newContext(c->line);
 //                         answer->payload = buf;
 //                         self->dw->downStream(self->dw, answer);
-//                         if (!ISALIVE(c))
+//                         if (!isAlive(c->line))
 //                         {
 //                             reuseContextBuffer(c);
 //                             destroyContext(c);
@@ -372,7 +372,7 @@
 //                         dw_context->payload = buf;
 //                         dw_context->src_io = c->src_io;
 //                         self->dw->downStream(self->dw, dw_context);
-//                         if (!ISALIVE(c))
+//                         if (!isAlive(c->line))
 //                         {
 //                             reuseContextBuffer(c);
 //                             destroyContext(c);

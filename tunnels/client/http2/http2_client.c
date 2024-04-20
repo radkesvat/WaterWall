@@ -318,7 +318,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         con->state = H2_SEND_HEADERS;
         // consumes payload
         while (trySendRequest(self, con, stream->stream_id, stream->io, c->payload))
-            if (!ISALIVE(c))
+            if (!isAlive(c->line))
             {
                 destroyContext(c);
                 return;
@@ -339,7 +339,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 con->init_sent = true;
                 self->up->upStream(self->up, newInitContext(con->line));
-                if (!ISALIVE(c))
+                if (!isAlive(c->line))
                 {
                     destroyContext(c);
                     return;
@@ -347,7 +347,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
 
             while (trySendRequest(self, con, 0, NULL, NULL))
-                if (!ISALIVE(c))
+                if (!isAlive(c->line))
                 {
                     destroyContext(c);
                     return;
@@ -366,7 +366,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             remove_stream(con, stream);
-            if (con->root.next == NULL && con->childs_added >= state->concurrency && ISALIVE(c))
+            if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(c->line))
             {
                 context_t *con_fc = newFinContext(con->line);
                 tunnel_t *con_dest = con->tunnel->up;
@@ -397,7 +397,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         assert(ret == len);
         reuseContextBuffer(c);
 
-        if (!ISALIVE(c))
+        if (!isAlive(c->line))
         {
             destroyContext(c);
             return;
@@ -412,13 +412,13 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
 
         while (trySendRequest(self, con, 0, NULL, NULL))
-            if (!ISALIVE(c))
+            if (!isAlive(c->line))
             {
                 destroyContext(c);
                 return;
             }
 
-        if (con->root.next == NULL && con->childs_added >= state->concurrency && ISALIVE(c))
+        if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(c->line))
         {
             context_t *con_fc = newFinContext(con->line);
             tunnel_t *con_dest = con->tunnel->up;
@@ -439,26 +439,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         destroyContext(c);
     }
 }
-
-static void http2ClientUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void http2ClientPacketUpStream(tunnel_t *self, context_t *c)
-{
-    LOGF("Http2Client: Http2 protocol dose not run on udp");
-    exit(1);
-}
-static void http2ClientDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void http2ClientPacketDownStream(tunnel_t *self, context_t *c)
-{
-    LOGF("Http2Client: Http2 protocol dose not run on udp");
-    exit(1);
-}
-
+ 
 tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 {
     http2_client_state_t *state = malloc(sizeof(http2_client_state_t) + (workers_count * sizeof(thread_connection_pool_t)));
@@ -507,18 +488,15 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 
     tunnel_t *t = newTunnel();
     t->state = state;
-    t->upStream = &http2ClientUpStream;
-    t->packetUpStream = &http2ClientPacketUpStream;
-    t->downStream = &http2ClientDownStream;
-    t->packetDownStream = &http2ClientPacketDownStream;
-
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }
 
 api_result_t apiHttp2Client(tunnel_t *self, char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; 
 }
 
 tunnel_t *destroyHttp2Client(tunnel_t *self)

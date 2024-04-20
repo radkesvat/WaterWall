@@ -245,22 +245,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-static void tcpListenerUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void tcpListenerPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void tcpListenerDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void tcpListenerPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
+
 
 static void on_recv(hio_t *io, void *buf, int readbytes)
 {
@@ -508,10 +493,8 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 
     registerSocketAcceptor(t, filter_opt, on_inbound_connected);
 
-    t->upStream = &tcpListenerUpStream;
-    t->packetUpStream = &tcpListenerPacketUpStream;
-    t->downStream = &tcpListenerDownStream;
-    t->packetDownStream = &tcpListenerPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
 
     atomic_thread_fence(memory_order_release);
     return t;

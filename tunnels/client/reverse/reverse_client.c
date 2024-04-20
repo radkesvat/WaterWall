@@ -61,14 +61,16 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 turned->first = true;
                 self->dw->downStream(self->dw, turned);
             }
-            else
+            else {
                 self->dw->downStream(self->dw, switchLine(c, ucstate->d));
+}
         }
         else
         {
             ucstate->pair_connected = true;
-            if (state->unused_cons[tid] > 0)
+            if (state->unused_cons[tid] > 0) {
                 state->unused_cons[tid] -= 1;
+}
             atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
             self->dw->downStream(self->dw, newInitContext(ucstate->d));
             
@@ -93,13 +95,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
-            else
-            {
-                ucstate->first_sent_d = true;
+            
+                            ucstate->first_sent_d = true;
                 c->first = true;
                 self->dw->downStream(self->dw, switchLine(c, ucstate->d));
                 initiateConnect(self, tid);
-            }
+           
         }
     }
     else
@@ -122,8 +123,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
             else
             {
                 destroy_cstate(ucstate);
-                if (state->unused_cons[tid] > 0)
+                if (state->unused_cons[tid] > 0) {
                     state->unused_cons[tid] -= 1;
+}
                 LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                      atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
                 initiateConnect(self, tid);
@@ -146,24 +148,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
     }
 }
-static void reverseClientUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void reverseClientPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void reverseClientDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void reverseClientPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
 
-static void start_reverse_celint(htimer_t *timer)
+
+static void startReverseCelint(htimer_t *timer)
 {
     tunnel_t *t = hevent_userdata(timer);
     for (int i = 0; i < workers_count; i++)
@@ -202,12 +189,9 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     tunnel_t *t = newTunnel();
     t->state = state;
-    t->upStream = &reverseClientUpStream;
-    t->packetUpStream = &reverseClientPacketUpStream;
-    t->downStream = &reverseClientDownStream;
-    t->packetDownStream = &reverseClientPacketDownStream;
-
-    htimer_t *start_timer = htimer_add(loops[0], start_reverse_celint, start_delay_ms, 1);
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
+    htimer_t *start_timer = htimer_add(loops[0], startReverseCelint, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
 
     atomic_thread_fence(memory_order_release);
@@ -215,9 +199,9 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     return t;
 }
 
-api_result_t apiReverseClient(tunnel_t *self, char *msg)
+api_result_t apiReverseClient(tunnel_t *self, const char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO(root): 
 }
 
 tunnel_t *destroyReverseClient(tunnel_t *self)

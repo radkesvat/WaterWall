@@ -92,14 +92,7 @@ typedef struct dynamic_value_s
     enum dynamic_value_status status;
     size_t                    value;
     void *                    value_ptr;
-
 } dynamic_value_t;
-
-enum socket_address_cmd
-{
-    kSacConnect   = 0X1,
-    kSacAssociate = 0X3,
-};
 
 enum socket_address_type
 {
@@ -108,15 +101,20 @@ enum socket_address_type
     kSatIPV6       = 0X4,
 };
 
+enum socket_address_protocol
+{
+    kSapTcp = 0X1,
+    kSapUdp = 0X3,
+};
+
 // all data we need to connect to somewhere
 typedef struct socket_context_s
 {
-    uint8_t                  protocol; // IPPROTO_X
-    enum socket_address_cmd  acmd;
-    enum socket_address_type atype;
-    char *                   domain;
-    unsigned int             domain_len;
-    bool                     resolved;
-    sockaddr_u               addr;
+    enum socket_address_protocol aproto;
+    enum socket_address_type     atype;
+    char *                       domain;
+    unsigned int                 domain_len;
+    bool                         resolved;
+    sockaddr_u                   addr;
 
 } socket_context_t;

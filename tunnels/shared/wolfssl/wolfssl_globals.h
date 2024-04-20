@@ -150,7 +150,7 @@ error:
     return NULL;
 }
 
-static void printSSLState()
+static void printSSLState(const SSL *ssl) // NOLINT (ssl in unused problem)
 {
     const char *current_state = SSL_state_string_long(s);
     LOGD("%s", current_state);

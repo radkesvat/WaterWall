@@ -65,7 +65,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     else
     {
         const unsigned int tid     = c->line->tid;
-        thread_box_t *     this_tb = &(state->workers[tid]);
+        thread_box_t *     this_tb = &(state->threadlocal_pool[tid]);
         if (c->init)
         {
             if (state->chain_index_d == 0)
@@ -131,7 +131,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     else
     {
         const unsigned int tid     = c->line->tid;
-        thread_box_t *     this_tb = &(state->workers[tid]);
+        thread_box_t *     this_tb = &(state->threadlocal_pool[tid]);
         if (c->init)
         {
             if (state->chain_index_u == 0)
@@ -200,22 +200,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
     }
 }
-static void reverseServerUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void reverseServerPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void reverseServerDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void reverseServerPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
 
 tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 {
@@ -225,10 +209,8 @@ tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 
     tunnel_t *t         = newTunnel();
     t->state            = state;
-    t->upStream         = &reverseServerUpStream;
-    t->packetUpStream   = &reverseServerPacketUpStream;
-    t->downStream       = &reverseServerDownStream;
-    t->packetDownStream = &reverseServerPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
     atomic_thread_fence(memory_order_release);
 
     return t;

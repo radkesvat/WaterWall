@@ -42,17 +42,17 @@ extern "C"
 
     typedef struct
     {
-        int              length;
+        unsigned int     length;
         http2_frame_type type;
         http2_flag       flags;
-        int              stream_id;
+        unsigned int     stream_id;
     } http2_frame_hd;
 
     static inline void http2FrameHdPack(const http2_frame_hd *restrict hd, unsigned char *restrict buf)
     {
         // hton
-        int            length    = hd->length;
-        int            stream_id = hd->stream_id;
+        unsigned int   length    = hd->length;
+        unsigned int   stream_id = hd->stream_id;
         unsigned char *p         = buf;
         *p++                     = (length >> 16) & 0xFF;
         *p++                     = (length >> 8) & 0xFF;

@@ -29,9 +29,7 @@ tunnel_t *newTunnel()
     t->up = NULL;
 
     t->upStream = &defaultUpStream;
-    t->packetUpStream = &defaultPacketUpStream;
     t->downStream = &defaultDownStream;
-    t->packetDownStream = &defaultPacketDownStream;
     return t;
 }
 
@@ -42,13 +40,6 @@ void defaultUpStream(tunnel_t *self, context_t *c)
         self->up->upStream(self->up, c);
     }
 }
-void defaultPacketUpStream(tunnel_t *self, context_t *c)
-{
-    if (self->up != NULL)
-    {
-        self->up->packetUpStream(self->up, c);
-    }
-}
 
 void defaultDownStream(tunnel_t *self, context_t *c)
 {
@@ -57,10 +48,4 @@ void defaultDownStream(tunnel_t *self, context_t *c)
         self->dw->downStream(self->dw, c);
     }
 }
-void defaultPacketDownStream(tunnel_t *self, context_t *c)
-{
-    if (self->dw != NULL)
-    {
-        self->dw->packetDownStream(self->dw, c);
-    }
-}
+

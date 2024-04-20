@@ -1,8 +1,8 @@
 #include "preconnect_client.h"
-#include "managers/node_manager.h"
-#include "loggers/network_logger.h"
-#include "types.h"
 #include "helpers.h"
+#include "loggers/network_logger.h"
+#include "managers/node_manager.h"
+#include "types.h"
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
@@ -31,8 +31,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const unsigned int tid = c->line->tid;
-        thread_box_t *this_tb = &(state->workers[tid]);
+        const unsigned int tid     = c->line->tid;
+        thread_box_t *     this_tb = &(state->workers[tid]);
         if (c->init)
         {
 
@@ -43,8 +43,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                 preconnect_client_con_state_t *ucon = this_tb->root.next;
                 remove_connection(this_tb, ucon);
-                ucon->d = c->line;
-                ucon->mode = connected_pair;
+                ucon->d       = c->line;
+                ucon->mode    = connected_pair;
                 CSTATE_MUT(c) = ucon;
                 self->dw->downStream(self->dw, newEstContext(c->line));
                 initiateConnect(self);
@@ -53,8 +53,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 atomic_fetch_add_explicit(&(state->active_cons), 1, memory_order_relaxed);
                 preconnect_client_con_state_t *dcon = create_cstate(c->line->tid);
-                CSTATE_MUT(c) = dcon;
-                dcon->mode = connected_direct;
+                CSTATE_MUT(c)                       = dcon;
+                dcon->mode                          = connected_direct;
                 self->up->upStream(self->up, c);
                 return;
             }
@@ -63,7 +63,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             preconnect_client_con_state_t *dcon = CSTATE(c);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_MUT(c)                       = NULL;
             atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
 
             switch (dcon->mode)
@@ -74,11 +74,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 break;
 
             case connected_pair:;
-                line_t *u_line = dcon->u;
+                line_t *u_line                             = dcon->u;
                 (dcon->u->chains_state)[self->chain_index] = NULL;
-                context_t * fctx =  switchLine(c, u_line); // created here to prevent destruction of line
+                context_t *fctx = switchLine(c, u_line); // created here to prevent destruction of line
                 destroy_cstate(dcon);
-                self->up->upStream(self->up,fctx);
+                self->up->upStream(self->up, fctx);
                 break;
             case notconnected:
             default:
@@ -120,9 +120,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const unsigned int tid = c->line->tid;
-        thread_box_t *this_tb = &(state->workers[tid]);
-        preconnect_client_con_state_t *ucon = CSTATE(c);
+        const unsigned int             tid     = c->line->tid;
+        thread_box_t *                 this_tb = &(state->workers[tid]);
+        preconnect_client_con_state_t *ucon    = CSTATE(c);
 
         if (c->fin)
         {
@@ -138,7 +138,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             case connected_pair:;
                 atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
-                line_t *d_line = ucon->d;
+                line_t *d_line                             = ucon->d;
                 (ucon->d->chains_state)[self->chain_index] = NULL;
                 destroy_cstate(ucon);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
@@ -179,22 +179,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
     }
 }
-static void preConnectClientUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void preConnectClientPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void preConnectClientDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void preConnectClientPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
+
 static void start_preconnect(htimer_t *timer)
 {
     tunnel_t *t = hevent_userdata(timer);
@@ -214,21 +199,20 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 {
     const size_t start_delay_ms = 150;
 
-    preconnect_client_state_t *state = malloc(sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
+    preconnect_client_state_t *state =
+        malloc(sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
     memset(state, 0, sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
 
-    state->min_unused_cons = min(max(workers_count * 2, state->min_unused_cons), 9999999);
-    state->connection_per_thread = min(4,state->min_unused_cons / workers_count);
+    state->min_unused_cons       = min(max(workers_count * 2, state->min_unused_cons), 9999999);
+    state->connection_per_thread = min(4, state->min_unused_cons / workers_count);
 
-    tunnel_t *t = newTunnel();
-    t->state = state;
-    t->upStream = &preConnectClientUpStream;
-    t->packetUpStream = &preConnectClientPacketUpStream;
-    t->downStream = &preConnectClientDownStream;
-    t->packetDownStream = &preConnectClientPacketDownStream;
+    tunnel_t *t   = newTunnel();
+    t->state      = state;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
 
     htimer_t *start_timer = htimer_add(loops[0], start_preconnect, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
@@ -240,7 +224,9 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 
 api_result_t apiPreConnectClient(tunnel_t *self, char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyPreConnectClient(tunnel_t *self)

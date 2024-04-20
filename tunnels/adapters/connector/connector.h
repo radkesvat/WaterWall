@@ -2,9 +2,9 @@
 #include "api.h"
 
 
-// con <-----\                /----->  Resolve=>  TCP Connect || Udp Associate
-// con <------>  Connector   <------>  Resolve=>  TCP Connect || Udp Associate
-// con <-----/                \----->  Resolve=>  TCP Connect || Udp Associate
+// con <-----\                /----->  TCP Connect || Udp Associate
+// con <------>  Connector   <------>  TCP Connect || Udp Associate
+// con <-----/                \----->  TCP Connect || Udp Associate
 //
 
 

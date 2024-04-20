@@ -5,7 +5,6 @@
 #include "utils/stringutils.h"
 #include "utils/userutils.h"
 
-
 #define i_type hmap_users_t    // NOLINT
 #define i_key  hash_t          // NOLINT
 #define i_val  trojan_user_t * // NOLINT
@@ -54,7 +53,7 @@ static void onFallbackTimer(htimer_t *timer)
     free(data);
     htimer_del(timer);
 
-    if (! ISALIVE(c))
+    if (! isAlive(c->line))
     {
         if (c->payload != NULL)
         {
@@ -68,10 +67,11 @@ static void onFallbackTimer(htimer_t *timer)
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
-    trojan_auth_server_state_t *state = STATE(self);
+    trojan_auth_server_state_t *    state  = STATE(self);
+    trojan_auth_server_con_state_t *cstate = CSTATE(c);
+
     if (c->payload != NULL)
     {
-        trojan_auth_server_con_state_t *cstate = CSTATE(c);
         if (cstate->authenticated)
         {
             self->up->upStream(self->up, c);
@@ -125,7 +125,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 init_ctx->src_io    = c->src_io;
                 cstate->init_sent   = true;
                 self->up->upStream(self->up, init_ctx);
-                if (! ISALIVE(c))
+                if (! isAlive(c->line))
                 {
                     reuseContextBuffer(c);
                     destroyContext(c);
@@ -148,16 +148,16 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(trojan_auth_server_con_state_t));
-            memset(CSTATE(c), 0, sizeof(trojan_auth_server_con_state_t));
-            trojan_auth_server_con_state_t *cstate = CSTATE(c);
+            cstate = malloc(sizeof(trojan_auth_server_con_state_t));
+            memset(cstate, 0, sizeof(trojan_auth_server_con_state_t));
+            CSTATE_MUT(c) = cstate;
             markAuthenticationNodePresence(c->line);
             destroyContext(c);
         }
         else if (c->fin)
         {
-            bool init_sent = CSTATE(c)->init_sent;
-            bool auth      = CSTATE(c)->authenticated;
+            bool init_sent = cstate->init_sent;
+            bool auth      = cstate->authenticated;
             free(CSTATE(c));
             CSTATE_MUT(c) = NULL;
             if (init_sent)
@@ -194,7 +194,6 @@ disconnect:;
     self->dw->downStream(self->dw, reply);
     return;
 fallback:;
-    trojan_auth_server_con_state_t *cstate = CSTATE(c);
     if (! cstate->init_sent)
     {
         context_t *init_ctx = newInitContext(c->line);
@@ -202,7 +201,7 @@ fallback:;
         cstate->init_sent   = true;
 
         state->fallback->upStream(state->fallback, init_ctx);
-        if (! ISALIVE(c))
+        if (! isAlive(c->line))
         {
             reuseContextBuffer(c);
             destroyContext(c);
@@ -352,10 +351,8 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
     tunnel_t *t = newTunnel();
     t->state    = state;
 
-    t->upStream         = &trojanAuthServerUpStream;
-    t->packetUpStream   = &trojanAuthServerPacketUpStream;
-    t->downStream       = &trojanAuthServerDownStream;
-    t->packetDownStream = &trojanAuthServerPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
     parse(t, settings, instance_info->chain_index);
 
     atomic_thread_fence(memory_order_release);

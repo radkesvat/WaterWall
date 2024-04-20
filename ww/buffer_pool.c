@@ -1,4 +1,5 @@
 #include "buffer_pool.h"
+#include "utils/mathutils.h"
 #include <assert.h> // for assert
 #include <malloc.h>
 #include <string.h>
@@ -16,17 +17,6 @@
 #define EVP_READ_BUFSIZE         (1U << 15) // 32K
 #define BUFFERPOOL_CONTAINER_LEN (50 + (250 * MEMORY_PROFILE))
 #define BUFFER_SIZE              ((MEMORY_PROFILE < MED2_MEMORY) ? 0 : EVP_READ_BUFSIZE)
-
-#undef max
-#undef min
-static inline size_t max(size_t x, size_t y)
-{
-    return (((x) < (y)) ? (y) : (x));
-}
-static inline size_t min(size_t x, size_t y)
-{
-    return (((x) < (y)) ? (x) : (y));
-}
 
 static void firstCharge(buffer_pool_t *state)
 {

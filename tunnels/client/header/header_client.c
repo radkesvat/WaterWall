@@ -12,9 +12,9 @@
 
 enum header_dynamic_value_status
 {
-    hdvs_empty = 0x0,
-    hdvs_constant,
-    hdvs_source_port,
+    kHdvsEmpty = 0x0,
+    kHdvsConstant,
+    kHdvsSourcePort,
 };
 
 typedef struct header_client_state_s
@@ -37,7 +37,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         switch ((enum header_dynamic_value_status)state->data.status)
         {
-        case hdvs_source_port:
+        case kHdvsSourcePort:
             shiftl(c->payload, sizeof(uint16_t));
             writeUI16(c->payload, sockaddr_port(&(c->line->src_ctx.addr)));
             break;
@@ -56,22 +56,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void headerClientUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void headerClientPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void headerClientDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void headerClientPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
+ 
 
 tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 {
@@ -83,18 +68,16 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
                                                          "src_context->port");
     tunnel_t *t = newTunnel();
     t->state = state;
-    t->upStream = &headerClientUpStream;
-    t->packetUpStream = &headerClientPacketUpStream;
-    t->downStream = &headerClientDownStream;
-    t->packetDownStream = &headerClientPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
     atomic_thread_fence(memory_order_release);
 
     return t;
 }
 
-api_result_t apiHeaderClient(tunnel_t *self, char *msg)
+api_result_t apiHeaderClient(tunnel_t *self, const char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void)(self); (void)(msg); return (api_result_t){0}; // TODO(root): 
 }
 
 tunnel_t *destroyHeaderClient(tunnel_t *self)

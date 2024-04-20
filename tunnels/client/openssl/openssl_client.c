@@ -80,7 +80,7 @@ static void flush_write_queue(tunnel_t *self, context_t *c)
     {
         self->upStream(self, contextQueuePop(cstate->queue));
 
-        if (!ISALIVE(c))
+        if (!isAlive(c->line))
             return;
     }
 }
@@ -124,7 +124,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         context_t *send_context = newContextFrom(c);
                         send_context->payload = buf;
                         self->up->upStream(self->up, send_context);
-                        if (!ISALIVE(c))
+                        if (!isAlive(c->line))
                         {
                             reuseContextBuffer(c);
                             destroyContext(c);
@@ -281,7 +281,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                             context_t *req_cont = newContextFrom(c);
                             req_cont->payload = buf;
                             self->up->upStream(self->up, req_cont);
-                            if (!ISALIVE(c))
+                            if (!isAlive(c->line))
                             {
                                 reuseContextBuffer(c);
                                 destroyContext(c);
@@ -338,7 +338,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     context_t *dw_est_ctx = newContextFrom(c);
                     dw_est_ctx->est = true;
                     self->dw->downStream(self->dw, dw_est_ctx);
-                    if (!ISALIVE(c))
+                    if (!isAlive(c->line))
                     {
                         LOGW("OpensslClient: prev node instantly closed the est with fin");
                         reuseContextBuffer(c);
@@ -377,7 +377,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload = buf;
                     self->dw->downStream(self->dw, data_ctx);
-                    if (!ISALIVE(c))
+                    if (!isAlive(c->line))
                     {
                         reuseContextBuffer(c);
                         destroyContext(c);
@@ -428,22 +428,7 @@ failed:;
     return;
 }
 
-static void openSSLUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void openSSLPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c); // TODO : DTLS
-}
-static void openSSLDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void openSSLPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
+ 
 
 tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 {
@@ -513,11 +498,8 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
     tunnel_t *t = newTunnel();
     t->state = state;
-
-    t->upStream = &openSSLUpStream;
-    t->packetUpStream = &openSSLPacketUpStream;
-    t->downStream = &openSSLDownStream;
-    t->packetDownStream = &openSSLPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }

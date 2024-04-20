@@ -1,15 +1,5 @@
 #include "buffer_stream.h"
-
-#undef max
-#undef min
-static inline size_t min(size_t x, size_t y)
-{
-    return (((x) < (y)) ? (x) : (y));
-}
-static inline size_t max(size_t x, size_t y)
-{
-    return (((x) > (y)) ? (x) : (y));
-}
+#include "utils/mathutils.h"
 
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 {

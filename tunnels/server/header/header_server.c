@@ -3,18 +3,11 @@
 #include "hv/hsocket.h"
 #include "loggers/network_logger.h"
 
-#define MAX_PACKET_SIZE 65535
-
-#define STATE(x) ((header_server_state_t *)((x)->state))
-#define CSTATE(x) ((header_server_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
-
 enum header_dynamic_value_status
 {
-    hdvs_empty = 0x0,
-    hdvs_constant,
-    hdvs_dest_port,
+    kHdvsEmpty = 0x0,
+    kHdvsConstant,
+    kHdvsDestPort,
 };
 
 typedef struct header_server_state_s
@@ -31,8 +24,8 @@ typedef struct header_server_con_state_s
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    header_server_state_t *state = STATE(self);
-
+    header_server_state_t *    state  = STATE(self);
+    header_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {
         if (c->first)
@@ -48,9 +41,9 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 
             uint16_t port = 0;
-            switch ((enum header_dynamic_value_status)state->data.status)
+            switch ((enum header_dynamic_value_status) state->data.status)
             {
-            case hdvs_dest_port:
+            case kHdvsConstant:
 
                 readUI16(buf, &port);
                 sockaddr_set_port(&(c->line->dest_ctx.addr), port);
@@ -66,13 +59,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 break;
 
             default:
-                (void)(0);
                 break;
             }
 
-            CSTATE(c)->init_sent = true;
+            cstate->init_sent = true;
             self->up->upStream(self->up, newInitContext(c->line));
-            if (!ISALIVE(c))
+            if (! isAlive(c->line))
             {
                 reuseContextBuffer(c);
                 destroyContext(c);
@@ -82,21 +74,25 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else if (c->init)
     {
-        header_server_con_state_t *cstate = malloc(sizeof(header_server_con_state_t));
+        cstate            = malloc(sizeof(header_server_con_state_t));
         cstate->init_sent = false;
-        CSTATE_MUT(c) = cstate;
+        CSTATE_MUT(c)     = cstate;
         destroyContext(c);
         return;
     }
     else if (c->fin)
     {
-        bool send_fin = CSTATE(c)->init_sent;
-        free(CSTATE(c));
+        bool send_fin = cstate->init_sent;
+        free(cstate);
         CSTATE_MUT(c) = NULL;
         if (send_fin)
+        {
             self->up->upStream(self->up, c);
+        }
         else
+        {
             destroyContext(c);
+        }
         return;
     }
 
@@ -115,49 +111,32 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void headerServerUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void headerServerPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void headerServerDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void headerServerPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-
 tunnel_t *newHeaderServer(node_instance_context_t *instance_info)
 {
 
     header_server_state_t *state = malloc(sizeof(header_server_state_t));
     memset(state, 0, sizeof(header_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
-    state->data = parseDynamicNumericValueFromJsonObject(settings, "override", 1,
-                                                         "dest_context->port");
-    tunnel_t *t = newTunnel();
-    t->state = state;
-    t->upStream = &headerServerUpStream;
-    t->packetUpStream = &headerServerPacketUpStream;
-    t->downStream = &headerServerDownStream;
-    t->packetDownStream = &headerServerPacketDownStream;
+    state->data           = parseDynamicNumericValueFromJsonObject(settings, "override", 1, "dest_context->port");
+    tunnel_t *t           = newTunnel();
+    t->state              = state;
+    t->upStream           = &upStream;
+    t->downStream         = &downStream;
     atomic_thread_fence(memory_order_release);
 
     return t;
 }
 
-api_result_t apiHeaderServer(tunnel_t *self, char *msg)
+api_result_t apiHeaderServer(tunnel_t *self, const char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0}; // TODO(root):
 }
 
 tunnel_t *destroyHeaderServer(tunnel_t *self)
 {
+    (void) (self);
     return NULL;
 }
 tunnel_metadata_t getMetadataHeaderServer()

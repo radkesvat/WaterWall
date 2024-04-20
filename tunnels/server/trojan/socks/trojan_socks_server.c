@@ -377,7 +377,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         context_t *up_init_ctx = newContextFrom(c);
         up_init_ctx->init      = true;
         self->up->packetUpStream(self->up, up_init_ctx);
-        if (! isAlive(c))
+        if (! isAlive(c->line))
         {
             LOGW("TrojanSocksServer: next node instantly closed the init with fin");
             return true;
@@ -616,10 +616,8 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
 
     tunnel_t *t         = newTunnel();
     t->state            = state;
-    t->upStream         = &trojanSocksServerUpStream;
-    t->packetUpStream   = &trojanSocksServerPacketUpStream;
-    t->downStream       = &trojanSocksServerDownStream;
-    t->packetDownStream = &trojanSocksServerPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }

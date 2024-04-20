@@ -2,13 +2,16 @@
 #include "buffer_pool.h"
 #include "loggers/network_logger.h"
 
-#define STATE(x) ((logger_tunnel_state_t *)((x)->state))
-#define CSTATE(x) ((logger_tunnel_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
+#define STATE(x)      ((logger_tunnel_state_t *) ((x)->state))
+#define CSTATE(x)     ((logger_tunnel_con_state_t *) ((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
+#define ISALIVE(x)    (CSTATE(x) != NULL)
 
 #undef min
-static inline size_t min(size_t x, size_t y) { return (((x) < (y)) ? (x) : (y)); }
+static inline size_t min(size_t x, size_t y)
+{
+    return (((x) < (y)) ? (x) : (y));
+}
 
 typedef struct logger_tunnel_state_s
 {
@@ -37,10 +40,10 @@ static inline void upStream(tunnel_t *self, context_t *c)
             // send back something
             {
                 context_t *reply = newContextFrom(c);
-                reply->payload = popBuffer(buffer_pools[c->line->tid]);
+                reply->payload   = popBuffer(buffer_pools[c->line->tid]);
                 reuseContextBuffer(c);
                 destroyContext(c);
-                sprintf((char*)rawBuf(reply->payload), "%s", "salam");
+                sprintf((char *) rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
                 self->dw->downStream(self->dw, reply);
             }
@@ -96,8 +99,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
             // send back something
             {
                 context_t *reply = newContextFrom(c);
-                reply->payload = popBuffer(buffer_pools[c->line->tid]);
-                sprintf((char*)rawBuf(reply->payload), "%s", "salam");
+                reply->payload   = popBuffer(buffer_pools[c->line->tid]);
+                sprintf((char *) rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
                 self->up->upStream(self->up, reply);
             }
@@ -118,7 +121,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             else
             {
                 context_t *reply = newContextFrom(c);
-                reply->est = true;
+                reply->est       = true;
                 destroyContext(c);
                 self->up->upStream(self->up, reply);
             }
@@ -142,38 +145,20 @@ static inline void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-static void loggerTunnelUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void loggerTunnelPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void loggerTunnelDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void loggerTunnelPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-
 tunnel_t *newLoggerTunnel(node_instance_context_t *instance_info)
 {
 
-    tunnel_t *t = newTunnel();
-
-    t->upStream = &loggerTunnelUpStream;
-    t->packetUpStream = &loggerTunnelPacketUpStream;
-    t->downStream = &loggerTunnelDownStream;
-    t->packetDownStream = &loggerTunnelPacketDownStream;
+    tunnel_t *t   = newTunnel();
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
     return t;
 }
 
 api_result_t apiLoggerTunnel(tunnel_t *self, char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0}; // TODO
 }
 
 tunnel_t *destroyLoggerTunnel(tunnel_t *self)

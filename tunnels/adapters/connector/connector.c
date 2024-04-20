@@ -3,6 +3,9 @@
 #include "utils/sockutils.h"
 #include "loggers/network_logger.h"
 
+
+
+
 tunnel_t *newConnector(node_instance_context_t *instance_info)
 {
     connector_state_t *state = malloc(sizeof(connector_state_t));
@@ -58,10 +61,8 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     tunnel_t *t = newTunnel();
     t->state = state;
 
-    t->upStream = &connectorUpStream;
-    t->packetUpStream = &connectorPacketUpStream;
-    t->downStream = &connectorDownStream;
-    t->packetDownStream = &connectorPacketDownStream;
+    t->upStream         = &upStream;
+    t->downStream       = &downStream;
 
     atomic_thread_fence(memory_order_release);
 
