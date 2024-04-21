@@ -12,11 +12,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern void socketAddrCopy(const sockaddr_u *restrict dest, const sockaddr_u *restrict source);
-extern bool socketCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
-extern bool socketCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
+extern void sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source);
+extern bool sockAddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
+extern bool sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
 extern void allocateDomainBuffer(socket_context_t *scontext);
-extern void setSocketContextDomain(socket_context_t *restrict scontext, char *restrict domain, uint8_t len);
+extern void setSocketContextDomain(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len);
+extern void setSocketContextPort(socket_context_t *dest, uint16_t port);
 
 char *readFile(const char *const path)
 {
@@ -170,12 +171,12 @@ bool socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict ad
     }
     if (addr1->sa.sa_family == AF_INET)
     {
-        return socketCmpIPV4(addr1, addr2);
+        return sockAddrCmpIPV4(addr1, addr2);
     }
 
     if (addr1->sa.sa_family == AF_INET6)
     {
-        return socketCmpIPV6(addr1, addr2);
+        return sockAddrCmpIPV6(addr1, addr2);
     }
 
     assert(! "unknown sa_family");
@@ -186,7 +187,7 @@ bool socketCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict ad
 void copySocketContextAddr(socket_context_t *dest, const socket_context_t *const source)
 {
     dest->address_protocol = source->address_protocol;
-    dest->address_type  = source->address_type;
+    dest->address_type     = source->address_type;
     switch (dest->address_type)
     {
     case kSatIPV4:
@@ -221,9 +222,8 @@ void copySocketContextAddr(socket_context_t *dest, const socket_context_t *const
             if (source->domain_resolved)
             {
                 dest->domain_resolved = true;
-                socketAddrCopy(&(dest->addr), &(source->addr));
+                sockAddrCopy(&(dest->addr), &(source->addr));
             }
-
         }
 
         break;

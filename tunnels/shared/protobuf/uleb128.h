@@ -39,7 +39,7 @@ static inline size_t readUleb128ToUint64(const unsigned char *restrict buffer_st
     return p - buffer_start;
 }
 
-// writes and moves to right, use size_uleb128 to calculate the len before write
+// writes and moves to right, use sizeUleb128 to calculate the len before write
 static inline void writeUleb128(unsigned char *p, size_t val)
 {
     unsigned char c;

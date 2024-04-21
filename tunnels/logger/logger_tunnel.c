@@ -2,11 +2,6 @@
 #include "buffer_pool.h"
 #include "loggers/network_logger.h"
 
-#define STATE(x)      ((logger_tunnel_state_t *) ((x)->state))
-#define CSTATE(x)     ((logger_tunnel_con_state_t *) ((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x)    (CSTATE(x) != NULL)
-
 #undef min
 static inline size_t min(size_t x, size_t y)
 {
@@ -38,18 +33,16 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
 
             // send back something
-            {
-                context_t *reply = newContextFrom(c);
-                reply->payload   = popBuffer(buffer_pools[c->line->tid]);
-                reuseContextBuffer(c);
-                destroyContext(c);
-                sprintf((char *) rawBuf(reply->payload), "%s", "salam");
-                setLen(reply->payload, strlen("salam"));
-                self->dw->downStream(self->dw, reply);
-            }
-            // context_t *reply = newFinContext(c->line);
-            // destroyContext(c);
-            // self->dw->downStream(self->dw, reply);
+            // {
+            //     context_t *reply = newContextFrom(c);
+            //     reply->payload   = popBuffer(getContextBufferPool(c));
+            //     reuseContextBuffer(c);
+            //     destroyContext(c);
+            //     sprintf((char *) rawBuf(reply->payload), "%s", "salam");
+            //     setLen(reply->payload, strlen("salam"));
+            //     self->dw->downStream(self->dw, reply);
+            // }
+
         }
     }
     else
@@ -77,7 +70,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, c);
             }
             else
+            {
                 destroyContext(c);
+            }
         }
     }
 }
@@ -97,13 +92,13 @@ static inline void downStream(tunnel_t *self, context_t *c)
         {
 
             // send back something
-            {
-                context_t *reply = newContextFrom(c);
-                reply->payload   = popBuffer(buffer_pools[c->line->tid]);
-                sprintf((char *) rawBuf(reply->payload), "%s", "salam");
-                setLen(reply->payload, strlen("salam"));
-                self->up->upStream(self->up, reply);
-            }
+            // {
+            //     context_t *reply = newContextFrom(c);
+            //     reply->payload   = popBuffer(getContextBufferPool(c));
+            //     sprintf((char *) rawBuf(reply->payload), "%s", "salam");
+            //     setLen(reply->payload, strlen("salam"));
+            //     self->up->upStream(self->up, reply);
+            // }
 
             reuseContextBuffer(c);
             destroyContext(c);
@@ -147,25 +142,26 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newLoggerTunnel(node_instance_context_t *instance_info)
 {
-
+    (void) instance_info;
     tunnel_t *t   = newTunnel();
     t->upStream   = &upStream;
     t->downStream = &downStream;
     return t;
 }
 
-api_result_t apiLoggerTunnel(tunnel_t *self, char *msg)
+api_result_t apiLoggerTunnel(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0}; // TODO
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyLoggerTunnel(tunnel_t *self)
 {
+    (void) (self);
     return NULL;
 }
 tunnel_metadata_t getMetadataLoggerTunnel()
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
 }

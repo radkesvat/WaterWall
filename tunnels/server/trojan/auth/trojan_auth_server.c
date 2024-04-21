@@ -84,8 +84,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
             // gettimeofday(&tv1, NULL);
             {
 
-                // the payload must not come buffeered here (gfw can do this but not the client)
+                // beware! trojan auth will not use stream buffer, at least the auth chunk must come in first sequence
+                // the payload must not come buffeered here (gfw can do this and detect trojan authentication
+                // but the client is not supposed to send small segments)
                 // so , if its incomplete we go to fallback!
+                // this is also mentioned in standard trojan docs (first packet also contains part of final payload)
                 size_t len = bufLen(c->payload);
                 if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
                 {
@@ -107,14 +110,14 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
                 {
                     // user not in database
-                    LOGW("TrojanAuthServer: a trojan-user rejecetd because not found in database");
+                    LOGW("TrojanAuthServer: a trojan-user rejected because not found in database");
                     goto failed;
                 }
                 trojan_user_t *tuser = (find_result.ref->second);
                 if (! tuser->user.enable)
                 {
                     // user disabled
-                    LOGW("TrojanAuthServer: user \"%s\" rejecetd because not enabled", tuser->user.name);
+                    LOGW("TrojanAuthServer: user \"%s\" rejected because not enabled", tuser->user.name);
 
                     goto failed;
                 }
@@ -136,7 +139,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, c);
             }
             // gettimeofday(&tv2, NULL);
-
             // double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec -
             // tv1.tv_sec); LOGD("Auth: took %lf sec", time_spent);
             return;

@@ -15,13 +15,13 @@ enum tcp_connector_dynamic_value_status
 typedef struct tcp_connector_state_s
 {
     // settings
-    bool                     tcp_no_delay;
-    bool                     tcp_fast_open;
-    bool                     reuse_addr;
-    enum domain_strategy     domain_strategy;
-    dynamic_value_t          dest_addr_selected;
-    dynamic_value_t          dest_port_selected;
-    socket_context_t         constant_dest_addr;
+    bool             tcp_no_delay;
+    bool             tcp_fast_open;
+    bool             reuse_addr;
+    int              domain_strategy;
+    dynamic_value_t  dest_addr_selected;
+    dynamic_value_t  dest_port_selected;
+    socket_context_t constant_dest_addr;
 
 } tcp_connector_state_t;
 

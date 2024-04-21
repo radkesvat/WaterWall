@@ -540,5 +540,5 @@ tunnel_t *destroyTcpListener(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataTcpListener()
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = TFLAG_ROUTE_STARTER};
+    return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
 }

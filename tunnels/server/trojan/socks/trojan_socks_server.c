@@ -4,7 +4,7 @@
 #include "loggers/network_logger.h"
 #include "utils/stringutils.h"
 #include "utils/userutils.h"
-
+#include "utils/sockutils.h"
 
 #define CRLF_LEN 2
 
@@ -29,7 +29,6 @@ typedef struct trojan_socks_server_con_state_s
 {
     bool init_sent;
     bool first_sent;
-    bool is_udp_forward;
 
     buffer_stream_t *udp_buf;
 
@@ -79,14 +78,13 @@ static bool parseAddress(context_t *c)
     socket_context_t *dest_context = &(c->line->dest_ctx);
     enum trojan_cmd   command      = ((unsigned char *) rawBuf(c->payload))[0];
     enum trojan_atyp  address_type = ((unsigned char *) rawBuf(c->payload))[1];
-    dest_context->acmd             = (enum socket_address_cmd)(command);
-    dest_context->address_type            = (enum socket_address_type)(address_type);
+    dest_context->address_type     = (enum socket_address_type)(address_type);
     shiftr(c->payload, 2);
 
     switch (command)
     {
     case kTrojancmdConnect:
-        dest_context->protocol = IPPROTO_TCP;
+        dest_context->address_protocol = kSapTcp;
         switch (address_type)
         {
         case kTrojanatypIpV4:
@@ -132,7 +130,7 @@ static bool parseAddress(context_t *c)
         }
         break;
     case kTrojancmdUdpAssociate:
-        dest_context->protocol = IPPROTO_UDP;
+        dest_context->address_protocol = kSapUdp;
         switch (address_type)
         {
 
@@ -205,10 +203,10 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return true;
     }
 
-    uint8_t  address_type       = bufferStreamViewByteAt(bstream, 0);
-    uint16_t packet_size = 0;
-    uint16_t full_len    = 0;
-    uint8_t  domain_len  = 0;
+    uint8_t  address_type = bufferStreamViewByteAt(bstream, 0);
+    uint16_t packet_size  = 0;
+    uint16_t full_len     = 0;
+    uint8_t  domain_len   = 0;
     switch (address_type)
     {
     case kTrojanatypIpV4:
@@ -301,7 +299,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
     case kTrojanatypIpV4:
         dest_context->addr.sa.sa_family = AF_INET;
-        dest_context->address_type             = kSatIPV4;
+        dest_context->address_type      = kSatIPV4;
         memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 4);
         shiftr(c->payload, 4);
         if (! cstate->first_sent)
@@ -330,7 +328,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
         break;
     case kTrojanatypIpV6:
-        dest_context->address_type             = kSatIPV6;
+        dest_context->address_type      = kSatIPV6;
         dest_context->addr.sa.sa_family = AF_INET6;
         memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 16);
         shiftr(c->payload, 16);
@@ -376,7 +374,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
         context_t *up_init_ctx = newContextFrom(c);
         up_init_ctx->init      = true;
-        self->up->packetUpStream(self->up, up_init_ctx);
+        self->up->upStream(self->up, up_init_ctx);
         if (! isAlive(c->line))
         {
             LOGW("TrojanSocksServer: next node instantly closed the init with fin");
@@ -385,7 +383,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         cstate->init_sent = true;
     }
 
-    self->up->packetUpStream(self->up, c);
+    self->up->upStream(self->up, c);
 
     // line is alvie because caller is holding a context, but still  fin could received
     // and state is gone
@@ -408,7 +406,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 trojan_socks_server_con_state_t *cstate       = CSTATE(c);
                 socket_context_t *               dest_context = &(c->line->dest_ctx);
 
-                if (dest_context->protocol == IPPROTO_TCP)
+                if (dest_context->address_protocol == kSapTcp)
                 {
                     context_t *up_init_ctx = newContextFrom(c);
                     up_init_ctx->init      = true;
@@ -422,11 +420,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     }
                     cstate->init_sent = true;
                 }
-                else if (dest_context->protocol == IPPROTO_UDP)
+                else if (dest_context->address_protocol == kSapUdp)
                 {
                     // udp will not call init here since no dest_context addr is available right now
-                    cstate->is_udp_forward = true;
-                    // self->up->packetUpStream(self->up, up_init_ctx);
                 }
 
                 if (bufLen(c->payload) <= 0)
@@ -435,7 +431,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
-                if (dest_context->protocol == IPPROTO_TCP)
+                if (dest_context->address_protocol == kSapTcp)
                 {
                     if (! cstate->first_sent)
                     {
@@ -445,7 +441,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     self->up->upStream(self->up, c);
                     return;
                 }
-                if (dest_context->protocol == IPPROTO_UDP)
+                if (dest_context->address_protocol == kSapUdp)
                 {
                     bufferStreamPush(cstate->udp_buf, c->payload);
                     c->payload = NULL;
@@ -496,7 +492,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
 
-            if (cstate->is_udp_forward)
+            if (c->line->dest_ctx.address_protocol == kSapUdp)
             {
                 bufferStreamPush(cstate->udp_buf, c->payload);
                 c->payload = NULL;
@@ -537,7 +533,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = malloc(sizeof(trojan_socks_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
-            cstate->udp_buf                         = newBufferStream(buffer_pools[c->line->tid]);
+            cstate->udp_buf                         = newBufferStream(getContextBufferPool(c));
             allocateDomainBuffer(&(c->line->dest_ctx));
             destroyContext(c);
         }
@@ -545,20 +541,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             trojan_socks_server_con_state_t *cstate    = CSTATE(c);
             bool                             init_sent = cstate->init_sent;
-            bool                             is_udp    = cstate->is_udp_forward;
             destroyBufferStream(cstate->udp_buf);
             free(cstate);
             CSTATE_MUT(c) = NULL;
             if (init_sent)
             {
-                if (is_udp)
-                {
-                    self->up->packetUpStream(self->up, c);
-                }
-                else
-                {
-                    self->up->upStream(self->up, c);
-                }
+                self->up->upStream(self->up, c);
             }
             else
             {
@@ -570,7 +558,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
-    trojan_socks_server_con_state_t *cstate    = CSTATE(c);
+    trojan_socks_server_con_state_t *cstate = CSTATE(c);
 
     if (c->fin)
     {
@@ -580,32 +568,11 @@ static inline void downStream(tunnel_t *self, context_t *c)
         self->dw->downStream(self->dw, c);
         return;
     }
-    if (cstate->is_udp_forward && c->payload != NULL)
+    if (c->line->dest_ctx.address_protocol == kSapUdp && c->payload != NULL)
     {
         makeUdpPacketAddress(c);
     }
     self->dw->downStream(self->dw, c);
-}
-
-static void trojanSocksServerUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void trojanSocksServerPacketUpStream(tunnel_t *self, context_t *c)
-{
-    if (c->init || c->first)
-    {
-        LOGE("TrojanSocksServer: trojan protocol is not meant to work on top of udp");
-    }
-    upStream(self, c);
-}
-static void trojanSocksServerDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void trojanSocksServerPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
 }
 
 tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
@@ -614,10 +581,10 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
     trojan_socks_server_state_t *state = malloc(sizeof(trojan_socks_server_state_t));
     memset(state, 0, sizeof(trojan_socks_server_state_t));
 
-    tunnel_t *t         = newTunnel();
-    t->state            = state;
-    t->upStream         = &upStream;
-    t->downStream       = &downStream;
+    tunnel_t *t   = newTunnel();
+    t->state      = state;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }
@@ -625,7 +592,9 @@ api_result_t apiTrojanSocksServer(tunnel_t *self, const char *msg)
 {
     (void) self;
     (void) msg;
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO(root):
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0}; // TODO(root):
 }
 
 tunnel_t *destroyTrojanSocksServer(tunnel_t *self)

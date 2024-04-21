@@ -12,7 +12,7 @@
 // #define STATE(x) ((oss_server_state_t *)((x)->state))
 // #define CSTATE(x) ((oss_server_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
 // #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-// #define ISALIVE(x) (CSTATE(x) != NULL)
+// #define isAlive(x) (CSTATE(x) != NULL)
 
 // typedef struct oss_server_state_s
 // {
@@ -131,7 +131,7 @@
 //                 if (status == SSLSTATUS_WANT_IO)
 //                     do
 //                     {
-//                         shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+//                         shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
 //                         size_t avail = rCap(buf);
 //                         n = BIO_read(cstate->wbio, rawBuf(buf), avail);
 //                         // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
@@ -152,12 +152,12 @@
 //                         {
 //                             // If BIO_should_retry() is false then the cause is an error condition.
 //                             reuseContextBuffer(c);
-//                             reuseBuffer(buffer_pools[c->line->tid], buf);
+//                             reuseBuffer(getContextBufferPool(c), buf);
 //                             goto failed;
 //                         }
 //                         else
 //                         {
-//                             reuseBuffer(buffer_pools[c->line->tid], buf);
+//                             reuseBuffer(getContextBufferPool(c), buf);
 //                         }
 //                     } while (n > 0);
 
@@ -196,7 +196,7 @@
 
 //             /* The encrypted data is now in the input bio so now we can perform actual
 //              * read of unencrypted data. */
-//             shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+//             shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
 //             shiftl(buf, 8192 / 2);
 //             setLen(buf, 0);
 //             do
@@ -230,7 +230,7 @@
 //             }
 //             else
 //             {
-//                 reuseBuffer(buffer_pools[c->line->tid], buf);
+//                 reuseBuffer(getContextBufferPool(c), buf);
 //             }
 
 //             status = get_sslstatus(cstate->ssl, n);
@@ -240,7 +240,7 @@
 //             if (status == SSLSTATUS_WANT_IO)
 //                 do
 //                 {
-//                     shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+//                     shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
 //                     size_t avail = rCap(buf);
 
 //                     n = BIO_read(cstate->wbio, rawBuf(buf), avail);
@@ -261,7 +261,7 @@
 //                     else if (!BIO_should_retry(cstate->wbio))
 //                     {
 //                         // If BIO_should_retry() is false then the cause is an error condition.
-//                         reuseBuffer(buffer_pools[c->line->tid], buf);
+//                         reuseBuffer(getContextBufferPool(c), buf);
 //                         reuseContextBuffer(c);
 //                         destroyContext(c);
 
@@ -269,7 +269,7 @@
 //                     }
 //                     else
 //                     {
-//                         reuseBuffer(buffer_pools[c->line->tid], buf);
+//                         reuseBuffer(getContextBufferPool(c), buf);
 //                     }
 //                 } while (n > 0);
 
@@ -362,7 +362,7 @@
 //                 do
 //                 {
 
-//                     shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+//                     shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
 //                     size_t avail = rCap(buf);
 //                     n = BIO_read(cstate->wbio, rawBuf(buf), avail);
 //                     if (n > 0)
@@ -383,13 +383,13 @@
 //                     else if (!BIO_should_retry(cstate->wbio))
 //                     {
 //                         // If BIO_should_retry() is false then the cause is an error condition.
-//                         reuseBuffer(buffer_pools[c->line->tid], buf);
+//                         reuseBuffer(getContextBufferPool(c), buf);
 //                         reuseContextBuffer(c);
 //                         goto failed_after_establishment;
 //                     }
 //                     else
 //                     {
-//                         reuseBuffer(buffer_pools[c->line->tid], buf);
+//                         reuseBuffer(getContextBufferPool(c), buf);
 //                     }
 //                 } while (n > 0);
 //             }

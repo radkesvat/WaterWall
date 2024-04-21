@@ -12,7 +12,7 @@
     } while (0)
 
 #ifdef INCLUDE_TCP_LISTENER
-#include "tunnels/adapters/tcp_listener/tcp_listener.h"
+#include "tunnels/adapters/listener/tcp/tcp_listener.h"
 #endif
 
 #ifdef INCLUDE_OPENSSL_SERVER
@@ -40,7 +40,7 @@
 #endif
 
 #ifdef INCLUDE_TCPCONNECTOR
-#include "tunnels/adapters/tcp_connector/tcp_connector.h"
+#include "tunnels/adapters/connector/tcp/tcp_connector.h"
 #endif
 
 #ifdef INCLUDE_BRIDGE

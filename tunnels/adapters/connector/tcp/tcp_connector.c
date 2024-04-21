@@ -2,6 +2,7 @@
 #include "loggers/network_logger.h"
 #include "types.h"
 #include "utils/sockutils.h"
+#include "sync_dns.h"
 
 static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
 {
@@ -242,7 +243,7 @@ void upStream(tunnel_t *self, context_t *c)
             gettimeofday(&(cstate->__profile_conenct), NULL);
 #endif
 
-            cstate->buffer_pool    = buffer_pools[c->line->tid];
+            cstate->buffer_pool    = getContextBufferPool(c);
             cstate->tunnel         = self;
             cstate->line           = c->line;
             cstate->data_queue     = newContextQueue(cstate->buffer_pool);
@@ -254,10 +255,10 @@ void upStream(tunnel_t *self, context_t *c)
             switch (state->dest_addr_selected.status)
             {
             case kCdvsFromSource:
-                copySocketContextAddr(&dest_ctx, &src_ctx);
+                copySocketContextAddr(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                copySocketContextAddr(&dest_ctx, &(state->constant_dest_addr));
+                copySocketContextAddr(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -266,10 +267,10 @@ void upStream(tunnel_t *self, context_t *c)
             switch (state->dest_port_selected.status)
             {
             case kCdvsFromSource:
-                copySocketContextPort(&dest_ctx, &src_ctx);
+                copySocketContextPort(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                copySocketContextPort(&dest_ctx, &(state->constant_dest_addr));
+                copySocketContextPort(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -428,7 +429,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     }
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        sockaddr_set_port(&(state->constant_dest_addr), state->dest_port_selected.value);
+        setSocketContextPort(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
 
     tunnel_t *t   = newTunnel();

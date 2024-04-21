@@ -236,7 +236,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 {
                     do
                     {
-                        shift_buffer_t *buf   = popBuffer(buffer_pools[c->line->tid]);
+                        shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
                         size_t          avail = rCap(buf);
                         n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                         // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
@@ -257,12 +257,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextBuffer(c);
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            reuseBuffer(getContextBufferPool(c), buf);
                             goto disconnect;
                         }
                         else
                         {
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            reuseBuffer(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -318,7 +318,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             do
             {
-                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, 8192 / 2);
                 setLen(buf, 0);
                 size_t avail = rCap(buf);
@@ -344,7 +344,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    reuseBuffer(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -357,7 +357,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 do
                 {
-                    shift_buffer_t *buf   = popBuffer(buffer_pools[c->line->tid]);
+                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
                     size_t          avail = rCap(buf);
 
                     n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
@@ -378,13 +378,13 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                         reuseContextBuffer(c);
                         goto failed_after_establishment;
                     }
                     else
                     {
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -410,7 +410,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->rbio                   = BIO_new(BIO_s_mem());
             cstate->wbio                   = BIO_new(BIO_s_mem());
             cstate->ssl                    = SSL_new(state->ssl_context);
-            cstate->fallback_buf           = newBufferStream(buffer_pools[c->line->tid]);
+            cstate->fallback_buf           = newBufferStream(getContextBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             if (state->anti_tit)
@@ -510,7 +510,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 do
                 {
 
-                    shift_buffer_t *buf   = popBuffer(buffer_pools[c->line->tid]);
+                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
                     size_t          avail = rCap(buf);
                     n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                     if (n > 0)
@@ -530,13 +530,13 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                         reuseContextBuffer(c);
                         goto failed_after_establishment;
                     }
                     else
                     {
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }

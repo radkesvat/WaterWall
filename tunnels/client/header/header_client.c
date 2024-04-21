@@ -3,13 +3,6 @@
 #include "hv/hsocket.h"
 #include "loggers/network_logger.h"
 
-#define MAX_PACKET_SIZE 65535
-
-#define STATE(x) ((header_client_state_t *)((x)->state))
-#define CSTATE(x) ((header_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
-
 enum header_dynamic_value_status
 {
     kHdvsEmpty = 0x0,
@@ -35,7 +28,7 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL && c->first)
     {
 
-        switch ((enum header_dynamic_value_status)state->data.status)
+        switch ((enum header_dynamic_value_status) state->data.status)
         {
         case kHdvsSourcePort:
             shiftl(c->payload, sizeof(uint16_t));
@@ -56,20 +49,17 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
- 
-
 tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 {
 
     header_client_state_t *state = malloc(sizeof(header_client_state_t));
     memset(state, 0, sizeof(header_client_state_t));
     const cJSON *settings = instance_info->node_settings_json;
-    state->data = parseDynamicNumericValueFromJsonObject(settings, "data", 1,
-                                                         "src_context->port");
-    tunnel_t *t = newTunnel();
-    t->state = state;
-    t->upStream         = &upStream;
-    t->downStream       = &downStream;
+    state->data           = parseDynamicNumericValueFromJsonObject(settings, "data", 1, "src_context->port");
+    tunnel_t *t           = newTunnel();
+    t->state              = state;
+    t->upStream           = &upStream;
+    t->downStream         = &downStream;
     atomic_thread_fence(memory_order_release);
 
     return t;
@@ -77,11 +67,14 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 
 api_result_t apiHeaderClient(tunnel_t *self, const char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO(root): 
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0}; // TODO(root):
 }
 
 tunnel_t *destroyHeaderClient(tunnel_t *self)
 {
+    (void) (self);
     return NULL;
 }
 tunnel_metadata_t getMetadataHeaderClient()

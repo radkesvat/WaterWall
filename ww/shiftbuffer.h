@@ -27,6 +27,7 @@ shift_buffer_t *newShallowShiftBuffer(shift_buffer_t *owner);
 void            reset(shift_buffer_t *self, unsigned int cap);
 void            unShallow(shift_buffer_t *self);
 void            expand(shift_buffer_t *self, unsigned int increase);
+void            appendBuffer(shift_buffer_t * restrict root, shift_buffer_t * restrict buf);
 
 inline bool isShallow(shift_buffer_t *self)
 {
@@ -107,10 +108,9 @@ inline void readUI16(shift_buffer_t *self, uint16_t *dest)
     memcpy(dest, rawBuf(self), sizeof(uint16_t));
 }
 
-
 /*
     Call setLen to know how much memory you own before any kind of writing
-*/ 
+*/
 
 inline unsigned char *rawBufMut(shift_buffer_t *self)
 {
@@ -146,4 +146,3 @@ inline void writeUI8(shift_buffer_t *self, uint8_t data)
 {
     writeRaw(self, &data, sizeof(uint8_t));
 }
-

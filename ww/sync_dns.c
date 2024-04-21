@@ -13,7 +13,7 @@ bool resolveContextSync(socket_context_t *sctx)
 #endif
     /* resolve domain */
     {
-        if (sockaddr_set_ip_port(&(sctx->addr), sctx->domain, old_port) != 0)
+        if (sockaddr_set_ipport(&(sctx->addr), sctx->domain, old_port) != 0)
         {
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
             return false;

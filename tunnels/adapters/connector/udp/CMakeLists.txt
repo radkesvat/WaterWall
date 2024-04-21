@@ -1,29 +1,21 @@
 
 
-add_library(Connector STATIC
-                    connector.c
-                    tcp.c
-                    udp.c
-                    resolve.c
+add_library(UdpConnector STATIC
+                    udp_connector.c
                  
 )
 
-# target_include_directories(Connector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
-target_include_directories(Connector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
-target_link_libraries(Connector ww)
+target_include_directories(UdpConnector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
+target_link_libraries(UdpConnector ww)
 
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
-
-
-target_compile_definitions(Connector PRIVATE  Connector_VERSION=0.1)
-
+target_compile_definitions(UdpConnector PRIVATE  UdpConnector_VERSION=0.1)
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(Connector PRIVATE  DEBUG=1)
-
+target_compile_definitions(UdpConnector PRIVATE  DEBUG=1)
 endif()

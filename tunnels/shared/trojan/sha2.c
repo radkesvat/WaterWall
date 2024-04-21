@@ -542,9 +542,9 @@ void sha224(const uint8 *message, uint64 len, uint8 *digest)
 {
     sha224_ctx ctx;
 
-    sha224_init(&ctx);
-    sha224_update(&ctx, message, len);
-    sha224_final(&ctx, digest);
+    sha224Init(&ctx);
+    sha224Update(&ctx, message, len);
+    sha224Final(&ctx, digest);
 }
 
 void sha224Init(sha224_ctx *ctx)
@@ -653,9 +653,9 @@ void sha256(const uint8 *message, uint64 len, uint8 *digest)
 {
     sha256_ctx ctx;
 
-    sha256_init(&ctx);
-    sha256_update(&ctx, message, len);
-    sha256_final(&ctx, digest);
+    sha256Init(&ctx);
+    sha256Update(&ctx, message, len);
+    sha256Final(&ctx, digest);
 }
 
 void sha256Init(sha256_ctx *ctx)
@@ -765,9 +765,9 @@ void sha384(const uint8 *message, uint64 len, uint8 *digest)
 {
     sha384_ctx ctx;
 
-    sha384_init(&ctx);
-    sha384_update(&ctx, message, len);
-    sha384_final(&ctx, digest);
+    sha384Init(&ctx);
+    sha384Update(&ctx, message, len);
+    sha384Final(&ctx, digest);
 }
 
 void sha384Init(sha384_ctx *ctx)
@@ -875,9 +875,9 @@ void sha512(const uint8 *message, uint64 len, uint8 *digest)
 {
     sha512_ctx ctx;
 
-    sha512_init(&ctx);
-    sha512_update(&ctx, message, len);
-    sha512_final(&ctx, digest);
+    sha512Init(&ctx);
+    sha512Update(&ctx, message, len);
+    sha512Final(&ctx, digest);
 }
 
 void sha512Init(sha512_ctx *ctx)
@@ -1020,12 +1020,12 @@ static void test_sha224_long_message(uint8 *digest)
 
     memset(message, 'a', sizeof(message));
 
-    sha224_init(&ctx);
+    sha224Init(&ctx);
     for (i = 0; i < 10000000; i++)
     {
-        sha224_update(&ctx, message, sizeof(message));
+        sha224Update(&ctx, message, sizeof(message));
     }
-    sha224_final(&ctx, digest);
+    sha224Final(&ctx, digest);
 }
 
 static void test_sha256_long_message(uint8 *digest)
@@ -1036,12 +1036,12 @@ static void test_sha256_long_message(uint8 *digest)
 
     memset(message, 'a', sizeof(message));
 
-    sha256_init(&ctx);
+    sha256Init(&ctx);
     for (i = 0; i < 10000000; i++)
     {
-        sha256_update(&ctx, message, sizeof(message));
+        sha256Update(&ctx, message, sizeof(message));
     }
-    sha256_final(&ctx, digest);
+    sha256Final(&ctx, digest);
 }
 
 static void test_sha384_long_message(uint8 *digest)
@@ -1052,12 +1052,12 @@ static void test_sha384_long_message(uint8 *digest)
 
     memset(message, 'a', sizeof(message));
 
-    sha384_init(&ctx);
+    sha384Init(&ctx);
     for (i = 0; i < 10000000; i++)
     {
-        sha384_update(&ctx, message, sizeof(message));
+        sha384Update(&ctx, message, sizeof(message));
     }
-    sha384_final(&ctx, digest);
+    sha384Final(&ctx, digest);
 }
 
 static void test_sha512_long_message(uint8 *digest)
@@ -1068,12 +1068,12 @@ static void test_sha512_long_message(uint8 *digest)
 
     memset(message, 'a', sizeof(message));
 
-    sha512_init(&ctx);
+    sha512Init(&ctx);
     for (i = 0; i < 10000000; i++)
     {
-        sha512_update(&ctx, message, sizeof(message));
+        sha512Update(&ctx, message, sizeof(message));
     }
-    sha512_final(&ctx, digest);
+    sha512Final(&ctx, digest);
 }
 
 #endif /* TEST_VECTORS_LONG */

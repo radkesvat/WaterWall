@@ -14,14 +14,13 @@
 
 typedef struct line_s
 {
-    hloop_t *loop;
-    uint16_t tid;
-    uint16_t refc;
-    uint16_t lcid;
-    uint8_t  auth_cur;
-    uint8_t  auth_max;
-    bool     alive;
-
+    uint8_t          tid;
+    uint16_t         refc;
+    uint8_t          lcid;
+    uint8_t          auth_cur;
+    uint8_t          auth_max;
+    bool             alive;
+    hloop_t *        loop;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
     void *           chains_state[];
@@ -67,7 +66,7 @@ void chainUp(tunnel_t *from, tunnel_t *to);
 void defaultUpStream(tunnel_t *self, context_t *c);
 void defaultDownStream(tunnel_t *self, context_t *c);
 
-inline line_t *newLine(uint16_t tid)
+inline line_t *newLine(uint8_t tid)
 {
     size_t  size   = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
     line_t *result = malloc(size);
@@ -93,7 +92,7 @@ inline uint8_t reserveChainStateIndex(line_t *l)
     l->lcid -= 1;
     return result;
 }
-static inline void internalUnRefLine(line_t *l)
+inline void internalUnRefLine(line_t *l)
 {
     l->refc -= 1;
     // check line
@@ -204,9 +203,22 @@ inline bool isFullyAuthenticated(line_t *line)
     return line->auth_cur >= line->auth_max;
 }
 
+
+inline buffer_pool_t *geBufferPool(uint8_t tid)
+{
+    return buffer_pools[tid];
+}
+inline buffer_pool_t *getLineBufferPool(line_t *l)
+{
+    return buffer_pools[l->tid];
+}
+inline buffer_pool_t *getContextBufferPool(context_t *c)
+{
+    return  buffer_pools[c->line->tid];
+}
 inline void reuseContextBuffer(context_t *c)
 {
     assert(c->payload != NULL);
-    reuseBuffer(buffer_pools[c->line->tid], c->payload);
+    reuseBuffer(getContextBufferPool(c), c->payload);
     c->payload = NULL;
 }

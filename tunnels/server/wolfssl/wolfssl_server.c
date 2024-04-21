@@ -236,7 +236,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 {
                     do
                     {
-                        shift_buffer_t *buf   = popBuffer(buffer_pools[c->line->tid]);
+                        shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
                         size_t          avail = rCap(buf);
                         n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                         // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
@@ -257,12 +257,12 @@ static inline void upStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextBuffer(c);
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            reuseBuffer(getContextBufferPool(c), buf);
                             goto disconnect;
                         }
                         else
                         {
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            reuseBuffer(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -318,7 +318,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             do
             {
-                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, 8192 / 2);
                 setLen(buf, 0);
                 size_t avail = rCap(buf);
@@ -344,7 +344,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    reuseBuffer(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -357,7 +357,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             {
                 do
                 {
-                    shift_buffer_t *buf   = popBuffer(buffer_pools[c->line->tid]);
+                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
                     size_t          avail = rCap(buf);
 
                     n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
@@ -378,13 +378,13 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                         reuseContextBuffer(c);
                         goto failed_after_establishment;
                     }
                     else
                     {
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -410,7 +410,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             cstate->rbio                    = BIO_new(BIO_s_mem());
             cstate->wbio                    = BIO_new(BIO_s_mem());
             cstate->ssl                     = SSL_new(state->ssl_context);
-            cstate->fallback_buf            = newBufferStream(buffer_pools[c->line->tid]);
+            cstate->fallback_buf            = newBufferStream(getContextBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             // if (state->anti_tit)
@@ -507,7 +507,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 do
                 {
 
-                    shift_buffer_t *buf   = popBuffer(buffer_pools[c->line->tid]);
+                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
                     size_t          avail = rCap(buf);
                     n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                     if (n > 0)
@@ -527,13 +527,13 @@ static inline void downStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                         reuseContextBuffer(c);
                         goto failed_after_establishment;
                     }
                     else
                     {
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -685,7 +685,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
     ssl_param->verify_peer = 0; // no mtls
     ssl_param->endpoint    = kSslServer;
-    state->ssl_context     = ssl_ctx_new(ssl_param);
+    state->ssl_context     = sslCtxNew(ssl_param);
     // int brotli_alg = TLSEXT_comp_cert_brotli;
     // SSL_set1_cert_comp_preference(state->ssl_context,&brotli_alg,1);
     // SSL_compress_certs(state->ssl_context,TLSEXT_comp_cert_brotli);
@@ -700,7 +700,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    SSL_CTX_set_alpn_select_cb(state->ssl_context, on_alpn_select, NULL);
+    SSL_CTX_set_alpn_select_cb(state->ssl_context, onAlpnSelect, NULL);
 
     tunnel_t *t = newTunnel();
     t->state    = state;
@@ -718,9 +718,6 @@ api_result_t apiWolfSSLServer(tunnel_t *self, const char *msg)
 {
     (void) self;
     (void) msg;
-
-    (void) (self);
-    (void) (msg);
     return (api_result_t){0};
 }
 

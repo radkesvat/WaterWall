@@ -14,7 +14,7 @@ typedef struct preconnect_server_con_state_s
 
 } preconnect_server_con_state_t;
 
-static void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upstream)
+static void upStream(tunnel_t *self, context_t *c)
 {
 
     if (c->payload != NULL)
@@ -31,7 +31,7 @@ static void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upstream)
                 return;
             }
         }
-        upstream(self->up, c);
+        self->up->upStream(self->up, c);
     }
     else if (c->init)
     {
@@ -49,7 +49,7 @@ static void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upstream)
         CSTATE_MUT(c) = NULL;
         if (send_fin)
         {
-            upstream(self->up, c);
+            self->up->upStream(self->up, c);
         }
         else
         {
@@ -60,7 +60,7 @@ static void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upstream)
     }
 }
 
-static inline void downStream(tunnel_t *self, context_t *c, TunnelFlowRoutine downstream)
+static inline void downStream(tunnel_t *self, context_t *c)
 {
 
     if (c->fin)
@@ -69,25 +69,10 @@ static inline void downStream(tunnel_t *self, context_t *c, TunnelFlowRoutine do
         CSTATE_MUT(c) = NULL;
     }
 
-    downstream(self->dw, c);
+    self->dw->downStream(self->dw, c);
 }
 
-static void preConnectServerUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c, self->up->upStream);
-}
-static void preConnectServerPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c, self->up->packetUpStream);
-}
-static void preConnectServerDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c, self->dw->downStream);
-}
-static void preConnectServerPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c, self->dw->packetDownStream);
-}
+
 
 tunnel_t *newPreConnectServer(node_instance_context_t *instance_info)
 {

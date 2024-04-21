@@ -2,11 +2,11 @@
 #include "loggers/network_logger.h"
 
 #include "cacert.h"
+#include <wolfssl/options.h>
 #include <wolfssl/openssl/bio.h>
 #include <wolfssl/openssl/err.h>
 #include <wolfssl/openssl/pem.h>
 #include <wolfssl/openssl/ssl.h>
-#include <wolfssl/options.h>
 enum
 {
     kSslServer = 0,
@@ -15,7 +15,7 @@ enum
 
 static int wolfssl_lib_initialized = false;
 
-static void opensslGlobalInit()
+static void wolfSslGlobalInit()
 {
     if (wolfssl_lib_initialized == 0)
     {
@@ -50,7 +50,7 @@ typedef void *ssl_ctx_t; ///> SSL_CTX
 
 static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
 {
-    opensslGlobalInit();
+    wolfSslGlobalInit();
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_CTX *ctx = SSL_CTX_new(SSLv23_method());
@@ -152,7 +152,7 @@ error:
 
 static void printSSLState(const SSL *ssl) // NOLINT (ssl in unused problem)
 {
-    const char *current_state = SSL_state_string_long(s);
+    const char *current_state = SSL_state_string_long(ssl);
     LOGD("%s", current_state);
 }
 

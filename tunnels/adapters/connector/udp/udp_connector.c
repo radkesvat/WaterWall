@@ -1,5 +1,6 @@
 #include "loggers/network_logger.h"
 #include "types.h"
+#include "sync_dns.h"
 #include "utils/sockutils.h"
 
 static void cleanup(udp_connector_con_state_t *cstate)
@@ -37,7 +38,7 @@ static void onRecv(hio_t *io, void *buf, int readbytes)
         context_t *est_context = newContext(line);
         est_context->est       = true;
         est_context->src_io    = io;
-        self->packetDownStream(self, est_context);
+        self->downStream(self, est_context);
         if (hevent_userdata(io) == NULL)
         {
             return;
@@ -48,7 +49,7 @@ static void onRecv(hio_t *io, void *buf, int readbytes)
     context->src_io    = io;
     context->payload   = payload;
 
-    self->packetDownStream(self, context);
+    self->downStream(self, context);
 }
 
 void upStream(tunnel_t *self, context_t *c)
@@ -86,7 +87,7 @@ void upStream(tunnel_t *self, context_t *c)
             memset(CSTATE(c), 0, sizeof(udp_connector_con_state_t));
             udp_connector_con_state_t *cstate = CSTATE(c);
 
-            cstate->buffer_pool = buffer_pools[c->line->tid];
+            cstate->buffer_pool = getContextBufferPool(c);
             cstate->tunnel      = self;
             cstate->line        = c->line;
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
@@ -130,10 +131,10 @@ void upStream(tunnel_t *self, context_t *c)
             switch (state->dest_addr_selected.status)
             {
             case kCdvsFromSource:
-                copySocketContextAddr(&dest_ctx, &src_ctx);
+                copySocketContextAddr(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                copySocketContextAddr(&dest_ctx, &(state->constant_dest_addr));
+                copySocketContextAddr(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -142,10 +143,10 @@ void upStream(tunnel_t *self, context_t *c)
             switch (state->dest_port_selected.status)
             {
             case kCdvsFromSource:
-                copySocketContextPort(&dest_ctx, &src_ctx);
+                copySocketContextPort(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                copySocketContextPort(&dest_ctx, &(state->constant_dest_addr));
+                copySocketContextPort(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -235,7 +236,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
     }
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        sockaddr_set_port(&(state->constant_dest_addr), state->dest_port_selected.value);
+        setSocketContextPort(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
     tunnel_t *t   = newTunnel();
     t->state      = state;

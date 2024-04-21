@@ -3,6 +3,7 @@
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
 
+extern bool           isShallow(shift_buffer_t *self);
 extern unsigned int   lCap(shift_buffer_t *self);
 extern unsigned int   rCap(shift_buffer_t *self);
 extern unsigned int   bufLen(shift_buffer_t *self);
@@ -138,4 +139,12 @@ void expand(shift_buffer_t *self, unsigned int increase)
         self->full_cap = new_realcap;
         free(old_buf);
     }
+}
+
+void appendBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf)
+{
+    unsigned int root_length   = bufLen(root);
+    unsigned int append_length = bufLen(buf);
+    setLen(root, root_length + append_length);
+    memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
 }

@@ -21,7 +21,6 @@ typedef struct protobuf_server_state_s
 typedef struct protobuf_server_con_state_s
 {
     buffer_stream_t *stream_buf;
-    size_t           wanted;
     bool             first_sent;
 
 } protobuf_server_con_state_t;
@@ -32,7 +31,7 @@ static void cleanup(protobuf_server_con_state_t *cstate)
     free(cstate);
 }
 
-static inline void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upstream, TunnelFlowRoutine downstream)
+static inline void upStream(tunnel_t *self, context_t *c)
 {
     protobuf_server_con_state_t *cstate = CSTATE(c);
 
@@ -60,7 +59,8 @@ static inline void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upst
             {
                 if (uleb_encoded_buf[0] = 0x0)
                 {
-                    // invalid
+                    LOGE("ProtoBufServer: rejected, invalid data");
+
                     goto disconnect;
                 }
 
@@ -70,7 +70,8 @@ static inline void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upst
             }
             if (data_len > MAX_PACKET_SIZE)
             {
-                // overflow
+                LOGE("ProtoBufServer: rejected, size too large %zu (%zu passed %lu left)", data_len, bytes_passed,
+                     bufferStreamLen(bstream));
                 goto disconnect;
             }
             if (! (bufferStreamLen(bstream) >= 1 + bytes_passed + data_len))
@@ -86,7 +87,7 @@ static inline void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upst
                 upstream_ctx->first = true;
                 cstate->first_sent  = true;
             }
-            upstream(self->up, upstream_ctx);
+            self->up->upStream(self->up, upstream_ctx);
             if (! isAlive(c->line))
             {
                 destroyContext(c);
@@ -99,9 +100,8 @@ static inline void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upst
         if (c->init)
         {
             cstate             = malloc(sizeof(protobuf_server_con_state_t));
-            cstate->wanted     = 0;
             cstate->first_sent = false;
-            cstate->stream_buf = newBufferStream(buffer_pools[c->line->tid]);
+            cstate->stream_buf = newBufferStream(getContextBufferPool(c));
             CSTATE_MUT(c)      = cstate;
         }
         else if (c->fin)
@@ -109,27 +109,27 @@ static inline void upStream(tunnel_t *self, context_t *c, TunnelFlowRoutine upst
             cleanup(cstate);
             CSTATE_MUT(c) = NULL;
         }
-        upstream(self->up, c);
+        self->up->upStream(self->up, c);
     }
 
     return;
 disconnect:
     cleanup(cstate);
     CSTATE_MUT(c) = NULL;
-    upstream(self->up, newFinContext(c->line));
-    downstream(self->dw, newFinContext(c->line));
+    self->up->upStream(self->up, newFinContext(c->line));
+    self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c, TunnelFlowRoutine downstream)
+static inline void downStream(tunnel_t *self, context_t *c)
 {
 
     if (c->payload != NULL)
     {
         size_t blen             = bufLen(c->payload);
-        size_t calculated_bytes = size_uleb128(blen);
+        size_t calculated_bytes = sizeUleb128(blen);
         shiftl(c->payload, calculated_bytes + 1);
-        write_uleb128(rawBufMut(c->payload) + 1, blen);
+        writeUleb128(rawBufMut(c->payload) + 1, blen);
         writeUI8(c->payload, '\n');
     }
     else
@@ -141,10 +141,8 @@ static inline void downStream(tunnel_t *self, context_t *c, TunnelFlowRoutine do
             CSTATE_MUT(c) = NULL;
         }
     }
-    downstream(self->dw, c);
+    self->dw->downStream(self->dw, c);
 }
-
-
 
 tunnel_t *newProtoBufServer(node_instance_context_t *instance_info)
 {

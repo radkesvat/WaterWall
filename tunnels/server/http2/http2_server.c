@@ -17,7 +17,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     }
 
     // LOGD("onHeaderCallback\n");
-    print_frame_hd(&frame->hd);
+    printFrameHd(&frame->hd);
     const char *name  = (const char *) _name;
     const char *value = (const char *) _value;
     // LOGD("%s: %s\n", name, value);
@@ -81,7 +81,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     if (con->content_type == kApplicationGrpc)
     {
 
-        shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
+        shift_buffer_t *buf = popBuffer(getLineBufferPool(con->line));
         shiftl(buf, lCap(buf) / 2); // use some unused space
         setLen(buf, len);
         writeRaw(buf, data, len);
@@ -95,7 +95,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
                 grpc_message_hd msghd;
                 grpcMessageHdUnpack(&msghd, rawBuf(gheader_buf));
                 stream->bytes_needed = msghd.length;
-                reuseBuffer(buffer_pools[con->line->tid], gheader_buf);
+                reuseBuffer(getLineBufferPool(con->line), gheader_buf);
             }
             if (stream->bytes_needed > 0 && bufferStreamLen(stream->chunkbs) >= stream->bytes_needed)
             {
@@ -121,7 +121,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     }
     else
     {
-        shift_buffer_t *buf = popBuffer(buffer_pools[con->line->tid]);
+        shift_buffer_t *buf = popBuffer(getLineBufferPool(con->line));
         shiftl(buf, lCap(buf) / 2); // use some unused space
         setLen(buf, len);
         writeRaw(buf, data, len);
@@ -146,7 +146,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         return 0;
     }
     // LOGD("onFrameRecvCallback\n");
-    print_frame_hd(&frame->hd);
+    printFrameHd(&frame->hd);
     http2_server_con_state_t *con  = (http2_server_con_state_t *) userdata;
     tunnel_t *                self = con->tunnel;
 
@@ -187,7 +187,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         context_t *fc   = newFinContext(stream->line);
         tunnel_t * dest = stream->tunnel;
         removeStream(con, stream);
-        delete_http2_stream(stream);
+        deleteHttp2Stream(stream);
         CSTATE_MUT(fc) = NULL;
 
         dest->upStream(dest, fc);
@@ -392,7 +392,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             removeStream(con, stream);
-            delete_http2_stream(stream);
+            deleteHttp2Stream(stream);
             CSTATE_MUT(c) = NULL;
 
             while (trySendResponse(self, con, 0, NULL, NULL))

@@ -15,11 +15,11 @@ enum udp_connector_dynamic_value_status
 typedef struct udp_connector_state_s
 {
     // settings
-    bool                     reuse_addr;
-    enum domain_strategy     domain_strategy;
-    dynamic_value_t          dest_addr_selected;
-    dynamic_value_t          dest_port_selected;
-    socket_context_t         constant_dest_addr;
+    bool             reuse_addr;
+    int              domain_strategy;
+    dynamic_value_t  dest_addr_selected;
+    dynamic_value_t  dest_port_selected;
+    socket_context_t constant_dest_addr;
 
 } udp_connector_state_t;
 
@@ -29,10 +29,10 @@ typedef struct udp_connector_con_state_s
     struct timeval __profile_conenct;
 #endif
 
-    tunnel_t *tunnel;
-    line_t *  line;
-    hio_t *   io;
-    buffer_pool_t *  buffer_pool;
+    tunnel_t *     tunnel;
+    line_t *       line;
+    hio_t *        io;
+    buffer_pool_t *buffer_pool;
 
     bool established;
 } udp_connector_con_state_t;

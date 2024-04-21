@@ -23,45 +23,7 @@
 
 static struct core_settings_s *settings = NULL;
 
-#ifdef OS_UNIX
-#include <sys/resource.h>
-void increaseFileLimit()
-{
 
-    struct rlimit rlim;
-    // Get the current limit
-    if (getrlimit(RLIMIT_NOFILE, &rlim) == -1)
-    {
-        LOGF("Core: getrlimit failed");
-        exit(EXIT_FAILURE);
-    }
-    if ((unsigned long) rlim.rlim_max < 8192)
-    {
-        LOGW(
-            "Core: Maximum allowed open files limit is %lu which is below 8192 !\n if you are running as a server then \
-        you might experince time-outs if this limits gets reached, depends on how many clients are connected to the server simultaneously\
-        ",
-            (unsigned long) rlim.rlim_max);
-    }
-    else
-    {
-        LOGD("Core: File limit  %lu -> %lu", (unsigned long) rlim.rlim_cur, (unsigned long) rlim.rlim_max);
-    }
-    // Set the hard limit to the maximum allowed value
-    rlim.rlim_cur = rlim.rlim_max;
-    // Apply the new limit
-    if (setrlimit(RLIMIT_NOFILE, &rlim) == -1)
-    {
-        LOGF("Core: setrlimit failed");
-        exit(EXIT_FAILURE);
-    }
-}
-#else
-void increaseFileLimit()
-{
-    (void) (0);
-}
-#endif
 
 static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
 {
@@ -128,8 +90,6 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
     }
 }
-
-
 
 static void parseLogPartOfJson(cJSON *log_obj)
 {
@@ -229,10 +189,16 @@ void parseCoreSettings(char *data_json)
     parseConfigPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "configs"));
     parseMiscPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "misc"));
 
-    if ((settings->workers_count < 0) || (settings->workers_count > 200))
+    if (settings->workers_count <= 0)
     {
-        LOGF("CoreSettings: the workers count is invalid");
+        fprintf(stderr, "CoreSettings: the workers count is invalid");
         exit(1);
+    }
+
+    if (settings->workers_count > 255)
+    {
+        fprintf(stderr, "CoreSettings: workers count is shrinked to maximum supported value -> 255");
+        settings->workers_count = 255;
     }
     cJSON_Delete(json);
     // TODO (DNS) Implement dns settings and backend

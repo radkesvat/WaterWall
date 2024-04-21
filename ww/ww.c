@@ -9,26 +9,26 @@
 #include "managers/socket_manager.h"
 
 unsigned int             workers_count  = 0;
-hthread_t               *workers        = NULL;
-struct hloop_s         **loops          = NULL;
-struct buffer_pool_s   **buffer_pools   = NULL;
+hthread_t *              workers        = NULL;
+struct hloop_s **        loops          = NULL;
+struct buffer_pool_s **  buffer_pools   = NULL;
 struct socket_manager_s *socekt_manager = NULL;
-struct node_manager_s   *node_manager   = NULL;
-logger_t                *core_logger    = NULL;
-logger_t                *network_logger = NULL;
-logger_t                *dns_logger     = NULL;
+struct node_manager_s *  node_manager   = NULL;
+logger_t *               core_logger    = NULL;
+logger_t *               network_logger = NULL;
+logger_t *               dns_logger     = NULL;
 
 struct ww_runtime_state_s
 {
     unsigned int             workers_count;
-    hthread_t               *workers;
-    struct hloop_s         **loops;
-    struct buffer_pool_s   **buffer_pools;
+    hthread_t *              workers;
+    struct hloop_s **        loops;
+    struct buffer_pool_s **  buffer_pools;
     struct socket_manager_s *socekt_manager;
-    struct node_manager_s   *node_manager;
-    logger_t                *core_logger;
-    logger_t                *network_logger;
-    logger_t                *dns_logger;
+    struct node_manager_s *  node_manager;
+    logger_t *               core_logger;
+    logger_t *               network_logger;
+    logger_t *               dns_logger;
 };
 
 void setWW(struct ww_runtime_state_s *state)
@@ -76,7 +76,7 @@ _Noreturn void runMainThread()
     exit(0);
 }
 
-static HTHREAD_ROUTINE(worker_thread) //NOLINT
+static HTHREAD_ROUTINE(worker_thread) // NOLINT
 {
     hloop_t *loop = (hloop_t *) userdata;
     hloop_run(loop);
@@ -107,7 +107,12 @@ void createWW(ww_construction_data_t runtime_data)
     }
 
     workers_count = workers_count;
-    workers       = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
+    if (workers_count <= 0 || workers_count > 255)
+    {
+        fprintf(stderr, "workers count was not in valid range, value: %u range:[1,255]", workers_count);
+    }
+
+    workers = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
 
     loops = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
     for (int i = 1; i < workers_count; ++i)

@@ -14,14 +14,14 @@ static inline void upStream(tunnel_t *self, context_t *c)
         switch (cstate->mode)
         {
 
-        case connected_direct:
+        case kConnectedDirect:
             self->up->upStream(self->up, c);
             break;
 
-        case connected_pair:
+        case kConnectedPair:
             self->up->upStream(self->up, switchLine(c, cstate->u));
             break;
-        case notconnected:
+        case kNotconnected:
         default:
             LOGF("PreConnectClient: invalid value of connection state (memory error?)");
             exit(1);
@@ -31,8 +31,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const unsigned int tid     = c->line->tid;
-        thread_box_t *     this_tb = &(state->workers[tid]);
+        const uint8_t tid     = c->line->tid;
+        thread_box_t *this_tb = &(state->workers[tid]);
         if (c->init)
         {
 
@@ -42,19 +42,19 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 atomic_fetch_add_explicit(&(state->active_cons), 1, memory_order_relaxed);
 
                 preconnect_client_con_state_t *ucon = this_tb->root.next;
-                remove_connection(this_tb, ucon);
+                removeConnection(this_tb, ucon);
                 ucon->d       = c->line;
-                ucon->mode    = connected_pair;
+                ucon->mode    = kConnectedPair;
                 CSTATE_MUT(c) = ucon;
                 self->dw->downStream(self->dw, newEstContext(c->line));
-                initiateConnect(self);
+                initiateConnect(self,false);
             }
             else
             {
                 atomic_fetch_add_explicit(&(state->active_cons), 1, memory_order_relaxed);
-                preconnect_client_con_state_t *dcon = create_cstate(c->line->tid);
+                preconnect_client_con_state_t *dcon = createCstate(c->line->tid);
                 CSTATE_MUT(c)                       = dcon;
-                dcon->mode                          = connected_direct;
+                dcon->mode                          = kConnectedDirect;
                 self->up->upStream(self->up, c);
                 return;
             }
@@ -68,19 +68,19 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
             switch (dcon->mode)
             {
-            case connected_direct:
-                destroy_cstate(dcon);
+            case kConnectedDirect:
+                destroyCstate(dcon);
                 self->up->upStream(self->up, c);
                 break;
 
-            case connected_pair:;
+            case kConnectedPair:;
                 line_t *u_line                             = dcon->u;
                 (dcon->u->chains_state)[self->chain_index] = NULL;
                 context_t *fctx = switchLine(c, u_line); // created here to prevent destruction of line
-                destroy_cstate(dcon);
+                destroyCstate(dcon);
                 self->up->upStream(self->up, fctx);
                 break;
-            case notconnected:
+            case kNotconnected:
             default:
                 LOGF("PreConnectClient: invalid value of connection state (memory error?)");
                 exit(1);
@@ -101,15 +101,15 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
         switch (cstate->mode)
         {
-        case connected_direct:
+        case kConnectedDirect:
             self->dw->downStream(self->dw, c);
             break;
 
-        case connected_pair:
+        case kConnectedPair:
             self->dw->downStream(self->dw, switchLine(c, cstate->d));
             break;
 
-        case notconnected:
+        case kNotconnected:
             LOGE("PreConnectClient: this node is not purposed to handle downstream data before pairing");
         default:
             LOGF("PreConnectClient: invalid value of connection state (memory error?)");
@@ -130,29 +130,35 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             switch (ucon->mode)
             {
-            case connected_direct:
+            case kConnectedDirect:
                 atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
-                destroy_cstate(ucon);
+                destroyCstate(ucon);
                 self->dw->downStream(self->dw, c);
+                initiateConnect(self,true);
+
                 break;
 
-            case connected_pair:;
+            case kConnectedPair:;
                 atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
                 line_t *d_line                             = ucon->d;
                 (ucon->d->chains_state)[self->chain_index] = NULL;
-                destroy_cstate(ucon);
+                destroyCstate(ucon);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
+                initiateConnect(self,false);
+
                 break;
 
-            case notconnected:
+            case kNotconnected:
                 if (ucon->prev != NULL)
                 {
                     // fin after est
                     atomic_fetch_add_explicit(&(state->unused_cons), -1, memory_order_relaxed);
-                    remove_connection(this_tb, ucon);
+                    removeConnection(this_tb, ucon);
                 }
-                destroy_cstate(ucon);
+                destroyCstate(ucon);
                 destroyContext(c);
+                initiateConnect(self,true);
+
                 break;
 
             default:
@@ -161,35 +167,37 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
                 break;
             }
-            LOGD("PreConnectClient: disconnected, unused: %d active: %d", state->unused_cons, STATE(self)->active_cons);
-            initiateConnect(self);
+            LOGD("PreConnectClient: disconnected, unused: %d active: %d", state->unused_cons, state->active_cons);
         }
         else if (c->est)
         {
-            if (ucon->mode == notconnected)
+            if (ucon->mode == kNotconnected)
             {
-                add_connection(this_tb, ucon);
+                addConnection(this_tb, ucon);
                 destroyContext(c);
                 unsigned int unused = atomic_fetch_add_explicit(&(state->unused_cons), 1, memory_order_relaxed);
                 LOGI("PreConnectClient: connected,    unused: %d active: %d", unused + 1, state->active_cons);
-                initiateConnect(self);
+                initiateConnect(self,false);
             }
             else
+            {
                 self->dw->downStream(self->dw, c);
+            }
         }
     }
 }
 
-static void start_preconnect(htimer_t *timer)
+static void startPreconnect(htimer_t *timer)
 {
-    tunnel_t *t = hevent_userdata(timer);
+    tunnel_t *                 self  = hevent_userdata(timer);
+    preconnect_client_state_t *state = STATE(self);
+
     for (int i = 0; i < workers_count; i++)
     {
-        const int cpt = STATE(t)->connection_per_thread;
-
+        const int cpt = state->connection_per_thread;
         for (size_t ci = 0; ci < cpt; ci++)
         {
-            initiateConnect(t);
+            initiateConnect(self,true);
         }
     }
 
@@ -206,7 +214,7 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 
     getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
 
-    state->min_unused_cons       = min(max(workers_count * 2, state->min_unused_cons), 9999999);
+    state->min_unused_cons       = min(max(workers_count * 4, state->min_unused_cons), 128);
     state->connection_per_thread = min(4, state->min_unused_cons / workers_count);
 
     tunnel_t *t   = newTunnel();
@@ -214,23 +222,22 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    htimer_t *start_timer = htimer_add(loops[0], start_preconnect, start_delay_ms, 1);
+    htimer_t *start_timer = htimer_add(loops[0], startPreconnect, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
-
     atomic_thread_fence(memory_order_release);
-
     return t;
 }
 
-api_result_t apiPreConnectClient(tunnel_t *self, char *msg)
+api_result_t apiPreConnectClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0}; // TODO
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyPreConnectClient(tunnel_t *self)
 {
+    (void) (self);
     return NULL;
 }
 tunnel_metadata_t getMetadataPreConnectClient()

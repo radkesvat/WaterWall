@@ -4,37 +4,42 @@
 
 typedef struct node_instance_context_s
 {
-    struct cJSON *node_json;
-    struct cJSON *node_settings_json; // node_json -> settings
-    struct node_s *self_node_handle;
-    struct config_file_s *self_file_handle;
-    size_t chain_index;
+    struct cJSON *        node_json;
+    struct cJSON *        node_settings_json; // node_json -> settings
+    struct config_file_s *node_file_handle;
+    struct node_s *       node;
+    size_t                chain_index;
 } node_instance_context_t;
 
+enum node_flags
+{
+    kNodeFlagNone = (1 << 0),
+    // this node can be a chain head (begin of the chain)
+    kNodeFlagChainHead = (1 << 1)
+
+};
 typedef struct tunnel_metadata_s
 {
-    int32_t version;
-    int32_t flags;
+    int32_t         version;
+    enum node_flags flags;
 } tunnel_metadata_t;
-
-#define TFLAG_ROUTE_STARTER (1 << 0)
 
 typedef struct node_s
 {
-    char *name;
+    char * name;
     hash_t hash_name;
-    char *type;
+    char * type;
     hash_t hash_type;
-    char *next;
+    char * next;
     hash_t hash_next;
-    size_t version;
+    uint32_t version;
     //------------ evaluated:
-    size_t refrenced;
-    bool route_starter;
+    uint32_t refrenced;
+    bool   route_starter;
 
-    tunnel_metadata_t metadata;
-    struct tunnel_lib_s *lib;
+    tunnel_metadata_t       metadata;
+    struct tunnel_lib_s *   lib;
     node_instance_context_t instance_context;
-    struct tunnel_s *instance;
+    struct tunnel_s *       instance;
 
 } node_t;

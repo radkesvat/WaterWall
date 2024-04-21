@@ -64,12 +64,14 @@ void runNode(node_t *n1, size_t chain_index)
 
 static void runNodes()
 {
+begin:;
     c_foreach(p1, map_node_t, state->node_map)
     {
         node_t *n1 = p1.ref->second;
         if (n1 != NULL && n1->instance == NULL && n1->route_starter == true)
         {
             runNode(n1, 0);
+            goto begin;
         }
     }
 }
@@ -138,7 +140,7 @@ static void cycleProcess()
         bool found = false;
         c_foreach(n1, map_node_t, state->node_map)
         {
-            if ((n1.ref->second->metadata.flags & TFLAG_ROUTE_STARTER) == TFLAG_ROUTE_STARTER)
+            if ((n1.ref->second->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
             {
                 found                         = true;
                 n1.ref->second->route_starter = true;
@@ -146,10 +148,54 @@ static void cycleProcess()
         }
         if (! found)
         {
-            LOGW("Node Map has detecetd 0 listener nodes...");
+            LOGW("NodeMap: detecetd 0 chainhead nodes, the");
         }
     }
 }
+
+void registerNode(node_t *new_node, cJSON *node_settings)
+{
+    new_node->hash_name = CALC_HASH_BYTES(new_node->name, strlen(new_node->name));
+    new_node->hash_type = CALC_HASH_BYTES(new_node->type, strlen(new_node->type));
+    if (new_node->next)
+    {
+        new_node->hash_next = CALC_HASH_BYTES(new_node->next, strlen(new_node->next));
+    }
+    // load lib
+    tunnel_lib_t lib = loadTunnelLibByHash(new_node->hash_type);
+    if (lib.hash_name == 0)
+    {
+        LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
+             new_node->hash_type);
+        exit(1);
+    }
+    else
+    {
+        LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
+    }
+    new_node->metadata            = lib.getmetadata_proc();
+    struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));
+    memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
+    *heap_lib     = lib;
+    new_node->lib = heap_lib;
+
+    node_instance_context_t new_node_ctx = {0};
+
+    new_node_ctx.node_json          = NULL;
+    new_node_ctx.node_settings_json = node_settings;
+    new_node_ctx.node   = new_node;
+    new_node_ctx.node_file_handle   = state->config_file;
+    new_node->instance_context      = new_node_ctx;
+    map_node_t *map                 = &(state->node_map);
+
+    if (map_node_t_contains(map, new_node->hash_name))
+    {
+        LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", new_node->name, new_node->hash_name);
+        exit(1);
+    }
+    map_node_t_insert(map, new_node->hash_name, new_node);
+}
+
 
 static void startParsingFiles()
 {
@@ -157,7 +203,6 @@ static void startParsingFiles()
     cJSON *node_json  = NULL;
     cJSON_ArrayForEach(node_json, nodes_json)
     {
-
         node_t *new_node = malloc(sizeof(node_t));
         memset(new_node, 0, sizeof(node_t));
         if (! getStringFromJsonObject(&(new_node->name), node_json, "name"))
@@ -166,7 +211,6 @@ static void startParsingFiles()
                  state->config_file->file_path);
             exit(1);
         }
-        new_node->hash_name = CALC_HASH_BYTES(new_node->name, strlen(new_node->name));
 
         if (! getStringFromJsonObject(&(new_node->type), node_json, "type"))
         {
@@ -174,53 +218,9 @@ static void startParsingFiles()
                  state->config_file->file_path);
             exit(1);
         }
-        new_node->hash_type = CALC_HASH_BYTES(new_node->type, strlen(new_node->type));
-
-        if (getStringFromJsonObject(&(new_node->next), node_json, "next"))
-        {
-            new_node->hash_next = CALC_HASH_BYTES(new_node->next, strlen(new_node->next));
-        }
-        int int_ver = 0;
-        if (getIntFromJsonObject(&int_ver, node_json, "version"))
-        {
-            new_node->version = int_ver;
-        }
-
-        // load lib
-        tunnel_lib_t lib = loadTunnelLibByHash(new_node->hash_type);
-        if (lib.hash_name == 0)
-        {
-            LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
-                 new_node->hash_type);
-            exit(1);
-        }
-        else
-        {
-            LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
-        }
-        new_node->metadata            = lib.getmetadata_proc();
-        struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));
-        memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
-        *heap_lib     = lib;
-        new_node->lib = heap_lib;
-
-        cJSON *js_settings = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
-
-        node_instance_context_t new_node_ctx = {0};
-
-        new_node_ctx.node_json          = node_json;
-        new_node_ctx.node_settings_json = js_settings;
-        new_node_ctx.self_node_handle   = new_node;
-        new_node_ctx.self_file_handle   = state->config_file;
-        new_node->instance_context      = new_node_ctx;
-        map_node_t *map                 = &(state->node_map);
-
-        if (map_node_t_contains(map, new_node->hash_name))
-        {
-            LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", new_node->name, new_node->hash_name);
-            exit(1);
-        }
-        map_node_t_insert(map, new_node->hash_name, new_node);
+        getStringFromJsonObject(&(new_node->next), node_json, "next");
+        getIntFromJsonObjectOrDefault(&(new_node->version), node_json, "version", 0);
+        registerNode(new_node, cJSON_GetObjectItemCaseSensitive(node_json, "settings"));
     }
     cycleProcess();
     pathWalk();

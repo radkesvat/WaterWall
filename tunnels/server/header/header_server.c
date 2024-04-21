@@ -18,7 +18,9 @@ typedef struct header_server_state_s
 
 typedef struct header_server_con_state_s
 {
-    bool init_sent;
+    bool            init_sent;
+    bool            first_sent;
+    shift_buffer_t *buf;
 
 } header_server_con_state_t;
 
@@ -28,19 +30,22 @@ static void upStream(tunnel_t *self, context_t *c)
     header_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {
-        if (c->first)
+        if (! cstate->init_sent)
         {
-
-            shift_buffer_t *buf = c->payload;
-            if (bufLen(buf) < 2)
+            if (cstate->buf)
             {
-                reuseContextBuffer(c);
-                self->dw->downStream(self->dw, newFinContext(c->line));
+                cstate->buf = appendBufferMerge(getContextBufferPool(c), cstate->buf, c->payload);
+                c->payload  = cstate->buf;
+            }
+            if (bufLen(c->payload) < 2)
+            {
+                cstate->buf = c->payload;
+                c->payload  = NULL;
                 destroyContext(c);
                 return;
             }
-
-            uint16_t port = 0;
+            shift_buffer_t *buf  = c->payload;
+            uint16_t        port = 0;
             switch ((enum header_dynamic_value_status) state->data.status)
             {
             case kHdvsConstant:
@@ -55,30 +60,42 @@ static void upStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
-
-                break;
-
-            default:
                 break;
             }
 
             cstate->init_sent = true;
             self->up->upStream(self->up, newInitContext(c->line));
-            if (! isAlive(c->line))
+            if (bufLen(buf) > 0)
+            {
+                if (! isAlive(c->line))
+                {
+                    reuseContextBuffer(c);
+                    destroyContext(c);
+                    return;
+                }
+            }
+            else
             {
                 reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }
         }
+        if (! cstate->first_sent)
+        {
+            c->first           = true;
+            cstate->first_sent = true;
+        }
+        self->up->upStream(self->up, c);
+
     }
     else if (c->init)
     {
         cstate            = malloc(sizeof(header_server_con_state_t));
         cstate->init_sent = false;
+        cstate->first_sent = false;
         CSTATE_MUT(c)     = cstate;
         destroyContext(c);
-        return;
     }
     else if (c->fin)
     {
@@ -93,10 +110,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             destroyContext(c);
         }
-        return;
     }
-
-    self->up->upStream(self->up, c);
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)

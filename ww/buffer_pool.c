@@ -7,76 +7,74 @@
 #include "loggers/network_logger.h"
 #endif
 
-#define LOW_MEMORY     0 // no preallocation (very small)
-#define MED1_MEMORY    1 // APPROX 10MB per thread
-#define MED2_MEMORY    2 // APPROX 20MB per thread
-#define HIG1_MEMORY    3 // APPROX 28MB per thread
-#define HIG2_MEMORY    4 // APPROX 36MB per thread
-#define MEMORY_PROFILE HIG2_MEMORY
+#define LOW_MEMORY  0 // no preallocation (very small)
+#define MED1_MEMORY 1 // APPROX 10MB per thread
+#define MED2_MEMORY 2 // APPROX 20MB per thread
+#define HIG1_MEMORY 3 // APPROX 28MB per thread
+#define HIG2_MEMORY 4 // APPROX 36MB per thread
+
+#define MEMORY_PROFILE HIG2_MEMORY // todo (cmake)
 
 #define EVP_READ_BUFSIZE         (1U << 15) // 32K
-#define BUFFERPOOL_CONTAINER_LEN (50 + (250 * MEMORY_PROFILE))
+#define BUFFERPOOL_CONTAINER_LEN ((16 * 4) + ((16 * 16) * MEMORY_PROFILE))
 #define BUFFER_SIZE              ((MEMORY_PROFILE < MED2_MEMORY) ? 0 : EVP_READ_BUFSIZE)
 
-static void firstCharge(buffer_pool_t *state)
+static void firstCharge(buffer_pool_t *pool)
 {
-    // state->chunks = 1;
-    state->available = malloc(2 * BUFFERPOOL_CONTAINER_LEN * sizeof(shift_buffer_t *));
-
     for (size_t i = 0; i < BUFFERPOOL_CONTAINER_LEN; i++)
     {
-        state->available[i] = newShiftBuffer(BUFFER_SIZE);
+        pool->available[i] = newShiftBuffer(BUFFER_SIZE);
     }
-    state->len = BUFFERPOOL_CONTAINER_LEN;
+    pool->len = BUFFERPOOL_CONTAINER_LEN;
 }
 
-static void reCharge(buffer_pool_t *state)
+static void reCharge(buffer_pool_t *pool)
 {
-    const size_t increase = min((2 * BUFFERPOOL_CONTAINER_LEN - state->len), BUFFERPOOL_CONTAINER_LEN);
-    for (size_t i = state->len; i < (state->len + increase); i++)
+    const size_t increase = min((2 * BUFFERPOOL_CONTAINER_LEN - pool->len), BUFFERPOOL_CONTAINER_LEN);
+    for (size_t i = pool->len; i < (pool->len + increase); i++)
     {
-        state->available[i] = newShiftBuffer(BUFFER_SIZE);
+        pool->available[i] = newShiftBuffer(BUFFER_SIZE);
     }
-    state->len += increase;
+    pool->len += increase;
 #ifdef DEBUG
-    LOGD("BufferPool: allocated %d new buffers, %zu are in use", increase, state->in_use);
+    LOGD("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
 
-static void giveMemBackToOs(buffer_pool_t *state)
+static void giveMemBackToOs(buffer_pool_t *pool)
 {
-    const size_t decrease = min(state->len, BUFFERPOOL_CONTAINER_LEN);
+    const size_t decrease = min(pool->len, BUFFERPOOL_CONTAINER_LEN);
 
-    for (size_t i = state->len - decrease; i < state->len; i++)
+    for (size_t i = pool->len - decrease; i < pool->len; i++)
     {
-        destroyShiftBuffer(state->available[i]);
+        destroyShiftBuffer(pool->available[i]);
     }
-    state->len -= decrease;
+    pool->len -= decrease;
 
 #ifdef DEBUG
-    LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, state->in_use);
+    LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
 
     malloc_trim(0); // y tho?
 }
 
-shift_buffer_t *popBuffer(buffer_pool_t *state)
+shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
     // return newShiftBuffer(BUFFER_SIZE);
-    if (state->len <= 0)
+    if (pool->len <= 0)
     {
-        reCharge(state);
+        reCharge(pool);
     }
-    --(state->len);
-    shift_buffer_t *result = state->available[state->len];
+    --(pool->len);
+    shift_buffer_t *result = pool->available[pool->len];
 
 #ifdef DEBUG
-    state->in_use += 1;
+    pool->in_use += 1;
 #endif
     return result;
 }
 
-void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
+void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
     // destroyShiftBuffer(b);
     // return;
@@ -86,27 +84,43 @@ void reuseBuffer(buffer_pool_t *state, shift_buffer_t *b)
         return;
     }
 #ifdef DEBUG
-    state->in_use -= 1;
+    pool->in_use -= 1;
 #endif
     reset(b, BUFFER_SIZE);
-    state->available[state->len] = b;
-    ++(state->len);
-    if (state->len > BUFFERPOOL_CONTAINER_LEN + (BUFFERPOOL_CONTAINER_LEN / 2))
+    pool->available[pool->len] = b;
+    ++(pool->len);
+    if (pool->len > (BUFFERPOOL_CONTAINER_LEN + (BUFFERPOOL_CONTAINER_LEN / 2)))
     {
-        giveMemBackToOs(state);
+        giveMemBackToOs(pool);
     }
+}
+
+shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2)
+{
+    unsigned int b1_length = bufLen(b1);
+    unsigned int b2_length = bufLen(b2);
+    if (b1_length >= b2_length)
+    {
+        appendBuffer(b1, b2);
+        reuseBuffer(pool, b2);
+        return b1;
+    }
+    shiftl(b2, b1_length);
+    memcpy(rawBufMut(b2), rawBuf(b1), b1_length);
+    reuseBuffer(pool, b1);
+    return b2;
 }
 
 buffer_pool_t *createBufferPool()
 {
-    buffer_pool_t *state = malloc(sizeof(buffer_pool_t));
-    memset(state, 0, sizeof(buffer_pool_t));
-
-    state->available = 0;
-    state->len       = 0;
+    const int      container_len = 2 * BUFFERPOOL_CONTAINER_LEN * sizeof(shift_buffer_t *);
+    buffer_pool_t *pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
-    state->in_use = 0;
+    memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
+    pool->in_use = 0;
 #endif
-    firstCharge(state);
-    return state;
+    memset(pool, 0, sizeof(buffer_pool_t));
+    pool->len = 0;
+    firstCharge(pool);
+    return pool;
 }

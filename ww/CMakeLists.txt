@@ -11,6 +11,7 @@ add_library(ww STATIC
                   buffer_pool.c
                   http_def.c
                   cacert.c
+                  sync_dns.c
                   utils/utils.c
                   managers/socket_manager.c
                   managers/node_manager.c

@@ -35,6 +35,7 @@ option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
+option(INCLUDE_UDPCONNECTOR "link UdpConnector staticly to the core"  TRUE)
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  TRUE)
 
 option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
@@ -96,8 +97,8 @@ target_link_libraries(Waterwall ww)
 #tcp listener
 if (INCLUDE_TCP_LISTENER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TCP_LISTENER=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_listener)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/tcp)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/tcp)
 target_link_libraries(Waterwall TcpListener)
 endif()
 
@@ -112,17 +113,25 @@ endif()
 #tcp connector
 if (INCLUDE_TCPCONNECTOR)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TCPCONNECTOR=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
-target_link_libraries(Waterwall Bridge)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/tcp)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/tcp)
+target_link_libraries(Waterwall TcpConnector)
+endif()
+
+#udp connector
+if (INCLUDE_UDPCONNECTOR)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_UDPCONNECTOR=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/udp)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/udp)
+target_link_libraries(Waterwall UdpConnector)
 endif()
 
 #bridge
 if (INCLUDE_BRIDGE)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_BRIDGE=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_connector)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/tcp_connector)
-target_link_libraries(Waterwall TcpConnector)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
+target_link_libraries(Waterwall Bridge)
 endif()
 
 #http2 server

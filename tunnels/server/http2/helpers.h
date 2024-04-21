@@ -28,7 +28,7 @@ static nghttp2_nv makeNv2(const char *name, const char *value, int namelen, int 
 static void printFrameHd(const nghttp2_frame_hd *hd)
 {
     LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
-           hd->stream_id);
+         hd->stream_id);
 }
 
 static void addStream(http2_server_con_state_t *con, http2_server_child_con_state_t *stream)
@@ -51,7 +51,7 @@ static void removeStream(http2_server_con_state_t *con, http2_server_child_con_s
     }
 }
 http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line,
-                                                    tunnel_t *target_tun, int32_t stream_id)
+                                                  tunnel_t *target_tun, int32_t stream_id)
 {
     http2_server_child_con_state_t *stream;
     stream = malloc(sizeof(http2_server_child_con_state_t));
@@ -73,9 +73,10 @@ static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
     stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
     destroyBufferStream(stream->chunkbs);
     destroyLine(stream->line);
-    if (stream->request_path) {
+    if (stream->request_path)
+    {
         free(stream->request_path);
-}
+    }
     free(stream);
 }
 
@@ -116,4 +117,3 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
     con->line->chains_state[self->chain_index] = NULL;
     free(con);
 }
-

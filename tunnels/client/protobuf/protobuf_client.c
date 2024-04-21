@@ -11,12 +11,7 @@
 // #include "packet.pb.h"
 #include "uleb128.h"
 
-#define MAX_PACKET_SIZE (65536 * 16)
-
-#define STATE(x) ((protobuf_client_state_t *)((x)->state))
-#define CSTATE(x) ((protobuf_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
+#define MAX_PACKET_SIZE (65536 * 1)
 
 typedef struct protobuf_client_state_s
 {
@@ -26,7 +21,7 @@ typedef struct protobuf_client_state_s
 typedef struct protobuf_client_con_state_s
 {
     buffer_stream_t *stream_buf;
-    size_t wanted;
+    bool             first_sent;
 
 } protobuf_client_con_state_t;
 
@@ -35,40 +30,15 @@ static void cleanup(protobuf_client_con_state_t *cstate)
     destroyBufferStream(cstate->stream_buf);
     free(cstate);
 }
-static void downStream(tunnel_t *self, context_t *c);
-
-static void process(tunnel_t *self, context_t *cin)
-{
-    protobuf_client_con_state_t *cstate = CSTATE(cin);
-    buffer_stream_t *bstream = cstate->stream_buf;
-    if (bufferStreamLen(bstream) < cstate->wanted || cstate->wanted <= 0) {
-        return;
-}
-
-    context_t *c = newContextFrom(cin);
-    c->payload = bufferStreamRead(bstream, cstate->wanted);
-    self->dw->downStream(self->dw, c);
-    cstate->wanted = 0;
-
-    if (bufferStreamLen(bstream) > 0)
-    {
-        context_t *c_left = newContextFrom(cin);
-        c_left->payload = bufferStreamRead(bstream, bufferStreamLen(bstream));
-        self->downStream(self, c_left);
-    }
-}
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-
     if (c->payload != NULL)
     {
-        size_t blen = bufLen(c->payload);
-        size_t calculated_bytes = size_uleb128(blen);
-        shiftl(c->payload, calculated_bytes);
-        write_uleb128(rawBufMut(c->payload), blen);
-
-        shiftl(c->payload, 1);
+        size_t blen             = bufLen(c->payload);
+        size_t calculated_bytes = sizeUleb128(blen);
+        shiftl(c->payload, calculated_bytes + 1);
+        writeUleb128(rawBufMut(c->payload) + 1, blen);
         writeUI8(c->payload, '\n');
     }
     else
@@ -76,9 +46,9 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             protobuf_client_con_state_t *cstate = malloc(sizeof(protobuf_client_con_state_t));
-            cstate->wanted = 0;
-            cstate->stream_buf = newBufferStream(buffer_pools[c->line->tid]);
-            CSTATE_MUT(c) = cstate;
+            cstate->first_sent                  = false;
+            cstate->stream_buf                  = newBufferStream(getContextBufferPool(c));
+            CSTATE_MUT(c)                       = cstate;
         }
         else if (c->fin)
         {
@@ -92,93 +62,103 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
+    protobuf_client_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        protobuf_client_con_state_t *cstate = CSTATE(c);
-        if (cstate->wanted > 0)
+        buffer_stream_t *bstream = cstate->stream_buf;
+        bufferStreamPush(cstate->stream_buf, c->payload);
+        c->payload = NULL;
+
+        while (true)
         {
-            bufferStreamPush(cstate->stream_buf, c->payload);
-            c->payload = NULL;
-            process(self, c);
-            destroyContext(c);
-            return;
-        }
-        
-        
-            shift_buffer_t *buf = c->payload;
-            if (bufLen(buf) < 2)
+            if (bufferStreamLen(bstream) < 2)
             {
-                reuseContextBuffer(c);
-                cleanup(cstate);
-                CSTATE_MUT(c) = NULL;
-                self->dw->downStream(self->dw, newFinContext(c->line));
-                self->up->upStream(self->up, newFinContext(c->line));
                 destroyContext(c);
                 return;
             }
+            unsigned int  read_len = (bufferStreamLen(bstream) >= 4 ? 4 : 2);
+            unsigned char uleb_encoded_buf[4];
+            bufferStreamViewBytesAt(bstream, uleb_encoded_buf, 1, read_len);
 
-            shiftr(buf, 1); // first byte is \n (grpc byte array identifier? always \n? )
-            size_t data_len = 0;
-            size_t bytes_passed = read_uleb128_to_uint64(rawBuf(buf), rawBuf(buf) + bufLen(buf), &data_len);
-            shiftr(buf, bytes_passed);
+            size_t data_len     = 0;
+            size_t bytes_passed = readUleb128ToUint64(uleb_encoded_buf, uleb_encoded_buf + read_len, &data_len);
+            if (data_len == 0)
+            {
+                if (uleb_encoded_buf[0] = 0x0)
+                {
+                    LOGE("ProtoBufClient: rejected, invalid data");
+                    goto disconnect;
+                }
+
+                // keep waiting for more data to come
+                destroyContext(c);
+                return;
+            }
             if (data_len > MAX_PACKET_SIZE)
             {
-                LOGE("ProtoBufServer: rejected, size too large %zu (%zu passed %d left)",data_len,bytes_passed,(int)(bufLen(buf)));
-                reuseContextBuffer(c);
-                cleanup(cstate);
-                CSTATE_MUT(c) = NULL;
-
-                self->dw->downStream(self->dw, newFinContext(c->line));
-                self->up->upStream(self->up, newFinContext(c->line));
-                destroyContext(c);
-                return;
+                LOGE("ProtoBufClient: rejected, size too large %zu (%zu passed %lu left)", data_len, bytes_passed,
+                     bufferStreamLen(bstream));
+                goto disconnect;
             }
-            if (data_len != bufLen(buf))
+            if (! (bufferStreamLen(bstream) >= 1 + bytes_passed + data_len))
             {
-                cstate->wanted = data_len;
-                bufferStreamPush(cstate->stream_buf, c->payload);
-                c->payload = NULL;
-                if (data_len >= bufLen(buf))
-  {                   process(self, c);
-}
                 destroyContext(c);
                 return;
             }
-       
+            context_t *upstream_ctx = newContextFrom(c);
+            upstream_ctx->payload   = bufferStreamRead(cstate->stream_buf, 1 + bytes_passed + data_len);
+            shiftr(upstream_ctx->payload, 1 + bytes_passed);
+            if (! cstate->first_sent)
+            {
+                upstream_ctx->first = true;
+                cstate->first_sent  = true;
+            }
+            self->dw->downStream(self->up, upstream_ctx);
+            if (! isAlive(c->line))
+            {
+                destroyContext(c);
+                return;
+            }
+        }
     }
     else
     {
         if (c->fin)
         {
-            cleanup(CSTATE(c));
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
         }
+        self->dw->downStream(self->dw, c);
     }
-
-    self->dw->downStream(self->dw, c);
+disconnect:
+    cleanup(cstate);
+    CSTATE_MUT(c) = NULL;
+    self->up->upStream(self->up, newFinContext(c->line));
+    self->dw->downStream(self->dw, newFinContext(c->line));
+    destroyContext(c);
 }
-
 
 tunnel_t *newProtoBufClient(node_instance_context_t *instance_info)
 {
-
-    tunnel_t *t = newTunnel();
-
-    t->upStream         = &upStream;
-    t->downStream       = &downStream;
+    (void) instance_info;
+    tunnel_t *t   = newTunnel();
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
     atomic_thread_fence(memory_order_release);
-
     return t;
 }
 
 api_result_t apiProtoBufClient(tunnel_t *self, const char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO(root): 
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0}; // TODO(root):
 }
 
 tunnel_t *destroyProtoBufClient(tunnel_t *self)
 {
+    (void) (self);
     return NULL;
 }
 tunnel_metadata_t getMetadataProtoBufClient()

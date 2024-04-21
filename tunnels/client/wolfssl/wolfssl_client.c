@@ -1,70 +1,64 @@
 #include "wolfssl_client.h"
 #include "buffer_pool.h"
 #include "buffer_stream.h"
+#include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
-#include "loggers/network_logger.h"
 #include "utils/jsonutils.h"
 #include "wolfssl_globals.h"
 
-#include <wolfssl/options.h>
 #include <wolfssl/openssl/bio.h>
 #include <wolfssl/openssl/err.h>
 #include <wolfssl/openssl/pem.h>
 #include <wolfssl/openssl/ssl.h>
+#include <wolfssl/options.h>
 
-#define STATE(x) ((wolfssl_client_state_t *)((x)->state))
-#define CSTATE(x) ((wolfssl_client_con_state_t *)((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
-#define ISALIVE(x) (CSTATE(x) != NULL)
-
-typedef struct wolfssl_client_state_s
+typedef struct wssl_client_state_s
 {
 
     ssl_ctx_t ssl_context;
     // settings
     char *alpn;
     char *sni;
-    bool verify;
+    bool  verify;
 
-} wolfssl_client_state_t;
+} wssl_client_state_t;
 
-typedef struct wolfssl_client_con_state_s
+typedef struct wssl_client_con_state_s
 {
-    bool handshake_completed;
-    SSL *ssl;
-    BIO *rbio;
-    BIO *wbio;
+    bool             handshake_completed;
+    SSL *            ssl;
+    BIO *            rbio;
+    BIO *            wbio;
     context_queue_t *queue;
 
-} wolfssl_client_con_state_t;
+} wssl_client_con_state_t;
 
 enum sslstatus
 {
-    SSLSTATUS_OK,
-    SSLSTATUS_WANT_IO,
-    SSLSTATUS_FAIL
+    kSslstatusOk,
+    kSslstatusWantIo,
+    kSslstatusFail
 };
-
-static enum sslstatus get_sslstatus(SSL *ssl, int n)
+static enum sslstatus getSslStatus(SSL *ssl, int n)
 {
     switch (SSL_get_error(ssl, n))
     {
     case SSL_ERROR_NONE:
-        return SSLSTATUS_OK;
+        return kSslstatusOk;
     case SSL_ERROR_WANT_WRITE:
     case SSL_ERROR_WANT_READ:
-        return SSLSTATUS_WANT_IO;
+        return kSslstatusWantIo;
     case SSL_ERROR_ZERO_RETURN:
     case SSL_ERROR_SYSCALL:
     default:
-        return SSLSTATUS_FAIL;
+        return kSslstatusFail;
     }
 }
 
 static void cleanup(tunnel_t *self, context_t *c)
 {
-    wolfssl_client_con_state_t *cstate = CSTATE(c);
+    wssl_client_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
         SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
@@ -75,40 +69,42 @@ static void cleanup(tunnel_t *self, context_t *c)
     }
 }
 
-static void flush_write_queue(tunnel_t *self, context_t *c)
+static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
-    wolfssl_client_con_state_t *cstate = CSTATE(c);
+    wssl_client_con_state_t *cstate = CSTATE(c);
 
     while (contextQueueLen(cstate->queue) > 0)
     {
         self->upStream(self, contextQueuePop(cstate->queue));
 
-        if (!isAlive(c->line))
+        if (! isAlive(c->line))
+        {
             return;
+        }
     }
 }
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
-    wolfssl_client_state_t *state = STATE(self);
+    wssl_client_state_t *state = STATE(self);
 
     if (c->payload != NULL)
     {
-        wolfssl_client_con_state_t *cstate = CSTATE(c);
+        wssl_client_con_state_t *cstate = CSTATE(c);
 
-        if (!cstate->handshake_completed)
+        if (! cstate->handshake_completed)
         {
             contextQueuePush(cstate->queue, c);
             return;
         }
 
         enum sslstatus status;
-        size_t len = bufLen(c->payload);
+        size_t         len = bufLen(c->payload);
 
         while (len > 0)
         {
-            int n = SSL_write(cstate->ssl, rawBuf(c->payload), len);
-            status = get_sslstatus(cstate->ssl, n);
+            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
+            status = getSslStatus(cstate->ssl, n);
 
             if (n > 0)
             {
@@ -118,44 +114,46 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 /* take the output of the SSL object and queue it for socket write */
                 do
                 {
-                    shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-                    size_t avail = rCap(buf);
-                    n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
+                    size_t          avail = rCap(buf);
+                    n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                     if (n > 0)
                     {
                         setLen(buf, n);
                         context_t *send_context = newContextFrom(c);
-                        send_context->payload = buf;
+                        send_context->payload   = buf;
                         self->up->upStream(self->up, send_context);
-                        if (!isAlive(c->line))
+                        if (! isAlive(c->line))
                         {
                             reuseContextBuffer(c);
                             destroyContext(c);
                             return;
                         }
                     }
-                    else if (!BIO_should_retry(cstate->wbio))
+                    else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                         reuseContextBuffer(c);
                         goto failed;
                     }
                     else
                     {
-                        reuseBuffer(buffer_pools[c->line->tid], buf);
+                        reuseBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
 
-            if (status == SSLSTATUS_FAIL)
+            if (status == kSslstatusFail)
             {
                 reuseContextBuffer(c);
                 goto failed;
             }
 
             if (n == 0)
+            {
                 break;
+            }
         }
         assert(bufLen(c->payload) == 0);
         reuseContextBuffer(c);
@@ -166,55 +164,56 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(wolfssl_client_con_state_t));
-            memset(CSTATE(c), 0, sizeof(wolfssl_client_con_state_t));
-            wolfssl_client_con_state_t *cstate = CSTATE(c);
-            cstate->rbio = BIO_new(BIO_s_mem());
-            cstate->wbio = BIO_new(BIO_s_mem());
-            cstate->ssl = SSL_new(state->ssl_context);
-            cstate->queue = newContextQueue(buffer_pools[c->line->tid]);
+            CSTATE_MUT(c) = malloc(sizeof(wssl_client_con_state_t));
+            memset(CSTATE(c), 0, sizeof(wssl_client_con_state_t));
+            wssl_client_con_state_t *cstate = CSTATE(c);
+            cstate->rbio                   = BIO_new(BIO_s_mem());
+            cstate->wbio                   = BIO_new(BIO_s_mem());
+            cstate->ssl                    = SSL_new(state->ssl_context);
+            cstate->queue                  = newContextQueue(getContextBufferPool(c));
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
-            context_t *clienthello_ctx = newContextFrom(c);
+            context_t *client_hello_ctx = newContextFrom(c);
             self->up->upStream(self->up, c);
-            if (!ISALIVE(clienthello_ctx))
+            if (! isAlive(client_hello_ctx->line))
             {
-                destroyContext(clienthello_ctx);
+                destroyContext(client_hello_ctx);
                 return;
             }
 
             // printSSLState(cstate->ssl);
             int n = SSL_connect(cstate->ssl);
             // printSSLState(cstate->ssl);
-            enum sslstatus status = get_sslstatus(cstate->ssl, n);
+            enum sslstatus status = getSslStatus(cstate->ssl, n);
             /* Did SSL request to write bytes? */
-            if (status == SSLSTATUS_WANT_IO)
+            if (status == kSslstatusWantIo)
             {
-                shift_buffer_t *buf = popBuffer(buffer_pools[clienthello_ctx->line->tid]);
-                size_t avail = rCap(buf);
-                n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                shift_buffer_t *buf   = popBuffer(getContextBufferPool(client_hello_ctx));
+                size_t          avail = rCap(buf);
+                n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {
                     setLen(buf, n);
-                    clienthello_ctx->payload = buf;
-                    clienthello_ctx->first = true;
-                    self->up->upStream(self->up, clienthello_ctx);
-
+                    client_hello_ctx->payload = buf;
+                    client_hello_ctx->first   = true;
+                    self->up->upStream(self->up, client_hello_ctx);
                 }
-                else if (!BIO_should_retry(cstate->rbio))
+                else if (! BIO_should_retry(cstate->rbio))
                 {
                     // If BIO_should_retry() is false then the cause is an error condition.
-                    reuseBuffer(buffer_pools[clienthello_ctx->line->tid], buf);
+                    reuseBuffer(getContextBufferPool(client_hello_ctx), buf);
                     goto failed;
                 }
                 else
                 {
-                    reuseBuffer(buffer_pools[clienthello_ctx->line->tid], buf);
+                    reuseBuffer(getContextBufferPool(client_hello_ctx), buf);
                 }
             }
-            if (status == SSLSTATUS_FAIL)
+            if (status == kSslstatusFail)
+            {
                 goto failed;
+            }
         }
         else if (c->fin)
         {
@@ -228,23 +227,22 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
 failed:;
     context_t *fail_context_up = newFinContext(c->line);
-    fail_context_up->src_io = c->src_io;
+    fail_context_up->src_io    = c->src_io;
     self->up->upStream(self->up, fail_context_up);
 
     context_t *fail_context = newFinContext(c->line);
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
-    return;
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
-    wolfssl_client_con_state_t *cstate = CSTATE(c);
+    wssl_client_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        int n;
+        int            n;
         enum sslstatus status;
         // if (!cstate->handshake_completed)
 
@@ -263,72 +261,73 @@ static inline void downStream(tunnel_t *self, context_t *c)
             shiftr(c->payload, n);
             len -= n;
 
-            if (!cstate->handshake_completed)
+            if (! cstate->handshake_completed)
             {
                 // printSSLState(cstate->ssl);
                 n = SSL_connect(cstate->ssl);
                 // printSSLState(cstate->ssl);
-                status = get_sslstatus(cstate->ssl, n);
+                status = getSslStatus(cstate->ssl, n);
 
                 /* Did SSL request to write bytes? */
-                if (status == SSLSTATUS_WANT_IO)
+                if (status == kSslstatusWantIo)
+                {
                     do
                     {
-                        shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-                        size_t avail = rCap(buf);
-                        n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                        shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
+                        size_t          avail = rCap(buf);
+                        n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
 
                         if (n > 0)
                         {
                             setLen(buf, n);
                             context_t *req_cont = newContextFrom(c);
-                            req_cont->payload = buf;
+                            req_cont->payload   = buf;
                             self->up->upStream(self->up, req_cont);
-                            if (!isAlive(c->line))
+                            if (! isAlive(c->line))
                             {
                                 reuseContextBuffer(c);
                                 destroyContext(c);
                                 return;
                             }
                         }
-                        else if (!BIO_should_retry(cstate->rbio))
+                        else if (! BIO_should_retry(cstate->rbio))
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextBuffer(c);
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            reuseBuffer(getContextBufferPool(c), buf);
                             goto failed;
                         }
                         else
                         {
-                            reuseBuffer(buffer_pools[c->line->tid], buf);
+                            reuseBuffer(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
-
-                if (status == SSLSTATUS_FAIL)
+                }
+                if (status == kSslstatusFail)
                 {
-                    int x = SSL_get_verify_result(cstate->ssl);
+                    SSL_get_verify_result(cstate->ssl);
                     printSSLError();
                     reuseContextBuffer(c);
                     goto failed;
                 }
 
                 /* Did SSL request to write bytes? */
-                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
-                size_t avail = rCap(buf);
-                n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
+                size_t          avail = rCap(buf);
+                n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {
                     setLen(buf, n);
                     context_t *data_ctx = newContext(c->line);
-                    data_ctx->payload = buf;
+                    data_ctx->payload   = buf;
                     self->up->upStream(self->up, data_ctx);
                 }
                 else
                 {
-                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    reuseBuffer(getContextBufferPool(c), buf);
                 }
 
-                if (!SSL_is_init_finished(cstate->ssl))
+                if (! SSL_is_init_finished(cstate->ssl))
                 {
                     //     reuseContextBuffer(c);
                     //     destroyContext(c);
@@ -336,19 +335,19 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    LOGD("OpensslClient: Tls handshake complete");
+                    LOGD("WolfClient: Tls handshake complete");
                     cstate->handshake_completed = true;
-                    context_t *dw_est_ctx = newContextFrom(c);
-                    dw_est_ctx->est = true;
+                    context_t *dw_est_ctx       = newContextFrom(c);
+                    dw_est_ctx->est             = true;
                     self->dw->downStream(self->dw, dw_est_ctx);
-                    if (!isAlive(c->line))
+                    if (! isAlive(c->line))
                     {
-                        LOGW("OpensslClient: prev node instantly closed the est with fin");
+                        LOGW("WolfsslClient: prev node instantly closed the est with fin");
                         reuseContextBuffer(c);
                         destroyContext(c);
                         return;
                     }
-                    flush_write_queue(self, c);
+                    flushWriteQueue(self, c);
                     // queue is flushed and we are done
                     // reuseContextBuffer(c);
                     // destroyContext(c);
@@ -362,25 +361,25 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
             /* The encrypted data is now in the input bio so now we can perform actual
              * read of unencrypted data. */
-            // shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+            // shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
             // shiftl(buf, 8192 / 2);
             // setLen(buf, 0);
 
             do
             {
-                shift_buffer_t *buf = popBuffer(buffer_pools[c->line->tid]);
+                shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, 8192 / 2);
                 setLen(buf, 0);
                 size_t avail = rCap(buf);
-                n = SSL_read(cstate->ssl, rawBufMut(buf), avail);
+                n            = SSL_read(cstate->ssl, rawBufMut(buf), avail);
 
                 if (n > 0)
                 {
                     setLen(buf, n);
                     context_t *data_ctx = newContextFrom(c);
-                    data_ctx->payload = buf;
+                    data_ctx->payload   = buf;
                     self->dw->downStream(self->dw, data_ctx);
-                    if (!isAlive(c->line))
+                    if (! isAlive(c->line))
                     {
                         reuseContextBuffer(c);
                         destroyContext(c);
@@ -389,14 +388,14 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    reuseBuffer(buffer_pools[c->line->tid], buf);
+                    reuseBuffer(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
 
-            status = get_sslstatus(cstate->ssl, n);
+            status = getSslStatus(cstate->ssl, n);
 
-            if (status == SSLSTATUS_FAIL)
+            if (status == kSslstatusFail)
             {
                 reuseContextBuffer(c);
                 goto failed;
@@ -414,7 +413,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
             self->dw->downStream(self->dw, c);
         }
         else
+        {
             destroyContext(c);
+        }
     }
 
     return;
@@ -427,43 +428,24 @@ failed:;
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
-
-    return;
-}
-
-static void wolfSSLUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void wolfSSLPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c); // TODO : DTLS
-}
-static void wolfSSLDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void wolfSSLPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
 }
 
 tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
 {
-    wolfssl_client_state_t *state = malloc(sizeof(wolfssl_client_state_t));
-    memset(state, 0, sizeof(wolfssl_client_state_t));
+    wssl_client_state_t *state = malloc(sizeof(wssl_client_state_t));
+    memset(state, 0, sizeof(wssl_client_state_t));
 
     ssl_ctx_opt_t *ssl_param = malloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
-    if (!(cJSON_IsObject(settings) && settings->child != NULL))
+    if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: WolfSSLClient->settings (object field) : The object was empty or invalid");
         return NULL;
     }
 
-    if (!getStringFromJsonObject(&(state->sni), settings, "sni"))
+    if (! getStringFromJsonObject(&(state->sni), settings, "sni"))
     {
         LOGF("JSON Error: WolfSSLClient->settings->sni (string field) : The data was empty or invalid");
         return NULL;
@@ -474,12 +456,12 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    if (!getBoolFromJsonObject(&(state->verify), settings, "verify"))
+    if (! getBoolFromJsonObject(&(state->verify), settings, "verify"))
     {
         state->verify = true;
     }
 
-    if (!getStringFromJsonObject((char **)&(state->alpn), settings, "alpn"))
+    if (! getStringFromJsonObject(&(state->alpn), settings, "alpn"))
     {
         LOGF("JSON Error: WolfSSLClient->settings->alpn (string field) : The data was empty or invalid");
         return NULL;
@@ -491,9 +473,9 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
     }
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
-    ssl_param->endpoint = SSL_CLIENT;
+    ssl_param->endpoint    = kSslClient;
     // ssl_param->ca_path = "cacert.pem";
-    state->ssl_context = ssl_ctx_new(ssl_param);
+    state->ssl_context = sslCtxNew(ssl_param);
     free(ssl_param);
     // SSL_CTX_load_verify_store(state->ssl_context,cacert_bytes);
 
@@ -507,31 +489,31 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
     struct
     {
         uint8_t len;
-        char alpn_data[];
-    } *ossl_alpn = malloc(1 + alpn_len);
+        char    alpn_data[];
+    } *ossl_alpn   = malloc(1 + alpn_len);
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *)ossl_alpn, 1 + alpn_len);
+    SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *) ossl_alpn, 1 + alpn_len);
     free(ossl_alpn);
 
-    tunnel_t *t = newTunnel();
-    t->state = state;
-
-    t->upStream = &wolfSSLUpStream;
-    t->packetUpStream = &wolfSSLPacketUpStream;
-    t->downStream = &wolfSSLDownStream;
-    t->packetDownStream = &wolfSSLPacketDownStream;
+    tunnel_t *t   = newTunnel();
+    t->state      = state;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
 }
 
-api_result_t apiWolfSSLClient(tunnel_t *self, char *msg)
+api_result_t apiWolfSSLClient(tunnel_t *self, const char *msg)
 {
-    (void)(self); (void)(msg); return (api_result_t){0}; // TODO
+    (void) (self);
+    (void) (msg);
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyWolfSSLClient(tunnel_t *self)
 {
+    (void) (self);
     return NULL;
 }
 

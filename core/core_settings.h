@@ -28,7 +28,6 @@ struct core_settings_s
 };
 
 void parseCoreSettings(char *data_json);
-void increaseFileLimit();
 
 char *getCoreLoggerFullPath();
 char *getNetworkLoggerFullPath();

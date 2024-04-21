@@ -8,7 +8,7 @@ typedef struct tunnel_lib_s
 {
     hash_t hash_name;
     struct tunnel_s *(*creation_proc)(node_instance_context_t *instance_info);
-    api_result_t (*api_proc)(struct tunnel_s *instance, char *msg);
+    api_result_t (*api_proc)(struct tunnel_s *instance,const char *msg);
     struct tunnel_s *(*destroy_proc)(struct tunnel_s *instance);
     tunnel_metadata_t (*getmetadata_proc)();
 
