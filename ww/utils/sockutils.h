@@ -47,11 +47,11 @@ enum socket_address_type getHostAddrType(char *host);
 
 inline void allocateDomainBuffer(socket_context_t *scontext)
 {
-    if (scontext->domain != NULL)
+    if (scontext->domain == NULL)
     {
         scontext->domain = malloc(256);
 #ifdef DEBUG
-        memset(&(scontext->domain), 0xEE, 256);
+        memset(scontext->domain, 0xEE, 256);
 #endif
     }
 }

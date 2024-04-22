@@ -11,7 +11,7 @@
 #include "utils/stringutils.h"
 
 #undef hlog
-#define hlog      getCoreLogger() // NOLINT
+#define hlog getCoreLogger() // NOLINT
 
 #define CORE_FILE "core.json"
 
@@ -33,28 +33,27 @@ int main(void)
     free(core_file_content);
 
     //  [Runtime setup]
-    {
-        hv_mkdir_p(getCoreSettings()->log_path);
+    hv_mkdir_p(getCoreSettings()->log_path);
 
-        // libhv has a separate logger, we attach it to the core logger
-        logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
-        logger_set_handler(hv_default_logger(), getCoreLoggerHandle(getCoreSettings()->core_log_console));
+    ww_construction_data_t runtime_data = {
+        .workers_count       = getCoreSettings()->workers_count,
+        .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreLoggerFullPath(),
+                                                         .log_level     = getCoreSettings()->core_log_level,
+                                                         .log_console   = getCoreSettings()->core_log_console},
+        .network_logger_data = (logger_construction_data_t){.log_file_path = getNetworkLoggerFullPath(),
+                                                            .log_level     = getCoreSettings()->network_log_level,
+                                                            .log_console   = getCoreSettings()->network_log_level},
+        .dns_logger_data     = (logger_construction_data_t){.log_file_path = getDnsLoggerFullPath(),
+                                                        .log_level     = getCoreSettings()->dns_log_level,
+                                                        .log_console   = getCoreSettings()->dns_log_console},
+    };
 
-        ww_construction_data_t runtime_data = {
-            .workers_count       = getCoreSettings()->workers_count,
-            .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreLoggerFullPath(),
-                                                             .log_level     = getCoreSettings()->core_log_level,
-                                                             .log_console   = getCoreSettings()->core_log_console},
-            .network_logger_data = (logger_construction_data_t){.log_file_path = getNetworkLoggerFullPath(),
-                                                                .log_level     = getCoreSettings()->network_log_level,
-                                                                .log_console   = getCoreSettings()->network_log_level},
-            .dns_logger_data     = (logger_construction_data_t){.log_file_path = getDnsLoggerFullPath(),
-                                                            .log_level     = getCoreSettings()->dns_log_level,
-                                                            .log_console   = getCoreSettings()->dns_log_console},
-        };
+    createWW(runtime_data);
 
-        createWW(runtime_data);
-    }
+    // libhv has a separate logger, we attach it to the core logger
+    logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
+    logger_set_handler(hv_default_logger(), getCoreLoggerHandle(getCoreSettings()->core_log_console));
+
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
     increaseFileLimit();
@@ -80,7 +79,7 @@ int main(void)
             break;
         }
     }
-    LOGD("Core: starting eventloops ...");
+    LOGD("Core: starting workers ...");
     startSocketManager();
     runMainThread();
 }

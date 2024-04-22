@@ -106,10 +106,10 @@ void createWW(ww_construction_data_t runtime_data)
         setDnsLoggerLevelByStr(runtime_data.dns_logger_data.log_level);
     }
 
-    workers_count = workers_count;
+    workers_count = runtime_data.workers_count;
     if (workers_count <= 0 || workers_count > 255)
     {
-        fprintf(stderr, "workers count was not in valid range, value: %u range:[1,255]", workers_count);
+        fprintf(stderr, "workers count was not in valid range, value: %u range:[1,255]\n", workers_count);
     }
 
     workers = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);

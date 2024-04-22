@@ -18,6 +18,10 @@
 # Disabled:
 #  -google-readability-namespace-comments the *_CLIENT_NS is a macro, and
 #   clang-tidy fails to match it against the initial value.
+
+# Radkesvat:
+# FunctionCase -> camelBack
+
 Checks: >
   -*,
   bugprone-*,
