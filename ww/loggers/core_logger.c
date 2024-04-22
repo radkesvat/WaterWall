@@ -33,20 +33,13 @@ static void generateLogFileName(const char *filepath, time_t ts, char *buf, int 
     struct tm *tm = localtime(&ts);
     snprintf(buf, len, "%s.%04d%02d%02d.log", filepath, tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
 }
-static void logfileName(const char *filepath, time_t ts, char *buf, int len)
-{
-    struct tm *tm = localtime(&ts);
-    snprintf(buf, len, "%s.%04d%02d%02d.log",
-             filepath,
-             tm->tm_year + 1900,
-             tm->tm_mon + 1,
-             tm->tm_mday);
-}
 
 static FILE *logFileShift(logger_t *logger)
 {
-    time_t ts_now = time(NULL);
-    int interval_days = logger->last_logfile_ts == 0 ? 0 : (ts_now + S_GMTOFF) / SECONDS_PER_DAY - (logger->last_logfile_ts + S_GMTOFF) / SECONDS_PER_DAY;
+    time_t ts_now        = time(NULL);
+    long   interval_days = logger->last_logfile_ts == 0 ? 0
+                                                        : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
+                                                            (logger->last_logfile_ts + S_GMTOFF) / SECONDS_PER_DAY;
     if (logger->fp_ == NULL || interval_days > 0)
     {
         // close old logfile
@@ -66,10 +59,10 @@ static FILE *logFileShift(logger_t *logger)
             if (interval_days >= logger->remain_days)
             {
                 // remove [today-interval_days, today-remain_days] logfile
-                for (int i = interval_days; i >= logger->remain_days; --i)
+                for (long i = interval_days; i >= logger->remain_days; --i)
                 {
                     time_t ts_rm = ts_now - i * SECONDS_PER_DAY;
-                    logfileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
+                    generateLogFileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                     remove(rm_logfile);
                 }
             }
@@ -77,7 +70,7 @@ static FILE *logFileShift(logger_t *logger)
             {
                 // remove today-remain_days logfile
                 time_t ts_rm = ts_now - logger->remain_days * SECONDS_PER_DAY;
-                logfileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
+                generateLogFileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                 remove(rm_logfile);
             }
         }
@@ -86,8 +79,8 @@ static FILE *logFileShift(logger_t *logger)
     // open today logfile
     if (logger->fp_ == NULL)
     {
-        logfileName(logger->filepath, ts_now, logger->cur_logfile, sizeof(logger->cur_logfile));
-        logger->fp_ = fopen(logger->cur_logfile, "a");
+        generateLogFileName(logger->filepath, ts_now, logger->cur_logfile, sizeof(logger->cur_logfile));
+        logger->fp_             = fopen(logger->cur_logfile, "a");
         logger->last_logfile_ts = ts_now;
     }
 
@@ -95,7 +88,7 @@ static FILE *logFileShift(logger_t *logger)
     if (logger->fp_ && --logger->can_write_cnt < 0)
     {
         fseek(logger->fp_, 0, SEEK_END);
-        long filesize = ftell(logger->fp_);
+        unsigned long long filesize = ftell(logger->fp_);
         if (filesize > logger->max_filesize)
         {
             fclose(logger->fp_);
@@ -111,7 +104,8 @@ static FILE *logFileShift(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt = (logger->max_filesize - filesize) / logger->bufsize;
+            logger->can_write_cnt =
+                ((long long) logger->max_filesize - (long long) filesize) / (long long) logger->bufsize;
         }
     }
 
