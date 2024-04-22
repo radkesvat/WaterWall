@@ -1,7 +1,7 @@
 #include "mux_client.h"
 #include "loggers/network_logger.h"
-#include "hv/hv.h"
-#include "hv/hloop.h"
+#include "hv.h"
+#include "hloop.h"
 #include <time.h>
 
 #define STATE(x) ((mux_state_t *)((x)->state))

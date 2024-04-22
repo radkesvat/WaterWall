@@ -1,7 +1,7 @@
 #pragma once
 #include "api.h"
 #include "buffer_stream.h"
-#include "hv/hatomic.h"
+#include "hatomic.h"
 
 typedef struct reverse_server_con_state_s
 {

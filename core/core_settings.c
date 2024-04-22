@@ -1,5 +1,5 @@
 #include "core_settings.h"
-#include "hv/hsysinfo.h"
+#include "hsysinfo.h"
 #include "utils/jsonutils.h"
 #include "utils/stringutils.h"
 #include <assert.h> // for assert

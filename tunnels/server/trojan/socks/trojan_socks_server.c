@@ -1,6 +1,6 @@
 #include "trojan_socks_server.h"
 #include "buffer_stream.h"
-#include "hv/hsocket.h"
+#include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "utils/stringutils.h"
 #include "utils/userutils.h"

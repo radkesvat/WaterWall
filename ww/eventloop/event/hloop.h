@@ -4,6 +4,7 @@
 #include "hexport.h"
 #include "hplatform.h"
 #include "hdef.h"
+#include "buffer_pool.h"
 
 typedef struct hloop_s      hloop_t;
 typedef struct hevent_s     hevent_t;

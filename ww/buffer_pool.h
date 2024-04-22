@@ -2,7 +2,7 @@
 
 #include "shiftbuffer.h"
 #ifdef DEBUG
-#include "hv/hatomic.h"
+#include "hatomic.h"
 #endif
 struct buffer_pool_s
 {

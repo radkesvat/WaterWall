@@ -1,7 +1,7 @@
 #pragma once
 #include "api.h"
 #include "buffer_stream.h"
-#include "hv/hatomic.h"
+#include "hatomic.h"
 
 struct connect_arg
 {

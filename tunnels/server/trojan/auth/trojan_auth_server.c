@@ -1,5 +1,5 @@
 #include "trojan_auth_server.h"
-#include "hv/hatomic.h"
+#include "hatomic.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "utils/stringutils.h"

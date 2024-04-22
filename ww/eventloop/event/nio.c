@@ -60,8 +60,6 @@ static void __close_cb(hio_t* io) {
     hio_close_cb(io);
 }
 
-
-
 static void nio_accept(hio_t* io) {
     // printd("nio_accept listenfd=%d\n", io->fd);
     int connfd = 0, err = 0, accept_cnt = 0;
@@ -87,7 +85,6 @@ static void nio_accept(hio_t* io) {
         // NOTE: inherit from listenio
         connio->accept_cb = io->accept_cb;
         connio->userdata = io->userdata;
-
 
         __accept_cb(connio);
     }
@@ -198,12 +195,9 @@ read:
     //         len = (1U << 20); // 1 MB
     //     }else
     // #endif
-    if (io->read_flags & HIO_READ_UNTIL_LENGTH) {
-        len = io->read_until_length - (io->readbuf.tail - io->readbuf.head);
-    }
-    else {
-        len = io->readbuf.len - io->readbuf.tail;
-    }
+
+    len = io->readbuf.len - io->readbuf.tail;
+
     assert(len > 0);
     nread = __nio_read(io, buf, len);
     // printd("read retval=%d\n", nread);
