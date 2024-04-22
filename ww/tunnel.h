@@ -2,8 +2,8 @@
 
 #include "basic_types.h"
 #include "buffer_pool.h"
-#include "hv/hatomic.h"
-#include "hv/hloop.h"
+#include "hatomic.h"
+#include "hloop.h"
 #include "ww.h"
 
 #define MAX_CHAIN_LEN (16 * 2)

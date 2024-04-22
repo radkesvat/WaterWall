@@ -1,6 +1,6 @@
 #pragma once
 #include "basic_types.h"
-#include "hv/hsocket.h"
+#include "hsocket.h"
 
 inline void sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source)
 {

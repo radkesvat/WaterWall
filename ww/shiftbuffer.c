@@ -1,5 +1,5 @@
 #include "shiftbuffer.h"
-#include "hv/hlog.h"
+#include "hlog.h"
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
 

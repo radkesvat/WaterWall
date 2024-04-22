@@ -1,7 +1,7 @@
 #pragma once
 #include "basic_types.h"
 #include "cJSON.h"
-#include "hv/hplatform.h" // for bool
+#include "hplatform.h" // for bool
 
 // dest must be pre-allocated
 bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key);

@@ -25,6 +25,7 @@ add_library(ww STATIC
 )
 
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libhv/include)
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
@@ -84,7 +85,7 @@ set(WITH_HTTP_CLIENT OFF CACHE BOOL "lbhv no http client")
 set(BUILD_SHARED OFF CACHE BOOL "ibhv no shared lib")
 set(BUILD_EXAMPLES OFF CACHE BOOL "ibhv dont build examples")
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/libhv)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/eventloop)
 
 # CPMAddPackage(
 #     NAME libhv
@@ -103,7 +104,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/libhv)
 # )
 # target_compile_options(hv_static PRIVATE -fPIC) 
 # target_compile_options(ww PUBLIC -fPIC)  
-# message( FATAL_ERROR "Y" )
+# message( FATAL_ERROR "OEUOUEOU: ${CMAKE_INSTALL_PREFIX}" )
 
 # target_compile_options(ww PUBLIC -pg)
 # target_link_options(ww PUBLIC -pg)
@@ -119,7 +120,6 @@ endif()
 # endif()
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
-target_link_libraries(ww hv_static) 
 
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
