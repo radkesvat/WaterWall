@@ -2,12 +2,13 @@
 #include "loggers/network_logger.h"
 
 #include "cacert.h"
-#include <wolfssl/options.h>
 #include <wolfssl/openssl/bio.h>
 #include <wolfssl/openssl/err.h>
 #include <wolfssl/openssl/pem.h>
 #include <wolfssl/openssl/ssl.h>
-enum
+#include <wolfssl/options.h>
+
+enum ssl_endpoint
 {
     kSslServer = 0,
     kSslClient = 1,
@@ -39,12 +40,12 @@ static void wolfSslGlobalInit()
 
 typedef struct
 {
-    const char *crt_file;
-    const char *key_file;
-    const char *ca_file;
-    const char *ca_path;
-    short       verify_peer;
-    short       endpoint; // HSSL_client / HSSL_CLIENT
+    const char *      crt_file;
+    const char *      key_file;
+    const char *      ca_file;
+    const char *      ca_path;
+    short             verify_peer;
+    enum ssl_endpoint endpoint;
 } ssl_ctx_opt_t;
 typedef void *ssl_ctx_t; ///> SSL_CTX
 
@@ -110,7 +111,7 @@ static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
         if (param->verify_peer)
         {
             mode = SSL_VERIFY_PEER;
-            if (param->endpoint == HSSL_SERVER)
+            if (param->endpoint == kSslServer)
             {
                 mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
             }

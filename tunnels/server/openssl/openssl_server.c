@@ -1,10 +1,10 @@
 #include "openssl_server.h"
 #include "buffer_pool.h"
 #include "buffer_stream.h"
+#include "frand.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "openssl_globals.h"
-#include "utils/jsonutils.h"
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -65,7 +65,7 @@ static int onAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outl
     unsigned int        offset = 0;
     while (offset < inlen)
     {
-        LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
+        // LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
         for (int i = 0; i < state->alpns_length; i++)
         {
             if (0 == strncmp((const char *) &(in[1 + offset]), state->alpns[i].name,
@@ -110,9 +110,14 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
     (void) ssl;
     (void) type;
     (void) len;
-
     oss_server_con_state_t *cstate = arg;
-    return cstate->reply_sent_tit < 10 ? (16 * 200) : 0;
+
+    if (cstate->reply_sent_tit < 10)
+    {
+        return (16 * (200 + (0x3F & fastRand())));
+    }
+
+    return 0;
 }
 
 static void cleanup(tunnel_t *self, context_t *c)
@@ -704,7 +709,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     t->state    = state;
     if (state->fallback != NULL)
     {
-        chainDown(t,state->fallback);
+        chainDown(t, state->fallback);
     }
     t->upStream   = &upStream;
     t->downStream = &downStream;

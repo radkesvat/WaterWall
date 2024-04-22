@@ -10,6 +10,7 @@
 
 unsigned int             workers_count  = 0;
 hthread_t *              workers        = NULL;
+unsigned int             frand_seed     = 0;
 struct hloop_s **        loops          = NULL;
 struct buffer_pool_s **  buffer_pools   = NULL;
 struct socket_manager_s *socekt_manager = NULL;
@@ -22,6 +23,7 @@ struct ww_runtime_state_s
 {
     unsigned int             workers_count;
     hthread_t *              workers;
+    unsigned int             frand_seed;
     struct hloop_s **        loops;
     struct buffer_pool_s **  buffer_pools;
     struct socket_manager_s *socekt_manager;
@@ -36,6 +38,7 @@ void setWW(struct ww_runtime_state_s *state)
 
     workers_count  = state->workers_count;
     workers        = state->workers;
+    frand_seed     = state->frand_seed;
     loops          = state->loops;
     buffer_pools   = state->buffer_pools;
     socekt_manager = state->socekt_manager;
@@ -54,6 +57,7 @@ struct ww_runtime_state_s *getWW()
     memset(state, 0, sizeof(struct ww_runtime_state_s));
     state->workers_count  = workers_count;
     state->workers        = workers;
+    state->frand_seed     = frand_seed;
     state->loops          = loops;
     state->buffer_pools   = buffer_pools;
     state->socekt_manager = socekt_manager;
@@ -113,6 +117,8 @@ void createWW(ww_construction_data_t runtime_data)
     }
 
     workers = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
+
+    frand_seed = time(NULL);
 
     loops = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
     for (int i = 1; i < workers_count; ++i)
