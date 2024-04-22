@@ -75,21 +75,31 @@ endif()
 
 
 # add libhv
-CPMAddPackage(
-    NAME libhv
-    GIT_TAG HEAD
-    GITHUB_REPOSITORY radkesvat/libhv
-    OPTIONS 
-    "WITH_OPENSSL OFF"
-    "WITH_EVPP OFF"
-    "WITH_HTTP OFF"
-    "WITH_HTTP_SERVER OFF"
-    "WITH_HTTP_CLIENT OFF"
-    "BUILD_SHARED OFF"
-    "BUILD_EXAMPLES OFF"
+set(WITH_OPENSSL OFF CACHE BOOL "libhv without openssl binding")
+set(WITH_EVPP OFF CACHE BOOL "libhv no c++ eventpool")
+set(WITH_HTTP OFF CACHE BOOL "libhv no http")
+set(WITH_HTTP_SERVER OFF CACHE BOOL "ibhv no http server")
+set(WITH_HTTP_CLIENT OFF CACHE BOOL "lbhv no http client")
+set(BUILD_SHARED OFF CACHE BOOL "ibhv no shared lib")
+set(BUILD_EXAMPLES OFF CACHE BOOL "ibhv dont build examples")
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/libhv)
+
+# CPMAddPackage(
+#     NAME libhv
+#     GIT_TAG HEAD
+#     GITHUB_REPOSITORY radkesvat/libhv
+#     OPTIONS 
+#     "WITH_OPENSSL OFF"
+#     "WITH_EVPP OFF"
+#     "WITH_HTTP OFF"
+#     "WITH_HTTP_SERVER OFF"
+#     "WITH_HTTP_CLIENT OFF"
+#     "BUILD_SHARED OFF"
+#     "BUILD_EXAMPLES OFF"
     
 
-)
+# )
 # target_compile_options(hv_static PRIVATE -fPIC) 
 # target_compile_options(ww PUBLIC -fPIC)  
 # message( FATAL_ERROR "Y" )
