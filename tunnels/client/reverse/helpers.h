@@ -7,7 +7,6 @@
 #define CSTATE_U(x)            ((reverse_client_con_state_t *) ((((x)->line->chains_state)[state->chain_index_pi])))
 #define CSTATE_D_MUT(x)        ((x)->line->chains_state)[state->chain_index_pi]
 #define CSTATE_U_MUT(x)        ((x)->line->chains_state)[state->chain_index_pi]
-#define IS_ALIVE(x)             (((((x)->line->chains_state)[state->chain_index_pi])) != NULL)
 #define PRECONNECT_DELAY_SHORT 10
 #define PRECONNECT_DELAY_HIGH  750
 
@@ -50,12 +49,19 @@ static void beforeConnect(hevent_t *ev)
 {
     struct connect_arg *cg            = hevent_userdata(ev);
     htimer_t *          connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
-    hevent_set_userdata(connect_timer, cg);
+    if (connect_timer)
+    {
+        hevent_set_userdata(connect_timer, cg);
+    }
+    else
+    {
+        doConnect(cg);
+    }
 }
 
-static void initiateConnect(tunnel_t *self, uint8_t tid,bool delay)
+static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
 {
-    reverse_client_state_t *    state  = STATE(self);
+    reverse_client_state_t *state = STATE(self);
 
     if (state->unused_cons[tid] >= state->connection_per_thread)
     {

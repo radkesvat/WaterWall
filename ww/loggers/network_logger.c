@@ -3,27 +3,27 @@
 #include "hv/hmutex.h"
 
 
-struct logger_s
-{
-    logger_handler     handler;
-    unsigned long long bufsize;
-    char              *buf;
 
-    int  level;
-    int  enable_color;
-    char format[64];
+struct logger_s {
+    logger_handler  handler;
+    unsigned int    bufsize;
+    char*           buf;
+
+    int             level;
+    int             enable_color;
+    char            format[64];
 
     // for file logger
-    char               filepath[256];
-    unsigned long long max_filesize;
-    long               remain_days;
-    int                enable_fsync;
-    FILE              *fp_;
-    char               cur_logfile[256];
-    time_t             last_logfile_ts;
-    long long          can_write_cnt;
+    char                filepath[256];
+    unsigned long long  max_filesize;
+    int                 remain_days;
+    int                 enable_fsync;
+    FILE*               fp_;
+    char                cur_logfile[256];
+    time_t              last_logfile_ts;
+    int                 can_write_cnt;
 
-    hmutex_t mutex_; // thread-safe
+    hmutex_t            mutex_; // thread-safe
 };
 
 static logger_t     *logger   = NULL;
@@ -106,8 +106,8 @@ static FILE *logFileShift(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt =
-                ((long long) logger->max_filesize - (long long) filesize) / (long long) logger->bufsize;
+                       logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / logger->bufsize);
+
         }
     }
 

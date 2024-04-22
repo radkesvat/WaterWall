@@ -2,32 +2,30 @@
 #include "hv/hbase.h"
 #include "hv/hmutex.h"
 
-struct logger_s
-{
-    logger_handler     handler;
-    unsigned long long bufsize;
-    char              *buf;
 
-    int  level;
-    int  enable_color;
-    char format[64];
+struct logger_s {
+    logger_handler  handler;
+    unsigned int    bufsize;
+    char*           buf;
+
+    int             level;
+    int             enable_color;
+    char            format[64];
 
     // for file logger
-    char               filepath[256];
-    unsigned long long max_filesize;
-    long               remain_days;
-    int                enable_fsync;
-    FILE              *fp_;
-    char               cur_logfile[256];
-    time_t             last_logfile_ts;
-    long long          can_write_cnt;
+    char                filepath[256];
+    unsigned long long  max_filesize;
+    int                 remain_days;
+    int                 enable_fsync;
+    FILE*               fp_;
+    char                cur_logfile[256];
+    time_t              last_logfile_ts;
+    int                 can_write_cnt;
 
-    hmutex_t mutex_; // thread-safe
+    hmutex_t            mutex_; // thread-safe
 };
-
-static logger_t     *logger   = NULL;
+static logger_t *logger = NULL;
 #define S_GMTOFF 28800 // 8*3600
-
 
 static void generateLogFileName(const char *filepath, time_t ts, char *buf, int len)
 {
@@ -39,7 +37,7 @@ static FILE *logFileShift(logger_t *logger)
 {
     time_t ts_now        = time(NULL);
     long   interval_days = logger->last_logfile_ts == 0 ? 0
-                                                        : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
+                                                      : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
                                                             (logger->last_logfile_ts + S_GMTOFF) / SECONDS_PER_DAY;
     if (logger->fp_ == NULL || interval_days > 0)
     {
@@ -105,8 +103,7 @@ static FILE *logFileShift(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt =
-                ((long long) logger->max_filesize - (long long) filesize) / (long long) logger->bufsize;
+            logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / logger->bufsize);
         }
     }
 
@@ -134,7 +131,6 @@ static void logFileWrite(logger_t *logger, const char *buf, int len)
         }
     }
 }
-
 
 static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {

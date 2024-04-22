@@ -534,7 +534,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
             cstate->udp_buf                         = newBufferStream(getContextBufferPool(c));
-            allocateDomainBuffer(&(c->line->dest_ctx));
+            allocateDomainBuffer(&(c->line->dest_ctx),true);
             destroyContext(c);
         }
         else if (c->fin)

@@ -40,26 +40,24 @@ void        copySocketContextAddr(socket_context_t *dest, const socket_context_t
 void        copySocketContextPort(socket_context_t *dest, socket_context_t *source);
 inline void setSocketContextPort(socket_context_t *dest, uint16_t port)
 {
-    dest->addr.sin.sin_port = port;
+    dest->addr.sin.sin_port = htons(port);
 }
 
 enum socket_address_type getHostAddrType(char *host);
 
-inline void allocateDomainBuffer(socket_context_t *scontext)
+inline void allocateDomainBuffer(socket_context_t *scontext, bool freeable)
 {
-    if (scontext->domain == NULL)
-    {
-        scontext->domain = malloc(256);
+    scontext->domain_constant = ! freeable;
+    scontext->domain          = malloc(256);
 #ifdef DEBUG
-        memset(scontext->domain, 0xEE, 256);
+    memset(scontext->domain, 0xEE, 256);
 #endif
-    }
 }
 // len is max 255 since it is 8bit
-inline void setSocketContextDomain(socket_context_t *restrict scontext,const char *restrict domain, uint8_t len)
+inline void setSocketContextDomain(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len)
 {
     assert(scontext->domain != NULL);
     memcpy(scontext->domain, domain, len);
     scontext->domain[len] = 0x0;
-    scontext->domain_len = len;
+    scontext->domain_len  = len;
 }

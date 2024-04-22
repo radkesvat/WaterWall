@@ -83,7 +83,7 @@ inline line_t *newLine(uint8_t tid)
         .dest_ctx = (socket_context_t){.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
         .src_ctx  = (socket_context_t){.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
     };
-    memset(&(result->chains_state), 0, MAX_CHAIN_LEN);
+    memset(&(result->chains_state), 0, (sizeof(void *) * MAX_CHAIN_LEN));
     return result;
 }
 inline uint8_t reserveChainStateIndex(line_t *l)

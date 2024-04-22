@@ -414,7 +414,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     if (state->dest_addr_selected.status == kDvsConstant)
     {
         state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
-        allocateDomainBuffer(&(state->constant_dest_addr));
+        allocateDomainBuffer(&(state->constant_dest_addr),false);
         setSocketContextDomain(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
                                strlen(state->dest_addr_selected.value_ptr));
     }

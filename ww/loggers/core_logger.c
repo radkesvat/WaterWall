@@ -4,9 +4,9 @@
 
 struct logger_s
 {
-    logger_handler     handler;
-    unsigned long long bufsize;
-    char              *buf;
+    logger_handler handler;
+    unsigned int   bufsize;
+    char *         buf;
 
     int  level;
     int  enable_color;
@@ -15,12 +15,12 @@ struct logger_s
     // for file logger
     char               filepath[256];
     unsigned long long max_filesize;
-    long               remain_days;
+    int                remain_days;
     int                enable_fsync;
-    FILE              *fp_;
+    FILE *             fp_;
     char               cur_logfile[256];
     time_t             last_logfile_ts;
-    long long          can_write_cnt;
+    int                can_write_cnt;
 
     hmutex_t mutex_; // thread-safe
 };
@@ -38,7 +38,7 @@ static FILE *logFileShift(logger_t *logger)
 {
     time_t ts_now        = time(NULL);
     long   interval_days = logger->last_logfile_ts == 0 ? 0
-                                                        : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
+                                                      : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
                                                             (logger->last_logfile_ts + S_GMTOFF) / SECONDS_PER_DAY;
     if (logger->fp_ == NULL || interval_days > 0)
     {
@@ -104,8 +104,7 @@ static FILE *logFileShift(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt =
-                ((long long) logger->max_filesize - (long long) filesize) / (long long) logger->bufsize;
+            logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / logger->bufsize);
         }
     }
 

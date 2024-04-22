@@ -60,10 +60,17 @@ static void beforeConnect(hevent_t *ev)
 {
     struct connect_arg *cg            = hevent_userdata(ev);
     htimer_t *          connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
-    hevent_set_userdata(connect_timer, cg);
+    if (connect_timer)
+    {
+        hevent_set_userdata(connect_timer, cg);
+    }
+    else
+    {
+        doConnect(cg);
+    }
 }
 
-static void initiateConnect(tunnel_t *self,bool delay)
+static void initiateConnect(tunnel_t *self, bool delay)
 {
     preconnect_client_state_t *state = STATE(self);
 
@@ -87,14 +94,14 @@ static void initiateConnect(tunnel_t *self,bool delay)
     hloop_t *worker_loop = loops[tid];
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
-    ev.loop                = worker_loop;
-    ev.cb                  = beforeConnect;
+    ev.loop = worker_loop;
+    ev.cb   = beforeConnect;
 
     struct connect_arg *cg = malloc(sizeof(struct connect_arg));
     cg->t                  = self;
     cg->tid                = tid;
     cg->delay              = delay ? PRECONNECT_DELAY_HIGH : PRECONNECT_DELAY_SHORT;
     ev.userdata            = cg;
-    
+
     hloop_post_event(worker_loop, &ev);
 }

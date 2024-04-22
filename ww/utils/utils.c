@@ -15,7 +15,7 @@
 extern void sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source);
 extern bool sockAddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
 extern bool sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
-extern void allocateDomainBuffer(socket_context_t *scontext);
+extern void allocateDomainBuffer(socket_context_t *scontext, bool freeable);
 extern void setSocketContextDomain(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len);
 extern void setSocketContextPort(socket_context_t *dest, uint16_t port);
 
@@ -212,11 +212,11 @@ void copySocketContextAddr(socket_context_t *dest, const socket_context_t *const
             }
             else
             {
-                if (dest->domain && dest->domain_constant)
+                if (dest->domain == NULL || (dest->domain_constant))
                 {
-                    dest->domain_constant = false;
-                    allocateDomainBuffer(dest);
+                    allocateDomainBuffer(dest, false);
                 }
+
                 setSocketContextDomain(dest, source->domain, source->domain_len);
             }
             if (source->domain_resolved)
