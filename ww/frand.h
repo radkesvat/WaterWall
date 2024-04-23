@@ -1,6 +1,6 @@
 #pragma once
 #include "ww.h"
-#include "utils/mathutils.h" // users probably want to use min/max
+#include "utils/mathutils.h"
 
 // seed initialized by ww (generally time())
 // Compute a pseudorandom integer.

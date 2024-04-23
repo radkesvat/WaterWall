@@ -15,13 +15,13 @@
 
 #define MEMORY_PROFILE HIG2_MEMORY // todo (cmake)
 
-#define BASE_READ_BUFSIZE        (1U << 18) // 8K
-#define BUFFERPOOL_CONTAINER_LEN ((16 * 4) + (16 * (1 * MEMORY_PROFILE)))
+#define BASE_READ_BUFSIZE        (1U << 13) // 8K
+#define BUFFERPOOL_CONTAINER_LEN ((16 * 4) + (16 * (16 * MEMORY_PROFILE)))
 #define BUFFER_SIZE              (BASE_READ_BUFSIZE * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1))
 
 static void firstCharge(buffer_pool_t *pool)
 {
-    for (size_t i = 0; i < pool->cap / 2; i++)
+    for (size_t i = 0; i < (pool->cap / 2); i++)
     {
         pool->available[i] = newShiftBuffer(pool->buffers_size);
     }
@@ -60,7 +60,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
-    return newShiftBuffer(BUFFER_SIZE);
+    // return newShiftBuffer(BUFFER_SIZE);
     if (pool->len <= 0)
     {
         reCharge(pool);
@@ -76,8 +76,8 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
-    destroyShiftBuffer(b);
-    return;
+    // destroyShiftBuffer(b);
+    // return;
     if (*(b->refc) > 1)
     {
         destroyShiftBuffer(b);
