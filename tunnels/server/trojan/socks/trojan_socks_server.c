@@ -2,9 +2,9 @@
 #include "buffer_stream.h"
 #include "hsocket.h"
 #include "loggers/network_logger.h"
+#include "utils/sockutils.h"
 #include "utils/stringutils.h"
 #include "utils/userutils.h"
-#include "utils/sockutils.h"
 
 #define CRLF_LEN 2
 
@@ -312,18 +312,12 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         dest_context->address_type = kSatDomainName;
         // size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
         shiftr(c->payload, 1);
-        if (dest_context->domain == NULL)
+        if (! cstate->first_sent) // print once per connection
         {
-            dest_context->domain = malloc(260);
-
-            if (! cstate->first_sent) // print once per connection
-            {
-                LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
-            }
-
-            memcpy(dest_context->domain, rawBuf(c->payload), domain_len);
-            dest_context->domain[domain_len] = 0;
+            LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
         }
+       
+        setSocketContextDomain(dest_context, rawBuf(c->payload), domain_len);
         shiftr(c->payload, domain_len);
 
         break;
@@ -534,7 +528,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
             cstate->udp_buf                         = newBufferStream(getContextBufferPool(c));
-            allocateDomainBuffer(&(c->line->dest_ctx),true);
+            allocateDomainBuffer(&(c->line->dest_ctx), true);
             destroyContext(c);
         }
         else if (c->fin)

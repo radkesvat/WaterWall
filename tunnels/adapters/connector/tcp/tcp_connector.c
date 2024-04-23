@@ -61,7 +61,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
 
         unsigned int bytes  = bufLen(cw->payload);
         int          nwrite = hio_write(io, cw->payload);
-        cw->payload = NULL;
+        cw->payload         = NULL;
         contextQueuePush(cstate->finished_queue, cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
@@ -163,6 +163,10 @@ static void onClose(hio_t *io)
 static void onOutBoundConnected(hio_t *upstream_io)
 {
     tcp_connector_con_state_t *cstate = hevent_userdata(upstream_io);
+    if (cstate == NULL)
+    {
+        return;
+    }
 #ifdef PROFILE
     struct timeval tv2;
     gettimeofday(&tv2, NULL);
@@ -206,7 +210,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             unsigned int bytes  = bufLen(c->payload);
             int          nwrite = hio_write(cstate->io, c->payload);
-            c->payload = NULL;
+            c->payload          = NULL;
             if (nwrite >= 0 && nwrite < bytes)
             {
                 if (c->src_io)

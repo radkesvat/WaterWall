@@ -49,6 +49,7 @@ inline void allocateDomainBuffer(socket_context_t *scontext, bool freeable)
 {
     scontext->domain_constant = ! freeable;
     scontext->domain          = malloc(256);
+    scontext->domain_len      = 0;
 #ifdef DEBUG
     memset(scontext->domain, 0xEE, 256);
 #endif

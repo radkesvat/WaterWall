@@ -63,7 +63,6 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
         {
             reuseContextBuffer(cw);
         }
-        reuseContextBuffer(cw);
         destroyContext(cw);
     }
 
