@@ -188,7 +188,7 @@ static void onOutBoundConnected(hio_t *upstream_io)
     self->downStream(self, est_context);
 }
 
-void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     tcp_connector_con_state_t *cstate = CSTATE(c);
 
@@ -332,7 +332,7 @@ fail:;
     self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
 }
-void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     tcp_connector_con_state_t *cstate = CSTATE(c);
 

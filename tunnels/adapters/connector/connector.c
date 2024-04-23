@@ -33,19 +33,7 @@ static void upStream(tunnel_t *self, context_t *c)
 }
 static void downStream(tunnel_t *self, context_t *c)
 {
-    connector_state_t *state  = STATE(self);
-    switch ((c->line->dest_ctx.address_protocol))
-    {
-
-    default:
-    case kSapTcp:
-        state->tcp_connector->downStream(state->tcp_connector, c);
-        break;
-
-    case kSapUdp:
-        state->udp_connector->downStream(state->udp_connector, c);
-        break;
-    }
+    self->dw->downStream(self->dw,c);
 }
 
 tunnel_t *newConnector(node_instance_context_t *instance_info)
@@ -80,6 +68,10 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
+
+    chainDown(t, state->tcp_connector);
+    chainDown(t, state->udp_connector);
+
     atomic_thread_fence(memory_order_release);
     return t;
 }

@@ -43,12 +43,20 @@
 #include "tunnels/adapters/connector/tcp/tcp_connector.h"
 #endif
 
+#ifdef INCLUDE_UDP_CONNECTOR
+#include "tunnels/adapters/connector/udp/udp_connector.h"
+#endif
+
 #ifdef INCLUDE_BRIDGE
 #include "tunnels/adapters/bridge/bridge.h"
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
 #include "tunnels/server/wolfssl/wolfssl_server.h"
+#endif
+
+#ifdef INCLUDE_WOLFSSL_CLIENT
+#include "tunnels/client/wolfssl/wolfssl_client.h"
 #endif
 
 #ifdef INCLUDE_HTTP2_SERVER
@@ -126,12 +134,24 @@ void loadStaticTunnelsIntoCore()
     USING(TcpConnector);
 #endif
 
+#ifdef INCLUDE_UDP_CONNECTOR
+    USING(UdpConnector);
+#endif
+
 #ifdef INCLUDE_BRIDGE
     USING(Bridge);
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
     USING(WolfSSLServer);
+#endif
+
+#ifdef INCLUDE_WOLFSSL_CLIENT
+    USING(WolfSSLClient);
+#endif
+
+#ifdef INCLUDE_WOLFSSL_CLIENT
+    USING(WolfSSLClient);
 #endif
 
 #ifdef INCLUDE_HTTP2_SERVER

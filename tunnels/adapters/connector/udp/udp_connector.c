@@ -49,7 +49,7 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
     self->downStream(self, context);
 }
 
-void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     udp_connector_con_state_t *cstate = CSTATE(c);
 
@@ -176,7 +176,7 @@ fail:;
     destroyContext(c);
 }
 
-void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     udp_connector_con_state_t *cstate = CSTATE(c);
 
