@@ -3,7 +3,6 @@
 
 #include "hloop.h"
 #include "iowatcher.h"
-#include "rudp.h"
 
 #include "hbuf.h"
 #include "hmutex.h"
@@ -18,7 +17,6 @@
 #define HLOOP_READ_BUFSIZE          (1U << 15)  // 32K
 #define READ_BUFSIZE_HIGH_WATER     (1U << 20)  // 1M
 #define WRITE_BUFSIZE_HIGH_WATER    (1U << 23)  // 8M
-#define MAX_READ_BUFSIZE            (1U << 24)  // 16M
 #define MAX_WRITE_BUFSIZE           (1U << 24)  // 16M
 
 // hio_read_flags
@@ -58,7 +56,7 @@ struct hloop_s {
     struct io_array             ios;
     uint32_t                    nios;
     // one loop per thread, so one readbuf per loop is OK.
-    hbuf_t                      readbuf;
+    buffer_pool_t*              bufpool;
     void*                       iowatcher;
     // custom_events
     int                         eventfds[2];
@@ -99,7 +97,7 @@ struct hperiod_s {
     int8_t      month;
 };
 
-QUEUE_DECL(offset_buf_t, write_queue);
+QUEUE_DECL(shift_buffer_t*, write_queue);
 // sizeof(struct hio_s)=416 on linux-x64
 struct hio_s {
     HEVENT_FIELDS
@@ -115,7 +113,6 @@ struct hio_s {
     unsigned    recvfrom    :1;
     unsigned    sendto      :1;
     unsigned    close       :1;
-    unsigned    alloced_readbuf :1; // for hio_alloc_readbuf
 // public:
     hio_type_e  io_type;
     uint32_t    id; // fd cannot be used as unique identifier, so we provide an id
@@ -132,15 +129,7 @@ struct hio_s {
     uint64_t            last_read_hrtime;
     uint64_t            last_write_hrtime;
     // read
-    fifo_buf_t          readbuf;
     unsigned int        read_flags;
-    // for hio_read_until
-    union {
-        unsigned int    read_until_length;
-        unsigned char   read_until_delim;
-    };
-    uint32_t            max_read_bufsize;
-    uint32_t            small_readbytes_cnt; // for readbuf autosize
     // write
     struct write_queue  write_queue;
     hrecursive_mutex_t  write_mutex; // lock write and write_queue
@@ -176,12 +165,6 @@ struct hio_s {
     void*       hovlp;          // for iocp/overlapio
 #endif
 
-#if WITH_RUDP
-    rudp_t          rudp;
-#if WITH_KCP
-    kcp_setting_t*  kcp_setting;
-#endif
-#endif
 };
 /*
  * hio lifeline:
@@ -203,9 +186,9 @@ uint32_t hio_next_id();
 
 void hio_accept_cb(hio_t* io);
 void hio_connect_cb(hio_t* io);
-void hio_handle_read(hio_t* io, void* buf, int readbytes);
-void hio_read_cb(hio_t* io, void* buf, int len);
-void hio_write_cb(hio_t* io, const void* buf, int len);
+void hio_handle_read(hio_t* io,shift_buffer_t* buf);
+void hio_read_cb(hio_t* io, shift_buffer_t* buf);
+void hio_write_cb(hio_t* io);
 void hio_close_cb(hio_t* io);
 
 void hio_del_connect_timer(hio_t* io);
@@ -215,24 +198,7 @@ void hio_del_write_timer(hio_t* io);
 void hio_del_keepalive_timer(hio_t* io);
 void hio_del_heartbeat_timer(hio_t* io);
 
-static inline void hio_use_loop_readbuf(hio_t* io) {
-    hloop_t* loop = io->loop;
-    if (loop->readbuf.len == 0) {
-        loop->readbuf.len = HLOOP_READ_BUFSIZE;
-        HV_ALLOC(loop->readbuf.base, loop->readbuf.len);
-    }
-    io->readbuf.base = loop->readbuf.base;
-    io->readbuf.len  = loop->readbuf.len;
-}
-static inline bool hio_is_loop_readbuf(hio_t* io) {
-    return io->readbuf.base == io->loop->readbuf.base;
-}
-static inline bool hio_is_alloced_readbuf(hio_t* io) {
-    return io->alloced_readbuf;
-}
-void hio_alloc_readbuf(hio_t* io, int len);
-void hio_free_readbuf(hio_t* io);
-void hio_memmove_readbuf(hio_t* io);
+
 
 #define EVENT_ENTRY(p)          container_of(p, hevent_t, pending_node)
 #define IDLE_ENTRY(p)           container_of(p, hidle_t,  node)

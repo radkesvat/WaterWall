@@ -7,6 +7,8 @@
 struct buffer_pool_s
 {
     unsigned int len;
+    unsigned int cap;
+    unsigned int buffers_size;
 #ifdef DEBUG
     atomic_size_t in_use;
 #endif
@@ -15,6 +17,7 @@ struct buffer_pool_s
 
 typedef struct buffer_pool_s buffer_pool_t;
 
+buffer_pool_t * createSmallBufferPool();
 buffer_pool_t * createBufferPool();
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);

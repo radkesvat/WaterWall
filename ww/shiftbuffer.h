@@ -12,6 +12,7 @@
 
 struct shift_buffer_s
 {
+    unsigned int  calc_len;
     unsigned int  lenpos;
     unsigned int  curpos;
     unsigned int  cap; // half of full cap
@@ -27,7 +28,7 @@ shift_buffer_t *newShallowShiftBuffer(shift_buffer_t *owner);
 void            reset(shift_buffer_t *self, unsigned int cap);
 void            unShallow(shift_buffer_t *self);
 void            expand(shift_buffer_t *self, unsigned int increase);
-void            appendBuffer(shift_buffer_t * restrict root, shift_buffer_t * restrict buf);
+void            appendBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf);
 
 inline bool isShallow(shift_buffer_t *self)
 {
@@ -54,12 +55,14 @@ inline void shiftl(shift_buffer_t *self, unsigned int bytes)
         unShallow(self);
     }
     self->curpos -= bytes;
+    self->calc_len += bytes;
 }
 
 inline void shiftr(shift_buffer_t *self, unsigned int bytes)
 {
-    // caller knows if there isspace or not, checking here makes no sense
+    // caller knows if there is space or not, checking here makes no sense
     self->curpos += bytes;
+    self->calc_len -= bytes;
 }
 
 // caller must call this function to own the memory before writing
@@ -74,6 +77,8 @@ inline void setLen(shift_buffer_t *self, unsigned int bytes)
         unShallow(self);
     }
     self->lenpos = self->curpos + bytes;
+    self->calc_len = bytes;
+
 }
 
 inline unsigned int bufLen(shift_buffer_t *self)
@@ -101,11 +106,15 @@ inline const void *rawBuf(shift_buffer_t *self)
 }
 inline void readUI8(shift_buffer_t *self, uint8_t *dest)
 {
-    memcpy(dest, rawBuf(self), sizeof(uint8_t));
+    *dest = *(uint8_t *) rawBuf(self);
 }
 inline void readUI16(shift_buffer_t *self, uint16_t *dest)
 {
-    memcpy(dest, rawBuf(self), sizeof(uint16_t));
+    *dest = *(uint16_t *) rawBuf(self);
+}
+inline void readUI64(shift_buffer_t *self, uint64_t *dest)
+{
+    *dest = *(uint64_t *) rawBuf(self);
 }
 
 /*
@@ -124,25 +133,25 @@ inline void writeRaw(shift_buffer_t *restrict self, const void *restrict buffer,
 
 inline void writeI32(shift_buffer_t *self, int32_t data)
 {
-    writeRaw(self, &data, sizeof(int32_t));
+    *(int32_t *) rawBufMut(self) = data;
 }
 
 inline void writeUI32(shift_buffer_t *self, uint32_t data)
 {
-    writeRaw(self, &data, sizeof(uint32_t));
+    *(uint32_t *) rawBufMut(self) = data;
 }
 
 inline void writeI16(shift_buffer_t *self, int16_t data)
 {
-    writeRaw(self, &data, sizeof(int16_t));
+    *(int16_t *) rawBufMut(self) = data;
 }
 
 inline void writeUI16(shift_buffer_t *self, uint16_t data)
 {
-    writeRaw(self, &data, sizeof(uint16_t));
+    *(uint16_t *) rawBufMut(self) = data;
 }
 
 inline void writeUI8(shift_buffer_t *self, uint8_t data)
 {
-    writeRaw(self, &data, sizeof(uint8_t));
+    *(uint8_t *) rawBufMut(self) = data;
 }

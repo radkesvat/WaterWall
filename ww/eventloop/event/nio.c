@@ -37,16 +37,16 @@ static void __connect_cb(hio_t* io) {
     hio_connect_cb(io);
 }
 
-static void __read_cb(hio_t* io, void* buf, int readbytes) {
+static void __read_cb(hio_t* io, shift_buffer_t* buf) {
     // printd("> %.*s\n", readbytes, buf);
     io->last_read_hrtime = io->loop->cur_hrtime;
-    hio_handle_read(io, buf, readbytes);
+    hio_handle_read(io, buf);
 }
 
-static void __write_cb(hio_t* io, const void* buf, int writebytes) {
+static void __write_cb(hio_t* io) {
     // printd("< %.*s\n", writebytes, buf);
     io->last_write_hrtime = io->loop->cur_hrtime;
-    hio_write_cb(io, buf, writebytes);
+    hio_write_cb(io);
 }
 
 static void __close_cb(hio_t* io) {
@@ -148,7 +148,6 @@ static int __nio_read(hio_t* io, void* buf, int len) {
         nread = recv(io->fd, buf, len, 0);
         break;
     case HIO_TYPE_UDP:
-    case HIO_TYPE_KCP:
     case HIO_TYPE_IP: {
         socklen_t addrlen = sizeof(sockaddr_u);
         nread = recvfrom(io->fd, buf, len, 0, io->peeraddr, &addrlen);
@@ -176,7 +175,6 @@ static int __nio_write(hio_t* io, const void* buf, int len) {
         nwrite = send(io->fd, buf, len, flag);
     } break;
     case HIO_TYPE_UDP:
-    case HIO_TYPE_KCP:
     case HIO_TYPE_IP: nwrite = sendto(io->fd, buf, len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr)); break;
     default: nwrite = write(io->fd, buf, len); break;
     }
@@ -186,38 +184,42 @@ static int __nio_write(hio_t* io, const void* buf, int len) {
 
 static void nio_read(hio_t* io) {
     // printd("nio_read fd=%d\n", io->fd);
-    void* buf;
-    int len = 0, nread = 0, err = 0;
-read:
-    buf = io->readbuf.base + io->readbuf.tail;
+    int nread = 0, err = 0;
+read:;
     // #if defined(OS_LINUX) && defined(HAVE_PIPE)
     //     if(io->pfd_w){
     //         len = (1U << 20); // 1 MB
     //     }else
     // #endif
+    shift_buffer_t* buf = popBuffer(io->loop->bufpool);
+    unsigned int available = rCap(buf);
+    if (available < 1024) {
+        reserve(buf, 1024);
+    }
+    nread = __nio_read(io, rawBufMut(buf), available);
 
-    len = io->readbuf.len - io->readbuf.tail;
-
-    assert(len > 0);
-    nread = __nio_read(io, buf, len);
     // printd("read retval=%d\n", nread);
     if (nread < 0) {
         err = socket_errno();
         if (err == EAGAIN || err == EINTR) {
             // goto read_done;
+            reuseBuffer(io->loop->bufpool, buf);
             return;
         }
         else if (err == EMSGSIZE) {
             // ignore
+            reuseBuffer(io->loop->bufpool, buf);
             return;
         }
         else {
             // perror("read");
+            reuseBuffer(io->loop->bufpool, buf);
             io->error = err;
             goto read_error;
         }
     }
     if (nread == 0) {
+        reuseBuffer(io->loop->bufpool, buf);
         goto disconnect;
     }
     // printf("%d \n",nread);
@@ -227,14 +229,16 @@ read:
     //         ((char*)buf)[nread] = '\0';
     //     }
     // #else
-    if (nread < len) {
-        // NOTE: make string friendly
-        ((char*)buf)[nread] = '\0';
-    }
+
+    // if (nread < len) {
+    //     // NOTE: make string friendly
+    //     ((char*)buf)[nread] = '\0';
+    // }
     // #endif
 
-    io->readbuf.tail += nread;
-    __read_cb(io, buf, nread);
+    setLen(buf, nread);
+    __read_cb(io, buf);
+    // user consumed buffer
     return;
 read_error:
 disconnect:
@@ -256,11 +260,10 @@ write:
         }
         return;
     }
-    offset_buf_t* pbuf = write_queue_front(&io->write_queue);
-    char* base = pbuf->base;
-    char* buf = base + pbuf->offset;
-    int len = pbuf->len - pbuf->offset;
-    nwrite = __nio_write(io, buf, len);
+    shift_buffer_t* buf = *write_queue_front(&io->write_queue);
+    unsigned int len = bufLen(buf);
+    // char* base = pbuf->base;
+    nwrite = __nio_write(io, rawBufMut(buf), len);
     // printd("write retval=%d\n", nwrite);
     if (nwrite < 0) {
         err = socket_errno();
@@ -277,9 +280,8 @@ write:
     if (nwrite == 0) {
         goto disconnect;
     }
-    pbuf->offset += nwrite;
+    shiftr(buf, nwrite);
     io->write_bufsize -= nwrite;
-    __write_cb(io, buf, nwrite);
     if (nwrite == len) {
         // NOTE: after write_cb, pbuf maybe invalid.
         // HV_FREE(pbuf->base);
@@ -287,14 +289,20 @@ write:
         //     if(io->pfd_w == 0)
         //         HV_FREE(base);
         // #else
-        HV_FREE(base);
+        reuseBuffer(io->loop->bufpool, buf);
         // #endif
         write_queue_pop_front(&io->write_queue);
+        __write_cb(io);
+
         if (!io->closed) {
             // write continue
             goto write;
         }
+    }else{
+        __write_cb(io);
+
     }
+
     // hrecursive_mutex_unlock(&io->write_mutex);
     return;
 write_error:
@@ -372,31 +380,22 @@ int hio_read(hio_t* io) {
         return -1;
     }
     hio_add(io, hio_handle_events, HV_READ);
-    if (io->readbuf.tail > io->readbuf.head &&
-        // io->unpack_setting == NULL &&
-        io->read_flags == 0) {
-        hio_read_remain(io);
-    }
+
     return 0;
 }
 
-int hio_write(hio_t* io, const void* buf, size_t len) {
+int hio_write(hio_t* io, shift_buffer_t* buf) {
     if (io->closed) {
         hloge("hio_write called but fd[%d] already closed!", io->fd);
+        reuseBuffer(io->loop->bufpool, buf);
         return -1;
     }
     int nwrite = 0, err = 0;
     // hrecursive_mutex_lock(&io->write_mutex);
-#if WITH_KCP
-    if (io->io_type == HIO_TYPE_KCP) {
-        nwrite = hio_write_kcp(io, buf, len);
-        // if (nwrite < 0) goto write_error;
-        goto write_done;
-    }
-#endif
+    unsigned int len = bufLen(buf);
     if (write_queue_empty(&io->write_queue)) {
     try_write:
-        nwrite = __nio_write(io, buf, len);
+        nwrite = __nio_write(io, rawBufMut(buf), len);
         // printd("write retval=%d\n", nwrite);
         if (nwrite < 0) {
             err = socket_errno();
@@ -427,9 +426,7 @@ int hio_write(hio_t* io, const void* buf, size_t len) {
             io->error = ERR_OVER_LIMIT;
             goto write_error;
         }
-        offset_buf_t remain;
-        remain.len = len - nwrite;
-        remain.offset = 0;
+        shiftr(buf, nwrite);
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w != 0){
         //             remain.base = 0X0; // skips free()
@@ -442,23 +439,29 @@ int hio_write(hio_t* io, const void* buf, size_t len) {
         //         }
         // #else
         // NOTE: free in nio_write
-        HV_ALLOC(remain.base, remain.len);
-        memcpy(remain.base, ((char*)buf) + nwrite, remain.len);
+
+        // HV_ALLOC(remain.base, remain.len);
+        // memcpy(remain.base, ((char*)buf) + nwrite, remain.len);
+
         // #endif
         if (io->write_queue.maxsize == 0) {
             write_queue_init(&io->write_queue, 4);
         }
-        write_queue_push_back(&io->write_queue, &remain);
-        io->write_bufsize += remain.len;
+        write_queue_push_back(&io->write_queue, &buf);
+        io->write_bufsize += bufLen(buf);
         if (io->write_bufsize > WRITE_BUFSIZE_HIGH_WATER) {
-            hlogw("write len=%u enqueue %u, bufsize=%u over high water %u", (unsigned int)len, (unsigned int)(remain.len - remain.offset),
-                  (unsigned int)io->write_bufsize, (unsigned int)WRITE_BUFSIZE_HIGH_WATER);
+            hlogw("write len=%u enqueue %u, bufsize=%u over high water %u", (unsigned int)len, (unsigned int)(bufLen(buf)), (unsigned int)io->write_bufsize,
+                  (unsigned int)WRITE_BUFSIZE_HIGH_WATER);
         }
     }
+
 write_done:
     // hrecursive_mutex_unlock(&io->write_mutex);
     if (nwrite > 0) {
-        __write_cb(io, buf, nwrite);
+        if (nwrite == len) {
+            reuseBuffer(io->loop->bufpool, buf);
+        }
+        __write_cb(io);
     }
     return nwrite;
 write_error:
@@ -469,6 +472,7 @@ disconnect:
      * if hio_close_sync, we have to be very careful to avoid using freed resources.
      * But if hio_close_async, we do not have to worry about this.
      */
+    reuseBuffer(io->loop->bufpool, buf);
     if (io->io_type & HIO_TYPE_SOCK_STREAM) {
         hio_close_async(io);
     }

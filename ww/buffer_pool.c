@@ -15,25 +15,25 @@
 
 #define MEMORY_PROFILE HIG2_MEMORY // todo (cmake)
 
-#define EVP_READ_BUFSIZE         (1U << 15) // 32K
-#define BUFFERPOOL_CONTAINER_LEN ((16 * 4) + ((16 * 16) * MEMORY_PROFILE))
-#define BUFFER_SIZE              ((MEMORY_PROFILE < MED2_MEMORY) ? 0 : EVP_READ_BUFSIZE)
+#define BASE_READ_BUFSIZE        (1U << 18) // 8K
+#define BUFFERPOOL_CONTAINER_LEN ((16 * 4) + (16 * (1 * MEMORY_PROFILE)))
+#define BUFFER_SIZE              (BASE_READ_BUFSIZE * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1))
 
 static void firstCharge(buffer_pool_t *pool)
 {
-    for (size_t i = 0; i < BUFFERPOOL_CONTAINER_LEN; i++)
+    for (size_t i = 0; i < pool->cap / 2; i++)
     {
-        pool->available[i] = newShiftBuffer(BUFFER_SIZE);
+        pool->available[i] = newShiftBuffer(pool->buffers_size);
     }
-    pool->len = BUFFERPOOL_CONTAINER_LEN;
+    pool->len = pool->cap / 2;
 }
 
 static void reCharge(buffer_pool_t *pool)
 {
-    const size_t increase = min((2 * BUFFERPOOL_CONTAINER_LEN - pool->len), BUFFERPOOL_CONTAINER_LEN);
+    const size_t increase = pool->cap / 2;
     for (size_t i = pool->len; i < (pool->len + increase); i++)
     {
-        pool->available[i] = newShiftBuffer(BUFFER_SIZE);
+        pool->available[i] = newShiftBuffer(pool->buffers_size);
     }
     pool->len += increase;
 #ifdef DEBUG
@@ -43,7 +43,7 @@ static void reCharge(buffer_pool_t *pool)
 
 static void giveMemBackToOs(buffer_pool_t *pool)
 {
-    const size_t decrease = min(pool->len, BUFFERPOOL_CONTAINER_LEN);
+    const size_t decrease = min(pool->len, pool->cap / 2);
 
     for (size_t i = pool->len - decrease; i < pool->len; i++)
     {
@@ -60,7 +60,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
-    // return newShiftBuffer(BUFFER_SIZE);
+    return newShiftBuffer(BUFFER_SIZE);
     if (pool->len <= 0)
     {
         reCharge(pool);
@@ -76,8 +76,8 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
-    // destroyShiftBuffer(b);
-    // return;
+    destroyShiftBuffer(b);
+    return;
     if (*(b->refc) > 1)
     {
         destroyShiftBuffer(b);
@@ -86,10 +86,10 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 #ifdef DEBUG
     pool->in_use -= 1;
 #endif
-    reset(b, BUFFER_SIZE);
+    reset(b, pool->buffers_size);
     pool->available[pool->len] = b;
     ++(pool->len);
-    if (pool->len > (BUFFERPOOL_CONTAINER_LEN + (BUFFERPOOL_CONTAINER_LEN / 2)))
+    if (pool->len > (pool->cap * 2) / 3)
     {
         giveMemBackToOs(pool);
     }
@@ -113,14 +113,31 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 
 buffer_pool_t *createBufferPool()
 {
-    const int      container_len = 2 * BUFFERPOOL_CONTAINER_LEN * sizeof(shift_buffer_t *);
-    buffer_pool_t *pool          = malloc(sizeof(buffer_pool_t) + container_len);
+
+    const unsigned long count_max     = 2 * BUFFERPOOL_CONTAINER_LEN;
+    const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
+    buffer_pool_t *     pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
-    pool->in_use = 0;
 #endif
     memset(pool, 0, sizeof(buffer_pool_t));
-    pool->len = 0;
+    pool->cap = count_max;
+    pool->buffers_size = BUFFER_SIZE;
+    firstCharge(pool);
+    return pool;
+}
+
+buffer_pool_t *createSmallBufferPool()
+{
+    const unsigned long count_max     = 2 * (16 * 4);
+    const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
+    buffer_pool_t *     pool          = malloc(sizeof(buffer_pool_t) + container_len);
+#ifdef DEBUG
+    memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
+#endif
+    memset(pool, 0, sizeof(buffer_pool_t));
+    pool->cap = count_max;
+    pool->buffers_size = 1024;
     firstCharge(pool);
     return pool;
 }

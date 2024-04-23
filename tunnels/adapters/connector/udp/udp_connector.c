@@ -1,6 +1,6 @@
 #include "loggers/network_logger.h"
-#include "types.h"
 #include "sync_dns.h"
+#include "types.h"
 #include "utils/sockutils.h"
 
 static void cleanup(udp_connector_con_state_t *cstate)
@@ -8,16 +8,13 @@ static void cleanup(udp_connector_con_state_t *cstate)
     udp_connector_state_t *state = STATE(cstate->tunnel);
     free(cstate);
 }
-static void onRecv(hio_t *io, void *buf, int readbytes)
+static void onRecv(hio_t *io, shift_buffer_t *buf)
 {
     udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (hevent_userdata(io));
 
-    shift_buffer_t *payload = popBuffer(cstate->buffer_pool);
-    setLen(payload, readbytes);
-    writeRaw(payload, buf, readbytes);
-
-    tunnel_t *self = (cstate)->tunnel;
-    line_t *  line = (cstate)->line;
+    shift_buffer_t *payload = buf;
+    tunnel_t *      self    = (cstate)->tunnel;
+    line_t *        line    = (cstate)->line;
 
     struct sockaddr *destaddr = hio_peeraddr(io);
 
@@ -68,13 +65,10 @@ void upStream(tunnel_t *self, context_t *c)
             goto fail;
         }
 
-        size_t nwrite = hio_write(cstate->io, rawBuf(c->payload), bytes);
-        if (nwrite >= 0 && nwrite < bytes)
-        {
-            assert(false); // should not happen
-        }
+        size_t nwrite = hio_write(cstate->io, c->payload);
+        c->payload    = NULL;
 
-        reuseContextBuffer(c);
+        assert(nwrite >= 0 && nwrite < bytes);
         destroyContext(c);
     }
     else
@@ -207,7 +201,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
         LOGF("JSON Error: UdpConnector->settings (object field) : The object was empty or invalid");
         return NULL;
     }
-    
+
     getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
 
     state->dest_addr_selected =
@@ -221,7 +215,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
     if (state->dest_addr_selected.status == kDvsConstant)
     {
         state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
-        allocateDomainBuffer(&(state->constant_dest_addr),false);
+        allocateDomainBuffer(&(state->constant_dest_addr), false);
         setSocketContextDomain(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
                                strlen(state->dest_addr_selected.value_ptr));
     }

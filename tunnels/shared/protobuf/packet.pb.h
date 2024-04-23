@@ -10,35 +10,45 @@
 #endif
 
 /* Struct definitions */
-typedef struct _SimpleMessage {
+typedef struct _SimpleMessage
+{
     pb_callback_t data;
 } SimpleMessage;
 
-
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /* Initializer values for message structs */
-#define SimpleMessage_init_default               {{{NULL}, NULL}}
-#define SimpleMessage_init_zero                  {{{NULL}, NULL}}
+#define SimpleMessage_init_default                                                                                     \
+    {                                                                                                                  \
+        {                                                                                                              \
+            {NULL}, NULL                                                                                               \
+        }                                                                                                              \
+    }
+#define SimpleMessage_init_zero                                                                                        \
+    {                                                                                                                  \
+        {                                                                                                              \
+            {NULL}, NULL                                                                                               \
+        }                                                                                                              \
+    }
 
 /* Field tags (for use in manual encoding/decoding) */
-#define SimpleMessage_data_tag                   1
+#define SimpleMessage_data_tag 1
 
 /* Struct field encoding specification for nanopb */
-#define SimpleMessage_FIELDLIST(X, a) \
-X(a, CALLBACK, SINGULAR, BYTES,    data,              1)
-#define SimpleMessage_CALLBACK pb_default_field_callback
-#define SimpleMessage_DEFAULT NULL
+#define SimpleMessage_FIELDLIST(X, a) X(a, CALLBACK, SINGULAR, BYTES, data, 1)
+#define SimpleMessage_CALLBACK        pb_default_field_callback
+#define SimpleMessage_DEFAULT         NULL
 
-extern const pb_msgdesc_t SimpleMessage_msg;
+    extern const pb_msgdesc_t SimpleMessage_msg;
 
 /* Defines for backwards compatibility with code written before nanopb-0.4.0 */
 #define SimpleMessage_fields &SimpleMessage_msg
 
-/* Maximum encoded size of messages (where known) */
-/* SimpleMessage_size depends on runtime parameters */
+    /* Maximum encoded size of messages (where known) */
+    /* SimpleMessage_size depends on runtime parameters */
 
 #ifdef __cplusplus
 } /* extern "C" */

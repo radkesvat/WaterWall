@@ -533,7 +533,7 @@ void setSocketManager(struct socket_manager_s *new_state)
 void startSocketManager()
 {
     assert(state != NULL);
-    hloop_t *accept_thread_loop = hloop_new(HLOOP_FLAG_AUTO_FREE);
+    hloop_t *accept_thread_loop = hloop_new(HLOOP_FLAG_AUTO_FREE,createSmallBufferPool());
     // accept_thread(accept_thread_loop);
     state->accept_thread = hthread_create(accept_thread, accept_thread_loop);
 }

@@ -120,20 +120,21 @@ void createWW(ww_construction_data_t runtime_data)
 
     frand_seed = time(NULL);
 
-    loops = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
-    for (int i = 1; i < workers_count; ++i)
-    {
-        loops[i]   = hloop_new(HLOOP_FLAG_AUTO_FREE);
-        workers[i] = hthread_create(worker_thread, loops[i]);
-    }
-    loops[0]   = hloop_new(HLOOP_FLAG_AUTO_FREE);
-    workers[0] = 0x0;
-
     buffer_pools = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
 
     for (int i = 0; i < workers_count; ++i)
     {
         buffer_pools[i] = createBufferPool();
+    }
+
+    loops = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
+    loops[0]   = hloop_new(HLOOP_FLAG_AUTO_FREE,buffer_pools[0]);
+    workers[0] = 0x0;
+
+    for (int i = 1; i < workers_count; ++i)
+    {
+        loops[i]   = hloop_new(HLOOP_FLAG_AUTO_FREE,buffer_pools[i]);
+        workers[i] = hthread_create(worker_thread, loops[i]);
     }
 
     socekt_manager = createSocketManager();

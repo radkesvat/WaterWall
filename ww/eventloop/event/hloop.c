@@ -14,15 +14,15 @@
 #include "sys/eventfd.h"
 #endif
 
-#define HLOOP_PAUSE_TIME        10      // ms
-#define HLOOP_MAX_BLOCK_TIME    100     // ms
-#define HLOOP_STAT_TIMEOUT      60000   // ms
+#define HLOOP_PAUSE_TIME 10      // ms
+#define HLOOP_MAX_BLOCK_TIME 100 // ms
+#define HLOOP_STAT_TIMEOUT 60000 // ms
 
-#define IO_ARRAY_INIT_SIZE              1024
-#define CUSTOM_EVENT_QUEUE_INIT_SIZE    16
+#define IO_ARRAY_INIT_SIZE 1024
+#define CUSTOM_EVENT_QUEUE_INIT_SIZE 16
 
-#define EVENTFDS_READ_INDEX     0
-#define EVENTFDS_WRITE_INDEX    1
+#define EVENTFDS_READ_INDEX 0
+#define EVENTFDS_WRITE_INDEX 1
 
 static void __hidle_del(hidle_t* idle);
 static void __htimer_del(htimer_t* timer);
@@ -79,8 +79,7 @@ static int __hloop_process_timers(struct heap* timers, uint64_t timeout) {
             }
             else if (timer->event_type == HEVENT_TYPE_PERIOD) {
                 hperiod_t* period = (hperiod_t*)timer;
-                timer->next_timeout = (uint64_t)cron_next_timeout(period->minute, period->hour, period->day,
-                        period->week, period->month) * 1000000;
+                timer->next_timeout = (uint64_t)cron_next_timeout(period->minute, period->hour, period->day, period->week, period->month) * 1000000;
             }
             heap_insert(timers, &timer->node);
         }
@@ -93,7 +92,7 @@ static int __hloop_process_timers(struct heap* timers, uint64_t timeout) {
 static int hloop_process_timers(hloop_t* loop) {
     uint64_t now = hloop_now_us(loop);
     int ntimers = __hloop_process_timers(&loop->timers, loop->cur_hrtime);
-    ntimers +=    __hloop_process_timers(&loop->realtimers, now);
+    ntimers += __hloop_process_timers(&loop->realtimers, now);
     return ntimers;
 }
 
@@ -113,7 +112,7 @@ static int hloop_process_pendings(hloop_t* loop) {
     hevent_t* next = NULL;
     int ncbs = 0;
     // NOTE: invoke event callback from high to low sorted by priority.
-    for (int i = HEVENT_PRIORITY_SIZE-1; i >= 0; --i) {
+    for (int i = HEVENT_PRIORITY_SIZE - 1; i >= 0; --i) {
         cur = loop->pendings[i];
         while (cur) {
             next = cur->pending_next;
@@ -162,7 +161,8 @@ int hloop_process_events(hloop_t* loop, int timeout_ms) {
 
     if (loop->nios) {
         nios = hloop_process_ios(loop, blocktime_ms);
-    } else {
+    }
+    else {
         hv_msleep(blocktime_ms);
     }
     hloop_update_time(loop);
@@ -179,7 +179,7 @@ process_timers:
     int npendings = loop->npendings;
     if (npendings == 0) {
         if (loop->nidles) {
-            nidles= hloop_process_idles(loop);
+            nidles = hloop_process_idles(loop);
         }
     }
     int ncbs = hloop_process_pendings(loop);
@@ -192,21 +192,19 @@ process_timers:
 static void hloop_stat_timer_cb(htimer_t* timer) {
     hloop_t* loop = timer->loop;
     // hlog_set_level(LOG_LEVEL_DEBUG);
-    hlogd("[loop] pid=%ld tid=%ld uptime=%lluus cnt=%llu nactives=%u nios=%u ntimers=%u nidles=%u",
-        loop->pid, loop->tid,
-        (unsigned long long)loop->cur_hrtime - loop->start_hrtime,
-        (unsigned long long)loop->loop_cnt,
-        loop->nactives, loop->nios, loop->ntimers, loop->nidles);
+    hlogd("[loop] pid=%ld tid=%ld uptime=%lluus cnt=%llu nactives=%u nios=%u ntimers=%u nidles=%u", loop->pid, loop->tid,
+          (unsigned long long)loop->cur_hrtime - loop->start_hrtime, (unsigned long long)loop->loop_cnt, loop->nactives, loop->nios, loop->ntimers,
+          loop->nidles);
 }
 
-static void eventfd_read_cb(hio_t* io, void* buf, int readbytes) {
+static void eventfd_read_cb(hio_t* io, shift_buffer_t* buf) {
     hloop_t* loop = io->loop;
     hevent_t* pev = NULL;
     hevent_t ev;
-    uint64_t count = readbytes;
+    uint64_t count = bufLen(buf);
 #if defined(OS_UNIX) && HAVE_EVENTFD
-    assert(readbytes == sizeof(count));
-    count = *(uint64_t*)buf;
+    assert(bufLen(buf) == sizeof(count));
+    readUI64(buf, &count);
 #endif
     for (uint64_t i = 0; i < count; ++i) {
         hmutex_lock(&loop->custom_events_mutex);
@@ -225,9 +223,11 @@ static void eventfd_read_cb(hio_t* io, void* buf, int readbytes) {
             ev.cb(&ev);
         }
     }
+    reuseBuffer(io->loop->bufpool, buf);
     return;
 unlock:
     hmutex_unlock(&loop->custom_events_mutex);
+    reuseBuffer(io->loop->bufpool, buf);
 }
 
 static int hloop_create_eventfds(hloop_t* loop) {
@@ -249,7 +249,7 @@ static int hloop_create_eventfds(hloop_t* loop) {
         return -1;
     }
 #endif
-    hio_t* io = hread(loop, loop->eventfds[EVENTFDS_READ_INDEX], NULL, 0, eventfd_read_cb);
+    hio_t* io = hread(loop, loop->eventfds[EVENTFDS_READ_INDEX], eventfd_read_cb);
     io->priority = HEVENT_HIGH_PRIORITY;
     ++loop->intern_nevents;
     return 0;
@@ -294,7 +294,7 @@ void hloop_post_event(hloop_t* loop, hevent_t* ev) {
 #elif defined(OS_UNIX) && HAVE_PIPE
     nwrite = write(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1);
 #else
-    nwrite =  send(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1, 0);
+    nwrite = send(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1, 0);
 #endif
     if (nwrite <= 0) {
         hloge("hloop_post_event failed!");
@@ -331,11 +331,6 @@ static void hloop_init(hloop_t* loop) {
     // ios
     // NOTE: io_array_init when hio_get -> io_array_resize
     // io_array_init(&loop->ios, IO_ARRAY_INIT_SIZE);
-
-    // readbuf
-    // NOTE: alloc readbuf when hio_use_loop_readbuf
-    // loop->readbuf.len = HLOOP_READ_BUFSIZE;
-    // HV_ALLOC(loop->readbuf.base, loop->readbuf.len);
 
     // NOTE: iowatcher_init when hio_add -> iowatcher_add_event
     // iowatcher_init(loop);
@@ -394,13 +389,6 @@ static void hloop_cleanup(hloop_t* loop) {
     }
     heap_init(&loop->realtimers, NULL);
 
-    // readbuf
-    if (loop->readbuf.base && loop->readbuf.len) {
-        HV_FREE(loop->readbuf.base);
-        loop->readbuf.base = NULL;
-        loop->readbuf.len = 0;
-    }
-
     // iowatcher
     iowatcher_cleanup(loop);
 
@@ -412,11 +400,12 @@ static void hloop_cleanup(hloop_t* loop) {
     hmutex_destroy(&loop->custom_events_mutex);
 }
 
-hloop_t* hloop_new(int flags) {
+hloop_t* hloop_new(int flags, buffer_pool_t* swimmingpool) {
     hloop_t* loop;
     HV_ALLOC_SIZEOF(loop);
     hloop_init(loop);
     loop->flags |= flags;
+    loop->bufpool = swimmingpool;
     // hlogd("hloop_new tid=%ld", loop->tid);
     return loop;
 }
@@ -462,8 +451,7 @@ int hloop_run(hloop_t* loop) {
             continue;
         }
         ++loop->loop_cnt;
-        if ((loop->flags & HLOOP_FLAG_QUIT_WHEN_NO_ACTIVE_EVENTS) &&
-            loop->nactives <= loop->intern_nevents) {
+        if ((loop->flags & HLOOP_FLAG_QUIT_WHEN_NO_ACTIVE_EVENTS) && loop->nactives <= loop->intern_nevents) {
             break;
         }
         hloop_process_events(loop, HLOOP_MAX_BLOCK_TIME);
@@ -579,7 +567,7 @@ uint32_t hloop_nactives(hloop_t* loop) {
     return loop->nactives;
 }
 
-void  hloop_set_userdata(hloop_t* loop, void* userdata) {
+void hloop_set_userdata(hloop_t* loop, void* userdata) {
     loop->userdata = userdata;
 }
 
@@ -613,7 +601,7 @@ void hidle_del(hidle_t* idle) {
 }
 
 htimer_t* htimer_add(hloop_t* loop, htimer_cb cb, uint32_t timeout_ms, uint32_t repeat) {
-    if (timeout_ms == 0)   return NULL;
+    if (timeout_ms == 0) return NULL;
     htimeout_t* timer;
     HV_ALLOC_SIZEOF(timer);
     timer->event_type = HEVENT_TYPE_TIMEOUT;
@@ -640,7 +628,8 @@ void htimer_reset(htimer_t* timer, uint32_t timeout_ms) {
     htimeout_t* timeout = (htimeout_t*)timer;
     if (timer->destroy) {
         loop->ntimers++;
-    } else {
+    }
+    else {
         heap_remove(&loop->timers, &timer->node);
     }
     if (timer->repeat == 0) {
@@ -658,9 +647,7 @@ void htimer_reset(htimer_t* timer, uint32_t timeout_ms) {
     EVENT_RESET(timer);
 }
 
-htimer_t* htimer_add_period(hloop_t* loop, htimer_cb cb,
-                int8_t minute,  int8_t hour, int8_t day,
-                int8_t week, int8_t month, uint32_t repeat) {
+htimer_t* htimer_add_period(hloop_t* loop, htimer_cb cb, int8_t minute, int8_t hour, int8_t day, int8_t week, int8_t month, uint32_t repeat) {
     if (minute > 59 || hour > 23 || day > 31 || week > 6 || month > 12) {
         return NULL;
     }
@@ -670,10 +657,10 @@ htimer_t* htimer_add_period(hloop_t* loop, htimer_cb cb,
     timer->priority = HEVENT_HIGH_PRIORITY;
     timer->repeat = repeat;
     timer->minute = minute;
-    timer->hour   = hour;
-    timer->day    = day;
-    timer->month  = month;
-    timer->week   = week;
+    timer->hour = hour;
+    timer->day = day;
+    timer->month = month;
+    timer->week = week;
     timer->next_timeout = (uint64_t)cron_next_timeout(minute, hour, day, week, month) * 1000000;
     heap_insert(&loop->realtimers, &timer->node);
     EVENT_ADD(loop, timer, cb);
@@ -685,7 +672,8 @@ static void __htimer_del(htimer_t* timer) {
     if (timer->destroy) return;
     if (timer->event_type == HEVENT_TYPE_TIMEOUT) {
         heap_remove(&timer->loop->timers, &timer->node);
-    } else if (timer->event_type == HEVENT_TYPE_PERIOD) {
+    }
+    else if (timer->event_type == HEVENT_TYPE_PERIOD) {
         heap_remove(&timer->loop->realtimers, &timer->node);
     }
     timer->loop->ntimers--;
@@ -700,19 +688,19 @@ void htimer_del(htimer_t* timer) {
 
 const char* hio_engine() {
 #ifdef EVENT_SELECT
-    return  "select";
+    return "select";
 #elif defined(EVENT_POLL)
-    return  "poll";
+    return "poll";
 #elif defined(EVENT_EPOLL)
-    return  "epoll";
+    return "epoll";
 #elif defined(EVENT_KQUEUE)
-    return  "kqueue";
+    return "kqueue";
 #elif defined(EVENT_IOCP)
-    return  "iocp";
+    return "iocp";
 #elif defined(EVENT_PORT)
-    return  "evport";
+    return "evport";
 #else
-    return  "noevent";
+    return "noevent";
 #endif
 }
 
@@ -720,7 +708,7 @@ static inline hio_t* __hio_get(hloop_t* loop, int fd) {
     if (fd >= loop->ios.maxsize) {
         int newsize = ceil2e(fd);
         newsize = MAX(newsize, IO_ARRAY_INIT_SIZE);
-        io_array_resize(&loop->ios, newsize > fd ? newsize : 2*fd);
+        io_array_resize(&loop->ios, newsize > fd ? newsize : 2 * fd);
     }
     return loop->ios.ptr[fd];
 }
@@ -760,8 +748,6 @@ void hio_attach(hloop_t* loop, hio_t* io) {
     }
 
     io->loop = loop;
-    // NOTE: use new_loop readbuf
-    hio_use_loop_readbuf(io);
     loop->ios.ptr[fd] = io;
 }
 
@@ -837,13 +823,9 @@ int hio_close_async(hio_t* io) {
 }
 
 //------------------high-level apis-------------------------------------------
-hio_t* hread(hloop_t* loop, int fd, void* buf, size_t len, hread_cb read_cb) {
+hio_t* hread(hloop_t* loop, int fd, hread_cb read_cb) {
     hio_t* io = hio_get(loop, fd);
     assert(io != NULL);
-    if (buf && len) {
-        io->readbuf.base = (char*)buf;
-        io->readbuf.len = len;
-    }
     if (read_cb) {
         io->read_cb = read_cb;
     }
@@ -851,13 +833,13 @@ hio_t* hread(hloop_t* loop, int fd, void* buf, size_t len, hread_cb read_cb) {
     return io;
 }
 
-hio_t* hwrite(hloop_t* loop, int fd, const void* buf, size_t len, hwrite_cb write_cb) {
+hio_t* hwrite(hloop_t* loop, int fd, shift_buffer_t* buf, hwrite_cb write_cb) {
     hio_t* io = hio_get(loop, fd);
     assert(io != NULL);
     if (write_cb) {
         io->write_cb = write_cb;
     }
-    hio_write(io, buf, len);
+    hio_write(io, buf);
     return io;
 }
 
@@ -871,7 +853,7 @@ hio_t* haccept(hloop_t* loop, int listenfd, haccept_cb accept_cb) {
     return io;
 }
 
-hio_t* hconnect (hloop_t* loop, int connfd, hconnect_cb connect_cb) {
+hio_t* hconnect(hloop_t* loop, int connfd, hconnect_cb connect_cb) {
     hio_t* io = hio_get(loop, connfd);
     assert(io != NULL);
     if (connect_cb) {
@@ -881,53 +863,51 @@ hio_t* hconnect (hloop_t* loop, int connfd, hconnect_cb connect_cb) {
     return io;
 }
 
-void hclose (hloop_t* loop, int fd) {
+void hclose(hloop_t* loop, int fd) {
     hio_t* io = hio_get(loop, fd);
     assert(io != NULL);
     hio_close(io);
 }
 
-hio_t* hrecv (hloop_t* loop, int connfd, void* buf, size_t len, hread_cb read_cb) {
-    //hio_t* io = hio_get(loop, connfd);
-    //assert(io != NULL);
-    //io->recv = 1;
-    //if (io->io_type != HIO_TYPE_SSL) {
-        //io->io_type = HIO_TYPE_TCP;
+hio_t* hrecv(hloop_t* loop, int connfd, hread_cb read_cb) {
+    // hio_t* io = hio_get(loop, connfd);
+    // assert(io != NULL);
+    // io->recv = 1;
+    // if (io->io_type != HIO_TYPE_SSL) {
+    // io->io_type = HIO_TYPE_TCP;
     //}
-    return hread(loop, connfd, buf, len, read_cb);
+    return hread(loop, connfd, read_cb);
 }
 
-hio_t* hsend (hloop_t* loop, int connfd, const void* buf, size_t len, hwrite_cb write_cb) {
-    //hio_t* io = hio_get(loop, connfd);
-    //assert(io != NULL);
-    //io->send = 1;
-    //if (io->io_type != HIO_TYPE_SSL) {
-        //io->io_type = HIO_TYPE_TCP;
+hio_t* hsend(hloop_t* loop, int connfd, shift_buffer_t* buf, hwrite_cb write_cb) {
+    // hio_t* io = hio_get(loop, connfd);
+    // assert(io != NULL);
+    // io->send = 1;
+    // if (io->io_type != HIO_TYPE_SSL) {
+    // io->io_type = HIO_TYPE_TCP;
     //}
-    return hwrite(loop, connfd, buf, len, write_cb);
+    return hwrite(loop, connfd, buf, write_cb);
 }
 
-hio_t* hrecvfrom (hloop_t* loop, int sockfd, void* buf, size_t len, hread_cb read_cb) {
-    //hio_t* io = hio_get(loop, sockfd);
-    //assert(io != NULL);
-    //io->recvfrom = 1;
-    //io->io_type = HIO_TYPE_UDP;
-    return hread(loop, sockfd, buf, len, read_cb);
+hio_t* hrecvfrom(hloop_t* loop, int sockfd, hread_cb read_cb) {
+    // hio_t* io = hio_get(loop, sockfd);
+    // assert(io != NULL);
+    // io->recvfrom = 1;
+    // io->io_type = HIO_TYPE_UDP;
+    return hread(loop, sockfd, read_cb);
 }
 
-hio_t* hsendto (hloop_t* loop, int sockfd, const void* buf, size_t len, hwrite_cb write_cb) {
-    //hio_t* io = hio_get(loop, sockfd);
-    //assert(io != NULL);
-    //io->sendto = 1;
-    //io->io_type = HIO_TYPE_UDP;
-    return hwrite(loop, sockfd, buf, len, write_cb);
+hio_t* hsendto(hloop_t* loop, int sockfd, shift_buffer_t* buf, hwrite_cb write_cb) {
+    // hio_t* io = hio_get(loop, sockfd);
+    // assert(io != NULL);
+    // io->sendto = 1;
+    // io->io_type = HIO_TYPE_UDP;
+    return hwrite(loop, sockfd, buf, write_cb);
 }
 
 //-----------------top-level apis---------------------------------------------
 hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e type, hio_side_e side) {
-    int sock_type = (type & HIO_TYPE_SOCK_STREAM) ? SOCK_STREAM :
-                    (type & HIO_TYPE_SOCK_DGRAM)  ? SOCK_DGRAM :
-                    (type & HIO_TYPE_SOCK_RAW)    ? SOCK_RAW : -1;
+    int sock_type = (type & HIO_TYPE_SOCK_STREAM) ? SOCK_STREAM : (type & HIO_TYPE_SOCK_DGRAM) ? SOCK_DGRAM : (type & HIO_TYPE_SOCK_RAW) ? SOCK_RAW : -1;
     if (sock_type == -1) return NULL;
     sockaddr_u addr;
     memset(&addr, 0, sizeof(addr));
@@ -978,13 +958,14 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
     if (side == HIO_SERVER_SIDE) {
         hio_set_localaddr(io, &addr.sa, sockaddr_len(&addr));
         io->priority = HEVENT_HIGH_PRIORITY;
-    } else {
+    }
+    else {
         hio_set_peeraddr(io, &addr.sa, sockaddr_len(&addr));
     }
     return io;
 }
 
-hio_t* hloop_create_tcp_server (hloop_t* loop, const char* host, int port, haccept_cb accept_cb) {
+hio_t* hloop_create_tcp_server(hloop_t* loop, const char* host, int port, haccept_cb accept_cb) {
     hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_SERVER_SIDE);
     if (io == NULL) return NULL;
     hio_setcb_accept(io, accept_cb);
@@ -992,7 +973,7 @@ hio_t* hloop_create_tcp_server (hloop_t* loop, const char* host, int port, hacce
     return io;
 }
 
-hio_t* hloop_create_tcp_client (hloop_t* loop, const char* host, int port, hconnect_cb connect_cb, hclose_cb close_cb) {
+hio_t* hloop_create_tcp_client(hloop_t* loop, const char* host, int port, hconnect_cb connect_cb, hclose_cb close_cb) {
     hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
     if (io == NULL) return NULL;
     hio_setcb_connect(io, connect_cb);
@@ -1000,8 +981,6 @@ hio_t* hloop_create_tcp_client (hloop_t* loop, const char* host, int port, hconn
     if (hio_connect(io) != 0) return NULL;
     return io;
 }
-
-
 
 hio_t* hloop_create_udp_server(hloop_t* loop, const char* host, int port) {
     return hio_create_socket(loop, host, port, HIO_TYPE_UDP, HIO_SERVER_SIDE);

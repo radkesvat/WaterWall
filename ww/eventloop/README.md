@@ -12,12 +12,15 @@ removed all examples
 
 removed ssl parts
 
-removed unpack and other stream related code
+removed unpack, kcp, rudp support and other stream control related code
 
 removed thread safety parts of hio_t structure
+
+small optimization tweaks
 
 added small changes such as splice call support (not yet integrated into waterwall)
 
 effort to change loop buffer to ww/buffer_pool
 
+note that this fork uses more memory since all the memory controlling & shrink conditions removed
 

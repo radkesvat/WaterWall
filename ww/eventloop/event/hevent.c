@@ -4,8 +4,6 @@
 #include "hlog.h"
 #include "herr.h"
 
-#include "unpack.h"
-
 uint64_t hloop_next_event_id() {
     static hatomic_t s_id = HATOMIC_VAR_INIT(0);
     return ++s_id;
@@ -101,14 +99,8 @@ void hio_ready(hio_t* io) {
     io->error = 0;
     io->events = io->revents = 0;
     io->last_read_hrtime = io->last_write_hrtime = io->loop->cur_hrtime;
-    // readbuf
-    io->alloced_readbuf = 0;
-    hio_use_loop_readbuf(io);
-    io->readbuf.head = io->readbuf.tail = 0;
+
     io->read_flags = 0;
-    io->read_until_length = 0;
-    io->max_read_bufsize = MAX_READ_BUFSIZE;
-    io->small_readbytes_cnt = 0;
     // write_queue
     io->write_bufsize = 0;
     io->max_write_bufsize = MAX_WRITE_BUFSIZE;
@@ -146,11 +138,7 @@ void hio_ready(hio_t* io) {
         hio_socket_init(io);
     }
 
-#if WITH_RUDP
-    if ((io->io_type & HIO_TYPE_SOCK_DGRAM) || (io->io_type & HIO_TYPE_SOCK_RAW)) {
-        rudp_init(&io->rudp);
-    }
-#endif
+
 }
 
 void hio_done(hio_t* io) {
@@ -159,29 +147,20 @@ void hio_done(hio_t* io) {
 
     hio_del(io, HV_RDWR);
 
-    // readbuf
-    hio_free_readbuf(io);
+
 
     // write_queue
-    offset_buf_t* pbuf = NULL;
-    hrecursive_mutex_lock(&io->write_mutex);
+    shift_buffer_t* buf = NULL;
+    // hrecursive_mutex_lock(&io->write_mutex);
     while (!write_queue_empty(&io->write_queue)) {
-        pbuf = write_queue_front(&io->write_queue);
-#if defined(OS_LINUX) && defined(HAVE_PIPE)
-        if (pbuf->base != NULL) HV_FREE(pbuf->base);
-#else
-        HV_FREE(pbuf->base);
-#endif
+        buf = *write_queue_front(&io->write_queue);
+        reuseBuffer(io->loop->bufpool, buf);
         write_queue_pop_front(&io->write_queue);
     }
     write_queue_cleanup(&io->write_queue);
-    hrecursive_mutex_unlock(&io->write_mutex);
+    io->write_queue.ptr = NULL;
+    // hrecursive_mutex_unlock(&io->write_mutex);
 
-#if WITH_RUDP
-    if ((io->io_type & HIO_TYPE_SOCK_DGRAM) || (io->io_type & HIO_TYPE_SOCK_RAW)) {
-        rudp_cleanup(&io->rudp);
-    }
-#endif
 }
 
 void hio_free(hio_t* io) {
@@ -312,45 +291,12 @@ void hio_connect_cb(hio_t* io) {
     }
 }
 
-void hio_handle_read(hio_t* io, void* buf, int readbytes) {
-#if WITH_KCP
-    if (io->io_type == HIO_TYPE_KCP) {
-        hio_read_kcp(io, buf, readbytes);
-        io->readbuf.head = io->readbuf.tail = 0;
-        return;
-    }
-#endif
-
-    const unsigned char* sp = (const unsigned char*)io->readbuf.base + io->readbuf.head;
-    const unsigned char* ep = (const unsigned char*)buf + readbytes;
-
+void hio_handle_read(hio_t* io,shift_buffer_t* buf) {
     // hio_read
-    io->readbuf.head = io->readbuf.tail = 0;
-    hio_read_cb(io, (void*)sp, ep - sp);
-
-    if (io->readbuf.head == io->readbuf.tail) {
-        io->readbuf.head = io->readbuf.tail = 0;
-    }
-    // readbuf autosize
-    if (io->readbuf.tail == io->readbuf.len) {
-        if (io->readbuf.head == 0) {
-            // scale up * 2
-            hio_alloc_readbuf(io, io->readbuf.len * 2);
-        }
-        else {
-            hio_memmove_readbuf(io);
-        }
-    }
-    else {
-        size_t small_size = io->readbuf.len / 2;
-        if (io->readbuf.tail < small_size && io->small_readbytes_cnt >= 3) {
-            // scale down / 2
-            hio_alloc_readbuf(io, small_size);
-        }
-    }
+    hio_read_cb(io, buf);
 }
 
-void hio_read_cb(hio_t* io, void* buf, int len) {
+void hio_read_cb(hio_t* io, shift_buffer_t* buf) {
     if (io->read_flags & HIO_READ_ONCE) {
         io->read_flags &= ~HIO_READ_ONCE;
         hio_read_stop(io);
@@ -358,26 +304,15 @@ void hio_read_cb(hio_t* io, void* buf, int len) {
 
     if (io->read_cb) {
         // printd("read_cb------\n");
-        io->read_cb(io, buf, len);
+        io->read_cb(io, buf);
         // printd("read_cb======\n");
-    }
-
-    // for readbuf autosize
-    if (hio_is_alloced_readbuf(io) && io->readbuf.len > READ_BUFSIZE_HIGH_WATER) {
-        size_t small_size = io->readbuf.len / 2;
-        if (len < small_size) {
-            ++io->small_readbytes_cnt;
-        }
-        else {
-            io->small_readbytes_cnt = 0;
-        }
     }
 }
 
-void hio_write_cb(hio_t* io, const void* buf, int len) {
+void hio_write_cb(hio_t* io) {
     if (io->write_cb) {
         // printd("write_cb------\n");
-        io->write_cb(io, buf, len);
+        io->write_cb(io);
         // printd("write_cb======\n");
     }
 }
@@ -604,65 +539,8 @@ void hio_set_heartbeat(hio_t* io, int interval_ms, hio_send_heartbeat_fn fn) {
 }
 
 //-----------------iobuf---------------------------------------------
-void hio_alloc_readbuf(hio_t* io, int len) {
-    if (len > io->max_read_bufsize) {
-        hloge("read bufsize > %u, close it!", io->max_read_bufsize);
-        io->error = ERR_OVER_LIMIT;
-        hio_close_async(io);
-        return;
-    }
-    if (hio_is_alloced_readbuf(io)) {
-        io->readbuf.base = (char*)hv_realloc(io->readbuf.base, len, io->readbuf.len);
-    }
-    else {
-        HV_ALLOC(io->readbuf.base, len);
-    }
-    io->readbuf.len = len;
-    io->alloced_readbuf = 1;
-    io->small_readbytes_cnt = 0;
-}
 
-void hio_free_readbuf(hio_t* io) {
-    if (hio_is_alloced_readbuf(io)) {
-        HV_FREE(io->readbuf.base);
-        io->alloced_readbuf = 0;
-        // reset to loop->readbuf
-        io->readbuf.base = io->loop->readbuf.base;
-        io->readbuf.len = io->loop->readbuf.len;
-    }
-}
 
-void hio_memmove_readbuf(hio_t* io) {
-    fifo_buf_t* buf = &io->readbuf;
-    if (buf->tail == buf->head) {
-        buf->head = buf->tail = 0;
-        return;
-    }
-    if (buf->tail > buf->head) {
-        size_t size = buf->tail - buf->head;
-        // [head, tail] => [0, tail - head]
-        memmove(buf->base, buf->base + buf->head, size);
-        buf->head = 0;
-        buf->tail = size;
-    }
-}
-
-void hio_set_readbuf(hio_t* io, void* buf, size_t len) {
-    assert(io && buf && len != 0);
-    hio_free_readbuf(io);
-    io->readbuf.base = (char*)buf;
-    io->readbuf.len = len;
-    io->readbuf.head = io->readbuf.tail = 0;
-    io->alloced_readbuf = 0;
-}
-
-hio_readbuf_t* hio_get_readbuf(hio_t* io) {
-    return &io->readbuf;
-}
-
-void hio_set_max_read_bufsize(hio_t* io, uint32_t size) {
-    io->max_read_bufsize = size;
-}
 
 void hio_set_max_write_bufsize(hio_t* io, uint32_t size) {
     io->max_write_bufsize = size;
@@ -675,40 +553,6 @@ size_t hio_write_bufsize(hio_t* io) {
 int hio_read_once(hio_t* io) {
     io->read_flags |= HIO_READ_ONCE;
     return hio_read_start(io);
-}
-
-int hio_read_until_length(hio_t* io, unsigned int len) {
-    if (len == 0) return 0;
-    if (io->readbuf.tail - io->readbuf.head >= len) {
-        void* buf = io->readbuf.base + io->readbuf.head;
-        io->readbuf.head += len;
-        if (io->readbuf.head == io->readbuf.tail) {
-            io->readbuf.head = io->readbuf.tail = 0;
-        }
-        hio_read_cb(io, buf, len);
-        return len;
-    }
-    io->read_flags = HIO_READ_UNTIL_LENGTH;
-    io->read_until_length = len;
-    if (io->readbuf.head > 1024 || io->readbuf.tail - io->readbuf.head < 1024) {
-        hio_memmove_readbuf(io);
-    }
-    // NOTE: prepare readbuf
-    int need_len = io->readbuf.head + len;
-    if (hio_is_loop_readbuf(io) || io->readbuf.len < need_len) {
-        hio_alloc_readbuf(io, need_len);
-    }
-    return hio_read_once(io);
-}
-
-int hio_read_remain(hio_t* io) {
-    int remain = io->readbuf.tail - io->readbuf.head;
-    if (remain > 0) {
-        void* buf = io->readbuf.base + io->readbuf.head;
-        io->readbuf.head = io->readbuf.tail = 0;
-        hio_read_cb(io, buf, remain);
-    }
-    return remain;
 }
 
 //-----------------upstream---------------------------------------------

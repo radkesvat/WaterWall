@@ -22,6 +22,7 @@ extern void           writeUI16(shift_buffer_t *self, uint16_t data);
 extern void           writeUI8(shift_buffer_t *self, uint8_t data);
 extern void           readUI8(shift_buffer_t *self, uint8_t *dest);
 extern void           readUI16(shift_buffer_t *self, uint16_t *dest);
+extern void           readUI64(shift_buffer_t *self, uint64_t *dest);
 
 void destroyShiftBuffer(shift_buffer_t *self)
 {
@@ -54,6 +55,7 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
         } while (i < real_cap);
     }
 
+    self->calc_len = 0;
     self->lenpos   = pre_cap;
     self->curpos   = pre_cap;
     self->cap      = pre_cap;
@@ -81,6 +83,7 @@ void reset(shift_buffer_t *self, unsigned int cap)
         self->cap             = cap;
         self->full_cap        = real_cap;
     }
+    self->calc_len = 0;
     self->lenpos = self->cap;
     self->curpos = self->cap;
 }
@@ -98,7 +101,7 @@ void unShallow(shift_buffer_t *self)
     *(self->refc) = 1;
     char *old_buf = self->pbuf;
     self->pbuf    = malloc(self->full_cap);
-    memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->lenpos]), (self->lenpos - self->curpos));
+    memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->lenpos]), (self->calc_len));
 }
 
 void expand(shift_buffer_t *self, unsigned int increase)
@@ -115,7 +118,7 @@ void expand(shift_buffer_t *self, unsigned int increase)
         char *old_buf    = self->pbuf;
         self->pbuf       = malloc(new_realcap);
         unsigned int dif = (new_realcap / 2) - self->cap;
-        memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), (self->lenpos - self->curpos));
+        memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
         self->lenpos += dif;
         self->cap      = new_realcap / 2;
@@ -132,7 +135,7 @@ void expand(shift_buffer_t *self, unsigned int increase)
         char *old_buf    = self->pbuf;
         self->pbuf       = malloc(new_realcap);
         unsigned int dif = (new_realcap / 2) - self->cap;
-        memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), (self->lenpos - self->curpos));
+        memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]),self->calc_len);
         self->curpos += dif;
         self->lenpos += dif;
         self->cap      = new_realcap / 2;

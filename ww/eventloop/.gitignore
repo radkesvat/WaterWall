@@ -52,7 +52,6 @@ examples/protorpc/generated
 *.pid
 *.log
 *.db
-hconfig.h.in
 
 include
 lib

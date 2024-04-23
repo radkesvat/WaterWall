@@ -296,14 +296,14 @@ int hio_read (hio_t* io) {
     return hio_add(io, hio_handle_events, HV_READ);
 }
 
-int hio_write(hio_t* io, const void* buf, size_t len) {
+int hio_write(hio_t* io, shift_buffer_t* buf) {
     int nwrite = 0;
 try_send:
     if (io->io_type == HIO_TYPE_TCP) {
-        nwrite = send(io->fd, buf, len, 0);
+        nwrite = send(io->fd, rawBuf(buf), bufLen(buf), 0);
     }
     else if (io->io_type == HIO_TYPE_UDP) {
-        nwrite = sendto(io->fd, buf, len, 0, io->peeraddr, sizeof(struct sockaddr_in6));
+        nwrite = sendto(io->fd, rawBuf(buf), bufLen(buf), 0, io->peeraddr, sizeof(struct sockaddr_in6));
     }
     else if (io->io_type == HIO_TYPE_IP) {
         goto WSASend;
@@ -328,11 +328,12 @@ try_send:
     }
     if (io->write_cb) {
         //printd("try_write_cb------\n");
-        io->write_cb(io, buf, nwrite);
+        io->write_cb(io, buf);
         //printd("try_write_cb======\n");
     }
-    if (nwrite == len) {
+    if (nwrite == bufLen(buf)) {
         //goto write_done;
+        reuseBuffer(io->loop->bufpool,buf);
         return nwrite;
     }
 WSASend:
@@ -341,10 +342,12 @@ WSASend:
         HV_ALLOC_SIZEOF(hovlp);
         hovlp->fd = io->fd;
         hovlp->event = HV_WRITE;
-        hovlp->buf.len = len - nwrite;
+        shiftr(buf,nwrite);
+        hovlp->buf.len = bufLen(buf);
         // NOTE: free on_send_complete
         HV_ALLOC(hovlp->buf.buf, hovlp->buf.len);
-        memcpy(hovlp->buf.buf, ((char*)buf) + nwrite, hovlp->buf.len);
+        memcpy(hovlp->buf.buf, rawBuf(buf), hovlp->buf.len);
+        reuseBuffer(io->loop->bufpool,buf);
         hovlp->io = io;
         DWORD dwbytes = 0;
         DWORD flags = 0;
@@ -371,6 +374,7 @@ WSASend:
     }
 write_error:
 disconnect:
+    reuseBuffer(io->loop->bufpool,buf);
     hio_close(io);
     return 0;
 }
