@@ -7,7 +7,7 @@ enum header_dynamic_value_status
 {
     kHdvsEmpty = 0x0,
     kHdvsConstant,
-    kHdvsSourcePort,
+    kHdvsSourcePort
 };
 
 typedef struct header_client_state_s
@@ -54,12 +54,15 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 
     header_client_state_t *state = malloc(sizeof(header_client_state_t));
     memset(state, 0, sizeof(header_client_state_t));
+
     const cJSON *settings = instance_info->node_settings_json;
     state->data           = parseDynamicNumericValueFromJsonObject(settings, "data", 1, "src_context->port");
-    tunnel_t *t           = newTunnel();
-    t->state              = state;
-    t->upStream           = &upStream;
-    t->downStream         = &downStream;
+
+    tunnel_t *t   = newTunnel();
+    t->state      = state;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
+
     atomic_thread_fence(memory_order_release);
 
     return t;

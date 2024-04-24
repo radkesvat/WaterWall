@@ -80,8 +80,9 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
             }
             destroyContext(cw);
         }
-        return true;
     }
+        return true;
+
 }
 static void onWriteComplete(hio_t *restrict io)
 {
@@ -251,10 +252,10 @@ static void upStream(tunnel_t *self, context_t *c)
             switch (state->dest_addr_selected.status)
             {
             case kCdvsFromSource:
-                copySocketContextAddr(dest_ctx, src_ctx);
+                socketContextAddrCopy(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                copySocketContextAddr(dest_ctx, &(state->constant_dest_addr));
+                socketContextAddrCopy(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -263,10 +264,10 @@ static void upStream(tunnel_t *self, context_t *c)
             switch (state->dest_port_selected.status)
             {
             case kCdvsFromSource:
-                copySocketContextPort(dest_ctx, src_ctx);
+                socketContextPortCopy(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                copySocketContextPort(dest_ctx, &(state->constant_dest_addr));
+                socketContextPortCopy(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -410,8 +411,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     if (state->dest_addr_selected.status == kDvsConstant)
     {
         state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
-        allocateDomainBuffer(&(state->constant_dest_addr), false);
-        setSocketContextDomain(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+        socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
                                strlen(state->dest_addr_selected.value_ptr));
     }
 
@@ -425,7 +425,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     }
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        setSocketContextPort(&(state->constant_dest_addr), state->dest_port_selected.value);
+        socketContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
 
     tunnel_t *t   = newTunnel();

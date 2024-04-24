@@ -80,9 +80,14 @@ static inline void downStream(tunnel_t *self, context_t *c)
             unsigned int  read_len = (bufferStreamLen(bstream) >= 4 ? 4 : 2);
             unsigned char uleb_encoded_buf[4];
             bufferStreamViewBytesAt(bstream, uleb_encoded_buf, 1, read_len);
+            // if (uleb_encoded_buf[0] != '\n')
+            // {
+            //     LOGE("ProtoBufClient: rejected, invalid data");
+            //     goto disconnect;
+            // }
 
             size_t data_len     = 0;
-            size_t bytes_passed = readUleb128ToUint64(uleb_encoded_buf, uleb_encoded_buf + read_len, &data_len);
+            size_t bytes_passed = readUleb128ToUint64(uleb_encoded_buf , uleb_encoded_buf + read_len, &data_len);
             if (data_len == 0)
             {
                 if (uleb_encoded_buf[0] = 0x0)
@@ -106,15 +111,15 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
-            context_t *upstream_ctx = newContextFrom(c);
-            upstream_ctx->payload   = bufferStreamRead(cstate->stream_buf, 1 + bytes_passed + data_len);
-            shiftr(upstream_ctx->payload, 1 + bytes_passed);
+            context_t *downstream_ctx = newContextFrom(c);
+            downstream_ctx->payload   = bufferStreamRead(cstate->stream_buf, 1 + bytes_passed + data_len);
+            shiftr(downstream_ctx->payload, 1 + bytes_passed);
             if (! cstate->first_sent)
             {
-                upstream_ctx->first = true;
+                downstream_ctx->first = true;
                 cstate->first_sent  = true;
             }
-            self->dw->downStream(self->up, upstream_ctx);
+            self->dw->downStream(self->dw, downstream_ctx);
             if (! isAlive(c->line))
             {
                 destroyContext(c);
@@ -132,7 +137,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         self->dw->downStream(self->dw, c);
     }
     return;
-disconnect:
+disconnect:;
     cleanup(cstate);
     CSTATE_MUT(c) = NULL;
     self->up->upStream(self->up, newFinContext(c->line));

@@ -52,7 +52,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
             unsigned int  read_len = (bufferStreamLen(bstream) >= 4 ? 4 : 2);
             unsigned char uleb_encoded_buf[4];
             bufferStreamViewBytesAt(bstream, uleb_encoded_buf, 1, read_len);
-
+            // if (uleb_encoded_buf[0] != '\n')
+            // {
+            //     LOGE("ProtoBufServer: rejected, invalid data");
+            //     goto disconnect;
+            // }
             size_t data_len     = 0;
             size_t bytes_passed = readUleb128ToUint64(uleb_encoded_buf, uleb_encoded_buf + read_len, &data_len);
             if (data_len == 0)
@@ -136,7 +140,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
-            protobuf_server_con_state_t *cstate = cstate;
+            protobuf_server_con_state_t *cstate = CSTATE(c);
             cleanup(cstate);
             CSTATE_MUT(c) = NULL;
         }

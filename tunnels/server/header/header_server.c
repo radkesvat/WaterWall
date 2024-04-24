@@ -48,7 +48,7 @@ static void upStream(tunnel_t *self, context_t *c)
             uint16_t        port = 0;
             switch ((enum header_dynamic_value_status) state->data.status)
             {
-            case kHdvsConstant:
+            case kHdvsDestPort:
 
                 readUI16(buf, &port);
                 sockaddr_set_port(&(c->line->dest_ctx.addr), port);
@@ -92,8 +92,7 @@ static void upStream(tunnel_t *self, context_t *c)
     else if (c->init)
     {
         cstate            = malloc(sizeof(header_server_con_state_t));
-        cstate->init_sent = false;
-        cstate->first_sent = false;
+        *cstate = (header_server_con_state_t){};
         CSTATE_MUT(c)     = cstate;
         destroyContext(c);
     }
@@ -118,7 +117,12 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     if (c->fin)
     {
-        free(CSTATE(c));
+        header_server_con_state_t *cstate = CSTATE(c);
+        if(cstate->buf){
+            reuseBuffer(getContextBufferPool(c),cstate->buf);
+        }
+
+        free(cstate);
         CSTATE_MUT(c) = NULL;
     }
 

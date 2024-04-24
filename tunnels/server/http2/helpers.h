@@ -27,8 +27,9 @@ static nghttp2_nv makeNv2(const char *name, const char *value, int namelen, int 
 
 static void printFrameHd(const nghttp2_frame_hd *hd)
 {
-    LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
-         hd->stream_id);
+    (void) hd;
+    // LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
+    //      hd->stream_id);
 }
 
 static void addStream(http2_server_con_state_t *con, http2_server_child_con_state_t *stream)

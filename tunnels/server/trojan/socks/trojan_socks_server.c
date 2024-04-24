@@ -109,7 +109,7 @@ static bool parseAddress(context_t *c)
                 return false;
             }
             LOGD("TrojanSocksServer: tcp connect domain %.*s", addr_len, rawBuf(c->payload));
-            setSocketContextDomain(dest_context, rawBuf(c->payload), addr_len);
+            socketContextDomainSet(dest_context, rawBuf(c->payload), addr_len);
             shiftr(c->payload, addr_len);
             break;
         case kTrojanatypIpV6:
@@ -317,7 +317,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
             LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
         }
        
-        setSocketContextDomain(dest_context, rawBuf(c->payload), domain_len);
+        socketContextDomainSet(dest_context, rawBuf(c->payload), domain_len);
         shiftr(c->payload, domain_len);
 
         break;
@@ -528,7 +528,6 @@ static inline void upStream(tunnel_t *self, context_t *c)
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             trojan_socks_server_con_state_t *cstate = CSTATE(c);
             cstate->udp_buf                         = newBufferStream(getContextBufferPool(c));
-            allocateDomainBuffer(&(c->line->dest_ctx), true);
             destroyContext(c);
         }
         else if (c->fin)
