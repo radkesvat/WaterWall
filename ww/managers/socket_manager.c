@@ -271,7 +271,7 @@ static void noSocketConsumerFound(hio_t *io)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    LOGE("SocketManager: Couldnot find consumer for socket FD:%x [%s] <= [%s]", (int) hio_fd(io),
+    LOGE("SocketManager: could not find consumer for socket FD:%x [%s] <= [%s]", (int) hio_fd(io),
          SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     hio_close(io);
 }
@@ -388,7 +388,7 @@ static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, c
     {
         if (! resetIptables())
         {
-            LOGF("SocketManager: could not clear iptables rusles");
+            LOGF("SocketManager: could not clear iptables rules");
             exit(1);
         }
         state->iptable_cleaned = true;
@@ -427,7 +427,7 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
     {
         if (ports_overlapped[p] == 1)
         {
-            LOGW("SocketManager: Couldnot listen on %s:[%u] , skipped...", host, p, "TCP");
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p, "TCP");
             continue;
         }
         ports_overlapped[p] = 1;
@@ -436,7 +436,7 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
 
         if (filter->listen_io == NULL)
         {
-            LOGW("SocketManager: Couldnot listen on %s:[%u] , skipped...", host, p, "TCP");
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p, "TCP");
             continue;
         }
 
@@ -501,6 +501,90 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
         }
     }
 }
+
+
+static void distributeUdpSocket(hio_t *io, uint16_t local_port)
+{
+    hmutex_lock(&(state->mutex));
+    sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
+
+    for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
+    {
+        c_foreach(k, filters_t, state->filters[ri])
+        {
+            socket_filter_t *      filter   = *(k.ref);
+            socket_filter_option_t option   = filter->option;
+            uint16_t               port_min = option.port_min;
+            uint16_t               port_max = option.port_max;
+
+            // single port or multi port per socket
+            if (port_min > local_port || port_max < local_port)
+            {
+                continue;
+            }
+            if (option.white_list_raddr != NULL)
+            {
+                if (! checkIpIsWhiteList(paddr, option.white_list_raddr))
+                {
+                    continue;
+                }
+            }
+
+            distributeSocket(io, filter, local_port, option.no_delay);
+            hmutex_unlock(&(state->mutex));
+            return;
+        }
+    }
+
+    hmutex_unlock(&(state->mutex));
+    noSocketConsumerFound(io);
+}
+
+// todo (udp smanager)
+static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
+{
+    for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
+    {
+        c_foreach(k, filters_t, state->filters[ri])
+        {
+            socket_filter_t *filter = *(k.ref);
+            if (filter->option.multiport_backend == kMultiportBackendDefault)
+            {
+                filter->option.multiport_backend = getDefaultMultiPortBackend();
+            }
+
+            socket_filter_option_t option   = filter->option;
+            uint16_t               port_min = option.port_min;
+            uint16_t               port_max = option.port_max;
+            if (port_min > port_max)
+            {
+                LOGF("SocketManager: port min must be lower than port max");
+                exit(1);
+            }
+            else if (port_min == port_max)
+            {
+                option.multiport_backend == kMultiportBackendNothing;
+            }
+            if (option.proto == kSapUdp)
+            {
+                if (option.multiport_backend == kMultiportBackendIptables)
+                {
+                    // listenUdpMultiPortIptables(loop, filter, option.host, port_min, ports_overlapped, port_max);
+                }
+                else if (option.multiport_backend == kMultiportBackendSockets)
+                {
+                    // listenUdpMultiPortSockets(loop, filter, option.host, port_min, ports_overlapped, port_max);
+                }
+                else
+                {
+                    // listenUdpSinglePort(loop, filter, option.host, port_min, ports_overlapped);
+                }
+            }
+        }
+    }
+}
+
+
 
 static HTHREAD_ROUTINE(accept_thread) //NOLINT
 {

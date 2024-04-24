@@ -194,7 +194,7 @@ read:;
     shift_buffer_t* buf = popBuffer(io->loop->bufpool);
     unsigned int available = rCap(buf);
     if (available < 1024) {
-        reserve(buf, 1024);
+        reserveBufSpace(buf, 1024);
     }
     nread = __nio_read(io, rawBufMut(buf), available);
 

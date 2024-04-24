@@ -12,13 +12,13 @@
 
 struct shift_buffer_s
 {
-    unsigned int  calc_len;
-    unsigned int  lenpos;
-    unsigned int  curpos;
-    unsigned int  cap; // half of full cap
-    unsigned int  full_cap;
-    unsigned int *refc;
-    char *        pbuf;
+    unsigned int    calc_len;
+    unsigned int    lenpos;
+    unsigned int    curpos;
+    unsigned int    cap; // half of full cap
+    unsigned int    full_cap;
+    unsigned short *refc;
+    char *          pbuf;
 };
 typedef struct shift_buffer_s shift_buffer_t;
 
@@ -76,18 +76,18 @@ inline void setLen(shift_buffer_t *self, unsigned int bytes)
     {
         unShallow(self);
     }
-    self->lenpos = self->curpos + bytes;
+    self->lenpos   = self->curpos + bytes;
     self->calc_len = bytes;
-
 }
 
 inline unsigned int bufLen(shift_buffer_t *self)
 {
-    return self->lenpos - self->curpos;
+    // return self->lenpos - self->curpos;
+    return self->calc_len;
 }
 
 // its only a hint, you are not allowed to write to that space before setLen
-inline void reserve(shift_buffer_t *self, unsigned int bytes)
+inline void reserveBufSpace(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {
@@ -118,7 +118,7 @@ inline void readUI64(shift_buffer_t *self, uint64_t *dest)
 }
 
 /*
-    Call setLen to know how much memory you own before any kind of writing
+    Call setLen/bufLen to know how much memory you own before any kind of writing
 */
 
 inline unsigned char *rawBufMut(shift_buffer_t *self)

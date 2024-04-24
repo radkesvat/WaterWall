@@ -159,7 +159,7 @@ api_result_t apiProtoBufClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0}; // TODO(root):
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyProtoBufClient(tunnel_t *self)

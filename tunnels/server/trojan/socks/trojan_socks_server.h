@@ -3,7 +3,7 @@
 #include "shared/trojan/trojan_types.h"
 
 //
-//                                           <------>   udp associate   <---> dest(s)
+//                                           <------>   udp associate   <---> dest
 //    con      <------>  TrojanSocksServer
 //                                           <------> tcp direct tunnel <---> dest
 //

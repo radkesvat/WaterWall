@@ -220,7 +220,7 @@ api_result_t apiReverseServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0}; // TODO(root):
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyReverseServer(tunnel_t *self)

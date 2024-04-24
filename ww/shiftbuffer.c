@@ -8,7 +8,7 @@ extern unsigned int   lCap(shift_buffer_t *self);
 extern unsigned int   rCap(shift_buffer_t *self);
 extern unsigned int   bufLen(shift_buffer_t *self);
 extern void           setLen(shift_buffer_t *self, unsigned int bytes);
-extern void           reserve(shift_buffer_t *self, unsigned int bytes);
+extern void           reserveBufSpace(shift_buffer_t *self, unsigned int bytes);
 extern void           consume(shift_buffer_t *self, unsigned int bytes);
 extern void           shiftl(shift_buffer_t *self, unsigned int bytes);
 extern void           shiftr(shift_buffer_t *self, unsigned int bytes);

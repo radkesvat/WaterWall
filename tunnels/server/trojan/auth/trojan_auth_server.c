@@ -231,22 +231,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void trojanAuthServerUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void trojanAuthServerPacketUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void trojanAuthServerDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void trojanAuthServerPacketDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
 
 static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
 {
@@ -366,7 +350,7 @@ api_result_t apiTrojanAuthServer(tunnel_t *self, const char *msg)
 
     (void) (self);
     (void) (msg);
-    return (api_result_t){0}; // TODO(root):
+    return (api_result_t){0};
 }
 
 tunnel_t *destroyTrojanAuthServer(tunnel_t *self)
