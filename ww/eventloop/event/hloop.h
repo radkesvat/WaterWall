@@ -162,6 +162,10 @@ HV_EXPORT uint32_t hloop_nidles(hloop_t* loop);
 // @return number of active events
 HV_EXPORT uint32_t hloop_nactives(hloop_t* loop);
 
+// @return the loop threadlocal buffer pool
+HV_EXPORT buffer_pool_t* hloop_bufferpool(hloop_t* loop);
+
+
 // userdata
 HV_EXPORT void hloop_set_userdata(hloop_t* loop, void* userdata);
 HV_EXPORT void* hloop_userdata(hloop_t* loop);

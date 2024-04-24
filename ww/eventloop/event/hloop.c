@@ -567,6 +567,10 @@ uint32_t hloop_nactives(hloop_t* loop) {
     return loop->nactives;
 }
 
+buffer_pool_t* hloop_bufferpool(hloop_t* loop) {
+    return loop->bufpool;
+}
+
 void hloop_set_userdata(hloop_t* loop, void* userdata) {
     loop->userdata = userdata;
 }
