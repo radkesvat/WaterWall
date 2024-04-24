@@ -11,7 +11,11 @@ static void cleanup(udp_connector_con_state_t *cstate)
 static void onRecv(hio_t *io, shift_buffer_t *buf)
 {
     udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (hevent_userdata(io));
-
+    if (cstate == NULL)
+    {
+        reuseBuffer(hloop_bufferpool(hevent_loop(io)),buf);
+        return;
+    }
     shift_buffer_t *payload = buf;
     tunnel_t *      self    = (cstate)->tunnel;
     line_t *        line    = (cstate)->line;

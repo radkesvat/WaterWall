@@ -128,6 +128,7 @@ static void onRecv(hio_t *restrict io, shift_buffer_t *buf)
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
     if (cstate == NULL)
     {
+        reuseBuffer(hloop_bufferpool(hevent_loop(io)),buf);
         return;
     }
     shift_buffer_t *payload = buf;
