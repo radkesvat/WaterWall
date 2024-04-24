@@ -316,7 +316,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         {
             LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
         }
-       
+
         socketContextDomainSet(dest_context, rawBuf(c->payload), domain_len);
         shiftr(c->payload, domain_len);
 
@@ -333,6 +333,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         break;
 
     default:
+        reuseContextBuffer(c);
+        destroyContext(c);
         return false;
         break;
     }
@@ -351,6 +353,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     // len(2) + crlf(2)
     if (bufLen(c->payload) < 4)
     {
+        reuseContextBuffer(c);
+        destroyContext(c);
         return false;
     }
     // memcpy(&(c->packet_size), rawBuf(c->payload), 2);
@@ -372,6 +376,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         if (! isAlive(c->line))
         {
             LOGW("TrojanSocksServer: next node instantly closed the init with fin");
+            reuseContextBuffer(c);
+            destroyContext(c);
             return true;
         }
         cstate->init_sent = true;
@@ -381,7 +387,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
     // line is alvie because caller is holding a context, but still  fin could received
     // and state is gone
-    if (line->chains_state[self->chain_index] == NULL)
+    if (! isAlive(line))
     {
         return true;
     }

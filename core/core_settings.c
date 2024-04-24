@@ -163,6 +163,10 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         {
             printf("workers unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
         }
+        if (settings->workers_count <= 0)
+        {
+            settings->workers_count = get_ncpu();
+        }
     }
     else
     {

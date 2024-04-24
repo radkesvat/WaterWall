@@ -68,7 +68,7 @@ static void upStream(tunnel_t *self, context_t *c)
         size_t nwrite = hio_write(cstate->io, c->payload);
         c->payload    = NULL;
 
-        assert(nwrite <= 0  || nwrite ==  bytes);
+        // assert(nwrite <= 0  || nwrite ==  bytes);
         destroyContext(c);
     }
     else

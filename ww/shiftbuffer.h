@@ -12,13 +12,13 @@
 
 struct shift_buffer_s
 {
-    unsigned int    calc_len;
-    unsigned int    lenpos;
-    unsigned int    curpos;
-    unsigned int    cap; // half of full cap
-    unsigned int    full_cap;
-    unsigned short *refc;
-    char *          pbuf;
+    unsigned int  calc_len;
+    unsigned int  lenpos;
+    unsigned int  curpos;
+    unsigned int  cap; // half of full cap
+    unsigned int  full_cap;
+    unsigned int *refc;
+    char *        pbuf;
 };
 typedef struct shift_buffer_s shift_buffer_t;
 
