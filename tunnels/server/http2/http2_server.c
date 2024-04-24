@@ -275,7 +275,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
 
             shiftl(buf, GRPC_MESSAGE_HDLEN);
 
-            grpcMessageHdUnpack(&msghd, rawBufMut(buf));
+            grpcMessageHdPack(&msghd, rawBufMut(buf));
         }
 
         http2_frame_hd framehd;
@@ -420,24 +420,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-static void http2ServerUpStream(tunnel_t *self, context_t *c)
-{
-    upStream(self, c);
-}
-static void http2ServerPacketUpStream(tunnel_t *self, context_t *c)
-{
-    // LOGF("Http2Server: Http2 protocol dose not run on udp");
-    upStream(self, c);
-}
-static void http2ServerDownStream(tunnel_t *self, context_t *c)
-{
-    downStream(self, c);
-}
-static void http2ServerPacketDownStream(tunnel_t *self, context_t *c)
-{
-    // LOGF("Http2Server: Http2 protocol dose not run on udp");
-    downStream(self, c);
-}
+
 
 tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
 {

@@ -80,7 +80,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
 
             shiftl(buf, GRPC_MESSAGE_HDLEN);
 
-            grpcMessageHdUnpack(&msghd, rawBufMut(buf));
+            grpcMessageHdPack(&msghd, rawBufMut(buf));
         }
         http2_frame_hd framehd;
 

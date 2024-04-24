@@ -32,8 +32,8 @@ static nghttp2_nv makeNV2(const char *name, const char *value, int namelen, int 
 static void printFrameHd(const nghttp2_frame_hd *hd)
 {
     (void) hd;
-    // LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
-    //      hd->stream_id);
+    LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
+         hd->stream_id);
 }
 
 static void addStraem(http2_client_con_state_t *con, http2_client_child_con_state_t *stream)
@@ -139,10 +139,11 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid, 
     con->line->chains_state[self->chain_index] = con;
 
     hevent_set_userdata(con->ping_timer, con);
-
     nghttp2_session_client_new2(&con->session, state->cbs, con, state->ngoptions);
-
-    nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS}};
+    nghttp2_settings_entry settings[] = {
+        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS},
+        {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (1U << 18)},
+        };
     nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
 
     con->state = kH2SendMagic;
