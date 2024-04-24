@@ -58,7 +58,6 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
     while (contextQueueLen(data_queue) > 0)
     {
         context_t *cw = contextQueuePop(data_queue);
-
         unsigned int bytes  = bufLen(cw->payload);
         int          nwrite = hio_write(io, cw->payload);
         cw->payload         = NULL;
@@ -67,22 +66,22 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
         {
             return false; // write pending}
         }
-        // data data_queue is empty
-        hio_t *last_resumed_io = NULL;
-        while (contextQueueLen(finished_queue) > 0)
-        {
-            context_t *cw          = contextQueuePop(finished_queue);
-            hio_t *    upstream_io = cw->src_io;
-            if (upstream_io != NULL && (last_resumed_io != upstream_io))
-            {
-                last_resumed_io = upstream_io;
-                hio_read(upstream_io);
-            }
-            destroyContext(cw);
-        }
     }
-        return true;
 
+    // data data_queue is empty
+    hio_t *last_resumed_io = NULL;
+    while (contextQueueLen(finished_queue) > 0)
+    {
+        context_t *cw          = contextQueuePop(finished_queue);
+        hio_t *    upstream_io = cw->src_io;
+        if (upstream_io != NULL && (last_resumed_io != upstream_io))
+        {
+            last_resumed_io = upstream_io;
+            hio_read(upstream_io);
+        }
+        destroyContext(cw);
+    }
+    return true;
 }
 static void onWriteComplete(hio_t *restrict io)
 {
@@ -412,7 +411,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     {
         state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
         socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
-                               strlen(state->dest_addr_selected.value_ptr));
+                                       strlen(state->dest_addr_selected.value_ptr));
     }
 
     state->dest_port_selected =
