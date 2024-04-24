@@ -55,7 +55,7 @@ static reverse_server_con_state_t *createCstate(bool isup, line_t *line)
     if (isup)
     {
         cstate->u      = line;
-        cstate->uqueue = newContextQueue(buffer_pools[line->tid]);
+        cstate->uqueue = newContextQueue(getLineBufferPool(line));
     }
     else
     {

@@ -18,7 +18,7 @@ extern context_t *    newEstContext(line_t *line);
 extern context_t *    newFinContext(line_t *line);
 extern context_t *    newInitContext(line_t *line);
 extern context_t *    switchLine(context_t *c, line_t *line);
-extern buffer_pool_t *geBufferPool(uint8_t tid);
+extern buffer_pool_t *getThreadBufferPool(uint8_t tid);
 extern buffer_pool_t *getLineBufferPool(line_t *l);
 extern buffer_pool_t *getContextBufferPool(context_t *c);
 

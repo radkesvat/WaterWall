@@ -32,8 +32,8 @@ static nghttp2_nv makeNV2(const char *name, const char *value, int namelen, int 
 static void printFrameHd(const nghttp2_frame_hd *hd)
 {
     (void) hd;
-    LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
-         hd->stream_id);
+    // LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
+    //      hd->stream_id);
 }
 
 static void addStraem(http2_client_con_state_t *con, http2_client_child_con_state_t *stream)
@@ -123,9 +123,9 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid, 
 {
     http2_client_state_t *    state = STATE(self);
     http2_client_con_state_t *con   = malloc(sizeof(http2_client_con_state_t));
-
     memset(con, 0, sizeof(http2_client_con_state_t));
-    con->queue                                 = newContextQueue(buffer_pools[tid]);
+    
+    con->queue                                 = newContextQueue(getThreadBufferPool(tid));
     con->content_type                          = state->content_type;
     con->path                                  = state->path;
     con->host                                  = state->host;

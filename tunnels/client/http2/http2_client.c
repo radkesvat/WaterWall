@@ -7,7 +7,7 @@
 static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
 {
     http2_frame_hd  framehd;
-    shift_buffer_t *buf = popBuffer(buffer_pools[line->tid]);
+    shift_buffer_t *buf = popBuffer(getLineBufferPool(line));
     setLen(buf, HTTP2_FRAME_HDLEN);
 
     framehd.length    = 0;
@@ -34,7 +34,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
     // LOGD("nghttp2_session_mem_send %d\n", len);
     if (len > 0)
     {
-        shift_buffer_t *send_buf = popBuffer(buffer_pools[line->tid]);
+        shift_buffer_t *send_buf = popBuffer(getLineBufferPool(line));
         shiftl(send_buf, lCap(send_buf) / 2); // use some unused space
         setLen(send_buf, len);
         writeRaw(send_buf, data, len);

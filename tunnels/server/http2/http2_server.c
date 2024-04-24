@@ -237,7 +237,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
     // LOGD("nghttp2_session_mem_send %d\n", len);
     if (len > 0)
     {
-        shift_buffer_t *send_buf = popBuffer(buffer_pools[line->tid]);
+        shift_buffer_t *send_buf = popBuffer(getLineBufferPool(line));
         shiftl(send_buf, lCap(send_buf) / 2); // use some unused space
         setLen(send_buf, len);
         writeRaw(send_buf, data, len);

@@ -203,7 +203,7 @@ inline bool isFullyAuthenticated(line_t *line)
 }
 
 
-inline buffer_pool_t *geBufferPool(uint8_t tid)
+inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
 {
     return buffer_pools[tid];
 }

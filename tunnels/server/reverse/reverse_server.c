@@ -162,7 +162,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 }
 
                 dcstate->signal_sent = true;
-                shift_buffer_t *buf  = popBuffer(buffer_pools[dcstate->d->tid]);
+                shift_buffer_t *buf  = popBuffer(getLineBufferPool(dcstate->d));
                 shiftl(buf, 1);
                 writeUI8(buf, 0xFF);
                 context_t *c = newContext(dcstate->d);

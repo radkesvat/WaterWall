@@ -28,8 +28,8 @@ static nghttp2_nv makeNv2(const char *name, const char *value, int namelen, int 
 static void printFrameHd(const nghttp2_frame_hd *hd)
 {
     (void) hd;
-    LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
-         hd->stream_id);
+    // LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
+    //      hd->stream_id);
 }
 
 static void addStream(http2_server_con_state_t *con, http2_server_child_con_state_t *stream)
@@ -57,8 +57,9 @@ http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con,
     http2_server_child_con_state_t *stream;
     stream = malloc(sizeof(http2_server_child_con_state_t));
     memset(stream, 0, sizeof(http2_server_child_con_state_t));
+    
     stream->stream_id                                       = stream_id;
-    stream->chunkbs                                         = newBufferStream(buffer_pools[this_line->tid]);
+    stream->chunkbs                                         = newBufferStream(getLineBufferPool(this_line));
     stream->parent                                          = this_line;
     stream->line                                            = newLine(this_line->tid);
     stream->line->chains_state[target_tun->chain_index - 1] = stream;

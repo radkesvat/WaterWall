@@ -23,8 +23,6 @@
 
 static struct core_settings_s *settings = NULL;
 
-
-
 static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
 {
     getStringFromJsonObjectOrDefault(&(settings->log_path), log_obj, "path", DEFAULT_LOG_PATH);
@@ -149,17 +147,21 @@ static void parseConfigPartOfJson(const cJSON *config_array)
 
 static void parseMiscPartOfJson(cJSON *misc_obj)
 {
+
+    // todo (remove deprection check) this should be removed in 0.7+
+    if (NULL != cJSON_GetObjectItemCaseSensitive(misc_obj, "threads"))
+    {
+        fprintf(stderr, "Deprectaed Error: core.json->misc->thraeds is replaced with \"workers\" since Waterwall 0.6\
+        , please update your json file");
+        exit(1);
+    }
+
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
-        if (! getIntFromJsonObject(&(settings->workers_count), misc_obj, "workers"))
+        if (! getIntFromJsonObjectOrDefault(&(settings->workers_count), misc_obj, "workers", get_ncpu()))
         {
-            settings->workers_count = 0;
-            printf("workers_count unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
-        }
-        if (settings->workers_count <= 0)
-        {
-            settings->workers_count = get_ncpu();
+            printf("workers unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
         }
     }
     else
@@ -167,7 +169,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         settings->libs_path = malloc(strlen(DEFAULT_LIBS_PATH) + 1);
         strcpy(settings->libs_path, DEFAULT_LIBS_PATH);
         settings->workers_count = get_ncpu();
-        printf("workers_count unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
+        printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }
 }
 void parseCoreSettings(char *data_json)

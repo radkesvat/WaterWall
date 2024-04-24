@@ -306,7 +306,7 @@ void onInboundConnected(hevent_t *ev)
     line_t *                  line        = newLine(tid);
     tcp_listener_con_state_t *cstate      = malloc(sizeof(tcp_listener_con_state_t));
     cstate->line                          = line;
-    cstate->buffer_pool                   = buffer_pools[tid];
+    cstate->buffer_pool                   = getThreadBufferPool(tid);
     cstate->finished_queue                = newContextQueue(cstate->buffer_pool);
     cstate->data_queue                    = newContextQueue(cstate->buffer_pool);
     cstate->io                            = io;
