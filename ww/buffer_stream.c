@@ -13,11 +13,12 @@ buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 void empytBufferStream(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q) { reuseBuffer(self->pool, *i.ref); }
+    queue_clear(&self->q);
 }
 
 void destroyBufferStream(buffer_stream_t *self)
 {
-    empytBufferStream(self);
+    c_foreach(i, queue, self->q) { reuseBuffer(self->pool, *i.ref); }
     queue_drop(&self->q);
     free(self);
 }
