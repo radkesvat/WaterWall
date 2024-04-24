@@ -98,9 +98,8 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/eventloop)
 #     "WITH_HTTP_CLIENT OFF"
 #     "BUILD_SHARED OFF"
 #     "BUILD_EXAMPLES OFF"
-    
-
 # )
+
 # target_compile_options(hv_static PRIVATE -fPIC) 
 # target_compile_options(ww PUBLIC -fPIC)  
 # message( FATAL_ERROR "OEUOUEOU: ${CMAKE_INSTALL_PREFIX}" )

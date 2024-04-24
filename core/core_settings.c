@@ -151,8 +151,8 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     // todo (remove deprection check) this should be removed in 0.7+
     if (NULL != cJSON_GetObjectItemCaseSensitive(misc_obj, "threads"))
     {
-        fprintf(stderr, "Deprectaed Error: core.json->misc->thraeds is replaced with \"workers\" since Waterwall 0.6\
-        , please update your json file");
+        fprintf(stderr, "Deprecated Error: core.json->misc->thraeds is replaced with \"workers\" since Waterwall 0.6\
+        \nplease update your json file.\n");
         exit(1);
     }
 
