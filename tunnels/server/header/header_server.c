@@ -34,8 +34,8 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             if (cstate->buf)
             {
-                cstate->buf = appendBufferMerge(getContextBufferPool(c), cstate->buf, c->payload);
-                c->payload  = cstate->buf;
+                c->payload  = appendBufferMerge(getContextBufferPool(c), cstate->buf, c->payload);
+                cstate->buf = NULL;
             }
             if (bufLen(c->payload) < 2)
             {
@@ -87,18 +87,21 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->first_sent = true;
         }
         self->up->upStream(self->up, c);
-
     }
     else if (c->init)
     {
-        cstate            = malloc(sizeof(header_server_con_state_t));
-        *cstate = (header_server_con_state_t){};
-        CSTATE_MUT(c)     = cstate;
+        cstate        = malloc(sizeof(header_server_con_state_t));
+        *cstate       = (header_server_con_state_t){};
+        CSTATE_MUT(c) = cstate;
         destroyContext(c);
     }
     else if (c->fin)
     {
         bool send_fin = cstate->init_sent;
+        if (cstate->buf)
+        {
+            reuseBuffer(getContextBufferPool(c), cstate->buf);
+        }
         free(cstate);
         CSTATE_MUT(c) = NULL;
         if (send_fin)
@@ -118,8 +121,9 @@ static inline void downStream(tunnel_t *self, context_t *c)
     if (c->fin)
     {
         header_server_con_state_t *cstate = CSTATE(c);
-        if(cstate->buf){
-            reuseBuffer(getContextBufferPool(c),cstate->buf);
+        if (cstate->buf)
+        {
+            reuseBuffer(getContextBufferPool(c), cstate->buf);
         }
 
         free(cstate);

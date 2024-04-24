@@ -3,13 +3,9 @@
 #include "managers/node_manager.h"
 
 
-// If you want to learn the development of waterwall nodes,
-// this must be the last node you take a look at!
-
-
 typedef struct bridge_state_s
 {
-    bool      mode_upside; // this node is last node of upstream
+    bool      mode_upside; // if this node is last node of upstream
     node_t *  pair_node;
     tunnel_t *pair;
 
@@ -41,7 +37,6 @@ static void upStream(tunnel_t *self, context_t *c)
     //     self->upStream   = self->downStream;
     //     self->downStream = tmp;
     // }
-
     // self->upStream(self, c);
 
 
@@ -70,7 +65,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
     //     self->downStream   = self->upStream;
     //     self->upStream = tmp;
     // }
-
     // self->downStream(self, c);
 
 
