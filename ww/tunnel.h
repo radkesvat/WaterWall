@@ -46,7 +46,6 @@ typedef void (*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
 struct tunnel_s
 {
     void *           state;
-    hloop_t **       loops;
     struct tunnel_s *dw, *up;
 
     TunnelFlowRoutine upStream;

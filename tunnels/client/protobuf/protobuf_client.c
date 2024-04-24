@@ -131,6 +131,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         }
         self->dw->downStream(self->dw, c);
     }
+    return;
 disconnect:
     cleanup(cstate);
     CSTATE_MUT(c) = NULL;

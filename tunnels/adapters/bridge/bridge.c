@@ -2,6 +2,11 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 
+
+// If you want to learn the development of waterwall nodes,
+// this must be the last node you take a look at!
+
+
 typedef struct bridge_state_s
 {
     bool      mode_upside; // this node is last node of upstream
@@ -15,26 +20,61 @@ typedef struct bridge_con_state_s
 
 } bridge_con_state_t;
 
+
 static void upStream(tunnel_t *self, context_t *c)
 {
     bridge_state_t *state = STATE(self);
-    if (state->mode_upside)
-    {
-        self->dw->upStream = state->pair->dw->downStream;
-        state->pair->dw->downStream(state->pair, c);
-    }
+    assert(state->mode_upside);
+
+    // swap upstream <-> downstream
+    // if (state->pair->upStream == &upStream)
+    // {
+    //     void *tmp        = self->dw;
+    //     *self            = *(state->pair->dw);
+    //     self->upStream   = self->downStream;
+    //     self->downStream = tmp;
+    // }
+    // else
+    // {
+    //     *self            = *(tunnel_t *) (state->pair->downStream);
+    //     void *tmp        = self->upStream;
+    //     self->upStream   = self->downStream;
+    //     self->downStream = tmp;
+    // }
+
+    // self->upStream(self, c);
+
+
+    state->pair->dw->downStream(state->pair->dw,c);
+
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
 
     bridge_state_t *state = STATE(self);
+    assert(! state->mode_upside);
 
-    if (! state->mode_upside)
-    {
-        self->up->downStream = state->pair->up->upStream;
-        state->pair->up->upStream(state->pair, c);
-    }
+    // swap upstream <-> downstream
+    // if (state->pair->upStream == &upStream)
+    // {
+    //     void *tmp        = self->up;
+    //     *self            = *(state->pair->up);
+    //     self->downStream   = self->upStream;
+    //     self->upStream = tmp;
+    // }
+    // else
+    // {
+    //     *self            = *(tunnel_t *) (state->pair->upStream);
+    //     void *tmp        = self->downStream;
+    //     self->downStream   = self->upStream;
+    //     self->upStream = tmp;
+    // }
+
+    // self->downStream(self, c);
+
+
+    state->pair->up->upStream(state->pair->up,c);
 }
 
 tunnel_t *newBridge(node_instance_context_t *instance_info)
