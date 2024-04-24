@@ -34,9 +34,8 @@ typedef struct oss_server_state_s
 typedef struct oss_server_con_state_s
 {
 
-    bool handshake_completed;
-
-    bool             fallback;
+    bool             handshake_completed;
+    bool             fallback_mode;
     bool             fallback_init_sent;
     bool             fallback_first_sent;
     buffer_stream_t *fallback_buf;
@@ -168,6 +167,7 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
     size_t record_len = bufferStreamLen(cstate->fallback_buf);
     if (record_len == 0)
     {
+        destroyContext(c);
         return;
     }
     if (! cstate->fallback_first_sent)
@@ -195,11 +195,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 
-        if (! cstate->handshake_completed)
+        if (state->fallback != NULL && ! cstate->handshake_completed)
         {
             bufferStreamPush(cstate->fallback_buf, newShallowShiftBuffer(c->payload));
         }
-        if (cstate->fallback)
+        if (cstate->fallback_mode)
         {
             reuseContextBuffer(c);
             if (state->fallback_delay <= 0)
@@ -278,7 +278,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     printSSLError();
                     if (state->fallback != NULL)
                     {
-                        cstate->fallback = true;
+                        cstate->fallback_mode = true;
                         if (state->fallback_delay <= 0)
                         {
                             fallbackWrite(self, c);
@@ -304,8 +304,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                 LOGD("OpensslServer: Tls handshake complete");
                 cstate->handshake_completed = true;
-                context_t *up_init_ctx      = newInitContext(c->line);
-                up_init_ctx->src_io         = c->src_io;
+                empytBufferStream(cstate->fallback_buf);
+                context_t *up_init_ctx = newInitContext(c->line);
+                up_init_ctx->src_io    = c->src_io;
                 self->up->upStream(self->up, up_init_ctx);
                 if (! isAlive(c->line))
                 {
@@ -431,7 +432,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
 
-            if (cstate->fallback)
+            if (cstate->fallback_mode)
             {
                 if (cstate->fallback_init_sent)
                 {
@@ -491,7 +492,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            if (cstate->fallback)
+            if (cstate->fallback_mode)
             {
                 self->dw->downStream(self->dw, c);
                 return; // not gona encrypt fall back data

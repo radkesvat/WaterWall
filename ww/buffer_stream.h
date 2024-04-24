@@ -16,6 +16,7 @@ struct buffer_stream_s
 typedef struct buffer_stream_s buffer_stream_t;
 
 buffer_stream_t *newBufferStream(buffer_pool_t *pool);
+void             empytBufferStream(buffer_stream_t *self);
 void             destroyBufferStream(buffer_stream_t *self);
 void             bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf);
 shift_buffer_t * bufferStreamRead(buffer_stream_t *self, size_t bytes);

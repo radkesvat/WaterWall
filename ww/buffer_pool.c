@@ -8,10 +8,10 @@
 #endif
 
 #define LOW_MEMORY  0 // no preallocation (very small)
-#define MED1_MEMORY 1 // APPROX 10MB per thread
-#define MED2_MEMORY 2 // APPROX 20MB per thread
-#define HIG1_MEMORY 3 // APPROX 28MB per thread
-#define HIG2_MEMORY 4 // APPROX 36MB per thread
+#define MED1_MEMORY 1 // APPROX 20MB per thread
+#define MED2_MEMORY 2 // APPROX 40MB per thread
+#define HIG1_MEMORY 3 // APPROX 56MB per thread
+#define HIG2_MEMORY 4 // APPROX 72MB per thread
 
 #define MEMORY_PROFILE HIG2_MEMORY // todo (cmake)
 
