@@ -129,7 +129,7 @@ buffer_pool_t *createBufferPool()
 
 buffer_pool_t *createSmallBufferPool()
 {
-    const unsigned long count_max     = 2 * (16 * 4);
+    const unsigned long count_max     = 2 * (16 * 2);
     const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
     buffer_pool_t *     pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
