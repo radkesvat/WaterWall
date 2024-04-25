@@ -93,6 +93,7 @@ void unShallow(shift_buffer_t *self)
     if (*(self->refc) <= 1)
     {
         // not a shallow
+        assert(false);
         return;
     }
 

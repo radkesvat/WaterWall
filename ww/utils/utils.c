@@ -216,13 +216,13 @@ void socketContextAddrCopy(socket_context_t *dest, const socket_context_t *const
     switch (dest->address_type)
     {
     case kSatIPV4:
-        dest->addr.sa.sa_family = AF_INET;
-        dest->addr.sin.sin_addr = source->addr.sin.sin_addr;
+        dest->address.sa.sa_family = AF_INET;
+        dest->address.sin.sin_addr = source->address.sin.sin_addr;
 
         break;
 
     case kSatDomainName:
-        dest->addr.sa.sa_family = AF_INET;
+        dest->address.sa.sa_family = AF_INET;
         if (source->domain != NULL)
         {
             if (source->domain_constant)
@@ -237,15 +237,15 @@ void socketContextAddrCopy(socket_context_t *dest, const socket_context_t *const
             if (source->domain_resolved)
             {
                 dest->domain_resolved = true;
-                sockAddrCopy(&(dest->addr), &(source->addr));
+                sockAddrCopy(&(dest->address), &(source->address));
             }
         }
 
         break;
 
     case kSatIPV6:
-        dest->addr.sa.sa_family = AF_INET6;
-        memcpy(&(dest->addr.sin6.sin6_addr), &(source->addr.sin6.sin6_addr), sizeof(struct in6_addr));
+        dest->address.sa.sa_family = AF_INET6;
+        memcpy(&(dest->address.sin6.sin6_addr), &(source->address.sin6.sin6_addr), sizeof(struct in6_addr));
 
         break;
     }
@@ -254,7 +254,7 @@ void socketContextAddrCopy(socket_context_t *dest, const socket_context_t *const
 void socketContextPortCopy(socket_context_t *dest, socket_context_t *source)
 {
     // this is supposed to work for both ipv4/6
-    dest->addr.sin.sin_port = source->addr.sin.sin_port;
+    dest->address.sin.sin_port = source->address.sin.sin_port;
 
     // alternative:
 
@@ -263,20 +263,19 @@ void socketContextPortCopy(socket_context_t *dest, socket_context_t *source)
     // case kSatIPV4:
     // case kSatDomainName:
     // default:
-    //     dest->addr.sin.sin_port = source->addr.sin.sin_port;
+    //     dest->address.sin.sin_port = source->address.sin.sin_port;
     //     break;
 
     // case kSatIPV6:
-    //     dest->addr.sin6.sin6_port = source->addr.sin6.sin6_port;
+    //     dest->address.sin6.sin6_port = source->address.sin6.sin6_port;
     //     break;
     // }
 }
 
 void socketContextPortSet(socket_context_t *dest, uint16_t port)
 {
-    dest->addr.sin.sin_port = htons(port);
+    dest->address.sin.sin_port = htons(port);
 }
-
 
 void socketContextDomainSet(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len)
 {
@@ -298,16 +297,14 @@ void socketContextDomainSet(socket_context_t *restrict scontext, const char *res
 }
 void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len)
 {
-    if (scontext->domain != NULL)
+    if (scontext->domain != NULL && ! scontext->domain_constant)
     {
-        if (! scontext->domain_constant)
-        {
-            free(scontext->domain);
-        }
+        free(scontext->domain);
     }
     scontext->domain_constant = true;
-    scontext->domain          = (char *)domain;
-    scontext->domain_len  = len;
+    scontext->domain          = (char *) domain;
+    scontext->domain_len      = len;
+    assert(scontext->domain[len] == 0x0);
 }
 enum socket_address_type getHostAddrType(char *host)
 {

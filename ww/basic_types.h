@@ -112,7 +112,7 @@ typedef struct socket_context_s
 {
     enum socket_address_protocol address_protocol;
     enum socket_address_type     address_type;
-    sockaddr_u                   addr;
+    sockaddr_u                   address;
     char *                       domain;
     unsigned int                 domain_len;
     bool                         domain_constant;

@@ -1,7 +1,7 @@
 #pragma once
 /**
  * IMPORTANT
- *  if you format this file, the content typo macros will not work and the http parsers will break!
+ *  if you format this file, the content type macros will not work and the http parsers will break!
 */
 
 #define DEFAULT_HTTP_PORT       80
@@ -64,7 +64,7 @@ enum http_parser_state {
   XX(412, PreconditionFailed,             Precondition Failed)                  \
   XX(413, PayloadTooLarge,               Payload Too Large)                     \
   XX(414, UriTooLong,                    URI Too Long)                          \
-  XX(415, UnsupportedMediaddress_type,          Unsupported Media Type)                \
+  XX(415, UnsupportedMediaddress_type,   Unsupported Media Type)                \
   XX(416, RangeNotSatisfiable,           Range Not Satisfiable)                 \
   XX(417, ExpectationFailed,              Expectation Failed)                   \
   XX(421, MisdirectedRequest,             Misdirected Request)                  \
@@ -167,17 +167,17 @@ enum http_method {
     XX(TextCss,                text/css,                 css)          \
     XX(TextCsv,                text/csv,                 csv)          \
     XX(TextMarkdown,           text/markdown,            md)           \
-    XX(TextEventStream,       text/event-stream,        sse)          \
+    XX(TextEventStream,       text/event-stream,        sse)           \
 
 #define MIME_TYPE_APPLICATION_MAP(XX) \
     XX(ApplicationJavascript,  application/javascript,             js)     \
     XX(ApplicationJson,        application/json,                   json)   \
     XX(ApplicationXml,         application/xml,                    xml)    \
     XX(ApplicationUrlencoded,  application/x-www-form-urlencoded,  kv)     \
-    XX(ApplicationOctetStream,application/octet-stream,           bin)    \
+    XX(ApplicationOctetStream,application/octet-stream,           bin)     \
     XX(ApplicationZip,         application/zip,                    zip)    \
     XX(ApplicationGzip,        application/gzip,                   gzip)   \
-    XX(Application_7Z,          application/x-7z-compressed,        7z)     \
+    XX(Application_7Z,          application/x-7z-compressed,        7z)    \
     XX(ApplicationRar,         application/x-rar-compressed,       rar)    \
     XX(ApplicationPdf,         application/pdf,                    pdf)    \
     XX(ApplicationRtf,         application/rtf,                    rtf)    \
@@ -218,7 +218,7 @@ enum http_method {
     XX(VideoMpeg,              video/mpeg,               mpeg)         \
     XX(VideoWebm,              video/webm,               webm)         \
     XX(VideoMov,               video/quicktime,          mov)          \
-    XX(Video_3Gpp,              video/3gpp,               3gpp)         \
+    XX(Video_3Gpp,              video/3gpp,              3gpp)         \
     XX(VideoAvi,               video/x-msvideo,          avi)          \
     XX(VideoWmv,               video/x-ms-wmv,           wmv)          \
     XX(VideoAsf,               video/x-ms-asf,           asf)          \

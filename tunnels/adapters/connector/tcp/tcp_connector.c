@@ -288,7 +288,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 
             hloop_t *loop   = loops[c->line->tid];
-            int      sockfd = socket(dest_ctx->addr.sa.sa_family, SOCK_STREAM, 0);
+            int      sockfd = socket(dest_ctx->address.sa.sa_family, SOCK_STREAM, 0);
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
@@ -314,7 +314,7 @@ static void upStream(tunnel_t *self, context_t *c)
             hio_t *upstream_io = hio_get(loop, sockfd);
             assert(upstream_io != NULL);
 
-            hio_set_peeraddr(upstream_io, &(dest_ctx->addr.sa), sockaddr_len(&(dest_ctx->addr)));
+            hio_set_peeraddr(upstream_io, &(dest_ctx->address.sa), sockaddr_len(&(dest_ctx->address)));
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
 

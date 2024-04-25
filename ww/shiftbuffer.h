@@ -22,9 +22,9 @@ struct shift_buffer_s
 };
 typedef struct shift_buffer_s shift_buffer_t;
 
-void            destroyShiftBuffer(shift_buffer_t *self);
 shift_buffer_t *newShiftBuffer(unsigned int pre_cap);
 shift_buffer_t *newShallowShiftBuffer(shift_buffer_t *owner);
+void            destroyShiftBuffer(shift_buffer_t *self);
 void            reset(shift_buffer_t *self, unsigned int cap);
 void            unShallow(shift_buffer_t *self);
 void            expand(shift_buffer_t *self, unsigned int increase);

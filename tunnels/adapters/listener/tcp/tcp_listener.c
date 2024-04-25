@@ -253,7 +253,7 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
     if (cstate == NULL)
     {
-        reuseBuffer(hloop_bufferpool(hevent_loop(io)),buf);
+        reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
         return;
     }
     shift_buffer_t *payload           = buf;
@@ -317,12 +317,12 @@ void onInboundConnected(hevent_t *ev)
     cstate->first_packet_sent             = false;
     line->chains_state[self->chain_index] = cstate;
     line->src_ctx.address_protocol        = data->proto;
-    line->src_ctx.addr.sa                 = *hio_peeraddr(io);
+    line->src_ctx.address.sa              = *hio_peeraddr(io);
 
     // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u
     // *)hio_localaddr(io)) : data->real_localport);
-    sockaddr_set_port(&(line->src_ctx.addr), data->real_localport);
-    line->src_ctx.address_type = line->src_ctx.addr.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
+    sockaddr_set_port(&(line->src_ctx.address), data->real_localport);
+    line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     hevent_set_userdata(io, cstate);
 
     struct sockaddr log_localaddr = *hio_localaddr(io);

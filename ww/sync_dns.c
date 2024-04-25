@@ -6,14 +6,14 @@ bool resolveContextSync(socket_context_t *sctx)
     // please check these before calling this function -> more performance
     assert(sctx->address_type == kSatDomainName && sctx->domain_resolved == false && sctx->domain != NULL);
     // we need to get and set port again because resolved ip can be v6/v4 which have different sizes
-    uint16_t old_port = sockaddr_port(&(sctx->addr));
+    uint16_t old_port = sockaddr_port(&(sctx->address));
 #ifdef PROFILE
     struct timeval tv1, tv2;
     gettimeofday(&tv1, NULL);
 #endif
     /* resolve domain */
     {
-        if (sockaddr_set_ipport(&(sctx->addr), sctx->domain, old_port) != 0)
+        if (sockaddr_set_ipport(&(sctx->address), sctx->domain, old_port) != 0)
         {
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
             return false;
@@ -21,7 +21,7 @@ bool resolveContextSync(socket_context_t *sctx)
         if (logger_will_write_level(getDnsLogger(), (log_level_e) LOG_LEVEL_INFO))
         {
             char ip[64];
-            sockaddr_str(&(sctx->addr), ip, 64);
+            sockaddr_str(&(sctx->address), ip, 64);
             LOGI("SyncDns: %s resolved to %s", sctx->domain, ip);
         }
     }

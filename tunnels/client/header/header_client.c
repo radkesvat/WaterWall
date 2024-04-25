@@ -32,7 +32,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
         case kHdvsSourcePort:
             shiftl(c->payload, sizeof(uint16_t));
-            writeUI16(c->payload, sockaddr_port(&(c->line->src_ctx.addr)));
+            writeUI16(c->payload, sockaddr_port(&(c->line->src_ctx.address)));
             break;
 
         default:

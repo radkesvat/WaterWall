@@ -14,8 +14,8 @@
 
 typedef struct line_s
 {
-    uint8_t          tid;
     uint16_t         refc;
+    uint8_t          tid;
     uint8_t          lcid;
     uint8_t          auth_cur;
     uint8_t          auth_max;
@@ -79,8 +79,8 @@ inline line_t *newLine(uint8_t tid)
         .loop     = loops[tid],
         .alive    = true,
         // to set a port we need to know the AF family, default v4
-        .dest_ctx = (socket_context_t){.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
-        .src_ctx  = (socket_context_t){.addr.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+        .dest_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+        .src_ctx  = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
     };
     memset(&(result->chains_state), 0, (sizeof(void *) * MAX_CHAIN_LEN));
     return result;

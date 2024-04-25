@@ -46,7 +46,7 @@ static void makeUdpPacketAddress(context_t *c)
     shiftl(c->payload, 2); // LEN
     writeUI16(c->payload, packet_len);
 
-    uint16_t port = sockaddr_port(&(c->line->dest_ctx.addr));
+    uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
     port          = (port << 8) | (port >> 8);
     shiftl(c->payload, 2); // port
     writeUI16(c->payload, port);
@@ -55,14 +55,14 @@ static void makeUdpPacketAddress(context_t *c)
     {
     case kSatIPV6:
         shiftl(c->payload, 16);
-        writeRaw(c->payload, &(c->line->dest_ctx.addr.sin6.sin6_addr), 16);
+        writeRaw(c->payload, &(c->line->dest_ctx.address.sin6.sin6_addr), 16);
         shiftl(c->payload, 1);
         writeUI8(c->payload, kSatIPV6);
 
     case kSatIPV4:
     default:
         shiftl(c->payload, 4);
-        writeRaw(c->payload, &(c->line->dest_ctx.addr.sin.sin_addr), 4);
+        writeRaw(c->payload, &(c->line->dest_ctx.address.sin.sin_addr), 4);
         shiftl(c->payload, 1);
         writeUI8(c->payload, kSatIPV4);
         break;
@@ -92,8 +92,8 @@ static bool parseAddress(context_t *c)
             {
                 return false;
             }
-            dest_context->addr.sa.sa_family = AF_INET;
-            memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 4);
+            dest_context->address.sa.sa_family = AF_INET;
+            memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 4);
             shiftr(c->payload, 4);
             LOGD("TrojanSocksServer: tcp connect ipv4");
             break;
@@ -117,8 +117,8 @@ static bool parseAddress(context_t *c)
             {
                 return false;
             }
-            dest_context->addr.sa.sa_family = AF_INET6;
-            memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 16);
+            dest_context->address.sa.sa_family = AF_INET6;
+            memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 16);
             shiftr(c->payload, 16);
             LOGD("TrojanSocksServer: tcp connect ipv6");
             break;
@@ -140,14 +140,12 @@ static bool parseAddress(context_t *c)
                 return false;
             }
             shiftr(c->payload, 4);
-            dest_context->addr.sa.sa_family = AF_INET;
+            dest_context->address.sa.sa_family = AF_INET;
             // LOGD("TrojanSocksServer: udp associate ipv4");
 
             break;
         case kTrojanatypDomainname:
             // LOGD("TrojanSocksServer: udp domain ");
-
-            dest_context->addr.sa.sa_family = AF_INET;
 
             if (bufLen(c->payload) < 1)
             {
@@ -187,10 +185,7 @@ static bool parseAddress(context_t *c)
     {
         return false;
     }
-    uint16_t port = 0;
-    memcpy(&port, rawBuf(c->payload), 2);
-    port = (port << 8) | (port >> 8);
-    sockaddr_set_port(&(dest_context->addr), port);
+    memcpy(&(dest_context->address.sin.sin_port), rawBuf(c->payload), 2);
     shiftr(c->payload, 2 + CRLF_LEN);
     return true;
 }
@@ -291,16 +286,16 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     socket_context_t *dest_context  = &(c->line->dest_ctx);
     c->src_io                       = src_io;
     c->payload                      = bufferStreamRead(bstream, full_len);
-    dest_context->addr.sa.sa_family = AF_INET;
+    dest_context->address.sa.sa_family = AF_INET;
 
     shiftr(c->payload, 1);
 
     switch (address_type)
     {
     case kTrojanatypIpV4:
-        dest_context->addr.sa.sa_family = AF_INET;
+        dest_context->address.sa.sa_family = AF_INET;
         dest_context->address_type      = kSatIPV4;
-        memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 4);
+        memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 4);
         shiftr(c->payload, 4);
         if (! cstate->first_sent)
         {
@@ -323,8 +318,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         break;
     case kTrojanatypIpV6:
         dest_context->address_type      = kSatIPV6;
-        dest_context->addr.sa.sa_family = AF_INET6;
-        memcpy(&(dest_context->addr.sin.sin_addr), rawBuf(c->payload), 16);
+        dest_context->address.sa.sa_family = AF_INET6;
+        memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 16);
         shiftr(c->payload, 16);
         if (! cstate->first_sent)
         {
@@ -344,10 +339,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
         return false;
     }
-    uint16_t port = 0;
-    memcpy(&port, rawBuf(c->payload), 2);
-    port = (port << 8) | (port >> 8);
-    sockaddr_set_port(&(dest_context->addr), port);
+    memcpy(&(dest_context->address.sin.sin_port), rawBuf(c->payload), 2);
     shiftr(c->payload, 2);
 
     // len(2) + crlf(2)

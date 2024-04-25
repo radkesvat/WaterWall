@@ -160,7 +160,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     goto fail;
                 }
             }
-            hio_set_peeraddr(cstate->io, &(dest_ctx->addr.sa), sockaddr_len(&(dest_ctx->addr)));
+            hio_set_peeraddr(cstate->io, &(dest_ctx->address.sa), sockaddr_len(&(dest_ctx->address)));
 
             destroyContext(c);
         }
