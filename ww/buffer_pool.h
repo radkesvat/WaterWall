@@ -8,6 +8,7 @@ struct buffer_pool_s
 {
     unsigned int len;
     unsigned int cap;
+    unsigned int free_threshould;
     unsigned int buffers_size;
 #ifdef DEBUG
     atomic_size_t in_use;

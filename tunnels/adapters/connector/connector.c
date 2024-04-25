@@ -24,8 +24,8 @@ static void upStream(tunnel_t *self, context_t *c)
     default:
     case kSapTcp:
         state->tcp_connector->upStream(state->tcp_connector, c);
-
         break;
+
     case kSapUdp:
         state->udp_connector->upStream(state->udp_connector, c);
         break;
@@ -47,10 +47,8 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
         LOGF("JSON Error: Connector->settings (object field) : The object was empty or invalid");
         return NULL;
     }
-    node_t *tcp_outbound_node = malloc(sizeof(node_t));
-    node_t *udp_outbound_node = malloc(sizeof(node_t));
-    memset(tcp_outbound_node, 0, sizeof(node_t));
-    memset(udp_outbound_node, 0, sizeof(node_t));
+    node_t *tcp_outbound_node = newNode();
+    node_t *udp_outbound_node = newNode();
     tcp_outbound_node->name    = concat(instance_info->node->name, "_tcp_outbound");
     tcp_outbound_node->type    = "TcpConnector";
     tcp_outbound_node->version = instance_info->node->version;

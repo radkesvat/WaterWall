@@ -30,7 +30,8 @@ static void firstCharge(buffer_pool_t *pool)
 
 static void reCharge(buffer_pool_t *pool)
 {
-    const size_t increase = pool->cap / 2;
+    const size_t increase = min((pool->cap - pool->len) - 1, pool->cap / 2);
+    
     for (size_t i = pool->len; i < (pool->len + increase); i++)
     {
         pool->available[i] = newShiftBuffer(pool->buffers_size);
@@ -65,13 +66,12 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
     {
         reCharge(pool);
     }
-    --(pool->len);
-    shift_buffer_t *result = pool->available[pool->len];
 
 #ifdef DEBUG
     pool->in_use += 1;
 #endif
-    return result;
+    --(pool->len);
+    return pool->available[pool->len];
 }
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
@@ -87,9 +87,8 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
     pool->in_use -= 1;
 #endif
     reset(b, pool->buffers_size);
-    pool->available[pool->len] = b;
-    ++(pool->len);
-    if (pool->len > (pool->cap * 2) / 3)
+    pool->available[(pool->len)++] = b;
+    if (pool->len > pool->free_threshould)
     {
         giveMemBackToOs(pool);
     }
@@ -121,8 +120,9 @@ buffer_pool_t *createBufferPool()
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
 #endif
     memset(pool, 0, sizeof(buffer_pool_t));
-    pool->cap = count_max;
-    pool->buffers_size = BUFFER_SIZE;
+    pool->cap             = count_max;
+    pool->buffers_size    = BUFFER_SIZE;
+    pool->free_threshould = (pool->cap * 2) / 3;
     firstCharge(pool);
     return pool;
 }
@@ -136,8 +136,9 @@ buffer_pool_t *createSmallBufferPool()
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
 #endif
     memset(pool, 0, sizeof(buffer_pool_t));
-    pool->cap = count_max;
-    pool->buffers_size = 1024;
+    pool->cap             = count_max;
+    pool->buffers_size    = 1024;
+    pool->free_threshould = (pool->cap * 2) / 3;
     firstCharge(pool);
     return pool;
 }

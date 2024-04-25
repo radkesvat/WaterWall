@@ -183,7 +183,7 @@ void registerNode(node_t *new_node, cJSON *node_settings)
 
     new_node_ctx.node_json          = NULL;
     new_node_ctx.node_settings_json = node_settings;
-    new_node_ctx.node   = new_node;
+    new_node_ctx.node               = new_node;
     new_node_ctx.node_file_handle   = state->config_file;
     new_node->instance_context      = new_node_ctx;
     map_node_t *map                 = &(state->node_map);
@@ -196,6 +196,22 @@ void registerNode(node_t *new_node, cJSON *node_settings)
     map_node_t_insert(map, new_node->hash_name, new_node);
 }
 
+node_t *getNode(hash_t hash_node_name)
+{
+    map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
+    if (iter.ref == map_node_t_end(&(state->node_map)).ref)
+    {
+        return NULL;
+    }
+    return (iter.ref->second);
+}
+
+node_t *newNode()
+{
+    node_t *new_node = malloc(sizeof(node_t));
+    memset(new_node, 0, sizeof(node_t));
+    return new_node;
+}
 
 static void startParsingFiles()
 {
@@ -203,8 +219,7 @@ static void startParsingFiles()
     cJSON *node_json  = NULL;
     cJSON_ArrayForEach(node_json, nodes_json)
     {
-        node_t *new_node = malloc(sizeof(node_t));
-        memset(new_node, 0, sizeof(node_t));
+        node_t *new_node = newNode();
         if (! getStringFromJsonObject(&(new_node->name), node_json, "name"))
         {
             LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
@@ -225,16 +240,6 @@ static void startParsingFiles()
     cycleProcess();
     pathWalk();
     runNodes();
-}
-
-node_t *getNode(hash_t hash_node_name)
-{
-    map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
-    if (iter.ref == map_node_t_end(&(state->node_map)).ref)
-    {
-        return NULL;
-    }
-    return (iter.ref->second);
 }
 
 static tunnel_t *getTunnel(hash_t hash_node_name)
