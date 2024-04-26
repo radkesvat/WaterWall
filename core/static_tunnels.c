@@ -91,12 +91,16 @@
 #include "tunnels/client/header/header_client.h"
 #endif
 
+#ifdef INCLUDE_PRECONNECT_SERVER
+#include "tunnels/server/preconnect/preconnect_server.h"
+#endif
+
 #ifdef INCLUDE_PRECONNECT_CLIENT
 #include "tunnels/client/preconnect/preconnect_client.h"
 #endif
 
-#ifdef INCLUDE_PRECONNECT_SERVER
-#include "tunnels/server/preconnect/preconnect_server.h"
+#ifdef INCLUDE_SOCKS_5_SERVER
+#include "tunnels/server/socks/5/socks5_server.h"
 #endif
 
 
@@ -186,12 +190,20 @@ void loadStaticTunnelsIntoCore()
     USING(HeaderClient);
 #endif
 
+#ifdef INCLUDE_PRECONNECT_SERVER
+    USING(PreConnectServer);
+#endif
+
 #ifdef INCLUDE_PRECONNECT_CLIENT
     USING(PreConnectClient);
 #endif
 
-#ifdef INCLUDE_PRECONNECT_SERVER
-    USING(PreConnectServer);
+#ifdef INCLUDE_SOCKS_5_SERVER
+    USING(Socks5Server);
 #endif
+
+
+
+
 
 }

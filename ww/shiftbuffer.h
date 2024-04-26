@@ -80,6 +80,31 @@ inline void setLen(shift_buffer_t *self, unsigned int bytes)
     self->calc_len = bytes;
 }
 
+// inline void sliceBuffer(shift_buffer_t *self, unsigned int bytes)
+// {
+//     assert(bytes < bufLen(self));
+
+//     if (bytes <= bufLen(self) / 2)
+//     {
+//         self->refc    = malloc(sizeof(unsigned int));
+//         *(self->refc) = 1;
+//         char *old_buf = self->pbuf;
+//         self->pbuf    = malloc(self->full_cap);
+//         memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->lenpos]), (self->calc_len));
+//     }
+
+    
+//     if (bytes <= bufLen(self) / 2)
+//     {
+//         self->refc    = malloc(sizeof(unsigned int));
+//         *(self->refc) = 1;
+//         char *old_buf = self->pbuf;
+//         self->pbuf    = malloc(self->full_cap);
+//         memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->lenpos]), (self->calc_len));
+//     }
+
+// }
+
 inline unsigned int bufLen(shift_buffer_t *self)
 {
     // return self->lenpos - self->curpos;

@@ -55,6 +55,7 @@ option(INCLUDE_HEADER_SERVER "link HeaderServer staticly to the core"  TRUE)
 option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_SERVER "link PreConnectServer staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_CLIENT "link PreConnectClient staticly to the core"  TRUE)
+option(INCLUDE_SOCKS_5_SERVER "link Socks5Server staticly to the core"  TRUE)
 
 
 
@@ -281,6 +282,13 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall PreConnectClient)
 endif()
 
+#socks5 server
+if (INCLUDE_SOCKS_5_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_SOCKS_5_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/socks/5)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/socks/5)
+target_link_libraries(Waterwall Socks5Server)
+endif()
 
 
 # komihash

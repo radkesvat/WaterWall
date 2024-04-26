@@ -38,50 +38,63 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
     }
     self->size -= bytes;
 
-    shift_buffer_t *result    = queue_pull_front(&self->q);
-    size_t          available = bufLen(result);
-    if (available > bytes)
-    {
-        shift_buffer_t *shadow = newShallowShiftBuffer(result);
-        setLen(shadow, bytes);
-        shiftr(result, bytes);
-        queue_push_front(&self->q, result);
-        return shadow;
-    }
-    if (available == bytes)
-    {
-        return result;
-    }
-
-    size_t needed = bytes - available;
-    size_t wi     = available;
-    setLen(result, bytes);
-    uint8_t *dest = rawBufMut(result);
+    shift_buffer_t *result = queue_pull_front(&self->q);
 
     while (true)
     {
-        shift_buffer_t *b    = queue_pull_front(&self->q);
-        size_t          blen = bufLen(b);
-
-        if (blen > needed)
+        size_t available = bufLen(result);
+        if (available > bytes)
         {
-            memcpy(dest + wi, rawBuf(b), needed);
-            shiftr(b, needed);
-            queue_push_front(&self->q, b);
+            shift_buffer_t *shadow = newShallowShiftBuffer(result);
+            setLen(shadow, bytes);
+            shiftr(result, bytes);
+            // choose the smallest copy 
+            // if(available >  bytes * 2){
+            //     unShallow(shadow);
+            // }else{
+            //     unShallow(result);
+            // }
+            queue_push_front(&self->q, result);
+            return shadow;
+        }
+        if (available == bytes)
+        {
             return result;
         }
-        if (blen == needed)
-        {
-            memcpy(dest + wi, rawBuf(b), needed);
-            reuseBuffer(self->pool, b);
-            return result;
-        }
-
-        memcpy(dest + wi, rawBuf(b), blen);
-        wi += blen;
-        needed -= blen;
-        reuseBuffer(self->pool, b);
+        result = appendBufferMerge(self->pool,result, queue_pull_front(&self->q));
     }
+
+    // shift_buffer_t *b = queue_pull_front(&self->q);
+
+    // size_t needed = bytes - available;
+    // size_t wi     = available;
+    // setLen(result, bytes);
+    // uint8_t *dest = rawBufMut(result);
+
+    // while (true)
+    // {
+    //     shift_buffer_t *b    = queue_pull_front(&self->q);
+    //     size_t          blen = bufLen(b);
+
+    //     if (blen > needed)
+    //     {
+    //         memcpy(dest + wi, rawBuf(b), needed);
+    //         shiftr(b, needed);
+    //         queue_push_front(&self->q, b);
+    //         return result;
+    //     }
+    //     if (blen == needed)
+    //     {
+    //         memcpy(dest + wi, rawBuf(b), needed);
+    //         reuseBuffer(self->pool, b);
+    //         return result;
+    //     }
+
+    //     memcpy(dest + wi, rawBuf(b), blen);
+    //     wi += blen;
+    //     needed -= blen;
+    //     reuseBuffer(self->pool, b);
+    // }
 }
 
 uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
