@@ -17,7 +17,7 @@
 typedef struct trojan_auth_server_state_s
 {
     config_file_t *config_file;
-    tunnel_t *     fallback;
+    tunnel_t      *fallback;
     int            fallback_delay;
     hmap_users_t   users;
 
@@ -32,7 +32,7 @@ typedef struct trojan_auth_server_con_state_s
 
 struct timer_eventdata
 {
-    tunnel_t * self;
+    tunnel_t  *self;
     context_t *c;
 };
 static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
@@ -45,10 +45,10 @@ static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
 
 static void onFallbackTimer(htimer_t *timer)
 {
-    struct timer_eventdata *    data  = hevent_userdata(timer);
-    tunnel_t *                  self  = data->self;
+    struct timer_eventdata     *data  = hevent_userdata(timer);
+    tunnel_t                   *self  = data->self;
     trojan_auth_server_state_t *state = STATE(self);
-    context_t *                 c     = data->c;
+    context_t                  *c     = data->c;
 
     free(data);
     htimer_del(timer);
@@ -67,7 +67,7 @@ static void onFallbackTimer(htimer_t *timer)
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
-    trojan_auth_server_state_t *    state  = STATE(self);
+    trojan_auth_server_state_t     *state  = STATE(self);
     trojan_auth_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
@@ -231,7 +231,6 @@ static inline void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-
 static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
 {
     trojan_auth_server_state_t *state = t->state;
@@ -337,8 +336,8 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
     tunnel_t *t = newTunnel();
     t->state    = state;
 
-    t->upStream         = &upStream;
-    t->downStream       = &downStream;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
     parse(t, settings, instance_info->chain_index);
 
     atomic_thread_fence(memory_order_release);

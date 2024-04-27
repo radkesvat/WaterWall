@@ -35,7 +35,7 @@ void releaseUpdateLock(config_file_t *state)
 // only use if you acquired lock before
 void unsafeCommitChanges(config_file_t *state)
 {
-    char *    string      = cJSON_PrintBuffered(state->root, (int) ((state->file_prebuffer_size) * 2), true);
+    char     *string      = cJSON_PrintBuffered(state->root, (int) ((state->file_prebuffer_size) * 2), true);
     size_t    len         = strlen(string);
     const int max_retries = 3;
     for (size_t i = 0; i < max_retries; i++)

@@ -6,17 +6,15 @@
 #include <stdio.h>
 #include <string.h>
 
-#define DEFAULT_CORE_LOG_LEVEL      "INFO"
-#define DEFAULT_CORE_LOG_FILE       "core.json"
-#define DEFAULT_CORE_ENABLE_CONSOLE true
-
+#define DEFAULT_CORE_LOG_LEVEL         "INFO"
+#define DEFAULT_CORE_LOG_FILE          "core.json"
+#define DEFAULT_CORE_ENABLE_CONSOLE    true
 #define DEFAULT_NETWORK_LOG_LEVEL      "INFO"
 #define DEFAULT_NETWORK_LOG_FILE       "network.json"
 #define DEFAULT_NETWORK_ENABLE_CONSOLE true
-
-#define DEFAULT_DNS_LOG_LEVEL      "INFO"
-#define DEFAULT_DNS_LOG_FILE       "dns.json"
-#define DEFAULT_DNS_ENABLE_CONSOLE true
+#define DEFAULT_DNS_LOG_LEVEL          "INFO"
+#define DEFAULT_DNS_LOG_FILE           "dns.json"
+#define DEFAULT_DNS_ENABLE_CONSOLE     true
 
 #define DEFAULT_LIBS_PATH "libs/"
 #define DEFAULT_LOG_PATH  "log/"

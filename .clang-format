@@ -1,6 +1,6 @@
 ---
 BasedOnStyle: Microsoft
-AlignAfterOpenBracket: Align
+AlignAfterOpenBracket: 'true'
 AlignConsecutiveMacros: 'true'
 AlignConsecutiveAssignments: 'true'
 AlignConsecutiveDeclarations: 'true'

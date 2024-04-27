@@ -41,13 +41,22 @@ void contextQueuePush(context_queue_t *self, context_t *context)
     }
     queue_push_back(&self->q, context);
 }
+
+// todo (better way) probably blacklisting the last closed io can solve this problem and it has much better performance
 context_t *contextQueuePop(context_queue_t *self)
 {
     context_t *context = queue_pull_front(&self->q);
 
-    if (context->fd == 0 || ! hio_exists(context->line->loop, context->fd) || hio_is_closed(context->src_io))
+    if (context->fd == 0 || ! hio_exists(context->line->loop, context->fd))
     {
         context->src_io = NULL;
+    }
+    else
+    {
+        if (hio_is_closed(context->src_io) || context->src_io != hio_get(context->line->loop, context->fd))
+        {
+            context->src_io = NULL;
+        }
     }
 
     return context;

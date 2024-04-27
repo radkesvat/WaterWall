@@ -12,12 +12,12 @@
 typedef struct tcp_listener_state_s
 {
     // settings
-    char *   address;
+    char    *address;
     int      multiport_backend;
     uint16_t port_min;
     uint16_t port_max;
-    char **  white_list_raddr;
-    char **  black_list_raddr;
+    char   **white_list_raddr;
+    char   **black_list_raddr;
     bool     fast_open;
     bool     no_delay;
 
@@ -25,13 +25,13 @@ typedef struct tcp_listener_state_s
 
 typedef struct tcp_listener_con_state_s
 {
-    hloop_t *        loop;
-    tunnel_t *       tunnel;
-    line_t *         line;
-    hio_t *          io;
+    hloop_t         *loop;
+    tunnel_t        *tunnel;
+    line_t          *line;
+    hio_t           *io;
     context_queue_t *finished_queue;
     context_queue_t *data_queue;
-    buffer_pool_t *  buffer_pool;
+    buffer_pool_t   *buffer_pool;
     bool             write_paused;
     bool             established;
     bool             first_packet_sent;
@@ -87,10 +87,10 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
 {
     context_queue_t *data_queue     = (cstate)->data_queue;
     context_queue_t *finished_queue = (cstate)->finished_queue;
-    hio_t *          io             = cstate->io;
+    hio_t           *io             = cstate->io;
     while (contextQueueLen(data_queue) > 0)
     {
-        context_t *  cw     = contextQueuePop(data_queue);
+        context_t   *cw     = contextQueuePop(data_queue);
         unsigned int bytes  = bufLen(cw->payload);
         int          nwrite = hio_write(io, cw->payload);
         cw->payload         = NULL;
@@ -105,7 +105,7 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
     while (contextQueueLen(finished_queue) > 0)
     {
         context_t *cw          = contextQueuePop(finished_queue);
-        hio_t *    upstream_io = cw->src_io;
+        hio_t     *upstream_io = cw->src_io;
         if (upstream_io != NULL && (last_resumed_io != upstream_io))
         {
             last_resumed_io = upstream_io;
@@ -146,7 +146,7 @@ static void onWriteComplete(hio_t *restrict io)
         while (contextQueueLen(finished_queue) > 0)
         {
             context_t *cw          = contextQueuePop(finished_queue);
-            hio_t *    upstream_io = cw->src_io;
+            hio_t     *upstream_io = cw->src_io;
             if (upstream_io != NULL && (last_resumed_io != upstream_io))
             {
                 last_resumed_io = upstream_io;
@@ -257,9 +257,9 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
         return;
     }
     shift_buffer_t *payload           = buf;
-    tunnel_t *      self              = (cstate)->tunnel;
-    line_t *        line              = (cstate)->line;
-    bool *          first_packet_sent = &((cstate)->first_packet_sent);
+    tunnel_t       *self              = (cstate)->tunnel;
+    line_t         *line              = (cstate)->line;
+    bool           *first_packet_sent = &((cstate)->first_packet_sent);
 
     context_t *context = newContext(line);
     context->src_io    = io;
@@ -286,8 +286,8 @@ static void onClose(hio_t *io)
 
     if (cstate != NULL)
     {
-        tunnel_t * self    = (cstate)->tunnel;
-        line_t *   line    = (cstate)->line;
+        tunnel_t  *self    = (cstate)->tunnel;
+        line_t    *line    = (cstate)->line;
         context_t *context = newFinContext(line);
         self->upStream(self, context);
     }
@@ -295,16 +295,16 @@ static void onClose(hio_t *io)
 
 void onInboundConnected(hevent_t *ev)
 {
-    hloop_t *               loop = ev->loop;
+    hloop_t                *loop = ev->loop;
     socket_accept_result_t *data = (socket_accept_result_t *) hevent_userdata(ev);
-    hio_t *                 io   = data->io;
+    hio_t                  *io   = data->io;
     size_t                  tid  = data->tid;
     hio_attach(loop, io);
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    tunnel_t *                self        = data->tunnel;
-    line_t *                  line        = newLine(tid);
+    tunnel_t                 *self        = data->tunnel;
+    line_t                   *line        = newLine(tid);
     tcp_listener_con_state_t *cstate      = malloc(sizeof(tcp_listener_con_state_t));
     cstate->line                          = line;
     cstate->buffer_pool                   = getThreadBufferPool(tid);

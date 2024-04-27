@@ -3,15 +3,15 @@
 #include "loggers/core_logger.h"
 #include <string.h>
 
-#define i_key  tunnel_lib_t // NOLINT
+#define i_key  tunnel_lib_t    // NOLINT
 #define i_type vec_static_libs // NOLINT
 #include "stc/vec.h"
 
 static struct
 {
-    const char *    search_path;
+    const char     *search_path;
     vec_static_libs slibs;
-} * state;
+} *state;
 
 static tunnel_lib_t dynLoadTunnelLib(hash_t hname)
 {

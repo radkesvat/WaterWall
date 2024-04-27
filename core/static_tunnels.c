@@ -1,15 +1,20 @@
-#include "ww.h"
 #include "library_loader.h"
 #include "loggers/core_logger.h"
+#include "ww.h"
 
-#define USING(x)                                                                       \
-    do                                                                                 \
-    {                                                                                  \
-        hash_t h = CALC_HASH_BYTES(#x, strlen(#x));                                        \
-        registerStaticLib((tunnel_lib_t){h,                                            \
-                                         new##x, api##x, destroy##x, getMetadata##x}); \
-        LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                    \
-    } while (0)
+#define USING(x)                                                                                                       \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        hash_t h = CALC_HASH_BYTES(#x, strlen(#x));                                                                    \
+        registerStaticLib((tunnel_lib_t){                                                                              \
+            .hash_name         = h,                                                                                    \
+            .createHandle      = new##x,                                                                               \
+            .destroyHandle     = destroy##x,                                                                           \
+            .apiHandle         = api##x,                                                                               \
+            .getMetadataHandle = getMetadata##x,                                                                       \
+        });                                                                                                            \
+        LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                                                      \
+    } while (0);
 
 #ifdef INCLUDE_TCP_LISTENER
 #include "tunnels/adapters/listener/tcp/tcp_listener.h"
@@ -102,7 +107,6 @@
 #ifdef INCLUDE_SOCKS_5_SERVER
 #include "tunnels/server/socks/5/socks5_server.h"
 #endif
-
 
 void loadStaticTunnelsIntoCore()
 {
@@ -201,9 +205,4 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_SOCKS_5_SERVER
     USING(Socks5Server);
 #endif
-
-
-
-
-
 }

@@ -4,6 +4,19 @@
 #ifdef DEBUG
 #include "hatomic.h"
 #endif
+
+/*
+    Just do a big memory allocation at the startup and keep using them, don't talk to os as much as possible.
+    it can also grow up (allocate another big chunk) and shrink down to the first state
+
+    This is the most memory consuming part of the program, and also the preallocation length really
+    depends on where you want to use this program, on a phone or on a 16 core server?
+    so there are possible choose able memory profiles in the .c file which you can select the best for your needs
+
+    todo (runtime selection) its better that the memory profile be a runtime selection than compile time
+
+*/
+
 struct buffer_pool_s
 {
     unsigned int len;
@@ -18,8 +31,8 @@ struct buffer_pool_s
 
 typedef struct buffer_pool_s buffer_pool_t;
 
-buffer_pool_t * createSmallBufferPool();
-buffer_pool_t * createBufferPool();
+buffer_pool_t  *createSmallBufferPool();
+buffer_pool_t  *createBufferPool();
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2);

@@ -12,6 +12,7 @@ add_library(ww STATIC
                   http_def.c
                   cacert.c
                   sync_dns.c
+                  idle_table.c
                   frand.c
                   utils/utils.c
                   managers/socket_manager.c

@@ -315,7 +315,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
-            socket_filter_t *      filter   = *(k.ref);
+            socket_filter_t       *filter   = *(k.ref);
             socket_filter_option_t option   = filter->option;
             uint16_t               port_min = option.port_min;
             uint16_t               port_max = option.port_max;
@@ -443,7 +443,8 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
     }
 }
-static void listenTcpSinglePort(hloop_t *loop,socket_filter_t *filter, char *host, uint16_t port, uint8_t *ports_overlapped)
+static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+                                uint8_t *ports_overlapped)
 {
     if (ports_overlapped[port] == 1)
     {
@@ -502,7 +503,6 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
     }
 }
 
-
 static void distributeUdpSocket(hio_t *io, uint16_t local_port)
 {
     hmutex_lock(&(state->mutex));
@@ -512,7 +512,7 @@ static void distributeUdpSocket(hio_t *io, uint16_t local_port)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
-            socket_filter_t *      filter   = *(k.ref);
+            socket_filter_t       *filter   = *(k.ref);
             socket_filter_option_t option   = filter->option;
             uint16_t               port_min = option.port_min;
             uint16_t               port_max = option.port_max;
@@ -584,9 +584,7 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
     }
 }
 
-
-
-static HTHREAD_ROUTINE(accept_thread) //NOLINT
+static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
     hloop_t *loop = (hloop_t *) userdata;
 
@@ -617,7 +615,7 @@ void setSocketManager(struct socket_manager_s *new_state)
 void startSocketManager()
 {
     assert(state != NULL);
-    hloop_t *accept_thread_loop = hloop_new(HLOOP_FLAG_AUTO_FREE,createSmallBufferPool());
+    hloop_t *accept_thread_loop = hloop_new(HLOOP_FLAG_AUTO_FREE, createSmallBufferPool());
     // accept_thread(accept_thread_loop);
     state->accept_thread = hthread_create(accept_thread, accept_thread_loop);
 }

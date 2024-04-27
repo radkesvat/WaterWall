@@ -12,7 +12,7 @@ extern void           reserveBufSpace(shift_buffer_t *self, unsigned int bytes);
 extern void           consume(shift_buffer_t *self, unsigned int bytes);
 extern void           shiftl(shift_buffer_t *self, unsigned int bytes);
 extern void           shiftr(shift_buffer_t *self, unsigned int bytes);
-extern const void *   rawBuf(shift_buffer_t *self);
+extern const void    *rawBuf(shift_buffer_t *self);
 extern unsigned char *rawBufMut(shift_buffer_t *self);
 extern void           writeRaw(shift_buffer_t *restrict self, const void *restrict buffer, unsigned int len);
 extern void           writeI32(shift_buffer_t *self, int32_t data);
@@ -43,7 +43,7 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
     unsigned int real_cap = pre_cap * 2;
 
     shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
-    self->pbuf           = malloc(real_cap);
+    self->pbuf           = malloc(15 + real_cap + 15);
 
     if (real_cap > 0) // map the virtual memory page to physical memory
     {
@@ -84,8 +84,8 @@ void reset(shift_buffer_t *self, unsigned int cap)
         self->full_cap        = real_cap;
     }
     self->calc_len = 0;
-    self->lenpos = self->cap;
-    self->curpos = self->cap;
+    self->lenpos   = self->cap;
+    self->curpos   = self->cap;
 }
 
 void unShallow(shift_buffer_t *self)
@@ -136,7 +136,7 @@ void expand(shift_buffer_t *self, unsigned int increase)
         char *old_buf    = self->pbuf;
         self->pbuf       = malloc(new_realcap);
         unsigned int dif = (new_realcap / 2) - self->cap;
-        memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]),self->calc_len);
+        memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
         self->lenpos += dif;
         self->cap      = new_realcap / 2;
@@ -145,10 +145,72 @@ void expand(shift_buffer_t *self, unsigned int increase)
     }
 }
 
-void appendBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf)
+void concatBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf)
 {
     unsigned int root_length   = bufLen(root);
     unsigned int append_length = bufLen(buf);
     setLen(root, root_length + append_length);
     memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
+}
+
+void sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int bytes)
+{
+    assert(bytes <= bufLen(source));
+    assert(bufLen(dest) == 0);
+
+    if (bytes <= bufLen(source) / 2)
+    {
+        setLen(dest, bytes);
+        memcpy(rawBufMut(dest), rawBuf(source), bytes);
+        shiftr(source, bytes);
+        return;
+    }
+
+    void *tmp_refc = source->refc;
+    void *tmp_pbuf = source->pbuf;
+    source->refc   = dest->refc;
+    source->pbuf   = dest->pbuf;
+    *dest          = (struct shift_buffer_s){.calc_len = source->calc_len,
+                                             .lenpos   = source->lenpos,
+                                             .curpos   = source->curpos,
+                                             .cap      = source->cap,
+                                             .full_cap = source->full_cap,
+                                             .refc     = tmp_refc,
+                                             .pbuf     = tmp_pbuf};
+
+    memcpy(rawBufMut(source), rawBuf(dest) + bytes, bufLen(dest) - bytes);
+    shiftr(source, bytes);
+    setLen(dest, bytes);
+}
+
+shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes)
+{
+    assert(bytes <= bufLen(self));
+
+    if (bytes <= bufLen(self) / 2)
+    {
+        shift_buffer_t *newbuf = newShiftBuffer(self->cap);
+        setLen(newbuf, bytes);
+        memcpy(rawBufMut(newbuf), rawBuf(self), bytes);
+        shiftr(self, bytes);
+        return newbuf;
+    }
+
+    shift_buffer_t *newbuf   = newShiftBuffer(self->cap);
+    void           *tmp_refc = self->refc;
+    void           *tmp_pbuf = self->pbuf;
+    self->refc               = newbuf->refc;
+    self->pbuf               = newbuf->pbuf;
+    *newbuf                  = (struct shift_buffer_s){.calc_len = self->calc_len,
+                                                       .lenpos   = self->lenpos,
+                                                       .curpos   = self->curpos,
+                                                       .cap      = self->cap,
+                                                       .full_cap = self->full_cap,
+                                                       .refc     = tmp_refc,
+                                                       .pbuf     = tmp_pbuf};
+
+    memcpy(rawBufMut(self), rawBuf(newbuf) + bytes, bufLen(newbuf) - bytes);
+    shiftr(self, bytes);
+    setLen(newbuf, bytes);
+    return newbuf;
 }

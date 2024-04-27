@@ -282,7 +282,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return true;
     }
 
-    context_t *       c                = newContext(line);
+    context_t        *c                = newContext(line);
     socket_context_t *dest_context     = &(c->line->dest_ctx);
     c->src_io                          = src_io;
     c->payload                         = bufferStreamRead(bstream, full_len);
@@ -386,7 +386,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             if (parseAddress(c))
             {
                 trojan_socks_server_con_state_t *cstate       = CSTATE(c);
-                socket_context_t *               dest_context = &(c->line->dest_ctx);
+                socket_context_t                *dest_context = &(c->line->dest_ctx);
 
                 if (dest_context->address_protocol == kSapTcp)
                 {
@@ -435,7 +435,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                         if (cstate->init_sent)
                         {
-                            self->up->upStream(self->up,  newFinContext(c->line));
+                            self->up->upStream(self->up, newFinContext(c->line));
                         }
 
                         destroyBufferStream(cstate->udp_buf);
@@ -483,7 +483,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
                     if (cstate->init_sent)
                     {
-                        self->up->upStream(self->up,  newFinContext(c->line));
+                        self->up->upStream(self->up, newFinContext(c->line));
                     }
                     if (cstate->udp_buf)
                     {

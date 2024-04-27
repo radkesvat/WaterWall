@@ -4,13 +4,22 @@
 #include "node.h"
 #include "utils/hashutils.h"
 
+/*
+
+    Load librarys form any source, most probably its a static library
+    otherwise, there should be a .dll , .so lib which is supposed to be loaded
+    in a cross platform way.
+
+    this is a general interface for loading librarys that implement tunnel interface
+*/
+
 typedef struct tunnel_lib_s
 {
+    struct tunnel_s *(*createHandle)(node_instance_context_t *instance_info);
+    struct tunnel_s *(*destroyHandle)(struct tunnel_s *instance);
+    api_result_t (*apiHandle)(struct tunnel_s *instance, const char *msg);
+    tunnel_metadata_t (*getMetadataHandle)();
     hash_t hash_name;
-    struct tunnel_s *(*creation_proc)(node_instance_context_t *instance_info);
-    api_result_t (*api_proc)(struct tunnel_s *instance,const char *msg);
-    struct tunnel_s *(*destroy_proc)(struct tunnel_s *instance);
-    tunnel_metadata_t (*getmetadata_proc)();
 
 } tunnel_lib_t;
 

@@ -38,14 +38,14 @@ int main(void)
     ww_construction_data_t runtime_data = {
         .workers_count       = getCoreSettings()->workers_count,
         .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreLoggerFullPath(),
-                                                         .log_level     = getCoreSettings()->core_log_level,
-                                                         .log_console   = getCoreSettings()->core_log_console},
+                                                            .log_level     = getCoreSettings()->core_log_level,
+                                                            .log_console   = getCoreSettings()->core_log_console},
         .network_logger_data = (logger_construction_data_t){.log_file_path = getNetworkLoggerFullPath(),
                                                             .log_level     = getCoreSettings()->network_log_level,
                                                             .log_console   = getCoreSettings()->network_log_level},
         .dns_logger_data     = (logger_construction_data_t){.log_file_path = getDnsLoggerFullPath(),
-                                                        .log_level     = getCoreSettings()->dns_log_level,
-                                                        .log_console   = getCoreSettings()->dns_log_console},
+                                                            .log_level     = getCoreSettings()->dns_log_level,
+                                                            .log_console   = getCoreSettings()->dns_log_console},
     };
 
     createWW(runtime_data);

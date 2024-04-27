@@ -1,6 +1,13 @@
 #pragma once
-
 #include "buffer_pool.h"
+
+/*
+    buffers look like packets , you want a stream? you want to read the length you want?
+    then use buffer stream! put every buffer into this mix box and now you have a flow of bytes
+    which you can read but not consume, save and keep appending data to it untill it statisfy your protocol
+
+*/
+
 
 #define i_TYPE queue, shift_buffer_t * // NOLINT
 #include "stc/deq.h"
@@ -23,7 +30,7 @@ shift_buffer_t * bufferStreamRead(buffer_stream_t *self, size_t bytes);
 uint8_t          bufferStreamViewByteAt(buffer_stream_t *self, size_t at);
 void             bufferStreamViewBytesAt(buffer_stream_t *self, uint8_t* buf, size_t at, size_t len);
 
-static inline size_t bufferStreamLen(buffer_stream_t *self)
+inline size_t bufferStreamLen(buffer_stream_t *self)
 {
     return self->size;
 }

@@ -6,6 +6,36 @@
 #include "hloop.h"
 #include "ww.h"
 
+/*
+    Tunnels basicly encapsulate / decapsulate the packets and pass it to the next tunnel.
+    something like this:
+
+    ----------------------------- a chain -------------------------------
+
+    ---------------            ---------------            ---------------                                                                                   
+    |             | ---------> |             | ---------> |             |                                                                                   
+    |  Tunnel 1   |            |  Tunnel 2   |            |  Tunnel 3   |                                                                               
+    |             | <--------- |             | <--------- |             |                                                                                   
+    ---------------            ---------------            ---------------      
+     
+    ----------------------------------------------------------------------
+
+    Tunnel 1 and 3 are also called adapters since they have a os socket to read and write to
+    
+    Nodes are mostly pairs, means that 1 pair is the client (imagine a node that encrypts data)
+    and other node is the server (imagine a node that decrypts data)
+
+    We don't care what a node is doing with packets
+    as long as it provides a upstream and downstream function its a node that can join the chain
+
+    And each tunnel knows that every connection can belong to any thread
+    so we created everything threadlocal, such as buffer pools, eventloops, etc...
+
+*/
+
+
+
+
 #define MAX_CHAIN_LEN (16 * 2)
 
 #define STATE(x)      ((void *) ((x)->state))

@@ -25,7 +25,7 @@ char *readFile(const char *const path)
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
-    char * string = malloc(fsize + 1);
+    char  *string = malloc(fsize + 1);
     size_t count  = fread(string, fsize, 1, f);
     if (count == 0)
     {
@@ -306,6 +306,21 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
     scontext->domain_len      = len;
     assert(scontext->domain[len] == 0x0);
 }
+
+hash_t sockAddrCalcHash(const sockaddr_u * scontext)
+{
+    // paddings are 0
+    if (scontext->sa.sa_family == AF_INET)
+    {
+        return CALC_HASH_BYTES(&(scontext->sin), sizeof(struct sockaddr_in));
+    }
+    if (scontext->sa.sa_family == AF_INET6)
+    {
+        return CALC_HASH_BYTES(&(scontext->sin6), sizeof(struct sockaddr_in6));
+    }
+    return CALC_HASH_BYTES(&(scontext->sa), (sockaddr_len((sockaddr_u *)scontext)));
+}
+
 enum socket_address_type getHostAddrType(char *host)
 {
     if (is_ipv4(host))
@@ -426,9 +441,9 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
 // blocking io
 cmdresult_t execCmd(const char *str)
 {
-    FILE *      fp;
+    FILE       *fp;
     cmdresult_t result = (cmdresult_t){{0}, -1};
-    char *      buf    = &(result.output[0]);
+    char       *buf    = &(result.output[0]);
     int         i      = 0;
     /* Open the command for reading. */
     fp = popen(str, "r");

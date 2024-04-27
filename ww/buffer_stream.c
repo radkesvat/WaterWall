@@ -1,6 +1,8 @@
 #include "buffer_stream.h"
 #include "utils/mathutils.h"
 
+extern size_t bufferStreamLen(buffer_stream_t *self);
+
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 {
     buffer_stream_t *bs = malloc(sizeof(buffer_stream_t));
@@ -12,13 +14,19 @@ buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 
 void empytBufferStream(buffer_stream_t *self)
 {
-    c_foreach(i, queue, self->q) { reuseBuffer(self->pool, *i.ref); }
+    c_foreach(i, queue, self->q)
+    {
+        reuseBuffer(self->pool, *i.ref);
+    }
     queue_clear(&self->q);
 }
 
 void destroyBufferStream(buffer_stream_t *self)
 {
-    c_foreach(i, queue, self->q) { reuseBuffer(self->pool, *i.ref); }
+    c_foreach(i, queue, self->q)
+    {
+        reuseBuffer(self->pool, *i.ref);
+    }
     queue_drop(&self->q);
     free(self);
 }
@@ -38,30 +46,23 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
     }
     self->size -= bytes;
 
-    shift_buffer_t *result = queue_pull_front(&self->q);
+    shift_buffer_t *container = queue_pull_front(&self->q);
 
     while (true)
     {
-        size_t available = bufLen(result);
+        size_t available = bufLen(container);
         if (available > bytes)
         {
-            shift_buffer_t *shadow = newShallowShiftBuffer(result);
-            setLen(shadow, bytes);
-            shiftr(result, bytes);
-            // choose the smallest copy 
-            // if(available >  bytes * 2){
-            //     unShallow(shadow);
-            // }else{
-            //     unShallow(result);
-            // }
-            queue_push_front(&self->q, result);
-            return shadow;
+            shift_buffer_t *cutted = popBuffer(self->pool);
+            sliceBufferTo(cutted, container, bytes);
+            queue_push_front(&self->q, container);
+            return cutted;
         }
         if (available == bytes)
         {
-            return result;
+            return container;
         }
-        result = appendBufferMerge(self->pool,result, queue_pull_front(&self->q));
+        container = appendBufferMerge(self->pool, container, queue_pull_front(&self->q));
     }
 
     // shift_buffer_t *b = queue_pull_front(&self->q);
@@ -119,31 +120,32 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
     return 0;
 }
 
-// todo (test) this can be implemented incorrectly, you didn't write unit tests -> you choosed to suffer
+// todo (test) this could be implemented incorrectly, you didn't write unit tests -> you choosed to suffer
 void bufferStreamViewBytesAt(buffer_stream_t *self, uint8_t *buf, size_t at, size_t len)
 {
-    assert(self->size >= (at + len) && self->size != 0);
-    unsigned int i = 0;
+    size_t bufferstream_i = at;
+    assert(self->size >= (bufferstream_i + len) && self->size != 0);
+    unsigned int buf_i = 0;
     c_foreach(qi, queue, self->q)
     {
 
         shift_buffer_t *b    = *qi.ref;
         size_t          blen = bufLen(b);
-
-        while (at < blen)
+        if (len - buf_i <= blen - bufferstream_i)
         {
-            if (len - i <= blen - at)
-            {
-                memcpy(buf + i, rawBuf(b) + at, len - i);
-                return;
-            }
-            buf[i++] = ((uint8_t *) rawBuf(b))[at++];
-            if (i == len)
+            memcpy(buf + buf_i, rawBuf(b) + bufferstream_i, len - buf_i);
+            return;
+        }
+        while (bufferstream_i < blen)
+        {
+
+            buf[buf_i++] = ((uint8_t *) rawBuf(b))[bufferstream_i++];
+            if (buf_i == len)
             {
                 return;
             }
         }
 
-        at -= blen;
+        bufferstream_i -= blen;
     }
 }

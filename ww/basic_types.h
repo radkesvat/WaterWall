@@ -1,5 +1,4 @@
 #pragma once
-
 #include "hatomic.h"
 #include "hmutex.h"
 #include "hplatform.h"
@@ -51,12 +50,12 @@ typedef struct user_stat_s
 typedef struct user_s
 {
     struct cJSON *json;
-    hmutex_t *    fsync_lock;
+    hmutex_t     *fsync_lock;
     //-----------------
-    char * name;
-    char * email;
-    char * notes;
-    char * uid; // unique id
+    char  *name;
+    char  *email;
+    char  *notes;
+    char  *uid; // unique id
     int    gid; // group id
     hash_t hash_uid;
 
@@ -69,7 +68,7 @@ typedef struct user_s
 
 typedef struct api_result_s
 {
-    char * result;
+    char  *result;
     size_t result_len;
 } api_result_t;
 
@@ -80,7 +79,6 @@ enum domain_strategy
     kDsPreferIpV6,
     kDsOnlyIpV4,
     kDsOnlyIpV6
-
 };
 enum dynamic_value_status
 {
@@ -91,7 +89,7 @@ typedef struct dynamic_value_s
 {
     enum dynamic_value_status status;
     size_t                    value;
-    void *                    value_ptr;
+    void                     *value_ptr;
 } dynamic_value_t;
 
 enum socket_address_type
@@ -115,7 +113,7 @@ typedef struct socket_context_s
     sockaddr_u                   address;
     sockaddr_u                   address_local;
     sockaddr_u                   address_peer;
-    char *                       domain;
+    char                        *domain;
     unsigned int                 domain_len;
     bool                         domain_constant;
     enum domain_strategy         domain_strategy;

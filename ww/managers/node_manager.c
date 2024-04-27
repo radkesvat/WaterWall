@@ -38,7 +38,7 @@ void runNode(node_t *n1, size_t chain_index)
 
         LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
-        n1->instance                     = n1->lib->creation_proc(&(n1->instance_context));
+        n1->instance                     = n1->lib->createHandle(&(n1->instance_context));
         if (n1->instance == NULL)
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
@@ -52,7 +52,7 @@ void runNode(node_t *n1, size_t chain_index)
     {
         LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
-        n1->instance                     = n1->lib->creation_proc(&(n1->instance_context));
+        n1->instance                     = n1->lib->createHandle(&(n1->instance_context));
         if (n1->instance == NULL)
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
@@ -173,7 +173,7 @@ void registerNode(node_t *new_node, cJSON *node_settings)
     {
         LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
     }
-    new_node->metadata            = lib.getmetadata_proc();
+    new_node->metadata            = lib.getMetadataHandle();
     struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));
     memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
     *heap_lib     = lib;

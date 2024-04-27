@@ -20,8 +20,8 @@ typedef struct config_file_s
     hmutex_t guard;
 } config_file_t;
 
-// a config is loaded in ram and can be updated continously by other threas forexample when a user
-// uses some traffic, at some point the config file will be update, the live data however is available through the api
+// a config is loaded in ram and can be updated continously by other threads forexample when a user
+// uses some traffic, at some point the config file will be updated, the live data however is available through the api
 // so , i see no reason to destroy a config file...
 void destroyConfigFile(config_file_t *state);
 

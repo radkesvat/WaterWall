@@ -31,7 +31,7 @@ static void firstCharge(buffer_pool_t *pool)
 static void reCharge(buffer_pool_t *pool)
 {
     const size_t increase = min((pool->cap - pool->len) - 1, pool->cap / 2);
-    
+
     for (size_t i = pool->len; i < (pool->len + increase); i++)
     {
         pool->available[i] = newShiftBuffer(pool->buffers_size);
@@ -100,7 +100,7 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     unsigned int b2_length = bufLen(b2);
     if (b1_length >= b2_length)
     {
-        appendBuffer(b1, b2);
+        concatBuffer(b1, b2);
         reuseBuffer(pool, b2);
         return b1;
     }
@@ -115,7 +115,7 @@ buffer_pool_t *createBufferPool()
 
     const unsigned long count_max     = 2 * BUFFERPOOL_CONTAINER_LEN;
     const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
-    buffer_pool_t *     pool          = malloc(sizeof(buffer_pool_t) + container_len);
+    buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
 #endif
@@ -131,7 +131,7 @@ buffer_pool_t *createSmallBufferPool()
 {
     const unsigned long count_max     = 2 * (16 * 2);
     const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
-    buffer_pool_t *     pool          = malloc(sizeof(buffer_pool_t) + container_len);
+    buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
 #endif

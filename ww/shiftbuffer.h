@@ -10,6 +10,24 @@
 #include "loggers/network_logger.h" //some logs needs to be printed on debug mode
 #endif
 
+/*
+
+    This is just a buffer, with parameters like length, cap
+    cap means the space you can still use without any cost (its preallocated space)
+
+    also, this buffer provides shallow copies ( simply think of it as a pointer duplicate )
+    but, both of them can be destroyed and if a buffer has 0 owner, it will be freed
+
+    shallow copies are risky, you can corrupt the data since you are working with 2 or more
+    pointers to same memory, so if you don't know what you are doing,
+    don't create shallows at all and use other functions or simply copy.
+
+    This buffer is supposed to be taken out of a pool (buffer_pool.h)
+    and some of the other functions are defined there
+
+
+*/
+
 struct shift_buffer_s
 {
     unsigned int  calc_len;
@@ -18,7 +36,7 @@ struct shift_buffer_s
     unsigned int  cap; // half of full cap
     unsigned int  full_cap;
     unsigned int *refc;
-    char *        pbuf;
+    char         *pbuf;
 };
 typedef struct shift_buffer_s shift_buffer_t;
 
@@ -28,7 +46,9 @@ void            destroyShiftBuffer(shift_buffer_t *self);
 void            reset(shift_buffer_t *self, unsigned int cap);
 void            unShallow(shift_buffer_t *self);
 void            expand(shift_buffer_t *self, unsigned int increase);
-void            appendBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf);
+void            concatBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf);
+void            sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int bytes);
+shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes);
 
 inline bool isShallow(shift_buffer_t *self)
 {
@@ -50,10 +70,10 @@ inline void shiftl(shift_buffer_t *self, unsigned int bytes)
     {
         expand(self, (bytes - lCap(self)));
     }
-    else if (isShallow(self) && bytes > 0)
-    {
-        unShallow(self);
-    }
+    // else if (isShallow(self) && bytes > 0)
+    // {
+    //     unShallow(self);
+    // }
     self->curpos -= bytes;
     self->calc_len += bytes;
 }
@@ -65,45 +85,20 @@ inline void shiftr(shift_buffer_t *self, unsigned int bytes)
     self->calc_len -= bytes;
 }
 
-// caller must call this function to own the memory before writing
+// developer must call this function to own the memory before writing
 inline void setLen(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {
         expand(self, (bytes - rCap(self)));
     }
-    else if (isShallow(self) && self->curpos + bytes > self->lenpos)
-    {
-        unShallow(self);
-    }
+    // else if (isShallow(self) && self->curpos + bytes > self->lenpos)
+    // {
+    //     unShallow(self);
+    // }
     self->lenpos   = self->curpos + bytes;
     self->calc_len = bytes;
 }
-
-// inline void sliceBuffer(shift_buffer_t *self, unsigned int bytes)
-// {
-//     assert(bytes < bufLen(self));
-
-//     if (bytes <= bufLen(self) / 2)
-//     {
-//         self->refc    = malloc(sizeof(unsigned int));
-//         *(self->refc) = 1;
-//         char *old_buf = self->pbuf;
-//         self->pbuf    = malloc(self->full_cap);
-//         memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->lenpos]), (self->calc_len));
-//     }
-
-    
-//     if (bytes <= bufLen(self) / 2)
-//     {
-//         self->refc    = malloc(sizeof(unsigned int));
-//         *(self->refc) = 1;
-//         char *old_buf = self->pbuf;
-//         self->pbuf    = malloc(self->full_cap);
-//         memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->lenpos]), (self->calc_len));
-//     }
-
-// }
 
 inline unsigned int bufLen(shift_buffer_t *self)
 {
@@ -111,7 +106,7 @@ inline unsigned int bufLen(shift_buffer_t *self)
     return self->calc_len;
 }
 
-// its only a hint, you are not allowed to write to that space before setLen
+// its only a hint, you are not allowed to write to that space before setLen()
 inline void reserveBufSpace(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)
