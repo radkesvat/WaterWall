@@ -1,8 +1,9 @@
 #pragma once
 
+#include "basic_types.h"
 #include "hloop.h"
 #include "hmutex.h"
-#include "utils/hashutils.h"
+#include <stdint.h>
 
 /*
     Thread safe idle table

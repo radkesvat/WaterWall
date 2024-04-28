@@ -3,11 +3,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h> // free
 #include <string.h> // memmove,memcpy
 
 #if defined(DEBUG) && ! defined(hlog)
-#include "loggers/network_logger.h" //some logs needs to be printed on debug mode
 #endif
 
 /*

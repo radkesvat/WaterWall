@@ -1,9 +1,7 @@
 #pragma once
 
 #include "shiftbuffer.h"
-#ifdef DEBUG
-#include "hatomic.h"
-#endif
+#include <stdatomic.h>
 
 /*
     Just do a big memory allocation at the startup and keep using them, don't talk to os as much as possible.

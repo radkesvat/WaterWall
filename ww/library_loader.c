@@ -1,6 +1,9 @@
 #include "library_loader.h"
-#include "hplatform.h"
-#include "loggers/core_logger.h"
+#include "basic_types.h"
+#include "loggers/core_logger.h" //NOLINT
+#include "stc/common.h"
+#include "utils/hashutils.h"
+#include <stdlib.h> 
 #include <string.h>
 
 #define i_key  tunnel_lib_t    // NOLINT

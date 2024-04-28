@@ -1,6 +1,5 @@
 #pragma once
 #include "ww.h"
-#include "utils/mathutils.h"
 
 /*
     about 2 times faster than default rand()

@@ -1,9 +1,10 @@
 #pragma once
-#include "hatomic.h"
 #include "hmutex.h"
-#include "hplatform.h"
 #include "hsocket.h"
 #include "htime.h"
+#include <stdint.h>
+#include <stdatomic.h>
+#include <stddef.h>
 
 typedef uint64_t hash_t;
 

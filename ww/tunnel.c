@@ -1,5 +1,9 @@
 #include "tunnel.h"
+#include "buffer_pool.h"
 #include "string.h" // memset
+#include <stdint.h>
+#include <assert.h>
+#include <stdlib.h>
 
 extern line_t        *newLine(uint8_t tid);
 extern uint8_t        reserveChainStateIndex(line_t *l);

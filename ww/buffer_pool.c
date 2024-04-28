@@ -1,22 +1,31 @@
 #include "buffer_pool.h"
+#include "hlog.h"
+#include "shiftbuffer.h"
 #include "utils/mathutils.h"
 #include <assert.h> // for assert
 #include <malloc.h>
+#include <stdlib.h>
 #include <string.h>
 #ifdef DEBUG
-#include "loggers/network_logger.h"
 #endif
 
-#define LOW_MEMORY  0 // no preallocation (very small)
-#define MED1_MEMORY 1 // APPROX 20MB per thread
-#define MED2_MEMORY 2 // APPROX 40MB per thread
-#define HIG1_MEMORY 3 // APPROX 56MB per thread
-#define HIG2_MEMORY 4 // APPROX 72MB per thread
+enum
+{
+    kLowMemory  = 0, // no preallocation (very small)
+    kMeD1Memory = 1, // APPROX 20MB per thread
+    kMeD2Memory = 2, // APPROX 40MB per thread
+    kHiG1Memory = 3, // APPROX 56MB per thread
+    kHiG2Memory = 4  // APPROX 72MB per thread
+};
 
-#define MEMORY_PROFILE HIG2_MEMORY // todo (cmake)
+#define MEMORY_PROFILE kHiG2Memory // todo (cmake)
 
-#define BASE_READ_BUFSIZE        (1U << 13) // 8K
-#define BUFFERPOOL_CONTAINER_LEN ((16 * 4) + (16 * (16 * MEMORY_PROFILE)))
+enum
+{
+    BASE_READ_BUFSIZE = (1U << 13) // 8K
+};
+
+#define BUFFERPOOL_CONTAINER_LEN ((unsigned long) ((16 * 4) + (16 * (16 * MEMORY_PROFILE))))
 #define BUFFER_SIZE              (BASE_READ_BUFSIZE * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1))
 
 static void firstCharge(buffer_pool_t *pool)
@@ -112,7 +121,6 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 
 buffer_pool_t *createBufferPool()
 {
-
     const unsigned long count_max     = 2 * BUFFERPOOL_CONTAINER_LEN;
     const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
     buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
@@ -129,7 +137,7 @@ buffer_pool_t *createBufferPool()
 
 buffer_pool_t *createSmallBufferPool()
 {
-    const unsigned long count_max     = 2 * (16 * 2);
+    const unsigned long count_max     = (unsigned long) (2 * (16 * 2));
     const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
     buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG

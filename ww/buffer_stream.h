@@ -1,5 +1,8 @@
 #pragma once
 #include "buffer_pool.h"
+#include "shiftbuffer.h"
+#include <stddef.h>
+#include <stdint.h>
 
 /*
     buffers look like packets , you want a stream? you want to read the length you want?
@@ -8,10 +11,8 @@
 
 */
 
-
 #define i_TYPE queue, shift_buffer_t * // NOLINT
 #include "stc/deq.h"
-#define Q_CAP 25
 
 struct buffer_stream_s
 {
@@ -26,9 +27,9 @@ buffer_stream_t *newBufferStream(buffer_pool_t *pool);
 void             empytBufferStream(buffer_stream_t *self);
 void             destroyBufferStream(buffer_stream_t *self);
 void             bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf);
-shift_buffer_t * bufferStreamRead(buffer_stream_t *self, size_t bytes);
+shift_buffer_t  *bufferStreamRead(buffer_stream_t *self, size_t bytes);
 uint8_t          bufferStreamViewByteAt(buffer_stream_t *self, size_t at);
-void             bufferStreamViewBytesAt(buffer_stream_t *self, uint8_t* buf, size_t at, size_t len);
+void             bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len);
 
 inline size_t bufferStreamLen(buffer_stream_t *self)
 {

@@ -2,30 +2,42 @@
 #include "hlog.h"
 #include <stdbool.h>
 
-#if !defined(ANDROID) || !defined(__ANDROID__)
 #undef hlog
-#define hlog getDnsLogger() // NOLINT
+#define HLOG getDnsLogger() 
 
-// GET RID OF ISO C99 WARNING IN DEBUG MODE
-#ifdef DEBUG
-#undef  hlogd
-#undef  hlogi
-#undef  hlogw
-#undef  hloge
-#undef  hlogf
-#define hlogd(...) logger_print(hlog, LOG_LEVEL_DEBUG, ## __VA_ARGS__) // NOLINT
-#define hlogi(...) logger_print(hlog, LOG_LEVEL_INFO,  ## __VA_ARGS__) // NOLINT
-#define hlogw(...) logger_print(hlog, LOG_LEVEL_WARN,  ## __VA_ARGS__) // NOLINT
-#define hloge(...) logger_print(hlog, LOG_LEVEL_ERROR, ## __VA_ARGS__) // NOLINT
-#define hlogf(...) logger_print(hlog, LOG_LEVEL_FATAL, ## __VA_ARGS__) // NOLINT
+#undef   LOGD
+#undef   LOGI
+#undef   LOGW
+#undef   LOGE
+#undef   LOGF
+#define  LOGD    HLOGD
+#define  LOGI    HLOGI
+#define  LOGW    HLOGW
+#define  LOGE    HLOGE
+#define  LOGF    HLOGF
+
+#if defined(ANDROID) || defined(__ANDROID__)
+#define LOG_TAG "JNI"
+
+#define HLOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define HLOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define HLOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
+#define HLOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define HLOGF(...) __android_log_print(ANDROID_LOG_FATAL, LOG_TAG, __VA_ARGS__)
+#else
+#define HLOGD(...) logger_print(HLOG, LOG_LEVEL_DEBUG, ## __VA_ARGS__) 
+#define HLOGI(...) logger_print(HLOG, LOG_LEVEL_INFO,  ## __VA_ARGS__) 
+#define HLOGW(...) logger_print(HLOG, LOG_LEVEL_WARN,  ## __VA_ARGS__) 
+#define HLOGE(...) logger_print(HLOG, LOG_LEVEL_ERROR, ## __VA_ARGS__) 
+#define HLOGF(...) logger_print(HLOG, LOG_LEVEL_FATAL, ## __VA_ARGS__) 
 #endif
-#endif // android
-
-logger_t *getDnsLogger();
-void setDnsLogger(logger_t * newlogger);
-logger_t *createDnsLogger(const char *log_file, bool console);
 
 
-static inline void setDnsLoggerLevelByStr(const char *log_level){
+logger_t          *getDnsLogger();
+void               setDnsLogger(logger_t *newlogger);
+logger_t          *createDnsLogger(const char *log_file, bool console);
+
+static inline void setDnsLoggerLevelByStr(const char *log_level)
+{
     logger_set_level_by_str(getDnsLogger(), log_level);
 }

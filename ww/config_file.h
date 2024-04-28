@@ -1,9 +1,8 @@
 #pragma once
 
-#include "basic_types.h"
+#include "cJSON.h"
 #include "hmutex.h"
-#include "tunnel.h"
-#include "utils/jsonutils.h"
+#include <stddef.h>
 
 typedef struct config_file_s
 {
@@ -14,8 +13,8 @@ typedef struct config_file_s
     int   core_minimum_version;
     bool  encrypted;
 
-    cJSON *  root;
-    cJSON *  nodes;
+    cJSON   *root;
+    cJSON   *nodes;
     size_t   file_prebuffer_size;
     hmutex_t guard;
 } config_file_t;

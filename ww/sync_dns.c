@@ -1,5 +1,11 @@
 #include "sync_dns.h"
+#include "basic_types.h"
+#include "hlog.h"
+#include "hsocket.h"
 #include "loggers/dns_logger.h"
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 bool resolveContextSync(socket_context_t *sctx)
 {

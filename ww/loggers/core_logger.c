@@ -1,12 +1,18 @@
 #include "core_logger.h"
-#include "hbase.h"
+#include "hlog.h"
 #include "hmutex.h"
+#include "htime.h"
+#include <assert.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
 struct logger_s
 {
     logger_handler handler;
     unsigned int   bufsize;
-    char *         buf;
+    char          *buf;
 
     int  level;
     int  enable_color;
@@ -17,7 +23,7 @@ struct logger_s
     unsigned long long max_filesize;
     int                remain_days;
     int                enable_fsync;
-    FILE *             fp_;
+    FILE              *fp_;
     char               cur_logfile[256];
     time_t             last_logfile_ts;
     int                can_write_cnt;
@@ -38,7 +44,7 @@ static FILE *logFileShift(logger_t *logger)
 {
     time_t ts_now        = time(NULL);
     long   interval_days = logger->last_logfile_ts == 0 ? 0
-                                                      : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
+                                                        : (ts_now + S_GMTOFF) / SECONDS_PER_DAY -
                                                             (logger->last_logfile_ts + S_GMTOFF) / SECONDS_PER_DAY;
     if (logger->fp_ == NULL || interval_days > 0)
     {
@@ -69,7 +75,7 @@ static FILE *logFileShift(logger_t *logger)
             else
             {
                 // remove today-remain_days logfile
-                time_t ts_rm = ts_now - logger->remain_days * SECONDS_PER_DAY;
+                time_t ts_rm = ts_now - (long) logger->remain_days * SECONDS_PER_DAY;
                 generateLogFileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                 remove(rm_logfile);
             }
@@ -133,7 +139,7 @@ static void logFileWrite(logger_t *logger, const char *buf, int len)
     }
 }
 
-static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     if (loglevel == LOG_LEVEL_ERROR || loglevel == LOG_LEVEL_FATAL)
     {
@@ -146,7 +152,7 @@ static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len
     logFileWrite(logger, buf, len);
 }
 
-static void coreLoggerHandle(int loglevel, const char *buf, int len)
+static void networkLoggerHandle(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
     logFileWrite(logger, buf, len);
@@ -169,11 +175,11 @@ logger_t *createCoreLogger(const char *log_file, bool console)
     logger_set_file(logger, log_file);
     if (console)
     {
-        logger_set_handler(logger, coreLoggerHandleWithStdStream);
+        logger_set_handler(logger, networkLoggerHandleWithStdStream);
     }
     else
     {
-        logger_set_handler(logger, coreLoggerHandle);
+        logger_set_handler(logger, networkLoggerHandle);
     }
 
     atexit(destroyCoreLogger);

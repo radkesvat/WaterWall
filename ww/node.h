@@ -1,6 +1,8 @@
 #pragma once
 
 #include "basic_types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 typedef struct node_instance_context_s
 {

@@ -1,12 +1,23 @@
 #include "buffer_stream.h"
-#include "utils/mathutils.h"
+#include "buffer_pool.h"
+#include "shiftbuffer.h"
+#include "stc/common.h"
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 extern size_t bufferStreamLen(buffer_stream_t *self);
+enum
+{
+    kQCap = 25
+};
 
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 {
     buffer_stream_t *bs = malloc(sizeof(buffer_stream_t));
-    bs->q               = queue_with_capacity(Q_CAP);
+    bs->q               = queue_with_capacity(kQCap);
     bs->pool            = pool;
     bs->size            = 0;
     return bs;
@@ -121,7 +132,7 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
 }
 
 // todo (test) this could be implemented incorrectly, you didn't write unit tests -> you choosed to suffer
-void bufferStreamViewBytesAt(buffer_stream_t *self, uint8_t *buf, size_t at, size_t len)
+void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)
 {
     size_t bufferstream_i = at;
     assert(self->size >= (bufferstream_i + len) && self->size != 0);

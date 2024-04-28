@@ -1,17 +1,23 @@
 #include "protobuf_server.h"
+#include "basic_types.h"
+#include "buffer_stream.h"
 #include "loggers/network_logger.h"
+#include "node.h"
+#include "shiftbuffer.h"
+#include "tunnel.h"
+#include "uleb128.h"
+#include <stdatomic.h>
+#include <stddef.h>
+#include <stdlib.h>
 /*
     we shall not use nanopb or any protobuf lib because they need atleast 1 memcopy
     i have read the byte array implemntation of the protoc and
     we do encoding/decoding right to the buffer
 */
-#include "buffer_stream.h"
-// #include <pb_encode.h>
-// #include <pb_decode.h>
-// #include "packet.pb.h"
-#include "uleb128.h"
-
-#define MAX_PACKET_SIZE (65536 * 1)
+enum
+{
+    kMaxPacketSize = (65536 * 1)
+};
 
 typedef struct protobuf_server_state_s
 {
@@ -50,7 +56,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
             unsigned int  read_len = (bufferStreamLen(bstream) >= 4 ? 4 : 2);
             unsigned char uleb_encoded_buf[4];
-            bufferStreamViewBytesAt(bstream, uleb_encoded_buf, 1, read_len);
+            bufferStreamViewBytesAt(bstream, 1, uleb_encoded_buf, read_len);
             // if (uleb_encoded_buf[0] != '\n')
             // {
             //     LOGE("ProtoBufServer: rejected, invalid data");
@@ -60,7 +66,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             size_t bytes_passed = readUleb128ToUint64(uleb_encoded_buf, uleb_encoded_buf + read_len, &data_len);
             if (data_len == 0)
             {
-                if (uleb_encoded_buf[0] = 0x0)
+                if (uleb_encoded_buf[0] == 0x0)
                 {
                     LOGE("ProtoBufServer: rejected, invalid data");
 
@@ -71,7 +77,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
-            if (data_len > MAX_PACKET_SIZE)
+            if (data_len > kMaxPacketSize)
             {
                 LOGE("ProtoBufServer: rejected, size too large %zu (%zu passed %lu left)", data_len, bytes_passed,
                      bufferStreamLen(bstream));

@@ -1,7 +1,14 @@
 #include "config_file.h"
-#include "hplatform.h"
-#include "loggers/core_logger.h"
+#include "cJSON.h"
+#include "hlog.h"
+#include "loggers/core_logger.h" //NOLINT
 #include "utils/fileutils.h"
+#include "utils/jsonutils.h"
+#include <hmutex.h>
+#include <pthread.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 void destroyConfigFile(config_file_t *state)
 {

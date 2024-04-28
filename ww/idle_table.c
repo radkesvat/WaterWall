@@ -1,7 +1,19 @@
 #include "idle_table.h"
+#include "basic_types.h"
+#include "hdef.h"
+#include "hloop.h"
+#include "hmutex.h"
 #include "ww.h"
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
-#define VEC_CAP 32
+enum
+{
+    kVecCap = 32
+};
 void idleCallBack(hidle_t *idle);
 
 void destoryIdleTable(idle_table_t *self)
@@ -17,8 +29,8 @@ idle_table_t *newIdleTable(uint8_t tid, OnIdleExpireCallBack cb)
     *newtable              = (idle_table_t){.tid            = tid,
                                             .loop           = loops[tid],
                                             .idle_handle    = hidle_add(loops[tid], idleCallBack, INFINITE),
-                                            .hqueue         = heapq_idles_t_with_capacity(VEC_CAP),
-                                            .hmap           = hmap_idles_t_with_capacity(VEC_CAP),
+                                            .hqueue         = heapq_idles_t_with_capacity(kVecCap),
+                                            .hmap           = hmap_idles_t_with_capacity(kVecCap),
                                             .expire_cb      = cb,
                                             .last_update_ms = hloop_now_ms(loops[tid])};
 
@@ -40,7 +52,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, uint8_t
                           .cb           = self->expire_cb};
 
     heapq_idles_t_push(&(self->hqueue), item);
-    
+
     hmap_idles_t_push(&(self->hmap), (hmap_idles_t_value){item->hash, item});
     hspinlock_unlock(&(self->slock));
     return item;

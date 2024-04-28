@@ -1,7 +1,9 @@
 #include "shiftbuffer.h"
-#include "hlog.h"
+#include <stdlib.h> 
+#include <stdint.h> 
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
+#include <string.h>
 
 extern bool           isShallow(shift_buffer_t *self);
 extern unsigned int   lCap(shift_buffer_t *self);

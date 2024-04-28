@@ -38,6 +38,7 @@ const char* httpContentTypeStr(enum http_content_type type) {
     }
 }
 
+//NOLINTBEGIN
 enum http_status httpStatusEnum(const char* str) {
 #define XX(num, name, string) \
     if (strcmp(str, #string) == 0) { \
@@ -105,3 +106,4 @@ enum http_content_type httpContentTypeEnumBySuffix(const char* str) {
 #undef XX
     return kContentTypeUndefined;
 }
+//NOLINTEND

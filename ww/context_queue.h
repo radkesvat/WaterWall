@@ -1,7 +1,9 @@
 #pragma once
 
 #include "buffer_pool.h"
+#include "hloop.h"
 #include "tunnel.h"
+#include <stddef.h>
 
 /*
     a queue for context type, this helps storing it and

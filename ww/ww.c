@@ -1,12 +1,18 @@
 #include "ww.h"
 #include "buffer_pool.h"
+#include "hlog.h"
 #include "hloop.h"
+#include "hthread.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
-
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 unsigned int             workers_count  = 0;
 hthread_t               *workers        = NULL;

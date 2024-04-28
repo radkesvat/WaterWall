@@ -1,8 +1,17 @@
 #include "context_queue.h"
+#include "buffer_pool.h"
+#include "hloop.h"
+#include "stc/common.h"
+#include "tunnel.h"
+#include <stddef.h>
+#include <stdlib.h>
 
 #define i_TYPE queue, context_t * // NOLINT
 #include "stc/deq.h"
-#define Q_CAP 25
+enum
+{
+    kQCap = 25
+};
 
 struct context_queue_s
 {
@@ -13,7 +22,7 @@ struct context_queue_s
 context_queue_t *newContextQueue(buffer_pool_t *pool)
 {
     context_queue_t *cb = malloc(sizeof(context_queue_t));
-    cb->q               = queue_with_capacity(Q_CAP);
+    cb->q               = queue_with_capacity(kQCap);
     cb->pool            = pool;
     return cb;
 }

@@ -2,9 +2,15 @@
 
 #include "basic_types.h"
 #include "buffer_pool.h"
-#include "hatomic.h"
 #include "hloop.h"
+#include "shiftbuffer.h"
 #include "ww.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <string.h>
+#include <assert.h>
 
 /*
     Tunnels basicly encapsulate / decapsulate the packets and pass it to the next tunnel.
@@ -36,7 +42,9 @@
 
 
 
-#define MAX_CHAIN_LEN (16 * 2)
+enum {
+kMaxChainLen = (16 * 2)
+};
 
 #define STATE(x)      ((void *) ((x)->state))
 #define CSTATE(x)     ((void *) ((((x)->line->chains_state)[self->chain_index])))
@@ -97,13 +105,13 @@ void defaultDownStream(tunnel_t *self, context_t *c);
 
 inline line_t *newLine(uint8_t tid)
 {
-    size_t  size   = sizeof(line_t) + (sizeof(void *) * MAX_CHAIN_LEN);
+    size_t  size   = sizeof(line_t) + (sizeof(void *) * kMaxChainLen);
     line_t *result = malloc(size);
     // memset(result, 0, size);
     *result = (line_t){
         .tid      = tid,
         .refc     = 1,
-        .lcid     = MAX_CHAIN_LEN - 1,
+        .lcid     = kMaxChainLen - 1,
         .auth_cur = 0,
         .auth_max = 0,
         .loop     = loops[tid],
@@ -112,7 +120,7 @@ inline line_t *newLine(uint8_t tid)
         .dest_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
         .src_ctx  = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
     };
-    memset(&(result->chains_state), 0, (sizeof(void *) * MAX_CHAIN_LEN));
+    memset(&(result->chains_state), 0, (sizeof(void *) * kMaxChainLen));
     return result;
 }
 inline uint8_t reserveChainStateIndex(line_t *l)
@@ -133,7 +141,7 @@ inline void internalUnRefLine(line_t *l)
     assert(l->alive == false);
 
     // there should not be any conn-state alive at this point
-    for (size_t i = 0; i < MAX_CHAIN_LEN; i++)
+    for (size_t i = 0; i < kMaxChainLen; i++)
     {
         assert(l->chains_state[i] == NULL);
     }

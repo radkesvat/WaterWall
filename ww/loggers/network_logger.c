@@ -1,34 +1,38 @@
 #include "network_logger.h"
-#include "hbase.h"
+#include "hlog.h"
 #include "hmutex.h"
+#include "htime.h"
+#include <assert.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
+struct logger_s
+{
+    logger_handler handler;
+    unsigned int   bufsize;
+    char          *buf;
 
-
-struct logger_s {
-    logger_handler  handler;
-    unsigned int    bufsize;
-    char*           buf;
-
-    int             level;
-    int             enable_color;
-    char            format[64];
+    int  level;
+    int  enable_color;
+    char format[64];
 
     // for file logger
-    char                filepath[256];
-    unsigned long long  max_filesize;
-    int                 remain_days;
-    int                 enable_fsync;
-    FILE*               fp_;
-    char                cur_logfile[256];
-    time_t              last_logfile_ts;
-    int                 can_write_cnt;
+    char               filepath[256];
+    unsigned long long max_filesize;
+    int                remain_days;
+    int                enable_fsync;
+    FILE              *fp_;
+    char               cur_logfile[256];
+    time_t             last_logfile_ts;
+    int                can_write_cnt;
 
-    hhybridmutex_t            mutex_; // thread-safe
+    hhybridmutex_t mutex_; // thread-safe
 };
 
-static logger_t     *logger   = NULL;
+static logger_t *logger = NULL;
 #define S_GMTOFF 28800 // 8*3600
-
 
 static void generateLogFileName(const char *filepath, time_t ts, char *buf, int len)
 {
@@ -71,7 +75,7 @@ static FILE *logFileShift(logger_t *logger)
             else
             {
                 // remove today-remain_days logfile
-                time_t ts_rm = ts_now - logger->remain_days * SECONDS_PER_DAY;
+                time_t ts_rm = ts_now - (long) logger->remain_days * SECONDS_PER_DAY;
                 generateLogFileName(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                 remove(rm_logfile);
             }
@@ -106,8 +110,7 @@ static FILE *logFileShift(logger_t *logger)
         }
         else
         {
-                       logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / logger->bufsize);
-
+            logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / logger->bufsize);
         }
     }
 
@@ -135,7 +138,6 @@ static void logFileWrite(logger_t *logger, const char *buf, int len)
         }
     }
 }
-
 
 static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
