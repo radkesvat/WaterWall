@@ -6,24 +6,8 @@
 #include <stdarg.h>
 #include <time.h>
 
-//#include "hmutex.h"
-#ifdef _WIN32
-#pragma warning (disable: 4244) // conversion loss of data
-#include <windows.h>
-#define hmutex_t            CRITICAL_SECTION
-#define hmutex_init         InitializeCriticalSection
-#define hmutex_destroy      DeleteCriticalSection
-#define hmutex_lock         EnterCriticalSection
-#define hmutex_unlock       LeaveCriticalSection
-#else
-#include <sys/time.h>       // for gettimeofday
-#include <pthread.h>
-#define hmutex_t            pthread_mutex_t
-#define hmutex_init(mutex)  pthread_mutex_init(mutex, NULL)
-#define hmutex_destroy      pthread_mutex_destroy
-#define hmutex_lock         pthread_mutex_lock
-#define hmutex_unlock       pthread_mutex_unlock
-#endif
+#include "hmutex.h"
+
 
 //#include "htime.h"
 #define SECONDS_PER_HOUR    3600
@@ -51,7 +35,7 @@ struct logger_s {
     time_t              last_logfile_ts;
     int                 can_write_cnt;
 
-    hmutex_t            mutex_; // thread-safe
+    hhybridmutex_t            mutex_; // thread-safe
 };
 
 static void logger_init(logger_t* logger) {
@@ -72,7 +56,7 @@ static void logger_init(logger_t* logger) {
     logger_set_file(logger, DEFAULT_LOG_FILE);
     logger->last_logfile_ts = 0;
     logger->can_write_cnt = -1;
-    hmutex_init(&logger->mutex_);
+    hhybridmutex_init(&logger->mutex_);
 }
 
 logger_t* logger_create() {
@@ -99,7 +83,7 @@ void logger_destroy(logger_t* logger) {
             fclose(logger->fp_);
             logger->fp_ = NULL;
         }
-        hmutex_destroy(&logger->mutex_);
+        hhybridmutex_destroy(&logger->mutex_);
         free(logger);
     }
 }
@@ -198,11 +182,11 @@ void logger_enable_fsync(logger_t* logger, int on) {
 }
 
 void logger_fsync(logger_t* logger) {
-    hmutex_lock(&logger->mutex_);
+    hhybridmutex_lock(&logger->mutex_);
     if (logger->fp_) {
         fflush(logger->fp_);
     }
-    hmutex_unlock(&logger->mutex_);
+    hhybridmutex_unlock(&logger->mutex_);
 }
 
 const char* logger_get_cur_file(logger_t* logger) {
@@ -351,7 +335,7 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
 #undef XXX
 
     // lock logger->buf
-    hmutex_lock(&logger->mutex_);
+    hhybridmutex_lock(&logger->mutex_);
 
     char* buf = logger->buf;
     int bufsize = logger->bufsize;
@@ -442,7 +426,7 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
         logfile_write(logger, buf, len);
     }
 
-    hmutex_unlock(&logger->mutex_);
+    hhybridmutex_unlock(&logger->mutex_);
     return len;
 }
 

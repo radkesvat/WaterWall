@@ -3,6 +3,7 @@
 
 #include "hexport.h"
 #include "hplatform.h"
+#include "hatomic.h"
 #include "htime.h"
 
 BEGIN_EXTERN_C
@@ -195,6 +196,115 @@ static inline int hsem_wait_for(hsem_t* sem, unsigned int ms) {
 }
 
 #endif
+
+
+
+// YIELD_THREAD() yields for other threads to be scheduled on the current CPU by the OS
+#if (defined(WIN32) || defined(_WIN32))
+  #define YIELD_THREAD() ((void)0)
+#else
+  #include <sched.h>
+  #define YIELD_THREAD() sched_yield()
+#endif
+
+
+// YIELD_CPU() yields for other work on a CPU core
+#if defined(__i386) || defined(__i386__) || defined(__x86_64__)
+  #define YIELD_CPU() __asm__ __volatile__("pause")
+#elif defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
+  #define YIELD_CPU() __asm__ __volatile__("yield")
+#elif defined(mips) || defined(__mips__) || defined(MIPS) || defined(_MIPS_) || defined(__mips64)
+  #if defined(_ABI64) && (_MIPS_SIM == _ABI64)
+    #define YIELD_CPU() __asm__ __volatile__("pause")
+  #else
+    // comment from WebKit source:
+    //   The MIPS32 docs state that the PAUSE instruction is a no-op on older
+    //   architectures (first added in MIPS32r2). To avoid assembler errors when
+    //   targeting pre-r2, we must encode the instruction manually.
+    #define YIELD_CPU() __asm__ __volatile__(".word 0x00000140")
+  #endif
+#elif (defined(WIN32) || defined(_WIN32))
+  #include <immintrin.h>
+  #define YIELD_CPU() _mm_pause()
+#else
+  // GCC & clang intrinsic
+  #define YIELD_CPU() __builtin_ia32_pause()
+#endif
+
+
+
+#define kYieldProcessorTries 1000
+
+// hybrid_mutex_t is a mutex that will spin for a short while and then block
+typedef struct  {
+    atomic_bool flag;
+    atomic_int  nwait;
+    hsem_t      sema;
+} hybrid_mutex_t;
+
+static bool HybridMutexInit(hybrid_mutex_t* m); // returns false if system failed to init semaphore
+static void HybridMutexDestroy(hybrid_mutex_t* m);
+static void HybridMutexLock(hybrid_mutex_t* m);
+static void HybridMutexUnlock(hybrid_mutex_t* m);
+
+
+static inline  bool HybridMutexInit(hybrid_mutex_t* m) {
+    m->flag = false;
+    m->nwait = 0;
+    return hsem_init(&m->sema, 0);
+}
+
+static inline  void HybridMutexDestroy(hybrid_mutex_t* m) {
+    hsem_destroy(&m->sema);
+}
+
+static inline  void HybridMutexLock(hybrid_mutex_t* m) {
+    if (atomic_exchange_explicit(&m->flag, true, memory_order_acquire)) {
+        // already locked -- slow path
+        while (1)
+        {
+            if (! atomic_exchange_explicit(&m->flag, true, memory_order_acquire))
+                break;
+            size_t n = kYieldProcessorTries;
+            while (atomic_load_explicit(&m->flag, memory_order_relaxed))
+            {
+                if (--n == 0)
+                {
+                    ATOMIC_ADD(&m->nwait, 1);
+                    while (atomic_load_explicit(&m->flag, memory_order_relaxed))
+                    {
+                      hsem_wait(&m->sema);
+                    }
+                    ATOMIC_SUB(&m->nwait, 1);
+                }
+                else
+                {
+                    // avoid starvation on hyper-threaded CPUs
+                    YIELD_CPU();
+                }
+            }
+        }
+    }
+}
+
+static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
+    atomic_exchange(&m->flag, false);
+    if (atomic_load(&m->nwait) != 0) {
+        // at least one thread waiting on a semaphore signal -- wake one thread
+        hsem_post(&m->sema); // TODO: should we check the return value?
+    }
+}
+
+#undef kYieldProcessorTries 
+
+#define hhybridmutex_t              hybrid_mutex_t
+#define hhybridmutex_init           HybridMutexInit
+#define hhybridmutex_destroy        HybridMutexDestroy
+#define hhybridmutex_lock           HybridMutexLock
+#define hhybridmutex_unlock         HybridMutexUnlock
+
+
+
 
 END_EXTERN_C
 

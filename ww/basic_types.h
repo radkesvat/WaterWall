@@ -50,7 +50,7 @@ typedef struct user_stat_s
 typedef struct user_s
 {
     struct cJSON *json;
-    hmutex_t     *fsync_lock;
+    hhybridmutex_t     *fsync_lock;
     //-----------------
     char  *name;
     char  *email;
@@ -65,6 +65,9 @@ typedef struct user_s
     user_stat_t      stats;
 
 } user_t;
+
+
+
 
 typedef struct api_result_s
 {

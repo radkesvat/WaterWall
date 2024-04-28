@@ -61,7 +61,7 @@ struct hloop_s {
     // custom_events
     int                         eventfds[2];
     event_queue                 custom_events;
-    hmutex_t                    custom_events_mutex;
+    hhybridmutex_t                    custom_events_mutex;
 };
 
 uint64_t hloop_next_event_id();
@@ -132,7 +132,7 @@ struct hio_s {
     unsigned int        read_flags;
     // write
     struct write_queue  write_queue;
-    hrecursive_mutex_t  write_mutex; // lock write and write_queue
+    // hrecursive_mutex_t  write_mutex; // lock write and write_queue
     uint32_t            write_bufsize;
     uint32_t            max_write_bufsize;
     // callbacks

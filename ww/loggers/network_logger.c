@@ -23,7 +23,7 @@ struct logger_s {
     time_t              last_logfile_ts;
     int                 can_write_cnt;
 
-    hmutex_t            mutex_; // thread-safe
+    hhybridmutex_t            mutex_; // thread-safe
 };
 
 static logger_t     *logger   = NULL;
