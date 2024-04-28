@@ -33,7 +33,11 @@ typedef struct trojan_socks_server_con_state_s
     buffer_stream_t *udp_buf;
 
 } trojan_socks_server_con_state_t;
-
+static void cleanup(trojan_socks_server_con_state_t *cstate)
+{
+    destroyBufferStream(cstate->udp_buf);
+    free(cstate);
+}
 static void encapsultaeUdpPacket(context_t *c)
 {
     uint16_t packet_len = bufLen(c->payload);
@@ -438,10 +442,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
                             self->up->upStream(self->up, newFinContext(c->line));
                         }
 
-                        destroyBufferStream(cstate->udp_buf);
-                        free(cstate);
+                        cleanup(cstate);
                         CSTATE_MUT(c)     = NULL;
-                        context_t *fin_dw = newFinContext(c->line);
+                        context_t *fin_dw = newFinContextFrom(c);
                         destroyContext(c);
                         self->dw->downStream(self->dw, fin_dw);
                     }
@@ -459,11 +462,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
             else
             {
                 trojan_socks_server_con_state_t *cstate = CSTATE(c);
-
                 reuseContextBuffer(c);
-                free(cstate);
+
+                cleanup(cstate);
                 CSTATE_MUT(c)    = NULL;
-                context_t *reply = newFinContext(c->line);
+                context_t *reply = newFinContextFrom(c);
                 destroyContext(c);
                 self->dw->downStream(self->dw, reply);
             }
@@ -489,9 +492,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     {
                         destroyBufferStream(cstate->udp_buf);
                     }
-                    free(cstate);
+                    cleanup(cstate);
                     CSTATE_MUT(c)     = NULL;
-                    context_t *fin_dw = newFinContext(c->line);
+                    context_t *fin_dw = newFinContextFrom(c);
                     destroyContext(c);
                     self->dw->downStream(self->dw, fin_dw);
                 }
@@ -519,11 +522,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
         {
             trojan_socks_server_con_state_t *cstate    = CSTATE(c);
             bool                             init_sent = cstate->init_sent;
-            if (cstate->udp_buf)
-            {
-                destroyBufferStream(cstate->udp_buf);
-            }
-            free(cstate);
+            cleanup(cstate);
             CSTATE_MUT(c) = NULL;
             if (init_sent)
             {
@@ -543,8 +542,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     if (c->fin)
     {
-        destroyBufferStream(cstate->udp_buf);
-        free(cstate);
+        cleanup(cstate);
         CSTATE_MUT(c) = NULL;
         self->dw->downStream(self->dw, c);
         return;

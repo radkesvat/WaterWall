@@ -239,6 +239,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
         {
             hio_t *io     = cstate->io;
             CSTATE_MUT(c) = NULL;
+            contextQueueNotifyIoRemoved(c->src_io);
+            
+    contextQueueNotifyIoRemoved(cstate->data_queue,c->src_io);
+    contextQueueNotifyIoRemoved(cstate->finished_queue,c->src_io);
             cleanup(cstate, true);
             destroyLine(c->line);
             destroyContext(c);

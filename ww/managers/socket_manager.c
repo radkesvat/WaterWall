@@ -1,9 +1,18 @@
 #include "socket_manager.h"
 #include "hthread.h"
+#include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "utils/procutils.h"
 #include "ww.h"
 #include <signal.h>
+
+typedef struct socket_filter_s
+{
+    hio_t                 *listen_io;
+    socket_filter_option_t option;
+    tunnel_t              *tunnel;
+    onAccept               cb;
+} socket_filter_t;
 
 #define i_key     socket_filter_t * // NOLINT
 #define i_type    filters_t         // NOLINT
@@ -17,14 +26,16 @@
 typedef struct socket_manager_s
 {
     hthread_t accept_thread;
-    hmutex_t  mutex;
     filters_t filters[FILTERS_LEVELS];
-    uint16_t  last_round_tindex;
-    bool      iptables_installed;
-    bool      ip6tables_installed;
-    bool      lsof_installed;
-    bool      iptable_cleaned;
-    bool      iptables_used;
+    hhybridmutex_t  mutex;
+    idle_table_t udp_table;
+    
+    uint16_t last_round_tindex;
+    bool     iptables_installed;
+    bool     ip6tables_installed;
+    bool     lsof_installed;
+    bool     iptable_cleaned;
+    bool     iptables_used;
 
 } socket_manager_state_t;
 
@@ -234,9 +245,9 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
         pirority++;
     }
 
-    hmutex_lock(&(state->mutex));
+    hhybridmutex_lock(&(state->mutex));
     filters_t_push(&(state->filters[pirority]), filter);
-    hmutex_unlock(&(state->mutex));
+    hhybridmutex_unlock(&(state->mutex));
 }
 
 static void distributeSocket(hio_t *io, socket_filter_t *filter, uint16_t local_port, bool no_delay)
@@ -308,7 +319,7 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, char **white_list_raddr)
 
 static void distributeTcpSocket(hio_t *io, uint16_t local_port)
 {
-    hmutex_lock(&(state->mutex));
+    hhybridmutex_lock(&(state->mutex));
     sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
 
     for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
@@ -334,12 +345,12 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
             }
 
             distributeSocket(io, filter, local_port, option.no_delay);
-            hmutex_unlock(&(state->mutex));
+            hhybridmutex_unlock(&(state->mutex));
             return;
         }
     }
 
-    hmutex_unlock(&(state->mutex));
+    hhybridmutex_unlock(&(state->mutex));
     noSocketConsumerFound(io);
 }
 
@@ -505,7 +516,7 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
 
 static void distributeUdpSocket(hio_t *io, uint16_t local_port)
 {
-    hmutex_lock(&(state->mutex));
+    hhybridmutex_lock(&(state->mutex));
     sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
 
     for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
@@ -531,12 +542,12 @@ static void distributeUdpSocket(hio_t *io, uint16_t local_port)
             }
 
             distributeSocket(io, filter, local_port, option.no_delay);
-            hmutex_unlock(&(state->mutex));
+            hhybridmutex_unlock(&(state->mutex));
             return;
         }
     }
 
-    hmutex_unlock(&(state->mutex));
+    hhybridmutex_unlock(&(state->mutex));
     noSocketConsumerFound(io);
 }
 
@@ -588,13 +599,13 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
     hloop_t *loop = (hloop_t *) userdata;
 
-    hmutex_lock(&(state->mutex));
+    hhybridmutex_lock(&(state->mutex));
     {
         uint8_t ports_overlapped[65536] = {0};
         listenTcp(loop, ports_overlapped);
     }
 
-    hmutex_unlock(&(state->mutex));
+    hhybridmutex_unlock(&(state->mutex));
 
     hloop_run(loop);
     LOGW("AcceptThread eventloop finished!");
@@ -630,7 +641,7 @@ socket_manager_state_t *createSocketManager()
         state->filters[i] = filters_t_init();
     }
 
-    hmutex_init(&state->mutex);
+    hhybridmutex_init(&state->mutex);
 
     state->iptables_installed = checkCommandAvailable("iptables");
     state->lsof_installed     = checkCommandAvailable("lsof");

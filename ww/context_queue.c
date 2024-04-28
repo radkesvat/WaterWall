@@ -47,21 +47,37 @@ context_t *contextQueuePop(context_queue_t *self)
 {
     context_t *context = queue_pull_front(&self->q);
 
-    if (context->fd == 0 || ! hio_exists(context->line->loop, context->fd))
-    {
-        context->src_io = NULL;
-    }
-    else
-    {
-        if (hio_is_closed(context->src_io) || context->src_io != hio_get(context->line->loop, context->fd))
-        {
-            context->src_io = NULL;
-        }
-    }
+    // if (context->fd == 0 || ! hio_exists(context->line->loop, context->fd))
+    // {
+    //     context->src_io = NULL;
+    // }
+    // else
+    // {
+    //     if (hio_is_closed(context->src_io) || context->src_io != hio_get(context->line->loop, context->fd))
+    //     {
+    //         context->src_io = NULL;
+    //     }
+    // }
 
     return context;
 }
 size_t contextQueueLen(context_queue_t *self)
 {
     return queue_size(&self->q);
+}
+
+void contextQueueNotifyIoRemoved(context_queue_t *self, hio_t *io)
+{
+    if (io == NULL)
+    {
+        return;
+    }
+    c_foreach(i, queue, self->q)
+    {
+        if ((*i.ref)->src_io == io)
+        {
+            (*i.ref)->src_io = NULL;
+        }
+        destroyContext((*i.ref));
+    }
 }

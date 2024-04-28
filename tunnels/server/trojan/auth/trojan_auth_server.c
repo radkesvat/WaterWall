@@ -191,7 +191,7 @@ disconnect:;
     reuseContextBuffer(c);
     free(CSTATE(c));
     CSTATE_MUT(c)    = NULL;
-    context_t *reply = newFinContext(c->line);
+    context_t *reply = newFinContextFrom(c);
     destroyContext(c);
     self->dw->downStream(self->dw, reply);
     return;

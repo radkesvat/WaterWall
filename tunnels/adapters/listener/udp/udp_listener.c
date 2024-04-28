@@ -1,6 +1,5 @@
 #include "udp_listener.h"
 #include "buffer_pool.h"
-#include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"
 #include "utils/jsonutils.h"
@@ -142,14 +141,10 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
     printf("[%s] <=> [%s]\n", SOCKADDR_STR(hio_localaddr(io), localaddrstr),
            SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
 
-    hash_t peer_hash =  sockAddrCalcHash(hio_peeraddr(io));   
-    
-      
-    line_t                   *line        = newLine(tid);
+    hash_t peer_hash = sockAddrCalcHash(hio_peeraddr(io));
+
+    line_t                   *line   = newLine(tid);
     udp_listener_con_state_t *cstate = (udp_listener_con_state_t *) (hevent_userdata(io));
-
-
-
 
     if (cstate == NULL)
     {

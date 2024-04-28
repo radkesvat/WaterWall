@@ -327,6 +327,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             hio_t *io     = cstate->io;
             CSTATE_MUT(c) = NULL;
+            contextQueueNotifyIoRemoved(c->src_io);
             cleanup(cstate, true);
             destroyContext(c);
             hio_close(io);

@@ -180,9 +180,16 @@ inline context_t *newEstContext(line_t *line)
     return c;
 }
 
-inline context_t *newFinContext(line_t *line)
+inline context_t *newFinContext(line_t *l)
 {
-    context_t *c = newContext(line);
+    context_t *c = newContext(l);
+    c->fin       = true;
+    return c;
+}
+
+inline context_t *newFinContextFrom(context_t *source)
+{
+    context_t *c = newContextFrom(source);
     c->fin       = true;
     return c;
 }

@@ -1,6 +1,7 @@
 #include "socks5_server.h"
 #include "buffer_stream.h"
 #include "utils/sockutils.h"
+#include "loggers/network_logger.h"
 
 #define SOCKS5_VERSION ((uint8_t) 5)
 
@@ -698,7 +699,7 @@ disconnect:;
     cleanup(cstate, getContextBufferPool(c));
     free(cstate);
     CSTATE_MUT(c) = NULL;
-    context_t *fc = newFinContext(c->line);
+    context_t *fc = newFinContextFrom(c);
     destroyContext(c);
     self->dw->downStream(self->dw, fc);
 }
@@ -750,7 +751,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = NULL;
             reuseBuffer(getContextBufferPool(c), respbuf);
             self->up->upStream(self->dw, newFinContext(c->line));
-            context_t *fc = newFinContext(c->line);
+            context_t *fc = newFinContextFrom(c);
             destroyContext(c);
             self->dw->downStream(self->dw, fc);
             return;

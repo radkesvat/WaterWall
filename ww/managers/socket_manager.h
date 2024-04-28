@@ -38,13 +38,15 @@ typedef struct socket_accept_result_s
 
 typedef void (*onAccept)(hevent_t *ev);
 
-typedef struct socket_filter_s
+typedef struct udpcon_s
 {
-    hio_t                 *listen_io;
-    socket_filter_option_t option;
-    tunnel_t              *tunnel;
-    onAccept               cb;
-} socket_filter_t;
+    sockaddr_u address_local;
+    sockaddr_u address_peer;
+    void (*closecb)(struct udpcon_s udp_con);
+    void (*readcb)(struct shift_buffer_s *buf);
+    void *userdata;
+
+} udpcon_t;
 
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 

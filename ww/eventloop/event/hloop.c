@@ -748,6 +748,7 @@ void hio_attach(hloop_t* loop, hio_t* io) {
     // so we need to free it if fd exists to avoid memory leak.
     hio_t* preio = __hio_get(loop, fd);
     if (preio != NULL && preio != io) {
+        assert(preio->closed);
         hio_free(preio);
     }
 
