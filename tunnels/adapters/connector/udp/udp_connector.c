@@ -1,6 +1,7 @@
 #include "loggers/network_logger.h"
 #include "sync_dns.h"
 #include "types.h"
+#include "utils/jsonutils.h"
 #include "utils/sockutils.h"
 
 static void cleanup(udp_connector_con_state_t *cstate)
@@ -13,15 +14,13 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
     udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (hevent_userdata(io));
     if (cstate == NULL)
     {
-        reuseBuffer(hloop_bufferpool(hevent_loop(io)),buf);
+        reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
         return;
     }
-    shift_buffer_t *payload = buf;
-    tunnel_t *      self    = (cstate)->tunnel;
-    line_t *        line    = (cstate)->line;
-
-    struct sockaddr *destaddr = hio_peeraddr(io);
-
+    shift_buffer_t          *payload  = buf;
+    tunnel_t                *self     = (cstate)->tunnel;
+    line_t                  *line     = (cstate)->line;
+    struct sockaddr         *destaddr = hio_peeraddr(io);
     enum socket_address_type address_type;
 
     if (destaddr->sa_family == AF_INET6)
@@ -89,7 +88,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->tunnel      = self;
             cstate->line        = c->line;
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
-            hloop_t *  loop      = loops[c->line->tid];
+            hloop_t   *loop      = loops[c->line->tid];
             sockaddr_u host_addr = {0};
             sockaddr_set_ipport(&host_addr, "0.0.0.0", 0);
 
@@ -126,7 +125,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             socket_context_t *dest_ctx = &(c->line->dest_ctx);
             socket_context_t *src_ctx  = &(c->line->src_ctx);
-            switch (state->dest_addr_selected.status)
+            switch ((enum udp_connector_dynamic_value_status) state->dest_addr_selected.status)
             {
             case kCdvsFromSource:
                 socketContextAddrCopy(dest_ctx, src_ctx);
@@ -138,7 +137,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCdvsFromDest:
                 break;
             }
-            switch (state->dest_port_selected.status)
+            switch ((enum udp_connector_dynamic_value_status) state->dest_port_selected.status)
             {
             case kCdvsFromSource:
                 socketContextPortCopy(dest_ctx, src_ctx);
@@ -160,7 +159,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     goto fail;
                 }
             }
-            hio_set_peeraddr(cstate->io, &(dest_ctx->address.sa), sockaddr_len(&(dest_ctx->address)));
+            hio_set_peeraddr(cstate->io, &(dest_ctx->address.sa), (int) sockaddr_len(&(dest_ctx->address)));
 
             destroyContext(c);
         }
@@ -220,7 +219,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
     {
         state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
         socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
-                               strlen(state->dest_addr_selected.value_ptr));
+                                       strlen(state->dest_addr_selected.value_ptr));
     }
 
     state->dest_port_selected =

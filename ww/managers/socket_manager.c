@@ -1,10 +1,27 @@
 #include "socket_manager.h"
+#include "basic_types.h"
+#include "buffer_pool.h"
+#include "hloop.h"
+#include "hmutex.h"
+#include "hsocket.h"
 #include "hthread.h"
 #include "idle_table.h"
 #include "loggers/network_logger.h"
+#include "stc/common.h"
+#include "tunnel.h"
 #include "utils/procutils.h"
 #include "ww.h"
+#include <arpa/inet.h>
+#include <assert.h>
+#include <netinet/in.h>
 #include <signal.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 typedef struct socket_filter_s
 {
@@ -19,17 +36,20 @@ typedef struct socket_filter_s
 #define i_use_cmp                   // NOLINT
 #include "stc/vec.h"
 
-#define SUPOPRT_V6      false
-#define SO_ORIGINAL_DST 80
-#define FILTERS_LEVELS  4
+#define SUPOPRT_V6 false
+enum
+{
+    kSoOriginalDest = 80,
+    kFilterLevels   = 4
+};
 
 typedef struct socket_manager_s
 {
-    hthread_t accept_thread;
-    filters_t filters[FILTERS_LEVELS];
-    hhybridmutex_t  mutex;
-    idle_table_t udp_table;
-    
+    hthread_t      accept_thread;
+    filters_t      filters[kFilterLevels];
+    hhybridmutex_t mutex;
+    idle_table_t   udp_table;
+
     uint16_t last_round_tindex;
     bool     iptables_installed;
     bool     ip6tables_installed;
@@ -322,7 +342,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     hhybridmutex_lock(&(state->mutex));
     sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
 
-    for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
+    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
@@ -363,7 +383,7 @@ static void onAcceptTcpMultiPort(hio_t *io)
 {
     unsigned char pbuf[28] = {0};
     socklen_t     size     = 16; // todo ipv6 value is 28
-    if (getsockopt(hio_fd(io), SOL_IP, SO_ORIGINAL_DST, &(pbuf[0]), &size) < 0)
+    if (getsockopt(hio_fd(io), SOL_IP, kSoOriginalDest, &(pbuf[0]), &size) < 0)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
@@ -473,7 +493,7 @@ static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
 }
 static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
 {
-    for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
+    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
@@ -493,7 +513,7 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
             }
             else if (port_min == port_max)
             {
-                option.multiport_backend == kMultiportBackendNothing;
+                option.multiport_backend = kMultiportBackendNothing;
             }
             if (option.proto == kSapTcp)
             {
@@ -514,12 +534,12 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
     }
 }
 
-static void distributeUdpSocket(hio_t *io, uint16_t local_port)
+static void distributeUdpSocket(hio_t *io,uint16_t local_port)
 {
     hhybridmutex_lock(&(state->mutex));
     sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
 
-    for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
+    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
@@ -552,9 +572,9 @@ static void distributeUdpSocket(hio_t *io, uint16_t local_port)
 }
 
 // todo (udp smanager)
-static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
+static void listenUdp()
 {
-    for (int ri = (FILTERS_LEVELS - 1); ri >= 0; ri--)
+    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
@@ -574,7 +594,7 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
             }
             else if (port_min == port_max)
             {
-                option.multiport_backend == kMultiportBackendNothing;
+                option.multiport_backend = kMultiportBackendNothing;
             }
             if (option.proto == kSapUdp)
             {
@@ -636,7 +656,7 @@ socket_manager_state_t *createSocketManager()
     assert(state == NULL);
     state = malloc(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
-    for (size_t i = 0; i < FILTERS_LEVELS; i++)
+    for (size_t i = 0; i < kFilterLevels; i++)
     {
         state->filters[i] = filters_t_init();
     }

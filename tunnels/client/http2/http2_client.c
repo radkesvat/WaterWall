@@ -1,8 +1,12 @@
 #include "http2_client.h"
 #include "helpers.h"
 #include "types.h"
+#include "utils/jsonutils.h"
 
-#define DEFAULT_CONCURRENCY 50 // 50 cons will be muxed into 1
+enum
+{
+    kDefaultConcurrency = 50 // 50 cons will be muxed into 1
+};
 
 static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
 {
@@ -28,7 +32,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         return false;
     }
 
-    char * data = NULL;
+    char  *data = NULL;
     size_t len;
     len = nghttp2_session_mem_send(con->session, (const uint8_t **) &data);
     // LOGD("nghttp2_session_mem_send %d\n", len);
@@ -108,11 +112,11 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
 }
 static void flushWriteQueue(http2_client_con_state_t *con)
 {
-    tunnel_t * self = con->tunnel;
+    tunnel_t  *self = con->tunnel;
     context_t *g    = newContext(con->line); // keep the line alive
     while (contextQueueLen(con->queue) > 0)
     {
-        context_t *                     stream_context = contextQueuePop(con->queue);
+        context_t                      *stream_context = contextQueuePop(con->queue);
         http2_client_child_con_state_t *stream         = CSTATE(stream_context);
         stream->io                                     = stream_context->src_io;
         con->state                                     = kH2SendHeaders;
@@ -149,7 +153,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     // LOGD("%s: %s\n", name, value);
 
     http2_client_con_state_t *con  = (http2_client_con_state_t *) userdata;
-    tunnel_t *                self = con->tunnel;
+    tunnel_t                 *self = con->tunnel;
 
     // Todo (http headers) should be saved somewhere
     // if (*name == ':')
@@ -184,7 +188,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
         return 0;
     }
     http2_client_con_state_t *con  = (http2_client_con_state_t *) userdata;
-    tunnel_t *                self = con->tunnel;
+    tunnel_t                 *self = con->tunnel;
 
     http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
     if (! stream)
@@ -256,7 +260,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     // LOGD("onFrameRecvCallback\n");
     printFrameHd(&frame->hd);
     http2_client_con_state_t *con  = (http2_client_con_state_t *) userdata;
-    tunnel_t *                self = con->tunnel;
+    tunnel_t                 *self = con->tunnel;
 
     switch (frame->hd.type)
     {
@@ -290,7 +294,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         }
         nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
         context_t *fc   = newFinContext(stream->line);
-        tunnel_t * dest = stream->tunnel;
+        tunnel_t  *dest = stream->tunnel;
         removeStream(con, stream);
         deleteHttp2Stream(stream);
         CSTATE_MUT(fc) = NULL;
@@ -322,7 +326,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         http2_client_child_con_state_t *stream = CSTATE(c);
-        http2_client_con_state_t *      con    = stream->parent->chains_state[self->chain_index];
+        http2_client_con_state_t       *con    = stream->parent->chains_state[self->chain_index];
         stream->io                             = c->src_io;
 
         if (! con->handshake_completed)
@@ -348,7 +352,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            http2_client_con_state_t *      con    = takeHttp2Connection(self, c->line->tid, NULL);
+            http2_client_con_state_t       *con    = takeHttp2Connection(self, c->line->tid, NULL);
             http2_client_child_con_state_t *stream = createHttp2Stream(con, c->line, c->src_io);
             CSTATE_MUT(c)                          = stream;
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
@@ -365,18 +369,19 @@ static inline void upStream(tunnel_t *self, context_t *c)
             }
 
             while (trySendRequest(self, con, 0, NULL, NULL))
-             {   if (! isAlive(c->line))
+            {
+                if (! isAlive(c->line))
                 {
                     destroyContext(c);
                     return;
                 }
-}
+            }
             destroyContext(c);
         }
         else if (c->fin)
         {
             http2_client_child_con_state_t *stream = CSTATE(c);
-            http2_client_con_state_t *      con    = stream->parent->chains_state[self->chain_index];
+            http2_client_con_state_t       *con    = stream->parent->chains_state[self->chain_index];
             if (con->content_type == kApplicationGrpc)
             {
                 sendGrpcFinalData(self, con->line, stream->stream_id);
@@ -387,7 +392,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
             if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(c->line))
             {
                 context_t *con_fc   = newFinContext(con->line);
-                tunnel_t * con_dest = con->tunnel->up;
+                tunnel_t  *con_dest = con->tunnel->up;
                 deleteHttp2Connection(con);
                 con_dest->upStream(con_dest, con_fc);
             }
@@ -402,7 +407,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
-    http2_client_state_t *    state = STATE(self);
+    http2_client_state_t     *state = STATE(self);
     http2_client_con_state_t *con   = CSTATE(c);
     con->io                         = c->src_io;
 
@@ -441,7 +446,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
         if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(c->line))
         {
             context_t *con_fc   = newFinContext(con->line);
-            tunnel_t * con_dest = con->tunnel->up;
+            tunnel_t  *con_dest = con->tunnel->up;
             deleteHttp2Connection(con);
             con_dest->upStream(con_dest, con_fc);
         }
@@ -499,7 +504,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
         free(content_type_buf);
     }
 
-    getIntFromJsonObjectOrDefault(&(state->concurrency), settings, "concurrency", DEFAULT_CONCURRENCY);
+    getIntFromJsonObjectOrDefault(&(state->concurrency), settings, "concurrency", kDefaultConcurrency);
 
     nghttp2_option_new(&(state->ngoptions));
     nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions, 0xffffffffU);

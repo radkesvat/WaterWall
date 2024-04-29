@@ -1,7 +1,13 @@
 #pragma once
 
-#include "hmutex.h"
+#include "basic_types.h"
+#include "hloop.h"
+#include "hsocket.h"
+#include "shiftbuffer.h"
 #include "tunnel.h"
+#include "ww.h"
+#include <stddef.h>
+#include <stdint.h>
 
 typedef enum
 {

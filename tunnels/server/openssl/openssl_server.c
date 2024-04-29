@@ -5,6 +5,7 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "openssl_globals.h"
+#include "utils/jsonutils.h"
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -13,9 +14,9 @@
 
 typedef struct
 {
-    char *       name;
+    char        *name;
     unsigned int name_length;
-    tunnel_t *   next;
+    tunnel_t    *next;
 } alpn_item_t;
 
 typedef struct oss_server_state_s
@@ -39,10 +40,10 @@ typedef struct oss_server_con_state_s
     bool             fallback_init_sent;
     bool             fallback_first_sent;
     buffer_stream_t *fallback_buf;
-    line_t *         fallback_line;
-    SSL *            ssl;
-    BIO *            rbio;
-    BIO *            wbio;
+    line_t          *fallback_line;
+    SSL             *ssl;
+    BIO             *rbio;
+    BIO             *wbio;
     bool             first_sent;
     bool             init_sent;
     int              reply_sent_tit;
@@ -51,7 +52,7 @@ typedef struct oss_server_con_state_s
 
 struct timer_eventdata
 {
-    tunnel_t * self;
+    tunnel_t  *self;
     context_t *c;
 };
 
@@ -113,7 +114,7 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
 
     if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 6)
     {
-        return (16 * (160 + (0x7F & fastRand())));
+        return (16 * (160 + (0x7F & (size_t) fastRand())));
     }
 
     return 0;
@@ -147,7 +148,7 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
         return;
     }
     assert(c->payload == NULL); // payload must be consumed
-    oss_server_state_t *    state  = STATE(self);
+    oss_server_state_t     *state  = STATE(self);
     oss_server_con_state_t *cstate = CSTATE(c);
 
     if (! cstate->fallback_init_sent)
@@ -189,7 +190,7 @@ static void onFallbackTimer(htimer_t *timer)
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
-    oss_server_state_t *    state  = STATE(self);
+    oss_server_state_t     *state  = STATE(self);
     oss_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
@@ -216,11 +217,11 @@ static inline void upStream(tunnel_t *self, context_t *c)
         }
         enum sslstatus status;
         int            n;
-        size_t         len = bufLen(c->payload);
+        unsigned int   len = bufLen(c->payload);
 
         while (len > 0)
         {
-            n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
+            n = BIO_write(cstate->rbio, rawBuf(c->payload), (int) len);
 
             if (n <= 0)
             {
@@ -242,8 +243,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                     do
                     {
                         shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        size_t          avail = rCap(buf);
-                        n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                        unsigned int    avail = rCap(buf);
+                        n                     = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
                         // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
                         if (n > 0)
                         {
@@ -327,8 +328,8 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, 8192 / 2);
                 setLen(buf, 0);
-                size_t avail = rCap(buf);
-                n            = SSL_read(cstate->ssl, rawBufMut(buf), avail);
+                unsigned int avail = rCap(buf);
+                n                  = SSL_read(cstate->ssl, rawBufMut(buf), (int) avail);
 
                 if (n > 0)
                 {
@@ -364,9 +365,9 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 do
                 {
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    size_t          avail = rCap(buf);
+                    unsigned int    avail = rCap(buf);
 
-                    n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                    n = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
                     if (n > 0)
                     {
                         setLen(buf, n);
@@ -474,7 +475,7 @@ disconnect:;
 
 static inline void downStream(tunnel_t *self, context_t *c)
 {
-    oss_server_state_t *    state  = STATE(self);
+    oss_server_state_t     *state  = STATE(self);
     oss_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
@@ -501,10 +502,10 @@ static inline void downStream(tunnel_t *self, context_t *c)
             LOGF("How it is possible to receive data before sending init to upstream?");
             exit(1);
         }
-        size_t len = bufLen(c->payload);
+        unsigned int len = bufLen(c->payload);
         while (len)
         {
-            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
+            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), (int) len);
             status = getSslstatus(cstate->ssl, n);
 
             if (n > 0)
@@ -517,8 +518,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 {
 
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    size_t          avail = rCap(buf);
-                    n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                    unsigned int    avail = rCap(buf);
+                    n                     = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
                     if (n > 0)
                     {
                         setLen(buf, n);

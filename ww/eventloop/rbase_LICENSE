@@ -1,7 +1,8 @@
-some of the code modification i made to libhv is taken directly or indirectly from rbase (ckit)
+some of the code modification i made is taken directly or indirectly from rbase (ckit)
 
-- hchan.h
+- channels
 - hybridmutex (inside hmutex.h)
+- and maybe other random snippests
 
 https://github.com/rsms/ckit
 

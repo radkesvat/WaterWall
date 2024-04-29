@@ -1,5 +1,4 @@
 #pragma once
-//NOLINTBEGIN
 #include "basic_types.h"
 #include "buffer_pool.h"
 #include "config_file.h"
@@ -9,4 +8,3 @@
 #include "tunnel.h"
 #include "utils/hashutils.h"
 #include "ww.h"
-//NOLINTEND

@@ -3,6 +3,7 @@
 #include "sync_dns.h"
 #include "types.h"
 #include "utils/sockutils.h"
+#include "utils/jsonutils.h"
 
 static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
 {
@@ -54,10 +55,10 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
 {
     context_queue_t *data_queue     = (cstate)->data_queue;
     context_queue_t *finished_queue = (cstate)->finished_queue;
-    hio_t *          io             = cstate->io;
+    hio_t           *io             = cstate->io;
     while (contextQueueLen(data_queue) > 0)
     {
-        context_t *cw = contextQueuePop(data_queue);
+        context_t   *cw     = contextQueuePop(data_queue);
         unsigned int bytes  = bufLen(cw->payload);
         int          nwrite = hio_write(io, cw->payload);
         cw->payload         = NULL;
@@ -73,7 +74,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
     while (contextQueueLen(finished_queue) > 0)
     {
         context_t *cw          = contextQueuePop(finished_queue);
-        hio_t *    upstream_io = cw->src_io;
+        hio_t     *upstream_io = cw->src_io;
         if (upstream_io != NULL && (last_resumed_io != upstream_io))
         {
             last_resumed_io = upstream_io;
@@ -112,7 +113,7 @@ static void onWriteComplete(hio_t *restrict io)
         while (contextQueueLen(finished_queue) > 0)
         {
             context_t *cw          = contextQueuePop(finished_queue);
-            hio_t *    upstream_io = cw->src_io;
+            hio_t     *upstream_io = cw->src_io;
             if (upstream_io != NULL && (last_resumed_io != upstream_io))
             {
                 last_resumed_io = upstream_io;
@@ -128,12 +129,12 @@ static void onRecv(hio_t *restrict io, shift_buffer_t *buf)
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
     if (cstate == NULL)
     {
-        reuseBuffer(hloop_bufferpool(hevent_loop(io)),buf);
+        reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
         return;
     }
     shift_buffer_t *payload = buf;
-    tunnel_t *      self    = (cstate)->tunnel;
-    line_t *        line    = (cstate)->line;
+    tunnel_t       *self    = (cstate)->tunnel;
+    line_t         *line    = (cstate)->line;
 
     context_t *context = newContext(line);
     context->src_io    = io;
@@ -154,8 +155,8 @@ static void onClose(hio_t *io)
     }
     if (cstate != NULL)
     {
-        tunnel_t * self    = (cstate)->tunnel;
-        line_t *   line    = (cstate)->line;
+        tunnel_t  *self    = (cstate)->tunnel;
+        line_t    *line    = (cstate)->line;
         context_t *context = newFinContext(line);
         self->downStream(self, context);
     }
@@ -178,7 +179,7 @@ static void onOutBoundConnected(hio_t *upstream_io)
 #endif
 
     tunnel_t *self = cstate->tunnel;
-    line_t *  line = cstate->line;
+    line_t   *line = cstate->line;
     hio_setcb_read(upstream_io, onRecv);
 
     char localaddrstr[SOCKADDR_STRLEN] = {0};
@@ -249,7 +250,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             socket_context_t *dest_ctx = &(c->line->dest_ctx);
             socket_context_t *src_ctx  = &(c->line->src_ctx);
-            switch (state->dest_addr_selected.status)
+            switch ((enum tcp_connector_dynamic_value_status) state->dest_addr_selected.status)
             {
             case kCdvsFromSource:
                 socketContextAddrCopy(dest_ctx, src_ctx);
@@ -261,7 +262,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCdvsFromDest:
                 break;
             }
-            switch (state->dest_port_selected.status)
+            switch ((enum tcp_connector_dynamic_value_status) state->dest_port_selected.status)
             {
             case kCdvsFromSource:
                 socketContextPortCopy(dest_ctx, src_ctx);
@@ -314,7 +315,7 @@ static void upStream(tunnel_t *self, context_t *c)
             hio_t *upstream_io = hio_get(loop, sockfd);
             assert(upstream_io != NULL);
 
-            hio_set_peeraddr(upstream_io, &(dest_ctx->address.sa), sockaddr_len(&(dest_ctx->address)));
+            hio_set_peeraddr(upstream_io, &(dest_ctx->address.sa), (int) sockaddr_len(&(dest_ctx->address)));
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
 
@@ -327,7 +328,8 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             hio_t *io     = cstate->io;
             CSTATE_MUT(c) = NULL;
-            contextQueueNotifyIoRemoved(c->src_io);
+            contextQueueNotifyIoRemoved(cstate->data_queue, c->src_io);
+            contextQueueNotifyIoRemoved(cstate->finished_queue, c->src_io);
             cleanup(cstate, true);
             destroyContext(c);
             hio_close(io);

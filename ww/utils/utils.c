@@ -1,11 +1,15 @@
 #include "basic_types.h"
+#include "cJSON.h"
 #include "fileutils.h"
 #include "hashutils.h"
+#include "hlog.h"
 #include "jsonutils.h"
 #include "procutils.h"
 #include "sockutils.h"
 #include "stringutils.h"
 #include "userutils.h"
+#include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #define NOMINMAX
 #include <stdarg.h>
@@ -143,7 +147,7 @@ bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key
     return false;
 }
 
-bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key, const char *def)
+bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key, const char *def) // NOLINT
 {
     assert(def != NULL);
     if (! getStringFromJsonObject(dest, json_obj, key))
@@ -180,7 +184,7 @@ bool sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restric
     {
         return false;
     }
-    if (addr1->sin6.sin6_scope_id, addr2->sin6.sin6_scope_id)
+    if (addr1->sin6.sin6_scope_id != addr2->sin6.sin6_scope_id)
     {
         return false;
     }
@@ -307,7 +311,7 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
     assert(scontext->domain[len] == 0x0);
 }
 
-hash_t sockAddrCalcHash(const sockaddr_u * scontext)
+hash_t sockAddrCalcHash(const sockaddr_u *scontext)
 {
     // paddings are 0
     if (scontext->sa.sa_family == AF_INET)
@@ -318,7 +322,7 @@ hash_t sockAddrCalcHash(const sockaddr_u * scontext)
     {
         return CALC_HASH_BYTES(&(scontext->sin6), sizeof(struct sockaddr_in6));
     }
-    return CALC_HASH_BYTES(&(scontext->sa), (sockaddr_len((sockaddr_u *)scontext)));
+    return CALC_HASH_BYTES(&(scontext->sa), (sockaddr_len((sockaddr_u *) scontext)));
 }
 
 enum socket_address_type getHostAddrType(char *host)
@@ -363,6 +367,73 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     user->enable = enable;
     // TODO (parse user) parse more fields from user like limits/dates/etc..
     return user;
+}
+
+bool getPortFromJsonObject(uint16_t *dest_pmin, const cJSON *json_obj, uint16_t *dest_pmax, const char *key)
+{
+}
+
+bool verifyIpCdir(const char *ipc, struct logger_s *logger)
+{
+    unsigned int ipc_length = strlen(ipc);
+    char        *slash      = strchr(ipc, '/');
+    if (slash == NULL)
+    {
+        if (logger)
+        {
+            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx",
+                         ipc);
+        }
+        return false;
+    }
+    *slash = '\0';
+    if (! is_ipaddr(ipc))
+    {
+        if (logger)
+        {
+            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error:whitelist %d : \"%s\" is not a valid ip address",
+                         ipc);
+        }
+        return false;
+    }
+
+    bool is_v4 = is_ipv4(ipc);
+    *slash     = '/';
+
+    char *subnet_part   = slash + 1;
+    int   prefix_length = atoi(subnet_part);
+
+    if (is_v4 && (prefix_length < 0 || prefix_length > 32))
+    {
+        if (logger)
+        {
+            logger_print(
+                logger, LOG_LEVEL_ERROR,
+                "verifyIpCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
+                prefix_length);
+        }
+        return false;
+    }
+    if (! is_v4 && (prefix_length < 0 || prefix_length > 128))
+    {
+        if (logger)
+        {
+            logger_print(
+                logger, LOG_LEVEL_ERROR,
+                "verifyIpCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128", ipc,
+                prefix_length);
+        }
+        return false;
+    }
+    if (prefix_length > 0 && slash + 2 + (int) (log10(prefix_length)) < ipc + ipc_length)
+    {
+        if (logger)
+        {
+            logger_print(logger, LOG_LEVEL_WARN,
+                         "verifyIpCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix",
+                         ipc);
+        }
+    }
 }
 
 dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...)

@@ -1,14 +1,23 @@
 #include "node_manager.h"
+#include "basic_types.h"
+#include "cJSON.h"
 #include "config_file.h"
 #include "library_loader.h"
 #include "loggers/core_logger.h"
+#include "node.h"
+#include "stc/common.h"
+#include "tunnel.h"
 #include "utils/hashutils.h"
 #include "utils/jsonutils.h"
+#include <assert.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define i_type map_node_t // NOLINT
 #define i_key  hash_t     // NOLINT
 #define i_val  node_t *   // NOLINT
-
+ 
 #include "stc/hmap.h"
 
 typedef struct node_manager_s
