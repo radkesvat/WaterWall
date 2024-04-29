@@ -115,8 +115,8 @@ if(APPLE)
 endif()
 
 # see Makefile
-set(ALL_SRCDIRS . base ssl event  util cpputil evpp protocol http http/client http/server mqtt)
-set(CORE_SRCDIRS . base ssl event)
+set(ALL_SRCDIRS . base event  util cpputil evpp protocol http http/client http/server mqtt)
+set(CORE_SRCDIRS . base event)
 if(WIN32)
     if(WITH_WEPOLL)
         set(CORE_SRCDIRS ${CORE_SRCDIRS} event/wepoll)

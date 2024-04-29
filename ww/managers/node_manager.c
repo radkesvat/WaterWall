@@ -243,7 +243,7 @@ static void startParsingFiles()
             exit(1);
         }
         getStringFromJsonObject(&(new_node->next), node_json, "next");
-        getIntFromJsonObjectOrDefault(&(new_node->version), node_json, "version", 0);
+        getIntFromJsonObjectOrDefault((int*)&(new_node->version), node_json, "version", 0);
         registerNode(new_node, cJSON_GetObjectItemCaseSensitive(node_json, "settings"));
     }
     cycleProcess();

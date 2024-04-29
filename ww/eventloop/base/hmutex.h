@@ -232,6 +232,26 @@ static inline int hsem_wait_for(hsem_t* sem, unsigned int ms) {
 #endif
 
 
+// hlsem_t is a "light-weight" semaphore which is more efficient than Sema under
+// high-contention condition, by avoiding syscalls.
+// Waiting when there's already a signal available is extremely cheap and involves
+// no syscalls. If there's no signal the implementation will retry by spinning for
+// a short while before eventually falling back to Sema.
+typedef struct hlsem_s {
+  atomic_llong count;
+  hsem_t         sema;
+} hlsem_t;
+
+// returns false if system impl failed (rare)
+bool   hlsem_init(hlsem_t*, uint32_t initcount);
+void   hlsem_destroy(hlsem_t*);
+bool   hlsem_wait(hlsem_t*);
+bool   hlsem_trywait(hlsem_t*);
+bool   hlsem_timedwait(hlsem_t*, uint64_t timeout_usecs);
+void   hlsem_signal(hlsem_t*, uint32_t count /*must be >0*/);
+size_t hlsem_approxavail(hlsem_t*);
+
+
 
 #define kYieldProcessorTries 1000
 

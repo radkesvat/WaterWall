@@ -1,5 +1,7 @@
 #pragma once
-#include "stdint.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
 
 // hchan_t is an optionally-buffered messaging channel for CSP-like processing.
 // Example:
@@ -24,7 +26,7 @@ typedef struct hchan_s hchan_t; // opaque
 
 // hchannel_open creates and initializes a new channel which holds elements of elemsize byte.
 // If bufcap>0 then a buffered channel with the capacity to hold bufcap elements is created.
-hchan_t* hchannel_open(Mem mem, size_t elemsize, uint32_t bufcap);
+hchan_t* hchannel_open(size_t elemsize, uint32_t bufcap);
 
 // hchan_close cancels any waiting senders and receivers.
 // Messages sent before this call are guaranteed to be delivered, assuming there are
