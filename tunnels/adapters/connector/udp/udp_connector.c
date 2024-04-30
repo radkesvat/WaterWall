@@ -9,7 +9,7 @@ static void cleanup(udp_connector_con_state_t *cstate)
     udp_connector_state_t *state = STATE(cstate->tunnel);
     free(cstate);
 }
-static void onRecv(hio_t *io, shift_buffer_t *buf)
+static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
     udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (hevent_userdata(io));
     if (cstate == NULL)
@@ -120,7 +120,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
-            hio_setcb_read(upstream_io, onRecv);
+            hio_setcb_read(upstream_io, onRecvFrom);
             hio_read(upstream_io);
 
             socket_context_t *dest_ctx = &(c->line->dest_ctx);

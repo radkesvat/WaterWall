@@ -3,29 +3,20 @@
 #include "buffer_pool.h"
 #include "hloop.h"
 #include "hmutex.h"
-#include "hsocket.h"
-#include "hthread.h"
 #include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "stc/common.h"
 #include "tunnel.h"
 #include "utils/procutils.h"
+#include "utils/sockutils.h"
 #include "ww.h"
-#include <arpa/inet.h>
-#include <assert.h>
-#include <netinet/in.h>
-#include <signal.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 typedef struct socket_filter_s
 {
-    hio_t                 *listen_io;
+    union {
+        hio_t  *listen_io;
+        hio_t **listen_ios;
+    };
     socket_filter_option_t option;
     tunnel_t              *tunnel;
     onAccept               cb;
@@ -48,9 +39,9 @@ typedef struct socket_manager_s
     hthread_t      accept_thread;
     filters_t      filters[kFilterLevels];
     hhybridmutex_t mutex;
-    idle_table_t   udp_table;
+    idle_table_t  *udp_table;
 
-    uint16_t last_round_tindex;
+    uint16_t last_round_tid;
     bool     iptables_installed;
     bool     ip6tables_installed;
     bool     lsof_installed;
@@ -247,11 +238,9 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
 {
 
     socket_filter_t *filter = malloc(sizeof(socket_filter_t));
-    filter->tunnel          = tunnel;
-    filter->option          = option;
-    filter->cb              = cb;
-    filter->listen_io       = NULL;
-    unsigned int pirority   = 0;
+    *filter                 = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
+
+    unsigned int pirority = 0;
     if (option.multiport_backend == kMultiportBackendNothing)
     {
         pirority++;
@@ -270,41 +259,51 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     hhybridmutex_unlock(&(state->mutex));
 }
 
-static void distributeSocket(hio_t *io, socket_filter_t *filter, uint16_t local_port, bool no_delay)
+static inline uint16_t getCurrentDistrbuteTid()
+{
+    return state->last_round_tid;
+}
+static inline void incrementDistrbuteTid()
+{
+    state->last_round_tid++;
+    if (state->last_round_tid >= workers_count)
+    {
+        state->last_round_tid = 0;
+    }
+}
+static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
     socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
     result->real_localport         = local_port;
 
-    if (no_delay)
-    {
-        tcp_nodelay(hio_fd(io), 1);
-    }
+    uint8_t  tid         = (uint8_t) getCurrentDistrbuteTid();
+    hloop_t *worker_loop = loops[tid];
+    hevent_t ev          = (hevent_t){.loop = worker_loop, .cb = filter->cb};
+    result->tid          = tid;
+    result->io           = io;
+    result->tunnel       = filter->tunnel;
+    ev.userdata          = result;
+    incrementDistrbuteTid();
 
-    hio_detach(io);
-    hloop_t *worker_loop = loops[state->last_round_tindex];
-    hevent_t ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.loop        = worker_loop;
-    ev.cb          = filter->cb;
-    result->tid    = state->last_round_tindex;
-    result->io     = io;
-    result->tunnel = filter->tunnel;
-    ev.userdata    = result;
-    state->last_round_tindex++;
-    if (state->last_round_tindex >= workers_count)
-    {
-        state->last_round_tindex = 0;
-    }
     hloop_post_event(worker_loop, &ev);
 }
-static void noSocketConsumerFound(hio_t *io)
+static void noTcpSocketConsumerFound(hio_t *io)
 {
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    LOGE("SocketManager: could not find consumer for socket FD:%x [%s] <= [%s]", (int) hio_fd(io),
+    LOGE("SocketManager: could not find consumer for Tcp socket FD:%x [%s] <= [%s]", (int) hio_fd(io),
          SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     hio_close(io);
+}
+static void noUdpSocketConsumerFound(udpsock_t *udpsock)
+{
+    char localaddrstr[SOCKADDR_STRLEN] = {0};
+    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+
+    LOGE("SocketManager: could not find consumer for Udp socket  [%s] <= [%s]",
+         SOCKADDR_STR(&(udpsock->address_local), localaddrstr), SOCKADDR_STR(&(udpsock->address_peer), peeraddrstr));
+    free(udpsock);
 }
 static bool checkIpIsWhiteList(sockaddr_u *addr, char **white_list_raddr)
 {
@@ -351,8 +350,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
             uint16_t               port_min = option.port_min;
             uint16_t               port_max = option.port_max;
 
-            // single port or multi port per socket
-            if (port_min > local_port || port_max < local_port)
+            if (option.proto != kSapTcp || port_min > local_port || port_max < local_port)
             {
                 continue;
             }
@@ -364,14 +362,19 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
                 }
             }
 
-            distributeSocket(io, filter, local_port, option.no_delay);
+            if (option.no_delay)
+            {
+                tcp_nodelay(hio_fd(io), 1);
+            }
+            hio_detach(io);
+            distributeSocket(io, filter, local_port);
             hhybridmutex_unlock(&(state->mutex));
             return;
         }
     }
 
     hhybridmutex_unlock(&(state->mutex));
-    noSocketConsumerFound(io);
+    noTcpSocketConsumerFound(io);
 }
 
 static void onAcceptTcpSinplePort(hio_t *io)
@@ -454,6 +457,10 @@ static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, c
 static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
                                       uint8_t *ports_overlapped, uint16_t port_max)
 {
+    const int length           = (port_max - port_min);
+    filter->listen_ios         = (hio_t **) malloc(sizeof(hio_t *) * (length + 1));
+    filter->listen_ios[length] = 0x0;
+    int i                      = 0;
     for (uint16_t p = port_min; p < port_max; p++)
     {
         if (ports_overlapped[p] == 1)
@@ -463,14 +470,14 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
         }
         ports_overlapped[p] = 1;
 
-        filter->listen_io = hloop_create_tcp_server(loop, host, p, onAcceptTcpSinplePort);
+        filter->listen_ios[i] = hloop_create_tcp_server(loop, host, p, onAcceptTcpSinplePort);
 
-        if (filter->listen_io == NULL)
+        if (filter->listen_ios[i] == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p, "TCP");
             continue;
         }
-
+        i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
     }
 }
@@ -534,22 +541,22 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
     }
 }
 
-static void distributeUdpSocket(hio_t *io,uint16_t local_port)
+static idle_item_t* distributeUdpSocket(udpsock_t *con, uint16_t local_port)
 {
     hhybridmutex_lock(&(state->mutex));
-    sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
+    sockaddr_u *paddr = &con->address_peer;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
+
             socket_filter_t       *filter   = *(k.ref);
             socket_filter_option_t option   = filter->option;
             uint16_t               port_min = option.port_min;
             uint16_t               port_max = option.port_max;
 
-            // single port or multi port per socket
-            if (port_min > local_port || port_max < local_port)
+            if (option.proto != kSapUdp || port_min > local_port || port_max < local_port)
             {
                 continue;
             }
@@ -560,19 +567,93 @@ static void distributeUdpSocket(hio_t *io,uint16_t local_port)
                     continue;
                 }
             }
-
-            distributeSocket(io, filter, local_port, option.no_delay);
+            con->tid = getCurrentDistrbuteTid();
+            distributeSocket(con, filter, local_port);
             hhybridmutex_unlock(&(state->mutex));
-            return;
+            return true;
         }
     }
 
     hhybridmutex_unlock(&(state->mutex));
-    noSocketConsumerFound(io);
+    noUdpSocketConsumerFound(con);
+    return NULL;
+}
+
+void onUdpSocketExpire(struct idle_item_s *table_item)
+{
+    assert(table_item->userdata != NULL);
+    udpsock_t *udpsock = table_item->userdata;
+
+    // call close callback
+    if (udpsock->closecb)
+    {
+        hevent_t ev;
+        memset(&ev, 0, sizeof(ev));
+        ev.loop = loops[table_item->tid];
+        ev.cb   = udpsock->closecb;
+        hevent_set_userdata(&ev, udpsock);
+        hloop_post_event(loops[table_item->tid], &ev);
+    }
+}
+static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
+{
+
+    printf("on_recvfrom fd=%d readbytes=%d\n", hio_fd(io), (int) bufLen(buf));
+    char localaddrstr[SOCKADDR_STRLEN] = {0};
+    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+    printf("[%s] <=> [%s]\n", SOCKADDR_STR(hio_localaddr(io), localaddrstr),
+           SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+
+    hash_t       peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(io));
+    idle_item_t *udp_item      = getIdleItemByHash(state->udp_table, peeraddr_hash);
+
+    if (udp_item)
+    {
+    }
+    else
+    {
+        udpsock_t *con = malloc(sizeof(udpsock_t));
+        *con =
+            (udpsock_t){.address_local = *hio_localaddr(io), .address_peer = *hio_peeraddr(io), .ident = peeraddr_hash};
+
+        if (distributeUdpSocket(con, sockaddr_port(((sockaddr_u *) hio_peeraddr(io)))))
+        {
+
+        }
+
+        // con is freed when no consumer is found
+    }
+
+    // char *str = (char *) buf;
+    // printf("< %.*s", readbytes, str);
+    // // echo
+    // printf("> %.*s", readbytes, str);
+    // hio_write(io, buf, readbytes);
+}
+
+static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+                                uint8_t *ports_overlapped)
+{
+    if (ports_overlapped[port] == 1)
+    {
+        return;
+    }
+    ports_overlapped[port] = 1;
+    LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
+    filter->listen_io = hloop_create_udp_server(loop, host, port);
+
+    if (filter->listen_io == NULL)
+    {
+        LOGF("SocketManager: stopping due to null socket handle");
+        exit(1);
+    }
+
+    hio_setcb_read(filter->listen_io, onRecvFrom);
+    hio_read(filter->listen_io);
 }
 
 // todo (udp smanager)
-static void listenUdp()
+static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -608,7 +689,7 @@ static void listenUdp()
                 }
                 else
                 {
-                    // listenUdpSinglePort(loop, filter, option.host, port_min, ports_overlapped);
+                    listenUdpSinglePort(loop, filter, option.host, port_min, ports_overlapped);
                 }
             }
         }
@@ -620,11 +701,16 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
     hloop_t *loop = (hloop_t *) userdata;
 
     hhybridmutex_lock(&(state->mutex));
+    state->udp_table = newIdleTable(loop, onUdpSocketExpire);
+
     {
         uint8_t ports_overlapped[65536] = {0};
         listenTcp(loop, ports_overlapped);
     }
-
+    {
+        uint8_t ports_overlapped[65536] = {0};
+        listenUdp(loop, ports_overlapped);
+    }
     hhybridmutex_unlock(&(state->mutex));
 
     hloop_run(loop);

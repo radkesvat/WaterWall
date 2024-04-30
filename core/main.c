@@ -58,7 +58,7 @@ int main(void)
 
     // libhv has a separate logger, we attach it to the core logger
     logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
-    logger_set_handler(hv_default_logger(), getCoreLoggerHandle(getCoreSettings()->core_log_console));
+    logger_set_handler(hv_default_logger(), getCoreLoggerHandle());
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");

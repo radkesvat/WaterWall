@@ -2,6 +2,7 @@
 #include "helpers.h"
 #include "loggers/network_logger.h"
 #include "types.h"
+#include "utils/jsonutils.h"
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
@@ -157,7 +158,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
 static void startReverseCelint(htimer_t *timer)
 {
-    tunnel_t *              self  = hevent_userdata(timer);
+    tunnel_t               *self  = hevent_userdata(timer);
     reverse_client_state_t *state = STATE(self);
     for (int i = 0; i < workers_count; i++)
     {

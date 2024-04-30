@@ -44,21 +44,23 @@ typedef struct socket_accept_result_s
 
 typedef void (*onAccept)(hevent_t *ev);
 
-typedef struct udpcon_s
+typedef struct udpsock_s
 {
     sockaddr_u address_local;
     sockaddr_u address_peer;
-    void (*closecb)(struct udpcon_s udp_con);
-    void (*readcb)(struct shift_buffer_s *buf);
-    void *userdata;
+    void (*closecb)(hevent_t *ev);
+    void (*readcb)(hevent_t *ev);
+    void  *userdata;
+    hash_t ident;
+    uint8_t tid;
 
-} udpcon_t;
+} udpsock_t;
+
+void closeUdpSocket(udpsock_t *udpsock);
 
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 
 struct socket_manager_s *getSocketManager();
-
-void                     setSocketManager(struct socket_manager_s *state);
 struct socket_manager_s *createSocketManager();
-
-void startSocketManager();
+void                     setSocketManager(struct socket_manager_s *state);
+void                     startSocketManager();

@@ -238,18 +238,18 @@ static inline int hsem_wait_for(hsem_t* sem, unsigned int ms) {
 // no syscalls. If there's no signal the implementation will retry by spinning for
 // a short while before eventually falling back to Sema.
 typedef struct hlsem_s {
-  atomic_llong count;
+  atomic_long count;
   hsem_t         sema;
 } hlsem_t;
 
-// returns false if system impl failed (rare)
-bool   hlsem_init(hlsem_t*, uint32_t initcount);
-void   hlsem_destroy(hlsem_t*);
-bool   hlsem_wait(hlsem_t*);
-bool   hlsem_trywait(hlsem_t*);
-bool   hlsem_timedwait(hlsem_t*, uint64_t timeout_usecs);
-void   hlsem_signal(hlsem_t*, uint32_t count /*must be >0*/);
-size_t hlsem_approxavail(hlsem_t*);
+bool LSemaInit(hlsem_t*, uint32_t initcount); // returns false if system impl failed (rare)
+void LSemaDispose(hlsem_t*);
+bool LSemaWait(hlsem_t*);
+bool LSemaTryWait(hlsem_t*);
+bool LSemaTimedWait(hlsem_t*, uint64_t timeout_usecs);
+void LSemaSignal(hlsem_t*, uint32_t count /*must be >0*/);
+size_t LSemaApproxAvail(hlsem_t*);
+
 
 
 
@@ -307,6 +307,9 @@ static inline  void HybridMutexLock(hybrid_mutex_t* m) {
     }
 }
 
+static inline  bool HybridMutexTryLock(hybrid_mutex_t* m) {
+    return  0 == atomic_exchange_explicit(&m->flag, true, memory_order_acquire); 
+}
 static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
     atomic_exchange(&m->flag, false);
     if (atomic_load(&m->nwait) != 0) {
@@ -321,6 +324,7 @@ static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
 #define hhybridmutex_init           HybridMutexInit
 #define hhybridmutex_destroy        HybridMutexDestroy
 #define hhybridmutex_lock           HybridMutexLock
+#define hhybridmutex_trylock        HybridMutexTryLock
 #define hhybridmutex_unlock         HybridMutexUnlock
 
 

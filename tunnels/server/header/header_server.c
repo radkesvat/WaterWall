@@ -2,6 +2,7 @@
 #include "buffer_stream.h"
 #include "hsocket.h"
 #include "loggers/network_logger.h"
+#include "utils/jsonutils.h"
 
 enum header_dynamic_value_status
 {

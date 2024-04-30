@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #undef hlog
+#undef HLOG
 #define HLOG getDnsLogger() 
 
 #undef   LOGD

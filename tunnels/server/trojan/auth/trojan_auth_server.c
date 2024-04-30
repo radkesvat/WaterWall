@@ -4,13 +4,16 @@
 #include "managers/node_manager.h"
 #include "utils/stringutils.h"
 #include "utils/userutils.h"
+#include "utils/jsonutils.h"
 
 #define i_type hmap_users_t    // NOLINT
 #define i_key  hash_t          // NOLINT
 #define i_val  trojan_user_t * // NOLINT
 
-#define VEC_CAP  100
-#define CRLF_LEN 2
+enum {
+VEC_CAP =  100,
+CRLF_LEN = 2
+};
 
 #include "stc/hmap.h"
 

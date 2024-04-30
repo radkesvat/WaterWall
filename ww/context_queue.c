@@ -87,6 +87,5 @@ void contextQueueNotifyIoRemoved(context_queue_t *self, hio_t *io)
         {
             (*i.ref)->src_io = NULL;
         }
-        destroyContext((*i.ref));
     }
 }

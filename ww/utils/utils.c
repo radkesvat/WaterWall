@@ -311,18 +311,18 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
     assert(scontext->domain[len] == 0x0);
 }
 
-hash_t sockAddrCalcHash(const sockaddr_u *scontext)
+hash_t sockAddrCalcHash(const sockaddr_u *saddr)
 {
     // paddings are 0
-    if (scontext->sa.sa_family == AF_INET)
+    if (saddr->sa.sa_family == AF_INET)
     {
-        return CALC_HASH_BYTES(&(scontext->sin), sizeof(struct sockaddr_in));
+        return CALC_HASH_BYTES(&(saddr->sin.sin_port), sizeof(struct sockaddr_in) + sizeof(in_port_t));
     }
-    if (scontext->sa.sa_family == AF_INET6)
+    if (saddr->sa.sa_family == AF_INET6)
     {
-        return CALC_HASH_BYTES(&(scontext->sin6), sizeof(struct sockaddr_in6));
+        return CALC_HASH_BYTES(&(saddr->sin6.sin6_port), sizeof(struct sockaddr_in6) + sizeof(in_port_t));
     }
-    return CALC_HASH_BYTES(&(scontext->sa), (sockaddr_len((sockaddr_u *) scontext)));
+    return CALC_HASH_BYTES(&(saddr->sa), (sockaddr_len((sockaddr_u *) saddr)));
 }
 
 enum socket_address_type getHostAddrType(char *host)
@@ -367,10 +367,6 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     user->enable = enable;
     // TODO (parse user) parse more fields from user like limits/dates/etc..
     return user;
-}
-
-bool getPortFromJsonObject(uint16_t *dest_pmin, const cJSON *json_obj, uint16_t *dest_pmax, const char *key)
-{
 }
 
 bool verifyIpCdir(const char *ipc, struct logger_s *logger)

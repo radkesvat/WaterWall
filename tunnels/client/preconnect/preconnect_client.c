@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "types.h"
+#include "utils/jsonutils.h"
 
 static inline void upStream(tunnel_t *self, context_t *c)
 {
@@ -47,7 +48,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 ucon->mode    = kConnectedPair;
                 CSTATE_MUT(c) = ucon;
                 self->dw->downStream(self->dw, newEstContext(c->line));
-                initiateConnect(self,false);
+                initiateConnect(self, false);
             }
             else
             {
@@ -121,7 +122,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     else
     {
         const unsigned int             tid     = c->line->tid;
-        thread_box_t *                 this_tb = &(state->workers[tid]);
+        thread_box_t                  *this_tb = &(state->workers[tid]);
         preconnect_client_con_state_t *ucon    = CSTATE(c);
 
         if (c->fin)
@@ -134,7 +135,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
                 destroyCstate(ucon);
                 self->dw->downStream(self->dw, c);
-                initiateConnect(self,true);
+                initiateConnect(self, true);
 
                 break;
 
@@ -144,7 +145,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 (ucon->d->chains_state)[self->chain_index] = NULL;
                 destroyCstate(ucon);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
-                initiateConnect(self,false);
+                initiateConnect(self, false);
 
                 break;
 
@@ -157,7 +158,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 }
                 destroyCstate(ucon);
                 destroyContext(c);
-                initiateConnect(self,true);
+                initiateConnect(self, true);
 
                 break;
 
@@ -177,7 +178,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 unsigned int unused = atomic_fetch_add_explicit(&(state->unused_cons), 1, memory_order_relaxed);
                 LOGI("PreConnectClient: connected,    unused: %d active: %d", unused + 1, state->active_cons);
-                initiateConnect(self,false);
+                initiateConnect(self, false);
             }
             else
             {
@@ -189,15 +190,15 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
 static void startPreconnect(htimer_t *timer)
 {
-    tunnel_t *                 self  = hevent_userdata(timer);
+    tunnel_t                  *self  = hevent_userdata(timer);
     preconnect_client_state_t *state = STATE(self);
 
     for (int i = 0; i < workers_count; i++)
     {
-        const int cpt = state->connection_per_thread;
+        const size_t cpt = state->connection_per_thread;
         for (size_t ci = 0; ci < cpt; ci++)
         {
-            initiateConnect(self,true);
+            initiateConnect(self, true);
         }
     }
 

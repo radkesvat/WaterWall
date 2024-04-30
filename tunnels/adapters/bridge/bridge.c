@@ -1,12 +1,12 @@
 #include "bridge.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
-
+#include "utils/jsonutils.h"
 
 typedef struct bridge_state_s
 {
     bool      mode_upside; // if this node is last node of upstream
-    node_t *  pair_node;
+    node_t   *pair_node;
     tunnel_t *pair;
 
 } bridge_state_t;
@@ -15,7 +15,6 @@ typedef struct bridge_con_state_s
 {
 
 } bridge_con_state_t;
-
 
 static void upStream(tunnel_t *self, context_t *c)
 {
@@ -39,9 +38,7 @@ static void upStream(tunnel_t *self, context_t *c)
     // }
     // self->upStream(self, c);
 
-
-    state->pair->dw->downStream(state->pair->dw,c);
-
+    state->pair->dw->downStream(state->pair->dw, c);
 }
 
 static inline void downStream(tunnel_t *self, context_t *c)
@@ -67,14 +64,13 @@ static inline void downStream(tunnel_t *self, context_t *c)
     // }
     // self->downStream(self, c);
 
-
-    state->pair->up->upStream(state->pair->up,c);
+    state->pair->up->upStream(state->pair->up, c);
 }
 
 tunnel_t *newBridge(node_instance_context_t *instance_info)
 {
     const cJSON *settings       = instance_info->node_settings_json;
-    char *       pair_node_name = NULL;
+    char        *pair_node_name = NULL;
     if (! getStringFromJsonObject(&pair_node_name, settings, "pair"))
     {
         LOGF("Bridge: \"pair\" is not provided in json");
