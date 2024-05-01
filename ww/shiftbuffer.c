@@ -1,8 +1,8 @@
 #include "shiftbuffer.h"
-#include <stdlib.h> 
-#include <stdint.h> 
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 extern bool           isShallow(shift_buffer_t *self);
@@ -159,8 +159,10 @@ void sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int by
 {
     assert(bytes <= bufLen(source));
     assert(bufLen(dest) == 0);
+    const unsigned int total     = bufLen(source);
+    const unsigned int threshold = 100;
 
-    if (bytes <= bufLen(source) / 2)
+    if (bytes <= (total / 2) + threshold)
     {
         setLen(dest, bytes);
         memcpy(rawBufMut(dest), rawBuf(source), bytes);
@@ -168,20 +170,12 @@ void sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int by
         return;
     }
 
-    void *tmp_refc = source->refc;
-    void *tmp_pbuf = source->pbuf;
-    source->refc   = dest->refc;
-    source->pbuf   = dest->pbuf;
-    *dest          = (struct shift_buffer_s){.calc_len = source->calc_len,
-                                             .lenpos   = source->lenpos,
-                                             .curpos   = source->curpos,
-                                             .cap      = source->cap,
-                                             .full_cap = source->full_cap,
-                                             .refc     = tmp_refc,
-                                             .pbuf     = tmp_pbuf};
+    shift_buffer_t tmp = *source;
+    *source            = *dest;
+    *dest              = tmp;
 
-    memcpy(rawBufMut(source), rawBuf(dest) + bytes, bufLen(dest) - bytes);
-    shiftr(source, bytes);
+    setLen(source, total - bytes);
+    memcpy(rawBufMut(source), rawBuf(dest) + bytes, total - bytes);
     setLen(dest, bytes);
 }
 

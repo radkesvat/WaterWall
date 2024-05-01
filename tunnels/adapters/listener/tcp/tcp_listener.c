@@ -296,7 +296,7 @@ static void onClose(hio_t *io)
     }
 }
 
-void onInboundConnected(hevent_t *ev)
+static void onInboundConnected(hevent_t *ev)
 {
     hloop_t                *loop = ev->loop;
     socket_accept_result_t *data = (socket_accept_result_t *) hevent_userdata(ev);
@@ -319,8 +319,8 @@ void onInboundConnected(hevent_t *ev)
     cstate->established                   = false;
     cstate->first_packet_sent             = false;
     line->chains_state[self->chain_index] = cstate;
-    line->src_ctx.address_protocol        = data->proto;
-    line->src_ctx.address.sa              = *hio_peeraddr(io);
+    line->src_ctx.address_protocol        = kSapTcp;
+    line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
 
     // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u
     // *)hio_localaddr(io)) : data->real_localport);
@@ -360,7 +360,7 @@ void onInboundConnected(hevent_t *ev)
     hio_read(io);
 }
 
-void parsePortSection(tcp_listener_state_t *state, const cJSON *settings)
+static void parsePortSection(tcp_listener_state_t *state, const cJSON *settings)
 {
     const cJSON *port_json = cJSON_GetObjectItemCaseSensitive(settings, "port");
     if ((cJSON_IsNumber(port_json) && (port_json->valuedouble != 0)))

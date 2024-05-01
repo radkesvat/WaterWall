@@ -5,12 +5,6 @@
 #include "hloop.h"
 #include "shiftbuffer.h"
 #include "ww.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <sys/socket.h>
-#include <string.h>
-#include <assert.h>
 
 /*
     Tunnels basicly encapsulate / decapsulate the packets and pass it to the next tunnel.
@@ -18,16 +12,16 @@
 
     ----------------------------- a chain -------------------------------
 
-    ---------------            ---------------            ---------------                                                                                   
-    |             | ---------> |             | ---------> |             |                                                                                   
-    |  Tunnel 1   |            |  Tunnel 2   |            |  Tunnel 3   |                                                                               
-    |             | <--------- |             | <--------- |             |                                                                                   
-    ---------------            ---------------            ---------------      
-     
+    ---------------            ---------------            ---------------
+    |             | ---------> |             | ---------> |             |
+    |  Tunnel 1   |            |  Tunnel 2   |            |  Tunnel 3   |
+    |             | <--------- |             | <--------- |             |
+    ---------------            ---------------            ---------------
+
     ----------------------------------------------------------------------
 
     Tunnel 1 and 3 are also called adapters since they have a os socket to read and write to
-    
+
     Nodes are mostly pairs, means that 1 pair is the client (imagine a node that encrypts data)
     and other node is the server (imagine a node that decrypts data)
 
@@ -39,11 +33,9 @@
 
 */
 
-
-
-
-enum {
-kMaxChainLen = (16 * 2)
+enum
+{
+    kMaxChainLen = (16 * 2)
 };
 
 #define STATE(x)      ((void *) ((x)->state))
@@ -52,23 +44,24 @@ kMaxChainLen = (16 * 2)
 
 typedef struct line_s
 {
+    hloop_t         *loop;
+    socket_context_t src_ctx;
+    socket_context_t dest_ctx;
     uint16_t         refc;
     uint8_t          tid;
     uint8_t          lcid;
     uint8_t          auth_cur;
     uint8_t          auth_max;
     bool             alive;
-    hloop_t *        loop;
-    socket_context_t src_ctx;
-    socket_context_t dest_ctx;
-    void *           chains_state[];
+
+    void *chains_state[];
 
 } line_t;
 
 typedef struct context_s
 {
-    line_t *        line;
-    hio_t *         src_io;
+    line_t         *line;
+    hio_t          *src_io;
     shift_buffer_t *payload;
     int             fd;
     bool            init;
@@ -83,7 +76,7 @@ typedef void (*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
 
 struct tunnel_s
 {
-    void *           state;
+    void            *state;
     struct tunnel_s *dw, *up;
 
     TunnelFlowRoutine upStream;
@@ -95,13 +88,12 @@ struct tunnel_s
 typedef struct tunnel_s tunnel_t;
 
 tunnel_t *newTunnel();
-
-void destroyTunnel(tunnel_t *self);
-void chain(tunnel_t *from, tunnel_t *to);
-void chainDown(tunnel_t *from, tunnel_t *to);
-void chainUp(tunnel_t *from, tunnel_t *to);
-void defaultUpStream(tunnel_t *self, context_t *c);
-void defaultDownStream(tunnel_t *self, context_t *c);
+void      destroyTunnel(tunnel_t *self);
+void      chain(tunnel_t *from, tunnel_t *to);
+void      chainDown(tunnel_t *from, tunnel_t *to);
+void      chainUp(tunnel_t *from, tunnel_t *to);
+void      defaultUpStream(tunnel_t *self, context_t *c);
+void      defaultDownStream(tunnel_t *self, context_t *c);
 
 inline line_t *newLine(uint8_t tid)
 {
@@ -247,7 +239,6 @@ inline bool isFullyAuthenticated(line_t *line)
     return line->auth_cur >= line->auth_max;
 }
 
-
 inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
 {
     return buffer_pools[tid];
@@ -258,7 +249,7 @@ inline buffer_pool_t *getLineBufferPool(line_t *l)
 }
 inline buffer_pool_t *getContextBufferPool(context_t *c)
 {
-    return  buffer_pools[c->line->tid];
+    return buffer_pools[c->line->tid];
 }
 inline void reuseContextBuffer(context_t *c)
 {

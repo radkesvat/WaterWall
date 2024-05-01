@@ -38,7 +38,7 @@ typedef struct socket_accept_result_s
     hio_t                       *io; // it also has the owner loop
     tunnel_t                    *tunnel;
     enum socket_address_protocol proto;
-    size_t                       tid;
+    uint8_t                      tid;
     uint16_t                     real_localport;
 
 } socket_accept_result_t;
@@ -57,10 +57,12 @@ typedef struct udp_payload_s
     udpsock_t      *sock;
     tunnel_t       *tunnel;
     uint8_t         tid;
+    sockaddr_u      peer_addr;
     uint16_t        real_localport;
     shift_buffer_t *buf;
 
 } udp_payload_t;
+void writeUdp(hio_t *socket_io, shift_buffer_t *buf);
 
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 

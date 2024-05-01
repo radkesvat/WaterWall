@@ -23,14 +23,13 @@ void destoryIdleTable(idle_table_t *self)
     hmap_idles_t_drop(&(self->hmap));
 }
 
-idle_table_t *newIdleTable(hloop_t *loop, OnIdleExpireCallBack cb)
+idle_table_t *newIdleTable(hloop_t *loop)
 {
     idle_table_t *newtable = malloc(sizeof(idle_table_t));
     *newtable              = (idle_table_t){.loop           = loop,
                                             .idle_handle    = hidle_add(loop, idleCallBack, INFINITE),
                                             .hqueue         = heapq_idles_t_with_capacity(kVecCap),
                                             .hmap           = hmap_idles_t_with_capacity(kVecCap),
-                                            .expire_cb      = cb,
                                             .last_update_ms = hloop_now_ms(loop)};
 
     hhybridmutex_init(&(newtable->mutex));
@@ -38,17 +37,15 @@ idle_table_t *newIdleTable(hloop_t *loop, OnIdleExpireCallBack cb)
     return newtable;
 }
 
-idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, uint8_t tid, uint64_t age_ms)
+idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
+                         uint64_t age_ms)
 {
-    assert(self && self->expire_cb);
+    assert(self);
     idle_item_t *item = malloc(sizeof(idle_item_t));
     hhybridmutex_lock(&(self->mutex));
 
-    *item = (idle_item_t){.expire_at_ms = hloop_now_ms(self->loop) + age_ms,
-                          .hash         = key,
-                          .tid          = tid,
-                          .userdata     = userdata,
-                          .cb           = self->expire_cb};
+    *item = (idle_item_t){
+        .expire_at_ms = hloop_now_ms(self->loop) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
 
     heapq_idles_t_push(&(self->hqueue), item);
 

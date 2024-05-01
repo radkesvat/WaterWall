@@ -1,5 +1,6 @@
 #include "udp_listener.h"
 #include "buffer_pool.h"
+#include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"
 #include "utils/jsonutils.h"
@@ -25,8 +26,9 @@ typedef struct udp_listener_con_state_s
 {
     hloop_t       *loop;
     tunnel_t      *tunnel;
-    line_t        *line;
     hio_t         *io;
+    idle_table_t  *table;
+    line_t        *line;
     buffer_pool_t *buffer_pool;
     bool           established;
     bool           first_packet_sent;
@@ -167,7 +169,8 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 
     self->upStream(self, context);
 }
-static void onClose(hio_t *io)
+
+static void onUdpConnectonExpire(idle_item_t *idle_udp)
 {
     udp_listener_con_state_t *cstate = (udp_listener_con_state_t *) (hevent_userdata(io));
     if (cstate != NULL)
@@ -188,40 +191,33 @@ static void onClose(hio_t *io)
     }
 }
 
-void onInboundConnected(hevent_t *ev)
+static udp_listener_con_state_t *newConnection(hloop_t *loop, uint8_t tid, tunnel_t *self, hio_t *io,
+                                               idle_table_t *table, uint8_t real_localport)
 {
-    hloop_t                *loop = ev->loop;
-    socket_accept_result_t *data = (socket_accept_result_t *) hevent_userdata(ev);
-    hio_t                  *io   = data->io;
-    size_t                  tid  = data->tid;
-    hio_attach(loop, io);
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    tunnel_t                 *self        = data->tunnel;
     line_t                   *line        = newLine(tid);
     udp_listener_con_state_t *cstate      = malloc(sizeof(udp_listener_con_state_t));
     cstate->line                          = line;
     cstate->buffer_pool                   = getThreadBufferPool(tid);
     cstate->io                            = io;
+    cstate->table                         = table;
     cstate->tunnel                        = self;
     cstate->established                   = false;
     cstate->first_packet_sent             = false;
     line->chains_state[self->chain_index] = cstate;
-    line->src_ctx.address_protocol        = data->proto;
-    line->src_ctx.address.sa              = *hio_peeraddr(io);
+    line->src_ctx.address_type            = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
+    line->src_ctx.address_protocol        = kSapUdp;
+    line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
+    sockaddr_set_port(&(line->src_ctx.address), real_localport);
 
-    // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u
-    // *)hio_localaddr(io)) : data->real_localport);
-    sockaddr_set_port(&(line->src_ctx.address), data->real_localport);
-    line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
-    hevent_set_userdata(io, cstate);
-
-    struct sockaddr log_localaddr = *hio_localaddr(io);
+    struct sockaddr log_localaddr = *hio_localaddr(cstate->io);
     sockaddr_set_port((sockaddr_u *) &(log_localaddr), data->real_localport);
 
-    LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
-         SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+    char localaddrstr[SOCKADDR_STRLEN] = {0};
+    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+
+    LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(cstate->io),
+         SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     free(data);
 
     hio_setcb_read(io, onRecv);
@@ -239,6 +235,63 @@ void onInboundConnected(hevent_t *ev)
     hio_read(io);
 }
 
+static void onFilteredRecv(hevent_t *ev)
+{
+    udp_payload_t *data = (udp_payload_t *) hevent_userdata(ev);
+
+    hash_t peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(data->sock->io));
+
+    idle_item_t *idle = getIdleItemByHash(data->sock->table, peeraddr_hash);
+    if (idle == NULL)
+    {
+
+        newIdleItem(data->sock->table, peeraddr_hash, ) onUdpConnectonExpire
+    }
+}
+
+void parsePortSection(udp_listener_state_t *state, const cJSON *settings)
+{
+    const cJSON *port_json = cJSON_GetObjectItemCaseSensitive(settings, "port");
+    if ((cJSON_IsNumber(port_json) && (port_json->valuedouble != 0)))
+    {
+        // single port given as a number
+        state->port_min = (int) port_json->valuedouble;
+        state->port_max = (int) port_json->valuedouble;
+    }
+    else
+    {
+        if (cJSON_IsArray(port_json) && cJSON_GetArraySize(port_json) == 2)
+        {
+            // multi port given
+            const cJSON *port_minmax;
+            int          i = 0;
+            cJSON_ArrayForEach(port_minmax, port_json)
+            {
+                if (! (cJSON_IsNumber(port_minmax) && (port_minmax->valuedouble != 0)))
+                {
+                    LOGF("JSON Error: UdpListener->settings->port (number-or-array field) : The data was empty or "
+                         "invalid");
+                    exit(1);
+                }
+                if (i == 0)
+                {
+                    state->port_min = (int) port_minmax->valuedouble;
+                }
+                else if (i == 1)
+                {
+                    state->port_max = (int) port_minmax->valuedouble;
+                }
+
+                i++;
+            }
+        }
+        else
+        {
+            LOGF("JSON Error: UdpListener->settings->port (number-or-array field) : The data was empty or invalid");
+            exit(1);
+        }
+    }
+}
 tunnel_t *newUdpListener(node_instance_context_t *instance_info)
 {
     udp_listener_state_t *state = malloc(sizeof(udp_listener_state_t));
@@ -250,76 +303,31 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
         LOGF("JSON Error: UdpListener->settings (object field) : The object was empty or invalid");
         return NULL;
     }
+    getBoolFromJsonObject(&(state->no_delay), settings, "nodelay");
 
     if (! getStringFromJsonObject(&(state->address), settings, "address"))
     {
         LOGF("JSON Error: UdpListener->settings->address (string field) : The data was empty or invalid");
         return NULL;
     }
-
-    int multiport_backend = kMultiportBackendNothing;
-
-    const cJSON *port = cJSON_GetObjectItemCaseSensitive(settings, "port");
-    if ((cJSON_IsNumber(port) && (port->valuedouble != 0)))
-    {
-        // single port given as a number
-        state->port_min = port->valuedouble;
-        state->port_max = port->valuedouble;
-    }
-    else
-    {
-        multiport_backend = kMultiportBackendDefault;
-        if (cJSON_IsArray(port))
-        {
-            const cJSON *port_minmax;
-            int          i = 0;
-            // multi port given
-            cJSON_ArrayForEach(port_minmax, port)
-            {
-                if (! (cJSON_IsNumber(port_minmax) && (port_minmax->valuedouble != 0)))
-                {
-                    LOGF("JSON Error: UdpListener->settings->port (number-or-array field) : The data was empty or "
-                         "invalid");
-                    LOGF("JSON Error: MultiPort parsing failed");
-                    return NULL;
-                }
-                if (i == 0)
-                {
-                    state->port_min = port_minmax->valuedouble;
-                }
-                else if (i == 1)
-                {
-                    state->port_max = port_minmax->valuedouble;
-                }
-                else
-                {
-                    LOGF("JSON Error: UdpListener->settings->port (number-or-array field) : The data was empty or "
-                         "invalid");
-                    LOGF("JSON Error: MultiPort port range has more data than expected");
-                    return NULL;
-                }
-
-                i++;
-            }
-
-            dynamic_value_t dy_mb =
-                parseDynamicStrValueFromJsonObject(settings, "multiport-backend", 2, "iptables", "socket");
-            if (dy_mb.status == 2)
-            {
-                multiport_backend = kMultiportBackendIptables;
-            }
-            if (dy_mb.status == 3)
-            {
-                multiport_backend = kMultiportBackendSockets;
-            }
-        }
-        else
-        {
-            LOGF("JSON Error: UdpListener->settings->port (number-or-array field) : The data was empty or invalid");
-            return NULL;
-        }
-    }
     socket_filter_option_t filter_opt = {0};
+
+    filter_opt.multiport_backend = kMultiportBackendNothing;
+    parsePortSection(state, settings);
+    if (state->port_max != 0)
+    {
+        filter_opt.multiport_backend = kMultiportBackendDefault;
+        dynamic_value_t dy_mb =
+            parseDynamicStrValueFromJsonObject(settings, "multiport-backend", 2, "iptables", "socket");
+        if (dy_mb.status == 2)
+        {
+            filter_opt.multiport_backend = kMultiportBackendIptables;
+        }
+        if (dy_mb.status == 3)
+        {
+            filter_opt.multiport_backend = kMultiportBackendSockets;
+        }
+    }
 
     filter_opt.white_list_raddr = NULL;
     const cJSON *wlist          = cJSON_GetObjectItemCaseSensitive(settings, "whitelist");
@@ -328,56 +336,22 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
         size_t len = cJSON_GetArraySize(wlist);
         if (len > 0)
         {
-            char **list = malloc(sizeof(char *) * (len + 1));
-            memset(list, 0, sizeof(char *) * (len + 1));
+            char **list = (char **) malloc(sizeof(char *) * (len + 1));
+            memset((void *) list, 0, sizeof(char *) * (len + 1));
             list[len]              = 0x0;
             int          i         = 0;
             const cJSON *list_item = NULL;
             cJSON_ArrayForEach(list_item, wlist)
             {
                 unsigned int list_item_len = 0;
-                if (! getStringFromJson(&(list[i]), list_item) || (list_item_len = strlen(list[i])) < 4)
+                if (! getStringFromJson(&(list[i]), list_item) || ! verifyIpCdir(list[i], getNetworkLogger()))
                 {
                     LOGF("JSON Error: UdpListener->settings->whitelist (array of strings field) index %d : The data "
                          "was empty or invalid",
                          i);
                     exit(1);
                 }
-                char *slash = strchr(list[i], '/');
-                if (slash == NULL)
-                {
-                    LOGF("Value Error: whitelist %d : Subnet prefix is missing in ip. \"%s\" + /xx", i, list[i]);
-                    exit(1);
-                }
-                *slash = '\0';
-                if (! is_ipaddr(list[i]))
-                {
-                    LOGF("Value Error: whitelist %d : \"%s\" is not a valid ip address", i, list[i]);
-                    exit(1);
-                }
 
-                bool is_v4 = is_ipv4(list[i]);
-                *slash     = '/';
-
-                char *subnet_part   = slash + 1;
-                int   prefix_length = atoi(subnet_part);
-
-                if (is_v4 && (prefix_length < 0 || prefix_length > 32))
-                {
-                    LOGF("Value Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32",
-                         list[i], prefix_length);
-                    exit(1);
-                }
-                if (! is_v4 && (prefix_length < 0 || prefix_length > 128))
-                {
-                    LOGF("Value Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128",
-                         list[i], prefix_length);
-                    exit(1);
-                }
-                if (prefix_length > 0 && slash + 2 + (int) (log10(prefix_length)) < list[i] + list_item_len)
-                {
-                    LOGW("the value \"%s\" looks incorrect, it has more data than ip/prefix", list[i]);
-                }
                 i++;
             }
 
@@ -385,12 +359,11 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
         }
     }
 
-    filter_opt.host              = state->address;
-    filter_opt.port_min          = state->port_min;
-    filter_opt.port_max          = state->port_max;
-    filter_opt.proto             = kSapUdp;
-    filter_opt.multiport_backend = multiport_backend;
-    filter_opt.black_list_raddr  = NULL;
+    filter_opt.host             = state->address;
+    filter_opt.port_min         = state->port_min;
+    filter_opt.port_max         = state->port_max;
+    filter_opt.proto            = kSapUdp;
+    filter_opt.black_list_raddr = NULL;
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

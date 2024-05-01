@@ -115,8 +115,8 @@ typedef struct socket_context_s
     enum socket_address_protocol address_protocol;
     enum socket_address_type     address_type;
     sockaddr_u                   address;
-    sockaddr_u                   address_local;
-    sockaddr_u                   address_peer;
+    // sockaddr_u                   address_local;
+    // sockaddr_u                   address_peer;
     char                        *domain;
     unsigned int                 domain_len;
     bool                         domain_constant;

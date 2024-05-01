@@ -567,11 +567,11 @@ static void postPayload(const udp_payload_t pl, socket_filter_t *filter)
 
     hloop_post_event(worker_loop, &ev);
 }
-static void distributeUdpPayload(const udp_payload_t pl, uint16_t local_port)
+static void distributeUdpPayload(const udp_payload_t pl)
 {
     hhybridmutex_lock(&(state->mutex));
-    sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(pl.sock->io);
-
+    sockaddr_u *paddr      = (sockaddr_u *) hio_peeraddr(pl.sock->io);
+    uint16_t    local_port = pl.real_localport;
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
@@ -606,21 +606,24 @@ static void distributeUdpPayload(const udp_payload_t pl, uint16_t local_port)
 static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
 
-    printf("on_recvfrom fd=%d readbytes=%d\n", hio_fd(io), (int) bufLen(buf));
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-    printf("[%s] <=> [%s]\n", SOCKADDR_STR(hio_localaddr(io), localaddrstr),
-           SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+    // printf("on_recvfrom fd=%d readbytes=%d\n", hio_fd(io), (int) bufLen(buf));
+    // char localaddrstr[SOCKADDR_STRLEN] = {0};
+    // char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+    // printf("[%s] <=> [%s]\n", SOCKADDR_STR(hio_localaddr(io), localaddrstr),
+    //        SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
 
     // hash_t       peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(io));
     udpsock_t *socket     = hevent_userdata(io);
     uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr(io));
     uint8_t    target_tid = local_port % workers_count;
 
-    distributeUdpPayload((udp_payload_t){.sock = socket, .buf = buf, .tid = target_tid, .real_localport = local_port},
-                         local_port);
-
-
+    distributeUdpPayload((udp_payload_t){
+        .sock      = socket,
+        .buf       = buf,
+        .tid       = target_tid,
+        .peer_addr = *(sockaddr_u *) hio_peeraddr(io),
+        .real_localport = local_port
+    });
 }
 
 static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
@@ -644,7 +647,7 @@ static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
     hio_read(filter->listen_io);
 }
 
-// todo (udp smanager)
+// todo (udp manager)
 static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
@@ -691,23 +694,23 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
 
 struct udp_sb
 {
-    udpsock_t      *sock;
+    hio_t          *socket_io;
     shift_buffer_t *buf;
 };
 void writeUdpThisLoop(hevent_t *ev)
 {
     struct udp_sb *ub     = hevent_userdata(ev);
-    size_t         nwrite = hio_write(ub->sock->io, ub->buf);
+    size_t         nwrite = hio_write(ub->socket_io, ub->buf);
     free(ub);
 }
-void writeUdp(udpsock_t *sock, shift_buffer_t *buf)
+void writeUdp(hio_t *socket_io, shift_buffer_t *buf)
 {
     struct udp_sb *ub = malloc(sizeof(struct udp_sb));
-    *ub               = (struct udp_sb){.sock = sock, buf = buf};
-    hevent_t ev       = (hevent_t){.loop = hevent_loop(sock->io), .cb = writeUdpThisLoop};
+    *ub               = (struct udp_sb){.socket_io = socket_io, buf = buf};
+    hevent_t ev       = (hevent_t){.loop = hevent_loop(socket_io), .cb = writeUdpThisLoop};
     ev.userdata       = ub;
 
-    hloop_post_event(hevent_loop(sock->io), &ev);
+    hloop_post_event(hevent_loop(socket_io), &ev);
 }
 
 static HTHREAD_ROUTINE(accept_thread) // NOLINT
