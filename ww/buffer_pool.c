@@ -25,8 +25,10 @@ enum
     BASE_READ_BUFSIZE = (1U << 13) // 8K
 };
 
-#define BUFFERPOOL_CONTAINER_LEN ((unsigned long) ((16 * 4) + (16 * (16 * MEMORY_PROFILE))))
-#define BUFFER_SIZE              (BASE_READ_BUFSIZE * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1))
+#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((16 * (16 * kMeD1Memory))))
+#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((16 * (16 * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1)))))
+
+#define BUFFER_SIZE (BASE_READ_BUFSIZE * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1))
 
 static void firstCharge(buffer_pool_t *pool)
 {
@@ -137,7 +139,7 @@ buffer_pool_t *createBufferPool()
 
 buffer_pool_t *createSmallBufferPool()
 {
-    const unsigned long count_max     = (unsigned long) (2 * (16 * 2));
+    const unsigned long count_max     = 2 * BUFFERPOOL_SMALL_CONTAINER_LEN;
     const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
     buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
@@ -145,7 +147,7 @@ buffer_pool_t *createSmallBufferPool()
 #endif
     memset(pool, 0, sizeof(buffer_pool_t));
     pool->cap             = count_max;
-    pool->buffers_size    = 1024;
+    pool->buffers_size    = BUFFER_SIZE;
     pool->free_threshould = (pool->cap * 2) / 3;
     firstCharge(pool);
     return pool;
