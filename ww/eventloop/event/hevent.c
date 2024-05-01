@@ -3,7 +3,7 @@
 #include "hatomic.h"
 #include "hlog.h"
 #include "herr.h"
-
+// todo (invesitage) how a dynamic node can have these?
 uint64_t hloop_next_event_id() {
     static hatomic_t s_id = HATOMIC_VAR_INIT(0);
     return ++s_id;

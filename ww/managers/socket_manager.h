@@ -3,6 +3,7 @@
 #include "basic_types.h"
 #include "hloop.h"
 #include "hsocket.h"
+#include "idle_table.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
 #include "ww.h"
@@ -46,17 +47,20 @@ typedef void (*onAccept)(hevent_t *ev);
 
 typedef struct udpsock_s
 {
-    sockaddr_u address_local;
-    sockaddr_u address_peer;
-    void (*closecb)(hevent_t *ev);
-    void (*readcb)(hevent_t *ev);
-    void  *userdata;
-    hash_t ident;
-    uint8_t tid;
+    hio_t        *io;
+    idle_table_t *udp_table;
 
 } udpsock_t;
 
-void closeUdpSocket(udpsock_t *udpsock);
+typedef struct udp_payload_s
+{
+    udpsock_t      *sock;
+    tunnel_t       *tunnel;
+    uint8_t         tid;
+    uint16_t        real_localport;
+    shift_buffer_t *buf;
+
+} udp_payload_t;
 
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 
