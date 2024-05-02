@@ -9,6 +9,7 @@
 #include <string.h>
 
 extern size_t bufferStreamLen(buffer_stream_t *self);
+
 enum
 {
     kQCap = 32
@@ -50,11 +51,7 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
 
 shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
 {
-    assert(self->size >= bytes);
-    if (self->size == 0)
-    {
-        return NULL;
-    }
+    assert(self->size >= bytes && bytes > 0);
     self->size -= bytes;
 
     shift_buffer_t *container = queue_pull_front(&self->q);
@@ -107,6 +104,14 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
     //     needed -= blen;
     //     reuseBuffer(self->pool, b);
     // }
+}
+shift_buffer_t *bufferStreamIdealRead(buffer_stream_t *self)
+{
+    assert(self->size > 0);
+    shift_buffer_t *container = queue_pull_front(&self->q);
+    self->size -= bufLen(container);
+    return container;
+
 }
 
 uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
