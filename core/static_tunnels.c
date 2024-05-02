@@ -20,6 +20,10 @@
 #include "tunnels/adapters/listener/tcp/tcp_listener.h"
 #endif
 
+#ifdef INCLUDE_UDP_LISTENER
+#include "tunnels/adapters/listener/udp/udp_listener.h"
+#endif
+
 #ifdef INCLUDE_OPENSSL_SERVER
 #include "tunnels/server/openssl/openssl_server.h"
 #endif
@@ -158,10 +162,6 @@ void loadStaticTunnelsIntoCore()
     USING(WolfSSLClient);
 #endif
 
-#ifdef INCLUDE_WOLFSSL_CLIENT
-    USING(WolfSSLClient);
-#endif
-
 #ifdef INCLUDE_HTTP2_SERVER
     USING(Http2Server);
 #endif
@@ -205,4 +205,9 @@ void loadStaticTunnelsIntoCore()
 #ifdef INCLUDE_SOCKS_5_SERVER
     USING(Socks5Server);
 #endif
+
+
+
+
+
 }

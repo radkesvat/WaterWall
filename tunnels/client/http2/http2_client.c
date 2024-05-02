@@ -319,7 +319,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     return 0;
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     http2_client_state_t *state = STATE(self);
 
@@ -405,7 +405,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     http2_client_state_t     *state = STATE(self);
     http2_client_con_state_t *con   = CSTATE(c);

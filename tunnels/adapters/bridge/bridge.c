@@ -41,7 +41,7 @@ static void upStream(tunnel_t *self, context_t *c)
     state->pair->dw->downStream(state->pair->dw, c);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
 
     bridge_state_t *state = STATE(self);

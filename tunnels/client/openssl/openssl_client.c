@@ -81,7 +81,7 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
     }
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     oss_client_state_t *state = STATE(self);
 
@@ -233,7 +233,7 @@ failed:;
     self->dw->downStream(self->dw, fail_context);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     oss_client_con_state_t *cstate = CSTATE(c);
 

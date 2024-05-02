@@ -37,7 +37,7 @@ static void cleanup(protobuf_server_con_state_t *cstate)
     free(cstate);
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     protobuf_server_con_state_t *cstate = CSTATE(c);
 
@@ -130,7 +130,7 @@ disconnect:
     destroyContext(c);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
 
     if (c->payload != NULL)

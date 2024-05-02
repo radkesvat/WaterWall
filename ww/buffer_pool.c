@@ -6,16 +6,15 @@
 #include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef DEBUG
-#endif
 
 enum
 {
-    kLowMemory  = 0, // no preallocation (very small)
-    kMeD1Memory = 1, // APPROX 20MB per thread
-    kMeD2Memory = 2, // APPROX 40MB per thread
-    kHiG1Memory = 3, // APPROX 56MB per thread
-    kHiG2Memory = 4  // APPROX 72MB per thread
+    // 0 is invalid memory multiplier
+    kLowMemory  = 1,      // no preallocation (very small)
+    kMeD1Memory = 16 * 1, // APPROX 20MB per thread
+    kMeD2Memory = 16 * 2, // APPROX 40MB per thread
+    kHiG1Memory = 16 * 3, // APPROX 56MB per thread
+    kHiG2Memory = 16 * 4  // APPROX 72MB per thread
 };
 
 #define MEMORY_PROFILE kHiG2Memory // todo (cmake)
@@ -25,10 +24,12 @@ enum
     BASE_READ_BUFSIZE = (1U << 13) // 8K
 };
 
-#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((16 * (16 * kMeD1Memory))))
-#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((16 * (16 * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1)))))
+#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((16 * kMeD1Memory)))
+#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((16 * MEMORY_PROFILE)))
 
-#define BUFFER_SIZE (BASE_READ_BUFSIZE * (MEMORY_PROFILE > 0 ? MEMORY_PROFILE : 1))
+#define BUFFER_SIZE_MORE (((int) (MEMORY_PROFILE / 16)) > 1 ? ((int) (MEMORY_PROFILE / 16)) - 1 : 1)
+
+#define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE))  // [8k,32k]
 
 static void firstCharge(buffer_pool_t *pool)
 {
@@ -41,7 +42,7 @@ static void firstCharge(buffer_pool_t *pool)
 
 static void reCharge(buffer_pool_t *pool)
 {
-    const size_t increase = min((pool->cap - pool->len) - 1, pool->cap / 2);
+    const size_t increase = min((pool->cap - pool->len), pool->cap / 2);
 
     for (size_t i = pool->len; i < (pool->len + increase); i++)
     {
@@ -89,7 +90,7 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
     // destroyShiftBuffer(b);
     // return;
-    if (*(b->refc) > 1)
+    if (isShallow(b))
     {
         destroyShiftBuffer(b);
         return;
@@ -97,12 +98,12 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 #ifdef DEBUG
     pool->in_use -= 1;
 #endif
-    reset(b, pool->buffers_size);
-    pool->available[(pool->len)++] = b;
     if (pool->len > pool->free_threshould)
     {
         giveMemBackToOs(pool);
     }
+    reset(b, pool->buffers_size);
+    pool->available[(pool->len)++] = b;
 }
 
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2)
@@ -120,35 +121,33 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     reuseBuffer(pool, b1);
     return b2;
 }
-
-buffer_pool_t *createBufferPool()
+static buffer_pool_t *allocBufferPool(unsigned long bufcount)
 {
-    const unsigned long count_max     = 2 * BUFFERPOOL_CONTAINER_LEN;
-    const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
+    // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
+    assert(bufcount >= 10);
+
+    // half of the pool is used, other half is free at startup
+    bufcount = 2 * bufcount;
+
+    const unsigned long container_len = bufcount * sizeof(shift_buffer_t *);
     buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
 #endif
     memset(pool, 0, sizeof(buffer_pool_t));
-    pool->cap             = count_max;
+    pool->cap             = bufcount;
     pool->buffers_size    = BUFFER_SIZE;
     pool->free_threshould = (pool->cap * 2) / 3;
     firstCharge(pool);
     return pool;
 }
 
+buffer_pool_t *createBufferPool()
+{
+    return allocBufferPool(BUFFERPOOL_CONTAINER_LEN);
+}
+
 buffer_pool_t *createSmallBufferPool()
 {
-    const unsigned long count_max     = 2 * BUFFERPOOL_SMALL_CONTAINER_LEN;
-    const unsigned long container_len = count_max * sizeof(shift_buffer_t *);
-    buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
-#ifdef DEBUG
-    memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
-#endif
-    memset(pool, 0, sizeof(buffer_pool_t));
-    pool->cap             = count_max;
-    pool->buffers_size    = BUFFER_SIZE;
-    pool->free_threshould = (pool->cap * 2) / 3;
-    firstCharge(pool);
-    return pool;
+    return allocBufferPool(BUFFERPOOL_SMALL_CONTAINER_LEN);
 }

@@ -32,6 +32,8 @@ endif()
 set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
+option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  TRUE)
+option(INCLUDE_LISTENER "link istener staticly to the core"  TRUE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
@@ -102,6 +104,25 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/tcp)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/tcp)
 target_link_libraries(Waterwall TcpListener)
 endif()
+
+
+#udp listener
+if (INCLUDE_UDP_LISTENER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_UDP_LISTENER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/udp)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/udp)
+target_link_libraries(Waterwall UdpListener)
+endif()
+
+
+#listener
+if (INCLUDE_LISTENER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_LISTENER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener)
+target_link_libraries(Waterwall Listener)
+endif()
+
 
 #connector
 if (INCLUDE_CONNECTOR)

@@ -62,7 +62,7 @@ static void restablish(tunnel_t *self, context_t *src_base_ctx)
 {
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     zero_rtt_con_t *cstate = CSTATE(c);
 
@@ -113,7 +113,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
 
     self->up->upStream(self->up, c);
 }
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     zero_rtt_con_t *cstate = CSTATE(c);
     if (c->est)

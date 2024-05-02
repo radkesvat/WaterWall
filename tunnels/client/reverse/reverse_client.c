@@ -4,7 +4,7 @@
 #include "types.h"
 #include "utils/jsonutils.h"
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
 
     reverse_client_state_t *state = STATE(self);
@@ -46,7 +46,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     reverse_client_state_t *state = STATE(self);
     uint8_t                 tid   = c->line->tid;

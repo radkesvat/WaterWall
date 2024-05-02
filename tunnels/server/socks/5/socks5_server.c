@@ -1,7 +1,7 @@
 #include "socks5_server.h"
 #include "buffer_stream.h"
-#include "utils/sockutils.h"
 #include "loggers/network_logger.h"
+#include "utils/sockutils.h"
 
 #define SOCKS5_VERSION ((uint8_t) 5)
 
@@ -72,7 +72,7 @@ typedef struct socks5_server_con_state_s
     bool             init_sent;
     bool             first_sent;
     socks5_state_e   state;
-    shift_buffer_t * waitbuf;
+    shift_buffer_t  *waitbuf;
     buffer_stream_t *udp_buf;
     unsigned int     need;
 
@@ -217,7 +217,7 @@ static bool processUdp(tunnel_t *self, socks5_server_con_state_t *cstate, line_t
         return true;
     }
 
-    context_t *       c                = newContext(line);
+    context_t        *c                = newContext(line);
     socket_context_t *dest_context     = &(c->line->dest_ctx);
     c->src_io                          = src_io;
     c->payload                         = bufferStreamRead(bstream, full_len);
@@ -308,14 +308,22 @@ static bool processUdp(tunnel_t *self, socks5_server_con_state_t *cstate, line_t
     }
     return processUdp(self, cstate, line, src_io);
 }
-
-static inline void upStream(tunnel_t *self, context_t *c)
+static void udpUpStream(tunnel_t *self, context_t *c)
 {
-    socks5_server_state_t *    state  = STATE(self);
+
+}
+static void upStream(tunnel_t *self, context_t *c)
+{
+    socks5_server_state_t     *state  = STATE(self);
     socks5_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
+        if (c->line->dest_ctx.address_protocol == kSapUdp)
+        {
+            udpUpStream(self,c);
+            return;
+        }
         if (cstate->state == kSUpstream)
         {
             if (c->line->dest_ctx.address_protocol == kSapUdp)
@@ -613,7 +621,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
                 }
                 // socks5 outbound connected
                 socks5_server_con_state_t *cstate  = CSTATE(c);
-                shift_buffer_t *           respbuf = popBuffer(getContextBufferPool(c));
+                shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
                 setLen(respbuf, 32);
                 uint8_t *resp = rawBufMut(respbuf);
                 memset(resp, 0, 32);
@@ -704,7 +712,7 @@ disconnect:;
     self->dw->downStream(self->dw, fc);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     if (c->fin)
     {
@@ -717,7 +725,7 @@ static inline void downStream(tunnel_t *self, context_t *c)
     {
         // socks5 outbound connected
         socks5_server_con_state_t *cstate  = CSTATE(c);
-        shift_buffer_t *           respbuf = popBuffer(getContextBufferPool(c));
+        shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
         setLen(respbuf, 32);
         uint8_t *resp = rawBufMut(respbuf);
         memset(resp, 0, 32);

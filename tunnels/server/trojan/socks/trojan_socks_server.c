@@ -380,7 +380,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     return processUdp(self, cstate, line, src_io);
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     if (c->payload != NULL)
     {
@@ -536,7 +536,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     trojan_socks_server_con_state_t *cstate = CSTATE(c);
 

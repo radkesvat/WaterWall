@@ -45,7 +45,7 @@ static void upStream(tunnel_t *self, context_t *c)
     self->up->upStream(self->up, c);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
 
     self->dw->downStream(self->dw, c);

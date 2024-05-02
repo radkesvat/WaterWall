@@ -188,7 +188,7 @@ static void onFallbackTimer(htimer_t *timer)
     free(data);
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     oss_server_state_t     *state  = STATE(self);
     oss_server_con_state_t *cstate = CSTATE(c);
@@ -473,7 +473,7 @@ disconnect:;
     self->dw->downStream(self->dw, fail_context);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     oss_server_state_t     *state  = STATE(self);
     oss_server_con_state_t *cstate = CSTATE(c);

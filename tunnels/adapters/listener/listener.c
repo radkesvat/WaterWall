@@ -52,7 +52,7 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
     tcp_outbound_node->name    = concat(instance_info->node->name, "_tcp_inbound");
     tcp_outbound_node->type    = "TcpListener";
     tcp_outbound_node->version = instance_info->node->version;
-    udp_outbound_node->name    = concat(instance_info->node->name, "_tcp_inbound");
+    udp_outbound_node->name    = concat(instance_info->node->name, "_udp_inbound");
     udp_outbound_node->type    = "UdpListener";
     udp_outbound_node->version = instance_info->node->version;
     registerNode(tcp_outbound_node, settings);

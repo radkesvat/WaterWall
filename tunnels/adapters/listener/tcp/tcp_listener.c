@@ -158,7 +158,7 @@ static void onWriteComplete(hio_t *restrict io)
     }
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     if (c->payload != NULL)
     {
@@ -192,7 +192,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     self->up->upStream(self->up, c);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     tcp_listener_con_state_t *cstate = CSTATE(c);
 

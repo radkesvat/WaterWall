@@ -11,7 +11,7 @@
 extern size_t bufferStreamLen(buffer_stream_t *self);
 enum
 {
-    kQCap = 25
+    kQCap = 32
 };
 
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)

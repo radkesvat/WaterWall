@@ -60,7 +60,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
 
     if (c->fin)

@@ -302,7 +302,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
     return false;
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     http2_server_state_t *state = STATE(self);
     if (c->payload != NULL)
@@ -355,7 +355,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     http2_server_child_con_state_t *stream = CSTATE(c);
     http2_server_con_state_t *      con    = stream->parent->chains_state[self->chain_index];

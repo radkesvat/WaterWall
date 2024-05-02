@@ -126,7 +126,7 @@ static void checkUpCon(tunnel_t *self, size_t up_id)
     }
 }
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
     mux_state_t *state = STATE(self);
     // find proper up id
@@ -218,7 +218,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     self->up->upStream(self->up, redir_context);
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
     mux_state_t *state = STATE(self);
 

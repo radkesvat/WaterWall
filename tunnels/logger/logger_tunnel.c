@@ -18,7 +18,7 @@ typedef struct logger_tunnel_con_state_s
 
 } logger_tunnel_con_state_t;
 
-static inline void upStream(tunnel_t *self, context_t *c)
+static void upStream(tunnel_t *self, context_t *c)
 {
 
     if (c->payload != NULL)
@@ -77,7 +77,7 @@ static inline void upStream(tunnel_t *self, context_t *c)
     }
 }
 
-static inline void downStream(tunnel_t *self, context_t *c)
+static void downStream(tunnel_t *self, context_t *c)
 {
 
     if (c->payload != NULL)

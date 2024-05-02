@@ -10,7 +10,7 @@
 #include "stc/deq.h"
 enum
 {
-    kQCap = 25
+    kQCap = 32
 };
 
 struct context_queue_s
