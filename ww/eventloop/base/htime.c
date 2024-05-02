@@ -1,4 +1,5 @@
 #include "htime.h"
+#include <time.h>
 
 static const char* s_weekdays[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
@@ -73,14 +74,15 @@ datetime_t datetime_now() {
 }
 
 datetime_t datetime_localtime(time_t seconds) {
-    struct tm* tm = localtime(&seconds);
+    static _Thread_local  struct tm tm;
+    localtime_r(&seconds,&tm);
     datetime_t dt;
-    dt.year  = tm->tm_year + 1900;
-    dt.month = tm->tm_mon  + 1;
-    dt.day   = tm->tm_mday;
-    dt.hour  = tm->tm_hour;
-    dt.min   = tm->tm_min;
-    dt.sec   = tm->tm_sec;
+    dt.year  = tm.tm_year + 1900;
+    dt.month = tm.tm_mon  + 1;
+    dt.day   = tm.tm_mday;
+    dt.hour  = tm.tm_hour;
+    dt.min   = tm.tm_min;
+    dt.sec   = tm.tm_sec;
     return dt;
 }
 
@@ -88,8 +90,10 @@ time_t datetime_mktime(datetime_t* dt) {
     struct tm tm;
     time_t ts;
     time(&ts);
-    struct tm* ptm = localtime(&ts);
-    memcpy(&tm, ptm, sizeof(struct tm));
+    static _Thread_local  struct tm ptm;
+    localtime_r(&ts,&ptm);
+
+    memcpy(&tm, &ptm, sizeof(struct tm));
     tm.tm_year = dt->year  - 1900;
     tm.tm_mon  = dt->month - 1;
     tm.tm_mday = dt->day;
@@ -225,10 +229,10 @@ time_t cron_next_timeout(int minute, int hour, int day, int week, int month) {
         MONTHLY,
         YEARLY,
     } period_type = MINUTELY;
-    struct tm tm;
     time_t tt;
     time(&tt);
-    tm = *localtime(&tt);
+    static _Thread_local  struct tm tm;
+    localtime_r(&tt,&tm);
     time_t tt_round = 0;
 
     tm.tm_sec = 0;

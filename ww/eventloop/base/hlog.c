@@ -62,8 +62,10 @@ static void logger_init(logger_t* logger) {
 logger_t* logger_create() {
     // init gmtoff here
     time_t ts = time(NULL);
-    struct tm* local_tm = localtime(&ts);
-    int local_hour = local_tm->tm_hour;
+    static _Thread_local  struct tm local_tm;
+    localtime_r(&ts,&local_tm);
+
+    int local_hour = local_tm.tm_hour;
     struct tm* gmt_tm = gmtime(&ts);
     int gmt_hour = gmt_tm->tm_hour;
     s_gmtoff = (local_hour - gmt_hour) * SECONDS_PER_HOUR;
@@ -203,12 +205,13 @@ const char* logger_get_cur_file(logger_t* logger) {
 #endif
 
 static void logfile_name(const char* filepath, time_t ts, char* buf, int len) {
-    struct tm* tm = localtime(&ts);
+    static _Thread_local  struct tm tm;
+    localtime_r(&ts,&tm);
     snprintf(buf, len, "%s.%04d%02d%02d.log",
             filepath,
-            tm->tm_year+1900,
-            tm->tm_mon+1,
-            tm->tm_mday);
+            tm.tm_year+1900,
+            tm.tm_mon+1,
+            tm.tm_mday);
 }
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
@@ -315,16 +318,16 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
     us       = tm.wMilliseconds * 1000;
 #else
     struct timeval tv;
-    struct tm* tm = NULL;
+    static _Thread_local  struct tm tm;
     gettimeofday(&tv, NULL);
     time_t tt = tv.tv_sec;
-    tm = localtime(&tt);
-    year     = tm->tm_year + 1900;
-    month    = tm->tm_mon  + 1;
-    day      = tm->tm_mday;
-    hour     = tm->tm_hour;
-    min      = tm->tm_min;
-    sec      = tm->tm_sec;
+    localtime_r(&tt,&tm);
+    year     = tm.tm_year + 1900;
+    month    = tm.tm_mon  + 1;
+    day      = tm.tm_mday;
+    hour     = tm.tm_hour;
+    min      = tm.tm_min;
+    sec      = tm.tm_sec;
     us       = tv.tv_usec;
 #endif
 
