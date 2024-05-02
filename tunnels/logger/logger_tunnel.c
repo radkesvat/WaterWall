@@ -1,6 +1,7 @@
 #include "logger_tunnel.h"
 #include "buffer_pool.h"
 #include "loggers/network_logger.h"
+#include "tunnel.h"
 
 #undef min
 static inline size_t min(size_t x, size_t y)
@@ -33,15 +34,15 @@ static void upStream(tunnel_t *self, context_t *c)
         {
 
             // send back something
-            // {
-            //     context_t *reply = newContextFrom(c);
-            //     reply->payload   = popBuffer(getContextBufferPool(c));
-            //     reuseContextBuffer(c);
-            //     destroyContext(c);
-            //     sprintf((char *) rawBuf(reply->payload), "%s", "salam");
-            //     setLen(reply->payload, strlen("salam"));
-            //     self->dw->downStream(self->dw, reply);
-            // }
+            {
+                context_t *reply = newContextFrom(c);
+                reply->payload   = popBuffer(getContextBufferPool(c));
+                reuseContextBuffer(c);
+                destroyContext(c);
+                sprintf((char *) rawBuf(reply->payload), "%s", "salam");
+                setLen(reply->payload, strlen("salam"));
+                self->dw->downStream(self->dw, reply);
+            }
 
         }
     }
@@ -56,13 +57,13 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                context_t *replyx = newContextFrom(c);
+                context_t *est_reply = newContextFrom(c);
                 destroyContext(c);
-                replyx->est = true;
-                self->dw->downStream(self->dw, replyx);
+                est_reply->est = true;
+                self->dw->downStream(self->dw, est_reply);
             }
         }
-        if (c->fin)
+        else if (c->fin)
         {
             LOGD("upstream fin");
             if (self->up != NULL)
@@ -121,20 +122,24 @@ static void downStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, reply);
             }
         }
-        if (c->fin)
+        else if (c->fin)
         {
             LOGD("downstream fin");
             if (self->dw != NULL)
             {
                 self->dw->downStream(self->dw, c);
+            }else {
+                destroyContext(c);
             }
         }
-        if (c->est)
+        else if (c->est)
         {
             LOGD("downstream est");
             if (self->dw != NULL)
             {
                 self->dw->downStream(self->dw, c);
+            }else {
+                destroyContext(c);
             }
         }
     }
