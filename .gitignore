@@ -6,7 +6,7 @@ node_modules
 /core/texts
 gen.py
 cacert.pem
-
+todo.txt
 
 #compiled bins
 /dist
