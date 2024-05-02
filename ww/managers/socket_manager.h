@@ -48,7 +48,7 @@ typedef void (*onAccept)(hevent_t *ev);
 typedef struct udpsock_s
 {
     hio_t        *io;
-    idle_table_t *udp_table;
+    idle_table_t *table;
 
 } udpsock_t;
 
@@ -62,11 +62,10 @@ typedef struct udp_payload_s
     shift_buffer_t *buf;
 
 } udp_payload_t;
-void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf);
-
-void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 
 struct socket_manager_s *getSocketManager();
 struct socket_manager_s *createSocketManager();
 void                     setSocketManager(struct socket_manager_s *state);
 void                     startSocketManager();
+void                     registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
+void                     postUdpWrite(hio_t *socket_io, shift_buffer_t *buf);

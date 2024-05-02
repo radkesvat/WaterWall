@@ -430,6 +430,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
                          ipc);
         }
     }
+    return true;
 }
 
 dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...)

@@ -24,6 +24,10 @@
 #include "tunnels/adapters/listener/udp/udp_listener.h"
 #endif
 
+#ifdef INCLUDE_LISTENER
+#include "tunnels/adapters/listener/listener.h"
+#endif
+
 #ifdef INCLUDE_OPENSSL_SERVER
 #include "tunnels/server/openssl/openssl_server.h"
 #endif
@@ -116,6 +120,14 @@ void loadStaticTunnelsIntoCore()
 {
 #ifdef INCLUDE_TCP_LISTENER
     USING(TcpListener);
+#endif
+
+#ifdef INCLUDE_UDP_LISTENER
+    USING(UdpListener);
+#endif
+
+#ifdef INCLUDE_LISTENER
+    USING(Listener);
 #endif
 
 #ifdef INCLUDE_OPENSSL_SERVER

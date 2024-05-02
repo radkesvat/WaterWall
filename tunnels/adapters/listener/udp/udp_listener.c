@@ -190,23 +190,23 @@ static void onFilteredRecv(hevent_t *ev)
     udp_payload_t *data          = (udp_payload_t *) hevent_userdata(ev);
     hash_t         peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(data->sock->io));
 
-    idle_item_t *idle = getIdleItemByHash(data->sock->udp_table, peeraddr_hash);
+    idle_item_t *idle = getIdleItemByHash(data->sock->table, peeraddr_hash);
     if (idle == NULL)
     {
         udp_listener_con_state_t *con =
-            newConnection(data->tid, data->tunnel, data->sock->io, data->sock->udp_table, data->real_localport);
+            newConnection(data->tid, data->tunnel, data->sock->io, data->sock->table, data->real_localport);
         if (! con)
         {
             reuseBuffer(getThreadBufferPool(data->tid), data->buf);
             free(data);
             return;
         }
-        con->idle_handle = (newIdleItem(data->sock->udp_table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
-                                        (uint64_t) 70 * 1000));
+        idle = con->idle_handle = newIdleItem(data->sock->table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
+                                        (uint64_t) 70 * 1000);
     }
     else
     {
-        keepIdleItemForAtleast(data->sock->udp_table, idle, (uint64_t) 70 * 1000);
+        keepIdleItemForAtleast(data->sock->table, idle, (uint64_t) 70 * 1000);
     }
 
     tunnel_t                 *self    = data->tunnel;

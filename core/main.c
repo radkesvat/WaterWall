@@ -16,8 +16,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#undef hlog
-#define hlog getCoreLogger() // NOLINT
+#undef HLOG
+#define HLOG getCoreLogger() // NOLINT
 
 #define CORE_FILE "core.json"
 
@@ -31,7 +31,7 @@ int main(void)
     char *core_file_content = readFile(CORE_FILE);
     if (core_file_content == NULL)
     {
-        fprintf(stderr, "Waterwall version %s\n Could not read core settings file \"%s\" \n",
+        fprintf(stderr, "Waterwall version %s\nCould not read core settings file \"%s\" \n",
                 TOSTRING(WATERWALL_VERSION), CORE_FILE);
         exit(1);
     }

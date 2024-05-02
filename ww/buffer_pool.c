@@ -1,5 +1,7 @@
 #include "buffer_pool.h"
-#include "hlog.h"
+#ifdef DEBUG
+#include "loggers/network_logger.h"
+#endif
 #include "shiftbuffer.h"
 #include "utils/mathutils.h"
 #include <assert.h> // for assert
@@ -29,7 +31,7 @@ enum
 
 #define BUFFER_SIZE_MORE (((int) (MEMORY_PROFILE / 16)) > 1 ? ((int) (MEMORY_PROFILE / 16)) - 1 : 1)
 
-#define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE))  // [8k,32k]
+#define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
 
 static void firstCharge(buffer_pool_t *pool)
 {

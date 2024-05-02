@@ -3,6 +3,7 @@
 #include "buffer_pool.h"
 #include "hloop.h"
 #include "hmutex.h"
+#include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "stc/common.h"
 #include "tunnel.h"
@@ -591,7 +592,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
                     continue;
                 }
             }
-            // idle_item_t idle_udp = newIdleItem(state->udp_table, peeraddr_hash, con, con->tid, (uint64_t) 70 * 1000);
+            // idle_item_t idle_udp = newIdleItem(state->table, peeraddr_hash, con, con->tid, (uint64_t) 70 * 1000);
             hhybridmutex_unlock(&(state->mutex));
             postPayload(pl, filter);
             return;
@@ -638,7 +639,9 @@ static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
         LOGF("SocketManager: stopping due to null socket handle");
         exit(1);
     }
-
+    udpsock_t* socket = malloc(sizeof(udpsock_t));
+    *socket = (udpsock_t){.io = filter->listen_io,.table = newIdleTable(loop)};
+    hevent_set_userdata(filter->listen_io,socket);
     hio_setcb_read(filter->listen_io, onRecvFrom);
     hio_read(filter->listen_io);
 }
@@ -714,7 +717,7 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
     hloop_t *loop = (hloop_t *) userdata;
 
     hhybridmutex_lock(&(state->mutex));
-    // state->udp_table = newIdleTable(loop, onUdpSocketExpire);
+    // state->table = newIdleTable(loop, onUdpSocketExpire);
 
     {
         uint8_t ports_overlapped[65536] = {0};
