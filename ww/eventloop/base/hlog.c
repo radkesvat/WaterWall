@@ -121,6 +121,10 @@ void logger_set_level_by_str(logger_t* logger, const char* szLoglevel) {
 int logger_will_write_level(logger_t* logger, log_level_e level) {
     return (logger->level) <= level;
 }
+logger_handler logger_handle(logger_t* logger){
+    return logger->handler;
+}
+
 
 void logger_set_format(logger_t* logger, const char* format) {
     if (format) {
@@ -272,7 +276,7 @@ static FILE* logfile_shift(logger_t* logger) {
     return logger->fp_;
 }
 
-static void logfile_write(logger_t* logger, const char* buf, int len) {
+void logfile_write(logger_t* logger, const char* buf, int len) {
     FILE* fp = logfile_shift(logger);
     if (fp) {
         fwrite(buf, 1, len, fp);

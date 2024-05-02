@@ -714,7 +714,7 @@ void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf)
 
 static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
-    hloop_t *loop = (hloop_t *) userdata;
+    hloop_t *loop = hloop_new(HLOOP_FLAG_AUTO_FREE, createSmallBufferPool());
 
     hhybridmutex_lock(&(state->mutex));
     // state->table = newIdleTable(loop, onUdpSocketExpire);
@@ -748,9 +748,8 @@ void setSocketManager(struct socket_manager_s *new_state)
 void startSocketManager()
 {
     assert(state != NULL);
-    hloop_t *accept_thread_loop = hloop_new(HLOOP_FLAG_AUTO_FREE, createSmallBufferPool());
     // accept_thread(accept_thread_loop);
-    state->accept_thread = hthread_create(accept_thread, accept_thread_loop);
+    state->accept_thread = hthread_create(accept_thread,NULL);
 }
 
 socket_manager_state_t *createSocketManager()

@@ -5,6 +5,7 @@
 #include "hplatform.h"
 #include "hatomic.h"
 #include "htime.h"
+#include <stdatomic.h>
 
 BEGIN_EXTERN_C
 
@@ -252,7 +253,6 @@ size_t LSemaApproxAvail(hlsem_t*);
 
 
 
-
 #define kYieldProcessorTries 1000
 
 // hybrid_mutex_t is a mutex that will spin for a short while and then block
@@ -290,12 +290,12 @@ static inline  void HybridMutexLock(hybrid_mutex_t* m) {
             {
                 if (--n == 0)
                 {
-                    ATOMIC_ADD(&m->nwait, 1);
+                    atomic_fetch_add_explicit(&m->nwait, 1,memory_order_relaxed );
                     while (atomic_load_explicit(&m->flag, memory_order_relaxed))
                     {
                       hsem_wait(&m->sema);
                     }
-                    ATOMIC_SUB(&m->nwait, 1);
+                    atomic_fetch_sub_explicit(&m->nwait, 1,memory_order_relaxed);
                 }
                 else
                 {
@@ -320,6 +320,20 @@ static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
 
 #undef kYieldProcessorTries 
 
+//  if you want to test, helgrind won't detect atomic flag
+#define TEST_HELGRIND   // will transform hybrid mutex to a regular mutex
+
+
+#ifdef TEST_HELGRIND
+#define hhybridmutex_t              hmutex_t
+#define hhybridmutex_init           hmutex_init
+#define hhybridmutex_destroy        hmutex_destroy
+#define hhybridmutex_lock           hmutex_lock
+#define hhybridmutex_trylock        hmutex_trylock
+#define hhybridmutex_unlock         hmutex_unlock
+
+
+#else
 #define hhybridmutex_t              hybrid_mutex_t
 #define hhybridmutex_init           HybridMutexInit
 #define hhybridmutex_destroy        HybridMutexDestroy
@@ -327,6 +341,8 @@ static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
 #define hhybridmutex_trylock        HybridMutexTryLock
 #define hhybridmutex_unlock         HybridMutexUnlock
 
+
+#endif
 
 
 

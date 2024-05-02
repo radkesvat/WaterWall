@@ -102,6 +102,7 @@ void createWW(ww_construction_data_t runtime_data)
         core_logger =
             createCoreLogger(runtime_data.core_logger_data.log_file_path, runtime_data.core_logger_data.log_console);
         setCoreLoggerLevelByStr(runtime_data.core_logger_data.log_level);
+        
     }
     if (runtime_data.network_logger_data.log_file_path)
     {

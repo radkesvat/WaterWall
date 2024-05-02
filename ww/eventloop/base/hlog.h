@@ -71,14 +71,15 @@ typedef enum {
 // logger: default file_logger
 // network_logger() see event/nlog.h
 typedef void (*logger_handler)(int loglevel, const char* buf, int len);
+typedef struct logger_s logger_t;
 
+HV_EXPORT void logfile_write(logger_t* logger, const char* buf, int len);
 HV_EXPORT void stdout_logger(int loglevel, const char* buf, int len);
 HV_EXPORT void stderr_logger(int loglevel, const char* buf, int len);
 HV_EXPORT void file_logger(int loglevel, const char* buf, int len);
 // network_logger implement see event/nlog.h
 // HV_EXPORT void network_logger(int loglevel, const char* buf, int len);
 
-typedef struct logger_s logger_t;
 HV_EXPORT logger_t* logger_create();
 HV_EXPORT void logger_destroy(logger_t* logger);
 
@@ -87,7 +88,7 @@ HV_EXPORT void logger_set_level(logger_t* logger, int level);
 // level = [VERBOSE,DEBUG,INFO,WARN,ERROR,FATAL,SILENT]
 HV_EXPORT void logger_set_level_by_str(logger_t* logger, const char* level);
 HV_EXPORT int logger_will_write_level(logger_t* logger, log_level_e level);
-
+HV_EXPORT logger_handler logger_handle(logger_t* logger);
 /*
  * format  = "%y-%m-%d %H:%M:%S.%z %L %s"
  * message = "2020-01-02 03:04:05.067 DEBUG message"

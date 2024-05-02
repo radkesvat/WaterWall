@@ -45,7 +45,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     hhybridmutex_lock(&(self->mutex));
 
     *item = (idle_item_t){
-        .expire_at_ms = hloop_now_ms(self->loop) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
+        .expire_at_ms = hloop_now_ms(loops[tid]) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
 
     heapq_idles_t_push(&(self->hqueue), item);
 

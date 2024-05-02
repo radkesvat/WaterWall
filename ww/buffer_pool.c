@@ -12,7 +12,7 @@
 enum
 {
     // 0 is invalid memory multiplier
-    kLowMemory  = 1,      // no preallocation (very small)
+    kLowMemory  = 1,      // no preallocation (very small) (0.6MB per thread)
     kMeD1Memory = 16 * 1, // APPROX 20MB per thread
     kMeD2Memory = 16 * 2, // APPROX 40MB per thread
     kHiG1Memory = 16 * 3, // APPROX 56MB per thread
