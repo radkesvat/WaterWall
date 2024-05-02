@@ -159,14 +159,18 @@ static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_
     line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
     sockaddr_set_port(&(line->src_ctx.address), real_localport);
 
-    struct sockaddr log_localaddr = *hio_localaddr(cstate->io);
-    sockaddr_set_port((sockaddr_u *) &(log_localaddr), real_localport);
+    if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    {
 
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+        struct sockaddr log_localaddr = *hio_localaddr(cstate->io);
+        sockaddr_set_port((sockaddr_u *) &(log_localaddr), real_localport);
 
-    LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(cstate->io),
-         SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+
+        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(cstate->io),
+             SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+    }
 
     // send the init packet
     lockLine(line);
@@ -200,8 +204,8 @@ static void onFilteredRecv(hevent_t *ev)
             free(data);
             return;
         }
-        idle = con->idle_handle = newIdleItem(data->sock->table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
-                                        (uint64_t) 70 * 1000);
+        idle = con->idle_handle =
+            newIdleItem(data->sock->table, peeraddr_hash, con, onUdpConnectonExpire, data->tid, (uint64_t) 70 * 1000);
     }
     else
     {

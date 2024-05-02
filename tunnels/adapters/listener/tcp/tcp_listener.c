@@ -1,5 +1,6 @@
 #include "tcp_listener.h"
 #include "buffer_pool.h"
+#include "hlog.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"
 #include "utils/jsonutils.h"
@@ -117,7 +118,7 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
     return true;
 }
 
-static void onWriteComplete(hio_t * io)
+static void onWriteComplete(hio_t *io)
 {
     // resume the read on other end of the connection
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
@@ -303,8 +304,6 @@ static void onInboundConnected(hevent_t *ev)
     hio_t                  *io   = data->io;
     size_t                  tid  = data->tid;
     hio_attach(loop, io);
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
     tunnel_t                 *self        = data->tunnel;
     line_t                   *line        = newLine(tid);
@@ -328,11 +327,18 @@ static void onInboundConnected(hevent_t *ev)
     line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     hevent_set_userdata(io, cstate);
 
-    struct sockaddr log_localaddr = *hio_localaddr(io);
-    sockaddr_set_port((sockaddr_u *) &(log_localaddr), data->real_localport);
+    if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    {
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
-         SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+        struct sockaddr log_localaddr = *hio_localaddr(io);
+        sockaddr_set_port((sockaddr_u *) &(log_localaddr), data->real_localport);
+
+        LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
+             SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+    }
+
     free(data);
 
     // io->upstream_io = NULL;
