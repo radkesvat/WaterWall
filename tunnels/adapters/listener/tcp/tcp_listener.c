@@ -117,7 +117,7 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
     return true;
 }
 
-static void onWriteComplete(hio_t *restrict io)
+static void onWriteComplete(hio_t * io)
 {
     // resume the read on other end of the connection
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));

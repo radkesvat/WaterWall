@@ -99,6 +99,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         postUdpWrite(cstate->io, c->payload);
+        c->payload = NULL;
         destroyContext(c);
     }
     else
@@ -124,7 +125,6 @@ static void downStream(tunnel_t *self, context_t *c)
 
 static void onUdpConnectonExpire(idle_item_t *idle_udp)
 {
-
     udp_listener_con_state_t *cstate = idle_udp->userdata;
     assert(cstate != NULL);
     if (cstate->tunnel == NULL)
@@ -143,7 +143,6 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
 static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_t *io, idle_table_t *table,
                                                uint8_t real_localport)
 {
-
     line_t                   *line        = newLine(tid);
     udp_listener_con_state_t *cstate      = malloc(sizeof(udp_listener_con_state_t));
     cstate->loop                          = loops[tid];

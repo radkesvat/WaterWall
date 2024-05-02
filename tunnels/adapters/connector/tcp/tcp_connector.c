@@ -65,7 +65,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
         contextQueuePush(cstate->finished_queue, cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
-            return false; // write pending}
+            return false; // write pending
         }
     }
 
@@ -84,7 +84,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
     }
     return true;
 }
-static void onWriteComplete(hio_t *restrict io)
+static void onWriteComplete(hio_t * io)
 {
     // resume the read on other end of the connection
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
@@ -124,7 +124,7 @@ static void onWriteComplete(hio_t *restrict io)
     }
 }
 
-static void onRecv(hio_t *restrict io, shift_buffer_t *buf)
+static void onRecv(hio_t * io, shift_buffer_t *buf)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
     if (cstate == NULL)
