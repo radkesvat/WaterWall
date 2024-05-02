@@ -6,7 +6,10 @@
 #include "utils/stringutils.h"
 #include "utils/userutils.h"
 
-#define CRLF_LEN 2
+enum
+{
+    kCrlfLen = 2
+};
 
 enum trojan_cmd
 {
@@ -35,7 +38,10 @@ typedef struct trojan_socks_server_con_state_s
 } trojan_socks_server_con_state_t;
 static void cleanup(trojan_socks_server_con_state_t *cstate)
 {
-    destroyBufferStream(cstate->udp_buf);
+    if (cstate->udp_buf)
+    {
+        destroyBufferStream(cstate->udp_buf);
+    }
     free(cstate);
 }
 static void encapsultaeUdpPacket(context_t *c)
@@ -43,7 +49,7 @@ static void encapsultaeUdpPacket(context_t *c)
     uint16_t packet_len = bufLen(c->payload);
     packet_len          = packet_len > 8192 ? 8192 : packet_len;
 
-    shiftl(c->payload, CRLF_LEN);
+    shiftl(c->payload, kCrlfLen);
     writeRaw(c->payload, (unsigned char *) "\r\n", 2);
 
     packet_len = (packet_len << 8) | (packet_len >> 8);
@@ -190,7 +196,7 @@ static bool parseAddress(context_t *c)
         return false;
     }
     memcpy(&(dest_context->address.sin.sin_port), rawBuf(c->payload), 2);
-    shiftr(c->payload, 2 + CRLF_LEN);
+    shiftr(c->payload, 2 + kCrlfLen);
     return true;
 }
 
@@ -346,7 +352,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     memcpy(&(dest_context->address.sin.sin_port), rawBuf(c->payload), 2);
 
     // port 2 length 2 crlf 2
-    shiftr(c->payload, 2 + 2 + CRLF_LEN);
+    shiftr(c->payload, 2 + 2 + kCrlfLen);
     assert(bufLen(c->payload) == packet_size);
 
     // send init ctx

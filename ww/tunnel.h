@@ -219,7 +219,7 @@ inline void lockLine(line_t *line)
 }
 inline void unLockLine(line_t *line)
 {
-    destroyLine(line);
+    internalUnRefLine(line);
 }
 
 inline void markAuthenticationNodePresence(line_t *line)
