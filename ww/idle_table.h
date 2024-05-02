@@ -57,5 +57,4 @@ idle_item_t  *newIdleItem(idle_table_t *self, hash_t key, void *userdata, Expire
 idle_item_t  *getIdleItemByHash(idle_table_t *self, hash_t key);
 void          destoryIdleTable(idle_table_t *self);
 void          keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
-void          removeIdleItemByHandle(idle_table_t *self, idle_item_t *item); // removing will not call expire cd
-void          removeIdleItemByHash(idle_table_t *self, hash_t key);
+bool          removeIdleItemByHash(idle_table_t *self, hash_t key);

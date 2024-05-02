@@ -74,35 +74,49 @@ idle_item_t *getIdleItemByHash(idle_table_t *self, hash_t key)
     return (find_result.ref->second);
 }
 
-void removeIdleItemByHandle(idle_table_t *self, idle_item_t *item)
+// static void removeIdleItemByHandle(idle_table_t *self, idle_item_t *item)
+// {
+//     hash_t item_hash = item->hash;
+
+//     // enough to say its no longer in heap queue
+//     *item = (idle_item_t){};
+
+//     hhybridmutex_lock(&(self->mutex));
+//     hmap_idles_t_erase(&(self->hmap), item_hash);
+//     heapq_idles_t_make_heap(&self->hqueue);
+//     hhybridmutex_unlock(&(self->mutex));
+
+//     // alternative:
+//     // const uint64_t et         = item->expire_at_ms;
+//     // idle_item_t  **heap_items = (idle_item_t **) heapq_idles_t_top(&(self->hqueue));
+//     // size_t         heap_size  = heapq_idles_t_size(&(self->hqueue));
+//     // for (size_t i = 0; i < heap_size; i++)
+//     // {
+//     //     if (et == heap_items[i]->expire_at_ms)
+//     //     {
+//     //         heapq_idles_t_erase_at(&(self->hqueue), i);
+//     //         break;
+//     //     }
+//     // }
+// }
+bool removeIdleItemByHash(idle_table_t *self, hash_t key)
 {
-    assert(item != NULL && item->hash != 0x0);
-    hash_t item_hash = item->hash;
-
-    // enough to say its no longer in heap queue
-    *item = (idle_item_t){};
-
     hhybridmutex_lock(&(self->mutex));
-    hmap_idles_t_erase(&(self->hmap), item_hash);
-    heapq_idles_t_make_heap(&self->hqueue);
-    hhybridmutex_unlock(&(self->mutex));
 
-    // alternative:
-    // const uint64_t et         = item->expire_at_ms;
-    // idle_item_t  **heap_items = (idle_item_t **) heapq_idles_t_top(&(self->hqueue));
-    // size_t         heap_size  = heapq_idles_t_size(&(self->hqueue));
-    // for (size_t i = 0; i < heap_size; i++)
-    // {
-    //     if (et == heap_items[i]->expire_at_ms)
-    //     {
-    //         heapq_idles_t_erase_at(&(self->hqueue), i);
-    //         break;
-    //     }
-    // }
-}
-void removeIdleItemByHash(idle_table_t *self, hash_t key)
-{
-    removeIdleItemByHandle(self, getIdleItemByHash(self, key));
+    hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
+    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref)
+    {
+        hhybridmutex_unlock(&(self->mutex));
+        return false;
+    }
+    idle_item_t *item = (find_result.ref->second);
+    hmap_idles_t_erase_at(&(self->hmap), find_result);
+    *item = (idle_item_t){};
+    heapq_idles_t_make_heap(&self->hqueue);
+
+    hhybridmutex_unlock(&(self->mutex));
+    return true;
+
 }
 
 static void beforeCloseCallBack(hevent_t *ev)
@@ -130,7 +144,7 @@ void idleCallBack(hidle_t *idle)
         {
             heapq_idles_t_pop(&(self->hqueue));
 
-            if (! item->cb)
+            if (item->cb)
 
             {
                 hmap_idles_t_erase(&(self->hmap), item->hash);
@@ -141,6 +155,8 @@ void idleCallBack(hidle_t *idle)
                 hevent_set_userdata(&ev, item);
 
                 hloop_post_event(loops[item->tid], &ev);
+            }else{
+                free(item);
             }
         }
         else

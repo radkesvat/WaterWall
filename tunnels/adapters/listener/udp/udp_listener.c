@@ -38,11 +38,24 @@ typedef struct udp_listener_con_state_s
 static void cleanup(udp_listener_con_state_t *cstate)
 {
 
-    if (cstate->idle_handle)
+    if (cstate->idle_handle != NULL)
     {
-        removeIdleItemByHandle(cstate->table, cstate->idle_handle);
+        if (removeIdleItemByHash(cstate->table, cstate->idle_handle->hash))
+        {
+            free(cstate);
+        }
+        else
+        {
+            // sounds impossible...
+            LOGE("Checkpoint udp listener");
+            // this prevent double free
+            *cstate = (udp_listener_con_state_t){};
+        }
     }
-    free(cstate);
+    else
+    {
+        free(cstate);
+    }
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -111,11 +124,16 @@ static void downStream(tunnel_t *self, context_t *c)
 
 static void onUdpConnectonExpire(idle_item_t *idle_udp)
 {
-    
+
     udp_listener_con_state_t *cstate = idle_udp->userdata;
     assert(cstate != NULL);
+    if (cstate->tunnel == NULL)
+    {
+        free(cstate);
+        return;
+    }
     LOGD("UdpListener: expired idle udp FD:%x ", (int) hio_fd(cstate->io));
-    cstate->idle_handle = NULL; // its freed by the table after return
+    cstate->idle_handle = NULL;
     tunnel_t  *self     = (cstate)->tunnel;
     line_t    *line     = (cstate)->line;
     context_t *context  = newFinContext(line);
@@ -183,13 +201,19 @@ static void onFilteredRecv(hevent_t *ev)
             free(data);
             return;
         }
-        con->idle_handle = newIdleItem(data->sock->udp_table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
-                                       (uint64_t) 70 * 1000);
+        con->idle_handle = (newIdleItem(data->sock->udp_table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
+                                        (uint64_t) 70 * 1000));
     }
+    else
+    {
+        keepIdleItemForAtleast(data->sock->udp_table, idle, (uint64_t) 70 * 1000);
+    }
+
     tunnel_t                 *self    = data->tunnel;
     udp_listener_con_state_t *con     = idle->userdata;
     context_t                *context = newContext(con->line);
     context->payload                  = data->buf;
+
     self->upStream(self, context);
     free(data);
 }
