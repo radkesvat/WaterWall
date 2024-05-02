@@ -349,14 +349,19 @@ static void onInboundConnected(hevent_t *ev)
     }
 
     // send the init packet
-    context_t *context = newInitContext(line);
-    context->src_io    = io;
-    self->upStream(self, context);
-    if (! isAlive(line))
+    lockLine(line);
     {
-        LOGW("TcpListener: socket just got closed by upstream before anything happend");
-        return;
+        context_t *context = newInitContext(line);
+        context->src_io    = io;
+        self->upStream(self, context);
+        if (! isAlive(line))
+        {
+            LOGW("TcpListener: socket just got closed by upstream before anything happend");
+            unLockLine(line);
+            return;
+        }
     }
+    unLockLine(line);
     hio_read(io);
 }
 

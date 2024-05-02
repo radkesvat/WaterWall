@@ -57,8 +57,8 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     udp_outbound_node->version = instance_info->node->version;
     registerNode(tcp_outbound_node, settings);
     registerNode(udp_outbound_node, settings);
-    runNode(tcp_outbound_node, instance_info->chain_index + 1);
-    runNode(udp_outbound_node, instance_info->chain_index + 1);
+    runNode(tcp_outbound_node, instance_info->chain_index);
+    runNode(udp_outbound_node, instance_info->chain_index);
     state->tcp_connector = tcp_outbound_node->instance;
     state->udp_connector = udp_outbound_node->instance;
 

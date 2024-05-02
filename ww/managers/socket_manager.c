@@ -3,12 +3,10 @@
 #include "buffer_pool.h"
 #include "hloop.h"
 #include "hmutex.h"
-#include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "stc/common.h"
 #include "tunnel.h"
 #include "utils/procutils.h"
-#include "utils/sockutils.h"
 #include "ww.h"
 
 typedef struct socket_filter_s
@@ -611,19 +609,17 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
     // char peeraddrstr[SOCKADDR_STRLEN]  = {0};
     // printf("[%s] <=> [%s]\n", SOCKADDR_STR(hio_localaddr(io), localaddrstr),
     //        SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
-
     // hash_t       peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(io));
+
     udpsock_t *socket     = hevent_userdata(io);
     uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr(io));
     uint8_t    target_tid = local_port % workers_count;
 
-    distributeUdpPayload((udp_payload_t){
-        .sock      = socket,
-        .buf       = buf,
-        .tid       = target_tid,
-        .peer_addr = *(sockaddr_u *) hio_peeraddr(io),
-        .real_localport = local_port
-    });
+    distributeUdpPayload((udp_payload_t){.sock           = socket,
+                                         .buf            = buf,
+                                         .tid            = target_tid,
+                                         .peer_addr      = *(sockaddr_u *) hio_peeraddr(io),
+                                         .real_localport = local_port});
 }
 
 static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
@@ -691,7 +687,7 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
         }
     }
 }
-
+// todo (async channel) :(
 struct udp_sb
 {
     hio_t          *socket_io;
@@ -703,7 +699,7 @@ void writeUdpThisLoop(hevent_t *ev)
     size_t         nwrite = hio_write(ub->socket_io, ub->buf);
     free(ub);
 }
-void writeUdp(hio_t *socket_io, shift_buffer_t *buf)
+void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf)
 {
     struct udp_sb *ub = malloc(sizeof(struct udp_sb));
     *ub               = (struct udp_sb){.socket_io = socket_io, buf = buf};

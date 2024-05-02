@@ -14,6 +14,8 @@ extern bool           isAlive(line_t *line);
 extern void           reuseContextBuffer(context_t *c);
 extern bool           isFullyAuthenticated(line_t *line);
 extern bool           isAuthenticated(line_t *line);
+extern void           lockLine(line_t *line);
+extern void           unLockLine(line_t *line);
 extern void           markAuthenticated(line_t *line);
 extern void           markAuthenticationNodePresence(line_t *line);
 extern context_t     *newContext(line_t *line);

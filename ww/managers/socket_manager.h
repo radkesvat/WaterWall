@@ -62,7 +62,7 @@ typedef struct udp_payload_s
     shift_buffer_t *buf;
 
 } udp_payload_t;
-void writeUdp(hio_t *socket_io, shift_buffer_t *buf);
+void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf);
 
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 

@@ -1,9 +1,9 @@
 #pragma once
 #include "api.h"
 
-// user <-----\                 /----->   simulated con 1
-// user <------>  UdpListener  <------>   simulated con 2
-// user <-----/                 \----->   simulated con 3
+// user <-----\                 /----->   simulated Udp con 1
+// user <------>  UdpListener  <------>   simulated Udp con 2
+// user <-----/                 \----->   simulated Udp con 3
 //
 
 

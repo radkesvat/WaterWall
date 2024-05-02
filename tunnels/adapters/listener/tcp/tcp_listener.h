@@ -1,10 +1,9 @@
 #pragma once
 #include "api.h"
 
-// user <-----\                 /----->    con 1
-// user <------>  TcpListener  <------>  con 2
-// user <-----/                 \----->    con 3
-//
+// user <-----\                 /----->    Tcp con 1
+// user <------>  TcpListener  <------>    Tcp con 2
+// user <-----/                 \----->    Tcp con 3
 
 
 tunnel_t         *newTcpListener(node_instance_context_t *instance_info);

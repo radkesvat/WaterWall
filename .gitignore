@@ -15,6 +15,7 @@ cacert.pem
 
 /core/texts
 /cmake
+/.cache
 
 .env.local
 .env.*.local

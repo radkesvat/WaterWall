@@ -3,9 +3,9 @@
 #include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"
+#include "tunnel.h"
 #include "utils/jsonutils.h"
-#include <string.h>
-#include <time.h>
+#include "utils/sockutils.h"
 
 // enable profile to see some time info
 // #define PROFILE 1
@@ -29,6 +29,7 @@ typedef struct udp_listener_con_state_s
     hio_t         *io;
     idle_table_t  *table;
     line_t        *line;
+    idle_item_t   *idle_handle;
     buffer_pool_t *buffer_pool;
     bool           established;
     bool           first_packet_sent;
@@ -36,11 +37,11 @@ typedef struct udp_listener_con_state_s
 
 static void cleanup(udp_listener_con_state_t *cstate)
 {
-    if (cstate->io)
-    {
-        hevent_set_userdata(cstate->io, NULL);
-    }
 
+    if (cstate->idle_handle)
+    {
+        removeIdleItemByHandle(cstate->table, cstate->idle_handle);
+    }
     free(cstate);
 }
 
@@ -84,34 +85,8 @@ static inline void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        if (cstate->write_paused)
-        {
-            if (c->src_io)
-            {
-                hio_read_stop(c->src_io);
-            }
-            contextQueuePush(cstate->data_queue, c);
-        }
-        else
-        {
-            unsigned int bytes  = bufLen(c->payload);
-            int          nwrite = hio_write(cstate->io, c->payload);
-            c->payload          = NULL;
-            if (nwrite >= 0 && nwrite < bytes)
-            {
-                if (c->src_io)
-                {
-                    hio_read_stop(c->src_io);
-                }
-                contextQueuePush(cstate->finished_queue, c);
-                cstate->write_paused = true;
-                hio_setcb_write(cstate->io, onWriteComplete);
-            }
-            else
-            {
-                destroyContext(c);
-            }
-        }
+        postUdpWrite(cstate->io, c->payload);
+        destroyContext(c);
     }
     else
     {
@@ -129,74 +104,31 @@ static inline void downStream(tunnel_t *self, context_t *c)
             cleanup(cstate);
             destroyLine(c->line);
             destroyContext(c);
-            hio_close(io);
             return;
         }
     }
 }
 
-static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
+static void onUdpConnectonExpire(idle_item_t *idle_udp)
 {
-
-    char localaddrstr[SOCKADDR_STRLEN] = {0};
-    char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-    printf("[%s] <=> [%s]\n", SOCKADDR_STR(hio_localaddr(io), localaddrstr),
-           SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
-
-    hash_t peer_hash = sockAddrCalcHash(hio_peeraddr(io));
-
-    line_t                   *line   = newLine(tid);
-    udp_listener_con_state_t *cstate = (udp_listener_con_state_t *) (hevent_userdata(io));
-
-    if (cstate == NULL)
-    {
-        reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
-        return;
-    }
-    shift_buffer_t *payload           = buf;
-    tunnel_t       *self              = (cstate)->tunnel;
-    line_t         *line              = (cstate)->line;
-    bool           *first_packet_sent = &((cstate)->first_packet_sent);
-
-    context_t *context = newContext(line);
-    context->src_io    = io;
-    context->payload   = payload;
-    if (! (*first_packet_sent))
-    {
-        *first_packet_sent = true;
-        context->first     = true;
-    }
-
+    
+    udp_listener_con_state_t *cstate = idle_udp->userdata;
+    assert(cstate != NULL);
+    LOGD("UdpListener: expired idle udp FD:%x ", (int) hio_fd(cstate->io));
+    cstate->idle_handle = NULL; // its freed by the table after return
+    tunnel_t  *self     = (cstate)->tunnel;
+    line_t    *line     = (cstate)->line;
+    context_t *context  = newFinContext(line);
     self->upStream(self, context);
 }
 
-static void onUdpConnectonExpire(idle_item_t *idle_udp)
-{
-    udp_listener_con_state_t *cstate = (udp_listener_con_state_t *) (hevent_userdata(io));
-    if (cstate != NULL)
-    {
-        LOGD("UdpListener: received close for FD:%x ", (int) hio_fd(io));
-    }
-    else
-    {
-        LOGD("UdpListener: sent close for FD:%x ", (int) hio_fd(io));
-    }
-
-    if (cstate != NULL)
-    {
-        tunnel_t  *self    = (cstate)->tunnel;
-        line_t    *line    = (cstate)->line;
-        context_t *context = newFinContext(line);
-        self->upStream(self, context);
-    }
-}
-
-static udp_listener_con_state_t *newConnection(hloop_t *loop, uint8_t tid, tunnel_t *self, hio_t *io,
-                                               idle_table_t *table, uint8_t real_localport)
+static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_t *io, idle_table_t *table,
+                                               uint8_t real_localport)
 {
 
     line_t                   *line        = newLine(tid);
     udp_listener_con_state_t *cstate      = malloc(sizeof(udp_listener_con_state_t));
+    cstate->loop                          = loops[tid];
     cstate->line                          = line;
     cstate->buffer_pool                   = getThreadBufferPool(tid);
     cstate->io                            = io;
@@ -211,45 +143,58 @@ static udp_listener_con_state_t *newConnection(hloop_t *loop, uint8_t tid, tunne
     sockaddr_set_port(&(line->src_ctx.address), real_localport);
 
     struct sockaddr log_localaddr = *hio_localaddr(cstate->io);
-    sockaddr_set_port((sockaddr_u *) &(log_localaddr), data->real_localport);
+    sockaddr_set_port((sockaddr_u *) &(log_localaddr), real_localport);
 
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
     LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(cstate->io),
          SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
-    free(data);
-
-    hio_setcb_read(io, onRecv);
-    hio_setcb_close(io, onClose);
 
     // send the init packet
-    context_t *context = newInitContext(line);
-    context->src_io    = io;
-    self->upStream(self, context);
-    if (! isAlive(line))
+    lockLine(line);
     {
-        LOGW("UdpListener: socket just got closed by upstream before anything happend");
-        return;
+        context_t *context = newInitContext(line);
+        self->upStream(self, context);
+        if (! isAlive(line))
+        {
+            LOGW("UdpListener: socket just got closed by upstream before anything happend");
+            unLockLine(line);
+            return NULL;
+        }
     }
-    hio_read(io);
+    unLockLine(line);
+    return cstate;
 }
 
 static void onFilteredRecv(hevent_t *ev)
 {
-    udp_payload_t *data = (udp_payload_t *) hevent_userdata(ev);
+    udp_payload_t *data          = (udp_payload_t *) hevent_userdata(ev);
+    hash_t         peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(data->sock->io));
 
-    hash_t peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(data->sock->io));
-
-    idle_item_t *idle = getIdleItemByHash(data->sock->table, peeraddr_hash);
+    idle_item_t *idle = getIdleItemByHash(data->sock->udp_table, peeraddr_hash);
     if (idle == NULL)
     {
-
-        newIdleItem(data->sock->table, peeraddr_hash, ) onUdpConnectonExpire
+        udp_listener_con_state_t *con =
+            newConnection(data->tid, data->tunnel, data->sock->io, data->sock->udp_table, data->real_localport);
+        if (! con)
+        {
+            reuseBuffer(getThreadBufferPool(data->tid), data->buf);
+            free(data);
+            return;
+        }
+        con->idle_handle = newIdleItem(data->sock->udp_table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
+                                       (uint64_t) 70 * 1000);
     }
+    tunnel_t                 *self    = data->tunnel;
+    udp_listener_con_state_t *con     = idle->userdata;
+    context_t                *context = newContext(con->line);
+    context->payload                  = data->buf;
+    self->upStream(self, context);
+    free(data);
 }
 
-void parsePortSection(udp_listener_state_t *state, const cJSON *settings)
+static void parsePortSection(udp_listener_state_t *state, const cJSON *settings)
 {
     const cJSON *port_json = cJSON_GetObjectItemCaseSensitive(settings, "port");
     if ((cJSON_IsNumber(port_json) && (port_json->valuedouble != 0)))
@@ -303,7 +248,6 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
         LOGF("JSON Error: UdpListener->settings (object field) : The object was empty or invalid");
         return NULL;
     }
-    getBoolFromJsonObject(&(state->no_delay), settings, "nodelay");
 
     if (! getStringFromJsonObject(&(state->address), settings, "address"))
     {
@@ -369,7 +313,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    registerSocketAcceptor(t, filter_opt, onInboundConnected);
+    registerSocketAcceptor(t, filter_opt, onFilteredRecv);
 
     atomic_thread_fence(memory_order_release);
     return t;
