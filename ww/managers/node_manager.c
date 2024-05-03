@@ -17,7 +17,7 @@
 #define i_type map_node_t // NOLINT
 #define i_key  hash_t     // NOLINT
 #define i_val  node_t *   // NOLINT
- 
+
 #include "stc/hmap.h"
 
 typedef struct node_manager_s
@@ -149,7 +149,7 @@ static void cycleProcess()
         bool found = false;
         c_foreach(n1, map_node_t, state->node_map)
         {
-            if ((n1.ref->second->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
+            if (n1.ref->second->route_starter)
             {
                 found                         = true;
                 n1.ref->second->route_starter = true;
@@ -182,7 +182,11 @@ void registerNode(node_t *new_node, cJSON *node_settings)
     {
         LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
     }
-    new_node->metadata            = lib.getMetadataHandle();
+    new_node->metadata = lib.getMetadataHandle();
+    if ((new_node->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
+    {
+        new_node->route_starter = true;
+    }
     struct tunnel_lib_s *heap_lib = malloc(sizeof(struct tunnel_lib_s));
     memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
     *heap_lib     = lib;
@@ -194,8 +198,10 @@ void registerNode(node_t *new_node, cJSON *node_settings)
     new_node_ctx.node_settings_json = node_settings;
     new_node_ctx.node               = new_node;
     new_node_ctx.node_file_handle   = state->config_file;
-    new_node->instance_context      = new_node_ctx;
-    map_node_t *map                 = &(state->node_map);
+
+    new_node->instance_context = new_node_ctx;
+
+    map_node_t *map = &(state->node_map);
 
     if (map_node_t_contains(map, new_node->hash_name))
     {
@@ -243,7 +249,7 @@ static void startParsingFiles()
             exit(1);
         }
         getStringFromJsonObject(&(new_node->next), node_json, "next");
-        getIntFromJsonObjectOrDefault((int*)&(new_node->version), node_json, "version", 0);
+        getIntFromJsonObjectOrDefault((int *) &(new_node->version), node_json, "version", 0);
         registerNode(new_node, cJSON_GetObjectItemCaseSensitive(node_json, "settings"));
     }
     cycleProcess();

@@ -2,6 +2,8 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "utils/stringutils.h"
+#include <stdint.h>
+#include <time.h>
 
 typedef struct listener_state_s
 {
@@ -17,7 +19,15 @@ typedef struct listener_con_state_s
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    self->up->upStream(self->up, c);
+    switch ((uint64_t)(STATE(self)->tcp_listener->instance))
+    {
+    default:
+        self->up->upStream(self->up, c);
+
+    case NULL:
+STATE(self)->tcp_listener->instance
+        break;
+    }
 }
 static void downStream(tunnel_t *self, context_t *c)
 {
@@ -47,29 +57,29 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
         LOGF("JSON Error: Listener->settings (object field) : The object was empty or invalid");
         return NULL;
     }
-    node_t *tcp_outbound_node  = newNode();
-    node_t *udp_outbound_node  = newNode();
-    tcp_outbound_node->name    = concat(instance_info->node->name, "_tcp_inbound");
-    tcp_outbound_node->type    = "TcpListener";
-    tcp_outbound_node->version = instance_info->node->version;
-    udp_outbound_node->name    = concat(instance_info->node->name, "_udp_inbound");
-    udp_outbound_node->type    = "UdpListener";
-    udp_outbound_node->version = instance_info->node->version;
-    registerNode(tcp_outbound_node, settings);
-    registerNode(udp_outbound_node, settings);
-    runNode(tcp_outbound_node, instance_info->chain_index);
-    runNode(udp_outbound_node, instance_info->chain_index);
-    state->tcp_listener = tcp_outbound_node->instance;
-    state->udp_listener = udp_outbound_node->instance;
+    node_t *tcp_inbound_node  = newNode();
+    node_t *udp_inbound_node  = newNode();
+    tcp_inbound_node->name    = concat(instance_info->node->name, "_tcp_inbound");
+    tcp_inbound_node->type    = "TcpListener";
+    tcp_inbound_node->version = instance_info->node->version;
+    tcp_inbound_node->next    = instance_info->node->name;
+
+    udp_inbound_node->name    = concat(instance_info->node->name, "_udp_inbound");
+    udp_inbound_node->type    = "UdpListener";
+    udp_inbound_node->version = instance_info->node->version;
+    udp_inbound_node->next    = instance_info->node->name;
+
+    // this is enough, node map will run these and perform chainging
+    registerNode(tcp_inbound_node, settings);
+    registerNode(udp_inbound_node, settings);
+
+    state->tcp_listener = tcp_inbound_node->instance;
+    state->udp_listener = udp_inbound_node->instance;
 
     tunnel_t *t   = newTunnel();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-
-    chainDown(t, state->tcp_listener);
-    chainDown(t, state->udp_listener);
-
     atomic_thread_fence(memory_order_release);
     return t;
 }
@@ -86,5 +96,5 @@ tunnel_t *destroyListener(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataListener()
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
 }

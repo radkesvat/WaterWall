@@ -1,6 +1,8 @@
 #include "socks5_server.h"
 #include "buffer_stream.h"
+#include "hsocket.h"
 #include "loggers/network_logger.h"
+#include "tunnel.h"
 #include "utils/sockutils.h"
 
 #define SOCKS5_VERSION ((uint8_t) 5)
@@ -310,7 +312,32 @@ static bool processUdp(tunnel_t *self, socks5_server_con_state_t *cstate, line_t
 }
 static void udpUpStream(tunnel_t *self, context_t *c)
 {
+    socks5_server_con_state_t *cstate = CSTATE(c);
+    shift_buffer_t            *bytes  = c->payload;
 
+    bufferStreamPush(cstate->udp_buf, bytes);
+    c->payload = NULL;
+
+    if (! processUdp(self, cstate, c->line, c->src_io))
+    {
+        LOGE("Socks5Server: udp packet could not be parsed");
+        if (cstate->init_sent)
+        {
+            self->up->upStream(self->up, newFinContext(c->line));
+        }
+        goto disconnect;
+    }
+    else
+    {
+        destroyContext(c);
+    }
+disconnect:;
+    cleanup(cstate, getContextBufferPool(c));
+    free(cstate);
+    CSTATE_MUT(c) = NULL;
+    context_t *fc = newFinContextFrom(c);
+    destroyContext(c);
+    self->dw->downStream(self->dw, fc);
 }
 static void upStream(tunnel_t *self, context_t *c)
 {
@@ -319,28 +346,32 @@ static void upStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        if (c->line->dest_ctx.address_protocol == kSapUdp)
+        if (c->line->src_ctx.address_protocol == kSapUdp)
         {
-            udpUpStream(self,c);
+            udpUpStream(self, c);
             return;
         }
         if (cstate->state == kSUpstream)
         {
             if (c->line->dest_ctx.address_protocol == kSapUdp)
             {
-                bufferStreamPush(cstate->udp_buf, c->payload);
-                c->payload = NULL;
+                reuseContextBuffer(c);
+                destroyContext(c);
+                LOGE("Socks5Server: client is not supposed to send anymore data");
 
-                if (! processUdp(self, cstate, c->line, c->src_io))
-                {
-                    LOGE("Socks5Server: udp packet could not be parsed");
-                    self->up->upStream(self->up, newFinContext(c->line));
-                    goto disconnect;
-                }
-                else
-                {
-                    destroyContext(c);
-                }
+                // bufferStreamPush(cstate->udp_buf, c->payload);
+                // c->payload = NULL;
+
+                // if (! processUdp(self, cstate, c->line, c->src_io))
+                // {
+                //     LOGE("Socks5Server: udp packet could not be parsed");
+                //     self->up->upStream(self->up, newFinContext(c->line));
+                //     goto disconnect;
+                // }
+                // else
+                // {
+                //     destroyContext(c);
+                // }
             }
             else if (c->line->dest_ctx.address_protocol == kSapTcp)
             {
@@ -448,7 +479,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 break;
             case kAssociateCommand:
                 c->line->dest_ctx.address_protocol = kSapUdp;
-                cstate->udp_buf                    = newBufferStream(getContextBufferPool(c));
                 break;
             default:
                 reuseContextBuffer(c);
@@ -595,30 +625,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-
-                if (bufLen(bytes) > 0)
-                {
-                    bufferStreamPush(cstate->udp_buf, bytes);
-                    c->payload = NULL;
-
-                    if (! processUdp(self, cstate, c->line, c->src_io))
-                    {
-                        LOGE("Socks5Server: udp packet could not be parsed");
-                        if (cstate->init_sent)
-                        {
-                            self->up->upStream(self->up, newFinContext(c->line));
-                        }
-                        goto disconnect;
-                    }
-                    else
-                    {
-                        destroyContext(c);
-                    }
-                }
-                else
-                {
-                    reuseContextBuffer(c);
-                }
+                reuseContextBuffer(c);
                 // socks5 outbound connected
                 socks5_server_con_state_t *cstate  = CSTATE(c);
                 shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
@@ -633,6 +640,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                 case AF_INET:
                     resp[resp_len++] = kIPv4Addr;
+                    sockaddr_set_port(&(c->line->dest_ctx.address), sockaddr_port(&(c->line->src_ctx.address)));
                     memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_addr, 4);
                     resp_len += 4;
                     memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_port, 2);
@@ -682,7 +690,12 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             cstate = malloc(sizeof(socks5_server_con_state_t));
             memset(cstate, 0, sizeof(socks5_server_con_state_t));
-            cstate->need  = 2;
+            cstate->need = 2;
+            if (c->line->src_ctx.address_protocol == kSapUdp)
+            {
+                cstate->udp_buf = newBufferStream(getContextBufferPool(c));
+            }
+
             CSTATE_MUT(c) = cstate;
             destroyContext(c);
         }

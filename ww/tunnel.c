@@ -37,7 +37,9 @@ void chainUp(tunnel_t *from, tunnel_t *to)
 // `to` downstreams to `from`
 void chainDown(tunnel_t *from, tunnel_t *to)
 {
-    assert(to->dw == NULL); // 2 nodes cannot chain to 1 exact node
+    // assert(to->dw == NULL); // 2 nodes cannot chain to 1 exact node
+    // such chains are possible by a generic listener adapter
+    // but the cyclic refrence detection is already done in node map
     to->dw = from;
 }
 // `from` <-> `to`
