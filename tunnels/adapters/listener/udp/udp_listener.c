@@ -9,7 +9,11 @@
 
 // enable profile to see some time info
 // #define PROFILE 1
-
+enum
+{
+    kUdpInitExpireTime = 5 * 1000,
+    kUdpKeepExpireTime = 60 * 1000
+};
 typedef struct udp_listener_state_s
 {
     // settings
@@ -141,7 +145,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
 }
 
 static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_t *io, idle_table_t *table,
-                                               uint8_t real_localport)
+                                               uint16_t real_localport)
 {
     line_t                   *line        = newLine(tid);
     udp_listener_con_state_t *cstate      = malloc(sizeof(udp_listener_con_state_t));
@@ -204,12 +208,12 @@ static void onFilteredRecv(hevent_t *ev)
             free(data);
             return;
         }
-        idle = con->idle_handle =
-            newIdleItem(data->sock->table, peeraddr_hash, con, onUdpConnectonExpire, data->tid, (uint64_t) 70 * 1000);
+        idle = con->idle_handle = newIdleItem(data->sock->table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
+                                              (uint64_t) kUdpInitExpireTime);
     }
     else
     {
-        keepIdleItemForAtleast(data->sock->table, idle, (uint64_t) 70 * 1000);
+        keepIdleItemForAtleast(data->sock->table, idle, (uint64_t) kUdpKeepExpireTime);
     }
 
     tunnel_t                 *self    = data->tunnel;

@@ -538,7 +538,8 @@ static void upStream(tunnel_t *self, context_t *c)
             else
             {
                 reuseContextBuffer(c);
-                // socks5 outbound connected
+                //todo (ip filter) socks5 standard says this should whitelist the caller ip
+                // socks5 outbound accepted, udp relay will connect
                 socks5_server_con_state_t *cstate  = CSTATE(c);
                 shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
                 setLen(respbuf, 32);

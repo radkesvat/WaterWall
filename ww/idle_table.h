@@ -2,7 +2,6 @@
 
 #include "basic_types.h"
 #include "hloop.h"
-#include "hmutex.h"
 #include <stdint.h>
 
 /*
@@ -17,44 +16,33 @@
     The time checking has no cost and won't syscall at all, and the checking is synced by the
     eventloop which by default wakes up every 100 ms.
 
+    idle item is a threadlocal item, it belongs to the thread that created it
+    and other threads must not change , remove or do anything to it
+
 */
 
 struct idle_item_s;
 typedef void (*ExpireCallBack)(struct idle_item_s *);
 
-typedef struct idle_item_s
+struct idle_item_s;
+typedef struct idle_item_s idle_item_t;
+
+struct idle_item_s
 {
+    void          *userdata;
     uint64_t       expire_at_ms;
     hash_t         hash;
-    void          *userdata;
     uint8_t        tid;
     ExpireCallBack cb;
-} idle_item_t;
-
-#define i_TYPE                    heapq_idles_t, struct idle_item_s *
-#define i_cmp                     -c_default_cmp                                // NOLINT
-#define idletable_less_func(x, y) ((*(x))->expire_at_ms < (*(y))->expire_at_ms) // NOLINT
-#define i_less                    idletable_less_func                           // NOLINT
-
-#include "stc/pque.h"
-
-#define i_TYPE hmap_idles_t, uint64_t, struct idle_item_s *
-#include "stc/hmap.h"
-
-typedef struct idle_table_s
-{
-    hloop_t       *loop;
-    hidle_t       *idle_handle;
-    heapq_idles_t  hqueue;
-    hmap_idles_t   hmap;
-    hhybridmutex_t mutex;
-    uint64_t       last_update_ms;
-} idle_table_t;
+};
+typedef struct idle_table_s idle_table_t;
 
 idle_table_t *newIdleTable(hloop_t *loop);
-idle_item_t  *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
-                          uint64_t age_ms);
-idle_item_t  *getIdleItemByHash(idle_table_t *self, hash_t key);
 void          destoryIdleTable(idle_table_t *self);
-void          keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
-bool          removeIdleItemByHash(idle_table_t *self, hash_t key);
+
+idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
+                         uint64_t age_ms);
+// [Notice] only the owner thread of an idle item can use these functios
+idle_item_t *getIdleItemByHash(idle_table_t *self, hash_t key);
+void         keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
+bool         removeIdleItemByHash(idle_table_t *self, hash_t key);

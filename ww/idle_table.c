@@ -14,6 +14,38 @@ enum
 {
     kVecCap = 32
 };
+
+
+#define i_TYPE                    heapq_idles_t, struct idle_item_s *
+#define i_cmp                     -c_default_cmp                                // NOLINT
+#define idletable_less_func(x, y) ((*(x))->expire_at_ms < (*(y))->expire_at_ms) // NOLINT
+#define i_less                    idletable_less_func                           // NOLINT
+#include "stc/pque.h"
+
+#define i_TYPE hmap_idles_t, uint64_t, struct idle_item_s *
+#include "stc/hmap.h"
+
+
+struct udp_listener_state_s
+{
+    // settings
+    char    *address;
+    int      multiport_backend;
+    uint16_t port_min;
+    uint16_t port_max;
+    char   **white_list_raddr;
+    char   **black_list_raddr;
+};
+struct idle_table_s
+{
+    hloop_t       *loop;
+    hidle_t       *idle_handle;
+    heapq_idles_t  hqueue;
+    hmap_idles_t   hmap;
+    hhybridmutex_t mutex;
+    uint64_t       last_update_ms;
+};
+
 void idleCallBack(hidle_t *idle);
 
 void destoryIdleTable(idle_table_t *self)
@@ -116,7 +148,6 @@ bool removeIdleItemByHash(idle_table_t *self, hash_t key)
 
     hhybridmutex_unlock(&(self->mutex));
     return true;
-
 }
 
 static void beforeCloseCallBack(hevent_t *ev)
@@ -124,10 +155,7 @@ static void beforeCloseCallBack(hevent_t *ev)
     idle_item_t   *item  = hevent_userdata(ev);
     const uint64_t oldex = item->expire_at_ms;
     item->cb(item);
-    if (oldex <= item->expire_at_ms)
-    {
-        free(item);
-    }
+    free(item);
 }
 void idleCallBack(hidle_t *idle)
 {
@@ -145,8 +173,8 @@ void idleCallBack(hidle_t *idle)
             heapq_idles_t_pop(&(self->hqueue));
 
             if (item->cb)
-
             {
+                // destruction must happen on other thread
                 hmap_idles_t_erase(&(self->hmap), item->hash);
                 hevent_t ev;
                 memset(&ev, 0, sizeof(ev));
@@ -155,7 +183,10 @@ void idleCallBack(hidle_t *idle)
                 hevent_set_userdata(&ev, item);
 
                 hloop_post_event(loops[item->tid], &ev);
-            }else{
+            }
+            else
+            {
+                // already removed
                 free(item);
             }
         }
