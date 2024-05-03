@@ -14,13 +14,20 @@ removed ssl parts
 
 removed unpack, kcp, rudp support and other stream control related code
 
-removed thread safety parts of hio_t structure
+removed thread safety parts of hio_t structure (i mean the writelock), 
+so we can no longer write to a hio_t from multiple threads
 
 small optimization tweaks
 
 added small changes such as splice call support (not yet integrated into waterwall)
 
-effort to change loop buffer to ww/buffer_pool
+changed loop buffer to ww/buffer_pool
 
-note that this fork uses more memory since all the memory controlling & shrink conditions removed
+added hybridmutex(and used it instead of regular mutex) , Lsema (light weight semaphore), thread channels
+
+changed the use of localtime() to localtime_r() (helgrind no longer shouts)
+
+
+
+note that this fork uses more memory since most of the memory controlling & shrink conditions removed
 
