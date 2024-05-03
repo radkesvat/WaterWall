@@ -2,6 +2,8 @@
 #include "buffer_stream.h"
 #include "hsocket.h"
 #include "loggers/network_logger.h"
+#include "shiftbuffer.h"
+#include "tunnel.h"
 #include "utils/sockutils.h"
 #include "utils/stringutils.h"
 #include "utils/userutils.h"
@@ -292,12 +294,23 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return true;
     }
 
-    context_t        *c                = newContext(line);
-    socket_context_t *dest_context     = &(c->line->dest_ctx);
-    c->src_io                          = src_io;
-    c->payload                         = bufferStreamRead(bstream, full_len);
-    dest_context->address.sa.sa_family = AF_INET;
+    context_t        *c            = newContext(line);
+    socket_context_t *dest_context = &(c->line->dest_ctx);
+    c->src_io                      = src_io;
+    c->payload                     = bufferStreamRead(bstream, full_len);
 
+    if (cstate->init_sent)
+    {
+        shiftr(c->payload, full_len - packet_size);
+        self->up->upStream(self->up, c);
+        if (! isAlive(line))
+        {
+            return true;
+        }
+        return processUdp(self, cstate, line, src_io);
+    }
+
+    dest_context->address.sa.sa_family = AF_INET;
     shiftr(c->payload, 1);
 
     switch (address_type)

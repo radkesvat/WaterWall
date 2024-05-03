@@ -7,6 +7,8 @@
 
 typedef struct listener_state_s
 {
+    node_t   *tcp_inbound_node;
+    node_t   *udp_inbound_node;
     tunnel_t *tcp_listener;
     tunnel_t *udp_listener;
 
@@ -17,17 +19,21 @@ typedef struct listener_con_state_s
 
 } listener_con_state_t;
 
+// set function pointers baby))
+static void upStream(tunnel_t *self, context_t *c);
+
+static void firstUpStream(tunnel_t *self, context_t *c)
+{
+
+    listener_state_t *state = STATE(self);
+    state->tcp_listener     = state->tcp_inbound_node->instance;
+    state->udp_listener     = state->udp_inbound_node->instance;
+    self->upStream          = upStream;
+    upStream(self, c);
+}
 static void upStream(tunnel_t *self, context_t *c)
 {
-    switch ((uint64_t)(STATE(self)->tcp_listener->instance))
-    {
-    default:
-        self->up->upStream(self->up, c);
-
-    case NULL:
-STATE(self)->tcp_listener->instance
-        break;
-    }
+    self->up->upStream(self->up, c);
 }
 static void downStream(tunnel_t *self, context_t *c)
 {
@@ -69,16 +75,16 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
     udp_inbound_node->version = instance_info->node->version;
     udp_inbound_node->next    = instance_info->node->name;
 
+    state->tcp_inbound_node = tcp_inbound_node;
+    state->udp_inbound_node = udp_inbound_node;
     // this is enough, node map will run these and perform chainging
     registerNode(tcp_inbound_node, settings);
     registerNode(udp_inbound_node, settings);
 
-    state->tcp_listener = tcp_inbound_node->instance;
-    state->udp_listener = udp_inbound_node->instance;
 
     tunnel_t *t   = newTunnel();
     t->state      = state;
-    t->upStream   = &upStream;
+    t->upStream   = &firstUpStream;
     t->downStream = &downStream;
     atomic_thread_fence(memory_order_release);
     return t;
