@@ -29,7 +29,7 @@
  * SUCH DAMAGE.
  */
 
-#if 0
+#if 1
 #define UNROLL_LOOPS /* Enable loops unrolling */
 #endif
 
@@ -100,7 +100,7 @@
 
 #define SHA256_EXP(a, b, c, d, e, f, g, h, j)                                                                          \
     {                                                                                                                  \
-        t1 = wv[h] + SHA256_F2(wv[e]) + CH(wv[e], wv[f], wv[g]) + sha256_k[j] + w[j];                                  \
+        t1 = wv[h] + SHA256_F2(wv[e]) + CH(wv[e], wv[f], wv[g]) + kSha256K[j] + w[j];                                  \
         t2 = SHA256_F1(wv[a]) + MAJ(wv[a], wv[b], wv[c]);                                                              \
         wv[d] += t1;                                                                                                   \
         wv[h] = t1 + t2;                                                                                               \
@@ -108,7 +108,7 @@
 
 #define SHA512_EXP(a, b, c, d, e, f, g, h, j)                                                                          \
     {                                                                                                                  \
-        t1 = wv[h] + SHA512_F2(wv[e]) + CH(wv[e], wv[f], wv[g]) + sha512_k[j] + w[j];                                  \
+        t1 = wv[h] + SHA512_F2(wv[e]) + CH(wv[e], wv[f], wv[g]) + kSha512K[j] + w[j];                                  \
         t2 = SHA512_F1(wv[a]) + MAJ(wv[a], wv[b], wv[c]);                                                              \
         wv[d] += t1;                                                                                                   \
         wv[h] = t1 + t2;                                                                                               \
@@ -556,14 +556,14 @@ void sha224Init(sha224_ctx *ctx)
         ctx->h[i] = kSha224H0[i];
     }
 #else
-    ctx->h[0] = sha224_h0[0];
-    ctx->h[1] = sha224_h0[1];
-    ctx->h[2] = sha224_h0[2];
-    ctx->h[3] = sha224_h0[3];
-    ctx->h[4] = sha224_h0[4];
-    ctx->h[5] = sha224_h0[5];
-    ctx->h[6] = sha224_h0[6];
-    ctx->h[7] = sha224_h0[7];
+    ctx->h[0] = kSha224H0[0];
+    ctx->h[1] = kSha224H0[1];
+    ctx->h[2] = kSha224H0[2];
+    ctx->h[3] = kSha224H0[3];
+    ctx->h[4] = kSha224H0[4];
+    ctx->h[5] = kSha224H0[5];
+    ctx->h[6] = kSha224H0[6];
+    ctx->h[7] = kSha224H0[7];
 #endif /* !UNROLL_LOOPS */
 
     ctx->len     = 0;
@@ -667,14 +667,14 @@ void sha256Init(sha256_ctx *ctx)
         ctx->h[i] = kSha256H0[i];
     }
 #else
-    ctx->h[0] = sha256_h0[0];
-    ctx->h[1] = sha256_h0[1];
-    ctx->h[2] = sha256_h0[2];
-    ctx->h[3] = sha256_h0[3];
-    ctx->h[4] = sha256_h0[4];
-    ctx->h[5] = sha256_h0[5];
-    ctx->h[6] = sha256_h0[6];
-    ctx->h[7] = sha256_h0[7];
+    ctx->h[0] = kSha224H0[0];
+    ctx->h[1] = kSha224H0[1];
+    ctx->h[2] = kSha224H0[2];
+    ctx->h[3] = kSha224H0[3];
+    ctx->h[4] = kSha224H0[4];
+    ctx->h[5] = kSha224H0[5];
+    ctx->h[6] = kSha224H0[6];
+    ctx->h[7] = kSha224H0[7];
 #endif /* !UNROLL_LOOPS */
 
     ctx->len     = 0;
@@ -779,14 +779,14 @@ void sha384Init(sha384_ctx *ctx)
         ctx->h[i] = kSha384H0[i];
     }
 #else
-    ctx->h[0] = sha384_h0[0];
-    ctx->h[1] = sha384_h0[1];
-    ctx->h[2] = sha384_h0[2];
-    ctx->h[3] = sha384_h0[3];
-    ctx->h[4] = sha384_h0[4];
-    ctx->h[5] = sha384_h0[5];
-    ctx->h[6] = sha384_h0[6];
-    ctx->h[7] = sha384_h0[7];
+    ctx->h[0] = kSha384H0[0];
+    ctx->h[1] = kSha384H0[1];
+    ctx->h[2] = kSha384H0[2];
+    ctx->h[3] = kSha384H0[3];
+    ctx->h[4] = kSha384H0[4];
+    ctx->h[5] = kSha384H0[5];
+    ctx->h[6] = kSha384H0[6];
+    ctx->h[7] = kSha384H0[7];
 #endif /* !UNROLL_LOOPS */
 
     ctx->len     = 0;
@@ -889,14 +889,14 @@ void sha512Init(sha512_ctx *ctx)
         ctx->h[i] = kSha512H0[i];
     }
 #else
-    ctx->h[0] = sha512_h0[0];
-    ctx->h[1] = sha512_h0[1];
-    ctx->h[2] = sha512_h0[2];
-    ctx->h[3] = sha512_h0[3];
-    ctx->h[4] = sha512_h0[4];
-    ctx->h[5] = sha512_h0[5];
-    ctx->h[6] = sha512_h0[6];
-    ctx->h[7] = sha512_h0[7];
+    ctx->h[0] = kSha512H0[0];
+    ctx->h[1] = kSha512H0[1];
+    ctx->h[2] = kSha512H0[2];
+    ctx->h[3] = kSha512H0[3];
+    ctx->h[4] = kSha512H0[4];
+    ctx->h[5] = kSha512H0[5];
+    ctx->h[6] = kSha512H0[6];
+    ctx->h[7] = kSha512H0[7];
 #endif /* !UNROLL_LOOPS */
 
     ctx->len     = 0;
