@@ -16,7 +16,7 @@
     The time checking has no cost and won't syscall at all, and the checking is synced by the
     eventloop which by default wakes up every 100 ms.
 
-    idle item is a threadlocal item, it belongs to the thread that created it
+    idle item is a threadگlocal item, it belongs to the thread that created it
     and other threads must not change , remove or do anything to it
 
 */
@@ -39,10 +39,10 @@ typedef struct idle_table_s idle_table_t;
 
 idle_table_t *newIdleTable(hloop_t *loop);
 void          destoryIdleTable(idle_table_t *self);
+idle_item_t  *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
+                          uint64_t age_ms);
 
-idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
-                         uint64_t age_ms);
-// [Notice] only the owner thread of an idle item can use these functios
+// [Notice] only the owner thread of an idle item can use these functios on it
 idle_item_t *getIdleItemByHash(idle_table_t *self, hash_t key);
 void         keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
 bool         removeIdleItemByHash(idle_table_t *self, hash_t key);

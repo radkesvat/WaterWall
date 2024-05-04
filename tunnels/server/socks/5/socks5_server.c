@@ -269,21 +269,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 reuseContextBuffer(c);
                 destroyContext(c);
-                LOGE("Socks5Server: client is not supposed to send anymore data");
-
-                // bufferStreamPush(cstate->udp_buf, c->payload);
-                // c->payload = NULL;
-
-                // if (! processUdp(self, cstate, c->line, c->src_io))
-                // {
-                //     LOGE("Socks5Server: udp packet could not be parsed");
-                //     self->up->upStream(self->up, newFinContext(c->line));
-                //     goto disconnect;
-                // }
-                // else
-                // {
-                //     destroyContext(c);
-                // }
+                LOGE("Socks5Server: client is not supposed to send data anymore");
             }
             else if (c->line->dest_ctx.address_protocol == kSapTcp)
             {
