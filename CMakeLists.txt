@@ -58,6 +58,7 @@ option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_SERVER "link PreConnectServer staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_CLIENT "link PreConnectClient staticly to the core"  TRUE)
 option(INCLUDE_SOCKS_5_SERVER "link Socks5Server staticly to the core"  TRUE)
+option(INCLUDE_REAILTY_CLIENT "link RealityClient staticly to the core"  TRUE)
 
 
 
@@ -312,6 +313,21 @@ target_link_libraries(Waterwall Socks5Server)
 endif()
 
 
+
+
+#reality client
+if (INCLUDE_REAILTY_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_REAILTY_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
+target_link_libraries(Waterwall RealityClient)
+endif()
+
+
+
+
+
+
 # komihash
 CPMAddPackage(
   NAME komihash
@@ -341,7 +357,7 @@ endif()
 
 
 
-# openssl (default version is 3.2)
+# openssl (default version is latest 3.3.0 +)
 CPMAddPackage(
     NAME openssl-cmake
     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
@@ -351,7 +367,6 @@ CPMAddPackage(
 
 
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
-target_compile_definitions(Waterwall PUBLIC NODES_STATIC=1 )
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 endif()
