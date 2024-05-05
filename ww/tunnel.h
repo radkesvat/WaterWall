@@ -147,28 +147,38 @@ inline void internalUnRefLine(line_t *l)
 
     free(l);
 }
+inline void lockLine(line_t *line)
+{
+    line->refc++;
+}
+inline void unLockLine(line_t *line)
+{
+    internalUnRefLine(line);
+}
+
 inline void destroyLine(line_t *l)
 {
     l->alive = false;
-    internalUnRefLine(l);
+    unLockLine(l);
 }
+
 inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
-    internalUnRefLine(c->line);
+    unLockLine(c->line);
     free(c);
 }
 inline context_t *newContext(line_t *line)
 {
     context_t *new_ctx = malloc(sizeof(context_t));
     *new_ctx           = (context_t){.line = line};
-    line->refc += 1;
+    lockLine(line);
     return new_ctx;
 }
 
 inline context_t *newContextFrom(context_t *source)
 {
-    source->line->refc += 1;
+    lockLine(source->line);
     context_t *new_ctx = malloc(sizeof(context_t));
     *new_ctx           = (context_t){.line = source->line, .src_io = source->src_io};
     return new_ctx;
@@ -202,8 +212,8 @@ inline context_t *newInitContext(line_t *line)
 }
 inline context_t *switchLine(context_t *c, line_t *line)
 {
-    line->refc += 1;
-    internalUnRefLine(c->line);
+    lockLine(line);
+    unLockLine(c->line);
     c->line = line;
     return c;
 }
@@ -211,16 +221,8 @@ inline bool isAlive(line_t *line)
 {
     return line->alive;
 }
-// when you don't have a context from a line, you cant guess the line is free()ed or not
-// so you should use locks before losing the last context
-inline void lockLine(line_t *line)
-{
-    line->refc++;
-}
-inline void unLockLine(line_t *line)
-{
-    internalUnRefLine(line);
-}
+
+
 
 inline void markAuthenticationNodePresence(line_t *line)
 {

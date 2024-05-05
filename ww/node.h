@@ -28,13 +28,14 @@ typedef struct tunnel_metadata_s
 typedef struct node_s
 {
     char    *name;
-    hash_t   hash_name;
     char    *type;
-    hash_t   hash_type;
     char    *next;
+    hash_t   hash_name;
+    hash_t   hash_type;
     hash_t   hash_next;
     uint32_t version;
-    //------------ evaluated:
+    
+    // evaluated:
     uint32_t refrenced;
     bool     route_starter;
 
