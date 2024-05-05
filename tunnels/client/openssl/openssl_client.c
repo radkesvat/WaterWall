@@ -23,11 +23,11 @@ typedef struct oss_client_state_s
 
 typedef struct oss_client_con_state_s
 {
-    bool             handshake_completed;
-    SSL *            ssl;
-    BIO *            rbio;
-    BIO *            wbio;
+    SSL             *ssl;
+    BIO             *rbio;
+    BIO             *wbio;
     context_queue_t *queue;
+    bool             handshake_completed;
 
 } oss_client_con_state_t;
 
@@ -96,7 +96,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
 
         enum sslstatus status;
-        size_t         len = bufLen(c->payload);
+        int            len = (int) bufLen(c->payload);
 
         while (len > 0)
         {
@@ -112,7 +112,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 do
                 {
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    size_t          avail = rCap(buf);
+                    int             avail = (int) rCap(buf);
                     n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                     if (n > 0)
                     {
@@ -187,7 +187,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (status == kSslstatusWantIo)
             {
                 shift_buffer_t *buf   = popBuffer(getContextBufferPool(client_hello_ctx));
-                size_t          avail = rCap(buf);
+                int             avail = (int) rCap(buf);
                 n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {
@@ -241,9 +241,8 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         int            n;
         enum sslstatus status;
-        // if (!cstate->handshake_completed)
 
-        size_t len = bufLen(c->payload);
+        int len = (int) bufLen(c->payload);
 
         while (len > 0)
         {
@@ -271,7 +270,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     do
                     {
                         shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        size_t          avail = rCap(buf);
+                        int             avail = (int) rCap(buf);
                         n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
 
                         if (n > 0)
@@ -310,7 +309,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 /* Did SSL request to write bytes? */
                 shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                size_t          avail = rCap(buf);
+                int             avail = (int) rCap(buf);
                 n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {
@@ -324,13 +323,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     reuseBuffer(getContextBufferPool(c), buf);
                 }
 
-                if (! SSL_is_init_finished(cstate->ssl))
-                {
-                    //     reuseContextBuffer(c);
-                    //     destroyContext(c);
-                    //     return;
-                }
-                else
+                if (SSL_is_init_finished(cstate->ssl))
                 {
                     LOGD("OpensslClient: Tls handshake complete");
                     cstate->handshake_completed = true;
@@ -358,17 +351,14 @@ static void downStream(tunnel_t *self, context_t *c)
 
             /* The encrypted data is now in the input bio so now we can perform actual
              * read of unencrypted data. */
-            // shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-            // shiftl(buf, 8192 / 2);
-            // setLen(buf, 0);
 
             do
             {
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, 8192 / 2);
                 setLen(buf, 0);
-                size_t avail = rCap(buf);
-                n            = SSL_read(cstate->ssl, rawBufMut(buf), avail);
+                int avail = (int) rCap(buf);
+                n         = SSL_read(cstate->ssl, rawBufMut(buf), avail);
 
                 if (n > 0)
                 {
@@ -453,21 +443,10 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    if (! getBoolFromJsonObject(&(state->verify), settings, "verify"))
-    {
-        state->verify = true;
-    }
+    getBoolFromJsonObjectOrDefault(&(state->verify), settings, "verify", true);
 
-    if (! getStringFromJsonObject(&(state->alpn), settings, "alpn"))
-    {
-        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty or invalid");
-        return NULL;
-    }
-    if (strlen(state->alpn) == 0)
-    {
-        LOGF("JSON Error: OpenSSLClient->settings->alpn (string field) : The data was empty");
-        return NULL;
-    }
+    getStringFromJsonObjectOrDefault(&(state->alpn), settings, "alpn","http/1.1");
+
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;

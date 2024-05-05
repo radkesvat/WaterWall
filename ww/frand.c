@@ -1,3 +1,3 @@
 #include "frand.h"
 
-extern unsigned int fastRand(void);
+extern uint32_t fastRand(void);

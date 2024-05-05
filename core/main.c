@@ -1,25 +1,14 @@
 #include "config_file.h"
 #include "core_settings.h"
 #include "hbase.h"
-#include "hlog.h"
 #include "loggers/core_logger.h"
-#include "loggers/dns_logger.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
 #include "os_helpers.h"
 #include "static_tunnels.h"
-#include "stc/common.h"
 #include "utils/fileutils.h"
 #include "utils/stringutils.h"
 #include "ww.h"
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-#undef HLOG
-#define HLOG getCoreLogger() // NOLINT
-
-#define CORE_FILE "core.json"
 
 int main(void)
 {
@@ -28,11 +17,12 @@ int main(void)
     // printf("hello world %d", test[4]);
 
     initCoreSettings();
-    char *core_file_content = readFile(CORE_FILE);
+    const char *core_file_name    = "core.json";
+    char       *core_file_content = readFile(core_file_name);
     if (core_file_content == NULL)
     {
         fprintf(stderr, "Waterwall version %s\nCould not read core settings file \"%s\" \n",
-                TOSTRING(WATERWALL_VERSION), CORE_FILE);
+                TOSTRING(WATERWALL_VERSION), core_file_name);
         exit(1);
     }
     parseCoreSettings(core_file_content);

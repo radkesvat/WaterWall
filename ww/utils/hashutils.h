@@ -1,11 +1,9 @@
 #pragma once
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
-
-// todo (benchmark) komihash vs Fowler–Noll–Vo
+// todo (benchmark) komihash vs Flower–Noll–Vo
 // todo (siphash) add sip hash
-
 
 // static inline uint64_t hashFnv1a64(const uint8_t *buf, size_t len)
 // {
@@ -22,11 +20,8 @@
 // #define CALC_HASH_PRIMITIVE(x)  hashFnv1a64((const uint8_t *) &(x), sizeof((x)))
 // #define CALC_HASH_BYTES(x, len) hashFnv1a64((const uint8_t *) (x), (len))
 
-
-
-
 #include "komihash.h"
 // zero as seed provides more performance
-#define KOMIHASH_SEED 0
-#define CALC_HASH_PRIMITIVE(x)  komihash((x), sizeof((x)), KOMIHASH_SEED)
+#define KOMIHASH_SEED           0
+#define CALC_HASH_PRIMITIVE(x)  komihash((const uint8_t *) &(x), sizeof((x)), KOMIHASH_SEED)
 #define CALC_HASH_BYTES(x, len) komihash((x), len, KOMIHASH_SEED)

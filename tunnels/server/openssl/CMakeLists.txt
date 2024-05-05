@@ -20,7 +20,7 @@ include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
 
-# add openssl (default version is 3.2)
+# add openssl (default version is latest 3.3.0 +)
 CPMAddPackage(
     NAME openssl-cmake
     URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz

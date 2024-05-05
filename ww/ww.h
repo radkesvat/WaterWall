@@ -10,7 +10,6 @@
 
 */
 
-#ifndef NODES_STATIC
 #if defined(_MSC_VER)
 #define WWEXPORT __declspec(dllexport)
 #elif defined(__GNUC__)
@@ -18,8 +17,16 @@
 #else
 #define WWEXPORT
 #endif
+
+#if defined(__GNUC__) || defined(__clang__) || defined(__IBMC__) || defined(__IBMCPP__) || defined(__COMPCERT__)
+
+#define WW_LIKELY(x)   __builtin_expect(x, 1)
+#define WW_UNLIKELY(x) __builtin_expect(x, 0)
+
 #else
-#define WWEXPORT
+
+#define WW_LIKELY(x)   (v)
+#define WW_UNLIKELY(x) (v)
 #endif
 
 struct ww_runtime_state_s;

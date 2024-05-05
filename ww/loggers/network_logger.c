@@ -20,16 +20,18 @@ static void destroyNetworkLogger(void)
     }
 }
 
-
 static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
-    if (loglevel == LOG_LEVEL_ERROR || loglevel == LOG_LEVEL_FATAL)
+    switch (loglevel)
     {
+    case LOG_LEVEL_WARN:
+    case LOG_LEVEL_ERROR:
+    case LOG_LEVEL_FATAL:
         stderr_logger(loglevel, buf, len);
-    }
-    else
-    {
+        break;
+    default:
         stdout_logger(loglevel, buf, len);
+        break;
     }
     logfile_write(logger, buf, len);
 }

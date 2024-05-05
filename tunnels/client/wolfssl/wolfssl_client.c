@@ -1,9 +1,6 @@
 #include "wolfssl_client.h"
 #include "buffer_pool.h"
-#include "buffer_stream.h"
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
-#include "managers/socket_manager.h"
 #include "utils/jsonutils.h"
 #include "wolfssl_globals.h"
 
@@ -27,9 +24,9 @@ typedef struct wssl_client_state_s
 typedef struct wssl_client_con_state_s
 {
     bool             handshake_completed;
-    SSL *            ssl;
-    BIO *            rbio;
-    BIO *            wbio;
+    SSL             *ssl;
+    BIO             *rbio;
+    BIO             *wbio;
     context_queue_t *queue;
 
 } wssl_client_con_state_t;
@@ -99,7 +96,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
 
         enum sslstatus status;
-        size_t         len = bufLen(c->payload);
+        int            len = (int) bufLen(c->payload);
 
         while (len > 0)
         {
@@ -115,7 +112,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 do
                 {
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    size_t          avail = rCap(buf);
+                    int             avail = (int) rCap(buf);
                     n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                     if (n > 0)
                     {
@@ -167,10 +164,10 @@ static void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c) = malloc(sizeof(wssl_client_con_state_t));
             memset(CSTATE(c), 0, sizeof(wssl_client_con_state_t));
             wssl_client_con_state_t *cstate = CSTATE(c);
-            cstate->rbio                   = BIO_new(BIO_s_mem());
-            cstate->wbio                   = BIO_new(BIO_s_mem());
-            cstate->ssl                    = SSL_new(state->ssl_context);
-            cstate->queue                  = newContextQueue(getContextBufferPool(c));
+            cstate->rbio                    = BIO_new(BIO_s_mem());
+            cstate->wbio                    = BIO_new(BIO_s_mem());
+            cstate->ssl                     = SSL_new(state->ssl_context);
+            cstate->queue                   = newContextQueue(getContextBufferPool(c));
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
@@ -190,7 +187,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (status == kSslstatusWantIo)
             {
                 shift_buffer_t *buf   = popBuffer(getContextBufferPool(client_hello_ctx));
-                size_t          avail = rCap(buf);
+                int             avail = (int) rCap(buf);
                 n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {
@@ -244,9 +241,8 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         int            n;
         enum sslstatus status;
-        // if (!cstate->handshake_completed)
 
-        size_t len = bufLen(c->payload);
+        int len = (int) bufLen(c->payload);
 
         while (len > 0)
         {
@@ -274,7 +270,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     do
                     {
                         shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        size_t          avail = rCap(buf);
+                        int             avail = (int) rCap(buf);
                         n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
 
                         if (n > 0)
@@ -313,7 +309,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 /* Did SSL request to write bytes? */
                 shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                size_t          avail = rCap(buf);
+                int             avail = (int) rCap(buf);
                 n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {
@@ -349,9 +345,6 @@ static void downStream(tunnel_t *self, context_t *c)
                     }
                     flushWriteQueue(self, c);
                     // queue is flushed and we are done
-                    // reuseContextBuffer(c);
-                    // destroyContext(c);
-                    // return;
                 }
 
                 reuseContextBuffer(c);
@@ -361,17 +354,14 @@ static void downStream(tunnel_t *self, context_t *c)
 
             /* The encrypted data is now in the input bio so now we can perform actual
              * read of unencrypted data. */
-            // shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-            // shiftl(buf, 8192 / 2);
-            // setLen(buf, 0);
 
             do
             {
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, 8192 / 2);
                 setLen(buf, 0);
-                size_t avail = rCap(buf);
-                n            = SSL_read(cstate->ssl, rawBufMut(buf), avail);
+                int avail = (int) rCap(buf);
+                n         = SSL_read(cstate->ssl, rawBufMut(buf), avail);
 
                 if (n > 0)
                 {
@@ -456,21 +446,9 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    if (! getBoolFromJsonObject(&(state->verify), settings, "verify"))
-    {
-        state->verify = true;
-    }
+    getBoolFromJsonObjectOrDefault(&(state->verify), settings, "verify", true);
 
-    if (! getStringFromJsonObject(&(state->alpn), settings, "alpn"))
-    {
-        LOGF("JSON Error: WolfSSLClient->settings->alpn (string field) : The data was empty or invalid");
-        return NULL;
-    }
-    if (strlen(state->alpn) == 0)
-    {
-        LOGF("JSON Error: WolfSSLClient->settings->alpn (string field) : The data was empty");
-        return NULL;
-    }
+    getStringFromJsonObjectOrDefault(&(state->alpn), settings, "alpn","http/1.1");
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;
