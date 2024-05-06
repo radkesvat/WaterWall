@@ -14,7 +14,7 @@
 #include "buffer_pool.h"
 
 
-#define HLOOP_READ_BUFSIZE          (1U << 15)  // 32K
+// #define HLOOP_READ_BUFSIZE          (1U << 15)  // 32K
 #define READ_BUFSIZE_HIGH_WATER     (1U << 20)  // 1M
 #define WRITE_BUFSIZE_HIGH_WATER    (1U << 23)  // 8M
 #define MAX_WRITE_BUFSIZE           (1U << 24)  // 16M

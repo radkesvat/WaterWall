@@ -4,14 +4,23 @@
 #include <stdatomic.h>
 
 /*
-    Just do a big memory allocation at the startup and keep using them, don't talk to os as much as possible.
-    it can also grow up (allocate another big chunk) and shrink down to the first state
+    A growable pool, very simple.
+
+    preallocates (n) number of buffers at each call to charge(),
+    
+    users should call popBuffer() when they want a buffer, and later call reuseBuffer when they are done with
+    the buffer.
+
+    recharing is done autmatically and internally.
+
+    - appendBufferMerge: concats 2 buffers to 1 in a efficient way, and the loser buffer is reused
+
 
     This is the most memory consuming part of the program, and also the preallocation length really
-    depends on where you want to use this program, on a phone or on a 16 core server?
-    so there are possible choices for memory profiles in the .c file which you can select the best for your needs
+    depends on where you want to use this program, on a mobile phone or on a 16 core server?
+    so there are possible choices for memory profiles in the .c file which you can select the best for your needs.
 
-    todo (runtime selection) its better that the memory profile be a runtime selection than compile time
+    todo (runtime selection) its better that the memory profile be a runtime selection than compile time.
 
 */
 

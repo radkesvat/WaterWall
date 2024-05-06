@@ -5,8 +5,6 @@
 #include <stdint.h>
 #include <string.h> // memmove,memcpy
 
-#if defined(DEBUG) && ! defined(hlog)
-#endif
 
 /*
 
@@ -83,7 +81,7 @@ inline void shiftr(shift_buffer_t *self, unsigned int bytes)
     self->calc_len -= bytes;
 }
 
-// developer must call this function to own the memory before writing
+// developer should call this function before writing
 inline void setLen(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)
@@ -104,7 +102,6 @@ inline unsigned int bufLen(shift_buffer_t *self)
     return self->calc_len;
 }
 
-// its only a hint, you are not allowed to write to that space before setLen()
 inline void reserveBufSpace(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)

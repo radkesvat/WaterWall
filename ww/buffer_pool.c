@@ -19,19 +19,21 @@ enum
     kHiG2Memory = 16 * 4  // APPROX 72MB per thread
 };
 
-#define MEMORY_PROFILE kHiG2Memory // todo (cmake)
+//NOLINTBEGIN
+// todo (cmake)
+#define MEMORY_PROFILE_SMALL    kMeD1Memory
+#define MEMORY_PROFILE_SELECTED kHiG2Memory
 
-enum
-{
-    BASE_READ_BUFSIZE = (1U << 13) // 8K
-};
+#define BASE_READ_BUFSIZE              (1U << 13) // 8k 
+#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((16 * MEMORY_PROFILE_SMALL)))
+#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((16 * MEMORY_PROFILE_SELECTED)))
 
-#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((16 * kMeD1Memory)))
-#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((16 * MEMORY_PROFILE)))
-
-#define BUFFER_SIZE_MORE (((int) (MEMORY_PROFILE / 16)) > 1 ? ((int) (MEMORY_PROFILE / 16)) - 1 : 1)
+#define BUFFER_SIZE_MORE                                                                                               \
+    (((int) (MEMORY_PROFILE_SELECTED / 16)) > 1 ? (((int) (MEMORY_PROFILE_SELECTED / 16)) - 1) : (0))
 
 #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
+
+//NOLINTEND
 
 static void firstCharge(buffer_pool_t *pool)
 {

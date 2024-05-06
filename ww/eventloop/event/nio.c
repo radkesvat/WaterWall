@@ -1,4 +1,5 @@
 #include "iowatcher.h"
+#include "ww.h"
 #ifndef EVENT_IOCP
 #include "hevent.h"
 #include "hsocket.h"
@@ -193,7 +194,7 @@ read:;
     // #endif
     shift_buffer_t* buf = popBuffer(io->loop->bufpool);
     unsigned int available = rCap(buf);
-    if (available < 1024) {
+    if (WW_UNLIKELY(available < 1024)) {
         reserveBufSpace(buf, 1024);
     }
     nread = __nio_read(io, rawBufMut(buf), available);
