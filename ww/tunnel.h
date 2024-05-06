@@ -51,7 +51,6 @@ typedef struct line_s
     uint8_t          tid;
     uint8_t          lcid;
     uint8_t          auth_cur;
-    uint8_t          auth_max;
     bool             alive;
 
     void *chains_state[];
@@ -105,7 +104,6 @@ inline line_t *newLine(uint8_t tid)
         .refc     = 1,
         .lcid     = kMaxChainLen - 1,
         .auth_cur = 0,
-        .auth_max = 0,
         .loop     = loops[tid],
         .alive    = true,
         // to set a port we need to know the AF family, default v4
@@ -224,10 +222,6 @@ inline bool isAlive(line_t *line)
 
 
 
-inline void markAuthenticationNodePresence(line_t *line)
-{
-    line->auth_max += 1;
-}
 inline void markAuthenticated(line_t *line)
 {
     line->auth_cur += 1;
@@ -236,10 +230,7 @@ inline bool isAuthenticated(line_t *line)
 {
     return line->auth_cur > 0;
 }
-inline bool isFullyAuthenticated(line_t *line)
-{
-    return line->auth_cur >= line->auth_max;
-}
+
 
 inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
 {
