@@ -7,9 +7,10 @@
 #include "tunnel.h"
 #include "utils/hashutils.h"
 #include "utils/jsonutils.h"
-#include "utils/mathutils.h"
+#include "ww.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <stdint.h>
@@ -18,9 +19,10 @@
 // these should not be modified, code may break
 enum reality_consts
 {
-    kEncryptionBlockSize  = 32,
+    kEncryptionBlockSize  = 16,
     kSignHeaderLen        = kEncryptionBlockSize * 2,
-    kSignPasswordLen      = kEncryptionBlockSize, // 256 bit key
+    kSignPasswordLen      = kEncryptionBlockSize,
+    kSignIVlen            = 16, // IV size for *most* modes is the same as the block size. For AES this is 128 bits
     kTLSVersion12         = 0x0303,
     kTLS12ApplicationData = 0x17,
 };
@@ -30,28 +32,30 @@ typedef struct reailty_client_state_s
 
     ssl_ctx_t ssl_context;
     // settings
-    char    *alpn;
-    char    *sni;
-    char    *password;
-    int      password_length;
-    uint64_t hash1;
-    uint64_t hash2;
-    uint64_t hash3;
-    bool     verify;
+    char         *alpn;
+    char         *sni;
+    char         *password;
+    bool          verify;
+    int           password_length;
+    uint64_t      hash1;
+    uint64_t      hash2;
+    uint64_t      hash3;
+    char          context_password[kSignPasswordLen];
+    unsigned char context_iv[kSignIVlen];
 
 } reailty_client_state_t;
 
 typedef struct reailty_client_con_state_s
 {
-    SSL            *ssl;
-    BIO            *rbio;
-    BIO            *wbio;
-    EVP_CIPHER_CTX *gcm_ctx;
-
+    SSL             *ssl;
+    BIO             *rbio;
+    BIO             *wbio;
+    EVP_CIPHER_CTX  *encryption_context;
+    EVP_CIPHER_CTX  *decryption_context;
     context_queue_t *queue;
     bool             handshake_completed;
+    bool             first_sent;
     uint32_t         epochsecs;
-    char             context_password[kSignPasswordLen];
 
 } reailty_client_con_state_t;
 
@@ -82,6 +86,9 @@ static void cleanup(tunnel_t *self, context_t *c)
     reailty_client_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
+        EVP_CIPHER_CTX_free(cstate->encryption_context);
+        EVP_CIPHER_CTX_free(cstate->decryption_context);
+
         SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
         destroyContextQueue(cstate->queue);
 
@@ -104,46 +111,111 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
         }
     }
 }
-static void customEncrypt(reailty_client_con_state_t *cstate, context_t *c)
+static void genericDecrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, shift_buffer_t *out)
 {
-}
+    uint16_t input_length = bufLen(in);
+    reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
+    int out_len = 0;
 
-static void firstPacketEncrypt(reailty_client_state_t *state, uint32_t ctx_epoch, context_t *c)
-{
-    c->first                    = true;
-    shift_buffer_t *buf         = c->payload;
-    uint16_t        data_length = bufLen(buf);
-    /* gcm */
-    shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, data_length);
-    setLen(buf, bufLen(buf) + (bufLen(buf) % kEncryptionBlockSize));
-
-    shiftl(buf, kSignHeaderLen);
-    for (int i = 0; i < kSignHeaderLen / sizeof(uint32_t); i++)
+    /*
+     * Provide the message to be decrypted, and obtain the plaintext output.
+     * EVP_DecryptUpdate can be called multiple times if necessary.
+     */
+    if (1 != EVP_DecryptUpdate(cstate->decryption_context, rawBufMut(out), &out_len, rawBuf(in), input_length))
     {
-        ((uint32_t *) rawBufMut(buf))[i] = fastRand();
+        printSSLErrorAndAbort();
+    }
+    setLen(out, out_len);
+
+    /*
+     * Finalise the decryption. Further plaintext bytes may be written at
+     * this stage.
+     */
+    if (1 != EVP_DecryptFinal_ex(cstate->decryption_context, rawBufMut(out) + out_len, &out_len))
+    {
+        printSSLErrorAndAbort();
+    }
+    setLen(out, bufLen(out) + out_len);
+}
+static void genericEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, shift_buffer_t *out)
+{
+    uint16_t input_length = bufLen(in);
+    reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
+    int out_len = 0;
+
+    /*
+     * Provide the message to be encrypted, and obtain the encrypted output.
+     * EVP_EncryptUpdate can be called multiple times if necessary
+     */
+    if (1 != EVP_EncryptUpdate(cstate->encryption_context, rawBufMut(out), &out_len, rawBuf(in), input_length))
+    {
+        printSSLErrorAndAbort();
     }
 
-    const uint32_t max_start_pos                          = 1 + kSignHeaderLen - sizeof(uint32_t);
-    uint32_t       start_pos                              = ((uint32_t) state->hash1) % max_start_pos;
-    *(uint32_t *) (((char *) rawBufMut(buf)) + start_pos) = ctx_epoch;
+    setLen(out, out_len);
+
+    /*
+     * Finalise the encryption. Further ciphertext bytes may be written at
+     * this stage.
+     */
+    if (1 != EVP_EncryptFinal_ex(cstate->encryption_context, rawBufMut(out) + out_len, &out_len))
+    {
+        printSSLErrorAndAbort();
+    }
+
+    setLen(out, bufLen(out) + out_len);
+}
+static void otherPacketsEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, shift_buffer_t *out)
+{
+
+    genericEncrypt(in, cstate, out);
+
+    unsigned int data_length = bufLen(out);
+    assert(data_length % kEncryptionBlockSize == 0);
+
+    shiftl(out, sizeof(uint16_t));
+    writeUI16(out, data_length);
+
+    shiftl(out, sizeof(uint16_t));
+    writeUI16(out, kTLSVersion12);
+
+    shiftl(out, sizeof(uint8_t));
+    writeUI8(out, kTLS12ApplicationData);
+}
+static void firstPacketEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, uint64_t hash1, uint64_t hash2,
+                               shift_buffer_t *out)
+{
+
+    genericEncrypt(in, cstate, out);
+
+    shiftl(out, kSignHeaderLen);
+    for (int i = 0; i < kSignHeaderLen / sizeof(uint32_t); i++)
+    {
+        ((uint32_t *) rawBufMut(out))[i] = fastRand();
+    }
+
+    const uint32_t max_start_pos = 1 + kSignHeaderLen - sizeof(uint32_t);
+    uint32_t       start_pos     = ((uint32_t) hash1) % max_start_pos;
+
+    uint32_t *u32_p = (uint32_t *) (((char *) rawBufMut(out)) + start_pos);
+    *u32_p          = cstate->epochsecs;
 
     for (int i = 0; i < kSignHeaderLen / sizeof(uint64_t); i++)
     {
-        ((uint64_t *) rawBufMut(buf))[i] = ((uint64_t *) rawBufMut(buf))[i] ^ state->hash2;
+        ((uint64_t *) rawBufMut(out))[i] = ((uint64_t *) rawBufMut(out))[i] ^ hash2;
     }
 
-    data_length = bufLen(buf);
+    unsigned int data_length = bufLen(out);
     assert(data_length % kEncryptionBlockSize == 0);
 
-    shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, data_length);
+    shiftl(out, sizeof(uint16_t));
+    writeUI16(out, data_length);
 
-    shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, kTLSVersion12);
+    shiftl(out, sizeof(uint16_t));
+    writeUI16(out, kTLSVersion12);
 
-    shiftl(buf, sizeof(uint8_t));
-    writeUI8(buf, kTLS12ApplicationData);
+    shiftl(out, sizeof(uint8_t));
+    writeUI8(out, kTLS12ApplicationData);
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -159,67 +231,20 @@ static void upStream(tunnel_t *self, context_t *c)
             contextQueuePush(cstate->queue, c);
             return;
         }
+        shift_buffer_t *cypher_buf = popBuffer(getContextBufferPool(c));
 
-        enum sslstatus status;
-        size_t         len = bufLen(c->payload);
-
-        while (len > 0)
+        if (WW_LIKELY(cstate->first_sent))
         {
-            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
-            status = getSslStatus(cstate->ssl, n);
-
-            if (n > 0)
-            {
-                /* consume the waiting bytes that have been used by SSL */
-                shiftr(c->payload, n);
-                len -= n;
-                /* take the output of the SSL object and queue it for socket write */
-                do
-                {
-                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    int             avail = (int) rCap(buf);
-                    n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
-                    if (n > 0)
-                    {
-                        setLen(buf, n);
-                        context_t *send_context = newContextFrom(c);
-                        send_context->payload   = buf;
-                        self->up->upStream(self->up, send_context);
-                        if (! isAlive(c->line))
-                        {
-                            reuseContextBuffer(c);
-                            destroyContext(c);
-                            return;
-                        }
-                    }
-                    else if (! BIO_should_retry(cstate->wbio))
-                    {
-                        // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(getContextBufferPool(c), buf);
-                        reuseContextBuffer(c);
-                        goto failed;
-                    }
-                    else
-                    {
-                        reuseBuffer(getContextBufferPool(c), buf);
-                    }
-                } while (n > 0);
-            }
-
-            if (status == kSslstatusFail)
-            {
-                reuseContextBuffer(c);
-                goto failed;
-            }
-
-            if (n == 0)
-            {
-                break;
-            }
+            otherPacketsEncrypt(c->payload, cstate, cypher_buf);
         }
-        assert(bufLen(c->payload) == 0);
+        else
+        {
+            firstPacketEncrypt(c->payload, cstate, state->hash1, state->hash2, cypher_buf);
+        }
         reuseContextBuffer(c);
-        destroyContext(c);
+        c->payload = cypher_buf;
+
+        self->up->upStream(self->up, c);
     }
     else
     {
@@ -233,19 +258,21 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->wbio                       = BIO_new(BIO_s_mem());
             cstate->ssl                        = SSL_new(state->ssl_context);
             cstate->queue                      = newContextQueue(getContextBufferPool(c));
-            cstate->gcm_ctx                    = EVP_CIPHER_CTX_new();
+            cstate->encryption_context         = EVP_CIPHER_CTX_new();
+            cstate->decryption_context         = EVP_CIPHER_CTX_new();
             cstate->epochsecs                  = (uint32_t) time(NULL);
-            memcpy(cstate->context_password, state->password,
-                   min(sizeof(cstate->context_password), state->password_length));
+            unsigned char iv[kSignIVlen];
 
-            for (int i = 0; i < (sizeof(cstate->context_password) / sizeof(uint64_t)); i++)
+            for (int i = 0; i < kSignIVlen; i++)
             {
-                ((uint64_t *) cstate->context_password)[i] =
-                    ((uint64_t *) cstate->context_password)[i] ^ cstate->epochsecs;
+                iv[i] = (uint8_t) (state->context_iv[i] + cstate->epochsecs);
             }
 
-            EVP_EncryptInit_ex(cstate->gcm_ctx, EVP_aes_256_gcm(), NULL, (const uint8_t *) cstate->context_password,
-                               NULL);
+            EVP_EncryptInit_ex(cstate->encryption_context, EVP_aes_128_cbc(), NULL,
+                               (const uint8_t *) state->context_password, (const uint8_t *) iv);
+
+            EVP_EncryptInit_ex(cstate->decryption_context, EVP_aes_128_cbc(), NULL,
+                               (const uint8_t *) state->context_password, (const uint8_t *) iv);
 
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
@@ -534,6 +561,8 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     {
         LOGF("JSON Error: RealityClient->settings->password (string field) : password is too short");
     }
+    // memset already made buff 0
+    memcpy(state->context_password, state->password, state->password_length);
 
     state->hash1 = CALC_HASH_BYTES(state->password, strlen(state->password));
     state->hash2 = CALC_HASH_PRIMITIVE(state->hash1);
@@ -557,7 +586,8 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     {
         uint8_t len;
         char    alpn_data[];
-    } *ossl_alpn   = malloc(1 + alpn_len);
+    } *ossl_alpn = malloc(1 + alpn_len);
+
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
     SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *) ossl_alpn, 1 + alpn_len);
