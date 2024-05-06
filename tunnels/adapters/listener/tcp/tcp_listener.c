@@ -305,21 +305,25 @@ static void onInboundConnected(hevent_t *ev)
     size_t                  tid  = data->tid;
     hio_attach(loop, io);
 
-    tunnel_t                 *self        = data->tunnel;
-    line_t                   *line        = newLine(tid);
-    tcp_listener_con_state_t *cstate      = malloc(sizeof(tcp_listener_con_state_t));
-    cstate->line                          = line;
-    cstate->buffer_pool                   = getThreadBufferPool(tid);
-    cstate->finished_queue                = newContextQueue(cstate->buffer_pool);
-    cstate->data_queue                    = newContextQueue(cstate->buffer_pool);
-    cstate->io                            = io;
-    cstate->tunnel                        = self;
-    cstate->write_paused                  = false;
-    cstate->established                   = false;
-    cstate->first_packet_sent             = false;
+    tunnel_t                 *self   = data->tunnel;
+    line_t                   *line   = newLine(tid);
+    tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
+
     line->chains_state[self->chain_index] = cstate;
     line->src_ctx.address_protocol        = kSapTcp;
     line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
+
+    *cstate = (tcp_listener_con_state_t){
+        .line              = line,
+        .buffer_pool       = getThreadBufferPool(tid),
+        .finished_queue    = newContextQueue(cstate->buffer_pool),
+        .data_queue        = newContextQueue(cstate->buffer_pool),
+        .io                = io,
+        .tunnel            = self,
+        .write_paused      = false,
+        .established       = false,
+        .first_packet_sent = false
+    };
 
     // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u
     // *)hio_localaddr(io)) : data->real_localport);

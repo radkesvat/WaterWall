@@ -53,12 +53,10 @@ void chain(tunnel_t *from, tunnel_t *to)
 tunnel_t *newTunnel()
 {
     tunnel_t *t = malloc(sizeof(tunnel_t));
-    t->state    = NULL;
-    t->dw       = NULL;
-    t->up       = NULL;
-
-    t->upStream   = &defaultUpStream;
-    t->downStream = &defaultDownStream;
+    *t          = (tunnel_t){
+                 .upStream   = &defaultUpStream,
+                 .downStream = &defaultDownStream,
+    };
     return t;
 }
 

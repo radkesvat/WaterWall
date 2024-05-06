@@ -149,18 +149,20 @@ static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_
 {
     line_t                   *line        = newLine(tid);
     udp_listener_con_state_t *cstate      = malloc(sizeof(udp_listener_con_state_t));
-    cstate->loop                          = loops[tid];
-    cstate->line                          = line;
-    cstate->buffer_pool                   = getThreadBufferPool(tid);
-    cstate->io                            = io;
-    cstate->table                         = table;
-    cstate->tunnel                        = self;
-    cstate->established                   = false;
-    cstate->first_packet_sent             = false;
     line->chains_state[self->chain_index] = cstate;
     line->src_ctx.address_type            = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     line->src_ctx.address_protocol        = kSapUdp;
     line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
+
+    *cstate = (udp_listener_con_state_t){.loop              = loops[tid],
+                                         .line              = line,
+                                         .buffer_pool       = getThreadBufferPool(tid),
+                                         .io                = io,
+                                         .table             = table,
+                                         .tunnel            = self,
+                                         .established       = false,
+                                         .first_packet_sent = false};
+
     sockaddr_set_port(&(line->src_ctx.address), real_localport);
 
     if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_DEBUG))
