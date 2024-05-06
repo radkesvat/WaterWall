@@ -368,7 +368,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     noTcpSocketConsumerFound(io);
 }
 
-static void onAcceptTcpSinplePort(hio_t *io)
+static void onAcceptTcpSinglePort(hio_t *io)
 {
     distributeTcpSocket(io, sockaddr_port((sockaddr_u *) hio_localaddr(io)));
 }
@@ -461,7 +461,7 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
         }
         ports_overlapped[p] = 1;
 
-        filter->listen_ios[i] = hloop_create_tcp_server(loop, host, p, onAcceptTcpSinplePort);
+        filter->listen_ios[i] = hloop_create_tcp_server(loop, host, p, onAcceptTcpSinglePort);
 
         if (filter->listen_ios[i] == NULL)
         {
@@ -481,7 +481,7 @@ static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
     }
     ports_overlapped[port] = 1;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
-    filter->listen_io = hloop_create_tcp_server(loop, host, port, onAcceptTcpSinplePort);
+    filter->listen_io = hloop_create_tcp_server(loop, host, port, onAcceptTcpSinglePort);
 
     if (filter->listen_io == NULL)
     {
