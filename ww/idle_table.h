@@ -16,7 +16,7 @@
     The time checking has no cost and won't syscall at all, and the checking is synced by the
     eventloop which by default wakes up every 100 ms.
 
-    idle item is a threadگlocal item, it belongs to the thread that created it
+    idle item is a threadlocal item, it belongs to the thread that created it
     and other threads must not change , remove or do anything to it
 
 */
