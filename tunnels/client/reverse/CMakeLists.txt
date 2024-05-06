@@ -5,7 +5,6 @@ add_library(ReverseClient STATIC
                  
 )
 
-# target_include_directories(ReverseClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
 target_include_directories(ReverseClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)

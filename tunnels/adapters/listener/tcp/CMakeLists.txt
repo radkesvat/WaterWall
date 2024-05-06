@@ -5,7 +5,6 @@ add_library(TcpListener STATIC
                  
 )
 
-# target_include_directories(TcpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
 target_include_directories(TcpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)

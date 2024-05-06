@@ -5,7 +5,6 @@ add_library(Listener STATIC
   
 )
 
-# target_include_directories(Listener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 #ww api
 target_include_directories(Listener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(Listener ww)

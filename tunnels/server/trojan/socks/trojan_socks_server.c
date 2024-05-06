@@ -5,8 +5,6 @@
 #include "shiftbuffer.h"
 #include "tunnel.h"
 #include "utils/sockutils.h"
-#include "utils/stringutils.h"
-#include "utils/userutils.h"
 
 enum
 {

@@ -5,7 +5,6 @@ add_library(Bridge STATIC
                  
 )
 
-# target_include_directories(Bridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
 target_include_directories(Bridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)

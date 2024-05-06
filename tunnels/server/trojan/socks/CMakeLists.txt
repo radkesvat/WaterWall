@@ -4,7 +4,6 @@ add_library(TrojanSocksServer STATIC
       trojan_socks_server.c
 )
 
-# target_include_directories(TrojanSocksServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
 target_include_directories(TrojanSocksServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../../ww)

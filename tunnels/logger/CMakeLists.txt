@@ -5,7 +5,6 @@ add_library(LoggerTunnel STATIC
                  
 )
 
-# target_include_directories(LoggerTunnel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
 target_include_directories(LoggerTunnel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)

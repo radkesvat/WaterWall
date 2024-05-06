@@ -5,7 +5,6 @@ add_library(OpenSSLClient STATIC
       
 )
 
-# target_include_directories(OpenSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
 target_include_directories(OpenSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)

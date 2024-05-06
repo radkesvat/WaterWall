@@ -5,7 +5,6 @@ add_library(TrojanAuthServer STATIC
       ${CMAKE_CURRENT_SOURCE_DIR}/../../../../tunnels/shared/trojan/sha2.c         
 )
 
-# target_include_directories(TrojanAuthServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 #ww api
 target_include_directories(TrojanAuthServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../../ww)
