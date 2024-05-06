@@ -23,6 +23,7 @@ CPMAddPackage(
     "BUILD_STATIC_LIBS ON"
     "BUILD_TESTING OFF"
     # "ENABLE_DEBUG ON "
+    "BUILD_SHARED_LIBS OFF"
          
 
 )
