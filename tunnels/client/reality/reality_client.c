@@ -7,14 +7,11 @@
 #include "tunnel.h"
 #include "utils/hashutils.h"
 #include "utils/jsonutils.h"
-#include "ww.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
-#include <stdint.h>
-#include <string.h>
 
 // these should not be modified, code may break
 enum reality_consts
@@ -35,8 +32,8 @@ typedef struct reailty_client_state_s
     char         *alpn;
     char         *sni;
     char         *password;
-    bool          verify;
     int           password_length;
+    bool          verify;
     uint64_t      hash1;
     uint64_t      hash2;
     uint64_t      hash3;
@@ -567,6 +564,12 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     state->hash1 = CALC_HASH_BYTES(state->password, strlen(state->password));
     state->hash2 = CALC_HASH_PRIMITIVE(state->hash1);
     state->hash3 = CALC_HASH_PRIMITIVE(state->hash2);
+    // the iv must be unpredictable, so initializing it from password
+    for (int i = 0; i < kSignIVlen; i++)
+    {
+        const uint8_t seed   = (uint8_t) (state->hash3 * (i + 7));
+        state->context_iv[i] = (uint8_t) (CALC_HASH_PRIMITIVE(seed));
+    }
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;
