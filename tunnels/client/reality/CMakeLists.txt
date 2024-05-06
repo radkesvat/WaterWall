@@ -5,19 +5,14 @@ add_library(RealityClient STATIC
       
 )
 
-
 #ww api
 target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(RealityClient ww)
-
-
 target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
 
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-
 
 # add openssl (default version is latest 3.3.0 +)
 CPMAddPackage(
