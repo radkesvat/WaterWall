@@ -169,3 +169,9 @@ static void printSSLError()
     }
     BIO_free(bio);
 }
+
+static void printSSLErrorAndAbort(void)
+{
+    ERR_print_errors_fp(stderr);
+    abort();
+}
