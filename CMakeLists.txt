@@ -58,6 +58,7 @@ option(INCLUDE_HEADER_CLIENT "link HeaderClient staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_SERVER "link PreConnectServer staticly to the core"  TRUE)
 option(INCLUDE_PRECONNECT_CLIENT "link PreConnectClient staticly to the core"  TRUE)
 option(INCLUDE_SOCKS_5_SERVER "link Socks5Server staticly to the core"  TRUE)
+option(INCLUDE_REAILTY_SERVER "link RealityServer staticly to the core"  TRUE)
 option(INCLUDE_REAILTY_CLIENT "link RealityClient staticly to the core"  TRUE)
 
 
@@ -312,7 +313,13 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall Socks5Server)
 endif()
 
-
+#reality server
+if (INCLUDE_REAILTY_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_REAILTY_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/reality)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/reality)
+target_link_libraries(Waterwall RealityServer)
+endif()
 
 
 #reality client
