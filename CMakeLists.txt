@@ -61,13 +61,7 @@ option(INCLUDE_SOCKS_5_SERVER "link Socks5Server staticly to the core"  TRUE)
 option(INCLUDE_REAILTY_SERVER "link RealityServer staticly to the core"  TRUE)
 option(INCLUDE_REAILTY_CLIENT "link RealityClient staticly to the core"  TRUE)
 
-
-
-
 set(OPENSSL_CONFIGURE_VERBOSE ON)
-
-
-# file(GLOB_RECURSE ltdlcore RELATIVE ${CMAKE_SOURCE_DIR} "core/libltdl/*.c")
 
 # add executable
 add_executable(Waterwall core/main.c
@@ -329,38 +323,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
 target_link_libraries(Waterwall RealityClient)
 endif()
-
-
-
-
-
-
-# komihash
-CPMAddPackage(
-  NAME komihash
-  GIT_REPOSITORY https://github.com/avaneev/komihash.git
-  GIT_TAG 5.10
-  DOWNLOAD_ONLY True
-)
-if(komihash_ADDED)
-  target_include_directories(Waterwall PUBLIC ${komihash_SOURCE_DIR})
-endif()
-
-
-
-# # cJson
-# CPMAddPackage(
-#     NAME cjson
-#     VERSION 1.7.17
-#     GITHUB_REPOSITORY DaveGamble/cJSON
-#     OPTIONS "BUILD_SHARED_LIBS OFF" "BUILD_SHARED_AND_STATIC_LIBS On"
-#     DOWNLOAD_ONLY True
-
-# )
-# if(cjson_ADDED)
-#   target_include_directories(Waterwall PUBLIC ${cjson_SOURCE_DIR})
-#   target_sources(Waterwall PUBLIC ${cjson_SOURCE_DIR}/cJSON.c)
-# endif()
 
 
 
