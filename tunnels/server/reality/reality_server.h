@@ -1,10 +1,9 @@
 #pragma once
 #include "api.h"
 
-//                                          |  <------> con
-//                                          |
-// con <------>  Reality-server  <------> auth <------> dest
-//
+//                                        /  <------> dest
+// con <------>  Reality-server --- auth 
+//                                        \  <------> con
 
 tunnel_t         *newRealityServer(node_instance_context_t *instance_info);
 api_result_t      apiRealityServer(tunnel_t *self, const char *msg);
