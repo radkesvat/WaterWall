@@ -12,6 +12,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <stdint.h>
 
 // these should not be modified, code may break
 enum reality_consts
@@ -52,6 +53,8 @@ typedef struct reailty_client_con_state_s
     context_queue_t *queue;
     bool             handshake_completed;
     bool             first_sent;
+    uint8_t          recv_count;
+    uint32_t         magic;
     uint32_t         epochsecs;
 
 } reailty_client_con_state_t;
@@ -245,7 +248,6 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-
         if (c->init)
         {
             CSTATE_MUT(c) = malloc(sizeof(reailty_client_con_state_t));
@@ -258,18 +260,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->encryption_context         = EVP_CIPHER_CTX_new();
             cstate->decryption_context         = EVP_CIPHER_CTX_new();
             cstate->epochsecs                  = (uint32_t) time(NULL);
-            unsigned char iv[kSignIVlen];
-
-            for (int i = 0; i < kSignIVlen; i++)
-            {
-                iv[i] = (uint8_t) (state->context_iv[i] + cstate->epochsecs);
-            }
-
-            EVP_EncryptInit_ex(cstate->encryption_context, EVP_aes_128_cbc(), NULL,
-                               (const uint8_t *) state->context_password, (const uint8_t *) iv);
-
-            EVP_EncryptInit_ex(cstate->decryption_context, EVP_aes_128_cbc(), NULL,
-                               (const uint8_t *) state->context_password, (const uint8_t *) iv);
+            cstate->magic                      = 0;
 
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
@@ -358,11 +349,22 @@ static void downStream(tunnel_t *self, context_t *c)
                 reuseContextBuffer(c);
                 goto failed;
             }
+
+            if (! cstate->handshake_completed && cstate->recv_count < 2)
+            {
+                cstate->recv_count += 1;
+                if (cstate->recv_count == 2)
+                {
+                    cstate->magic = CALC_HASH_BYTES(rawBuf(c->payload), len);
+                }
+            }
+
             shiftr(c->payload, n);
             len -= n;
 
             if (! cstate->handshake_completed)
             {
+
                 // printSSLState(cstate->ssl);
                 n = SSL_connect(cstate->ssl);
                 // printSSLState(cstate->ssl);
@@ -430,9 +432,23 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (SSL_is_init_finished(cstate->ssl))
                 {
                     LOGD("OpensslClient: Tls handshake complete");
+                    reailty_client_state_t *state = STATE(self);
+
                     cstate->handshake_completed = true;
-                    context_t *dw_est_ctx       = newContextFrom(c);
-                    dw_est_ctx->est             = true;
+                    unsigned char iv[kSignIVlen];
+                    for (int i = 0; i < kSignIVlen; i++)
+                    {
+                        iv[i] = (uint8_t) (state->context_iv[i] + cstate->magic + cstate->epochsecs);
+                    }
+
+                    EVP_EncryptInit_ex(cstate->encryption_context, EVP_aes_128_cbc(), NULL,
+                                       (const uint8_t *) state->context_password, (const uint8_t *) iv);
+
+                    EVP_EncryptInit_ex(cstate->decryption_context, EVP_aes_128_cbc(), NULL,
+                                       (const uint8_t *) state->context_password, (const uint8_t *) iv);
+
+                    context_t *dw_est_ctx = newContextFrom(c);
+                    dw_est_ctx->est       = true;
                     self->dw->downStream(self->dw, dw_est_ctx);
                     if (! isAlive(c->line))
                     {

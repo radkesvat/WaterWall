@@ -1,15 +1,18 @@
 #include "reality_server.h"
+#include "basic_types.h"
 #include "buffer_pool.h"
 #include "buffer_stream.h"
 #include "frand.h"
 #include "hloop.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
+#include "openssl_globals.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
 #include "utils/jsonutils.h"
 #include <openssl/evp.h>
 #include <stdint.h>
+#include <string.h>
 
 enum reality_consts
 {
@@ -48,90 +51,112 @@ typedef struct reality_server_state_s
 
 typedef struct reality_server_con_state_s
 {
-    unsigned char              calculated_iv[kSignIVlen];
+    buffer_stream_t           *stream;
     EVP_CIPHER_CTX            *encryption_context;
     EVP_CIPHER_CTX            *decryption_context;
     uint32_t                   sniff_counter;
-    uint32_t                   epoch;
     enum connection_auth_state auth_state;
     bool                       first_sent;
     bool                       init_sent;
+    uint8_t                    send_counter;
+    uint32_t                   magic;
+    uint32_t                   epoch;
+    uint32_t                   reply_sent_tit;
+    unsigned char              calculated_iv[kSignIVlen];
 
 } reality_server_con_state_t;
 
-static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
-{
-    (void) ssl;
-    (void) type;
-    (void) len;
-    reality_server_con_state_t *cstate = arg;
+// static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
+// {
+//     (void) ssl;
+//     (void) type;
+//     (void) len;
+//     reality_server_con_state_t *cstate = arg;
 
-    if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 6)
-    {
-        return (16 * (160 + (0x7F & (size_t) fastRand())));
-    }
+//     if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 6)
+//     {
+//         return (16 * (160 + (0x7F & (size_t) fastRand())));
+//     }
 
-    return 0;
-}
+//     return 0;
+// }
 
 static void cleanup(tunnel_t *self, context_t *c)
 {
     reality_server_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
-        EVP_CIPHER_CTX_free(cstate->encryption_context);
-        EVP_CIPHER_CTX_free(cstate->decryption_context);
+        switch (cstate->auth_state)
+        {
+        case kConAuthPending:
+        case kConUnAuthorized:
+
+            break;
+        case kConAuthorized:
+            destroyBufferStream(cstate->stream);
+            EVP_CIPHER_CTX_free(cstate->encryption_context);
+            EVP_CIPHER_CTX_free(cstate->decryption_context);
+            break;
+        }
+
         free(cstate);
         CSTATE_MUT(c) = NULL;
     }
 }
 
-static void fallbackWrite(tunnel_t *self, context_t *c)
+static void genericDecrypt(shift_buffer_t *in, reality_server_con_state_t *cstate, shift_buffer_t *out)
 {
-    if (! isAlive(c->line))
-    {
-        destroyContext(c);
-        return;
-    }
-    assert(c->payload == NULL); // payload must be consumed
-    reality_server_state_t     *state  = STATE(self);
-    reality_server_con_state_t *cstate = CSTATE(c);
+    uint16_t input_length = bufLen(in);
+    reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
+    int out_len = 0;
 
-    if (! cstate->fallback_init_sent)
+    /*
+     * Provide the message to be decrypted, and obtain the plaintext output.
+     * EVP_DecryptUpdate can be called multiple times if necessary.
+     */
+    if (1 != EVP_DecryptUpdate(cstate->decryption_context, rawBufMut(out), &out_len, rawBuf(in), input_length))
     {
-        cstate->fallback_init_sent = true;
+        printSSLErrorAndAbort();
+    }
+    setLen(out, out_len);
 
-        context_t *init_ctx = newInitContext(c->line);
-        init_ctx->src_io    = c->src_io;
-        cstate->init_sent   = true;
-        state->fallback->upStream(state->fallback, init_ctx);
-        if (! isAlive(c->line))
-        {
-            destroyContext(c);
-            return;
-        }
-    }
-    size_t record_len = bufferStreamLen(cstate->fallback_buf);
-    if (record_len == 0)
+    /*
+     * Finalise the decryption. Further plaintext bytes may be written at
+     * this stage.
+     */
+    if (1 != EVP_DecryptFinal_ex(cstate->decryption_context, rawBufMut(out) + out_len, &out_len))
     {
-        destroyContext(c);
-        return;
+        printSSLErrorAndAbort();
     }
-    if (! cstate->fallback_first_sent)
-    {
-        c->first                    = true;
-        cstate->fallback_first_sent = true;
-    }
-
-    c->payload = bufferStreamRead(cstate->fallback_buf, record_len);
-    state->fallback->upStream(state->fallback, c);
+    setLen(out, bufLen(out) + out_len);
 }
-static void onFallbackTimer(htimer_t *timer)
+static void genericEncrypt(shift_buffer_t *in, reality_server_con_state_t *cstate, shift_buffer_t *out)
 {
-    struct timer_eventdata *data = hevent_userdata(timer);
-    fallbackWrite(data->self, data->c);
-    htimer_del(timer);
-    free(data);
+    uint16_t input_length = bufLen(in);
+    reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
+    int out_len = 0;
+
+    /*
+     * Provide the message to be encrypted, and obtain the encrypted output.
+     * EVP_EncryptUpdate can be called multiple times if necessary
+     */
+    if (1 != EVP_EncryptUpdate(cstate->encryption_context, rawBufMut(out), &out_len, rawBuf(in), input_length))
+    {
+        printSSLErrorAndAbort();
+    }
+
+    setLen(out, out_len);
+
+    /*
+     * Finalise the encryption. Further ciphertext bytes may be written at
+     * this stage.
+     */
+    if (1 != EVP_EncryptFinal_ex(cstate->encryption_context, rawBufMut(out) + out_len, &out_len))
+    {
+        printSSLErrorAndAbort();
+    }
+
+    setLen(out, bufLen(out) + out_len);
 }
 static bool isValid(shift_buffer_t *in_buf, reality_server_state_t *state, reality_server_con_state_t *cstate)
 {
@@ -150,9 +175,23 @@ static bool isValid(shift_buffer_t *in_buf, reality_server_state_t *state, reali
     const uint32_t max_start_pos = 1 + kSignHeaderLen - sizeof(uint32_t);
     uint32_t       start_pos     = (uint32_t) ((state->hash1) % max_start_pos);
 
-    uint32_t *header_epoch = (uint32_t *)(header_p8 + start_pos);
+    uint32_t header_epoch = *(uint32_t *) (header_p8 + start_pos);
 
-    retutrn(cstate->epoch - state->max_delta_time >= *header_epoch);
+    if (((cstate->epoch - state->max_delta_time) >= header_epoch))
+    {
+        assert(cstate->magic != 0);
+
+        for (int i = 0; i < kSignIVlen; i++)
+        {
+            cstate->calculated_iv[i] = (uint8_t) (state->context_base_iv[i] + header_epoch + cstate->magic);
+        }
+
+        memcpy(rawBufMut(in_buf) + kSignHeaderLen, rawBuf(in_buf), 1 + 2 + 2);
+        shiftr(in_buf, 5);
+        return true;
+    }
+    LOGD("RealityServer: packet was not reality client-hello");
+    return false;
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -166,14 +205,19 @@ static void upStream(tunnel_t *self, context_t *c)
         switch (cstate->auth_state)
         {
         case kConAuthPending:
-            if (isValid(c->payload, state->hash1, state->hash2, cstate->epoch, state->max_delta_time))
+            if (isValid(c->payload, state, cstate))
             {
                 cstate->auth_state = kConAuthorized;
+                cstate->stream     = newBufferStream(getContextBufferPool(c));
                 EVP_EncryptInit_ex(cstate->encryption_context, EVP_aes_128_cbc(), NULL,
-                                   (const uint8_t *) state->context_password, (const uint8_t *) iv);
+                                   (const uint8_t *) state->context_password, cstate->calculated_iv);
 
                 EVP_EncryptInit_ex(cstate->decryption_context, EVP_aes_128_cbc(), NULL,
-                                   (const uint8_t *) state->context_password, (const uint8_t *) iv);
+                                   (const uint8_t *) state->context_password, cstate->calculated_iv);
+                
+                state->dest->upStream(state->dest,newFinContextFrom(c));
+                self->up->upStream(self->up,newInitContext(c->line));
+
                 goto authorized;
             }
             else
@@ -190,7 +234,30 @@ static void upStream(tunnel_t *self, context_t *c)
             break;
         authorized:;
         case kConAuthorized:
-            self->up->upStream(self->up, c);
+
+            bufferStreamPush(cstate->stream, c->payload);
+            c->payload = NULL;
+            while (bufferStreamLen(cstate->stream) >= 1 + 2 + 2)
+            {
+                uint8_t tls_header[1 + 2 + 2];
+                bufferStreamViewBytesAt(cstate->stream, 0, tls_header, sizeof(tls_header));
+                uint16_t length = *(uint16_t *) (tls_header + 3);
+                if (bufferStreamLen(cstate->stream) >= 1 + 2 + 2 + length)
+                {
+                    context_t *data_ctx = newContextFrom(c);
+                    data_ctx->payload   = popBuffer(getContextBufferPool(c));
+
+                    shift_buffer_t *cypher_buf = bufferStreamRead(cstate->stream, 1 + 2 + 2 + length);
+                    shiftr(cypher_buf, 1 + 2 + 2);
+                    genericDecrypt(cypher_buf, cstate, c->payload);
+                    self->up->upStream(self->up, data_ctx);
+                }
+                else
+                {
+                    break;
+                }
+            }
+
             break;
         }
     }
@@ -212,43 +279,11 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
 
-            if (cstate->fallback_mode)
-            {
-                if (cstate->fallback_init_sent)
-                {
-                    cleanup(self, c);
-                    state->fallback->upStream(state->fallback, c);
-                }
-                else
-                {
-                    cleanup(self, c);
-                    destroyContext(c);
-                }
-            }
-            else if (cstate->init_sent)
-            {
-                cleanup(self, c);
-                self->up->upStream(self->up, c);
-            }
-            else
-            {
-                cleanup(self, c);
-                destroyContext(c);
-            }
+            tunnel_t *next = (cstate->auth_state == kConAuthorized) ? self->up : state->dest;
+            cleanup(self, c);
+            next->upStream(next, c);
         }
     }
-
-    return;
-
-disconnect:;
-    context_t *fail_context_up = newFinContextFrom(c);
-    fail_context_up->src_io    = c->src_io;
-    self->up->upStream(self->up, fail_context_up);
-
-    context_t *fail_context = newFinContextFrom(c);
-    cleanup(self, c);
-    destroyContext(c);
-    self->dw->downStream(self->dw, fail_context);
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -263,53 +298,52 @@ static void downStream(tunnel_t *self, context_t *c)
             cstate->reply_sent_tit += 1;
         }
 
-        enum sslstatus status;
-
-        if (! cstate->handshake_completed)
+        switch (cstate->auth_state)
         {
-            if (cstate->fallback_mode)
-            {
-                self->dw->downStream(self->dw, c);
-                return; // not gona encrypt fall back data
-            }
+        case kConAuthPending:
+        case kConUnAuthorized:
 
-            LOGF("How it is possible to receive data before sending init to upstream?");
-            exit(1);
+            if (cstate->send_counter != 2)
+            {
+                cstate->send_counter += 1;
+                if (cstate->send_counter == 2)
+                {
+                    LOGD("RealityServer: second reply was %d bytes", (int) bufLen(c->payload));
+                    cstate->magic = CALC_HASH_BYTES(rawBuf(c->payload), bufLen(c->payload));
+                    LOGD("RealityServer: magic = %02x", cstate->magic);
+                }
+            }
+            self->dw->downStream(self->dw, c);
+
+            break;
+        case kConAuthorized:
+
+            break;
         }
 
         reuseContextBuffer(c);
         destroyContext(c);
-
-        return;
     }
-
-    if (c->est)
+    else
     {
-        self->dw->downStream(self->dw, c);
-        return;
+        if (c->est)
+        {
+            self->dw->downStream(self->dw, c);
+            return;
+        }
+        if (c->fin)
+        {
+            cleanup(self, c);
+            self->dw->downStream(self->dw, c);
+        }
     }
-    if (c->fin)
-    {
-        cleanup(self, c);
-        self->dw->downStream(self->dw, c);
-    }
-
-    return;
-
-failed_after_establishment:;
-    context_t *fail_context_up = newFinContextFrom(c);
-    self->up->upStream(self->up, fail_context_up);
-
-    context_t *fail_context = newFinContextFrom(c);
-    cleanup(self, c);
-    destroyContext(c);
-    self->dw->downStream(self->dw, fail_context);
 }
 
 tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 {
     reality_server_state_t *state = malloc(sizeof(reality_server_state_t));
     memset(state, 0, sizeof(reality_server_state_t));
+    const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
@@ -322,8 +356,8 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         LOGF("JSON Error: RealityClient->settings->password (string field) : The data was empty or invalid");
         return NULL;
     }
-    getIntFromJsonObjectOrDefault(&(state->counter_threshould), settings, "sniffing-counter", 5);
-    getIntFromJsonObjectOrDefault(&(state->max_delta_time), settings, "max-delta-time", 10);
+    getIntFromJsonObjectOrDefault((int *) &(state->counter_threshould), settings, "sniffing-counter", 5);
+    getIntFromJsonObjectOrDefault((int *) &(state->max_delta_time), settings, "max-delta-time", 10);
 
     state->password_length = (int) strlen(state->password);
     if (state->password_length < 3)

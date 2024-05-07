@@ -2,7 +2,7 @@
 #include "api.h"
 
 //                                        /  <------> dest
-// con <------>  Reality-server --- auth 
+// con <------>  Reality-server --- auth
 //                                        \  <------> con
 
 tunnel_t         *newRealityServer(node_instance_context_t *instance_info);
