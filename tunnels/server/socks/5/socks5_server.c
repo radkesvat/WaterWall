@@ -91,7 +91,7 @@ static void cleanup(socks5_server_con_state_t *cstate, buffer_pool_t *reusepool)
         reuseBuffer(reusepool, cstate->waitbuf);
     }
 }
-static void encapsultaeUdpPacket(context_t* c)
+static void encapsulateUdpPacket(context_t* c)
 {
     shift_buffer_t* packet = c->payload;
     uint16_t packet_len = bufLen(c->payload);
@@ -623,7 +623,7 @@ static void downStream(tunnel_t *self, context_t *c)
 {
     if (c->line->dest_ctx.address_protocol == kSapUdp && c->payload != NULL)
     {
-        encapsultaeUdpPacket(c);
+        encapsulateUdpPacket(c);
         self->dw->downStream(self->dw, c);
         return;
     }

@@ -44,7 +44,7 @@ static void cleanup(trojan_socks_server_con_state_t *cstate)
     }
     free(cstate);
 }
-static void encapsultaeUdpPacket(context_t *c)
+static void encapsulateUdpPacket(context_t *c)
 {
     uint16_t packet_len = bufLen(c->payload);
     packet_len          = packet_len > 8192 ? 8192 : packet_len;
@@ -566,7 +566,7 @@ static void downStream(tunnel_t *self, context_t *c)
     }
     if (c->line->dest_ctx.address_protocol == kSapUdp && c->payload != NULL)
     {
-        encapsultaeUdpPacket(c);
+        encapsulateUdpPacket(c);
     }
     self->dw->downStream(self->dw, c);
 }
