@@ -1,18 +1,17 @@
 #include "trojan_auth_server.h"
-#include "hatomic.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
-#include "utils/stringutils.h"
-#include "utils/userutils.h"
 #include "utils/jsonutils.h"
+#include "utils/userutils.h"
 
 #define i_type hmap_users_t    // NOLINT
 #define i_key  hash_t          // NOLINT
 #define i_val  trojan_user_t * // NOLINT
 
-enum {
-VEC_CAP =  100,
-CRLF_LEN = 2
+enum
+{
+    kVecCap  = 100,
+    kCRLFLen = 2
 };
 
 #include "stc/hmap.h"
@@ -93,7 +92,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 // so , if its incomplete we go to fallback!
                 // this is also mentioned in standard trojan docs (first packet also contains part of final payload)
                 size_t len = bufLen(c->payload);
-                if (len < (sizeof(sha224_hex_t) + CRLF_LEN))
+                if (len < (sizeof(sha224_hex_t) + kCRLFLen))
                 {
                     // invalid protocol
                     LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
@@ -138,7 +137,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     return;
                 }
 
-                shiftr(c->payload, sizeof(sha224_hex_t) + CRLF_LEN);
+                shiftr(c->payload, sizeof(sha224_hex_t) + kCRLFLen);
                 self->up->upStream(self->up, c);
             }
             // gettimeofday(&tv2, NULL);
@@ -156,7 +155,6 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate = malloc(sizeof(trojan_auth_server_con_state_t));
             memset(cstate, 0, sizeof(trojan_auth_server_con_state_t));
             CSTATE_MUT(c) = cstate;
-            markAuthenticationNodePresence(c->line);
             destroyContext(c);
         }
         else if (c->fin)
@@ -268,11 +266,10 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             free(user);
             sha224((uint8_t *) tuser->user.uid, strlen(tuser->user.uid), &(tuser->hash_user[0]));
 
-            for (int i = 0; i < sizeof(sha224_t); i++)
+            for (size_t i = 0; i < sizeof(sha224_t); i++)
             {
                 sprintf((char *) &(tuser->hash_hexed_user[i * 2]), "%02x", (tuser->hash_user[i]));
             }
-            // 640f8fd293ea546e483060cce622d7f9ab96026d6af84a4333f486f9
             LOGD("TrojanAuthServer: user \"%s\" parsed, sha224: %.12s...", tuser->user.name, tuser->hash_hexed_user);
 
             tuser->komihash_of_hex = CALC_HASH_BYTES(tuser->hash_hexed_user, sizeof(sha224_hex_t));
@@ -328,7 +325,7 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 {
     trojan_auth_server_state_t *state = malloc(sizeof(trojan_auth_server_state_t));
     memset(state, 0, sizeof(trojan_auth_server_state_t));
-    state->users    = hmap_users_t_with_capacity(VEC_CAP);
+    state->users    = hmap_users_t_with_capacity(kVecCap);
     cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
