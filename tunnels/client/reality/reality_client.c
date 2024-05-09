@@ -1,5 +1,7 @@
 #include "reality_client.h"
 #include "buffer_pool.h"
+#include "buffer_stream.h"
+#include "context_queue.h"
 #include "frand.h"
 #include "loggers/network_logger.h"
 #include "openssl_globals.h"
@@ -7,20 +9,22 @@
 #include "tunnel.h"
 #include "utils/hashutils.h"
 #include "utils/jsonutils.h"
+#include "utils/mathutils.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 #include <stdint.h>
+#include <string.h>
 
 // these should not be modified, code may break
 enum reality_consts
 {
     kEncryptionBlockSize  = 16,
-    kSignHeaderLen        = kEncryptionBlockSize * 2,
+    kSignLen              = (224 / 8),
     kSignPasswordLen      = kEncryptionBlockSize,
-    kSignIVlen            = 16, // IV size for *most* modes is the same as the block size. For AES this is 128 bits
+    kIVlen                = 16, // iv size for *most* modes is the same as the block size. For AES this is 128 bits
     kTLSVersion12         = 0x0303,
     kTLS12ApplicationData = 0x17,
 };
@@ -30,16 +34,13 @@ typedef struct reailty_client_state_s
 
     ssl_ctx_t ssl_context;
     // settings
-    char         *alpn;
-    char         *sni;
-    char         *password;
-    int           password_length;
-    bool          verify;
-    uint64_t      hash1;
-    uint64_t      hash2;
-    uint64_t      hash3;
-    char          context_password[kSignPasswordLen];
-    unsigned char context_iv[kSignIVlen];
+    char   *alpn;
+    char   *sni;
+    char   *password;
+    int     password_length;
+    bool    verify;
+    uint8_t hashes[EVP_MAX_MD_SIZE];
+    char    context_password[kSignPasswordLen];
 
 } reailty_client_state_t;
 
@@ -48,14 +49,15 @@ typedef struct reailty_client_con_state_s
     SSL             *ssl;
     BIO             *rbio;
     BIO             *wbio;
+    EVP_MD          *msg_digest;
+    EVP_PKEY        *sign_key;
+    EVP_MD_CTX      *sign_context;
     EVP_CIPHER_CTX  *encryption_context;
     EVP_CIPHER_CTX  *decryption_context;
+    buffer_stream_t *read_stream;
     context_queue_t *queue;
     bool             handshake_completed;
     bool             first_sent;
-    uint8_t          recv_count;
-    uint32_t         magic;
-    uint32_t         epochsecs;
 
 } reailty_client_con_state_t;
 
@@ -86,8 +88,15 @@ static void cleanup(tunnel_t *self, context_t *c)
     reailty_client_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
+        if (cstate->handshake_completed)
+        {
+            destroyBufferStream(cstate->read_stream);
+        }
         EVP_CIPHER_CTX_free(cstate->encryption_context);
         EVP_CIPHER_CTX_free(cstate->decryption_context);
+        EVP_MD_CTX_free(cstate->sign_context);
+        EVP_MD_free(cstate->msg_digest);
+        EVP_PKEY_free(cstate->sign_key);
 
         SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
         destroyContextQueue(cstate->queue);
@@ -111,9 +120,53 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
         }
     }
 }
-static void genericDecrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, shift_buffer_t *out)
+
+static bool verifyMessage(shift_buffer_t *buf, reailty_client_con_state_t *cstate)
 {
-    uint16_t input_length = bufLen(in);
+    int     rc = EVP_DigestSignInit(cstate->sign_context, NULL, cstate->msg_digest, NULL, cstate->sign_key);
+    uint8_t expect[EVP_MAX_MD_SIZE];
+    memcpy(expect, rawBuf(buf), kSignLen);
+    shiftr(buf, kSignLen);
+    assert(rc == 1);
+    rc = EVP_DigestSignUpdate(cstate->sign_context, rawBuf(buf), bufLen(buf));
+    assert(rc == 1);
+    uint8_t buff[EVP_MAX_MD_SIZE];
+    size_t  size = sizeof(buff);
+    rc           = EVP_DigestSignFinal(cstate->sign_context, buff, &size);
+    assert(rc == 1);
+    assert(size == kSignLen);
+    return ! ! CRYPTO_memcmp(expect, buff, size);
+}
+
+static void signMessage(shift_buffer_t *buf, reailty_client_con_state_t *cstate)
+{
+    int rc = EVP_DigestSignInit(cstate->sign_context, NULL, cstate->msg_digest, NULL, cstate->sign_key);
+    assert(rc == 1);
+    rc = EVP_DigestSignUpdate(cstate->sign_context, rawBuf(buf), bufLen(buf));
+    assert(rc == 1);
+    size_t req = 0;
+    rc         = EVP_DigestSignFinal(cstate->sign_context, NULL, &req);
+    assert(rc == 1);
+    shiftl(buf, req);
+    size_t slen = 0;
+    rc          = EVP_DigestSignFinal(cstate->sign_context, rawBufMut(buf), &slen);
+    assert(rc == 1);
+    assert(req == slen == kSignLen);
+}
+
+static shift_buffer_t *genericDecrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, char *password,
+                                      buffer_pool_t *pool)
+{
+    shift_buffer_t *out          = popBuffer(pool);
+    uint16_t        input_length = bufLen(in);
+
+    uint8_t iv[kIVlen];
+    memcpy(iv, rawBuf(in), kIVlen);
+    shiftr(in, kIVlen);
+
+    EVP_DecryptInit_ex(cstate->decryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password,
+                       (const uint8_t *) iv);
+
     reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
     int out_len = 0;
 
@@ -135,12 +188,27 @@ static void genericDecrypt(shift_buffer_t *in, reailty_client_con_state_t *cstat
     {
         printSSLErrorAndAbort();
     }
+    reuseBuffer(pool, in);
+
     setLen(out, bufLen(out) + out_len);
+    return out;
 }
-static void genericEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, shift_buffer_t *out)
+static shift_buffer_t *genericEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, char *password,
+                                      buffer_pool_t *pool)
 {
-    uint16_t input_length = bufLen(in);
-    reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
+    shift_buffer_t *out          = popBuffer(pool);
+    int             input_length = (int) bufLen(in);
+
+    uint8_t iv[kIVlen];
+    for (int i; i < kIVlen / sizeof(uint32_t); i++)
+    {
+        ((uint32_t *) iv)[i] = fastRand();
+    }
+
+    EVP_EncryptInit_ex(cstate->encryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password,
+                       (const uint8_t *) iv);
+
+    reserveBufSpace(out, input_length + (input_length % kEncryptionBlockSize));
     int out_len = 0;
 
     /*
@@ -152,7 +220,7 @@ static void genericEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstat
         printSSLErrorAndAbort();
     }
 
-    setLen(out, out_len);
+    setLen(out, bufLen(out) + out_len);
 
     /*
      * Finalise the encryption. Further ciphertext bytes may be written at
@@ -162,60 +230,27 @@ static void genericEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstat
     {
         printSSLErrorAndAbort();
     }
-
+    reuseBuffer(pool, in);
     setLen(out, bufLen(out) + out_len);
+
+    shiftl(out, kIVlen);
+    memcpy(rawBufMut(out), iv, kIVlen);
+    return out;
 }
-static void otherPacketsEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, shift_buffer_t *out)
+
+static void appendTlsHeader(shift_buffer_t *buf)
 {
+    unsigned int data_length = bufLen(buf);
+    assert(data_length < (1U << 16));
 
-    genericEncrypt(in, cstate, out);
+    shiftl(buf, sizeof(uint16_t));
+    writeUI16(buf, (uint16_t) data_length);
 
-    unsigned int data_length = bufLen(out);
-    assert(data_length % kEncryptionBlockSize == 0);
+    shiftl(buf, sizeof(uint16_t));
+    writeUI16(buf, kTLSVersion12);
 
-    shiftl(out, sizeof(uint16_t));
-    writeUI16(out, data_length);
-
-    shiftl(out, sizeof(uint16_t));
-    writeUI16(out, kTLSVersion12);
-
-    shiftl(out, sizeof(uint8_t));
-    writeUI8(out, kTLS12ApplicationData);
-}
-static void firstPacketEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, uint64_t hash1, uint64_t hash2,
-                               shift_buffer_t *out)
-{
-
-    genericEncrypt(in, cstate, out);
-
-    shiftl(out, kSignHeaderLen);
-    for (int i = 0; i < kSignHeaderLen / sizeof(uint32_t); i++)
-    {
-        ((uint32_t *) rawBufMut(out))[i] = fastRand();
-    }
-
-    const uint32_t max_start_pos = 1 + kSignHeaderLen - sizeof(uint32_t);
-    uint32_t       start_pos     = ((uint32_t) hash1) % max_start_pos;
-
-    uint32_t *u32_p = (uint32_t *) (((char *) rawBufMut(out)) + start_pos);
-    *u32_p          = cstate->epochsecs;
-
-    for (int i = 0; i < kSignHeaderLen / sizeof(uint64_t); i++)
-    {
-        ((uint64_t *) rawBufMut(out))[i] = ((uint64_t *) rawBufMut(out))[i] ^ hash2;
-    }
-
-    unsigned int data_length = bufLen(out);
-    assert(data_length % kEncryptionBlockSize == 0);
-
-    shiftl(out, sizeof(uint16_t));
-    writeUI16(out, data_length);
-
-    shiftl(out, sizeof(uint16_t));
-    writeUI16(out, kTLSVersion12);
-
-    shiftl(out, sizeof(uint8_t));
-    writeUI8(out, kTLS12ApplicationData);
+    shiftl(buf, sizeof(uint8_t));
+    writeUI8(buf, kTLS12ApplicationData);
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -231,20 +266,24 @@ static void upStream(tunnel_t *self, context_t *c)
             contextQueuePush(cstate->queue, c);
             return;
         }
-        shift_buffer_t *cypher_buf = popBuffer(getContextBufferPool(c));
-
-        if (WW_LIKELY(cstate->first_sent))
+        // todo (research) about encapsulation order and safety, CMAC HMAC
+        shift_buffer_t *buf = c->payload;
+        while (bufLen(buf) > 0)
         {
-            otherPacketsEncrypt(c->payload, cstate, cypher_buf);
-        }
-        else
-        {
-            firstPacketEncrypt(c->payload, cstate, state->hash1, state->hash2, cypher_buf);
+            const int       chunk_size = ((1 << 16) - (1 + kSignLen + kEncryptionBlockSize + kIVlen));
+            const uint16_t  remain     = (uint16_t) min(bufLen(buf), chunk_size);
+            shift_buffer_t *chunk      = shallowSliceBuffer(buf, remain);
+            shiftl(chunk, 2);
+            writeUI16(chunk, remain);
+            chunk = genericEncrypt(chunk, cstate, state->context_password, getContextBufferPool(c));
+            signMessage(chunk, cstate);
+            appendTlsHeader(chunk);
+            context_t *cout = newContextFrom(c);
+            cout->payload   = chunk;
+            self->up->upStream(self->up, cout);
         }
         reuseContextBuffer(c);
-        c->payload = cypher_buf;
-
-        self->up->upStream(self->up, c);
+        destroyContext(c);
     }
     else
     {
@@ -257,10 +296,14 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->wbio                       = BIO_new(BIO_s_mem());
             cstate->ssl                        = SSL_new(state->ssl_context);
             cstate->queue                      = newContextQueue(getContextBufferPool(c));
+            cstate->sign_context               = EVP_MD_CTX_create();
             cstate->encryption_context         = EVP_CIPHER_CTX_new();
             cstate->decryption_context         = EVP_CIPHER_CTX_new();
-            cstate->epochsecs                  = (uint32_t) time(NULL);
-            cstate->magic                      = 0;
+            cstate->msg_digest                 = (EVP_MD *) EVP_get_digestbyname("SHA256");
+            int sk_size                        = EVP_MD_size(cstate->msg_digest);
+            cstate->sign_key                   = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
+
+            EVP_DigestInit_ex(cstate->sign_context, cstate->msg_digest, NULL);
 
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
@@ -330,10 +373,53 @@ failed:;
 
 static void downStream(tunnel_t *self, context_t *c)
 {
+    reailty_client_state_t     *state  = STATE(self);
     reailty_client_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
+
+        if (cstate->handshake_completed)
+        {
+            bufferStreamPush(cstate->read_stream, c->payload);
+            c->payload = NULL;
+            uint8_t tls_header[1 + 2 + 2];
+
+            while (bufferStreamLen(cstate->read_stream) >= sizeof(tls_header))
+            {
+                bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, sizeof(tls_header));
+                uint16_t length = *(uint16_t *) (tls_header + 3);
+                if (bufferStreamLen(cstate->read_stream) >= sizeof(tls_header) + length)
+                {
+                    shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, sizeof(tls_header) + length);
+                    shiftr(buf, sizeof(tls_header));
+
+                    if (! verifyMessage(buf, cstate))
+                    {
+                        LOGE("RealityClient: verifyMessage failed");
+                        reuseBuffer(getContextBufferPool(c), buf);
+                        goto failed;
+                    }
+
+                    buf             = genericDecrypt(buf, cstate, state->context_password, getContextBufferPool(c));
+                    uint16_t length = 0;
+                    readUI16(buf, &(length));
+                    shiftr(buf, sizeof(uint16_t));
+                    setLen(buf, length);
+
+                    context_t *plain_data_ctx = newContextFrom(c);
+                    plain_data_ctx->payload   = buf;
+                    self->dw->downStream(self->dw, plain_data_ctx);
+                }
+                else
+                {
+                    break;
+                }
+            }
+            destroyContext(c);
+            return;
+        }
+
         int            n;
         enum sslstatus status;
 
@@ -348,15 +434,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 /* if BIO write fails, assume unrecoverable */
                 reuseContextBuffer(c);
                 goto failed;
-            }
-
-            if (! cstate->handshake_completed && cstate->recv_count < 2)
-            {
-                cstate->recv_count += 1;
-                if (cstate->recv_count == 2)
-                {
-                    cstate->magic = CALC_HASH_BYTES(rawBuf(c->payload), len);
-                }
             }
 
             shiftr(c->payload, n);
@@ -435,17 +512,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     reailty_client_state_t *state = STATE(self);
 
                     cstate->handshake_completed = true;
-                    unsigned char iv[kSignIVlen];
-                    for (int i = 0; i < kSignIVlen; i++)
-                    {
-                        iv[i] = (uint8_t) (state->context_iv[i] + cstate->magic + cstate->epochsecs);
-                    }
-
-                    EVP_EncryptInit_ex(cstate->encryption_context, EVP_aes_128_cbc(), NULL,
-                                       (const uint8_t *) state->context_password, (const uint8_t *) iv);
-
-                    EVP_EncryptInit_ex(cstate->decryption_context, EVP_aes_128_cbc(), NULL,
-                                       (const uint8_t *) state->context_password, (const uint8_t *) iv);
+                    cstate->read_stream         = newBufferStream(getContextBufferPool(c));
 
                     context_t *dw_est_ctx = newContextFrom(c);
                     dw_est_ctx->est       = true;
@@ -577,14 +644,12 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     // memset already made buff 0
     memcpy(state->context_password, state->password, state->password_length);
 
-    state->hash1 = CALC_HASH_BYTES(state->password, strlen(state->password));
-    state->hash2 = CALC_HASH_PRIMITIVE(state->hash1);
-    state->hash3 = CALC_HASH_PRIMITIVE(state->hash2);
-    // the iv must be unpredictable, so initializing it from password
-    for (int i = 0; i < kSignIVlen; i++)
+    assert(EVP_MAX_MD_SIZE % sizeof(uint64_t) == 0);
+    uint64_t *p64 = (uint64_t *) state->hashes;
+    p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
+    for (int i = 1; i < EVP_MAX_MD_SIZE / sizeof(uint64_t); i++)
     {
-        const uint8_t seed   = (uint8_t) (state->hash3 * (i + 7));
-        state->context_iv[i] = (uint8_t) (CALC_HASH_PRIMITIVE(seed));
+        p64[i] = p64[i - 1];
     }
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
