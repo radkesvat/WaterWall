@@ -280,6 +280,7 @@ static void upStream(tunnel_t *self, context_t *c)
             appendTlsHeader(chunk);
             context_t *cout = newContextFrom(c);
             cout->payload   = chunk;
+            assert(bufLen(chunk) % 16 == 5);
             self->up->upStream(self->up, cout);
         }
         reuseContextBuffer(c);
@@ -384,7 +385,6 @@ static void downStream(tunnel_t *self, context_t *c)
             bufferStreamPush(cstate->read_stream, c->payload);
             c->payload = NULL;
             uint8_t tls_header[1 + 2 + 2];
-
             while (bufferStreamLen(cstate->read_stream) >= sizeof(tls_header))
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, sizeof(tls_header));
@@ -527,50 +527,8 @@ static void downStream(tunnel_t *self, context_t *c)
                     flushWriteQueue(self, c);
                     // queue is flushed and we are done
                 }
-
-                reuseContextBuffer(c);
-                destroyContext(c);
-                return;
             }
-
-            /* The encrypted data is now in the input bio so now we can perform actual
-             * read of unencrypted data. */
-
-            do
-            {
-                shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-                shiftl(buf, 8192 / 2);
-                setLen(buf, 0);
-                int avail = (int) rCap(buf);
-                n         = SSL_read(cstate->ssl, rawBufMut(buf), avail);
-
-                if (n > 0)
-                {
-                    setLen(buf, n);
-                    context_t *data_ctx = newContextFrom(c);
-                    data_ctx->payload   = buf;
-                    self->dw->downStream(self->dw, data_ctx);
-                    if (! isAlive(c->line))
-                    {
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                        return;
-                    }
-                }
-                else
-                {
-                    reuseBuffer(getContextBufferPool(c), buf);
-                }
-
-            } while (n > 0);
-
-            status = getSslStatus(cstate->ssl, n);
-
-            if (status == kSslstatusFail)
-            {
-                reuseContextBuffer(c);
-                goto failed;
-            }
+        
         }
         // done with socket data
         reuseContextBuffer(c);
