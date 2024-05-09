@@ -592,7 +592,6 @@ static void distributeUdpPayload(const udp_payload_t pl)
                     continue;
                 }
             }
-            // idle_item_t idle_udp = newIdleItem(state->table, peeraddr_hash, con, con->tid, (uint64_t) 70 * 1000);
             hhybridmutex_unlock(&(state->mutex));
             postPayload(pl, filter);
             return;

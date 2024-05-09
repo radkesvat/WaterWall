@@ -46,7 +46,7 @@ option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  TRUE)
-option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix
+option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix ?
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
