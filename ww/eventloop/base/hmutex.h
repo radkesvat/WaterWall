@@ -321,7 +321,7 @@ static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
 #undef kYieldProcessorTries 
 
 //  if you want to test, helgrind won't detect atomic flag
-#define TEST_HELGRIND   // will transform hybrid mutex to a regular mutex
+// #define TEST_HELGRIND   // will transform hybrid mutex to a regular mutex
 
 
 #ifdef TEST_HELGRIND
