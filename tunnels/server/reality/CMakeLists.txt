@@ -11,6 +11,7 @@ target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../.
 target_link_libraries(RealityServer ww)
 
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
+target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/reality)
 
 
 # add dependencies

@@ -9,6 +9,7 @@ add_library(RealityClient STATIC
 target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(RealityClient ww)
 target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
+target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/reality)
 
 
 # add dependencies

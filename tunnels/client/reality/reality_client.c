@@ -2,11 +2,9 @@
 #include "buffer_pool.h"
 #include "buffer_stream.h"
 #include "context_queue.h"
-#include "frand.h"
 #include "loggers/network_logger.h"
 #include "openssl_globals.h"
-#include "shiftbuffer.h"
-#include "tunnel.h"
+#include "reality_helpers.h"
 #include "utils/hashutils.h"
 #include "utils/jsonutils.h"
 #include "utils/mathutils.h"
@@ -15,19 +13,6 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
-#include <stdint.h>
-#include <string.h>
-
-// these should not be modified, code may break
-enum reality_consts
-{
-    kEncryptionBlockSize  = 16,
-    kSignLen              = (224 / 8),
-    kSignPasswordLen      = kEncryptionBlockSize,
-    kIVlen                = 16, // iv size for *most* modes is the same as the block size. For AES this is 128 bits
-    kTLSVersion12         = 0x0303,
-    kTLS12ApplicationData = 0x17,
-};
 
 typedef struct reailty_client_state_s
 {
@@ -121,138 +106,6 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
     }
 }
 
-static bool verifyMessage(shift_buffer_t *buf, reailty_client_con_state_t *cstate)
-{
-    int     rc = EVP_DigestSignInit(cstate->sign_context, NULL, cstate->msg_digest, NULL, cstate->sign_key);
-    uint8_t expect[EVP_MAX_MD_SIZE];
-    memcpy(expect, rawBuf(buf), kSignLen);
-    shiftr(buf, kSignLen);
-    assert(rc == 1);
-    rc = EVP_DigestSignUpdate(cstate->sign_context, rawBuf(buf), bufLen(buf));
-    assert(rc == 1);
-    uint8_t buff[EVP_MAX_MD_SIZE];
-    size_t  size = sizeof(buff);
-    rc           = EVP_DigestSignFinal(cstate->sign_context, buff, &size);
-    assert(rc == 1);
-    assert(size == kSignLen);
-    return ! ! CRYPTO_memcmp(expect, buff, size);
-}
-
-static void signMessage(shift_buffer_t *buf, reailty_client_con_state_t *cstate)
-{
-    int rc = EVP_DigestSignInit(cstate->sign_context, NULL, cstate->msg_digest, NULL, cstate->sign_key);
-    assert(rc == 1);
-    rc = EVP_DigestSignUpdate(cstate->sign_context, rawBuf(buf), bufLen(buf));
-    assert(rc == 1);
-    size_t req = 0;
-    rc         = EVP_DigestSignFinal(cstate->sign_context, NULL, &req);
-    assert(rc == 1);
-    shiftl(buf, req);
-    size_t slen = 0;
-    rc          = EVP_DigestSignFinal(cstate->sign_context, rawBufMut(buf), &slen);
-    assert(rc == 1);
-    assert(req == slen == kSignLen);
-}
-
-static shift_buffer_t *genericDecrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, char *password,
-                                      buffer_pool_t *pool)
-{
-    shift_buffer_t *out          = popBuffer(pool);
-    uint16_t        input_length = bufLen(in);
-
-    uint8_t iv[kIVlen];
-    memcpy(iv, rawBuf(in), kIVlen);
-    shiftr(in, kIVlen);
-
-    EVP_DecryptInit_ex(cstate->decryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password,
-                       (const uint8_t *) iv);
-
-    reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
-    int out_len = 0;
-
-    /*
-     * Provide the message to be decrypted, and obtain the plaintext output.
-     * EVP_DecryptUpdate can be called multiple times if necessary.
-     */
-    if (1 != EVP_DecryptUpdate(cstate->decryption_context, rawBufMut(out), &out_len, rawBuf(in), input_length))
-    {
-        printSSLErrorAndAbort();
-    }
-    setLen(out, out_len);
-
-    /*
-     * Finalise the decryption. Further plaintext bytes may be written at
-     * this stage.
-     */
-    if (1 != EVP_DecryptFinal_ex(cstate->decryption_context, rawBufMut(out) + out_len, &out_len))
-    {
-        printSSLErrorAndAbort();
-    }
-    reuseBuffer(pool, in);
-
-    setLen(out, bufLen(out) + out_len);
-    return out;
-}
-static shift_buffer_t *genericEncrypt(shift_buffer_t *in, reailty_client_con_state_t *cstate, char *password,
-                                      buffer_pool_t *pool)
-{
-    shift_buffer_t *out          = popBuffer(pool);
-    int             input_length = (int) bufLen(in);
-
-    uint8_t iv[kIVlen];
-    for (int i; i < kIVlen / sizeof(uint32_t); i++)
-    {
-        ((uint32_t *) iv)[i] = fastRand();
-    }
-
-    EVP_EncryptInit_ex(cstate->encryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password,
-                       (const uint8_t *) iv);
-
-    reserveBufSpace(out, input_length + (input_length % kEncryptionBlockSize));
-    int out_len = 0;
-
-    /*
-     * Provide the message to be encrypted, and obtain the encrypted output.
-     * EVP_EncryptUpdate can be called multiple times if necessary
-     */
-    if (1 != EVP_EncryptUpdate(cstate->encryption_context, rawBufMut(out), &out_len, rawBuf(in), input_length))
-    {
-        printSSLErrorAndAbort();
-    }
-
-    setLen(out, bufLen(out) + out_len);
-
-    /*
-     * Finalise the encryption. Further ciphertext bytes may be written at
-     * this stage.
-     */
-    if (1 != EVP_EncryptFinal_ex(cstate->encryption_context, rawBufMut(out) + out_len, &out_len))
-    {
-        printSSLErrorAndAbort();
-    }
-    reuseBuffer(pool, in);
-    setLen(out, bufLen(out) + out_len);
-
-    shiftl(out, kIVlen);
-    memcpy(rawBufMut(out), iv, kIVlen);
-    return out;
-}
-
-static void appendTlsHeader(shift_buffer_t *buf)
-{
-    unsigned int data_length = bufLen(buf);
-    assert(data_length < (1U << 16));
-
-    shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, (uint16_t) data_length);
-
-    shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, kTLSVersion12);
-
-    shiftl(buf, sizeof(uint8_t));
-    writeUI8(buf, kTLS12ApplicationData);
-}
-
 static void upStream(tunnel_t *self, context_t *c)
 {
     reailty_client_state_t *state = STATE(self);
@@ -275,8 +128,8 @@ static void upStream(tunnel_t *self, context_t *c)
             shift_buffer_t *chunk      = shallowSliceBuffer(buf, remain);
             shiftl(chunk, 2);
             writeUI16(chunk, remain);
-            chunk = genericEncrypt(chunk, cstate, state->context_password, getContextBufferPool(c));
-            signMessage(chunk, cstate);
+            chunk = genericEncrypt(chunk, cstate->encryption_context, state->context_password, getContextBufferPool(c));
+            signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
             appendTlsHeader(chunk);
             context_t *cout = newContextFrom(c);
             cout->payload   = chunk;
@@ -394,14 +247,15 @@ static void downStream(tunnel_t *self, context_t *c)
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, sizeof(tls_header) + length);
                     shiftr(buf, sizeof(tls_header));
 
-                    if (! verifyMessage(buf, cstate))
+                    if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
                     {
                         LOGE("RealityClient: verifyMessage failed");
                         reuseBuffer(getContextBufferPool(c), buf);
                         goto failed;
                     }
 
-                    buf             = genericDecrypt(buf, cstate, state->context_password, getContextBufferPool(c));
+                    buf             = genericDecrypt(buf, cstate->decryption_context, state->context_password,
+                                                     getContextBufferPool(c));
                     uint16_t length = 0;
                     readUI16(buf, &(length));
                     shiftr(buf, sizeof(uint16_t));
@@ -528,7 +382,6 @@ static void downStream(tunnel_t *self, context_t *c)
                     // queue is flushed and we are done
                 }
             }
-        
         }
         // done with socket data
         reuseContextBuffer(c);
