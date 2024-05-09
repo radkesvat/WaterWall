@@ -18,6 +18,9 @@
     pointers to same memory, so if you don't know what you are doing,
     don't create shallows at all and use other functions or simply copy.
 
+    shallow functions are never used by ww, the only user of those are the final developer
+    non shallow slice/other functions use calculated minimal copy or buffer swapping
+
     This buffer is supposed to be taken out of a pool (buffer_pool.h)
     and some of the other functions are defined there
 
@@ -28,6 +31,7 @@ struct shift_buffer_s
 {
     unsigned int *refc;
     char         *pbuf;
+    // unsigned int  base;
     unsigned int  calc_len;
     unsigned int  lenpos;
     unsigned int  curpos;
@@ -45,6 +49,7 @@ void            expand(shift_buffer_t *self, unsigned int increase);
 void            concatBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf);
 void            sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int bytes);
 shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes);
+shift_buffer_t *shallowSliceBuffer(shift_buffer_t *self, unsigned int bytes);
 
 inline bool isShallow(shift_buffer_t *self)
 {

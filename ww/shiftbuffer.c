@@ -210,3 +210,11 @@ shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes)
     setLen(newbuf, bytes);
     return newbuf;
 }
+shift_buffer_t *shallowSliceBuffer(shift_buffer_t *self, unsigned int bytes)
+{
+    assert(bytes <= bufLen(self));
+    shift_buffer_t *shallow = newShallowShiftBuffer(self);
+    setLen(shallow, bytes);
+    shiftr(self, bytes);
+    return shallow;
+}
