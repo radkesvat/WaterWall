@@ -61,10 +61,10 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
         size_t available = bufLen(container);
         if (available > bytes)
         {
-            shift_buffer_t *cutted = popBuffer(self->pool);
-            sliceBufferTo(cutted, container, bytes);
+            shift_buffer_t *slice = popBuffer(self->pool);
+            sliceBufferTo(slice, container, bytes);
             queue_push_front(&self->q, container);
-            return cutted;
+            return slice;
         }
         if (available == bytes)
         {
