@@ -69,6 +69,27 @@ char *concat(const char *s1, const char *s2)
     strcat(result, s2);
     return result;
 }
+void toUpperCase(char *str)
+{
+    int i = 0;
+    while (str[i] != 0x0)
+    {
+        str[i] = (char)toupper(str[i]);
+        i++;
+    }
+}
+void toLowerCase(char *str)
+{
+    int i = 0;
+    while (str[i] != 0x0)
+    {
+        str[i] = (char)tolower(str[i]);
+        i++;
+    }
+}
+
+
+
 
 bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
 {
