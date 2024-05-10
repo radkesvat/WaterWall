@@ -116,6 +116,14 @@
 #include "tunnels/server/socks/5/socks5_server.h"
 #endif
 
+#ifdef INCLUDE_REALITY_SERVER
+#include "tunnels/server/reality/reality_server.h"
+#endif
+
+#ifdef INCLUDE_REALITY_CLIENT
+#include "tunnels/client/reality/reality_client.h"
+#endif
+
 void loadStaticTunnelsIntoCore()
 {
 #ifdef INCLUDE_TCP_LISTENER
@@ -218,8 +226,11 @@ void loadStaticTunnelsIntoCore()
     USING(Socks5Server);
 #endif
 
+#ifdef INCLUDE_REALITY_SERVER
+    USING(RealityServer);
+#endif
 
-
-
-
+#ifdef INCLUDE_REALITY_CLIENT
+    USING(RealityClient);
+#endif
 }
