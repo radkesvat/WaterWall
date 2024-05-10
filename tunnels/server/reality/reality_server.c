@@ -339,7 +339,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 
     if (! getStringFromJsonObject(&(state->password), settings, "password"))
     {
-        LOGF("JSON Error: RealityClient->settings->password (string field) : The data was empty or invalid");
+        LOGF("JSON Error: RealityServer->settings->password (string field) : The data was empty or invalid");
         return NULL;
     }
     getIntFromJsonObjectOrDefault((int *) &(state->counter_threshould), settings, "sniffing-counter", 5);
@@ -348,11 +348,16 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     state->password_length = (int) strlen(state->password);
     if (state->password_length < 3)
     {
-        LOGF("JSON Error: RealityClient->settings->password (string field) : password is too short");
+        LOGF("JSON Error: RealityServer->settings->password (string field) : password is too short");
+        return NULL;
     }
     // memset already made buff 0
     memcpy(state->context_password, state->password, state->password_length);
-    assert(EVP_MAX_MD_SIZE % sizeof(uint64_t) == 0);
+    if (EVP_MAX_MD_SIZE % sizeof(uint64_t) != 0)
+    {
+        LOGF("Assert Error: RealityServer-> EVP_MAX_MD_SIZE not a multiple of 8");
+        return NULL;
+    }
     uint64_t *p64 = (uint64_t *) state->hashes;
     p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
     for (int i = 1; i < EVP_MAX_MD_SIZE / sizeof(uint64_t); i++)

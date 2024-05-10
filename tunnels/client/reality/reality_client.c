@@ -466,11 +466,17 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     if (state->password_length < 3)
     {
         LOGF("JSON Error: RealityClient->settings->password (string field) : password is too short");
+        return NULL;
     }
     // memset already made buff 0
     memcpy(state->context_password, state->password, state->password_length);
 
-    assert(EVP_MAX_MD_SIZE % sizeof(uint64_t) == 0);
+    if (EVP_MAX_MD_SIZE % sizeof(uint64_t) != 0)
+    {
+        LOGF("Assert Error: RealityClient-> EVP_MAX_MD_SIZE not a multiple of 8");
+        return NULL;
+    }
+
     uint64_t *p64 = (uint64_t *) state->hashes;
     p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
     for (int i = 1; i < EVP_MAX_MD_SIZE / sizeof(uint64_t); i++)

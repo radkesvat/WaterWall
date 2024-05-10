@@ -49,7 +49,7 @@ static void signMessage(shift_buffer_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sig
     size_t slen = 0;
     rc          = EVP_DigestSignFinal(sign_context, rawBufMut(buf), &slen);
     assert(rc == 1);
-    assert(req == slen == kSignLen);
+    assert((req == slen) && (req == kSignLen));
 }
 
 static shift_buffer_t *genericDecrypt(shift_buffer_t *in, EVP_CIPHER_CTX *decryption_context, char *password,

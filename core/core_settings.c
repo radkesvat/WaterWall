@@ -174,13 +174,9 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         {
             int profile = json_ram_profile->valueint;
 
-            if (profile > 5 || profile < 1)
-            {
-                fprintf(stderr, "CoreSettings: ram-profile must be in range [1 - 5]\n");
-                exit(1);
-            }
             switch (profile)
             {
+            case 0:
             case 1:
                 settings->ram_profile = kRamProfileS1Memory;
                 break;
