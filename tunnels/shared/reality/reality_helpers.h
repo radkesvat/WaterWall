@@ -1,7 +1,8 @@
 #pragma once
 #include "buffer_pool.h"
 #include "frand.h"
-#include "openssl_globals.h"  /* These helpers depened on openssl */
+#include "openssl_globals.h" /* These helpers depened on openssl */
+#include "shiftbuffer.h"
 #include <assert.h>
 #include <openssl/evp.h>
 #include <stddef.h>
@@ -16,7 +17,6 @@ enum reality_consts
     kTLSVersion12         = 0x0303,
     kTLS12ApplicationData = 0x17,
     kTLSHeaderlen         = 1 + 2 + 2,
-
 };
 
 static bool verifyMessage(shift_buffer_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sign_context, EVP_PKEY *sign_key)
@@ -147,4 +147,10 @@ static void appendTlsHeader(shift_buffer_t *buf)
 
     shiftl(buf, sizeof(uint8_t));
     writeUI8(buf, kTLS12ApplicationData);
+}
+
+static bool isTlsData(shift_buffer_t *buf)
+{
+    return bufLen(buf) >= kTLSHeaderlen && ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData &&
+           *((uint16_t *) (rawBuf(buf) + 1)) == kTLSVersion12 && *((uint16_t *) (rawBuf(buf) + 1)) > 0x0;
 }

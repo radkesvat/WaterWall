@@ -100,27 +100,71 @@ static void upStream(tunnel_t *self, context_t *c)
         case kConAuthPending: {
 
             shift_buffer_t *buf = c->payload;
-            shiftr(buf, kTLSHeaderlen);
-            bool valid = verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
-            shiftl(buf, kTLSHeaderlen);
-
-            if (valid)
+            if (isTlsData(buf) || bufferStreamLen(cstate->read_stream) > 0)
             {
-                cstate->auth_state  = kConAuthorized;
-                cstate->read_stream = newBufferStream(getContextBufferPool(c));
+                uint8_t tls_header[1 + 2 + 2];
 
-                state->dest->upStream(state->dest, newFinContextFrom(c));
-                self->up->upStream(self->up, newInitContext(c->line));
-
-                goto authorized;
-            }
-            else
-            {
-                cstate->giveup_counter -= 0;
-                if (cstate->giveup_counter == 0)
+                bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(buf));
+                while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
                 {
-                    cstate->auth_state = kConUnAuthorized;
+                    bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
+                    uint16_t length = *(uint16_t *) (tls_header + 3);
+                    if (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                    {
+                        shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                        shiftr(buf, kTLSHeaderlen);
+
+                        if (verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
+                        {
+                            reuseContextBuffer(c);
+                            cstate->auth_state = kConAuthorized;
+
+                            state->dest->upStream(state->dest, newFinContextFrom(c));
+                            self->up->upStream(self->up, newInitContext(c->line));
+                            if (! isAlive(c->line))
+                            {
+                                reuseBuffer(getContextBufferPool(c), buf);
+                                destroyContext(c);
+
+                                return;
+                            }
+
+                            buf             = genericDecrypt(buf, cstate->decryption_context, state->context_password,
+                                                             getContextBufferPool(c));
+                            uint16_t length = 0;
+                            readUI16(buf, &(length));
+                            shiftr(buf, sizeof(uint16_t));
+                            assert(length <= bufLen(buf));
+                            setLen(buf, length);
+
+                            context_t *plain_data_ctx = newContextFrom(c);
+                            plain_data_ctx->payload   = buf;
+                            self->up->upStream(self->up, plain_data_ctx);
+
+                            if (! isAlive(c->line))
+                            {
+                                destroyContext(c);
+                                return;
+                            }
+                            goto authorized;
+                        }
+                        else
+                        {
+                            reuseBuffer(getContextBufferPool(c), buf);
+                        }
+                    }
+                    else
+                    {
+                        break;
+                    }
                 }
+            }
+
+            cstate->giveup_counter -= 0;
+            if (cstate->giveup_counter == 0)
+            {
+                empytBufferStream(cstate->read_stream);
+                cstate->auth_state = kConUnAuthorized;
             }
         }
 
@@ -128,19 +172,19 @@ static void upStream(tunnel_t *self, context_t *c)
             state->dest->upStream(state->dest, c);
 
             break;
-        authorized:;
         case kConAuthorized: {
             bufferStreamPush(cstate->read_stream, c->payload);
             c->payload = NULL;
+        authorized:;
             uint8_t tls_header[1 + 2 + 2];
-            while (bufferStreamLen(cstate->read_stream) >= sizeof(tls_header))
+            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
-                bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, sizeof(tls_header));
+                bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = *(uint16_t *) (tls_header + 3);
-                if (bufferStreamLen(cstate->read_stream) >= sizeof(tls_header) + length)
+                if (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, sizeof(tls_header) + length);
-                    shiftr(buf, sizeof(tls_header));
+                    shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    shiftr(buf, kTLSHeaderlen);
 
                     if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
                     {
@@ -160,6 +204,11 @@ static void upStream(tunnel_t *self, context_t *c)
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;
                     self->up->upStream(self->up, plain_data_ctx);
+                    if (! isAlive(c->line))
+                    {
+                        destroyContext(c);
+                        return;
+                    }
                 }
                 else
                 {
@@ -183,6 +232,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->giveup_counter     = state->counter_threshould;
             cstate->encryption_context = EVP_CIPHER_CTX_new();
             cstate->decryption_context = EVP_CIPHER_CTX_new();
+            cstate->read_stream        = newBufferStream(getContextBufferPool(c));
 
             state->dest->upStream(state->dest, c);
         }
@@ -224,31 +274,41 @@ static void downStream(tunnel_t *self, context_t *c)
             self->dw->downStream(self->dw, c);
             break;
         case kConAuthorized:;
-            shift_buffer_t *buf = c->payload;
-            while (bufLen(buf) > 0)
+            shift_buffer_t *buf        = c->payload;
+            const int       chunk_size = ((1 << 16) - (kSignLen + (kEncryptionBlockSize * 2) + kIVlen));
+
+            if (bufLen(buf) < chunk_size)
             {
-                const int       chunk_size = ((1 << 16) - (1 + kSignLen + kEncryptionBlockSize + kIVlen));
-                const uint16_t  remain     = (uint16_t) min(bufLen(buf), chunk_size);
-                shift_buffer_t *chunk      = shallowSliceBuffer(buf, remain);
-                shiftl(chunk, 2);
-                writeUI16(chunk, remain);
-                chunk =
-                    genericEncrypt(chunk, cstate->encryption_context, state->context_password, getContextBufferPool(c));
-                signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
-                appendTlsHeader(chunk);
-                context_t *cout = newContextFrom(c);
-                cout->payload   = chunk;
-                assert(bufLen(chunk) % 16 == 5);
-                self->dw->downStream(self->dw, cout);
+                writeUI16(buf, bufLen(buf));
+                buf = genericEncrypt(buf, cstate->encryption_context, state->context_password, getContextBufferPool(c));
+                signMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
+                appendTlsHeader(buf);
+                assert(bufLen(buf) % 16 == 5);
+                self->dw->downStream(self->dw, c);
             }
-            reuseContextBuffer(c);
-            destroyContext(c);
+            else
+            {
+                while (bufLen(buf) > 0)
+                {
+                    const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
+                    shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);
+                    shiftl(chunk, 2);
+                    writeUI16(chunk, remain);
+                    chunk = genericEncrypt(chunk, cstate->encryption_context, state->context_password,
+                                           getContextBufferPool(c));
+                    signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
+                    appendTlsHeader(chunk);
+                    context_t *cout = newContextFrom(c);
+                    cout->payload   = chunk;
+                    assert(bufLen(chunk) % 16 == 5);
+                    self->dw->downStream(self->dw, cout);
+                }
+                reuseContextBuffer(c);
+                destroyContext(c);
+            }
 
             break;
         }
-
-        reuseContextBuffer(c);
-        destroyContext(c);
     }
     else
     {

@@ -4,7 +4,6 @@
 #include "loggers/network_logger.h"
 #include "utils/jsonutils.h"
 
-
 enum header_dynamic_value_status
 {
     kHdvsEmpty = 0x0,
@@ -27,7 +26,7 @@ static void upStream(tunnel_t *self, context_t *c)
 {
     header_client_state_t *state = STATE(self);
 
-    if (c->payload != NULL && c->first)
+    if (c->first && c->payload != NULL)
     {
 
         switch ((enum header_dynamic_value_status) state->data.status)
