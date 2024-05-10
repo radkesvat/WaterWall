@@ -119,14 +119,14 @@ static shift_buffer_t *genericEncrypt(shift_buffer_t *in, EVP_CIPHER_CTX *encryp
     int             input_length = (int) bufLen(in);
 
     uint8_t iv[kIVlen];
-    for (int i; i < kIVlen / sizeof(uint32_t); i++)
+    for (int i = 0; i < kIVlen / sizeof(uint32_t); i++)
     {
         ((uint32_t *) iv)[i] = fastRand();
     }
 
     EVP_EncryptInit_ex(encryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password, (const uint8_t *) iv);
 
-    reserveBufSpace(out, input_length + (input_length % kEncryptionBlockSize));
+    reserveBufSpace(out, input_length + kEncryptionBlockSize +(input_length % kEncryptionBlockSize));
     int out_len = 0;
 
     /*

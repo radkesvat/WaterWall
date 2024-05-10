@@ -124,7 +124,7 @@ static void upStream(tunnel_t *self, context_t *c)
         shift_buffer_t *buf = c->payload;
         c->payload   = NULL;
 
-        const int chunk_size = ((1 << 16) - (kSignLen + (kEncryptionBlockSize) + kIVlen));
+        const int chunk_size = ((1 << 16) - (kSignLen + (2*kEncryptionBlockSize) + kIVlen));
 
         if (bufLen(buf) < chunk_size)
         {
