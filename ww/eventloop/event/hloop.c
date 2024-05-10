@@ -421,6 +421,10 @@ void hloop_free(hloop_t** pp) {
     *pp = NULL;
 }
 
+#ifdef DEBUG
+_Thread_local htimer_t* _loop_debug_timer = NULL;
+#endif
+
 // while (loop->status) { hloop_process_events(loop); }
 int hloop_run(hloop_t* loop) {
     if (loop == NULL) return -1;
@@ -439,7 +443,7 @@ int hloop_run(hloop_t* loop) {
         hhybridmutex_unlock(&loop->custom_events_mutex);
 
 #ifdef DEBUG
-        htimer_add(loop, hloop_stat_timer_cb, HLOOP_STAT_TIMEOUT, INFINITE);
+        _loop_debug_timer = htimer_add(loop, hloop_stat_timer_cb, HLOOP_STAT_TIMEOUT, INFINITE);
         ++loop->intern_nevents;
 #endif
     }
