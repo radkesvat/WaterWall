@@ -258,7 +258,7 @@ void socketContextAddrCopy(socket_context_t *dest, const socket_context_t *const
             {
                 socketContextDomainSet(dest, source->domain, source->domain_len);
             }
-
+            dest->domain_resolved = source->domain_resolved;
             if (source->domain_resolved)
             {
                 dest->domain_resolved = true;
