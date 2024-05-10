@@ -14,7 +14,7 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 
-typedef struct reailty_client_state_s
+typedef struct reality_client_state_s
 {
 
     ssl_ctx_t ssl_context;
@@ -27,9 +27,9 @@ typedef struct reailty_client_state_s
     uint8_t hashes[EVP_MAX_MD_SIZE];
     char    context_password[kSignPasswordLen];
 
-} reailty_client_state_t;
+} reality_client_state_t;
 
-typedef struct reailty_client_con_state_s
+typedef struct reality_client_con_state_s
 {
     SSL             *ssl;
     BIO             *rbio;
@@ -44,7 +44,7 @@ typedef struct reailty_client_con_state_s
     bool             handshake_completed;
     bool             first_sent;
 
-} reailty_client_con_state_t;
+} reality_client_con_state_t;
 
 enum sslstatus
 {
@@ -70,7 +70,7 @@ static enum sslstatus getSslStatus(SSL *ssl, int n)
 
 static void cleanup(tunnel_t *self, context_t *c)
 {
-    reailty_client_con_state_t *cstate = CSTATE(c);
+    reality_client_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
         if (cstate->handshake_completed)
@@ -93,7 +93,7 @@ static void cleanup(tunnel_t *self, context_t *c)
 
 static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
-    reailty_client_con_state_t *cstate = CSTATE(c);
+    reality_client_con_state_t *cstate = CSTATE(c);
 
     while (contextQueueLen(cstate->queue) > 0)
     {
@@ -108,11 +108,11 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    reailty_client_state_t *state = STATE(self);
+    reality_client_state_t *state = STATE(self);
 
     if (c->payload != NULL)
     {
-        reailty_client_con_state_t *cstate = CSTATE(c);
+        reality_client_con_state_t *cstate = CSTATE(c);
 
         if (! cstate->handshake_completed)
         {
@@ -158,9 +158,9 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(reailty_client_con_state_t));
-            memset(CSTATE(c), 0, sizeof(reailty_client_con_state_t));
-            reailty_client_con_state_t *cstate = CSTATE(c);
+            CSTATE_MUT(c) = malloc(sizeof(reality_client_con_state_t));
+            memset(CSTATE(c), 0, sizeof(reality_client_con_state_t));
+            reality_client_con_state_t *cstate = CSTATE(c);
             cstate->rbio                       = BIO_new(BIO_s_mem());
             cstate->wbio                       = BIO_new(BIO_s_mem());
             cstate->ssl                        = SSL_new(state->ssl_context);
@@ -242,8 +242,8 @@ failed:;
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    reailty_client_state_t     *state  = STATE(self);
-    reailty_client_con_state_t *cstate = CSTATE(c);
+    reality_client_state_t     *state  = STATE(self);
+    reality_client_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
@@ -378,7 +378,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (SSL_is_init_finished(cstate->ssl))
                 {
                     LOGD("OpensslClient: Tls handshake complete");
-                    reailty_client_state_t *state = STATE(self);
+                    reality_client_state_t *state = STATE(self);
 
                     cstate->handshake_completed = true;
                     cstate->read_stream         = newBufferStream(getContextBufferPool(c));
@@ -429,8 +429,8 @@ failed:;
 
 tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 {
-    reailty_client_state_t *state = malloc(sizeof(reailty_client_state_t));
-    memset(state, 0, sizeof(reailty_client_state_t));
+    reality_client_state_t *state = malloc(sizeof(reality_client_state_t));
+    memset(state, 0, sizeof(reality_client_state_t));
 
     ssl_ctx_opt_t *ssl_param = malloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
