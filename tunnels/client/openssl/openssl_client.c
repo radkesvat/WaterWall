@@ -327,17 +327,19 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     LOGD("OpensslClient: Tls handshake complete");
                     cstate->handshake_completed = true;
-                    context_t *dw_est_ctx       = newContextFrom(c);
-                    dw_est_ctx->est             = true;
-                    self->dw->downStream(self->dw, dw_est_ctx);
+                    flushWriteQueue(self, c);
+
                     if (! isAlive(c->line))
                     {
-                        LOGW("OpensslClient: prev node instantly closed the est with fin");
                         reuseContextBuffer(c);
                         destroyContext(c);
                         return;
                     }
-                    flushWriteQueue(self, c);
+
+                    context_t *dw_est_ctx = newContextFrom(c);
+                    dw_est_ctx->est       = true;
+                    self->dw->downStream(self->dw, dw_est_ctx);
+
                     // queue is flushed and we are done
                     // reuseContextBuffer(c);
                     // destroyContext(c);
@@ -445,8 +447,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
     getBoolFromJsonObjectOrDefault(&(state->verify), settings, "verify", true);
 
-    getStringFromJsonObjectOrDefault(&(state->alpn), settings, "alpn","http/1.1");
-
+    getStringFromJsonObjectOrDefault(&(state->alpn), settings, "alpn", "http/1.1");
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;
