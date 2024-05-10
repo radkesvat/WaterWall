@@ -5,6 +5,7 @@
 #include "loggers/network_logger.h"
 #include "openssl_globals.h"
 #include "reality_helpers.h"
+#include "tunnel.h"
 #include "utils/hashutils.h"
 #include "utils/jsonutils.h"
 #include "utils/mathutils.h"
@@ -121,16 +122,19 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         // todo (research) about encapsulation order and safety, CMAC HMAC
         shift_buffer_t *buf = c->payload;
+        c->payload   = NULL;
 
-        const int chunk_size = ((1 << 16) - (kSignLen + (kEncryptionBlockSize * 2) + kIVlen));
+        const int chunk_size = ((1 << 16) - (kSignLen + (kEncryptionBlockSize) + kIVlen));
 
         if (bufLen(buf) < chunk_size)
         {
-            writeUI16(buf, bufLen(buf));
+
             buf = genericEncrypt(buf, cstate->encryption_context, state->context_password, getContextBufferPool(c));
             signMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
             appendTlsHeader(buf);
             assert(bufLen(buf) % 16 == 5);
+            c->payload   = buf;
+
             self->up->upStream(self->up, c);
         }
         else
@@ -139,8 +143,6 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
                 shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);
-                shiftl(chunk, 2);
-                writeUI16(chunk, remain);
                 chunk =
                     genericEncrypt(chunk, cstate->encryption_context, state->context_password, getContextBufferPool(c));
                 signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
@@ -150,7 +152,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 assert(bufLen(chunk) % 16 == 5);
                 self->up->upStream(self->up, cout);
             }
-            reuseContextBuffer(c);
+            reuseBuffer(getContextBufferPool(c),buf);
             destroyContext(c);
         }
     }
@@ -158,19 +160,19 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(reality_client_con_state_t));
-            memset(CSTATE(c), 0, sizeof(reality_client_con_state_t));
-            reality_client_con_state_t *cstate = CSTATE(c);
-            cstate->rbio                       = BIO_new(BIO_s_mem());
-            cstate->wbio                       = BIO_new(BIO_s_mem());
-            cstate->ssl                        = SSL_new(state->ssl_context);
-            cstate->queue                      = newContextQueue(getContextBufferPool(c));
-            cstate->sign_context               = EVP_MD_CTX_create();
-            cstate->encryption_context         = EVP_CIPHER_CTX_new();
-            cstate->decryption_context         = EVP_CIPHER_CTX_new();
-            cstate->msg_digest                 = (EVP_MD *) EVP_get_digestbyname("SHA256");
-            int sk_size                        = EVP_MD_size(cstate->msg_digest);
-            cstate->sign_key                   = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
+            reality_client_con_state_t *cstate = malloc(sizeof(reality_client_con_state_t));
+            memset(cstate, 0, sizeof(reality_client_con_state_t));
+            CSTATE_MUT(c)              = cstate;
+            cstate->rbio               = BIO_new(BIO_s_mem());
+            cstate->wbio               = BIO_new(BIO_s_mem());
+            cstate->ssl                = SSL_new(state->ssl_context);
+            cstate->queue              = newContextQueue(getContextBufferPool(c));
+            cstate->encryption_context = EVP_CIPHER_CTX_new();
+            cstate->decryption_context = EVP_CIPHER_CTX_new();
+            cstate->sign_context       = EVP_MD_CTX_create();
+            cstate->msg_digest         = (EVP_MD *) EVP_get_digestbyname(MSG_DIGEST_ALG);
+            int sk_size                = EVP_MD_size(cstate->msg_digest);
+            cstate->sign_key           = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
 
             EVP_DigestInit_ex(cstate->sign_context, cstate->msg_digest, NULL);
 
@@ -271,10 +273,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                     buf             = genericDecrypt(buf, cstate->decryption_context, state->context_password,
                                                      getContextBufferPool(c));
-                    uint16_t length = 0;
-                    readUI16(buf, &(length));
-                    shiftr(buf, sizeof(uint16_t));
-                    setLen(buf, length);
+                   
 
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;
@@ -377,24 +376,23 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 if (SSL_is_init_finished(cstate->ssl))
                 {
-                    LOGD("OpensslClient: Tls handshake complete");
+                    LOGD("RealityClient: Tls handshake complete");
                     reality_client_state_t *state = STATE(self);
 
                     cstate->handshake_completed = true;
                     cstate->read_stream         = newBufferStream(getContextBufferPool(c));
 
-                    context_t *dw_est_ctx = newContextFrom(c);
-                    dw_est_ctx->est       = true;
-                    self->dw->downStream(self->dw, dw_est_ctx);
+                    flushWriteQueue(self, c);
+
                     if (! isAlive(c->line))
                     {
-                        LOGW("OpensslClient: prev node instantly closed the est with fin");
                         reuseContextBuffer(c);
                         destroyContext(c);
                         return;
                     }
-                    flushWriteQueue(self, c);
-                    // queue is flushed and we are done
+                    context_t *dw_est_ctx = newContextFrom(c);
+                    dw_est_ctx->est       = true;
+                    self->dw->downStream(self->dw, dw_est_ctx);
                 }
             }
         }

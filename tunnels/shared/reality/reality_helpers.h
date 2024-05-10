@@ -8,12 +8,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define MSG_DIGEST_ALG "SHA256"
+
 enum reality_consts
 {
     kEncryptionBlockSize  = 16,
     kSignPasswordLen      = kEncryptionBlockSize,
     kIVlen                = 16, // iv size for *most* modes is the same as the block size. For AES this is 128 bits
-    kSignLen              = (224 / 8),
+    kSignLen              = (256 / 8),
     kTLSVersion12         = 0x0303,
     kTLS12ApplicationData = 0x17,
     kTLSHeaderlen         = 1 + 2 + 2,
@@ -21,34 +23,57 @@ enum reality_consts
 
 static bool verifyMessage(shift_buffer_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sign_context, EVP_PKEY *sign_key)
 {
+    assert(bufLen(buf) >= kSignLen);
     int     rc = EVP_DigestSignInit(sign_context, NULL, msg_digest, NULL, sign_key);
     uint8_t expect[EVP_MAX_MD_SIZE];
     memcpy(expect, rawBuf(buf), kSignLen);
     shiftr(buf, kSignLen);
-    assert(rc == 1);
+    if (rc != 1)
+    {
+        printSSLErrorAndAbort();
+    }
     rc = EVP_DigestSignUpdate(sign_context, rawBuf(buf), bufLen(buf));
-    assert(rc == 1);
+    if (rc != 1)
+    {
+        printSSLErrorAndAbort();
+    }
     uint8_t buff[EVP_MAX_MD_SIZE];
     size_t  size = sizeof(buff);
     rc           = EVP_DigestSignFinal(sign_context, buff, &size);
-    assert(rc == 1);
+    if (rc != 1)
+    {
+        printSSLErrorAndAbort();
+    }
     assert(size == kSignLen);
-    return ! ! CRYPTO_memcmp(expect, buff, size);
+
+    return 0 == CRYPTO_memcmp(expect, buff, size);
 }
 
 static void signMessage(shift_buffer_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sign_context, EVP_PKEY *sign_key)
 {
     int rc = EVP_DigestSignInit(sign_context, NULL, msg_digest, NULL, sign_key);
-    assert(rc == 1);
+    if (rc != 1)
+    {
+        printSSLErrorAndAbort();
+    }
     rc = EVP_DigestSignUpdate(sign_context, rawBuf(buf), bufLen(buf));
-    assert(rc == 1);
+    if (rc != 1)
+    {
+        printSSLErrorAndAbort();
+    }
     size_t req = 0;
     rc         = EVP_DigestSignFinal(sign_context, NULL, &req);
-    assert(rc == 1);
+    if (rc != 1)
+    {
+        printSSLErrorAndAbort();
+    }
     shiftl(buf, req);
-    size_t slen = 0;
+    size_t slen = req;
     rc          = EVP_DigestSignFinal(sign_context, rawBufMut(buf), &slen);
-    assert(rc == 1);
+    if (rc != 1)
+    {
+        printSSLErrorAndAbort();
+    }
     assert((req == slen) && (req == kSignLen));
 }
 
@@ -56,15 +81,12 @@ static shift_buffer_t *genericDecrypt(shift_buffer_t *in, EVP_CIPHER_CTX *decryp
                                       buffer_pool_t *pool)
 {
     shift_buffer_t *out          = popBuffer(pool);
-    uint16_t        input_length = bufLen(in);
 
-    uint8_t iv[kIVlen];
-    memcpy(iv, rawBuf(in), kIVlen);
+
+    EVP_DecryptInit_ex(decryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password, (const uint8_t *) rawBuf(in));
     shiftr(in, kIVlen);
-
-    EVP_DecryptInit_ex(decryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password, (const uint8_t *) iv);
-
-    reserveBufSpace(out, input_length + (2 * kEncryptionBlockSize));
+    uint16_t        input_length = bufLen(in);
+    reserveBufSpace(out, input_length );
     int out_len = 0;
 
     /*
