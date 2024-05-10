@@ -19,7 +19,7 @@ static void destroyCoreLogger(void)
     }
 }
 
-static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     switch (loglevel)
     {
@@ -35,7 +35,7 @@ static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int 
     logfile_write(logger, buf, len);
 }
 
-static void networkLoggerHandle(int loglevel, const char *buf, int len)
+static void coreLoggerHandle(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
     logfile_write(logger, buf, len);
@@ -58,11 +58,11 @@ logger_t *createCoreLogger(const char *log_file, bool console)
     logger_set_file(logger, log_file);
     if (console)
     {
-        logger_set_handler(logger, networkLoggerHandleWithStdStream);
+        logger_set_handler(logger, coreLoggerHandleWithStdStream);
     }
     else
     {
-        logger_set_handler(logger, networkLoggerHandle);
+        logger_set_handler(logger, coreLoggerHandle);
     }
 
     atexit(destroyCoreLogger);
