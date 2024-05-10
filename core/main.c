@@ -33,6 +33,7 @@ int main(void)
 
     ww_construction_data_t runtime_data = {
         .workers_count       = getCoreSettings()->workers_count,
+        .ram_profile         = getCoreSettings()->ram_profile,
         .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreLoggerFullPath(),
                                                             .log_level     = getCoreSettings()->core_log_level,
                                                             .log_console   = getCoreSettings()->core_log_console},

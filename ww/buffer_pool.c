@@ -4,27 +4,18 @@
 #endif
 #include "shiftbuffer.h"
 #include "utils/mathutils.h"
+#include "ww.h"
 #include <assert.h> // for assert
 #include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum
-{
-    // 0 is invalid memory multiplier
-    kLowMemory  = 1,      // no preallocation (very small) (0.6MB per thread)
-    kMeD1Memory = 16 * 1, // APPROX 20MB per thread
-    kMeD2Memory = 16 * 2, // APPROX 40MB per thread
-    kHiG1Memory = 16 * 3, // APPROX 56MB per thread
-    kHiG2Memory = 16 * 4  // APPROX 72MB per thread
-};
+// NOLINTBEGIN
+//  todo (cmake)
+#define MEMORY_PROFILE_SMALL    kRamProfileM1Memory
+#define MEMORY_PROFILE_SELECTED ram_profile
 
-//NOLINTBEGIN
-// todo (cmake)
-#define MEMORY_PROFILE_SMALL    kMeD1Memory
-#define MEMORY_PROFILE_SELECTED kHiG2Memory
-
-#define BASE_READ_BUFSIZE              (1U << 13) // 8k 
+#define BASE_READ_BUFSIZE              (1U << 13) // 8k
 #define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((16 * MEMORY_PROFILE_SMALL)))
 #define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((16 * MEMORY_PROFILE_SELECTED)))
 
@@ -33,7 +24,7 @@ enum
 
 #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
 
-//NOLINTEND
+// NOLINTEND
 
 static void firstCharge(buffer_pool_t *pool)
 {

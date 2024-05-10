@@ -8,6 +8,7 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
+#include "utils/stringutils.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +18,7 @@
 unsigned int             workers_count  = 0;
 hthread_t               *workers        = NULL;
 unsigned int             frand_seed     = 0;
+unsigned int             ram_profile    = 0;
 struct hloop_s         **loops          = NULL;
 struct buffer_pool_s   **buffer_pools   = NULL;
 struct socket_manager_s *socekt_manager = NULL;
@@ -30,6 +32,7 @@ struct ww_runtime_state_s
     unsigned int             workers_count;
     hthread_t               *workers;
     unsigned int             frand_seed;
+    unsigned int             ram_profile;
     struct hloop_s         **loops;
     struct buffer_pool_s   **buffer_pools;
     struct socket_manager_s *socekt_manager;
@@ -45,6 +48,7 @@ void setWW(struct ww_runtime_state_s *state)
     workers_count  = state->workers_count;
     workers        = state->workers;
     frand_seed     = state->frand_seed;
+    ram_profile    = state->ram_profile;
     loops          = state->loops;
     buffer_pools   = state->buffer_pools;
     socekt_manager = state->socekt_manager;
@@ -64,6 +68,7 @@ struct ww_runtime_state_s *getWW()
     state->workers_count  = workers_count;
     state->workers        = workers;
     state->frand_seed     = frand_seed;
+    state->ram_profile    = ram_profile;
     state->loops          = loops;
     state->buffer_pools   = buffer_pools;
     state->socekt_manager = socekt_manager;
@@ -95,38 +100,38 @@ static HTHREAD_ROUTINE(worker_thread) // NOLINT
     return 0;
 }
 
-void createWW(ww_construction_data_t runtime_data)
+void createWW(ww_construction_data_t init_data)
 {
-    if (runtime_data.core_logger_data.log_file_path)
+    if (init_data.core_logger_data.log_file_path)
     {
         core_logger =
-            createCoreLogger(runtime_data.core_logger_data.log_file_path, runtime_data.core_logger_data.log_console);
-        setCoreLoggerLevelByStr(runtime_data.core_logger_data.log_level);
-        
+            createCoreLogger(init_data.core_logger_data.log_file_path, init_data.core_logger_data.log_console);
+        toUpperCase(init_data.core_logger_data.log_level);
+        setCoreLoggerLevelByStr(init_data.core_logger_data.log_level);
     }
-    if (runtime_data.network_logger_data.log_file_path)
+    if (init_data.network_logger_data.log_file_path)
     {
-        network_logger = createNetworkLogger(runtime_data.network_logger_data.log_file_path,
-                                             runtime_data.network_logger_data.log_console);
-        setNetworkLoggerLevelByStr(runtime_data.network_logger_data.log_level);
+        network_logger =
+            createNetworkLogger(init_data.network_logger_data.log_file_path, init_data.network_logger_data.log_console);
+        toUpperCase(init_data.network_logger_data.log_level);
+        setNetworkLoggerLevelByStr(init_data.network_logger_data.log_level);
     }
-    if (runtime_data.dns_logger_data.log_file_path)
+    if (init_data.dns_logger_data.log_file_path)
     {
-        dns_logger =
-            createDnsLogger(runtime_data.dns_logger_data.log_file_path, runtime_data.dns_logger_data.log_console);
-        setDnsLoggerLevelByStr(runtime_data.dns_logger_data.log_level);
+        dns_logger = createDnsLogger(init_data.dns_logger_data.log_file_path, init_data.dns_logger_data.log_console);
+        toUpperCase(init_data.dns_logger_data.log_level);
+        setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
     }
 
-    workers_count = runtime_data.workers_count;
+    workers_count = init_data.workers_count;
     if (workers_count <= 0 || workers_count > 255)
     {
-        fprintf(stderr, "workers count was not in valid range, value: %u range:[1,255]\n", workers_count);
+        fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - 255]\n", workers_count);
     }
 
-    workers = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
-
-    frand_seed = time(NULL);
-
+    workers      = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
+    frand_seed   = time(NULL);
+    ram_profile  = init_data.ram_profile;
     buffer_pools = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
 
     for (int i = 0; i < workers_count; ++i)
@@ -136,7 +141,7 @@ void createWW(ww_construction_data_t runtime_data)
 
     loops      = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
     loops[0]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[0]);
-    workers[0] = 0x0;
+    workers[0] = (hthread_t) NULL;
 
     for (int i = 1; i < workers_count; ++i)
     {

@@ -42,12 +42,23 @@ typedef struct
     bool  log_console;
 } logger_construction_data_t;
 
+enum ram_profiles
+{
+    kRamProfileInvalid  = 0,      // 0 is invalid memory multiplier
+    kRamProfileS1Memory = 1,      // no preallocation (very small) (0.6MB per thread)
+    kRamProfileM1Memory = 16 * 1, // APPROX 20MB per thread
+    kRamProfileM2Memory = 16 * 2, // APPROX 40MB per thread
+    kRamProfileL1Memory = 16 * 3, // APPROX 56MB per thread
+    kRamProfileL2Memory = 16 * 4  // APPROX 72MB per thread
+};
 typedef struct
 {
     unsigned int               workers_count;
+    enum ram_profiles          ram_profile;
     logger_construction_data_t core_logger_data;
     logger_construction_data_t network_logger_data;
     logger_construction_data_t dns_logger_data;
+
 } ww_construction_data_t;
 
 void createWW(ww_construction_data_t data);
@@ -57,6 +68,7 @@ _Noreturn void runMainThread();
 extern unsigned int             workers_count;
 extern hthread_t               *workers;
 extern unsigned int             frand_seed;
+extern unsigned int             ram_profile;
 extern struct hloop_s         **loops;
 extern struct buffer_pool_s   **buffer_pools;
 extern struct socket_manager_s *socket_disp_state;

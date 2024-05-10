@@ -22,6 +22,7 @@ struct core_settings_s
     bool  dns_log_console;
 
     int   workers_count;
+    int   ram_profile;
     char *libs_path;
 
     vec_config_path_t config_paths;
