@@ -1,6 +1,5 @@
 #include "hchan.h"
 #include "hmutex.h"
-#include "threads.h"
 
 #define align2(n, w)                                                            \
     ({                                                                          \
@@ -38,7 +37,7 @@ typedef _Atomic(unsigned char) atomic_uint8_t;
 #define THREAD_ID_INVALID SIZE_MAX
 
 static size_t thread_id() {
-    static thread_local size_t _thread_id = THREAD_ID_INVALID;
+    static _Thread_local size_t _thread_id = THREAD_ID_INVALID;
     static atomic_size _thread_id_counter = ATOMIC_VAR_INIT(0);
     size_t tid = _thread_id;
     if (tid == THREAD_ID_INVALID) {
@@ -221,7 +220,7 @@ static void thr_init(Thr* t) {
 }
 
 inline static Thr* thr_current() {
-    static thread_local Thr _thr = {0};
+    static _Thread_local Thr _thr = {0};
 
     Thr* t = &_thr;
     if (!t->init) thr_init(t);
