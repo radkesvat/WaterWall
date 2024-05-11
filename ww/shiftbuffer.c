@@ -110,7 +110,7 @@ void unShallow(shift_buffer_t *self)
 void expand(shift_buffer_t *self, unsigned int increase)
 {
     const bool keep = self->curpos != self->lenpos;
-    if (*(self->refc) > 1)
+    if (isShallow(self))
     {
         const unsigned int old_realcap = self->full_cap;
         unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap * 2) + (increase * 2))));

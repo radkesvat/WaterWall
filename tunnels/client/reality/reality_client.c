@@ -122,9 +122,9 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         // todo (research) about encapsulation order and safety, CMAC HMAC
         shift_buffer_t *buf = c->payload;
-        c->payload   = NULL;
+        c->payload          = NULL;
 
-        const int chunk_size = ((1 << 16) - (kSignLen + (2*kEncryptionBlockSize) + kIVlen));
+        const int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
         if (bufLen(buf) < chunk_size)
         {
@@ -133,7 +133,7 @@ static void upStream(tunnel_t *self, context_t *c)
             signMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
             appendTlsHeader(buf);
             assert(bufLen(buf) % 16 == 5);
-            c->payload   = buf;
+            c->payload = buf;
 
             self->up->upStream(self->up, c);
         }
@@ -152,7 +152,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 assert(bufLen(chunk) % 16 == 5);
                 self->up->upStream(self->up, cout);
             }
-            reuseBuffer(getContextBufferPool(c),buf);
+            reuseBuffer(getContextBufferPool(c), buf);
             destroyContext(c);
         }
     }
@@ -271,9 +271,8 @@ static void downStream(tunnel_t *self, context_t *c)
                         goto failed;
                     }
 
-                    buf             = genericDecrypt(buf, cstate->decryption_context, state->context_password,
-                                                     getContextBufferPool(c));
-                   
+                    buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
+                                         getContextBufferPool(c));
 
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;

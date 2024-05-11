@@ -129,9 +129,9 @@ static void upStream(tunnel_t *self, context_t *c)
                                 return;
                             }
 
-                            buf             = genericDecrypt(buf, cstate->decryption_context, state->context_password,
-                                                             getContextBufferPool(c));
-                            
+                            buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
+                                                 getContextBufferPool(c));
+
                             context_t *plain_data_ctx = newContextFrom(c);
                             plain_data_ctx->payload   = buf;
                             self->up->upStream(self->up, plain_data_ctx);
@@ -188,9 +188,8 @@ static void upStream(tunnel_t *self, context_t *c)
                         goto failed;
                     }
 
-                    buf             = genericDecrypt(buf, cstate->decryption_context, state->context_password,
-                                                     getContextBufferPool(c));
-                   
+                    buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
+                                         getContextBufferPool(c));
 
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;
@@ -269,9 +268,9 @@ static void downStream(tunnel_t *self, context_t *c)
             self->dw->downStream(self->dw, c);
             break;
         case kConAuthorized:;
-            shift_buffer_t *buf        = c->payload;
-            c->payload = NULL;
-            const int       chunk_size = ((1 << 16) - (kSignLen + (2*kEncryptionBlockSize) + kIVlen));
+            shift_buffer_t *buf  = c->payload;
+            c->payload           = NULL;
+            const int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
             if (bufLen(buf) < chunk_size)
             {
@@ -279,7 +278,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 signMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
                 appendTlsHeader(buf);
                 assert(bufLen(buf) % 16 == 5);
-                c->payload   = buf;
+                c->payload = buf;
                 self->dw->downStream(self->dw, c);
             }
             else
@@ -288,8 +287,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
                     shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);
-                    chunk = genericEncrypt(chunk, cstate->encryption_context, state->context_password,
-                                           getContextBufferPool(c));
+                    chunk                  = genericEncrypt(chunk, cstate->encryption_context, state->context_password,
+                                                            getContextBufferPool(c));
                     signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
                     appendTlsHeader(chunk);
                     context_t *cout = newContextFrom(c);
@@ -297,7 +296,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     assert(bufLen(chunk) % 16 == 5);
                     self->dw->downStream(self->dw, cout);
                 }
-            reuseBuffer(getContextBufferPool(c),buf);
+                reuseBuffer(getContextBufferPool(c), buf);
                 destroyContext(c);
             }
 
@@ -306,8 +305,12 @@ static void downStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        if (c->est)
+        if (c->est )
         {
+            if(cstate->auth_state == kConAuthorized){
+                destroyContext(c);
+            return;
+            }
             self->dw->downStream(self->dw, c);
             return;
         }
