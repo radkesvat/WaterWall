@@ -217,9 +217,15 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
     }
     if (state->dest_addr_selected.status == kDvsConstant)
     {
-        state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
-        socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
-                                       strlen(state->dest_addr_selected.value_ptr));
+        if (state->constant_dest_addr.address_type == kSatDomainName)
+        {
+            socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+                                           strlen(state->dest_addr_selected.value_ptr));
+        }
+        else
+        {
+            sockaddr_set_ip(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
+        }
     }
 
     state->dest_port_selected =

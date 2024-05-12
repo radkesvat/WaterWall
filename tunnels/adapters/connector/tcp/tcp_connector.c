@@ -1,9 +1,11 @@
 #include "tcp_connector.h"
+#include "basic_types.h"
+#include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "sync_dns.h"
 #include "types.h"
-#include "utils/sockutils.h"
 #include "utils/jsonutils.h"
+#include "utils/sockutils.h"
 
 static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
 {
@@ -84,7 +86,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
     }
     return true;
 }
-static void onWriteComplete(hio_t * io)
+static void onWriteComplete(hio_t *io)
 {
     // resume the read on other end of the connection
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
@@ -124,7 +126,7 @@ static void onWriteComplete(hio_t * io)
     }
 }
 
-static void onRecv(hio_t * io, shift_buffer_t *buf)
+static void onRecv(hio_t *io, shift_buffer_t *buf)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
     if (cstate == NULL)
@@ -414,8 +416,15 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     if (state->dest_addr_selected.status == kDvsConstant)
     {
         state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
-        socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
-                                       strlen(state->dest_addr_selected.value_ptr));
+        if (state->constant_dest_addr.address_type == kSatDomainName)
+        {
+            socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+                                           strlen(state->dest_addr_selected.value_ptr));
+        }
+        else
+        {
+            sockaddr_set_ip(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
+        }
     }
 
     state->dest_port_selected =
