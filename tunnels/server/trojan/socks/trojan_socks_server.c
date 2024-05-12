@@ -33,14 +33,14 @@ typedef struct trojan_socks_server_con_state_s
     bool init_sent;
     bool first_sent;
 
-    buffer_stream_t *udp_buf;
+    buffer_stream_t *udp_stream;
 
 } trojan_socks_server_con_state_t;
 static void cleanup(trojan_socks_server_con_state_t *cstate)
 {
-    if (cstate->udp_buf)
+    if (cstate->udp_stream)
     {
-        destroyBufferStream(cstate->udp_buf);
+        destroyBufferStream(cstate->udp_stream);
     }
     free(cstate);
 }
@@ -202,7 +202,7 @@ static bool parseAddress(context_t *c)
 
 static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, line_t *line, hio_t *src_io)
 {
-    buffer_stream_t *bstream = cstate->udp_buf;
+    buffer_stream_t *bstream = cstate->udp_stream;
     if (bufferStreamLen(bstream) <= 0)
     {
         return true;
@@ -426,7 +426,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 else if (dest_context->address_protocol == kSapUdp)
                 {
                     // udp will not call init here since no dest_context addr is available right now
-                    cstate->udp_buf = newBufferStream(getContextBufferPool(c));
+                    cstate->udp_stream = newBufferStream(getContextBufferPool(c));
                 }
 
                 if (bufLen(c->payload) <= 0)
@@ -447,7 +447,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 if (dest_context->address_protocol == kSapUdp)
                 {
-                    bufferStreamPush(cstate->udp_buf, c->payload);
+                    bufferStreamPush(cstate->udp_stream, c->payload);
                     c->payload = NULL;
 
                     if (! processUdp(self, cstate, c->line, c->src_io))
@@ -494,7 +494,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (c->line->dest_ctx.address_protocol == kSapUdp)
             {
-                bufferStreamPush(cstate->udp_buf, c->payload);
+                bufferStreamPush(cstate->udp_stream, c->payload);
                 c->payload = NULL;
 
                 if (! processUdp(self, cstate, c->line, c->src_io))
@@ -505,9 +505,9 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         self->up->upStream(self->up, newFinContext(c->line));
                     }
-                    if (cstate->udp_buf)
+                    if (cstate->udp_stream)
                     {
-                        destroyBufferStream(cstate->udp_buf);
+                        destroyBufferStream(cstate->udp_stream);
                     }
                     cleanup(cstate);
                     CSTATE_MUT(c)     = NULL;
