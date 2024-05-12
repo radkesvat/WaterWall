@@ -27,7 +27,6 @@ typedef struct oss_server_state_s
 
     // settings
     tunnel_t *fallback;
-    int       fallback_delay;
     bool      anti_tit; // solve tls in tls using paddings
 
 } oss_server_state_t;
@@ -40,7 +39,6 @@ typedef struct oss_server_con_state_s
     bool             fallback_init_sent;
     bool             fallback_first_sent;
     buffer_stream_t *fallback_buf;
-    line_t          *fallback_line;
     SSL             *ssl;
     BIO             *rbio;
     BIO             *wbio;
@@ -49,12 +47,6 @@ typedef struct oss_server_con_state_s
     int              reply_sent_tit;
 
 } oss_server_con_state_t;
-
-struct timer_eventdata
-{
-    tunnel_t  *self;
-    context_t *c;
-};
 
 static int onAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in,
                         unsigned int inlen, void *arg)
@@ -132,14 +124,6 @@ static void cleanup(tunnel_t *self, context_t *c)
     }
 }
 
-static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
-{
-    struct timer_eventdata *result = malloc(sizeof(struct timer_eventdata));
-    result->self                   = self;
-    result->c                      = c;
-    return result;
-}
-
 static void fallbackWrite(tunnel_t *self, context_t *c)
 {
     if (! isAlive(c->line))
@@ -180,13 +164,6 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
     c->payload = bufferStreamRead(cstate->fallback_buf, record_len);
     state->fallback->upStream(state->fallback, c);
 }
-static void onFallbackTimer(htimer_t *timer)
-{
-    struct timer_eventdata *data = hevent_userdata(timer);
-    fallbackWrite(data->self, data->c);
-    htimer_del(timer);
-    free(data);
-}
 
 static void upStream(tunnel_t *self, context_t *c)
 {
@@ -203,16 +180,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (cstate->fallback_mode)
         {
             reuseContextBuffer(c);
-            if (state->fallback_delay <= 0)
-            {
-                fallbackWrite(self, c);
-            }
-            else
-            {
-                htimer_t *fallback_timer = htimer_add(c->line->loop, onFallbackTimer, state->fallback_delay, 1);
-                hevent_set_userdata(fallback_timer, newTimerData(self, c));
-            }
-
+            fallbackWrite(self, c);
             return;
         }
         enum sslstatus status;
@@ -280,16 +248,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (state->fallback != NULL)
                     {
                         cstate->fallback_mode = true;
-                        if (state->fallback_delay <= 0)
-                        {
-                            fallbackWrite(self, c);
-                        }
-                        else
-                        {
-                            htimer_t *fallback_timer =
-                                htimer_add(c->line->loop, onFallbackTimer, state->fallback_delay, 1);
-                            hevent_set_userdata(fallback_timer, newTimerData(self, c));
-                        }
+                        fallbackWrite(self, c);
                         return;
                     }
 
@@ -326,7 +285,7 @@ static void upStream(tunnel_t *self, context_t *c)
             do
             {
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-                shiftl(buf, 8192 / 2);
+                shiftl(buf, lCap(buf) / 2);
                 setLen(buf, 0);
                 unsigned int avail = rCap(buf);
                 n                  = SSL_read(cstate->ssl, rawBufMut(buf), (int) avail);
@@ -662,14 +621,6 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     }
     else
     {
-        getIntFromJsonObject(&(state->fallback_delay), settings, "fallback-intence-delay");
-        if (state->fallback_delay < 0)
-        {
-            state->fallback_delay = 0;
-        }
-
-        LOGD("OpensslServer: accessing fallback node");
-
         hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(hash_next);
         if (next_node == NULL)
