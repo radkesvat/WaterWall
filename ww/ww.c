@@ -9,10 +9,13 @@
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
 #include "utils/stringutils.h"
+#include <malloc.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <time.h>
 
 unsigned int             workers_count  = 0;
@@ -79,8 +82,15 @@ struct ww_runtime_state_s *getWW()
     return state;
 }
 
+void idleFreeMem(htimer_t *timer)
+{
+    (void)timer;
+    malloc_trim(0);
+}
+
 _Noreturn void runMainThread()
 {
+    // htimer_add_period(loops[0], idleFreeMem, 1, 0, 0, 0, 0, INFINITE);
     hloop_run(loops[0]);
     hloop_free(&loops[0]);
     for (size_t i = 1; i < workers_count; i++)

@@ -15,7 +15,6 @@ enum
     kVecCap = 32
 };
 
-
 #define i_TYPE                    heapq_idles_t, struct idle_item_s *
 #define i_cmp                     -c_default_cmp                                // NOLINT
 #define idletable_less_func(x, y) ((*(x))->expire_at_ms < (*(y))->expire_at_ms) // NOLINT
@@ -24,7 +23,6 @@ enum
 
 #define i_TYPE hmap_idles_t, uint64_t, struct idle_item_s *
 #include "stc/hmap.h"
-
 
 struct udp_listener_state_s
 {
@@ -39,18 +37,18 @@ struct udp_listener_state_s
 struct idle_table_s
 {
     hloop_t       *loop;
-    hidle_t       *idle_handle;
+    htimer_t      *idle_handle;
     heapq_idles_t  hqueue;
     hmap_idles_t   hmap;
     hhybridmutex_t mutex;
     uint64_t       last_update_ms;
 };
 
-void idleCallBack(hidle_t *idle);
+void idleCallBack(htimer_t *timer);
 
 void destoryIdleTable(idle_table_t *self)
 {
-    hidle_del(self->idle_handle);
+    htimer_del(self->idle_handle);
     heapq_idles_t_drop(&(self->hqueue));
     hmap_idles_t_drop(&(self->hmap));
 }
@@ -59,7 +57,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
 {
     idle_table_t *newtable = malloc(sizeof(idle_table_t));
     *newtable              = (idle_table_t){.loop           = loop,
-                                            .idle_handle    = hidle_add(loop, idleCallBack, INFINITE),
+                                            .idle_handle    = htimer_add_period(loop, idleCallBack, 1, 0, 0, 0, 0, INFINITE),
                                             .hqueue         = heapq_idles_t_with_capacity(kVecCap),
                                             .hmap           = hmap_idles_t_with_capacity(kVecCap),
                                             .last_update_ms = hloop_now_ms(loop)};
@@ -157,9 +155,9 @@ static void beforeCloseCallBack(hevent_t *ev)
     item->cb(item);
     free(item);
 }
-void idleCallBack(hidle_t *idle)
+void idleCallBack(htimer_t *timer)
 {
-    idle_table_t  *self  = hevent_userdata(idle);
+    idle_table_t  *self  = hevent_userdata(timer);
     const uint64_t now   = hloop_now_ms(self->loop);
     self->last_update_ms = now;
     hhybridmutex_lock(&(self->mutex));

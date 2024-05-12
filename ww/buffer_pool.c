@@ -6,13 +6,12 @@
 #include "utils/mathutils.h"
 #include "ww.h"
 #include <assert.h> // for assert
-#include <malloc.h>
 #include <stdlib.h>
 #include <string.h>
 
 // NOLINTBEGIN
 //  todo (cmake)
-#define MEMORY_PROFILE_SMALL    kRamProfileM1Memory
+#define MEMORY_PROFILE_SMALL    (ram_profile >= kRamProfileM1Memory ? kRamProfileM1Memory : ram_profile)
 #define MEMORY_PROFILE_SELECTED ram_profile
 
 #define BASE_READ_BUFSIZE              (1U << 13) // 8k
@@ -62,8 +61,6 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 #ifdef DEBUG
     LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
-
-    malloc_trim(0); // y tho?
 }
 
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
