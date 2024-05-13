@@ -42,11 +42,19 @@ enum
 #define CSTATE(x)     ((void *) ((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
 
+typedef void (*LineFlowSignal)(void *state);
+
 typedef struct line_s
 {
     hloop_t         *loop;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
+    void            *up_state;
+    void            *dw_state;
+    LineFlowSignal   up_pause_cb;
+    LineFlowSignal   up_resume_cb;
+    LineFlowSignal   dw_pause_cb;
+    LineFlowSignal   dw_resume_cb;
     uint16_t         refc;
     uint8_t          tid;
     uint8_t          lcid;
@@ -60,7 +68,6 @@ typedef struct line_s
 typedef struct context_s
 {
     line_t         *line;
-    hio_t          *src_io;
     shift_buffer_t *payload;
     int             fd;
     bool            init;
@@ -113,6 +120,64 @@ inline line_t *newLine(uint8_t tid)
     memset(&(result->chains_state), 0, (sizeof(void *) * kMaxChainLen));
     return result;
 }
+inline bool isAlive(line_t *line)
+{
+    return line->alive;
+}
+
+inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
+{
+    l->up_state     = state;
+    l->up_pause_cb  = pause_cb;
+    l->up_resume_cb = resume_cb;
+}
+inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
+{
+    l->dw_state     = state;
+    l->dw_pause_cb  = pause_cb;
+    l->dw_resume_cb = resume_cb;
+}
+inline void doneLineUpSide(line_t *l)
+{
+    l->up_state = NULL;
+}
+inline void doneLineDownSide(line_t *l)
+{
+    l->dw_state = NULL;
+}
+
+inline void pauseLineUpSide(line_t *l)
+{
+    if (l->up_state)
+    {
+        l->up_pause_cb(l->up_state);
+    }
+}
+
+inline void pauseLineDownSide(line_t *l)
+{
+    if (l->dw_state)
+    {
+        l->dw_pause_cb(l->dw_state);
+    }
+}
+
+inline void resumeLineUpSide(line_t *l)
+{
+    if (l->up_state)
+    {
+        l->up_resume_cb(l->up_state);
+    }
+}
+
+inline void resumeLineDownSide(line_t *l)
+{
+    if (l->dw_state)
+    {
+        l->dw_resume_cb(l->dw_state);
+    }
+}
+
 inline uint8_t reserveChainStateIndex(line_t *l)
 {
     uint8_t result = l->lcid;
@@ -178,7 +243,7 @@ inline context_t *newContextFrom(context_t *source)
 {
     lockLine(source->line);
     context_t *new_ctx = malloc(sizeof(context_t));
-    *new_ctx           = (context_t){.line = source->line, .src_io = source->src_io};
+    *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
 }
 inline context_t *newEstContext(line_t *line)
@@ -215,12 +280,6 @@ inline context_t *switchLine(context_t *c, line_t *line)
     c->line = line;
     return c;
 }
-inline bool isAlive(line_t *line)
-{
-    return line->alive;
-}
-
-
 
 inline void markAuthenticated(line_t *line)
 {
@@ -230,7 +289,6 @@ inline bool isAuthenticated(line_t *line)
 {
     return line->auth_cur > 0;
 }
-
 
 inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
 {

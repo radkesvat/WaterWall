@@ -1,4 +1,5 @@
 #pragma once
+#include "tunnel.h"
 #include "types.h"
 
 #define CSTATE_D(x)     ((reverse_server_con_state_t *) ((((x)->line->chains_state)[state->chain_index_d])))
@@ -46,6 +47,24 @@ static void removeConnectionD(thread_box_t *box, reverse_server_con_state_t *con
         con->next->prev = con->prev;
     }
     box->d_count -= 1;
+}
+static void onLinePausedU(void *cstate)
+{
+    pauseLineDownSide(((reverse_server_con_state_t *) cstate)->d);
+}
+
+static void onLineResumedU(void *cstate)
+{
+    resumeLineDownSide(((reverse_server_con_state_t *) cstate)->d);
+}
+static void onLinePausedD(void *cstate)
+{
+    pauseLineDownSide(((reverse_server_con_state_t *) cstate)->u);
+}
+
+static void onLineResumedD(void *cstate)
+{
+    resumeLineDownSide(((reverse_server_con_state_t *) cstate)->u);
 }
 
 static reverse_server_con_state_t *createCstate(bool isup, line_t *line)

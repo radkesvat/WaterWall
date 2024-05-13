@@ -126,10 +126,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
                 cstate->authenticated = true;
                 markAuthenticated(c->line);
-                context_t *init_ctx = newInitContext(c->line);
-                init_ctx->src_io    = c->src_io;
                 cstate->init_sent   = true;
-                self->up->upStream(self->up, init_ctx);
+                self->up->upStream(self->up, newInitContext(c->line));
                 if (! isAlive(c->line))
                 {
                     reuseContextBuffer(c);
@@ -199,11 +197,8 @@ disconnect:;
 fallback:;
     if (! cstate->init_sent)
     {
-        context_t *init_ctx = newInitContext(c->line);
-        init_ctx->src_io    = c->src_io;
         cstate->init_sent   = true;
-
-        state->fallback->upStream(state->fallback, init_ctx);
+        state->fallback->upStream(state->fallback, newInitContext(c->line));
         if (! isAlive(c->line))
         {
             reuseContextBuffer(c);

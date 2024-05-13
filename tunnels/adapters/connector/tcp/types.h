@@ -31,14 +31,11 @@ typedef struct tcp_connector_con_state_s
     struct timeval __profile_conenct;
 #endif
 
-    tunnel_t *tunnel;
-    line_t *  line;
-    hio_t *   io;
-
-    buffer_pool_t *  buffer_pool;
+    tunnel_t        *tunnel;
+    line_t          *line;
+    hio_t           *io;
+    buffer_pool_t   *buffer_pool;
     context_queue_t *data_queue;
-    context_queue_t *finished_queue;
-
-    bool write_paused;
-    bool established;
+    bool             write_paused;
+    bool             established;
 } tcp_connector_con_state_t;

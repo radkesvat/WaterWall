@@ -17,4 +17,3 @@ void             destroyContextQueue(context_queue_t *self);
 void             contextQueuePush(context_queue_t *self, context_t *context);
 context_t       *contextQueuePop(context_queue_t *self);
 size_t           contextQueueLen(context_queue_t *self);
-void             contextQueueNotifyIoRemoved(context_queue_t *self, hio_t *io);

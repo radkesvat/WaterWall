@@ -37,7 +37,6 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
         cstate->established    = true;
         context_t *est_context = newContext(line);
         est_context->est       = true;
-        est_context->src_io    = io;
         self->downStream(self, est_context);
         if (hevent_userdata(io) == NULL)
         {
@@ -46,7 +45,6 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
     }
 
     context_t *context = newContext(line);
-    context->src_io    = io;
     context->payload   = payload;
 
     self->downStream(self, context);

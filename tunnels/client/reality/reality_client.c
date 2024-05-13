@@ -232,9 +232,7 @@ static void upStream(tunnel_t *self, context_t *c)
     return;
 
 failed:;
-    context_t *fail_context_up = newFinContextFrom(c);
-    fail_context_up->src_io    = c->src_io;
-    self->up->upStream(self->up, fail_context_up);
+    self->up->upStream(self->up, newFinContextFrom(c));
 
     context_t *fail_context = newFinContextFrom(c);
     cleanup(self, c);

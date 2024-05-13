@@ -26,11 +26,11 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->fin)
         {
-            const unsigned int          tid                   = c->line->tid;
-            reverse_client_con_state_t *dcstate               = CSTATE_D(c);
-            CSTATE_D_MUT(c)                                   = NULL;
-            (dcstate->u->chains_state)[state->chain_index_pi] = NULL;
-            context_t *fc                                     = switchLine(c, dcstate->u);
+            const unsigned int          tid               = c->line->tid;
+            reverse_client_con_state_t *dcstate           = CSTATE_D(c);
+            CSTATE_D_MUT(c)                               = NULL;
+            (dcstate->u->chains_state)[self->chain_index] = NULL;
+            context_t *fc                                 = switchLine(c, dcstate->u);
             cleanup(dcstate);
             const unsigned int old_reverse_cons =
                 atomic_fetch_add_explicit(&(state->reverse_cons), -1, memory_order_relaxed);
@@ -111,9 +111,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (c->fin)
         {
-            reverse_client_con_state_t *ucstate               = CSTATE_U(c);
-            CSTATE_U_MUT(c)                                   = NULL;
-            (ucstate->d->chains_state)[state->chain_index_pi] = NULL;
+            reverse_client_con_state_t *ucstate              = CSTATE_U(c);
+            CSTATE_U_MUT(c)                                  = NULL;
+            (ucstate->d->chains_state)[state->chain_index_d] = NULL;
 
             if (ucstate->pair_connected)
             {
@@ -158,7 +158,7 @@ static void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-static void startReverseCelint(htimer_t *timer)
+static void startReverseClient(htimer_t *timer)
 {
     tunnel_t               *self  = hevent_userdata(timer);
     reverse_client_state_t *state = STATE(self);
@@ -191,16 +191,16 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     state->connection_per_thread = 1;
 
     // we are always the first line creator so its easy to get the positon independent index here
-    line_t *l             = newLine(0);
-    int     index         = reserveChainStateIndex(l);
-    state->chain_index_pi = index;
+    line_t *l            = newLine(0);
+    int     index        = reserveChainStateIndex(l);
+    state->chain_index_d = index;
     destroyLine(l);
 
     tunnel_t *t           = newTunnel();
     t->state              = state;
     t->upStream           = &upStream;
     t->downStream         = &downStream;
-    htimer_t *start_timer = htimer_add(loops[0], startReverseCelint, start_delay_ms, 1);
+    htimer_t *start_timer = htimer_add(loops[0], startReverseClient, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
 
     atomic_thread_fence(memory_order_release);

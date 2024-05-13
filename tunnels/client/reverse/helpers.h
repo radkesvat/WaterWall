@@ -1,14 +1,37 @@
 #pragma once
 #include "loggers/network_logger.h"
+#include "tunnel.h"
 #include "types.h"
 #include "utils/mathutils.h"
 
-#define CSTATE_D(x)            ((reverse_client_con_state_t *) ((((x)->line->chains_state)[state->chain_index_pi])))
-#define CSTATE_U(x)            ((reverse_client_con_state_t *) ((((x)->line->chains_state)[state->chain_index_pi])))
-#define CSTATE_D_MUT(x)        ((x)->line->chains_state)[state->chain_index_pi]
-#define CSTATE_U_MUT(x)        ((x)->line->chains_state)[state->chain_index_pi]
-#define PRECONNECT_DELAY_SHORT 10
-#define PRECONNECT_DELAY_HIGH  750
+#define CSTATE_D(x)     ((reverse_client_con_state_t *) ((((x)->line->chains_state)[state->chain_index_d])))
+#define CSTATE_U(x)     ((reverse_client_con_state_t *) ((((x)->line->chains_state)[self->chain_index])))
+#define CSTATE_D_MUT(x) ((x)->line->chains_state)[state->chain_index_d]
+#define CSTATE_U_MUT(x) ((x)->line->chains_state)[self->chain_index]
+enum
+{
+    kPreconnectDelayShort = 10,
+    kPreconnectDelayHigh  = 750
+};
+
+static void onLinePausedU(void *cstate)
+{
+    pauseLineUpSide(((reverse_client_con_state_t *) cstate)->d);
+}
+
+static void onLineResumedU(void *cstate)
+{
+    resumeLineUpSide(((reverse_client_con_state_t *) cstate)->d);
+}
+static void onLinePausedD(void *cstate)
+{
+    pauseLineUpSide(((reverse_client_con_state_t *) cstate)->u);
+}
+
+static void onLineResumedD(void *cstate)
+{
+    resumeLineUpSide(((reverse_client_con_state_t *) cstate)->u);
+}
 
 static reverse_client_con_state_t *createCstate(uint8_t tid)
 {
@@ -17,22 +40,21 @@ static reverse_client_con_state_t *createCstate(uint8_t tid)
 
     line_t *up = newLine(tid);
     line_t *dw = newLine(tid);
-    cstate->u  = up;
-    cstate->d  = dw;
+    reserveChainStateIndex(dw); // we always take one from the down line
+    setupLineDownSide(up, onLinePausedU, cstate, onLineResumedU);
+    setupLineDownSide(dw, onLinePausedD, cstate, onLinePausedD);
+    cstate->u = up;
+    cstate->d = dw;
 
     return cstate;
 }
 
 static void cleanup(reverse_client_con_state_t *cstate)
 {
-    if (cstate->u)
-    {
-        destroyLine(cstate->u);
-    }
-    if (cstate->d)
-    {
-        destroyLine(cstate->d);
-    }
+    doneLineDownSide(cstate->u);
+    doneLineDownSide(cstate->d);
+    destroyLine(cstate->u);
+    destroyLine(cstate->d);
     free(cstate);
 }
 static void doConnect(struct connect_arg *cg)
@@ -41,8 +63,8 @@ static void doConnect(struct connect_arg *cg)
     reverse_client_state_t     *state  = STATE(self);
     reverse_client_con_state_t *cstate = createCstate(cg->tid);
     free(cg);
-    (cstate->u->chains_state)[state->chain_index_pi] = cstate;
-    (cstate->d->chains_state)[state->chain_index_pi] = cstate;
+    (cstate->u->chains_state)[self->chain_index]    = cstate;
+    (cstate->d->chains_state)[state->chain_index_d] = cstate;
     self->up->upStream(self->up, newInitContext(cstate->u));
 }
 
@@ -96,7 +118,7 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
     struct connect_arg *cg = malloc(sizeof(struct connect_arg));
     cg->t                  = self;
     cg->tid                = tid;
-    cg->delay              = delay ? PRECONNECT_DELAY_HIGH : PRECONNECT_DELAY_SHORT;
+    cg->delay              = delay ? kPreconnectDelayHigh : kPreconnectDelayShort;
     ev.userdata            = cg;
     hloop_post_event(worker_loop, &ev);
 }

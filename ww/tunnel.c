@@ -27,6 +27,14 @@ extern context_t     *switchLine(context_t *c, line_t *line);
 extern buffer_pool_t *getThreadBufferPool(uint8_t tid);
 extern buffer_pool_t *getLineBufferPool(line_t *l);
 extern buffer_pool_t *getContextBufferPool(context_t *c);
+extern void           setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb);
+extern void           setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb);
+extern void           doneLineUpSide(line_t *l);
+extern void           doneLineDownSide(line_t *l);
+extern void           pauseLineUpSide(line_t *l);
+extern void           pauseLineDownSide(line_t *l);
+extern void           resumeLineUpSide(line_t *l);
+extern void           resumeLineDownSide(line_t *l);
 
 // `from` upstreams to `to`
 void chainUp(tunnel_t *from, tunnel_t *to)

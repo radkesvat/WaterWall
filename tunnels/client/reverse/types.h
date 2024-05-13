@@ -7,7 +7,7 @@ struct connect_arg
 {
     uint8_t      tid;
     unsigned int delay;
-    tunnel_t *   t;
+    tunnel_t    *t;
 };
 
 typedef struct reverse_client_con_state_s
@@ -25,8 +25,10 @@ typedef struct reverse_client_state_s
 {
     atomic_uint  reverse_cons;
     atomic_uint  round_index;
-    size_t       chain_index_pi;
-    size_t       connection_per_thread;
+
+    uint8_t chain_index_d;
+
+    int          connection_per_thread;
     int          min_unused_cons;
     unsigned int unused_cons[];
 

@@ -23,8 +23,7 @@ static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
     endstream_ctx->payload   = buf;
     self->up->upStream(self->up, endstream_ctx);
 }
-static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t stream_id, hio_t *stream_io,
-                           shift_buffer_t *buf)
+static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t stream_id, shift_buffer_t *buf)
 {
     line_t *line = con->line;
     if (con == NULL)
@@ -45,7 +44,6 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
 
         context_t *req = newContext(line);
         req->payload   = send_buf;
-        req->src_io    = stream_io;
         if (! con->first_sent)
         {
             con->first_sent = true;
@@ -96,7 +94,6 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         http2FrameHdPack(&framehd, rawBufMut(buf));
         context_t *req = newContext(line);
         req->payload   = buf;
-        req->src_io    = stream_io;
         self->up->upStream(self->up, req);
 
         goto send_done;
@@ -118,11 +115,10 @@ static void flushWriteQueue(http2_client_con_state_t *con)
     {
         context_t                      *stream_context = contextQueuePop(con->queue);
         http2_client_child_con_state_t *stream         = CSTATE(stream_context);
-        stream->io                                     = stream_context->src_io;
         con->state                                     = kH2SendHeaders;
 
         // consumes payload
-        while (trySendRequest(self, con, stream->stream_id, stream->io, stream_context->payload))
+        while (trySendRequest(self, con, stream->stream_id, stream_context->payload))
         {
             if (! isAlive(g->line))
             {
@@ -224,7 +220,6 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
                 stream->bytes_needed      = 0;
                 context_t *stream_data    = newContext(stream->line);
                 stream_data->payload      = gdata_buf;
-                stream_data->src_io       = con->io;
                 stream->tunnel->downStream(stream->tunnel, stream_data);
 
                 if (nghttp2_session_get_stream_user_data(session, stream_id))
@@ -243,7 +238,6 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
         writeRaw(buf, data, len);
         context_t *stream_data = newContext(stream->line);
         stream_data->payload   = buf;
-        stream_data->src_io    = con->io;
         stream->tunnel->downStream(stream->tunnel, stream_data);
     }
 
@@ -327,7 +321,6 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         http2_client_child_con_state_t *stream = CSTATE(c);
         http2_client_con_state_t       *con    = stream->parent->chains_state[self->chain_index];
-        stream->io                             = c->src_io;
 
         if (! con->handshake_completed)
         {
@@ -337,7 +330,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         con->state = kH2SendHeaders;
         // consumes payload
-        while (trySendRequest(self, con, stream->stream_id, stream->io, c->payload))
+        while (trySendRequest(self, con, stream->stream_id, c->payload))
         {
             if (! isAlive(c->line))
             {
@@ -352,8 +345,8 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            http2_client_con_state_t       *con    = takeHttp2Connection(self, c->line->tid, NULL);
-            http2_client_child_con_state_t *stream = createHttp2Stream(con, c->line, c->src_io);
+            http2_client_con_state_t       *con    = takeHttp2Connection(self, c->line->tid);
+            http2_client_child_con_state_t *stream = createHttp2Stream(con, c->line);
             CSTATE_MUT(c)                          = stream;
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
 
@@ -368,7 +361,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
             }
 
-            while (trySendRequest(self, con, 0, NULL, NULL))
+            while (trySendRequest(self, con, 0, NULL))
             {
                 if (! isAlive(c->line))
                 {
@@ -409,8 +402,6 @@ static void downStream(tunnel_t *self, context_t *c)
 {
     http2_client_state_t     *state = STATE(self);
     http2_client_con_state_t *con   = CSTATE(c);
-    con->io                         = c->src_io;
-
     if (c->payload != NULL)
     {
 
@@ -434,7 +425,7 @@ static void downStream(tunnel_t *self, context_t *c)
             return;
         }
 
-        while (trySendRequest(self, con, 0, NULL, NULL))
+        while (trySendRequest(self, con, 0, NULL))
         {
             if (! isAlive(c->line))
             {

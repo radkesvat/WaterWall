@@ -10,7 +10,7 @@
 #include "stc/deq.h"
 enum
 {
-    kQCap = 32
+    kQCap = 16
 };
 
 struct context_queue_s
@@ -44,50 +44,15 @@ void destroyContextQueue(context_queue_t *self)
 
 void contextQueuePush(context_queue_t *self, context_t *context)
 {
-    if (context->src_io)
-    {
-        context->fd = hio_fd(context->src_io);
-    }
     queue_push_back(&self->q, context);
 }
 
-// i don't know if there is a better way, since a muxed src can just gets freed even if its in the queue :(
-// could we proxy the close callback ...? 
 context_t *contextQueuePop(context_queue_t *self)
 {
     context_t *context = queue_pull_front(&self->q);
-
-    if (context->fd == 0 || ! hio_exists(context->line->loop, context->fd))
-    {
-        context->src_io = NULL;
-    }
-    else
-    {
-        if (hio_is_closed(context->src_io) || context->src_io != hio_get(context->line->loop, context->fd))
-        {
-            context->src_io = NULL;
-        }
-    }
-
     return context;
 }
 size_t contextQueueLen(context_queue_t *self)
 {
     return queue_size(&self->q);
-}
-
-void contextQueueNotifyIoRemoved(context_queue_t *self, hio_t *io)
-{
-    if (io == NULL)
-    {
-        return;
-    }
-    c_foreach(i, queue, self->q)
-    {
-        if ((*i.ref)->src_io == io)
-        {
-            (*i.ref)->src_io = NULL;
-            (*i.ref)->fd     = 0;
-        }
-    }
 }

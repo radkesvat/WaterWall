@@ -1,8 +1,10 @@
 #include "tcp_listener.h"
 #include "buffer_pool.h"
 #include "hlog.h"
+#include "hloop.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"
+#include "tunnel.h"
 #include "utils/jsonutils.h"
 #include "utils/sockutils.h"
 #include <string.h>
@@ -31,7 +33,6 @@ typedef struct tcp_listener_con_state_s
     tunnel_t        *tunnel;
     line_t          *line;
     hio_t           *io;
-    context_queue_t *finished_queue;
     context_queue_t *data_queue;
     buffer_pool_t   *buffer_pool;
     bool             write_paused;
@@ -44,18 +45,14 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
     if (cstate->io)
     {
         hevent_set_userdata(cstate->io, NULL);
+        hio_close(cstate->io);
     }
-
-    hio_t *last_resumed_io = NULL;
 
     while (contextQueueLen(cstate->data_queue) > 0)
     {
+        // all data must be written before sending fin, event loop will hold them for us
         context_t *cw = contextQueuePop(cstate->data_queue);
-        if (cw->src_io != NULL && last_resumed_io != cw->src_io)
-        {
-            last_resumed_io = cw->src_io;
-            hio_read(cw->src_io);
-        }
+
         if (write_queue)
         {
             hio_write(cstate->io, cw->payload);
@@ -68,53 +65,29 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
         destroyContext(cw);
     }
 
-    while (contextQueueLen(cstate->finished_queue) > 0)
-    {
-        context_t *cw = contextQueuePop(cstate->finished_queue);
-        if (cw->src_io != NULL && last_resumed_io != cw->src_io)
-        {
-            last_resumed_io = cw->src_io;
-            hio_read(cw->src_io);
-        }
-
-        destroyContext(cw);
-    }
-
     destroyContextQueue(cstate->data_queue);
-    destroyContextQueue(cstate->finished_queue);
+    doneLineDownSide(cstate->line);
+    destroyLine(cstate->line);
     free(cstate);
 }
 
 static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
 {
-    context_queue_t *data_queue     = (cstate)->data_queue;
-    context_queue_t *finished_queue = (cstate)->finished_queue;
-    hio_t           *io             = cstate->io;
+    context_queue_t *data_queue = (cstate)->data_queue;
+    hio_t           *io         = cstate->io;
     while (contextQueueLen(data_queue) > 0)
     {
         context_t   *cw     = contextQueuePop(data_queue);
         unsigned int bytes  = bufLen(cw->payload);
         int          nwrite = hio_write(io, cw->payload);
         cw->payload         = NULL;
-        contextQueuePush(cstate->finished_queue, cw);
+        destroyContext(cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
             return false; // write pending
         }
     }
-    // data queue is empty
-    hio_t *last_resumed_io = NULL;
-    while (contextQueueLen(finished_queue) > 0)
-    {
-        context_t *cw          = contextQueuePop(finished_queue);
-        hio_t     *upstream_io = cw->src_io;
-        if (upstream_io != NULL && (last_resumed_io != upstream_io))
-        {
-            last_resumed_io = upstream_io;
-            hio_read(upstream_io);
-        }
-        destroyContext(cw);
-    }
+
     return true;
 }
 
@@ -129,34 +102,26 @@ static void onWriteComplete(hio_t *io)
 
     if (hio_write_is_complete(io))
     {
+
+        context_queue_t *data_queue = cstate->data_queue;
+        if (contextQueueLen(data_queue) > 0 && ! resumeWriteQueue(cstate))
+        {
+            return;
+        }
         hio_setcb_write(cstate->io, NULL);
         cstate->write_paused = false;
-
-        context_queue_t *data_queue     = cstate->data_queue;
-        context_queue_t *finished_queue = cstate->finished_queue;
-        if (contextQueueLen(data_queue) > 0)
-        {
-            if (! resumeWriteQueue(cstate))
-            {
-                hio_setcb_write(cstate->io, onWriteComplete);
-                cstate->write_paused = true;
-                return;
-            }
-        }
-
-        hio_t *last_resumed_io = NULL;
-        while (contextQueueLen(finished_queue) > 0)
-        {
-            context_t *cw          = contextQueuePop(finished_queue);
-            hio_t     *upstream_io = cw->src_io;
-            if (upstream_io != NULL && (last_resumed_io != upstream_io))
-            {
-                last_resumed_io = upstream_io;
-                hio_read(upstream_io);
-            }
-            destroyContext(cw);
-        }
+        resumeLineUpSide(cstate->line);
     }
+}
+
+static void onLinePaused(void *cstate)
+{
+    hio_read_stop(((tcp_listener_con_state_t *) cstate)->io);
+}
+
+static void onLineResumed(void *cstate)
+{
+    hio_read(((tcp_listener_con_state_t *) cstate)->io);
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -183,10 +148,8 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->fin)
         {
 
-            tcp_listener_con_state_t *cstate = CSTATE(c);
-            cleanup(cstate, false);
+            cleanup(CSTATE(c), false);
             CSTATE_MUT(c) = NULL;
-            destroyLine(c->line);
         }
     }
 
@@ -201,10 +164,7 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         if (cstate->write_paused)
         {
-            if (c->src_io)
-            {
-                hio_read_stop(c->src_io);
-            }
+            pauseLineUpSide(c->line);
             contextQueuePush(cstate->data_queue, c);
         }
         else
@@ -212,19 +172,13 @@ static void downStream(tunnel_t *self, context_t *c)
             unsigned int bytes  = bufLen(c->payload);
             int          nwrite = hio_write(cstate->io, c->payload);
             c->payload          = NULL;
+            destroyContext(c);
+
             if (nwrite >= 0 && nwrite < bytes)
             {
-                if (c->src_io)
-                {
-                    hio_read_stop(c->src_io);
-                }
-                contextQueuePush(cstate->finished_queue, c);
+                pauseLineUpSide(c->line);
                 cstate->write_paused = true;
                 hio_setcb_write(cstate->io, onWriteComplete);
-            }
-            else
-            {
-                destroyContext(c);
             }
         }
     }
@@ -239,14 +193,10 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         if (c->fin)
         {
-            hio_t *io     = cstate->io;
-            CSTATE_MUT(c) = NULL;
-            contextQueueNotifyIoRemoved(cstate->data_queue, c->src_io);
-            contextQueueNotifyIoRemoved(cstate->finished_queue, c->src_io);
+            hio_t *io = cstate->io;
             cleanup(cstate, true);
-            destroyLine(c->line);
+            CSTATE_MUT(c) = NULL;
             destroyContext(c);
-            hio_close(io);
             return;
         }
     }
@@ -266,7 +216,6 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
     bool           *first_packet_sent = &((cstate)->first_packet_sent);
 
     context_t *context = newContext(line);
-    context->src_io    = io;
     context->payload   = payload;
     if (! (*first_packet_sent))
     {
@@ -313,20 +262,17 @@ static void onInboundConnected(hevent_t *ev)
     line->src_ctx.address_protocol        = kSapTcp;
     line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
 
-    *cstate = (tcp_listener_con_state_t){
-        .line              = line,
-        .buffer_pool       = getThreadBufferPool(tid),
-        .finished_queue    = newContextQueue(cstate->buffer_pool),
-        .data_queue        = newContextQueue(cstate->buffer_pool),
-        .io                = io,
-        .tunnel            = self,
-        .write_paused      = false,
-        .established       = false,
-        .first_packet_sent = false
-    };
+    *cstate = (tcp_listener_con_state_t){.line              = line,
+                                         .buffer_pool       = getThreadBufferPool(tid),
+                                         .data_queue        = newContextQueue(cstate->buffer_pool),
+                                         .io                = io,
+                                         .tunnel            = self,
+                                         .write_paused      = false,
+                                         .established       = false,
+                                         .first_packet_sent = false};
 
-    // sockaddr_set_port(&(line->src_ctx.addr), data->real_localport == 0 ? sockaddr_port((sockaddr_u
-    // *)hio_localaddr(io)) : data->real_localport);
+    setupLineDownSide(line, onLinePaused, cstate, onLineResumed);
+
     sockaddr_set_port(&(line->src_ctx.address), data->real_localport);
     line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     hevent_set_userdata(io, cstate);
@@ -345,24 +291,13 @@ static void onInboundConnected(hevent_t *ev)
 
     free(data);
 
-    // io->upstream_io = NULL;
     hio_setcb_read(io, onRecv);
     hio_setcb_close(io, onClose);
-    // hio_setcb_write(io, onWriteComplete); not required here
-    if (resumeWriteQueue(cstate))
-    {
-        cstate->write_paused = false;
-    }
-    else
-    {
-        hio_setcb_write(cstate->io, onWriteComplete);
-    }
 
     // send the init packet
     lockLine(line);
     {
         context_t *context = newInitContext(line);
-        context->src_io    = io;
         self->upStream(self, context);
         if (! isAlive(line))
         {

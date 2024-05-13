@@ -18,9 +18,8 @@
 
     This is the most memory consuming part of the program, and also the preallocation length really
     depends on where you want to use this program, on a mobile phone or on a 16 core server?
-    so there are possible choices for memory profiles in the .c file which you can select the best for your needs.
 
-    todo (runtime selection) its better that the memory profile be a runtime selection than compile time.
+    so the pool width is affected by ww memory profile
 
 */
 

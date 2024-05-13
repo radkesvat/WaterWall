@@ -10,7 +10,6 @@
 #include <string.h>
 
 // NOLINTBEGIN
-//  todo (cmake)
 #define MEMORY_PROFILE_SMALL    (ram_profile >= kRamProfileM1Memory ? kRamProfileM1Memory : ram_profile)
 #define MEMORY_PROFILE_SELECTED ram_profile
 

@@ -134,10 +134,8 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
     {
         cstate->fallback_init_sent = true;
 
-        context_t *init_ctx = newInitContext(c->line);
-        init_ctx->src_io    = c->src_io;
         cstate->init_sent   = true;
-        state->fallback->upStream(state->fallback, init_ctx);
+        state->fallback->upStream(state->fallback,  newInitContext(c->line));
         if (! isAlive(c->line))
         {
             destroyContext(c);
@@ -260,9 +258,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 LOGD("OpensslServer: Tls handshake complete");
                 cstate->handshake_completed = true;
-                context_t *up_init_ctx      = newInitContext(c->line);
-                up_init_ctx->src_io         = c->src_io;
-                self->up->upStream(self->up, up_init_ctx);
+                self->up->upStream(self->up, newInitContext(c->line));
                 if (! isAlive(c->line))
                 {
                     LOGW("OpensslServer: next node instantly closed the init with fin");
@@ -416,9 +412,7 @@ static void upStream(tunnel_t *self, context_t *c)
     return;
 
 failed_after_establishment:;
-    context_t *fail_context_up = newFinContextFrom(c);
-    fail_context_up->src_io    = c->src_io;
-    self->up->upStream(self->up, fail_context_up);
+    self->up->upStream(self->up, newFinContextFrom(c));
 
 disconnect:;
     context_t *fail_context = newFinContextFrom(c);

@@ -2,6 +2,7 @@
 #include "helpers.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
+#include "tunnel.h"
 #include "types.h"
 #include "ww.h"
 
@@ -67,6 +68,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 removeConnectionU(this_tb, ucstate);
                 ucstate->d      = c->line;
                 ucstate->paired = true;
+                setupLineUpSide(ucstate->u, onLinePausedU, ucstate, onLineResumedU);
+                setupLineUpSide(ucstate->d, onLinePausedD, ucstate, onLineResumedD);
                 CSTATE_D_MUT(c) = ucstate;
                 self->up->upStream(self->up, newEstContext(ucstate->u));
 
@@ -145,8 +148,10 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 reverse_server_con_state_t *dcstate = this_tb->d_cons_root.next;
                 removeConnectionD(this_tb, dcstate);
-                dcstate->u                                       = c->line;
-                dcstate->paired                                  = true;
+                dcstate->u      = c->line;
+                dcstate->paired = true;
+                setupLineUpSide(dcstate->u, onLinePausedU, dcstate, onLineResumedU);
+                setupLineUpSide(dcstate->d, onLinePausedD, dcstate, onLineResumedD);
                 CSTATE_U_MUT(c)                                  = dcstate;
                 (dcstate->d->chains_state)[state->chain_index_d] = dcstate;
                 self->up->upStream(self->up, newEstContext(c->line));

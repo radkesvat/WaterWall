@@ -200,7 +200,7 @@ static bool parseAddress(context_t *c)
     return true;
 }
 
-static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, line_t *line, hio_t *src_io)
+static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, line_t *line)
 {
     buffer_stream_t *bstream = cstate->udp_stream;
     if (bufferStreamLen(bstream) <= 0)
@@ -216,7 +216,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
     case kTrojanatypIpV4:
         // address_type | DST.ADDR | DST.PORT | Length |  CRLF   | Payload
-        //       1      |    4     |   2      |   2    |    2
+        //       1      |    4     |    2     |   2    |    2
 
         if (bufferStreamLen(bstream) < 1 + 4 + 2 + 2 + 2)
         {
@@ -237,7 +237,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         break;
     case kTrojanatypDomainName:
         // address_type | DST.ADDR | DST.PORT | Length |  CRLF   | Payload
-        //      1       | x(1) + x |   2      |   2    |    2
+        //      1       | x(1) + x |    2     |   2    |    2
         if (bufferStreamLen(bstream) < 1 + 1 + 2 + 2 + 2)
         {
             return true;
@@ -262,7 +262,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         break;
     case kTrojanatypIpV6:
         // address_type | DST.ADDR | DST.PORT | Length |  CRLF   | Payload
-        //      1       |   16     |   2      |   2    |    2
+        //      1       |   16     |    2     |   2    |    2
 
         if (bufferStreamLen(bstream) < 1 + 16 + 2 + 2 + 2)
         {
@@ -294,7 +294,6 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
     context_t        *c            = newContext(line);
     socket_context_t *dest_context = &(c->line->dest_ctx);
-    c->src_io                      = src_io;
     c->payload                     = bufferStreamRead(bstream, full_len);
 
     if (cstate->init_sent)
@@ -305,7 +304,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         {
             return true;
         }
-        return processUdp(self, cstate, line, src_io);
+        return processUdp(self, cstate, line);
     }
 
     dest_context->address.sa.sa_family = AF_INET;
@@ -394,7 +393,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
         return true;
     }
-    return processUdp(self, cstate, line, src_io);
+    return processUdp(self, cstate, line);
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -450,7 +449,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     bufferStreamPush(cstate->udp_stream, c->payload);
                     c->payload = NULL;
 
-                    if (! processUdp(self, cstate, c->line, c->src_io))
+                    if (! processUdp(self, cstate, c->line))
                     {
                         LOGE("TrojanSocksServer: udp packet could not be parsed");
 
@@ -497,7 +496,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 bufferStreamPush(cstate->udp_stream, c->payload);
                 c->payload = NULL;
 
-                if (! processUdp(self, cstate, c->line, c->src_io))
+                if (! processUdp(self, cstate, c->line))
                 {
                     LOGE("TrojanSocksServer: udp packet could not be parsed");
 

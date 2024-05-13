@@ -1,9 +1,13 @@
 #pragma once
 
+#include "tunnel.h"
 #include "types.h"
 
-#define MAX_CONCURRENT_STREAMS 0xffffffffu
-#define PING_INTERVAL          5000
+enum
+{
+    kMaxConcurrentStreams = 0xffffffffU,
+    kPingInterval         = 5000
+};
 
 static void onPingTimer(htimer_t *timer);
 
@@ -18,22 +22,46 @@ static nghttp2_nv makeNV(const char *name, const char *value)
     return nv;
 }
 
-static nghttp2_nv makeNV2(const char *name, const char *value, int namelen, int valuelen)
-{
-    nghttp2_nv nv;
-    nv.name     = (uint8_t *) name;
-    nv.value    = (uint8_t *) value;
-    nv.namelen  = namelen;
-    nv.valuelen = valuelen;
-    nv.flags    = NGHTTP2_NV_FLAG_NONE;
-    return nv;
-}
-
 static void printFrameHd(const nghttp2_frame_hd *hd)
 {
     (void) hd;
     // LOGD("[frame] length=%d type=%x flags=%x stream_id=%d\n", (int) hd->length, (int) hd->type, (int) hd->flags,
     //      hd->stream_id);
+}
+
+static void onStreamLinePaused(void *arg)
+{
+    http2_client_child_con_state_t *stream = (http2_client_child_con_state_t *) arg;
+    pauseLineUpSide(stream->parent);
+}
+static void onStreamLineResumed(void *arg)
+{
+    http2_client_child_con_state_t *stream = (http2_client_child_con_state_t *) arg;
+    resumeLineUpSide(stream->parent);
+}
+
+static void onH2LinePaused(void *arg)
+{
+    http2_client_con_state_t       *con = (http2_client_con_state_t *) arg;
+    http2_client_child_con_state_t *stream_i;
+    for (stream_i = con->root.next; stream_i;)
+    {
+        http2_client_child_con_state_t *next = stream_i->next;
+        pauseLineDownSide(next->line);
+        stream_i = next;
+    }
+}
+
+static void onH2LineResumed(void *arg)
+{
+    http2_client_con_state_t       *con = (http2_client_con_state_t *) arg;
+    http2_client_child_con_state_t *stream_i;
+    for (stream_i = con->root.next; stream_i;)
+    {
+        http2_client_child_con_state_t *next = stream_i->next;
+        pauseLineDownSide(next->line);
+        stream_i = next;
+    }
 }
 
 static void addStraem(http2_client_con_state_t *con, http2_client_child_con_state_t *stream)
@@ -56,7 +84,7 @@ static void removeStream(http2_client_con_state_t *con, http2_client_child_con_s
     }
 }
 
-static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_t *con, line_t *child_line, hio_t *io)
+static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_t *con, line_t *child_line)
 {
     char       authority_addr[320];
     nghttp2_nv nvs[15];
@@ -102,11 +130,12 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
     stream->chunkbs   = newBufferStream(getLineBufferPool(con->line));
     stream->parent    = con->line;
     stream->line      = child_line;
-    stream->io        = io;
     stream->tunnel    = con->tunnel->dw;
-
     stream->line->chains_state[stream->tunnel->chain_index + 1] = stream;
+    setupLineUpSide(stream->line, onStreamLinePaused, stream, onStreamLineResumed);
+
     addStraem(con, stream);
+
     // nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
 
     return stream;
@@ -116,37 +145,39 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
 
     destroyBufferStream(stream->chunkbs);
     stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
+    doneLineUpSide(stream->line);
+
     free(stream);
 }
 
-static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid, hio_t *io)
+static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 {
-    http2_client_state_t *    state = STATE(self);
+    http2_client_state_t     *state = STATE(self);
     http2_client_con_state_t *con   = malloc(sizeof(http2_client_con_state_t));
-    memset(con, 0, sizeof(http2_client_con_state_t));
-    
-    con->queue                                 = newContextQueue(getThreadBufferPool(tid));
-    con->content_type                          = state->content_type;
-    con->path                                  = state->path;
-    con->host                                  = state->host;
-    con->host_port                             = state->host_port;
-    con->scheme                                = state->scheme;
-    con->method                                = kHttpGet;
-    con->line                                  = newLine(tid);
-    con->ping_timer                            = htimer_add(con->line->loop, onPingTimer, PING_INTERVAL, INFINITE);
-    con->tunnel                                = self;
-    con->io                                    = io;
+
+    *con = (http2_client_con_state_t){
+        .queue        = newContextQueue(getThreadBufferPool(tid)),
+        .content_type = state->content_type,
+        .path         = state->path,
+        .host         = state->host,
+        .host_port    = state->host_port,
+        .scheme       = state->scheme,
+        .state        = kH2SendMagic,
+        .method       = kHttpGet,
+        .line         = newLine(tid),
+        .ping_timer   = htimer_add(con->line->loop, onPingTimer, kPingInterval, INFINITE),
+        .tunnel       = self,
+    };
     con->line->chains_state[self->chain_index] = con;
+    setupLineUpSide(con->line, onH2LinePaused, con, onH2LineResumed);
 
     hevent_set_userdata(con->ping_timer, con);
     nghttp2_session_client_new2(&con->session, state->cbs, con, state->ngoptions);
     nghttp2_settings_entry settings[] = {
-        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, MAX_CONCURRENT_STREAMS},
+        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, kMaxConcurrentStreams},
         {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (1U << 18)},
-        };
+    };
     nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
-
-    con->state = kH2SendMagic;
 
     if (state->content_type == kApplicationGrpc)
     {
@@ -157,10 +188,10 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid, 
 }
 static void deleteHttp2Connection(http2_client_con_state_t *con)
 {
-    tunnel_t *            self  = con->tunnel;
+    tunnel_t             *self  = con->tunnel;
     http2_client_state_t *state = STATE(self);
 
-    vec_cons *    vector = &(state->thread_cpool[con->line->tid].cons);
+    vec_cons     *vector = &(state->thread_cpool[con->line->tid].cons);
     vec_cons_iter it     = vec_cons_find(vector, con);
     if (it.ref != vec_cons_end(vector).ref)
     {
@@ -171,8 +202,8 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     for (stream_i = con->root.next; stream_i;)
     {
         http2_client_child_con_state_t *next    = stream_i->next;
-        context_t *                     fin_ctx = newFinContext(stream_i->line);
-        tunnel_t *                      dest    = stream_i->tunnel;
+        context_t                      *fin_ctx = newFinContext(stream_i->line);
+        tunnel_t                       *dest    = stream_i->tunnel;
         deleteHttp2Stream(stream_i);
         CSTATE_MUT(fin_ctx) = NULL;
         dest->downStream(dest, fin_ctx);
@@ -181,12 +212,13 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     nghttp2_session_del(con->session);
     con->line->chains_state[self->chain_index] = NULL;
     destroyContextQueue(con->queue);
+    doneLineDownSide(con->line);
     destroyLine(con->line);
     htimer_del(con->ping_timer);
     free(con);
 }
 
-static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid, hio_t *io)
+static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid)
 {
 
     http2_client_state_t *state = STATE(self);
@@ -215,12 +247,12 @@ static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid, hi
             return con;
         }
 
-        con = createHttp2Connection(self, tid, io);
+        con = createHttp2Connection(self, tid);
         vec_cons_push(vector, con);
         return con;
     }
 
-    http2_client_con_state_t *con = createHttp2Connection(self, tid, io);
+    http2_client_con_state_t *con = createHttp2Connection(self, tid);
     vec_cons_push(vector, con);
     return con;
 }
@@ -232,7 +264,7 @@ static void onPingTimer(htimer_t *timer)
     {
         LOGW("Http2Client: closing a session due to no ping reply");
         context_t *con_fc   = newFinContext(con->line);
-        tunnel_t * con_dest = con->tunnel->up;
+        tunnel_t  *con_dest = con->tunnel->up;
         deleteHttp2Connection(con);
         con_dest->upStream(con_dest, con_fc);
     }
@@ -240,7 +272,7 @@ static void onPingTimer(htimer_t *timer)
     {
         con->no_ping_ack = true;
         nghttp2_submit_ping(con->session, 0, NULL);
-        char * data = NULL;
+        char  *data = NULL;
         size_t len;
         len = nghttp2_session_mem_send(con->session, (const uint8_t **) &data);
         if (len > 0)
@@ -250,7 +282,6 @@ static void onPingTimer(htimer_t *timer)
             writeRaw(send_buf, data, len);
             context_t *req = newContext(con->line);
             req->payload   = send_buf;
-            req->src_io    = NULL;
             if (! con->first_sent)
             {
                 con->first_sent = true;

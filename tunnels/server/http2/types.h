@@ -1,8 +1,7 @@
 #pragma once
 #include "api.h"
 #include "buffer_stream.h"
-#include "grpc_def.h"
-#include "http2_def.h"
+
 #include "http_def.h"
 #include "nghttp2/nghttp2.h"
 
@@ -36,7 +35,6 @@ typedef struct http2_server_child_con_state_s
     size_t           bytes_needed;
     line_t *         parent;
     line_t *         line;
-    hio_t *          io;
     tunnel_t *       tunnel;
 } http2_server_child_con_state_t;
 
@@ -51,7 +49,6 @@ typedef struct http2_server_con_state_s
 
     tunnel_t *                     tunnel;
     line_t *                       line;
-    hio_t *                        io;
     http2_server_child_con_state_t root;
 
 } http2_server_con_state_t;
