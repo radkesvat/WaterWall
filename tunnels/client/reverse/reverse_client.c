@@ -1,6 +1,9 @@
 #include "reverse_client.h"
+#include "buffer_pool.h"
 #include "helpers.h"
 #include "loggers/network_logger.h"
+#include "shiftbuffer.h"
+#include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
 
@@ -28,7 +31,7 @@ static void upStream(tunnel_t *self, context_t *c)
             CSTATE_D_MUT(c)                                   = NULL;
             (dcstate->u->chains_state)[state->chain_index_pi] = NULL;
             context_t *fc                                     = switchLine(c, dcstate->u);
-            destroyCstate(dcstate);
+            cleanup(dcstate);
             const unsigned int old_reverse_cons =
                 atomic_fetch_add_explicit(&(state->reverse_cons), -1, memory_order_relaxed);
             LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid, state->unused_cons[tid],
@@ -59,6 +62,14 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             if (! ucstate->first_sent_d)
             {
+                ucstate->pair_connected = true;
+                if (state->unused_cons[tid] > 0)
+                {
+                    state->unused_cons[tid] -= 1;
+                }
+                atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
+                initiateConnect(self, tid, false);
+
                 ucstate->first_sent_d = true;
                 context_t *turned     = switchLine(c, ucstate->d);
                 turned->first         = true;
@@ -71,40 +82,28 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            ucstate->pair_connected = true;
-            if (state->unused_cons[tid] > 0)
-            {
-                state->unused_cons[tid] -= 1;
-            }
-            atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
-            self->dw->downStream(self->dw, newInitContext(ucstate->d));
-
-            if (CSTATE_U(c) == NULL)
-            {
-                reuseBuffer(getContextBufferPool(c), c->payload);
-                c->payload = NULL;
-                destroyContext(c);
-                return;
-            }
 
             // first byte is 0xFF a signal from reverse server
             uint8_t check = 0x0;
             readUI8(c->payload, &check);
-            assert(check == (unsigned char) 0xFF);
-            shiftr(c->payload, 1);
-            if (bufLen(c->payload) <= 0)
+            if (check != (unsigned char) 0xFF)
             {
-                initiateConnect(self, tid, false);
-                reuseBuffer(getContextBufferPool(c), c->payload);
-                c->payload = NULL;
+                reuseContextBuffer(c);
+                cleanup(ucstate);
+                self->up->upStream(self->up, newFinContextFrom(c));
                 destroyContext(c);
                 return;
             }
+            shiftr(c->payload, 1);
+            state->unused_cons[tid] += 1;
+            LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
+                 atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
 
-            ucstate->first_sent_d = true;
-            c->first              = true;
-            self->dw->downStream(self->dw, switchLine(c, ucstate->d));
-            initiateConnect(self, tid, false);
+            self->dw->downStream(self->dw, newInitContext(ucstate->d));
+
+            reuseContextBuffer(c);
+            destroyContext(c);
+            return;
         }
     }
     else
@@ -123,12 +122,12 @@ static void downStream(tunnel_t *self, context_t *c)
                 LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                      old_reverse_cons - 1);
                 context_t *fc = switchLine(c, ucstate->d);
-                destroyCstate(ucstate);
+                cleanup(ucstate);
                 self->dw->downStream(self->dw, fc);
             }
             else
             {
-                destroyCstate(ucstate);
+                cleanup(ucstate);
                 if (state->unused_cons[tid] > 0)
                 {
                     state->unused_cons[tid] -= 1;
@@ -143,11 +142,14 @@ static void downStream(tunnel_t *self, context_t *c)
         else if (c->est)
         {
             CSTATE_U(c)->established = true;
-            state->unused_cons[tid] += 1;
-            LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
-                 atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+
+            context_t *hello_data_ctx = newContextFrom(c);
+            hello_data_ctx->payload   = popBuffer(getContextBufferPool(c));
+            setLen(hello_data_ctx->payload, 1);
+            writeUI8(hello_data_ctx->payload, 0xFF);
+            self->up->upStream(self->up, hello_data_ctx);
+
             destroyContext(c);
-            initiateConnect(self, tid, false);
         }
         else
         {
@@ -185,8 +187,8 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
-    state->min_unused_cons       = min(max(workers_count * 4, state->min_unused_cons), 128);
-    state->connection_per_thread = min(4, state->min_unused_cons / workers_count);
+    state->min_unused_cons       = 1;
+    state->connection_per_thread = 1;
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l             = newLine(0);

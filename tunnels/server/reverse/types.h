@@ -7,7 +7,7 @@ typedef struct reverse_server_con_state_s
 {
     struct reverse_server_con_state_s *prev, *next;
     bool                               paired;
-    bool                               signal_sent;
+    bool                               handshaked;
     context_queue_t *                  uqueue;
     line_t *                           u;
     line_t *                           d;

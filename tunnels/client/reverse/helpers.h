@@ -23,16 +23,22 @@ static reverse_client_con_state_t *createCstate(uint8_t tid)
     return cstate;
 }
 
-static void destroyCstate(reverse_client_con_state_t *cstate)
+static void cleanup(reverse_client_con_state_t *cstate)
 {
-    destroyLine(cstate->u);
-    destroyLine(cstate->d);
+    if (cstate->u)
+    {
+        destroyLine(cstate->u);
+    }
+    if (cstate->d)
+    {
+        destroyLine(cstate->d);
+    }
     free(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
-    tunnel_t *                  self   = cg->t;
-    reverse_client_state_t *    state  = STATE(self);
+    tunnel_t                   *self   = cg->t;
+    reverse_client_state_t     *state  = STATE(self);
     reverse_client_con_state_t *cstate = createCstate(cg->tid);
     free(cg);
     (cstate->u->chains_state)[state->chain_index_pi] = cstate;
@@ -48,7 +54,7 @@ static void connectTimerFinished(htimer_t *timer)
 static void beforeConnect(hevent_t *ev)
 {
     struct connect_arg *cg            = hevent_userdata(ev);
-    htimer_t *          connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
+    htimer_t           *connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
     if (connect_timer)
     {
         hevent_set_userdata(connect_timer, cg);

@@ -64,7 +64,7 @@ static reverse_server_con_state_t *createCstate(bool isup, line_t *line)
     return cstate;
 }
 
-static void destroyCstate(reverse_server_con_state_t *cstate)
+static void cleanup(reverse_server_con_state_t *cstate)
 {
 
     if (cstate->uqueue)
