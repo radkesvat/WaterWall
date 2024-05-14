@@ -171,7 +171,6 @@ static void upStream(tunnel_t *self, context_t *c)
             unsigned int bytes  = bufLen(c->payload);
             int          nwrite = hio_write(cstate->io, c->payload);
             c->payload          = NULL;
-            destroyContext(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {
@@ -179,6 +178,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 cstate->write_paused = true;
                 hio_setcb_write(cstate->io, onWriteComplete);
             }
+            destroyContext(c);
+
         }
     }
     else
