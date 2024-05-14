@@ -47,12 +47,14 @@ static void upStream(tunnel_t *self, context_t *c)
             if (dcstate->handshaked || check != (unsigned char) 0xFF)
             {
                 reuseContextBuffer(c);
+                CSTATE_D_MUT(c)                                  = NULL;
+                (dcstate->u->chains_state)[state->chain_index_u] = NULL;
                 cleanup(dcstate);
                 self->dw->downStream(self->dw, newFinContextFrom(c));
                 destroyContext(c);
                 return;
             }
-            shiftr(c->payload, 1);
+            reuseContextBuffer(c);
             dcstate->handshaked = true;
             self->dw->downStream(self->dw, newEstContext(c->line));
 
@@ -61,7 +63,12 @@ static void upStream(tunnel_t *self, context_t *c)
             setLen(hello_data_ctx->payload, 1);
             writeUI8(hello_data_ctx->payload, 0xFF);
             self->dw->downStream(self->dw, hello_data_ctx);
-
+            if (! isAlive(c->line))
+            {
+                reuseContextBuffer(c);
+                destroyContext(c);
+                return;
+            }
             if (this_tb->u_count > 0)
             {
                 reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
@@ -72,13 +79,20 @@ static void upStream(tunnel_t *self, context_t *c)
                 setupLineUpSide(ucstate->d, onLinePausedD, ucstate, onLineResumedD);
                 CSTATE_D_MUT(c) = ucstate;
                 self->up->upStream(self->up, newEstContext(ucstate->u));
-
+                if (! isAlive(c->line))
+                {
+                    reuseContextBuffer(c);
+                    destroyContext(c);
+                    return;
+                }
                 flushWriteQueue(self, ucstate);
             }
             else
             {
                 addConnectionD(this_tb, dcstate);
             }
+            destroyContext(c);
+
         }
     }
     else
@@ -155,13 +169,13 @@ static void downStream(tunnel_t *self, context_t *c)
                 CSTATE_U_MUT(c)                                  = dcstate;
                 (dcstate->d->chains_state)[state->chain_index_d] = dcstate;
                 self->up->upStream(self->up, newEstContext(c->line));
-                if (CSTATE_U(c) == NULL)
+                if (! isAlive(c->line))
                 {
                     destroyContext(c);
                     return;
                 }
                 self->dw->downStream(self->dw, newEstContext(dcstate->d));
-                if (CSTATE_U(c) == NULL)
+                if (! isAlive(c->line))
                 {
                     destroyContext(c);
                     return;

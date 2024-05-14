@@ -62,16 +62,20 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             if (! ucstate->first_sent_d)
             {
-                ucstate->pair_connected = true;
                 if (state->unused_cons[tid] > 0)
                 {
                     state->unused_cons[tid] -= 1;
                 }
                 atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
                 initiateConnect(self, tid, false);
-
+                context_t *turned = switchLine(c, ucstate->d);
+                if (! isAlive(ucstate->d))
+                {
+                    reuseContextBuffer(c);
+                    destroyContext(c);
+                    return;
+                }
                 ucstate->first_sent_d = true;
-                context_t *turned     = switchLine(c, ucstate->d);
                 turned->first         = true;
                 self->dw->downStream(self->dw, turned);
             }
@@ -89,6 +93,8 @@ static void downStream(tunnel_t *self, context_t *c)
             if (check != (unsigned char) 0xFF)
             {
                 reuseContextBuffer(c);
+                CSTATE_U_MUT(c)                                  = NULL;
+                (ucstate->d->chains_state)[state->chain_index_d] = NULL;
                 cleanup(ucstate);
                 self->up->upStream(self->up, newFinContextFrom(c));
                 destroyContext(c);
@@ -98,7 +104,7 @@ static void downStream(tunnel_t *self, context_t *c)
             state->unused_cons[tid] += 1;
             LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                  atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
-
+            ucstate->pair_connected = true;
             self->dw->downStream(self->dw, newInitContext(ucstate->d));
 
             reuseContextBuffer(c);
