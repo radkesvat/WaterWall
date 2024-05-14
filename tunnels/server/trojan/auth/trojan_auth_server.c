@@ -290,7 +290,6 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             state->fallback_delay = 0;
         }
 
-        LOGD("TrojanAuthServer: accessing fallback node");
 
         hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(hash_next);

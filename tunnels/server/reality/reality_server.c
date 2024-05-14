@@ -368,7 +368,6 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         LOGW("RealityServer: no destination node provided in json");
         return NULL;
     }
-    LOGD("RealityServer: accessing destination node");
 
     hash_t  hash_next = CALC_HASH_BYTES(dest_node_name, strlen(dest_node_name));
     node_t *next_node = getNode(hash_next);
