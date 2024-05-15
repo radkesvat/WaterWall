@@ -1,10 +1,13 @@
 #include "reverse_client.h"
-#include "buffer_pool.h"
 #include "helpers.h"
 #include "loggers/network_logger.h"
+#include "shiftbuffer.h"
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
 
 static void upStream(tunnel_t *self, context_t *c)
 {
@@ -43,7 +46,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            assert(false); // unexpected
+            // unexpected
         }
     }
 }
@@ -65,6 +68,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             if (ucstate->handshaked)
             {
+            hasdata:;
                 if (state->unused_cons[tid] > 0)
                 {
                     state->unused_cons[tid] -= 1;
@@ -77,6 +81,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 self->dw->downStream(self->dw, newInitContext(ucstate->d));
                 if (! isAlive(ucstate->d))
                 {
+
                     reuseContextBuffer(c);
                     destroyContext(c);
                     return;
@@ -90,8 +95,10 @@ static void downStream(tunnel_t *self, context_t *c)
                 // first byte is 0xFF a signal from reverse server
                 uint8_t check = 0x0;
                 readUI8(c->payload, &check);
+                shiftr(c->payload, 1);
                 if (check != (unsigned char) 0xFF)
                 {
+
                     reuseContextBuffer(c);
                     CSTATE_U_MUT(c)                                  = NULL;
                     (ucstate->d->chains_state)[state->chain_index_d] = NULL;
@@ -101,13 +108,22 @@ static void downStream(tunnel_t *self, context_t *c)
                     return;
                 }
                 ucstate->handshaked = true;
-                reuseContextBuffer(c);
 
                 state->unused_cons[tid] += 1;
                 LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                      atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
 
-                destroyContext(c);
+                initiateConnect(self, tid, false);
+                if (bufLen(c->payload) > 0)
+                {
+                    goto hasdata;
+                }
+                else
+                {
+                    reuseContextBuffer(c);
+                    destroyContext(c);
+                }
+
                 return;
             }
         }
@@ -133,13 +149,17 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                cleanup(ucstate);
-                if (state->unused_cons[tid] > 0)
+                if (ucstate->handshaked)
                 {
-                    state->unused_cons[tid] -= 1;
+                    if (state->unused_cons[tid] > 0)
+                    {
+                        state->unused_cons[tid] -= 1;
+                    }
+                    LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
+                         atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
                 }
-                LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
-                     atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+                cleanup(ucstate);
+
                 initiateConnect(self, tid, true);
 
                 destroyContext(c);
@@ -153,7 +173,7 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            assert(false); // unexpected
+            // unexpected
         }
     }
 }
@@ -162,11 +182,11 @@ static void startReverseClient(htimer_t *timer)
 {
     tunnel_t               *self  = hevent_userdata(timer);
     reverse_client_state_t *state = STATE(self);
-    for (int i = 0; i < workers_count; i++)
+    for (unsigned int i = 0; i < workers_count; i++)
     {
-        const int cpt = state->connection_per_thread;
+        const int cpt = (int) state->connection_per_thread;
 
-        for (size_t ci = 0; ci < cpt; ci++)
+        for (int ci = 0; ci < cpt; ci++)
         {
             initiateConnect(self, i, true);
         }
@@ -183,12 +203,12 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(atomic_uint) * workers_count));
     const cJSON *settings = instance_info->node_settings_json;
 
-    getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
+    getIntFromJsonObject((int *) &(state->min_unused_cons), settings, "minimum-unused");
 
     // int total = max(16, state->cons_forward);
     // int total = max(1, state->cons_forward);
-    state->min_unused_cons       = 1;
-    state->connection_per_thread = 1;
+    state->min_unused_cons       = min(max((workers_count * (ssize_t)4), state->min_unused_cons), 128);
+    state->connection_per_thread = min(4, state->min_unused_cons / workers_count);
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l            = newLine(0);
