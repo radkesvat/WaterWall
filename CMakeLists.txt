@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 
-project(Waterwall VERSION 0.7)
+project(Waterwall VERSION 0.8)
 
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
@@ -18,16 +18,17 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
   if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(CMAKE_C_COMPILE_OPTIONS_IPO  "-flto")
     set(CMAKE_CXX_COMPILE_OPTIONS_IPO  "-flto")
+    
+    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-generate")
+    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-use=${CMAKE_CURRENT_SOURCE_DIR}/build/bin/code.profdata")
+
   endif()
 endif()
 
+# force link glibc ver 2.27
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -include  ${CMAKE_CURRENT_SOURCE_DIR}/core/force_link_glibc_2.27.h")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include  ${CMAKE_CURRENT_SOURCE_DIR}/core/force_link_glibc_2.27.h")
 
-
-
-# set(CMAKE_VERBOSE_MAKEFILE ON CACHE STRING "my configurable string" FORCE)
-# set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
-# set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address" CACHE STRING "my configurable string" FORCE)
-# set(CMAKE_EXE_LINKER_FLAGS_DEBUG  "${CMAKE_EXE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer  -fsanitize=address" CACHE STRING "my configurable string" FORCE)
 
 set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
 
@@ -341,7 +342,7 @@ target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 endif()
 
 add_compile_options(
-  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> /experimental:c11atomics
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> 
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
 )
 
@@ -350,7 +351,7 @@ if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_options(Waterwall PUBLIC -fsanitize=address)
   target_link_options(Waterwall PUBLIC -fsanitize=address)
 endif()
-# target_compile_options(Waterwall PUBLIC -pedantic)
+
 
 message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
