@@ -2,7 +2,6 @@
 #include "buffer_pool.h"
 #include "helpers.h"
 #include "loggers/network_logger.h"
-#include "shiftbuffer.h"
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
@@ -60,15 +59,22 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (ucstate->pair_connected)
         {
-            if (! ucstate->first_sent_d)
+            self->dw->downStream(self->dw, switchLine(c, ucstate->d));
+        }
+        else
+        {
+            if (ucstate->handshaked)
             {
                 if (state->unused_cons[tid] > 0)
                 {
                     state->unused_cons[tid] -= 1;
                 }
                 atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
+
+                ucstate->pair_connected = true;
+                context_t *turned       = switchLine(c, ucstate->d);
+                self->dw->downStream(self->dw, newInitContext(ucstate->d));
                 initiateConnect(self, tid, false);
-                context_t *turned = switchLine(c, ucstate->d);
                 if (! isAlive(ucstate->d))
                 {
                     reuseContextBuffer(c);
@@ -81,35 +87,29 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                self->dw->downStream(self->dw, switchLine(c, ucstate->d));
-            }
-        }
-        else
-        {
-
-            // first byte is 0xFF a signal from reverse server
-            uint8_t check = 0x0;
-            readUI8(c->payload, &check);
-            if (check != (unsigned char) 0xFF)
-            {
+                // first byte is 0xFF a signal from reverse server
+                uint8_t check = 0x0;
+                readUI8(c->payload, &check);
+                if (check != (unsigned char) 0xFF)
+                {
+                    reuseContextBuffer(c);
+                    CSTATE_U_MUT(c)                                  = NULL;
+                    (ucstate->d->chains_state)[state->chain_index_d] = NULL;
+                    cleanup(ucstate);
+                    self->up->upStream(self->up, newFinContextFrom(c));
+                    destroyContext(c);
+                    return;
+                }
+                ucstate->handshaked = true;
                 reuseContextBuffer(c);
-                CSTATE_U_MUT(c)                                  = NULL;
-                (ucstate->d->chains_state)[state->chain_index_d] = NULL;
-                cleanup(ucstate);
-                self->up->upStream(self->up, newFinContextFrom(c));
+
+                state->unused_cons[tid] += 1;
+                LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
+                     atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+
                 destroyContext(c);
                 return;
             }
-            shiftr(c->payload, 1);
-            state->unused_cons[tid] += 1;
-            LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
-                 atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
-            ucstate->pair_connected = true;
-            self->dw->downStream(self->dw, newInitContext(ucstate->d));
-
-            reuseContextBuffer(c);
-            destroyContext(c);
-            return;
         }
     }
     else
@@ -148,13 +148,6 @@ static void downStream(tunnel_t *self, context_t *c)
         else if (c->est)
         {
             CSTATE_U(c)->established = true;
-
-            context_t *hello_data_ctx = newContextFrom(c);
-            hello_data_ctx->payload   = popBuffer(getContextBufferPool(c));
-            setLen(hello_data_ctx->payload, 1);
-            writeUI8(hello_data_ctx->payload, 0xFF);
-            self->up->upStream(self->up, hello_data_ctx);
-
             destroyContext(c);
         }
         else

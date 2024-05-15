@@ -42,7 +42,7 @@ static reverse_client_con_state_t *createCstate(uint8_t tid)
     line_t *dw = newLine(tid);
     reserveChainStateIndex(dw); // we always take one from the down line
     setupLineDownSide(up, onLinePausedU, cstate, onLineResumedU);
-    setupLineDownSide(dw, onLinePausedD, cstate, onLinePausedD);
+    setupLineDownSide(dw, onLinePausedD, cstate, onLineResumedD);
     cstate->u = up;
     cstate->d = dw;
 
@@ -65,7 +65,19 @@ static void doConnect(struct connect_arg *cg)
     free(cg);
     (cstate->u->chains_state)[self->chain_index]    = cstate;
     (cstate->d->chains_state)[state->chain_index_d] = cstate;
+    context_t *hello_data_ctx                       = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
+
+    if (! isAlive(cstate->u))
+    {
+        destroyContext(hello_data_ctx);
+        return;
+    }
+
+    hello_data_ctx->payload = popBuffer(getContextBufferPool(hello_data_ctx));
+    setLen(hello_data_ctx->payload, 1);
+    writeUI8(hello_data_ctx->payload, 0xFF);
+    self->up->upStream(self->up, hello_data_ctx);
 }
 
 static void connectTimerFinished(htimer_t *timer)

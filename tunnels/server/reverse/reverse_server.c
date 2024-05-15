@@ -41,12 +41,12 @@ static void upStream(tunnel_t *self, context_t *c)
             thread_box_t               *this_tb = &(state->threadlocal_pool[c->line->tid]);
             reverse_server_con_state_t *dcstate = CSTATE_D(c);
 
-            // first byte is 0xFF a signal from reverse server
+            // first byte is 0xFF a signal from reverse client
             uint8_t check = 0x0;
             readUI8(c->payload, &check);
+            reuseContextBuffer(c);
             if (dcstate->handshaked || check != (unsigned char) 0xFF)
             {
-                reuseContextBuffer(c);
                 CSTATE_D_MUT(c)                                  = NULL;
                 (dcstate->u->chains_state)[state->chain_index_u] = NULL;
                 cleanup(dcstate);
@@ -54,21 +54,21 @@ static void upStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
-            reuseContextBuffer(c);
             dcstate->handshaked = true;
-            self->dw->downStream(self->dw, newEstContext(c->line));
 
             context_t *hello_data_ctx = newContextFrom(c);
             hello_data_ctx->payload   = popBuffer(getContextBufferPool(c));
             setLen(hello_data_ctx->payload, 1);
             writeUI8(hello_data_ctx->payload, 0xFF);
             self->dw->downStream(self->dw, hello_data_ctx);
+
             if (! isAlive(c->line))
             {
                 reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }
+
             if (this_tb->u_count > 0)
             {
                 reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
@@ -77,7 +77,15 @@ static void upStream(tunnel_t *self, context_t *c)
                 ucstate->paired = true;
                 setupLineUpSide(ucstate->u, onLinePausedU, ucstate, onLineResumedU);
                 setupLineUpSide(ucstate->d, onLinePausedD, ucstate, onLineResumedD);
+                cleanup(CSTATE_D(c));
                 CSTATE_D_MUT(c) = ucstate;
+                self->dw->downStream(self->dw, newEstContext(c->line));
+                if (! isAlive(c->line))
+                {
+                    reuseContextBuffer(c);
+                    destroyContext(c);
+                    return;
+                }
                 self->up->upStream(self->up, newEstContext(ucstate->u));
                 if (! isAlive(c->line))
                 {
@@ -92,7 +100,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 addConnectionD(this_tb, dcstate);
             }
             destroyContext(c);
-
         }
     }
     else
@@ -152,14 +159,13 @@ static void downStream(tunnel_t *self, context_t *c)
         thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
         if (c->init)
         {
-            if (state->chain_index_u == 0)
+            if (WW_UNLIKELY(state->chain_index_u == 0))
             {
                 state->chain_index_u = reserveChainStateIndex(c->line);
             }
 
             if (this_tb->d_count > 0)
             {
-
                 reverse_server_con_state_t *dcstate = this_tb->d_cons_root.next;
                 removeConnectionD(this_tb, dcstate);
                 dcstate->u      = c->line;
