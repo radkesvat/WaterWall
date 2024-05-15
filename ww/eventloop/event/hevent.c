@@ -489,7 +489,7 @@ static void __keepalive_timeout_cb(htimer_t* timer) {
         if (io->io_type & HIO_TYPE_SOCKET) {
             char localaddrstr[SOCKADDR_STRLEN] = {0};
             char peeraddrstr[SOCKADDR_STRLEN] = {0};
-            hlogw("keepalive timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr), SOCKADDR_STR(io->peeraddr, peeraddrstr));
+            hlogd("keepalive timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr), SOCKADDR_STR(io->peeraddr, peeraddrstr));
         }
         io->error = ETIMEDOUT;
         hio_close(io);

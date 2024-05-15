@@ -402,7 +402,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
             err = socket_errno();
             if (err == EAGAIN || err == EINTR) {
                 nwrite = 0;
-                hlogw("try_write failed, enqueue!");
+                hlogd("try_write failed, enqueue!");
                 goto enqueue;
             }
             else {
@@ -494,7 +494,7 @@ int hio_close(hio_t* io) {
     if (!write_queue_empty(&io->write_queue) && io->error == 0 && io->close == 0 && io->destroy == 0) {
         io->close = 1;
         
-        hlogw("write_queue not empty, close later.");
+        hlogd("write_queue not empty, close later.");
         int timeout_ms = io->close_timeout ? io->close_timeout : HIO_DEFAULT_CLOSE_TIMEOUT;
         io->close_timer = htimer_add(io->loop, __close_timeout_cb, timeout_ms, 1);
         io->close_timer->privdata = io;
