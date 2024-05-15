@@ -24,8 +24,8 @@
 #define HIO_READ_UNTIL_LENGTH   0x2
 #define HIO_READ_UNTIL_DELIM    0x4
 
-ARRAY_DECL(hio_t*, io_array);
-QUEUE_DECL(hevent_t, event_queue);
+ARRAY_DECL(hio_t*, io_array)
+QUEUE_DECL(hevent_t, event_queue)
 
 struct hloop_s {
     uint32_t    flags;
@@ -64,7 +64,7 @@ struct hloop_s {
     hhybridmutex_t                    custom_events_mutex;
 };
 
-uint64_t hloop_next_event_id();
+uint64_t hloop_next_event_id(void);
 
 struct hidle_s {
     HEVENT_FIELDS
@@ -97,7 +97,8 @@ struct hperiod_s {
     int8_t      month;
 };
 
-QUEUE_DECL(shift_buffer_t*, write_queue);
+QUEUE_DECL(shift_buffer_t*, write_queue)
+
 // sizeof(struct hio_s)=416 on linux-x64
 struct hio_s {
     HEVENT_FIELDS
@@ -182,7 +183,7 @@ void hio_init(hio_t* io);
 void hio_ready(hio_t* io);
 void hio_done(hio_t* io);
 void hio_free(hio_t* io);
-uint32_t hio_next_id();
+uint32_t hio_next_id(void);
 
 void hio_accept_cb(hio_t* io);
 void hio_connect_cb(hio_t* io);

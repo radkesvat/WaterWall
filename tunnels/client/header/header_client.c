@@ -19,7 +19,7 @@ typedef struct header_client_state_s
 
 typedef struct header_client_con_state_s
 {
-
+    void*_;
 } header_client_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -81,7 +81,7 @@ tunnel_t *destroyHeaderClient(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataHeaderClient()
+tunnel_metadata_t getMetadataHeaderClient(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

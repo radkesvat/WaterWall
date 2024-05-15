@@ -12,7 +12,7 @@ typedef struct connector_state_s
 
 typedef struct connector_con_state_s
 {
-
+    void*_;
 } connector_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -84,7 +84,7 @@ tunnel_t *destroyConnector(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataConnector()
+tunnel_metadata_t getMetadataConnector(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

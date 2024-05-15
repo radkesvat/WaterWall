@@ -694,7 +694,7 @@ void htimer_del(htimer_t* timer) {
     EVENT_DEL(timer);
 }
 
-const char* hio_engine() {
+const char* hio_engine(void) {
 #ifdef EVENT_SELECT
     return "select";
 #elif defined(EVENT_POLL)

@@ -34,7 +34,7 @@
 #endif
 
 
-logger_t          *getNetworkLogger();
+logger_t          *getNetworkLogger(void);
 void               setNetworkLogger(logger_t *newlogger);
 logger_t          *createNetworkLogger(const char *log_file, bool console);
 

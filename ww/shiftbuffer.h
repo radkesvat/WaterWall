@@ -38,6 +38,7 @@ struct shift_buffer_s
     unsigned int  cap; // half of full cap
     unsigned int  full_cap;
 };
+
 typedef struct shift_buffer_s shift_buffer_t;
 
 shift_buffer_t *newShiftBuffer(unsigned int pre_cap);

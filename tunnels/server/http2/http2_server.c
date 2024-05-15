@@ -456,7 +456,7 @@ tunnel_t *destroyHttp2Server(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataHttp2Server()
+tunnel_metadata_t getMetadataHttp2Server(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

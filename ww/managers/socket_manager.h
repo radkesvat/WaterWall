@@ -63,9 +63,9 @@ typedef struct udp_payload_s
 
 } udp_payload_t;
 
-struct socket_manager_s *getSocketManager();
-struct socket_manager_s *createSocketManager();
+struct socket_manager_s *getSocketManager(void);
+struct socket_manager_s *createSocketManager(void);
 void                     setSocketManager(struct socket_manager_s *state);
-void                     startSocketManager();
+void                     startSocketManager(void);
 void                     registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 void                     postUdpWrite(hio_t *socket_io, shift_buffer_t *buf);

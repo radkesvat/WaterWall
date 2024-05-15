@@ -25,6 +25,7 @@ enum trojan_atyp
 
 typedef struct trojan_socks_server_state_s
 {
+    void*_;
 
 } trojan_socks_server_state_t;
 
@@ -596,7 +597,7 @@ tunnel_t *destroyTrojanSocksServer(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataTrojanSocksServer()
+tunnel_metadata_t getMetadataTrojanSocksServer(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

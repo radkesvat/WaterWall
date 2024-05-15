@@ -12,4 +12,4 @@
 tunnel_t         *newTrojanSocksServer(node_instance_context_t *instance_info);
 api_result_t      apiTrojanSocksServer(tunnel_t *self, const char *msg);
 tunnel_t         *destroyTrojanSocksServer(tunnel_t *self);
-tunnel_metadata_t getMetadataTrojanSocksServer();
+tunnel_metadata_t getMetadataTrojanSocksServer(void);

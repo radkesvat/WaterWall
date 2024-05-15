@@ -94,7 +94,7 @@ static void upStream(tunnel_t *self, context_t *c)
     else if (c->init)
     {
         cstate        = malloc(sizeof(header_server_con_state_t));
-        *cstate       = (header_server_con_state_t){};
+        *cstate       = (header_server_con_state_t){0};
         CSTATE_MUT(c) = cstate;
         destroyContext(c);
     }
@@ -164,7 +164,7 @@ tunnel_t *destroyHeaderServer(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataHeaderServer()
+tunnel_metadata_t getMetadataHeaderServer(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

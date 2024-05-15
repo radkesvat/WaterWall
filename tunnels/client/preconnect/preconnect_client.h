@@ -8,4 +8,4 @@
 tunnel_t *        newPreConnectClient(node_instance_context_t *instance_info);
 api_result_t      apiPreConnectClient(tunnel_t *self, const char *msg);
 tunnel_t *        destroyPreConnectClient(tunnel_t *self);
-tunnel_metadata_t getMetadataPreConnectClient();
+tunnel_metadata_t getMetadataPreConnectClient(void);

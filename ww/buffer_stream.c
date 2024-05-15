@@ -149,7 +149,7 @@ void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
         size_t          blen = bufLen(b);
         if (len - buf_i <= blen - bufferstream_i)
         {
-            memcpy(buf + buf_i, rawBuf(b) + bufferstream_i, len - buf_i);
+            memcpy(buf + buf_i, ((char*)rawBuf(b))+bufferstream_i , len - buf_i);
             return;
         }
         while (bufferstream_i < blen)

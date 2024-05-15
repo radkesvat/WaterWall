@@ -9,4 +9,4 @@
 tunnel_t *        newTcpConnector(node_instance_context_t *instance_info);
 api_result_t      apiTcpConnector(tunnel_t *self, const char *msg);
 tunnel_t *        destroyTcpConnector(tunnel_t *self);
-tunnel_metadata_t getMetadataTcpConnector();
+tunnel_metadata_t getMetadataTcpConnector(void);

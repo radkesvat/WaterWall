@@ -12,7 +12,7 @@
 #include <sys/sysctl.h>
 #endif
 
-static inline int get_ncpu() {
+static inline int get_ncpu(void) {
 #ifdef OS_WIN
     SYSTEM_INFO si;
     GetSystemInfo(&si);

@@ -85,9 +85,9 @@ HV_EXPORT void setproctitle(const char* fmt, ...);
 #endif
 
 // pidfile
-HV_EXPORT int   create_pidfile();
+HV_EXPORT int   create_pidfile(void);
 HV_EXPORT void  delete_pidfile(void);
-HV_EXPORT pid_t getpid_from_pidfile();
+HV_EXPORT pid_t getpid_from_pidfile(void);
 
 // signal=[start,stop,restart,status,reload]
 HV_EXPORT int  signal_init(procedure_t reload_fn DEFAULT(NULL), void* reload_userdata DEFAULT(NULL));

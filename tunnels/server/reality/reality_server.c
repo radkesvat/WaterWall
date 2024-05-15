@@ -408,7 +408,7 @@ tunnel_t *destroyRealityServer(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataRealityServer()
+tunnel_metadata_t getMetadataRealityServer(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

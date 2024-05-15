@@ -10,7 +10,7 @@ static const uint8_t s_days[] = \
 //   1       3       5       7   8       10      12
     {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-unsigned int gettick_ms() {
+unsigned int gettick_ms(void) {
 #ifdef OS_WIN
     return GetTickCount();
 #elif HAVE_CLOCK_GETTIME
@@ -24,7 +24,7 @@ unsigned int gettick_ms() {
 #endif
 }
 
-unsigned long long gethrtime_us() {
+unsigned long long gethrtime_us(void) {
 #ifdef OS_WIN
     static LONGLONG s_freq = 0;
     if (s_freq == 0) {
@@ -51,7 +51,7 @@ unsigned long long gethrtime_us() {
 #endif
 }
 
-datetime_t datetime_now() {
+datetime_t datetime_now(void) {
 #ifdef OS_WIN
     SYSTEMTIME tm;
     GetLocalTime(&tm);
@@ -211,7 +211,7 @@ const char* weekday_itoa(int weekday) {
     return s_weekdays[weekday];
 }
 
-datetime_t hv_compile_datetime() {
+datetime_t hv_compile_datetime(void) {
     datetime_t dt;
     char month[32];
     sscanf(__DATE__, "%s %d %d", month, &dt.day, &dt.year);

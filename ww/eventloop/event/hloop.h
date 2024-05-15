@@ -228,7 +228,7 @@ const char* hio_engine() {
 #endif
 }
 */
-HV_EXPORT const char* hio_engine();
+HV_EXPORT const char* hio_engine(void);
 
 HV_EXPORT hio_t* hio_get(hloop_t* loop, int fd);
 HV_EXPORT int hio_add(hio_t* io, hio_cb cb, int events DEFAULT(HV_READ));

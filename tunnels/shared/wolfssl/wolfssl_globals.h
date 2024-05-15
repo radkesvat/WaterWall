@@ -2,6 +2,7 @@
 #include "loggers/network_logger.h"
 
 #include "cacert.h"
+#include <assert.h>
 #include <wolfssl/openssl/bio.h>
 #include <wolfssl/openssl/err.h>
 #include <wolfssl/openssl/pem.h>
@@ -16,7 +17,7 @@ enum ssl_endpoint
 
 static int wolfssl_lib_initialized = false;
 
-static void wolfSslGlobalInit()
+static void wolfSslGlobalInit(void)
 {
     if (wolfssl_lib_initialized == 0)
     {
@@ -40,10 +41,10 @@ static void wolfSslGlobalInit()
 
 typedef struct
 {
-    const char *      crt_file;
-    const char *      key_file;
-    const char *      ca_file;
-    const char *      ca_path;
+    const char       *crt_file;
+    const char       *key_file;
+    const char       *ca_file;
+    const char       *ca_path;
     short             verify_peer;
     enum ssl_endpoint endpoint;
 } ssl_ctx_opt_t;
@@ -59,7 +60,9 @@ static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
     SSL_CTX *ctx = SSL_CTX_new(TLS_method());
 #endif
     if (ctx == NULL)
+    {
         return NULL;
+    }
     int         mode    = SSL_VERIFY_NONE;
     const char *ca_file = NULL;
     const char *ca_path = NULL;
@@ -122,14 +125,16 @@ static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
         // SSL_CTX_set_default_verify_paths(ctx);
         // alternative: use the boundeled cacert.pem
         BIO *bio = BIO_new(BIO_s_mem());
-        int  n   = BIO_write(bio, cacert_bytes, cacert_len);
-        assert(n == cacert_len);
+        int  n   = BIO_write(bio, cacert_bytes, (int)cacert_len);
+        assert(n == (int)cacert_len);
         X509 *x = NULL;
         while (true)
         {
             x = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL);
             if (x == NULL)
+            {
                 break;
+            }
             X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx), x);
             X509_free(x);
             x = NULL;
@@ -158,11 +163,11 @@ static void printSSLState(const SSL *ssl) // NOLINT (ssl in unused problem)
 }
 
 // if you get compile error at this function , include the propper logger before this file
-static void printSSLError()
+static void printSSLError(void)
 {
     BIO *bio = BIO_new(BIO_s_mem());
     ERR_print_errors(bio);
-    char * buf = NULL;
+    char  *buf = NULL;
     size_t len = BIO_get_mem_data(bio, &buf);
     if (len > 0)
     {

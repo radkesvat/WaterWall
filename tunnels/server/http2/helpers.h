@@ -3,10 +3,7 @@
 #include "tunnel.h"
 #include "types.h"
 
-enum
-{
-    kMaxConcurrentStreams = 0xffffffffU
-};
+#define kMaxConcurrentStreams 0xffffffffU // NOLINT
 
 static nghttp2_nv makeNv(const char *name, const char *value)
 {

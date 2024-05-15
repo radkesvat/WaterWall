@@ -1,11 +1,9 @@
 #include "hchan.h"
 #include "hmutex.h"
 
-#define align2(n, w)                                                            \
-    ({                                                                          \
-        assert(((w) & ((w) - 1)) == 0); /* alignment w is not a power of two */ \
-        ((n) + ((w) - 1)) & ~((w) - 1);                                         \
-    })
+#define MUSTALIGN2(n, w) assert(((w) & ((w) - 1)) == 0); /* alignment w is not a power of two */
+
+#define align2(n, w) (((n) + ((w) - 1)) & ~((w) - 1))
 
 // DEBUG_CHAN_LOG: define to enable debug logging of send and recv
 // #define DEBUG_CHAN_LOG
@@ -60,44 +58,44 @@ static const char* tcolor() {
     return colors[thread_id() % countof(colors)];
 }
 
-// _dlog_chan writes a log message to stderr along with a globally unique "causality"
+// _//dlog_chan writes a log message to stderr along with a globally unique "causality"
 // sequence number. It does not use libc FILEs as those use mutex locks which would alter
 // the behavior of multi-threaded channel operations. Instead it uses a buffer on the stack,
 // which of course is local per thread and then calls the write syscall with the one buffer.
 // This all means that log messages may be out of order; use the "causality" sequence number
 // to understand what other messages were produced according to the CPU.
 ATTR_FORMAT(printf, 2, 3)
-static void _dlog_chan(const char* fname, const char* fmt, ...) {
+static void _                                            // dlog_chan(const char* fname, const char* fmt, ...) {
     static atomic_uint32_t seqnext = ATOMIC_VAR_INIT(1); // start at 1 to map to line nubmers
 
-    uint32_t seq = atomic_fetch_add_explicitx(&seqnext, 1, memory_order_acquire);
+uint32_t seq = atomic_fetch_add_explicitx(&seqnext, 1, memory_order_acquire);
 
-    char buf[256];
-    const ssize_t bufcap = (ssize_t)sizeof(buf);
-    ssize_t buflen = 0;
+char buf[256];
+const ssize_t bufcap = (ssize_t)sizeof(buf);
+ssize_t buflen = 0;
 
-    buflen += (ssize_t)snprintf(&buf[buflen], bufcap - buflen, "%04u \x1b[1m%sT%02zu ", seq, tcolor(), thread_id());
+buflen += (ssize_t)snprintf(&buf[buflen], bufcap - buflen, "%04u \x1b[1m%sT%02zu ", seq, tcolor(), thread_id());
 
-    va_list ap;
-    va_start(ap, fmt);
-    buflen += (ssize_t)vsnprintf(&buf[buflen], bufcap - buflen, fmt, ap);
-    va_end(ap);
+va_list ap;
+va_start(ap, fmt);
+buflen += (ssize_t)vsnprintf(&buf[buflen], bufcap - buflen, fmt, ap);
+va_end(ap);
 
-    if (buflen > 0) {
-        buflen += (ssize_t)snprintf(&buf[buflen], bufcap - buflen, "\x1b[0m (%s)\n", fname);
-        if (buflen >= bufcap) {
-            // truncated; make sure to end the line
-            buf[buflen - 1] = '\n';
-        }
+if (buflen > 0) {
+    buflen += (ssize_t)snprintf(&buf[buflen], bufcap - buflen, "\x1b[0m (%s)\n", fname);
+    if (buflen >= bufcap) {
+        // truncated; make sure to end the line
+        buf[buflen - 1] = '\n';
     }
-
-#undef FMT
-    write(STDERR_FILENO, buf, buflen);
 }
 
-#define dlog_chan(fmt, ...) _dlog_chan(__FUNCTION__, fmt, ##__VA_ARGS__)
-#define dlog_send(fmt, ...) dlog_chan("send: " fmt, ##__VA_ARGS__)
-#define dlog_recv(fmt, ...) dlog_chan("recv: " fmt, ##__VA_ARGS__)
+#undef FMT
+write(STDERR_FILENO, buf, buflen);
+}
+
+#define dlog_chan(fmt, ...) _ // dlog_chan(__FUNCTION__, fmt, ##__VA_ARGS__)
+#define dlog_send(fmt, ...)   // dlog_chan("send: " fmt, ##__VA_ARGS__)
+#define dlog_recv(fmt, ...)   // dlog_chan("recv: " fmt, ##__VA_ARGS__)
 // #define dlog_send(fmt, ...) do{}while(0)
 // #define dlog_recv(fmt, ...) do{}while(0)
 #else
@@ -219,7 +217,7 @@ static void thr_init(Thr* t) {
     LSemaInit(&t->sema, 0); // TODO: Semadestroy?
 }
 
-inline static Thr* thr_current() {
+inline static Thr* thr_current(void) {
     static _Thread_local Thr _thr = {0};
 
     Thr* t = &_thr;
@@ -232,7 +230,7 @@ inline static void thr_signal(Thr* t) {
 }
 
 inline static void thr_wait(Thr* t) {
-    dlog_chan("thr_wait ...");
+    // dlog_chan("thr_wait ...");
     LSemaWait(&t->sema); // sleep
 }
 
@@ -269,7 +267,7 @@ static Thr* chan_park(hchan_t* c, WaitQ* wq, void* elemptr) {
     // caller must hold lock on channel that owns wq
     Thr* t = thr_current();
     atomic_store_explicit(&t->elemptr, elemptr, memory_order_relaxed);
-    dlog_chan("park: elemptr %p", elemptr);
+    // dlog_chan("park: elemptr %p", elemptr);
     wq_enqueue(wq, t);
     chan_unlock(&c->lock);
     thr_wait(t);
@@ -292,8 +290,8 @@ static bool chan_send_direct(hchan_t* c, void* srcelemptr, Thr* recvt) {
 
     void* dstelemptr = atomic_load_explicit(&recvt->elemptr, memory_order_acquire);
     assert(dstelemptr != NULL);
-    dlog_send("direct send of srcelemptr %p to [%zu] (dstelemptr %p)", srcelemptr, recvt->id, dstelemptr);
-    // store to address provided with chan_recv call
+    // dlog_send("direct send of srcelemptr %p to [%zu] (dstelemptr %p)", srcelemptr, recvt->id, dstelemptr);
+    //  store to address provided with chan_recv call
     memcpy(dstelemptr, srcelemptr, c->elemsize);
     atomic_store_explicit(&recvt->elemptr, NULL, memory_order_relaxed); // clear pointer (TODO: is this really needed?)
 
@@ -304,7 +302,7 @@ static bool chan_send_direct(hchan_t* c, void* srcelemptr, Thr* recvt) {
 
 inline static bool chan_send(hchan_t* c, void* srcelemptr, bool* closed) {
     bool block = closed == NULL;
-    dlog_send("srcelemptr %p", srcelemptr);
+    // dlog_send("srcelemptr %p", srcelemptr);
 
     // fast path for non-blocking send on full channel
     //
@@ -355,7 +353,7 @@ inline static bool chan_send(hchan_t* c, void* srcelemptr, bool* closed) {
         // copy *srcelemptr -> *dstelemptr
         void* dstelemptr = chan_bufptr(c, i);
         memcpy(dstelemptr, srcelemptr, c->elemsize);
-        dlog_send("enqueue elemptr %p at buf[%u]", srcelemptr, i);
+        // dlog_send("enqueue elemptr %p at buf[%u]", srcelemptr, i);
         if (i == c->qcap - 1) atomic_store_explicit(&c->sendx, 0, memory_order_relaxed);
         atomic_fetch_add_explicit(&c->qlen, 1, memory_order_relaxed);
         chan_unlock(&c->lock);
@@ -370,9 +368,9 @@ inline static bool chan_send(hchan_t* c, void* srcelemptr, bool* closed) {
 
     // park the calling thread. Some recv caller will wake us up.
     // Note that chan_park calls chan_unlock(&c->lock)
-    dlog_send("wait... (elemptr %p)", srcelemptr);
+    // dlog_send("wait... (elemptr %p)", srcelemptr);
     chan_park(c, &c->sendq, srcelemptr);
-    dlog_send("woke up -- sent elemptr %p", srcelemptr);
+    // dlog_send("woke up -- sent elemptr %p", srcelemptr);
     return true;
 }
 
@@ -388,7 +386,7 @@ static bool chan_recv_direct(hchan_t* c, void* dstelemptr, Thr* st);
 
 inline static bool chan_recv(hchan_t* c, void* dstelemptr, bool* closed) {
     bool block = closed == NULL; // TODO: non-blocking path
-    dlog_recv("dstelemptr %p", dstelemptr);
+    // dlog_recv("dstelemptr %p", dstelemptr);
 
     // Fast path: check for failed non-blocking operation without acquiring the lock.
     if (!block && chan_empty(c)) {
@@ -423,7 +421,7 @@ inline static bool chan_recv(hchan_t* c, void* dstelemptr, bool* closed) {
 
     if (atomic_load_explicit(&c->closed, memory_order_relaxed) && atomic_load_explicit(&c->qlen, memory_order_relaxed) == 0) {
         // channel is closed and the buffer queue is empty
-        dlog_recv("channel closed & empty queue");
+        // dlog_recv("channel closed & empty queue");
         chan_unlock(&c->lock);
         memset(dstelemptr, 0, c->elemsize);
         if (closed) *closed = true;
@@ -454,7 +452,7 @@ inline static bool chan_recv(hchan_t* c, void* dstelemptr, bool* closed) {
         memset(srcelemptr, 0, c->elemsize); // zero buffer memory
 #endif
 
-        dlog_recv("dequeue elemptr %p from buf[%u]", srcelemptr, i);
+        // dlog_recv("dequeue elemptr %p from buf[%u]", srcelemptr, i);
 
         chan_unlock(&c->lock);
         return true;
@@ -474,23 +472,23 @@ inline static bool chan_recv(hchan_t* c, void* dstelemptr, bool* closed) {
 
     // Block by parking the thread. Some send caller will wake us up.
     // Note that chan_park calls chan_unlock(&c->lock)
-    dlog_recv("wait... (elemptr %p)", dstelemptr);
+    // dlog_recv("wait... (elemptr %p)", dstelemptr);
     t = chan_park(c, &c->recvq, dstelemptr);
 
     // woken up by sender or close call
     if (atomic_load_explicit(&t->closed, memory_order_relaxed)) {
         // Note that we check "closed" on the Thr, not the hchan_t.
         // This is important since c->closed may be true even as we receive a message.
-        dlog_recv("woke up -- channel closed");
+        // dlog_recv("woke up -- channel closed");
         goto ret_closed;
     }
 
     // message was delivered by storing to elemptr by some sender
-    dlog_recv("woke up -- received to elemptr %p", dstelemptr);
+    // dlog_recv("woke up -- received to elemptr %p", dstelemptr);
     return true;
 
 ret_closed:
-    dlog_recv("channel closed");
+    // dlog_recv("channel closed");
     memset(dstelemptr, 0, c->elemsize);
     return false;
 }
@@ -511,7 +509,7 @@ static bool chan_recv_direct(hchan_t* c, void* dstelemptr, Thr* sendert) {
     if (atomic_load_explicit(&c->qlen, memory_order_relaxed) == 0) {
         // Copy data from sender
         void* srcelemptr = atomic_load_explicit(&sendert->elemptr, memory_order_consume);
-        dlog_recv("direct recv of srcelemptr %p from [%zu] (dstelemptr %p, buffer empty)", srcelemptr, sendert->id, dstelemptr);
+        // dlog_recv("direct recv of srcelemptr %p from [%zu] (dstelemptr %p, buffer empty)", srcelemptr, sendert->id, dstelemptr);
         assert(srcelemptr != NULL);
         memcpy(dstelemptr, srcelemptr, c->elemsize);
     }
@@ -519,7 +517,7 @@ static bool chan_recv_direct(hchan_t* c, void* dstelemptr, Thr* sendert) {
         // Queue is full. Take the item at the head of the queue.
         // Make the sender enqueue its item at the tail of the queue.
         // Since the queue is full, those are both the same slot.
-        dlog_recv("direct recv from [%zu] (dstelemptr %p, buffer full)", sendert->id, dstelemptr);
+        // dlog_recv("direct recv from [%zu] (dstelemptr %p, buffer full)", sendert->id, dstelemptr);
         // assert_debug(atomic_load_explicit(&c->qlen) == c->qcap); // queue is full
 
         // copy element from queue to receiver
@@ -536,13 +534,13 @@ static bool chan_recv_direct(hchan_t* c, void* dstelemptr, Thr* sendert) {
         void* bufelemptr = chan_bufptr(c, i);
         assert(bufelemptr != NULL);
         memcpy(dstelemptr, bufelemptr, c->elemsize);
-        dlog_recv("dequeue srcelemptr %p from buf[%u]", bufelemptr, i);
+        // dlog_recv("dequeue srcelemptr %p from buf[%u]", bufelemptr, i);
 
         // copy *sendert->elemptr -> c->buf[i]
         void* srcelemptr = atomic_load_explicit(&sendert->elemptr, memory_order_consume);
         assert(srcelemptr != NULL);
         memcpy(bufelemptr, srcelemptr, c->elemsize);
-        dlog_recv("enqueue srcelemptr %p to buf[%u]", srcelemptr, i);
+        // dlog_recv("enqueue srcelemptr %p to buf[%u]", srcelemptr, i);
     }
 
     chan_unlock(&c->lock);
@@ -554,6 +552,7 @@ hchan_t* hchan_Open(size_t elemsize, uint32_t bufcap) {
     int64_t memsize = (int64_t)sizeof(hchan_t) + ((int64_t)bufcap * (int64_t)elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
+    MUSTALIGN2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
     memsize = align2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
 
     // check for overflow
@@ -566,6 +565,7 @@ hchan_t* hchan_Open(size_t elemsize, uint32_t bufcap) {
     uintptr_t ptr = (uintptr_t)malloc(memsize);
 
     // align c to line cache boundary
+    MUSTALIGN2(ptr, LINE_CACHE_SIZE);
     hchan_t* c = (hchan_t*)align2(ptr, LINE_CACHE_SIZE);
 
     c->memptr = ptr;
@@ -582,10 +582,10 @@ hchan_t* hchan_Open(size_t elemsize, uint32_t bufcap) {
 }
 
 void hchan_Close(hchan_t* c) {
-    dlog_chan("--- close ---");
+    // dlog_chan("--- close ---");
 
     chan_lock(&c->lock);
-    dlog_chan("close: channel locked");
+    // dlog_chan("close: channel locked");
 
     if (atomic_exchange_explicit(&c->closed, 1, memory_order_acquire) != 0) {
         fprintf(stderr, "close of closed channel");
@@ -595,7 +595,7 @@ void hchan_Close(hchan_t* c) {
 
     Thr* t = atomic_load_explicit(&c->recvq.first, memory_order_acquire);
     while (t) {
-        dlog_chan("close: wake recv [%zu]", t->id);
+        // dlog_chan("close: wake recv [%zu]", t->id);
         Thr* next = t->next;
         atomic_store_explicit(&t->closed, true, memory_order_relaxed);
         thr_signal(t);
@@ -604,7 +604,7 @@ void hchan_Close(hchan_t* c) {
 
     t = atomic_load_explicit(&c->sendq.first, memory_order_acquire);
     while (t) {
-        dlog_chan("close: wake send [%zu]", t->id);
+        // dlog_chan("close: wake send [%zu]", t->id);
         Thr* next = t->next;
         atomic_store_explicit(&t->closed, true, memory_order_relaxed);
         thr_signal(t);
@@ -612,7 +612,7 @@ void hchan_Close(hchan_t* c) {
     }
 
     chan_unlock(&c->lock);
-    dlog_chan("close: done");
+    // dlog_chan("close: done");
 }
 
 void hchan_Free(hchan_t* c) {

@@ -368,7 +368,7 @@ void setproctitle(const char* fmt, ...) {
 }
 #endif
 
-int create_pidfile() {
+int create_pidfile(void) {
     FILE* fp = fopen(g_main_ctx.pidfile, "w");
     if (fp == NULL) {
         hloge("fopen('%s') error: %d", g_main_ctx.pidfile, errno);
@@ -388,7 +388,7 @@ void delete_pidfile(void) {
     remove(g_main_ctx.pidfile);
 }
 
-pid_t getpid_from_pidfile() {
+pid_t getpid_from_pidfile(void) {
     FILE* fp = fopen(g_main_ctx.pidfile, "r");
     if (fp == NULL) {
         // hloge("fopen('%s') error: %d", g_main_ctx.pidfile, errno);

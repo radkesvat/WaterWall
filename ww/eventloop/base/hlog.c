@@ -59,7 +59,7 @@ static void logger_init(logger_t* logger) {
     hhybridmutex_init(&logger->mutex_);
 }
 
-logger_t* logger_create() {
+logger_t* logger_create(void) {
     // init gmtoff here
     time_t ts = time(NULL);
     static _Thread_local  struct tm local_tm;
@@ -438,7 +438,7 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
 }
 
 static logger_t* s_logger = NULL;
-logger_t* hv_default_logger() {
+logger_t* hv_default_logger(void) {
     if (s_logger == NULL) {
         s_logger = logger_create();
         atexit(hv_destroy_default_logger);

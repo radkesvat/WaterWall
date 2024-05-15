@@ -219,7 +219,7 @@ tunnel_t *destroyReverseClient(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataReverseClient()
+tunnel_metadata_t getMetadataReverseClient(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

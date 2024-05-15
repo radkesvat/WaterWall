@@ -4,12 +4,12 @@
 #include "hlog.h"
 #include "herr.h"
 // todo (invesitage) how a dynamic node can have these?
-uint64_t hloop_next_event_id() {
+uint64_t hloop_next_event_id(void) {
     static hatomic_t s_id = HATOMIC_VAR_INIT(0);
     return ++s_id;
 }
 
-uint32_t hio_next_id() {
+uint32_t hio_next_id(void) {
     static hatomic_t s_id = HATOMIC_VAR_INIT(0);
     return ++s_id;
 }

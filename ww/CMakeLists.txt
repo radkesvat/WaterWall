@@ -43,14 +43,12 @@ if(komihash_ADDED)
   target_include_directories(ww PUBLIC ${komihash_SOURCE_DIR})
 endif()
 
-
 CPMAddPackage(
   NAME stc
-  GIT_REPOSITORY https://github.com/stclib/STC
-  GIT_TAG 09790f024ad29fca6fe60528461eeb589d4a917b
+  GIT_REPOSITORY https://github.com/radkesvat/STC
+  GIT_TAG HEAD
   DOWNLOAD_ONLY True
 )
-
 
 if(stc_ADDED)
   target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
@@ -117,9 +115,12 @@ endif()
 # if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 # target_compile_options(ww PUBLIC -ftrack-macro-expansion=0)
 # endif()
+target_compile_options(ww PUBLIC -Wno-gnu-zero-variadic-macro-arguments)
+
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
+target_compile_options(ww PUBLIC -pedantic)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(ww PRIVATE DEBUG=1)

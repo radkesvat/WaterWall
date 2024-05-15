@@ -13,11 +13,11 @@
 static hatomic_t s_alloc_cnt = HATOMIC_VAR_INIT(0);
 static hatomic_t s_free_cnt = HATOMIC_VAR_INIT(0);
 
-long hv_alloc_cnt() {
+long hv_alloc_cnt(void) {
     return s_alloc_cnt;
 }
 
-long hv_free_cnt() {
+long hv_free_cnt(void) {
     return s_free_cnt;
 }
 

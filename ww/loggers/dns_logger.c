@@ -42,7 +42,7 @@ static void dnsLoggerHandle(int loglevel, const char *buf, int len)
     logfile_write(logger, buf, len);
 }
 
-logger_t *getDnsLogger()
+logger_t *getDnsLogger(void)
 {
     return logger;
 }

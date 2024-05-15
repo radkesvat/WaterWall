@@ -93,7 +93,7 @@ struct tunnel_s
 
 typedef struct tunnel_s tunnel_t;
 
-tunnel_t *newTunnel();
+tunnel_t *newTunnel(void);
 void      destroyTunnel(tunnel_t *self);
 void      chain(tunnel_t *from, tunnel_t *to);
 void      chainDown(tunnel_t *from, tunnel_t *to);

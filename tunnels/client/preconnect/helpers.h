@@ -3,8 +3,11 @@
 #include "types.h"
 #include "utils/mathutils.h"
 
-#define PRECONNECT_DELAY_SHORT 10
-#define PRECONNECT_DELAY_HIGH  750
+enum
+{
+    kPreconnectDelayShort = 10,
+    kPreconnectDelayHigh  = 750
+};
 
 static void addConnection(thread_box_t *box, preconnect_client_con_state_t *con)
 {
@@ -43,8 +46,8 @@ static void destroyCstate(preconnect_client_con_state_t *cstate)
 }
 static void doConnect(struct connect_arg *cg)
 {
-    tunnel_t *                     self   = cg->t;
-    preconnect_client_state_t *    state  = STATE(self);
+    tunnel_t                      *self   = cg->t;
+    preconnect_client_state_t     *state  = STATE(self);
     preconnect_client_con_state_t *cstate = createCstate(cg->tid);
     free(cg);
     (cstate->u->chains_state)[self->chain_index] = cstate;
@@ -59,7 +62,7 @@ static void connectTimerFinished(htimer_t *timer)
 static void beforeConnect(hevent_t *ev)
 {
     struct connect_arg *cg            = hevent_userdata(ev);
-    htimer_t *          connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
+    htimer_t           *connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
     if (connect_timer)
     {
         hevent_set_userdata(connect_timer, cg);
@@ -100,7 +103,7 @@ static void initiateConnect(tunnel_t *self, bool delay)
     struct connect_arg *cg = malloc(sizeof(struct connect_arg));
     cg->t                  = self;
     cg->tid                = tid;
-    cg->delay              = delay ? PRECONNECT_DELAY_HIGH : PRECONNECT_DELAY_SHORT;
+    cg->delay              = delay ? kPreconnectDelayHigh : kPreconnectDelayShort;
     ev.userdata            = cg;
 
     hloop_post_event(worker_loop, &ev);

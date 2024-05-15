@@ -273,25 +273,25 @@ void parseCoreSettings(char *data_json)
     // TODO (DNS) Implement dns settings and backend
 }
 
-char *getCoreLoggerFullPath()
+char *getCoreLoggerFullPath(void)
 {
     return concat(settings->log_path, settings->core_log_file);
 }
-char *getNetworkLoggerFullPath()
+char *getNetworkLoggerFullPath(void)
 {
     return concat(settings->log_path, settings->network_log_file);
 }
-char *getDnsLoggerFullPath()
+char *getDnsLoggerFullPath(void)
 {
     return concat(settings->log_path, settings->dns_log_file);
 }
 
-struct core_settings_s *getCoreSettings()
+struct core_settings_s *getCoreSettings(void)
 {
     return settings;
 }
 
-void initCoreSettings()
+void initCoreSettings(void)
 {
     assert(settings == NULL); // we can't use logs here, so just assert
 

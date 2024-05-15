@@ -175,7 +175,7 @@ void sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int by
     *dest              = tmp;
 
     setLen(source, total - bytes);
-    memcpy(rawBufMut(source), rawBuf(dest) + bytes, total - bytes);
+    memcpy(rawBufMut(source), &(((char*)rawBuf(dest))[bytes]), total - bytes);
     setLen(dest, bytes);
 }
 
@@ -205,7 +205,7 @@ shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes)
                                                        .refc     = tmp_refc,
                                                        .pbuf     = tmp_pbuf};
 
-    memcpy(rawBufMut(self), rawBuf(newbuf) + bytes, bufLen(newbuf) - bytes);
+    memcpy(rawBufMut(self), &(((char*)rawBuf(newbuf))[bytes]), bufLen(newbuf) - bytes);
     shiftr(self, bytes);
     setLen(newbuf, bytes);
     return newbuf;

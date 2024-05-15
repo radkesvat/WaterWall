@@ -33,7 +33,7 @@ struct ww_runtime_state_s;
 
 WWEXPORT void setWW(struct ww_runtime_state_s *state);
 
-struct ww_runtime_state_s *getWW();
+struct ww_runtime_state_s *getWW(void);
 
 typedef struct
 {
@@ -63,7 +63,7 @@ typedef struct
 
 void createWW(ww_construction_data_t data);
 
-_Noreturn void runMainThread();
+_Noreturn void runMainThread(void);
 
 extern unsigned int             workers_count;
 extern hthread_t               *workers;

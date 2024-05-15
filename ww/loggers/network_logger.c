@@ -42,7 +42,7 @@ static void networkLoggerHandle(int loglevel, const char *buf, int len)
     logfile_write(logger, buf, len);
 }
 
-logger_t *getNetworkLogger()
+logger_t *getNetworkLogger(void)
 {
     return logger;
 }

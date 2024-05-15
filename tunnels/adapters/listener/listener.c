@@ -16,7 +16,7 @@ typedef struct listener_state_s
 
 typedef struct listener_con_state_s
 {
-
+    void*_;
 } listener_con_state_t;
 
 // set function pointers baby))
@@ -100,7 +100,7 @@ tunnel_t *destroyListener(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataListener()
+tunnel_metadata_t getMetadataListener(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
 }

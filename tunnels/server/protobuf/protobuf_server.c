@@ -21,7 +21,7 @@ enum
 
 typedef struct protobuf_server_state_s
 {
-
+    void *_;
 } protobuf_server_state_t;
 
 typedef struct protobuf_server_con_state_s
@@ -177,7 +177,7 @@ tunnel_t *destroyProtoBufServer(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataProtoBufServer()
+tunnel_metadata_t getMetadataProtoBufServer(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

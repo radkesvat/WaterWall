@@ -6,4 +6,4 @@
 tunnel_t *        newReverseServer(node_instance_context_t *instance_info);
 api_result_t      apiReverseServer(tunnel_t *self, const char *msg);
 tunnel_t *        destroyReverseServer(tunnel_t *self);
-tunnel_metadata_t getMetadataReverseServer();
+tunnel_metadata_t getMetadataReverseServer(void);

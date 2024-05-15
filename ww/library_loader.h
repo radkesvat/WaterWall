@@ -17,7 +17,7 @@ typedef struct tunnel_lib_s
     struct tunnel_s *(*createHandle)(node_instance_context_t *instance_info);
     struct tunnel_s *(*destroyHandle)(struct tunnel_s *instance);
     api_result_t (*apiHandle)(struct tunnel_s *instance, const char *msg);
-    tunnel_metadata_t (*getMetadataHandle)();
+    tunnel_metadata_t (*getMetadataHandle)(void);
     hash_t hash_name;
 
 } tunnel_lib_t;

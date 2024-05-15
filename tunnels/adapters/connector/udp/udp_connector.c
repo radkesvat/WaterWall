@@ -257,7 +257,7 @@ tunnel_t *destroyUdpConnector(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataUdpConnector()
+tunnel_metadata_t getMetadataUdpConnector(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

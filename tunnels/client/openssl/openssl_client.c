@@ -492,7 +492,7 @@ tunnel_t *destroyOpenSSLClient(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataOpenSSLClient()
+tunnel_metadata_t getMetadataOpenSSLClient(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

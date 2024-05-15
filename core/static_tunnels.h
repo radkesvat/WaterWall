@@ -4,4 +4,4 @@
 
 
 
-void loadStaticTunnelsIntoCore();
+void loadStaticTunnelsIntoCore(void);

@@ -67,7 +67,7 @@ typedef enum
 
 typedef struct socks5_server_state_s
 {
-
+    void*_;
 } socks5_server_state_t;
 
 typedef struct socks5_server_con_state_s
@@ -749,7 +749,7 @@ tunnel_t *destroySocks5Server(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataSocks5Server()
+tunnel_metadata_t getMetadataSocks5Server(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

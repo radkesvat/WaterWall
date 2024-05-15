@@ -30,9 +30,9 @@ struct core_settings_s
 
 void parseCoreSettings(char *data_json);
 
-char *getCoreLoggerFullPath();
-char *getNetworkLoggerFullPath();
-char *getDnsLoggerFullPath();
+char *getCoreLoggerFullPath(void);
+char *getNetworkLoggerFullPath(void);
+char *getDnsLoggerFullPath(void);
 
-struct core_settings_s *getCoreSettings();
-void                    initCoreSettings();
+struct core_settings_s *getCoreSettings(void);
+void                    initCoreSettings(void);

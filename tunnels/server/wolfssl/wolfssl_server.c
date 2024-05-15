@@ -675,7 +675,7 @@ tunnel_t *destroyWolfSSLServer(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataWolfSSLServer()
+tunnel_metadata_t getMetadataWolfSSLServer(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

@@ -9,4 +9,4 @@
 tunnel_t *        newConnector(node_instance_context_t *instance_info);
 api_result_t      apiConnector(tunnel_t *self, const char *msg);
 tunnel_t *        destroyConnector(tunnel_t *self);
-tunnel_metadata_t getMetadataConnector();
+tunnel_metadata_t getMetadataConnector(void);

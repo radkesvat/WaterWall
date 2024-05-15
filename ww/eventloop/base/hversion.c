@@ -2,7 +2,7 @@
 
 #include "htime.h"
 
-const char* hv_compile_version() {
+const char* hv_compile_version(void) {
     static char s_version[16] = {0};
     datetime_t dt = hv_compile_datetime();
     snprintf(s_version, sizeof(s_version), "%d.%d.%d.%d",

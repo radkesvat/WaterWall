@@ -48,8 +48,8 @@ HV_EXPORT void  hv_free(void* ptr);
 #define HV_STACK_ALLOC(ptr, size)   STACK_OR_HEAP_ALLOC(ptr, size, HV_DEFAULT_STACKBUF_SIZE)
 #define HV_STACK_FREE(ptr)          STACK_OR_HEAP_FREE(ptr)
 
-HV_EXPORT long hv_alloc_cnt();
-HV_EXPORT long hv_free_cnt();
+HV_EXPORT long hv_alloc_cnt(void);
+HV_EXPORT long hv_free_cnt(void);
 HV_INLINE void hv_memcheck(void) {
     printf("Memcheck => alloc:%ld free:%ld\n", hv_alloc_cnt(), hv_free_cnt());
 }

@@ -133,12 +133,12 @@ static buffer_pool_t *allocBufferPool(unsigned long bufcount)
     return pool;
 }
 
-buffer_pool_t *createBufferPool()
+buffer_pool_t *createBufferPool(void)
 {
     return allocBufferPool(BUFFERPOOL_CONTAINER_LEN);
 }
 
-buffer_pool_t *createSmallBufferPool()
+buffer_pool_t *createSmallBufferPool(void)
 {
     return allocBufferPool(BUFFERPOOL_SMALL_CONTAINER_LEN);
 }

@@ -21,7 +21,7 @@
 
 BEGIN_EXTERN_C
 
-HV_INLINE int socket_errno() {
+HV_INLINE int socket_errno(void) {
 #ifdef OS_WIN
     return WSAGetLastError();
 #else

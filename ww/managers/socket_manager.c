@@ -94,7 +94,7 @@ static bool redirectPortUdp(unsigned int port, unsigned int to)
     return execCmd(b).exit_code == 0;
 }
 
-static bool resetIptables()
+static bool resetIptables(void)
 {
     LOGD("SocketManager: clearing iptables nat rules");
 #if SUPOPRT_V6
@@ -104,7 +104,7 @@ static bool resetIptables()
 
     return execCmd("iptables -t nat -F").exit_code == 0 && execCmd("iptables -t nat -X").exit_code == 0;
 }
-static void exitHook()
+static void exitHook(void)
 {
     if (state->iptables_used)
     {
@@ -257,11 +257,11 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     hhybridmutex_unlock(&(state->mutex));
 }
 
-static inline uint16_t getCurrentDistrbuteTid()
+static inline uint16_t getCurrentDistrbuteTid(void)
 {
     return state->last_round_tid;
 }
-static inline void incrementDistrbuteTid()
+static inline void incrementDistrbuteTid(void)
 {
     state->last_round_tid++;
     if (state->last_round_tid >= workers_count)
@@ -391,7 +391,7 @@ static void onAcceptTcpMultiPort(hio_t *io)
     distributeTcpSocket(io, (pbuf[2] << 8) | pbuf[3]);
 }
 
-static multiport_backend_t getDefaultMultiPortBackend()
+static multiport_backend_t getDefaultMultiPortBackend(void)
 {
     if (state->iptables_installed)
     {
@@ -733,7 +733,7 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
     return 0;
 }
 
-struct socket_manager_s *getSocketManager()
+struct socket_manager_s *getSocketManager(void)
 {
     return state;
 }
@@ -744,14 +744,14 @@ void setSocketManager(struct socket_manager_s *new_state)
     state = new_state;
 }
 
-void startSocketManager()
+void startSocketManager(void)
 {
     assert(state != NULL);
     // accept_thread(accept_thread_loop);
     state->accept_thread = hthread_create(accept_thread,NULL);
 }
 
-socket_manager_state_t *createSocketManager()
+socket_manager_state_t *createSocketManager(void)
 {
     assert(state == NULL);
     state = malloc(sizeof(socket_manager_state_t));

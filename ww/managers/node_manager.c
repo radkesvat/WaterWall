@@ -71,7 +71,7 @@ void runNode(node_t *n1, size_t chain_index)
     }
 }
 
-static void runNodes()
+static void runNodes(void)
 {
 begin:;
     c_foreach(p1, map_node_t, state->node_map)
@@ -85,7 +85,7 @@ begin:;
     }
 }
 
-static void pathWalk()
+static void pathWalk(void)
 {
 
     c_foreach(p1, map_node_t, state->node_map)
@@ -111,7 +111,7 @@ static void pathWalk()
     }
 }
 
-static void cycleProcess()
+static void cycleProcess(void)
 {
     c_foreach(n1, map_node_t, state->node_map)
     {
@@ -221,14 +221,14 @@ node_t *getNode(hash_t hash_node_name)
     return (iter.ref->second);
 }
 
-node_t *newNode()
+node_t *newNode(void)
 {
     node_t *new_node = malloc(sizeof(node_t));
     memset(new_node, 0, sizeof(node_t));
     return new_node;
 }
 
-static void startParsingFiles()
+static void startParsingFiles(void)
 {
     cJSON *nodes_json = state->config_file->nodes;
     cJSON *node_json  = NULL;
@@ -267,7 +267,7 @@ static tunnel_t *getTunnel(hash_t hash_node_name)
     return (iter.ref->second)->instance;
 }
 
-struct node_manager_s *getNodeManager()
+struct node_manager_s *getNodeManager(void)
 {
     return state;
 }
@@ -283,7 +283,7 @@ void runConfigFile(config_file_t *config_file)
     startParsingFiles();
 }
 
-node_manager_t *createNodeManager()
+node_manager_t *createNodeManager(void)
 {
     assert(state == NULL);
 

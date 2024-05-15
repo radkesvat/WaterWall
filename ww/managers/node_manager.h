@@ -26,9 +26,9 @@ struct node_manager_s;
 
 void                   runNode(node_t *n1, size_t chain_index);
 node_t                *getNode(hash_t hash_node_name);
-node_t                *newNode();
+node_t                *newNode(void);
 void                   registerNode(node_t *new_node, cJSON *node_settings);
 void                   runConfigFile(config_file_t *config_file);
-struct node_manager_s *getNodeManager();
+struct node_manager_s *getNodeManager(void);
 void                   setNodeManager(struct node_manager_s *state);
-struct node_manager_s *createNodeManager();
+struct node_manager_s *createNodeManager(void);

@@ -11,11 +11,12 @@ static inline size_t min(size_t x, size_t y)
 
 typedef struct logger_tunnel_state_s
 {
-
+    void*_;
 } logger_tunnel_state_t;
 
 typedef struct logger_tunnel_con_state_s
 {
+    void*_;
 
 } logger_tunnel_con_state_t;
 
@@ -166,7 +167,7 @@ tunnel_t *destroyLoggerTunnel(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataLoggerTunnel()
+tunnel_metadata_t getMetadataLoggerTunnel(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
 }

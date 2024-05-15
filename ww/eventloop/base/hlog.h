@@ -80,7 +80,7 @@ HV_EXPORT void file_logger(int loglevel, const char* buf, int len);
 // network_logger implement see event/nlog.h
 // HV_EXPORT void network_logger(int loglevel, const char* buf, int len);
 
-HV_EXPORT logger_t* logger_create();
+HV_EXPORT logger_t* logger_create(void);
 HV_EXPORT void logger_destroy(logger_t* logger);
 
 HV_EXPORT void logger_set_handler(logger_t* logger, logger_handler fn);
@@ -121,7 +121,7 @@ HV_EXPORT void logger_fsync(logger_t* logger);
 HV_EXPORT const char* logger_get_cur_file(logger_t* logger);
 
 // hlog: default logger instance
-HV_EXPORT logger_t* hv_default_logger();
+HV_EXPORT logger_t* hv_default_logger(void);
 HV_EXPORT void      hv_destroy_default_logger(void);
 
 // macro hlog*
@@ -142,11 +142,11 @@ HV_EXPORT void      hv_destroy_default_logger(void);
 #define hlog_get_cur_file()             logger_get_cur_file(hlog)
 #define hlog_will_write(level)          logger_will_write_level(hlog,level)
 
-#define hlogd(fmt, ...) logger_print(hlog, LOG_LEVEL_DEBUG, fmt " [%s:%d:%s]", ## __VA_ARGS__, __FILENAME__, __LINE__, __FUNCTION__)
-#define hlogi(fmt, ...) logger_print(hlog, LOG_LEVEL_INFO,  fmt " [%s:%d:%s]", ## __VA_ARGS__, __FILENAME__, __LINE__, __FUNCTION__)
-#define hlogw(fmt, ...) logger_print(hlog, LOG_LEVEL_WARN,  fmt " [%s:%d:%s]", ## __VA_ARGS__, __FILENAME__, __LINE__, __FUNCTION__)
-#define hloge(fmt, ...) logger_print(hlog, LOG_LEVEL_ERROR, fmt " [%s:%d:%s]", ## __VA_ARGS__, __FILENAME__, __LINE__, __FUNCTION__)
-#define hlogf(fmt, ...) logger_print(hlog, LOG_LEVEL_FATAL, fmt " [%s:%d:%s]", ## __VA_ARGS__, __FILENAME__, __LINE__, __FUNCTION__)
+#define hlogd(fmt, ...) logger_print(hlog, LOG_LEVEL_DEBUG, fmt , ## __VA_ARGS__)
+#define hlogi(fmt, ...) logger_print(hlog, LOG_LEVEL_INFO,  fmt , ## __VA_ARGS__)
+#define hlogw(fmt, ...) logger_print(hlog, LOG_LEVEL_WARN,  fmt , ## __VA_ARGS__)
+#define hloge(fmt, ...) logger_print(hlog, LOG_LEVEL_ERROR, fmt , ## __VA_ARGS__)
+#define hlogf(fmt, ...) logger_print(hlog, LOG_LEVEL_FATAL, fmt , ## __VA_ARGS__)
 
 // below for android
 #if defined(ANDROID) || defined(__ANDROID__)

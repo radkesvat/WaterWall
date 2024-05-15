@@ -124,7 +124,7 @@
 #include "tunnels/client/reality/reality_client.h"
 #endif
 
-void loadStaticTunnelsIntoCore()
+void loadStaticTunnelsIntoCore(void)
 {
 #ifdef INCLUDE_TCP_LISTENER
     USING(TcpListener);

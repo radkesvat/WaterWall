@@ -16,7 +16,7 @@ typedef int     epoll_handle_t;
 
 #include "array.h"
 #define EVENTS_INIT_SIZE    64
-ARRAY_DECL(struct epoll_event, events);
+ARRAY_DECL(struct epoll_event, events)
 
 typedef struct epoll_ctx_s {
     epoll_handle_t      epfd;

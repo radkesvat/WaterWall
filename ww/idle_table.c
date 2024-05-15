@@ -141,7 +141,7 @@ bool removeIdleItemByHash(idle_table_t *self, hash_t key)
     }
     idle_item_t *item = (find_result.ref->second);
     hmap_idles_t_erase_at(&(self->hmap), find_result);
-    *item = (idle_item_t){};
+    *item = (idle_item_t){0};
     heapq_idles_t_make_heap(&self->hqueue);
 
     hhybridmutex_unlock(&(self->mutex));

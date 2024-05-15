@@ -406,7 +406,7 @@ tunnel_t *destroyTcpConnector(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataTcpConnector()
+tunnel_metadata_t getMetadataTcpConnector(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

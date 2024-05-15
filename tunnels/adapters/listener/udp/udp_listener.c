@@ -53,7 +53,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
             // sounds impossible...
             LOGE("Checkpoint udp listener");
             // this prevent double free
-            *cstate = (udp_listener_con_state_t){};
+            *cstate = (udp_listener_con_state_t){0};
         }
     }
     else
@@ -364,7 +364,7 @@ tunnel_t *destroyUdpListener(tunnel_t *self)
     (void) (self);
     return NULL;
 }
-tunnel_metadata_t getMetadataUdpListener()
+tunnel_metadata_t getMetadataUdpListener(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
 }

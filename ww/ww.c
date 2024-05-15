@@ -64,7 +64,7 @@ void setWW(struct ww_runtime_state_s *state)
     free(state);
 }
 
-struct ww_runtime_state_s *getWW()
+struct ww_runtime_state_s *getWW(void)
 {
     struct ww_runtime_state_s *state = malloc(sizeof(struct ww_runtime_state_s));
     memset(state, 0, sizeof(struct ww_runtime_state_s));
@@ -88,7 +88,7 @@ void idleFreeMem(htimer_t *timer)
     malloc_trim(0);
 }
 
-_Noreturn void runMainThread()
+_Noreturn void runMainThread(void)
 {
     // htimer_add_period(loops[0], idleFreeMem, 1, 0, 0, 0, 0, INFINITE);
     hloop_run(loops[0]);

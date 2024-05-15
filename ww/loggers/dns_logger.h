@@ -34,7 +34,7 @@
 #endif
 
 
-logger_t          *getDnsLogger();
+logger_t          *getDnsLogger(void);
 void               setDnsLogger(logger_t *newlogger);
 logger_t          *createDnsLogger(const char *log_file, bool console);
 

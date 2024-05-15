@@ -524,7 +524,7 @@ tunnel_t *destroyHttp2Client(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataHttp2Client()
+tunnel_metadata_t getMetadataHttp2Client(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

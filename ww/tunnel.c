@@ -57,7 +57,7 @@ void chain(tunnel_t *from, tunnel_t *to)
     to->chain_index = from->chain_index + 1;
 }
 
-tunnel_t *newTunnel()
+tunnel_t *newTunnel(void)
 {
     tunnel_t *t = malloc(sizeof(tunnel_t));
     *t          = (tunnel_t){

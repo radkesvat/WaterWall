@@ -493,7 +493,7 @@ tunnel_t *destroyWolfSSLClient(tunnel_t *self)
     return NULL;
 }
 
-tunnel_metadata_t getMetadataWolfSSLClient()
+tunnel_metadata_t getMetadataWolfSSLClient(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
 }

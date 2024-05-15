@@ -53,20 +53,20 @@ HV_INLINE int gettimeofday(struct timeval *tv, struct timezone *tz) {
 }
 #endif
 
-HV_EXPORT unsigned int gettick_ms();
-HV_INLINE unsigned long long gettimeofday_ms() {
+HV_EXPORT unsigned int gettick_ms(void);
+HV_INLINE unsigned long long gettimeofday_ms(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return tv.tv_sec * (unsigned long long)1000 + tv.tv_usec/1000;
 }
-HV_INLINE unsigned long long gettimeofday_us() {
+HV_INLINE unsigned long long gettimeofday_us(void) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return tv.tv_sec * (unsigned long long)1000000 + tv.tv_usec;
 }
-HV_EXPORT unsigned long long gethrtime_us();
+HV_EXPORT unsigned long long gethrtime_us(void);
 
-HV_EXPORT datetime_t datetime_now();
+HV_EXPORT datetime_t datetime_now(void);
 HV_EXPORT datetime_t datetime_localtime(time_t seconds);
 HV_EXPORT time_t     datetime_mktime(datetime_t* dt);
 
@@ -95,7 +95,7 @@ HV_EXPORT const char* month_itoa(int month);
 HV_EXPORT int weekday_atoi(const char* weekday);
 HV_EXPORT const char* weekday_itoa(int weekday);
 
-HV_EXPORT datetime_t hv_compile_datetime();
+HV_EXPORT datetime_t hv_compile_datetime(void);
 
 /*
  * minute   hour    day     week    month       action

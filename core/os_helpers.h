@@ -4,7 +4,7 @@
 
 #ifdef OS_UNIX
 #include <sys/resource.h>
-static void increaseFileLimit()
+static void increaseFileLimit(void)
 {
 
     struct rlimit rlim;
@@ -36,7 +36,7 @@ static void increaseFileLimit()
     }
 }
 #else
-static void increaseFileLimit()
+static void increaseFileLimit(void)
 {
     (void) (0);
 }

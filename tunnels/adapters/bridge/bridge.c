@@ -13,7 +13,7 @@ typedef struct bridge_state_s
 
 typedef struct bridge_con_state_s
 {
-
+    void*_;
 } bridge_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -119,7 +119,7 @@ tunnel_t *destroyBridge(tunnel_t *self)
 
     return NULL;
 }
-tunnel_metadata_t getMetadataBridge()
+tunnel_metadata_t getMetadataBridge(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
 }

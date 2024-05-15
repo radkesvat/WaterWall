@@ -3,10 +3,11 @@
 #include "tunnel.h"
 #include "types.h"
 
+#define kMaxConcurrentStreams 0xffffffffU // NOLINT
+
 enum
 {
-    kMaxConcurrentStreams = 0xffffffffU,
-    kPingInterval         = 5000
+    kPingInterval = 5000
 };
 
 static void onPingTimer(htimer_t *timer);

@@ -41,7 +41,7 @@ static void coreLoggerHandle(int loglevel, const char *buf, int len)
     logfile_write(logger, buf, len);
 }
 
-logger_t *getCoreLogger()
+logger_t *getCoreLogger(void)
 {
     return logger;
 }
@@ -69,7 +69,7 @@ logger_t *createCoreLogger(const char *log_file, bool console)
     return logger;
 }
 
-core_logger_handle_t getCoreLoggerHandle()
+core_logger_handle_t getCoreLoggerHandle(void)
 {
     return logger_handle(logger);
 }

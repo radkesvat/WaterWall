@@ -80,13 +80,13 @@ static void signMessage(shift_buffer_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sig
 static shift_buffer_t *genericDecrypt(shift_buffer_t *in, EVP_CIPHER_CTX *decryption_context, char *password,
                                       buffer_pool_t *pool)
 {
-    shift_buffer_t *out          = popBuffer(pool);
+    shift_buffer_t *out = popBuffer(pool);
 
-
-    EVP_DecryptInit_ex(decryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password, (const uint8_t *) rawBuf(in));
+    EVP_DecryptInit_ex(decryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password,
+                       (const uint8_t *) rawBuf(in));
     shiftr(in, kIVlen);
-    uint16_t        input_length = bufLen(in);
-    reserveBufSpace(out, input_length );
+    uint16_t input_length = bufLen(in);
+    reserveBufSpace(out, input_length);
     int out_len = 0;
 
     /*
@@ -126,7 +126,7 @@ static shift_buffer_t *genericEncrypt(shift_buffer_t *in, EVP_CIPHER_CTX *encryp
 
     EVP_EncryptInit_ex(encryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password, (const uint8_t *) iv);
 
-    reserveBufSpace(out, input_length + kEncryptionBlockSize +(input_length % kEncryptionBlockSize));
+    reserveBufSpace(out, input_length + kEncryptionBlockSize + (input_length % kEncryptionBlockSize));
     int out_len = 0;
 
     /*
@@ -174,5 +174,6 @@ static void appendTlsHeader(shift_buffer_t *buf)
 static bool isTlsData(shift_buffer_t *buf)
 {
     return bufLen(buf) >= kTLSHeaderlen && ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData &&
-           *((uint16_t *) (rawBuf(buf) + 1)) == kTLSVersion12 && *((uint16_t *) (rawBuf(buf) + 1)) > 0x0;
+           *((uint16_t *) &(((char *) rawBuf(buf))[1])) == kTLSVersion12
+           && bufLen(buf) > 0;
 }
