@@ -24,13 +24,13 @@ typedef struct reverse_client_con_state_s
 
 typedef struct reverse_client_state_s
 {
-    atomic_uint  reverse_cons;
-    atomic_uint  round_index;
+    atomic_uint reverse_cons;
+    atomic_uint round_index;
 
     uint8_t chain_index_d;
 
-    int          connection_per_thread;
-    int          min_unused_cons;
+    unsigned int connection_per_thread;
+    unsigned int min_unused_cons;
     unsigned int unused_cons[];
 
 } reverse_client_state_t;
