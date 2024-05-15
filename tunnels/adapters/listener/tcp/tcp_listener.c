@@ -194,7 +194,6 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             assert(! cstate->established);
             cstate->established = true;
-            hio_set_keepalive_timeout(cstate->io, kDefaultKeepAliveTimeOutMs);
             destroyContext(c);
             return;
         }
@@ -259,6 +258,7 @@ static void onInboundConnected(hevent_t *ev)
     hio_t                  *io   = data->io;
     size_t                  tid  = data->tid;
     hio_attach(loop, io);
+    hio_set_keepalive_timeout(io, kDefaultKeepAliveTimeOutMs);
 
     tunnel_t                 *self   = data->tunnel;
     line_t                   *line   = newLine(tid);
