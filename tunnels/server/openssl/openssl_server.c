@@ -104,9 +104,9 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
     (void) len;
     oss_server_con_state_t *cstate = arg;
 
-    if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 6)
+    if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 3)
     {
-        return (16 * (160 + (0x7F & (size_t) fastRand())));
+        return (16 * (96 + (0xFF & (size_t) fastRand())));
     }
 
     return 0;
