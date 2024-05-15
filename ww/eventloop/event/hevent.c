@@ -57,6 +57,7 @@ static void hio_socket_init(hio_t* io) {
     }
     socklen_t addrlen = sizeof(sockaddr_u);
     int ret = getsockname(io->fd, io->localaddr, &addrlen);
+    (void)ret;
     printd("getsockname fd=%d ret=%d errno=%d\n", io->fd, ret, socket_errno());
     // NOTE: udp peeraddr set by recvfrom/sendto
     if (io->io_type & HIO_TYPE_SOCK_STREAM) {
@@ -81,6 +82,7 @@ void hio_init(hio_t* io) {
     // write_queue_init(&io->write_queue, 4);
 
     // hrecursive_mutex_init(&io->write_mutex);
+    (void)io;
 }
 
 void hio_ready(hio_t* io) {
@@ -131,10 +133,6 @@ void hio_ready(hio_t* io) {
 #ifdef EVENT_IOCP
     io->hovlp = NULL;
 
-
-
-
-
 #endif
 
     // io_type
@@ -142,8 +140,6 @@ void hio_ready(hio_t* io) {
     if (io->io_type & HIO_TYPE_SOCKET) {
         hio_socket_init(io);
     }
-
-
 }
 
 void hio_done(hio_t* io) {
@@ -152,11 +148,9 @@ void hio_done(hio_t* io) {
 
     hio_del(io, HV_RDWR);
 
-
-
     // write_queue
     shift_buffer_t* buf = NULL;
-    // 
+    //
     while (!write_queue_empty(&io->write_queue)) {
         buf = *write_queue_front(&io->write_queue);
         reuseBuffer(io->loop->bufpool, buf);
@@ -164,8 +158,6 @@ void hio_done(hio_t* io) {
     }
     write_queue_cleanup(&io->write_queue);
     io->write_queue.ptr = NULL;
-    
-
 }
 
 void hio_free(hio_t* io) {
@@ -295,7 +287,7 @@ void hio_connect_cb(hio_t* io) {
     }
 }
 
-void hio_handle_read(hio_t* io,shift_buffer_t* buf) {
+void hio_handle_read(hio_t* io, shift_buffer_t* buf) {
     // hio_read
     hio_read_cb(io, buf);
 }
@@ -409,7 +401,7 @@ void hio_set_close_timeout(hio_t* io, int timeout_ms) {
 static void __read_timeout_cb(htimer_t* timer) {
     hio_t* io = (hio_t*)timer->privdata;
     uint64_t inactive_ms = (io->loop->cur_hrtime - io->last_read_hrtime) / 1000;
-    if (inactive_ms + 100 < io->read_timeout) {
+    if (inactive_ms + 100 < (uint64_t)io->read_timeout) {
         htimer_reset(io->read_timer, io->read_timeout - inactive_ms);
     }
     else {
@@ -445,7 +437,7 @@ void hio_set_read_timeout(hio_t* io, int timeout_ms) {
 static void __write_timeout_cb(htimer_t* timer) {
     hio_t* io = (hio_t*)timer->privdata;
     uint64_t inactive_ms = (io->loop->cur_hrtime - io->last_write_hrtime) / 1000;
-    if (inactive_ms + 100 < io->write_timeout) {
+    if (inactive_ms + 100 < (uint64_t)io->write_timeout) {
         htimer_reset(io->write_timer, io->write_timeout - inactive_ms);
     }
     else {
@@ -482,7 +474,7 @@ static void __keepalive_timeout_cb(htimer_t* timer) {
     hio_t* io = (hio_t*)timer->privdata;
     uint64_t last_rw_hrtime = MAX(io->last_read_hrtime, io->last_write_hrtime);
     uint64_t inactive_ms = (io->loop->cur_hrtime - last_rw_hrtime) / 1000;
-    if (inactive_ms + 100 < io->keepalive_timeout) {
+    if (inactive_ms + 100 < (uint64_t)io->keepalive_timeout) {
         htimer_reset(io->keepalive_timer, io->keepalive_timeout - inactive_ms);
     }
     else {
@@ -543,8 +535,6 @@ void hio_set_heartbeat(hio_t* io, int interval_ms, hio_send_heartbeat_fn fn) {
 }
 
 //-----------------iobuf---------------------------------------------
-
-
 
 void hio_set_max_write_bufsize(hio_t* io, uint32_t size) {
     io->max_write_bufsize = size;

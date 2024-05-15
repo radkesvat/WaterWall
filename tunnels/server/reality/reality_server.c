@@ -109,7 +109,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                     uint16_t length = *(uint16_t *) (tls_header + 3);
-                    if (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                    if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                     {
                         shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                         shiftr(buf, kTLSHeaderlen);
@@ -154,7 +154,6 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                 }
             }
-
             cstate->giveup_counter -= 0;
             if (cstate->giveup_counter == 0)
             {
@@ -162,6 +161,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 cstate->auth_state = kConUnAuthorized;
             }
         }
+            // fallthrough
 
         case kConUnAuthorized:
             state->dest->upStream(state->dest, c);
@@ -176,7 +176,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = *(uint16_t *) (tls_header + 3);
-                if (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                     shiftr(buf, kTLSHeaderlen);
@@ -270,7 +270,7 @@ static void downStream(tunnel_t *self, context_t *c)
         case kConAuthorized:;
             shift_buffer_t *buf  = c->payload;
             c->payload           = NULL;
-            const int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
+            const unsigned int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
             if (bufLen(buf) < chunk_size)
             {
@@ -305,11 +305,12 @@ static void downStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        if (c->est )
+        if (c->est)
         {
-            if(cstate->auth_state == kConAuthorized){
+            if (cstate->auth_state == kConAuthorized)
+            {
                 destroyContext(c);
-            return;
+                return;
             }
             self->dw->downStream(self->dw, c);
             return;
@@ -357,7 +358,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     }
     uint64_t *p64 = (uint64_t *) state->hashes;
     p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
-    for (int i = 1; i < EVP_MAX_MD_SIZE / sizeof(uint64_t); i++)
+    for (int i = 1; i < (int) (EVP_MAX_MD_SIZE / sizeof(uint64_t)); i++)
     {
         p64[i] = p64[i - 1];
     }

@@ -94,11 +94,7 @@ static void cleanup(socks5_server_con_state_t *cstate, buffer_pool_t *reusepool)
 static void encapsulateUdpPacket(context_t* c)
 {
     shift_buffer_t* packet = c->payload;
-    uint16_t packet_len = bufLen(c->payload);
 
-    // packet_len = (packet_len << 8) | (packet_len >> 8);
-    // shiftl(packet, 2); // LEN
-    // writeUI16(packet, packet_len);
 
     uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
     port          = (port << 8) | (port >> 8);
@@ -112,6 +108,7 @@ static void encapsulateUdpPacket(context_t* c)
         writeRaw(packet, &(c->line->dest_ctx.address.sin6.sin6_addr), 16);
         shiftl(packet, 1);
         writeUI8(packet, kIPv6Addr);
+        break;
 
     case kSatIPV4:
     default:
@@ -130,7 +127,7 @@ static void encapsulateUdpPacket(context_t* c)
 #define ATLEAST(x)                                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \
-        if (bufLen(c->payload) < (x))                                                                                  \
+        if ((int)bufLen(c->payload) < (x))                                                                                  \
         {                                                                                                              \
             reuseContextBuffer(c);                                                                                     \
             goto disconnect;                                                                                           \
@@ -253,7 +250,6 @@ disconnect:;
 }
 static void upStream(tunnel_t *self, context_t *c)
 {
-    socks5_server_state_t     *state  = STATE(self);
     socks5_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
@@ -303,6 +299,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
         case kSBegin:
             cstate->state = kSAuthMethodsCount;
+            //fallthrough
         case kSAuthMethodsCount: {
             assert(cstate->need == 2);
             uint8_t version = 0;
@@ -324,7 +321,7 @@ static void upStream(tunnel_t *self, context_t *c)
         break;
         case kSAuthMethods: {
             // TODO(root): check auth methods
-            uint8_t authmethod = kNoAuth;
+            // uint8_t authmethod = kNoAuth;
             // send auth mothod
             shift_buffer_t *resp = popBuffer(getContextBufferPool(c));
             shiftl(resp, 1);
@@ -364,7 +361,7 @@ static void upStream(tunnel_t *self, context_t *c)
             readUI8(bytes, &cmd);
             shiftr(bytes, 1);
 
-            if (version != SOCKS5_VERSION || cmd != kConnectCommand && cmd != kAssociateCommand)
+            if (version != SOCKS5_VERSION || (cmd != kConnectCommand && cmd != kAssociateCommand))
             {
                 LOGE("Socks5Server: Unsupprted command: %d", (int) cmd);
                 reuseContextBuffer(c);
@@ -526,7 +523,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 reuseContextBuffer(c);
                 //todo (ip filter) socks5 standard says this should whitelist the caller ip
                 // socks5 outbound accepted, udp relay will connect
-                socks5_server_con_state_t *cstate  = CSTATE(c);
                 shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
                 setLen(respbuf, 32);
                 uint8_t *resp = rawBufMut(respbuf);
@@ -635,7 +631,6 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             cstate->init_sent = false;
             // socks5 outbound failed
-            socks5_server_con_state_t *cstate  = CSTATE(c);
             shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
             setLen(respbuf, 32);
             uint8_t *resp = rawBufMut(respbuf);

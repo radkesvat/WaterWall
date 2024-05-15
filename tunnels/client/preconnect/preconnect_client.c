@@ -112,6 +112,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         case kNotconnected:
             LOGE("PreConnectClient: this node is not purposed to handle downstream data before pairing");
+            //fallthrough
         default:
             LOGF("PreConnectClient: invalid value of connection state (memory error?)");
             exit(1);
@@ -193,7 +194,7 @@ static void startPreconnect(htimer_t *timer)
     tunnel_t                  *self  = hevent_userdata(timer);
     preconnect_client_state_t *state = STATE(self);
 
-    for (int i = 0; i < workers_count; i++)
+    for (unsigned int i = 0; i < workers_count; i++)
     {
         const size_t cpt = state->connection_per_thread;
         for (size_t ci = 0; ci < cpt; ci++)
@@ -213,9 +214,9 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
     const cJSON *settings = instance_info->node_settings_json;
 
-    getIntFromJsonObject(&(state->min_unused_cons), settings, "minimum-unused");
+    getIntFromJsonObject((int*)&(state->min_unused_cons), settings, "minimum-unused");
 
-    state->min_unused_cons       = min(max(workers_count * 4, state->min_unused_cons), 128);
+    state->min_unused_cons       = (unsigned int)min(max((ssize_t)(workers_count * 4), (ssize_t)state->min_unused_cons), 128);
     state->connection_per_thread = min(4, state->min_unused_cons / workers_count);
 
     tunnel_t *t   = newTunnel();

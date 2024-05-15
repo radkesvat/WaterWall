@@ -186,7 +186,8 @@ static int __nio_write(hio_t* io, const void* buf, int len) {
 static void nio_read(hio_t* io) {
     // printd("nio_read fd=%d\n", io->fd);
     int nread = 0, err = 0;
-read:;
+//  read:;
+
     // #if defined(OS_LINUX) && defined(HAVE_PIPE)
     //     if(io->pfd_w){
     //         len = (1U << 20); // 1 MB
@@ -251,10 +252,10 @@ disconnect:
 static void nio_write(hio_t* io) {
     // printd("nio_write fd=%d\n", io->fd);
     int nwrite = 0, err = 0;
-    // 
+    //
 write:
     if (write_queue_empty(&io->write_queue)) {
-        
+
         if (io->close) {
             io->close = 0;
             hio_close(io);
@@ -262,14 +263,14 @@ write:
         return;
     }
     shift_buffer_t* buf = *write_queue_front(&io->write_queue);
-    unsigned int len = bufLen(buf);
+    int len = (int)bufLen(buf);
     // char* base = pbuf->base;
     nwrite = __nio_write(io, rawBufMut(buf), len);
     // printd("write retval=%d\n", nwrite);
     if (nwrite < 0) {
         err = socket_errno();
         if (err == EAGAIN || err == EINTR) {
-            
+
             return;
         }
         else {
@@ -299,16 +300,15 @@ write:
             // write continue
             goto write;
         }
-    }else{
+    }
+    else {
         __write_cb(io);
-
     }
 
-    
     return;
 write_error:
 disconnect:
-    
+
     if (io->io_type & HIO_TYPE_SOCK_STREAM) {
         hio_close(io);
     }
@@ -326,11 +326,11 @@ static void hio_handle_events(hio_t* io) {
 
     if ((io->events & HV_WRITE) && (io->revents & HV_WRITE)) {
         // NOTE: del HV_WRITE, if write_queue empty
-        // 
+        //
         if (write_queue_empty(&io->write_queue)) {
             hio_del(io, HV_WRITE);
         }
-        
+
         if (io->connect) {
             // NOTE: connect just do once
             // ONESHOT
@@ -392,10 +392,10 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
         return -1;
     }
     int nwrite = 0, err = 0;
-    // 
-    unsigned int len = bufLen(buf);
+    //
+    int len = (int)bufLen(buf);
     if (write_queue_empty(&io->write_queue)) {
-    try_write:
+        //    try_write:
         nwrite = __nio_write(io, rawBufMut(buf), len);
         // printd("write retval=%d\n", nwrite);
         if (nwrite < 0) {
@@ -457,7 +457,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
     }
 
 write_done:
-    
+
     if (nwrite > 0) {
         if (nwrite == len) {
             reuseBuffer(io->loop->bufpool, buf);
@@ -467,7 +467,7 @@ write_done:
     return nwrite;
 write_error:
 disconnect:
-    
+
     /* NOTE:
      * We usually free resources in hclose_cb,
      * if hio_close_sync, we have to be very careful to avoid using freed resources.
@@ -486,14 +486,14 @@ int hio_close(hio_t* io) {
         return hio_close_async(io);
     }
 
-    // 
+    //
     if (io->closed) {
-        
+
         return 0;
     }
     if (!write_queue_empty(&io->write_queue) && io->error == 0 && io->close == 0 && io->destroy == 0) {
         io->close = 1;
-        
+
         hlogd("write_queue not empty, close later.");
         int timeout_ms = io->close_timeout ? io->close_timeout : HIO_DEFAULT_CLOSE_TIMEOUT;
         io->close_timer = htimer_add(io->loop, __close_timeout_cb, timeout_ms, 1);
@@ -501,7 +501,6 @@ int hio_close(hio_t* io) {
         return 0;
     }
     io->closed = 1;
-    
 
     hio_done(io);
     __close_cb(io);

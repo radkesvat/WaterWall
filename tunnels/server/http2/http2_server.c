@@ -25,7 +25,6 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     // LOGD("%s: %s\n", name, value);
 
     http2_server_con_state_t *con  = (http2_server_con_state_t *) userdata;
-    tunnel_t *                self = con->tunnel;
 
     if (*name == ':')
     {
@@ -68,7 +67,6 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
         return 0;
     }
     http2_server_con_state_t *con  = (http2_server_con_state_t *) userdata;
-    tunnel_t *                self = con->tunnel;
 
     http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
     if (! stream)
@@ -302,7 +300,6 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    http2_server_state_t *state = STATE(self);
     if (c->payload != NULL)
     {
         http2_server_con_state_t *con = CSTATE(c);
@@ -420,9 +417,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
 {
+    (void)instance_info;
     http2_server_state_t *state = malloc(sizeof(http2_server_state_t));
     memset(state, 0, sizeof(http2_server_state_t));
-    cJSON *settings = instance_info->node_settings_json;
 
     nghttp2_session_callbacks_new(&(state->cbs));
     nghttp2_session_callbacks_set_on_header_callback(state->cbs, onHeaderCallback);

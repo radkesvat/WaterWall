@@ -341,10 +341,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 endif()
 
-add_compile_options(
-  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> 
-  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic -Werror>
-)
 
 
 if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")

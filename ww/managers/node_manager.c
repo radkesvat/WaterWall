@@ -257,15 +257,15 @@ static void startParsingFiles(void)
     runNodes();
 }
 
-static tunnel_t *getTunnel(hash_t hash_node_name)
-{
-    map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
-    if (iter.ref == map_node_t_end(&(state->node_map)).ref)
-    {
-        return NULL;
-    }
-    return (iter.ref->second)->instance;
-}
+// static tunnel_t *getTunnel(hash_t hash_node_name)
+// {
+//     map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
+//     if (iter.ref == map_node_t_end(&(state->node_map)).ref)
+//     {
+//         return NULL;
+//     }
+//     return (iter.ref->second)->instance;
+// }
 
 struct node_manager_s *getNodeManager(void)
 {

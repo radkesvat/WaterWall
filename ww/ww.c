@@ -144,7 +144,7 @@ void createWW(ww_construction_data_t init_data)
     ram_profile  = init_data.ram_profile;
     buffer_pools = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
 
-    for (int i = 0; i < workers_count; ++i)
+    for (unsigned int i = 0; i < workers_count; ++i)
     {
         buffer_pools[i] = createBufferPool();
     }
@@ -153,7 +153,7 @@ void createWW(ww_construction_data_t init_data)
     loops[0]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[0]);
     workers[0] = (hthread_t) NULL;
 
-    for (int i = 1; i < workers_count; ++i)
+    for (unsigned int i = 1; i < workers_count; ++i)
     {
         loops[i]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[i]);
         workers[i] = hthread_create(worker_thread, loops[i]);

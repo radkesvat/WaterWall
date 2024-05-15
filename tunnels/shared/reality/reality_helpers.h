@@ -119,7 +119,7 @@ static shift_buffer_t *genericEncrypt(shift_buffer_t *in, EVP_CIPHER_CTX *encryp
     int             input_length = (int) bufLen(in);
 
     uint8_t iv[kIVlen];
-    for (int i = 0; i < kIVlen / sizeof(uint32_t); i++)
+    for (int i = 0; i < (int)(kIVlen / sizeof(uint32_t)); i++)
     {
         ((uint32_t *) iv)[i] = fastRand();
     }

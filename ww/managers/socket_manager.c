@@ -72,6 +72,7 @@ static bool redirectPortRangeUdp(unsigned int pmin, unsigned int pmax, unsigned 
     sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
     return execCmd(b).exit_code == 0;
 }
+
 static bool redirectPortTcp(unsigned int port, unsigned int to)
 {
     char b[300];
@@ -220,7 +221,7 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
             prefix_length -= bits;
         }
         // struct in6_addr mask_addr;
-        memcpy(&(subnet_mask->s6_addr), subnet_mask, 16);
+        // memcpy(&(subnet_mask->s6_addr), subnet_mask, 16);
         // inet_ntop(AF_INET6, &mask_addr, subnet_mask, INET6_ADDRSTRLEN);
     }
     else
@@ -638,9 +639,9 @@ static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
         LOGF("SocketManager: stopping due to null socket handle");
         exit(1);
     }
-    udpsock_t* socket = malloc(sizeof(udpsock_t));
-    *socket = (udpsock_t){.io = filter->listen_io,.table = newIdleTable(loop)};
-    hevent_set_userdata(filter->listen_io,socket);
+    udpsock_t *socket = malloc(sizeof(udpsock_t));
+    *socket           = (udpsock_t){.io = filter->listen_io, .table = newIdleTable(loop)};
+    hevent_set_userdata(filter->listen_io, socket);
     hio_setcb_read(filter->listen_io, onRecvFrom);
     hio_read(filter->listen_io);
 }
@@ -699,12 +700,14 @@ void writeUdpThisLoop(hevent_t *ev)
 {
     struct udp_sb *ub     = hevent_userdata(ev);
     size_t         nwrite = hio_write(ub->socket_io, ub->buf);
+    (void) nwrite;
+
     free(ub);
 }
 void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf)
 {
     struct udp_sb *ub = malloc(sizeof(struct udp_sb));
-    *ub               = (struct udp_sb){.socket_io = socket_io, buf = buf};
+    *ub               = (struct udp_sb){.socket_io = socket_io, buf};
     hevent_t ev       = (hevent_t){.loop = hevent_loop(socket_io), .cb = writeUdpThisLoop};
     ev.userdata       = ub;
 
@@ -713,6 +716,7 @@ void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf)
 
 static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
+    (void) userdata;
     hloop_t *loop = hloop_new(HLOOP_FLAG_AUTO_FREE, createSmallBufferPool());
 
     hhybridmutex_lock(&(state->mutex));
@@ -748,7 +752,7 @@ void startSocketManager(void)
 {
     assert(state != NULL);
     // accept_thread(accept_thread_loop);
-    state->accept_thread = hthread_create(accept_thread,NULL);
+    state->accept_thread = hthread_create(accept_thread, NULL);
 }
 
 socket_manager_state_t *createSocketManager(void)

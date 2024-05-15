@@ -58,7 +58,7 @@ static int onAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outl
     while (offset < inlen)
     {
         // LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        for (int i = 0; i < state->alpns_length; i++)
+        for (int i = 0; i < (int)state->alpns_length; i++)
         {
             if (0 == strncmp((const char *) &(in[1 + offset]), state->alpns[i].name,
                              state->alpns[i].name_length < in[offset] ? state->alpns[i].name_length : in[offset]))

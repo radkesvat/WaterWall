@@ -6,7 +6,6 @@
 
 static void cleanup(udp_connector_con_state_t *cstate)
 {
-    udp_connector_state_t *state = STATE(cstate->tunnel);
     free(cstate);
 }
 static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
@@ -20,17 +19,6 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
     shift_buffer_t          *payload  = buf;
     tunnel_t                *self     = (cstate)->tunnel;
     line_t                  *line     = (cstate)->line;
-    struct sockaddr         *destaddr = hio_peeraddr(io);
-    enum socket_address_type address_type;
-
-    if (destaddr->sa_family == AF_INET6)
-    {
-        address_type = kSatIPV6;
-    }
-    else
-    {
-        address_type = kSatIPV4;
-    }
 
     if (! cstate->established)
     {
@@ -56,7 +44,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        unsigned int bytes = bufLen(c->payload);
 
         if (hio_is_closed(cstate->io))
         {
@@ -68,7 +55,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         size_t nwrite = hio_write(cstate->io, c->payload);
         c->payload    = NULL;
-
+        (void)nwrite;
         // assert(nwrite <= 0  || nwrite ==  bytes);
         destroyContext(c);
     }

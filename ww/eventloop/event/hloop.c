@@ -183,9 +183,10 @@ process_timers:
         }
     }
     int ncbs = hloop_process_pendings(loop);
-    // printd("blocktime=%d nios=%d/%u ntimers=%d/%u nidles=%d/%u nactives=%d npendings=%d ncbs=%d\n",
-    //         blocktime, nios, loop->nios, ntimers, loop->ntimers, nidles, loop->nidles,
-    //         loop->nactives, npendings, ncbs);
+    printd("blocktime=%d nios=%d/%u ntimers=%d/%u nidles=%d/%u nactives=%d npendings=%d ncbs=%d\n",
+            blocktime, nios, loop->nios, ntimers, loop->ntimers, nidles, loop->nidles,
+            loop->nactives, npendings, ncbs);
+    (void)nios;
     return ncbs;
 }
 
@@ -354,7 +355,7 @@ static void hloop_cleanup(hloop_t* loop) {
 
     // ios
     printd("cleanup ios...\n");
-    for (int i = 0; i < loop->ios.maxsize; ++i) {
+    for (size_t i = 0; i < loop->ios.maxsize; ++i) {
         hio_t* io = loop->ios.ptr[i];
         if (io) {
             hio_free(io);
@@ -511,7 +512,7 @@ hloop_status_e hloop_status(hloop_t* loop) {
 
 void hloop_update_time(hloop_t* loop) {
     loop->cur_hrtime = gethrtime_us();
-    if (hloop_now(loop) != time(NULL)) {
+    if ((time_t)hloop_now(loop) != time(NULL)) {
         // systemtime changed, we adjust start_ms
         loop->start_ms = gettimeofday_ms() - (loop->cur_hrtime - loop->start_hrtime) / 1000;
     }
@@ -713,7 +714,7 @@ const char* hio_engine(void) {
 }
 
 static inline hio_t* __hio_get(hloop_t* loop, int fd) {
-    if (fd >= loop->ios.maxsize) {
+    if (fd >= (int)loop->ios.maxsize) {
         int newsize = ceil2e(fd);
         newsize = MAX(newsize, IO_ARRAY_INIT_SIZE);
         io_array_resize(&loop->ios, newsize > fd ? newsize : 2 * fd);
@@ -742,7 +743,7 @@ hio_t* hio_get(hloop_t* loop, int fd) {
 void hio_detach(hio_t* io) {
     hloop_t* loop = io->loop;
     int fd = io->fd;
-    assert(loop != NULL && fd < loop->ios.maxsize);
+    assert(loop != NULL && fd < (int)loop->ios.maxsize);
     loop->ios.ptr[fd] = NULL;
 }
 
@@ -761,7 +762,7 @@ void hio_attach(hloop_t* loop, hio_t* io) {
 }
 
 bool hio_exists(hloop_t* loop, int fd) {
-    if (fd >= loop->ios.maxsize) {
+    if (fd >= (int)loop->ios.maxsize) {
         return false;
     }
     return loop->ios.ptr[fd] != NULL;

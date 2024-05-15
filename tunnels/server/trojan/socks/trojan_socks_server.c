@@ -25,7 +25,7 @@ enum trojan_atyp
 
 typedef struct trojan_socks_server_state_s
 {
-    void*_;
+    void *_;
 
 } trojan_socks_server_state_t;
 
@@ -69,6 +69,7 @@ static void encapsulateUdpPacket(context_t *c)
         writeRaw(c->payload, &(c->line->dest_ctx.address.sin6.sin6_addr), 16);
         shiftl(c->payload, 1);
         writeUI8(c->payload, kTrojanatypIpV6);
+        break;
 
     case kSatIPV4:
     default:
@@ -245,7 +246,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         }
         domain_len = bufferStreamViewByteAt(bstream, 1);
 
-        if (bufferStreamLen(bstream) < 1 + 1 + domain_len + 2 + 2 + 2)
+        if ((int) bufferStreamLen(bstream) < 1 + 1 + domain_len + 2 + 2 + 2)
         {
             return true;
         }
@@ -532,7 +533,6 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_MUT(c) = malloc(sizeof(trojan_socks_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
-            trojan_socks_server_con_state_t *cstate = CSTATE(c);
             destroyContext(c);
         }
         else if (c->fin)

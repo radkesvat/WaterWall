@@ -396,6 +396,7 @@ pid_t getpid_from_pidfile(void) {
     }
     int pid = -1;
     int _ = fscanf(fp, "%d", &pid);
+    (void)_;
     fclose(fp);
     return pid;
 }
@@ -600,6 +601,7 @@ void signal_handle(const char* signal) {
 
 // master-workers processes
 static HTHREAD_ROUTINE(worker_thread) {
+    (void)userdata;
     hlogi("worker_thread pid=%ld tid=%ld", hv_getpid(), hv_gettid());
     if (g_main_ctx.worker_fn) {
         g_main_ctx.worker_fn(g_main_ctx.worker_userdata);
@@ -608,6 +610,7 @@ static HTHREAD_ROUTINE(worker_thread) {
 }
 
 static void worker_init(void* userdata) {
+    (void)userdata;
 #ifdef OS_UNIX
     setproctitle("%s: worker process", g_main_ctx.program_name);
     signal(SIGNAL_RELOAD, signal_handler);
@@ -615,6 +618,7 @@ static void worker_init(void* userdata) {
 }
 
 static void worker_proc(void* userdata) {
+    (void)userdata;
     for (int i = 1; i < g_main_ctx.worker_threads; ++i) {
         hthread_create(worker_thread, NULL);
     }

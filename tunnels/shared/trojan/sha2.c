@@ -29,9 +29,8 @@
  * SUCH DAMAGE.
  */
 
-#if 1
+
 #define UNROLL_LOOPS /* Enable loops unrolling */
-#endif
 
 #include <string.h>
 
@@ -117,8 +116,8 @@
 static const uint32 kSha224H0[8] = {0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939,
                                     0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4};
 
-static const uint32 kSha256H0[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                                    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+// static const uint32 kSha256H0[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+//                                     0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
 
 static const uint64 kSha384H0[8] = {0xcbbb9d5dc1059ed8ULL, 0x629a292a367cd507ULL, 0x9159015a3070dd17ULL,
                                     0x152fecd8f70e5939ULL, 0x67332667ffc00b31ULL, 0x8eb44a8768581511ULL,

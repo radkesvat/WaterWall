@@ -41,7 +41,6 @@ void destroyShiftBuffer(shift_buffer_t *self)
 
 shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
 {
-    assert(pre_cap >= 0);
     unsigned int real_cap = pre_cap * 2;
 
     shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
@@ -109,7 +108,6 @@ void unShallow(shift_buffer_t *self)
 
 void expand(shift_buffer_t *self, unsigned int increase)
 {
-    const bool keep = self->curpos != self->lenpos;
     if (isShallow(self))
     {
         const unsigned int old_realcap = self->full_cap;

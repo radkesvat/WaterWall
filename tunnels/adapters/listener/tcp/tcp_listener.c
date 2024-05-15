@@ -14,7 +14,7 @@
 // #define PROFILE 1
 enum
 {
-    kDefaultKeepAliveTimeOutMs = 75*1000 // same as NGINX
+    kDefaultKeepAliveTimeOutMs = 75 * 1000 // same as NGINX
 };
 
 typedef struct tcp_listener_state_s
@@ -69,6 +69,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
         destroyContext(cw);
     }
 
+    resumeLineUpSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
     doneLineDownSide(cstate->line);
     destroyLine(cstate->line);
@@ -81,10 +82,10 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
     hio_t           *io         = cstate->io;
     while (contextQueueLen(data_queue) > 0)
     {
-        context_t   *cw     = contextQueuePop(data_queue);
-        unsigned int bytes  = bufLen(cw->payload);
-        int          nwrite = hio_write(io, cw->payload);
-        cw->payload         = NULL;
+        context_t *cw     = contextQueuePop(data_queue);
+        int        bytes  = (int) bufLen(cw->payload);
+        int        nwrite = hio_write(io, cw->payload);
+        cw->payload       = NULL;
         destroyContext(cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
@@ -173,9 +174,9 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            unsigned int bytes  = bufLen(c->payload);
-            int          nwrite = hio_write(cstate->io, c->payload);
-            c->payload          = NULL;
+            int bytes  = (int) bufLen(c->payload);
+            int nwrite = hio_write(cstate->io, c->payload);
+            c->payload = NULL;
 
             if (nwrite >= 0 && nwrite < bytes)
             {
@@ -199,7 +200,6 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         if (c->fin)
         {
-            hio_t *io = cstate->io;
             cleanup(cstate, true);
             CSTATE_MUT(c) = NULL;
             destroyContext(c);
@@ -410,7 +410,6 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
             const cJSON *list_item = NULL;
             cJSON_ArrayForEach(list_item, wlist)
             {
-                unsigned int list_item_len = 0;
                 if (! getStringFromJson(&(list[i]), list_item) || ! verifyIpCdir(list[i], getNetworkLogger()))
                 {
                     LOGF("JSON Error: TcpListener->settings->whitelist (array of strings field) index %d : The data "

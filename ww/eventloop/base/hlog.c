@@ -121,7 +121,7 @@ void logger_set_level_by_str(logger_t* logger, const char* szLoglevel) {
 }
 
 int logger_will_write_level(logger_t* logger, log_level_e level) {
-    return (logger->level) <= level;
+    return (logger->level) <= (int)level;
 }
 logger_handler logger_handle(logger_t* logger){
     return logger->handler;
@@ -259,7 +259,7 @@ static FILE* logfile_shift(logger_t* logger) {
     // NOTE: estimate can_write_cnt to avoid frequent fseek/ftell
     if (logger->fp_ && --logger->can_write_cnt < 0) {
         fseek(logger->fp_, 0, SEEK_END);
-        long filesize = ftell(logger->fp_);
+        unsigned long long filesize = ftell(logger->fp_);
         if (filesize > logger->max_filesize) {
             fclose(logger->fp_);
             logger->fp_ = NULL;
@@ -454,13 +454,16 @@ void hv_destroy_default_logger(void) {
 }
 
 void stdout_logger(int loglevel, const char* buf, int len) {
+    (void)loglevel;
     fprintf(stdout, "%.*s", len, buf);
 }
 
 void stderr_logger(int loglevel, const char* buf, int len) {
+    (void)loglevel;
     fprintf(stderr, "%.*s", len, buf);
 }
 
 void file_logger(int loglevel, const char* buf, int len) {
+    (void)loglevel;
     logfile_write(hv_default_logger(), buf, len);
 }

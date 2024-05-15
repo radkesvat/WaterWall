@@ -186,7 +186,7 @@ failed:;
         goto fallback;
     }
 
-disconnect:;
+// disconnect:;
     reuseContextBuffer(c);
     free(CSTATE(c));
     CSTATE_MUT(c)    = NULL;

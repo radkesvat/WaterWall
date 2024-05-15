@@ -117,7 +117,6 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         if (c->fin)
         {
-            hio_t *io     = cstate->io;
             CSTATE_MUT(c) = NULL;
             cleanup(cstate);
             destroyLine(c->line);
@@ -320,7 +319,6 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
             const cJSON *list_item = NULL;
             cJSON_ArrayForEach(list_item, wlist)
             {
-                unsigned int list_item_len = 0;
                 if (! getStringFromJson(&(list[i]), list_item) || ! verifyIpCdir(list[i], getNetworkLogger()))
                 {
                     LOGF("JSON Error: UdpListener->settings->whitelist (array of strings field) index %d : The data "

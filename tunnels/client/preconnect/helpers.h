@@ -47,7 +47,6 @@ static void destroyCstate(preconnect_client_con_state_t *cstate)
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t                      *self   = cg->t;
-    preconnect_client_state_t     *state  = STATE(self);
     preconnect_client_con_state_t *cstate = createCstate(cg->tid);
     free(cg);
     (cstate->u->chains_state)[self->chain_index] = cstate;

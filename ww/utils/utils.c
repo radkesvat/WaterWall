@@ -74,7 +74,7 @@ void toUpperCase(char *str)
     int i = 0;
     while (str[i] != 0x0)
     {
-        str[i] = (char)toupper(str[i]);
+        str[i] = (char) toupper(str[i]);
         i++;
     }
 }
@@ -83,13 +83,10 @@ void toLowerCase(char *str)
     int i = 0;
     while (str[i] != 0x0)
     {
-        str[i] = (char)tolower(str[i]);
+        str[i] = (char) tolower(str[i]);
         i++;
     }
 }
-
-
-
 
 bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
 {
@@ -533,7 +530,6 @@ cmdresult_t execCmd(const char *str)
     FILE       *fp;
     cmdresult_t result = (cmdresult_t){{0}, -1};
     char       *buf    = &(result.output[0]);
-    int         i      = 0;
     /* Open the command for reading. */
     fp = popen(str, "r");
     if (fp == NULL)
@@ -542,7 +538,8 @@ cmdresult_t execCmd(const char *str)
         return (cmdresult_t){{0}, -1};
     }
 
-    int read         = fscanf(fp, "%2047s", buf);
+    int read = fscanf(fp, "%2047s", buf);
+    (void) read;
     result.exit_code = pclose(fp);
 
     return result;

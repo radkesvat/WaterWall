@@ -121,7 +121,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
     }
     if (nepoll == 0) return 0;
     int nevents = 0;
-    for (int i = 0; i < epoll_ctx->events.size; ++i) {
+    for (size_t i = 0; i < epoll_ctx->events.size; ++i) {
         struct epoll_event* ee = epoll_ctx->events.ptr + i;
         int fd = ee->data.fd;
         uint32_t revents = ee->events;

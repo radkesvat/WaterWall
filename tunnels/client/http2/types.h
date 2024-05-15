@@ -28,37 +28,37 @@ typedef struct http2_client_child_con_state_s
 {
     struct http2_client_child_con_state_s *prev, *next;
     int32_t                                stream_id;
-    nghttp2_stream *                       ng_stream;
-    buffer_stream_t *                      chunkbs; // used for grpc
+    nghttp2_stream                        *ng_stream;
+    buffer_stream_t                       *chunkbs; // used for grpc
     size_t                                 bytes_needed;
-    tunnel_t *                             tunnel;
-    line_t *                               parent;
-    line_t *                               line;
+    tunnel_t                              *tunnel;
+    line_t                                *parent;
+    line_t                                *line;
 
 } http2_client_child_con_state_t;
 
 typedef struct http2_client_con_state_s
 {
 
-    nghttp2_session *              session;
+    nghttp2_session               *session;
     http2_session_state            state;
-    context_queue_t *              queue;
+    context_queue_t               *queue;
     size_t                         childs_added;
     int                            error;
     int                            frame_type_when_stream_closed;
     bool                           handshake_completed;
     enum http_method               method;
     enum http_content_type         content_type;
-    const char *                   path;
-    const char *                   host; // authority
+    const char                    *path;
+    const char                    *host; // authority
     int                            host_port;
-    const char *                   scheme;
+    const char                    *scheme;
     bool                           init_sent;
     bool                           first_sent;
     bool                           no_ping_ack;
-    htimer_t *                     ping_timer;
-    tunnel_t *                     tunnel;
-    line_t *                       line;
+    htimer_t                      *ping_timer;
+    tunnel_t                      *tunnel;
+    line_t                        *line;
     http2_client_child_con_state_t root;
 
 } http2_client_con_state_t;
@@ -78,12 +78,12 @@ typedef struct http2_client_state_s
 {
     nghttp2_session_callbacks *cbs;
     enum http_content_type     content_type;
-    int                        concurrency;
-    char *                     path;
-    char *                     host; // authority
+    size_t                     concurrency;
+    char                      *path;
+    char                      *host; // authority
     int                        host_port;
-    char *                     scheme;
+    char                      *scheme;
     int                        last_iid;
-    nghttp2_option *           ngoptions;
+    nghttp2_option            *ngoptions;
     thread_connection_pool_t   thread_cpool[];
 } http2_client_state_t;

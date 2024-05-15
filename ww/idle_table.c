@@ -151,7 +151,6 @@ bool removeIdleItemByHash(idle_table_t *self, hash_t key)
 static void beforeCloseCallBack(hevent_t *ev)
 {
     idle_item_t   *item  = hevent_userdata(ev);
-    const uint64_t oldex = item->expire_at_ms;
     item->cb(item);
     free(item);
 }

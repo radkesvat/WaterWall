@@ -53,7 +53,6 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
 
         return true;
     }
-    assert(len >= 0);
 
     if (buf == NULL || bufLen(buf) <= 0)
     {
@@ -130,11 +129,13 @@ static void flushWriteQueue(http2_client_con_state_t *con)
     destroyContext(g);
 }
 
-static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *_name, size_t namelen,
-                            const uint8_t *_value, size_t valuelen, uint8_t flags, void *userdata)
+static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen,
+                            const uint8_t *value, size_t valuelen, uint8_t flags, void *userdata)
 {
+    (void) name;
     (void) session;
     (void) namelen;
+    (void) value;
     (void) valuelen;
     (void) flags;
     if (userdata == NULL)
@@ -144,12 +145,12 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
 
     // LOGD("onHeaderCallback\n");
     printFrameHd(&frame->hd);
-    const char *name  = (const char *) _name;
-    const char *value = (const char *) _value;
+    // const char *name  = (const char *) _name;
+    // const char *value = (const char *) _value;
     // LOGD("%s: %s\n", name, value);
 
-    http2_client_con_state_t *con  = (http2_client_con_state_t *) userdata;
-    tunnel_t                 *self = con->tunnel;
+    // http2_client_con_state_t *con  = (http2_client_con_state_t *) userdata;
+    // tunnel_t                 *self = con->tunnel;
 
     // Todo (http headers) should be saved somewhere
     // if (*name == ':')
@@ -183,8 +184,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     {
         return 0;
     }
-    http2_client_con_state_t *con  = (http2_client_con_state_t *) userdata;
-    tunnel_t                 *self = con->tunnel;
+    http2_client_con_state_t *con = (http2_client_con_state_t *) userdata;
 
     http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
     if (! stream)
@@ -495,7 +495,9 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
         free(content_type_buf);
     }
 
-    getIntFromJsonObjectOrDefault(&(state->concurrency), settings, "concurrency", kDefaultConcurrency);
+    int int_concurrency;
+    getIntFromJsonObjectOrDefault(&(int_concurrency), settings, "concurrency", kDefaultConcurrency);
+    state->concurrency = int_concurrency;
 
     nghttp2_option_new(&(state->ngoptions));
     nghttp2_option_set_peer_max_concurrent_streams(state->ngoptions, 0xffffffffU);

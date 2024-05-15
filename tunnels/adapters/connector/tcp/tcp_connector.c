@@ -32,7 +32,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
         }
         destroyContext(cw);
     }
-
+    resumeLineDownSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
     doneLineUpSide(cstate->line);
     free(cstate);
@@ -44,10 +44,10 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
     hio_t           *io         = cstate->io;
     while (contextQueueLen(data_queue) > 0)
     {
-        context_t   *cw     = contextQueuePop(data_queue);
-        unsigned int bytes  = bufLen(cw->payload);
-        int          nwrite = hio_write(io, cw->payload);
-        cw->payload         = NULL;
+        context_t *cw     = contextQueuePop(data_queue);
+        int        bytes  = (int) bufLen(cw->payload);
+        int        nwrite = hio_write(io, cw->payload);
+        cw->payload       = NULL;
         destroyContext(cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
@@ -168,9 +168,9 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            unsigned int bytes  = bufLen(c->payload);
-            int          nwrite = hio_write(cstate->io, c->payload);
-            c->payload          = NULL;
+            int bytes  = (int) bufLen(c->payload);
+            int nwrite = hio_write(cstate->io, c->payload);
+            c->payload = NULL;
 
             if (nwrite >= 0 && nwrite < bytes)
             {
@@ -179,7 +179,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 hio_setcb_write(cstate->io, onWriteComplete);
             }
             destroyContext(c);
-
         }
     }
     else
@@ -277,7 +276,6 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            hio_t *io     = cstate->io;
             CSTATE_MUT(c) = NULL;
             cleanup(cstate, true);
             destroyContext(c);

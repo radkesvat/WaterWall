@@ -127,6 +127,7 @@ static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
         BIO *bio = BIO_new(BIO_s_mem());
         int  n   = BIO_write(bio, cacert_bytes, (int)cacert_len);
         assert(n == (int)cacert_len);
+        (void)n;
         X509 *x = NULL;
         while (true)
         {

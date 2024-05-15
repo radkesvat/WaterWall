@@ -49,7 +49,7 @@ static inline type* atype##_at(atype* p, int pos) {\
     if (pos < 0) {\
         pos += p->size;\
     }\
-    assert(pos >= 0 && pos < p->size);\
+    assert(pos >= 0 && (size_t) pos < p->size);\
     return p->ptr + pos;\
 }\
 \
@@ -104,11 +104,11 @@ static inline void atype##_add(atype* p, type* elem, int pos) {\
     if (pos < 0) {\
         pos += p->size;\
     }\
-    assert(pos >= 0 && pos <= p->size);\
+    assert(pos >= 0 && (size_t)pos <= p->size);\
     if (p->size == p->maxsize) {\
         atype##_double_resize(p);\
     }\
-    if (pos < p->size) {\
+    if ((size_t)pos < p->size) {\
         memmove(p->ptr + pos+1, p->ptr + pos, sizeof(type) * (p->size - pos));\
     }\
     p->ptr[pos] = *elem;\
@@ -119,9 +119,9 @@ static inline void atype##_del(atype* p, int pos) {\
     if (pos < 0) {\
         pos += p->size;\
     }\
-    assert(pos >= 0 && pos < p->size);\
+    assert(pos >= 0 && (size_t)pos < p->size);\
     p->size--;\
-    if (pos < p->size) {\
+    if ((size_t)pos < p->size) {\
         memmove(p->ptr + pos, p->ptr + pos+1, sizeof(type) * (p->size - pos));\
     }\
 }\
@@ -130,9 +130,9 @@ static inline void atype##_del_nomove(atype* p, int pos) {\
     if (pos < 0) {\
         pos += p->size;\
     }\
-    assert(pos >= 0 && pos < p->size);\
+    assert(pos >= 0 && (size_t) pos < p->size);\
     p->size--;\
-    if (pos < p->size) {\
+    if ((size_t)pos < p->size) {\
         p->ptr[pos] = p->ptr[p->size];\
     }\
 }\

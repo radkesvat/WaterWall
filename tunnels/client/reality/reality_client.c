@@ -257,7 +257,7 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = *(uint16_t *) (tls_header + 3);
-                if (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                     shiftr(buf, kTLSHeaderlen);
@@ -374,7 +374,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (SSL_is_init_finished(cstate->ssl))
                 {
                     LOGD("RealityClient: Tls handshake complete");
-                    reality_client_state_t *state = STATE(self);
 
                     cstate->handshake_completed = true;
                     cstate->read_stream         = newBufferStream(getContextBufferPool(c));
@@ -474,7 +473,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 
     uint64_t *p64 = (uint64_t *) state->hashes;
     p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
-    for (int i = 1; i < EVP_MAX_MD_SIZE / sizeof(uint64_t); i++)
+    for (int i = 1; i < (int)(EVP_MAX_MD_SIZE / sizeof(uint64_t)); i++)
     {
         p64[i] = p64[i - 1];
     }

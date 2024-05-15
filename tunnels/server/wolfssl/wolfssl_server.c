@@ -58,7 +58,7 @@ static int onAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outl
     while (offset < inlen)
     {
         LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        for (int i = 0; i < state->alpns_length; i++)
+        for (int i = 0; i < (int) state->alpns_length; i++)
         {
             if (0 == strncmp((const char *) &(in[1 + offset]), state->alpns[i].name,
                              state->alpns[i].name_length < in[offset] ? state->alpns[i].name_length : in[offset]))
@@ -134,8 +134,8 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
     {
         cstate->fallback_init_sent = true;
 
-        cstate->init_sent   = true;
-        state->fallback->upStream(state->fallback,  newInitContext(c->line));
+        cstate->init_sent = true;
+        state->fallback->upStream(state->fallback, newInitContext(c->line));
         if (! isAlive(c->line))
         {
             destroyContext(c);
@@ -179,7 +179,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         enum sslstatus status;
         int            n;
-        size_t         len = bufLen(c->payload);
+        int            len = (int) bufLen(c->payload);
 
         while (len > 0)
         {
@@ -205,7 +205,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     do
                     {
                         shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        size_t          avail = rCap(buf);
+                        int             avail = (int) rCap(buf);
                         n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                         // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
                         if (n > 0)
@@ -278,8 +278,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, 8192 / 2);
                 setLen(buf, 0);
-                size_t avail = rCap(buf);
-                n            = SSL_read(cstate->ssl, rawBufMut(buf), avail);
+                int avail = (int) rCap(buf);
+                n         = SSL_read(cstate->ssl, rawBufMut(buf), avail);
 
                 if (n > 0)
                 {
@@ -315,7 +315,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 do
                 {
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    size_t          avail = rCap(buf);
+                    int             avail = (int) rCap(buf);
 
                     n = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                     if (n > 0)
@@ -423,7 +423,6 @@ disconnect:;
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    wssl_server_state_t     *state  = STATE(self);
     wssl_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
@@ -447,7 +446,7 @@ static void downStream(tunnel_t *self, context_t *c)
             LOGF("How it is possible to receive data before sending init to upstream?");
             exit(1);
         }
-        size_t len = bufLen(c->payload);
+        int len = (int) bufLen(c->payload);
         while (len)
         {
             int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
@@ -463,7 +462,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
 
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    size_t          avail = rCap(buf);
+                    int             avail = (int) rCap(buf);
                     n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                     if (n > 0)
                     {
