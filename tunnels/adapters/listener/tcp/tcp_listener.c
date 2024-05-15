@@ -12,6 +12,10 @@
 
 // enable profile to see some time info
 // #define PROFILE 1
+enum
+{
+    kDefaultKeepAliveTimeOutMs = 75*1000 // same as NGINX
+};
 
 typedef struct tcp_listener_state_s
 {
@@ -180,7 +184,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 hio_setcb_write(cstate->io, onWriteComplete);
             }
             destroyContext(c);
-
         }
     }
     else
@@ -188,7 +191,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (c->est)
         {
+            assert(! cstate->established);
             cstate->established = true;
+            hio_set_keepalive_timeout(cstate->io, kDefaultKeepAliveTimeOutMs);
             destroyContext(c);
             return;
         }
