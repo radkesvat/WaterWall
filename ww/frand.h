@@ -2,7 +2,7 @@
 #include "ww.h"
 
 /*
-    Generic random implementations, to be faster or provider other features...
+    Generic random implementations, to be faster or provide other features...
 
     "frand_seed" is initialized by ww (generally time()) the seed is a global ww variable
 

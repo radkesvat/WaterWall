@@ -115,8 +115,9 @@ endif()
 # if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 # target_compile_options(ww PUBLIC -ftrack-macro-expansion=0)
 # endif()
-target_compile_options(ww PUBLIC -Wno-gnu-zero-variadic-macro-arguments)
 
+# todo (:<)
+target_compile_options(ww PUBLIC -Wno-gnu-zero-variadic-macro-arguments)
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
