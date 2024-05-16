@@ -23,7 +23,9 @@ enum reality_consts
 
 static bool verifyMessage(shift_buffer_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sign_context, EVP_PKEY *sign_key)
 {
-    assert(bufLen(buf) >= kSignLen);
+    if(bufLen(buf) < kSignLen){
+        return false;
+    }
     int     rc = EVP_DigestSignInit(sign_context, NULL, msg_digest, NULL, sign_key);
     uint8_t expect[EVP_MAX_MD_SIZE];
     memcpy(expect, rawBuf(buf), kSignLen);
