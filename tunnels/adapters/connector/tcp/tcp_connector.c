@@ -13,7 +13,6 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
     if (cstate->io)
     {
         hevent_set_userdata(cstate->io, NULL);
-        hio_close(cstate->io);
     }
 
     while (contextQueueLen(cstate->data_queue) > 0)
@@ -32,9 +31,14 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
         }
         destroyContext(cw);
     }
+       
+    if (cstate->io)
+    {
+        hio_close(cstate->io);
+    }
+    doneLineUpSide(cstate->line);
     resumeLineDownSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
-    doneLineUpSide(cstate->line);
     free(cstate);
 }
 
