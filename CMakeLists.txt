@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
-project(Waterwall VERSION 0.8)
+project(Waterwall VERSION 0.9)
 
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
@@ -21,6 +21,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
     
     # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-generate")
     # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-use=${CMAKE_CURRENT_SOURCE_DIR}/build/bin/code.profdata")
+    # add_compile_options(-Wno-profile-instr-unprofiled)
 
   endif()
 endif()
