@@ -71,11 +71,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     reality_server_con_state_t *cstate = CSTATE(c);
     if (cstate != NULL)
     {
-
-        if (cstate->auth_state == kConAuthorized)
-        {
-            destroyBufferStream(cstate->read_stream);
-        }
+        destroyBufferStream(cstate->read_stream);
         EVP_CIPHER_CTX_free(cstate->encryption_context);
         EVP_CIPHER_CTX_free(cstate->decryption_context);
         EVP_MD_CTX_free(cstate->sign_context);
@@ -268,8 +264,8 @@ static void downStream(tunnel_t *self, context_t *c)
             self->dw->downStream(self->dw, c);
             break;
         case kConAuthorized:;
-            shift_buffer_t *buf  = c->payload;
-            c->payload           = NULL;
+            shift_buffer_t *buf           = c->payload;
+            c->payload                    = NULL;
             const unsigned int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
             if (bufLen(buf) < chunk_size)
