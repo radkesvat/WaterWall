@@ -49,26 +49,22 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
     if (cstate->io)
     {
         hevent_set_userdata(cstate->io, NULL);
-    }
-
-    while (contextQueueLen(cstate->data_queue) > 0)
-    {
-        // all data must be written before sending fin, event loop will hold them for us
-        context_t *cw = contextQueuePop(cstate->data_queue);
-
-        if (write_queue)
+        while (contextQueueLen(cstate->data_queue) > 0)
         {
-            hio_write(cstate->io, cw->payload);
-            cw->payload = NULL;
+            // all data must be written before sending fin, event loop will hold them for us
+            context_t *cw = contextQueuePop(cstate->data_queue);
+
+            if (write_queue)
+            {
+                hio_write(cstate->io, cw->payload);
+                cw->payload = NULL;
+            }
+            else
+            {
+                reuseContextBuffer(cw);
+            }
+            destroyContext(cw);
         }
-        else
-        {
-            reuseContextBuffer(cw);
-        }
-        destroyContext(cw);
-    }
-    if (cstate->io)
-    {
         hio_close(cstate->io);
     }
     doneLineDownSide(cstate->line);
