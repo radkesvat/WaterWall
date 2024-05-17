@@ -23,7 +23,8 @@ enum reality_consts
 
 static bool verifyMessage(shift_buffer_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sign_context, EVP_PKEY *sign_key)
 {
-    if(bufLen(buf) < kSignLen){
+    if (bufLen(buf) < kSignLen)
+    {
         return false;
     }
     int     rc = EVP_DigestSignInit(sign_context, NULL, msg_digest, NULL, sign_key);
@@ -121,7 +122,7 @@ static shift_buffer_t *genericEncrypt(shift_buffer_t *in, EVP_CIPHER_CTX *encryp
     int             input_length = (int) bufLen(in);
 
     uint8_t iv[kIVlen];
-    for (int i = 0; i < (int)(kIVlen / sizeof(uint32_t)); i++)
+    for (int i = 0; i < (int) (kIVlen / sizeof(uint32_t)); i++)
     {
         ((uint32_t *) iv)[i] = fastRand();
     }
@@ -164,10 +165,10 @@ static void appendTlsHeader(shift_buffer_t *buf)
     assert(data_length < (1U << 16));
 
     shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, (uint16_t) data_length);
+    writeUI16(buf, htons((uint16_t) data_length));
 
     shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, kTLSVersion12);
+    writeUI16(buf, htons(kTLSVersion12));
 
     shiftl(buf, sizeof(uint8_t));
     writeUI8(buf, kTLS12ApplicationData);
@@ -175,7 +176,5 @@ static void appendTlsHeader(shift_buffer_t *buf)
 
 static bool isTlsData(shift_buffer_t *buf)
 {
-    return bufLen(buf) >= kTLSHeaderlen && ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData &&
-           *((uint16_t *) &(((char *) rawBuf(buf))[1])) == kTLSVersion12
-           && bufLen(buf) > 0;
+    return bufLen(buf) >= kTLSHeaderlen;
 }

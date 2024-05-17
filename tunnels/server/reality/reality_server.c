@@ -9,6 +9,7 @@
 #include "tunnel.h"
 #include "utils/jsonutils.h"
 #include "utils/mathutils.h"
+#include <netinet/in.h>
 #include <openssl/evp.h>
 #include <stdint.h>
 #include <string.h>
@@ -104,7 +105,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
                 {
                     bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
-                    uint16_t length = *(uint16_t *) (tls_header + 3);
+                    uint16_t length = ntohs(*(uint16_t *) (tls_header + 2));
+                    
                     if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                     {
                         shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
@@ -171,7 +173,7 @@ static void upStream(tunnel_t *self, context_t *c)
             while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
-                uint16_t length = *(uint16_t *) (tls_header + 3);
+                uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
@@ -336,7 +338,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         LOGF("JSON Error: RealityServer->settings->password (string field) : The data was empty or invalid");
         return NULL;
     }
-    getIntFromJsonObjectOrDefault((int *) &(state->counter_threshould), settings, "sniffing-counter", 5);
+    getIntFromJsonObjectOrDefault((int *) &(state->counter_threshould), settings, "sniffing-counter", 7);
     getIntFromJsonObjectOrDefault((int *) &(state->max_delta_time), settings, "max-delta-time", 10);
 
     state->password_length = (int) strlen(state->password);

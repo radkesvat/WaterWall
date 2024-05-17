@@ -256,7 +256,7 @@ static void downStream(tunnel_t *self, context_t *c)
             while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
-                uint16_t length = *(uint16_t *) (tls_header + 3);
+                uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
