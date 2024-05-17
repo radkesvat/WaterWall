@@ -321,7 +321,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     reuseBuffer(getContextBufferPool(c), buf);
                 }
 
-                if (SSL_is_init_finished(cstate->ssl))
+                if (!cstate->handshake_completed && SSL_is_init_finished(cstate->ssl) )
                 {
                     LOGD("OpensslClient: Tls handshake complete");
                     cstate->handshake_completed = true;

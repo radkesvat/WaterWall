@@ -16,7 +16,6 @@ static nghttp2_nv makeNv(const char *name, const char *value)
     return nv;
 }
 
-
 static void printFrameHd(const nghttp2_frame_hd *hd)
 {
     (void) hd;
@@ -61,9 +60,8 @@ static void onH2LinePaused(void *arg)
     http2_server_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
-        http2_server_child_con_state_t *next = stream_i->next;
-        pauseLineUpSide(next->line);
-        stream_i = next;
+        pauseLineUpSide(stream_i->line);
+        stream_i =  stream_i->next;
     }
 }
 
@@ -73,9 +71,8 @@ static void onH2LineResumed(void *arg)
     http2_server_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
-        http2_server_child_con_state_t *next = stream_i->next;
-        resumeLineUpSide(next->line);
-        stream_i = next;
+        resumeLineUpSide(stream_i->line);
+        stream_i= stream_i->next;
     }
 }
 
@@ -134,6 +131,7 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
 {
     tunnel_t                       *self = con->tunnel;
     http2_server_child_con_state_t *stream_i;
+
     for (stream_i = con->root.next; stream_i;)
     {
         context_t                      *fin_ctx = newFinContext(stream_i->line);
@@ -144,9 +142,8 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
         dest->upStream(dest, fin_ctx);
         stream_i = next;
     }
-
-    nghttp2_session_del(con->session);
     doneLineUpSide(con->line);
+    nghttp2_session_del(con->session);
     con->line->chains_state[self->chain_index] = NULL;
     free(con);
 }

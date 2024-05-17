@@ -47,9 +47,8 @@ static void onH2LinePaused(void *arg)
     http2_client_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
-        http2_client_child_con_state_t *next = stream_i->next;
-        pauseLineDownSide(next->line);
-        stream_i = next;
+        pauseLineDownSide(stream_i->line);
+        stream_i = stream_i->next;
     }
 }
 
@@ -59,9 +58,8 @@ static void onH2LineResumed(void *arg)
     http2_client_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
-        http2_client_child_con_state_t *next = stream_i->next;
-        pauseLineDownSide(next->line);
-        stream_i = next;
+        pauseLineDownSide(stream_i->line);
+        stream_i = stream_i->next;
     }
 }
 
@@ -166,7 +164,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
         .state        = kH2SendMagic,
         .method       = kHttpGet,
         .line         = newLine(tid),
-        .ping_timer   = htimer_add(con->line->loop, onPingTimer, kPingInterval, INFINITE),
+        .ping_timer   = htimer_add(loops[tid], onPingTimer, kPingInterval, INFINITE),
         .tunnel       = self,
     };
     con->line->chains_state[self->chain_index] = con;
@@ -210,10 +208,10 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
         dest->downStream(dest, fin_ctx);
         stream_i = next;
     }
+    doneLineDownSide(con->line);
     nghttp2_session_del(con->session);
     con->line->chains_state[self->chain_index] = NULL;
     destroyContextQueue(con->queue);
-    doneLineDownSide(con->line);
     destroyLine(con->line);
     htimer_del(con->ping_timer);
     free(con);
