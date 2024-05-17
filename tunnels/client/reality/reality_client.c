@@ -260,9 +260,11 @@ static void downStream(tunnel_t *self, context_t *c)
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
                     shiftr(buf, kTLSHeaderlen);
 
-                    if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
+                    if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key) ||
+                        ! is_tls_applicationdata)
                     {
                         LOGE("RealityClient: verifyMessage failed");
                         reuseBuffer(getContextBufferPool(c), buf);
@@ -473,7 +475,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 
     uint64_t *p64 = (uint64_t *) state->hashes;
     p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
-    for (int i = 1; i < (int)(EVP_MAX_MD_SIZE / sizeof(uint64_t)); i++)
+    for (int i = 1; i < (int) (EVP_MAX_MD_SIZE / sizeof(uint64_t)); i++)
     {
         p64[i] = p64[i - 1];
     }

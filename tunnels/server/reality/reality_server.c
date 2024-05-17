@@ -97,61 +97,60 @@ static void upStream(tunnel_t *self, context_t *c)
         case kConAuthPending: {
 
             shift_buffer_t *buf = c->payload;
-            if (isTlsData(buf) || bufferStreamLen(cstate->read_stream) > 0)
+
+            uint8_t tls_header[1 + 2 + 2];
+
+            bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(buf));
+            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
-                uint8_t tls_header[1 + 2 + 2];
+                bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
+                uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
 
-                bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(buf));
-                while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
+                if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
-                    uint16_t length = ntohs(*(uint16_t *) (tls_header + 2));
-                    
-                    if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                    shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    shiftr(buf, kTLSHeaderlen);
+
+                    if (verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
                     {
-                        shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
-                        shiftr(buf, kTLSHeaderlen);
+                        reuseContextBuffer(c);
+                        cstate->auth_state = kConAuthorized;
 
-                        if (verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
-                        {
-                            reuseContextBuffer(c);
-                            cstate->auth_state = kConAuthorized;
-
-                            state->dest->upStream(state->dest, newFinContextFrom(c));
-                            self->up->upStream(self->up, newInitContext(c->line));
-                            if (! isAlive(c->line))
-                            {
-                                reuseBuffer(getContextBufferPool(c), buf);
-                                destroyContext(c);
-
-                                return;
-                            }
-
-                            buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
-                                                 getContextBufferPool(c));
-
-                            context_t *plain_data_ctx = newContextFrom(c);
-                            plain_data_ctx->payload   = buf;
-                            self->up->upStream(self->up, plain_data_ctx);
-
-                            if (! isAlive(c->line))
-                            {
-                                destroyContext(c);
-                                return;
-                            }
-                            goto authorized;
-                        }
-                        else
+                        state->dest->upStream(state->dest, newFinContextFrom(c));
+                        self->up->upStream(self->up, newInitContext(c->line));
+                        if (! isAlive(c->line))
                         {
                             reuseBuffer(getContextBufferPool(c), buf);
+                            destroyContext(c);
+
+                            return;
                         }
+
+                        buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
+                                             getContextBufferPool(c));
+
+                        context_t *plain_data_ctx = newContextFrom(c);
+                        plain_data_ctx->payload   = buf;
+                        self->up->upStream(self->up, plain_data_ctx);
+
+                        if (! isAlive(c->line))
+                        {
+                            destroyContext(c);
+                            return;
+                        }
+                        goto authorized;
                     }
                     else
                     {
-                        break;
+                        reuseBuffer(getContextBufferPool(c), buf);
                     }
                 }
+                else
+                {
+                    break;
+                }
             }
+
             cstate->giveup_counter -= 0;
             if (cstate->giveup_counter == 0)
             {
@@ -177,9 +176,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
+
                     shiftr(buf, kTLSHeaderlen);
 
-                    if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
+                    if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key) ||
+                        ! is_tls_applicationdata)
                     {
                         LOGE("RealityServer: verifyMessage failed");
                         reuseBuffer(getContextBufferPool(c), buf);

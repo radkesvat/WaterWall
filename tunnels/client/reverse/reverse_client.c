@@ -73,8 +73,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     state->unused_cons[tid] -= 1;
                 }
-                atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
                 initiateConnect(self, tid, false);
+                atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
 
                 ucstate->pair_connected = true;
                 context_t *turned       = switchLine(c, ucstate->d);
