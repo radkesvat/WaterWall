@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
-project(Waterwall VERSION 0.9)
+project(Waterwall VERSION 0.92)
 
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
