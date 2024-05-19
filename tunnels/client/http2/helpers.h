@@ -58,7 +58,7 @@ static void onH2LineResumed(void *arg)
     http2_client_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
-        pauseLineDownSide(stream_i->line);
+        resumeLineDownSide(stream_i->line);
         stream_i = stream_i->next;
     }
 }
@@ -145,6 +145,7 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
     destroyBufferStream(stream->chunkbs);
     stream->line->chains_state[stream->tunnel->chain_index + 1] = NULL;
     doneLineUpSide(stream->line);
+    resumeLineUpSide(stream->parent);
 
     free(stream);
 }
@@ -168,7 +169,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
         .tunnel       = self,
     };
     con->line->chains_state[self->chain_index] = con;
-    setupLineUpSide(con->line, onH2LinePaused, con, onH2LineResumed);
+    setupLineDownSide(con->line, onH2LinePaused, con, onH2LineResumed);
 
     hevent_set_userdata(con->ping_timer, con);
     nghttp2_session_client_new2(&con->session, state->cbs, con, state->ngoptions);

@@ -100,6 +100,7 @@ static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
     stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
     destroyBufferStream(stream->chunkbs);
     doneLineDownSide(stream->line);
+    resumeLineDownSide(stream->parent);
     destroyLine(stream->line);
     if (stream->request_path)
     {
