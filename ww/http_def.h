@@ -28,13 +28,13 @@ enum http_parser_state {
 // http_status
 // XX(num, name, string)
 #define HTTP_STATUS_MAP(XX)                                                     \
-  XX(100, Continue,                        Continue)                            \
+  XX(100, Continue,                       Continue)                             \
   XX(101, SwitchingProtocols,             Switching Protocols)                  \
-  XX(102, PROCESSING,                      Processing)                          \
-  XX(200, OK,                              OK)                                  \
-  XX(201, CREATED,                         Created)                             \
-  XX(202, ACCEPTED,                        Accepted)                            \
-  XX(203, NonAuthoritativeInformation,   Non-Authoritative Information)         \
+  XX(102, PROCESSING,                     Processing)                           \
+  XX(200, OK,                             OK)                                   \
+  XX(201, CREATED,                        Created)                              \
+  XX(202, ACCEPTED,                       Accepted)                             \
+  XX(203, NonAuthoritativeInformation,    Non-Authoritative Information)        \
   XX(204, NoContent,                      No Content)                           \
   XX(205, ResetContent,                   Reset Content)                        \
   XX(206, PartialContent,                 Partial Content)                      \
@@ -43,46 +43,46 @@ enum http_parser_state {
   XX(226, ImUsed,                         IM Used)                              \
   XX(300, MultipleChoices,                Multiple Choices)                     \
   XX(301, MovedPermanently,               Moved Permanently)                    \
-  XX(302, FOUND,                           Found)                               \
+  XX(302, FOUND,                          Found)                                \
   XX(303, SeeOther,                       See Other)                            \
   XX(304, NotModified,                    Not Modified)                         \
   XX(305, UseProxy,                       Use Proxy)                            \
   XX(307, TemporaryRedirect,              Temporary Redirect)                   \
   XX(308, PermanentRedirect,              Permanent Redirect)                   \
   XX(400, BadRequest,                     Bad Request)                          \
-  XX(401, UNAUTHORIZED,                    Unauthorized)                        \
+  XX(401, UNAUTHORIZED,                   Unauthorized)                         \
   XX(402, PaymentRequired,                Payment Required)                     \
-  XX(403, FORBIDDEN,                       Forbidden)                           \
+  XX(403, FORBIDDEN,                      Forbidden)                            \
   XX(404, NotFound,                       Not Found)                            \
-  XX(405, MethodNotAllowed,              Method Not Allowed)                    \
+  XX(405, MethodNotAllowed,               Method Not Allowed)                   \
   XX(406, NotAcceptable,                  Not Acceptable)                       \
-  XX(407, ProxyAuthenticationRequired,   Proxy Authentication Required)         \
+  XX(407, ProxyAuthenticationRequired,    Proxy Authentication Required)        \
   XX(408, RequestTimeout,                 Request Timeout)                      \
-  XX(409, CONFLICT,                        Conflict)                            \
-  XX(410, GONE,                            Gone)                                \
+  XX(409, CONFLICT,                       Conflict)                             \
+  XX(410, GONE,                           Gone)                                 \
   XX(411, LengthRequired,                 Length Required)                      \
   XX(412, PreconditionFailed,             Precondition Failed)                  \
-  XX(413, PayloadTooLarge,               Payload Too Large)                     \
-  XX(414, UriTooLong,                    URI Too Long)                          \
-  XX(415, UnsupportedMediaddress_type,   Unsupported Media Type)                \
-  XX(416, RangeNotSatisfiable,           Range Not Satisfiable)                 \
+  XX(413, PayloadTooLarge,                Payload Too Large)                    \
+  XX(414, UriTooLong,                     URI Too Long)                         \
+  XX(415, UnsupportedMediaddress_type,    Unsupported Media Type)               \
+  XX(416, RangeNotSatisfiable,            Range Not Satisfiable)                \
   XX(417, ExpectationFailed,              Expectation Failed)                   \
   XX(421, MisdirectedRequest,             Misdirected Request)                  \
   XX(422, UnprocessableEntity,            Unprocessable Entity)                 \
-  XX(423, LOCKED,                          Locked)                              \
+  XX(423, LOCKED,                         Locked)                               \
   XX(424, FailedDependency,               Failed Dependency)                    \
   XX(426, UpgradeRequired,                Upgrade Required)                     \
   XX(428, PreconditionRequired,           Precondition Required)                \
-  XX(429, TooManyRequests,               Too Many Requests)                     \
-  XX(431, RequestHeaderFieldsTooLarge, Request Header Fields Too Large)         \
-  XX(451, UnavailableForLegalReasons,   Unavailable For Legal Reasons)          \
-  XX(500, InternalServerError,           Internal Server Error)                 \
+  XX(429, TooManyRequests,                Too Many Requests)                    \
+  XX(431, RequestHeaderFieldsTooLarge,    Request Header Fields Too Large)      \
+  XX(451, UnavailableForLegalReasons,     Unavailable For Legal Reasons)        \
+  XX(500, InternalServerError,            Internal Server Error)                \
   XX(501, NotImplemented,                 Not Implemented)                      \
   XX(502, BadGateway,                     Bad Gateway)                          \
   XX(503, ServiceUnavailable,             Service Unavailable)                  \
   XX(504, GatewayTimeout,                 Gateway Timeout)                      \
-  XX(505, HttpVersionNotSupported,      HTTP Version Not Supported)             \
-  XX(506, VariantAlsoNegotiates,         Variant Also Negotiates)               \
+  XX(505, HttpVersionNotSupported,        HTTP Version Not Supported)           \
+  XX(506, VariantAlsoNegotiates,          Variant Also Negotiates)              \
   XX(507, InsufficientStorage,            Insufficient Storage)                 \
   XX(508, LoopDetected,                   Loop Detected)                        \
   XX(510, NotExtended,                    Not Extended)                         \
@@ -167,14 +167,14 @@ enum http_method {
     XX(TextCss,                text/css,                 css)          \
     XX(TextCsv,                text/csv,                 csv)          \
     XX(TextMarkdown,           text/markdown,            md)           \
-    XX(TextEventStream,       text/event-stream,        sse)           \
+    XX(TextEventStream,       text/event-stream,         sse)          \
 
 #define MIME_TYPE_APPLICATION_MAP(XX) \
     XX(ApplicationJavascript,  application/javascript,             js)     \
     XX(ApplicationJson,        application/json,                   json)   \
     XX(ApplicationXml,         application/xml,                    xml)    \
     XX(ApplicationUrlencoded,  application/x-www-form-urlencoded,  kv)     \
-    XX(ApplicationOctetStream,application/octet-stream,           bin)     \
+    XX(ApplicationOctetStream,application/octet-stream,            bin)    \
     XX(ApplicationZip,         application/zip,                    zip)    \
     XX(ApplicationGzip,        application/gzip,                   gzip)   \
     XX(Application_7Z,          application/x-7z-compressed,        7z)    \
