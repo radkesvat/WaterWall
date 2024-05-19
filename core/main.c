@@ -39,7 +39,7 @@ int main(void)
                                                             .log_console   = getCoreSettings()->core_log_console},
         .network_logger_data = (logger_construction_data_t){.log_file_path = getNetworkLoggerFullPath(),
                                                             .log_level     = getCoreSettings()->network_log_level,
-                                                            .log_console   = getCoreSettings()->network_log_level},
+                                                            .log_console   = getCoreSettings()->network_log_console},
         .dns_logger_data     = (logger_construction_data_t){.log_file_path = getDnsLoggerFullPath(),
                                                             .log_level     = getCoreSettings()->dns_log_level,
                                                             .log_console   = getCoreSettings()->dns_log_console},
