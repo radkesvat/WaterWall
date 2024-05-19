@@ -298,5 +298,5 @@ void initCoreSettings(void)
     settings = malloc(sizeof(struct core_settings_s));
     memset(settings, 0, sizeof(struct core_settings_s));
 
-    settings->config_paths = vec_config_path_t_with_capacity(10);
+    settings->config_paths = vec_config_path_t_with_capacity(2);
 }
