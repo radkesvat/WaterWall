@@ -177,11 +177,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
+                    bool is_tls_33 = ((uint16_t *) (((uint8_t *) rawBuf(buf)) + 1))[0] == kTLSVersion12;
 
                     shiftr(buf, kTLSHeaderlen);
 
                     if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key) ||
-                        ! is_tls_applicationdata)
+                        ! is_tls_applicationdata || ! is_tls_33)
                     {
                         LOGE("RealityServer: verifyMessage failed");
                         reuseBuffer(getContextBufferPool(c), buf);

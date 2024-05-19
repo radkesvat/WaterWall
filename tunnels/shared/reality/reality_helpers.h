@@ -16,7 +16,7 @@ enum reality_consts
     kSignPasswordLen      = kEncryptionBlockSize,
     kIVlen                = 16, // iv size for *most* modes is the same as the block size. For AES this is 128 bits
     kSignLen              = (256 / 8),
-    kTLSVersion12         = 0x0303,
+    kTLSVersion12         = 0x0303, // endian checking is not done for this!, you are responsible to add htons if you change it
     kTLS12ApplicationData = 0x17,
     kTLSHeaderlen         = 1 + 2 + 2,
 };
