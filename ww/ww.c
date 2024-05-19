@@ -30,6 +30,7 @@ logger_t                *core_logger    = NULL;
 logger_t                *network_logger = NULL;
 logger_t                *dns_logger     = NULL;
 
+
 struct ww_runtime_state_s
 {
     unsigned int             workers_count;
@@ -84,13 +85,16 @@ struct ww_runtime_state_s *getWW(void)
 
 void idleFreeMem(htimer_t *timer)
 {
-    (void)timer;
+    (void) timer;
     malloc_trim(0);
 }
 
+// just because timer is considered "possibly lost" poniter
+htimer_t *trim_timer = NULL;
+
 _Noreturn void runMainThread(void)
 {
-    // htimer_add_period(loops[0], idleFreeMem, 1, 0, 0, 0, 0, INFINITE);
+    trim_timer = htimer_add_period(loops[0], idleFreeMem, 2, 0, 0, 0, 0, INFINITE);
     hloop_run(loops[0]);
     hloop_free(&loops[0]);
     for (size_t i = 1; i < workers_count; i++)
