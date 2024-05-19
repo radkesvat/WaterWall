@@ -1,4 +1,5 @@
 #include "buffer_pool.h"
+#include <malloc.h>
 #ifdef DEBUG
 #include "loggers/network_logger.h"
 #endif
@@ -60,6 +61,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 #ifdef DEBUG
     LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
+    malloc_trim(0);
 }
 
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
