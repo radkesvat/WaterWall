@@ -1,5 +1,7 @@
 #include "http2_client.h"
+#include "buffer_pool.h"
 #include "helpers.h"
+#include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
 
@@ -28,6 +30,10 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
     line_t *line = con->line;
     if (con == NULL)
     {
+        if (buf)
+        {
+            reuseBuffer(getLineBufferPool(con->line), buf);
+        }
         return false;
     }
 
@@ -54,9 +60,13 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
         return true;
     }
 
-    if (buf == NULL || bufLen(buf) <= 0)
+    if (buf == NULL)
     {
         return false;
+    }
+    if (bufLen(buf) <= 0)
+    {
+        reuseBuffer(getLineBufferPool(con->line), buf);
     }
     // HTTP2_DATA
     if (con->state == kH2SendHeaders)
@@ -108,8 +118,8 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
 }
 static void flushWriteQueue(http2_client_con_state_t *con)
 {
-    tunnel_t  *self = con->tunnel;
-    context_t *g    = newContext(con->line); // keep the line alive
+    tunnel_t *self = con->tunnel;
+    lockLine(con->line);
     while (contextQueueLen(con->queue) > 0)
     {
         context_t                      *stream_context = contextQueuePop(con->queue);
@@ -119,14 +129,18 @@ static void flushWriteQueue(http2_client_con_state_t *con)
         // consumes payload
         while (trySendRequest(self, con, stream->stream_id, stream_context->payload))
         {
-            if (! isAlive(g->line))
+            if (! isAlive(con->line))
             {
-                destroyContext(g);
+                stream_context->payload = NULL;
+                destroyContext(stream_context);
+                unLockLine(con->line);
                 return;
             }
         }
+        stream_context->payload = NULL;
+        destroyContext(stream_context);
     }
-    destroyContext(g);
+    unLockLine(con->line);
 }
 
 static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen,
@@ -304,9 +318,12 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         {
             http2_client_child_con_state_t *stream =
                 nghttp2_session_get_stream_user_data(con->session, frame->hd.stream_id);
-            con->handshake_completed = true;
-            flushWriteQueue(con);
-            stream->tunnel->downStream(stream->tunnel, newEstContext(stream->line));
+            if (stream)
+            {
+                con->handshake_completed = true;
+                flushWriteQueue(con);
+                stream->tunnel->downStream(stream->tunnel, newEstContext(stream->line));
+            }
         }
     }
 
