@@ -103,7 +103,7 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
 {
     reverse_client_state_t *state = STATE(self);
 
-    if (state->unused_cons[tid] >= state->connection_per_thread)
+    if (state->unused_cons[tid] >= state->min_unused_cons)
     {
         return;
     }

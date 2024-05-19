@@ -113,7 +113,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                      atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
 
-                initiateConnect(self, tid, false);
                 if (bufLen(c->payload) > 0)
                 {
                     goto hasdata;
@@ -173,23 +172,19 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            // unexpected
+            // unreachable
+            destroyContext(c);
         }
     }
 }
 
 static void startReverseClient(htimer_t *timer)
 {
-    tunnel_t               *self  = hevent_userdata(timer);
-    reverse_client_state_t *state = STATE(self);
+    tunnel_t *self = hevent_userdata(timer);
     for (unsigned int i = 0; i < workers_count; i++)
     {
-        const int cpt = (int) state->connection_per_thread;
 
-        for (int ci = 0; ci < cpt; ci++)
-        {
-            initiateConnect(self, i, true);
-        }
+        initiateConnect(self, i, true);
     }
 
     htimer_del(timer);
@@ -205,10 +200,8 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     getIntFromJsonObject((int *) &(state->min_unused_cons), settings, "minimum-unused");
 
-    // int total = max(16, state->cons_forward);
-    // int total = max(1, state->cons_forward);
-    state->min_unused_cons       = min(max((workers_count * (ssize_t)4), state->min_unused_cons), 128);
-    state->connection_per_thread = min(4, state->min_unused_cons / workers_count);
+
+    state->min_unused_cons = min(max((workers_count * (ssize_t) 8), state->min_unused_cons), 128);
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l            = newLine(0);

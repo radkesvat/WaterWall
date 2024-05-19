@@ -29,7 +29,6 @@ typedef struct reverse_client_state_s
 
     uint8_t chain_index_d;
 
-    unsigned int connection_per_thread;
     unsigned int min_unused_cons;
     unsigned int unused_cons[];
 
