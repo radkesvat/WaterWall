@@ -89,7 +89,7 @@ void idleFreeMem(htimer_t *timer)
     malloc_trim(0);
 }
 
-// just because timer is considered "possibly lost" poniter
+// just because timer is considered "possibly lost" pointer
 htimer_t *trim_timer = NULL;
 
 _Noreturn void runMainThread(void)
