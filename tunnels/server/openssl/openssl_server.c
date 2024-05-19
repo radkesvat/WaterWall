@@ -58,7 +58,7 @@ static int onAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *outl
     while (offset < inlen)
     {
         // LOGD("client ALPN ->  %.*s", in[offset], &(in[1 + offset]));
-        for (int i = 0; i < (int)state->alpns_length; i++)
+        for (int i = 0; i < (int) state->alpns_length; i++)
         {
             if (0 == strncmp((const char *) &(in[1 + offset]), state->alpns[i].name,
                              state->alpns[i].name_length < in[offset] ? state->alpns[i].name_length : in[offset]))
@@ -104,9 +104,9 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
     (void) len;
     oss_server_con_state_t *cstate = arg;
 
-    if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 3)
+    if ((cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 3) || (fastRand() % 13 == 0))
     {
-        return (16 * (96 + (0xFF & (size_t) fastRand())));
+        return (16 * (512 + (0xFF & (size_t) fastRand())));
     }
 
     return 0;
