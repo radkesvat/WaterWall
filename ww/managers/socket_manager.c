@@ -258,11 +258,11 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     hhybridmutex_unlock(&(state->mutex));
 }
 
-static inline uint16_t getCurrentDistrbuteTid(void)
+static inline uint16_t getCurrentDistributeTid(void)
 {
     return state->last_round_tid;
 }
-static inline void incrementDistrbuteTid(void)
+static inline void incrementDistributeTid(void)
 {
     state->last_round_tid++;
     if (state->last_round_tid >= workers_count)
@@ -275,14 +275,14 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
     result->real_localport         = local_port;
 
-    uint8_t  tid         = (uint8_t) getCurrentDistrbuteTid();
+    uint8_t  tid         = (uint8_t) getCurrentDistributeTid();
     hloop_t *worker_loop = loops[tid];
     hevent_t ev          = (hevent_t){.loop = worker_loop, .cb = filter->cb};
     result->tid          = tid;
     result->io           = io;
     result->tunnel       = filter->tunnel;
     ev.userdata          = result;
-    incrementDistrbuteTid();
+    incrementDistributeTid();
 
     hloop_post_event(worker_loop, &ev);
 }
