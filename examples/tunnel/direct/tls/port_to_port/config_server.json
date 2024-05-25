@@ -1,0 +1,43 @@
+{
+    "name": "config_tls_tunnel_server_single_port",
+    "nodes": [
+        {
+            "name": "inbound",
+            "type": "TcpListener",
+            "settings": {
+                "address": "0.0.0.0",
+                "port": 443,
+                "nodelay": true
+            },
+            "next": "ssl_server"
+        },
+        {
+            "name": "ssl_server",
+            "type": "OpenSSLServer",
+            "settings": {
+                "cert-file": "fullchain.pem",
+                "key-file": "privkey.pem",
+                "alpns": [
+                    {
+                        "value": "h2",
+                        "next": "node->next"
+                    },
+                    {
+                        "value": "http/1.1",
+                        "next": "node->next"
+                    }
+                ]
+            },
+            "next": "outbound"
+        },
+        {
+            "name": "outbound",
+            "type": "TcpConnector",
+            "settings": {
+                "nodelay": true,
+                "address": "127.0.0.1",
+                "port": 443
+            }
+        }
+    ]
+}

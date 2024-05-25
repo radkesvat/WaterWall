@@ -1,25 +1,23 @@
 {
-    "name": "simple_port_to_port",
+    "name": "config_tcp_multiport",
     "nodes": [
         {
-            "name": "inbound",
+            "name": "input",
             "type": "TcpListener",
             "settings": {
                 "address": "0.0.0.0",
-                "port": 443,
+                "port": [23,65535],
                 "nodelay": true
             },
-            "next": "outbound"
+            "next": "output"
         },
-        
-        
         {
-            "name": "outbound",
+            "name": "output",
             "type": "TcpConnector",
             "settings": {
                 "nodelay": true,
                 "address": "1.1.1.1",
-                "port": 443
+                "port": "src_context->port"
             }
         }
     ]

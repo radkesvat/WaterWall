@@ -19,15 +19,10 @@
                 "key-file": "privkey.pem",
                 "alpns": [
                     {
-                        "value": "h2",
-                        "next": "node->next"
-                    },
-                    {
                         "value": "http/1.1",
                         "next": "node->next"
                     }
-                ],
-                "fallback-intence-delay": 0
+                ]
             },
             "next": "header"
         },
@@ -37,14 +32,14 @@
             "settings": {
                 "override": "dest_context->port"
             },
-            "next": "my-connector"
+            "next": "outbound"
         },
         {
-            "name": "my-connector",
-            "type": "Connector",
+            "name": "outbound",
+            "type": "TcpConnector",
             "settings": {
                 "nodelay": true,
-                "address": "mydomain.com",
+                "address": "127.0.0.1",
                 "port": "dest_context->port"
             }
         }
