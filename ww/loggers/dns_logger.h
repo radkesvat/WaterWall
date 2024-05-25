@@ -42,3 +42,5 @@ static inline void setDnsLoggerLevelByStr(const char *log_level)
 {
     logger_set_level_by_str(getDnsLogger(), log_level);
 }
+
+logger_handler getDnsLoggerHandle(void);

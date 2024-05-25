@@ -69,7 +69,7 @@ logger_t *createCoreLogger(const char *log_file, bool console)
     return logger;
 }
 
-core_logger_handle_t getCoreLoggerHandle(void)
+logger_handler getCoreLoggerHandle(void)
 {
     return logger_handle(logger);
 }

@@ -42,3 +42,5 @@ static inline void setNetworkLoggerLevelByStr(const char *log_level)
 {
     logger_set_level_by_str(getNetworkLogger(), log_level);
 }
+
+logger_handler getNetworkLoggerHandle(void);

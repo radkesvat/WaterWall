@@ -19,7 +19,6 @@ static void destroyDnsLogger(void)
     }
 }
 
-
 static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     switch (loglevel)
@@ -68,4 +67,9 @@ logger_t *createDnsLogger(const char *log_file, bool console)
 
     atexit(destroyDnsLogger);
     return logger;
+}
+
+logger_handler getDnsLoggerHandle(void)
+{
+    return logger_handle(logger);
 }

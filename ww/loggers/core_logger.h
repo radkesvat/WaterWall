@@ -43,5 +43,4 @@ static inline void setCoreLoggerLevelByStr(const char *log_level)
     logger_set_level_by_str(getCoreLogger(), log_level);
 }
 
-typedef void (*core_logger_handle_t)(int, const char *, int);
-core_logger_handle_t getCoreLoggerHandle(void);
+logger_handler getCoreLoggerHandle(void);
