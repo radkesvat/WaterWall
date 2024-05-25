@@ -73,7 +73,7 @@ static void doConnect(struct connect_arg *cg)
         destroyContext(hello_data_ctx);
         return;
     }
-
+    hello_data_ctx->first = true;
     hello_data_ctx->payload = popBuffer(getContextBufferPool(hello_data_ctx));
     setLen(hello_data_ctx->payload, 1);
     writeUI8(hello_data_ctx->payload, 0xFF);
@@ -123,14 +123,13 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
     // }
 
     hloop_t *worker_loop = loops[tid];
-    hevent_t ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.loop                = worker_loop;
-    ev.cb                  = beforeConnect;
+
+    hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
     struct connect_arg *cg = malloc(sizeof(struct connect_arg));
+    ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;
     cg->delay              = delay ? kPreconnectDelayHigh : kPreconnectDelayShort;
-    ev.userdata            = cg;
+
     hloop_post_event(worker_loop, &ev);
 }
