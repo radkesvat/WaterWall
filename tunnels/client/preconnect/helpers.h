@@ -94,16 +94,13 @@ static void initiateConnect(tunnel_t *self, bool delay)
     }
 
     hloop_t *worker_loop = loops[tid];
-    hevent_t ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.loop = worker_loop;
-    ev.cb   = beforeConnect;
 
+    hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
     struct connect_arg *cg = malloc(sizeof(struct connect_arg));
+    ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;
     cg->delay              = delay ? kPreconnectDelayHigh : kPreconnectDelayShort;
-    ev.userdata            = cg;
 
     hloop_post_event(worker_loop, &ev);
 }
