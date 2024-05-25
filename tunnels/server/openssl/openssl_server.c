@@ -6,11 +6,12 @@
 #include "managers/node_manager.h"
 #include "openssl_globals.h"
 #include "utils/jsonutils.h"
-
+#include "utils/mathutils.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <unistd.h>
 
 typedef struct
 {
@@ -104,11 +105,10 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
     (void) len;
     oss_server_con_state_t *cstate = arg;
 
-    if ((cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 3) || (fastRand() % 13 == 0))
+    if ((cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 25))
     {
-        return (16 * (512 + (0xFF & (size_t) fastRand())));
+        return (size_t) 16 * 192;
     }
-
     return 0;
 }
 
@@ -456,10 +456,10 @@ static void downStream(tunnel_t *self, context_t *c)
             LOGF("How it is possible to receive data before sending init to upstream?");
             exit(1);
         }
-        unsigned int len = bufLen(c->payload);
+        int len = (int) bufLen(c->payload);
         while (len)
         {
-            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), (int) len);
+            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
             status = getSslstatus(cstate->ssl, n);
 
             if (n > 0)
