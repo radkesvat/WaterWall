@@ -46,10 +46,7 @@ int main(void)
     };
 
     createWW(runtime_data);
-
-    // libhv has a separate logger, we attach it to the core logger
-    logger_set_level_by_str(hv_default_logger(), getCoreSettings()->core_log_level);
-    logger_set_handler(hv_default_logger(), getCoreLoggerHandle());
+    // core logger is available after ww setup
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
