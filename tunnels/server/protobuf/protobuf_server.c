@@ -49,7 +49,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         while (true)
         {
-            if (bufferStreamLen(bstream) < 2)
+            if (bufferStreamLen(bstream) < 3)
             {
                 destroyContext(c);
                 return;
