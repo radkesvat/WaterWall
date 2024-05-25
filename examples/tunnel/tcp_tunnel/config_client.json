@@ -1,0 +1,26 @@
+{
+    "name": "simple_port_to_port",
+    "nodes": [
+        {
+            "name": "inbound",
+            "type": "TcpListener",
+            "settings": {
+                "address": "0.0.0.0",
+                "port": 443,
+                "nodelay": true
+            },
+            "next": "outbound"
+        },
+        
+        
+        {
+            "name": "outbound",
+            "type": "TcpConnector",
+            "settings": {
+                "nodelay": true,
+                "address": "1.1.1.1",
+                "port": 443
+            }
+        }
+    ]
+}
