@@ -129,6 +129,11 @@ void createWW(ww_construction_data_t init_data)
             createNetworkLogger(init_data.network_logger_data.log_file_path, init_data.network_logger_data.log_console);
         toUpperCase(init_data.network_logger_data.log_level);
         setNetworkLoggerLevelByStr(init_data.network_logger_data.log_level);
+
+        // libhv has a separate logger,  attach it to the network logger
+        logger_set_level_by_str(hv_default_logger(), init_data.network_logger_data.log_level);
+        logger_set_handler(hv_default_logger(), getNetworkLoggerHandle());
+
     }
     if (init_data.dns_logger_data.log_file_path)
     {
