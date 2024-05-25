@@ -14,7 +14,7 @@
 // #define PROFILE 1
 enum
 {
-    kDefaultKeepAliveTimeOutMs = 75 * 1000 // same as NGINX
+    kDefaultKeepAliveTimeOutMs = 60 * 1000 // same as NGINX
 };
 
 typedef struct tcp_listener_state_s
