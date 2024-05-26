@@ -32,6 +32,7 @@ void empytBufferStream(buffer_stream_t *self)
         reuseBuffer(self->pool, *i.ref);
     }
     queue_clear(&self->q);
+    self->size = 0;
 }
 
 void destroyBufferStream(buffer_stream_t *self)
