@@ -7,7 +7,7 @@
 
 enum
 {
-    kDefaultConcurrency = 50 // 50 cons will be muxed into 1
+    kDefaultConcurrency = 100 // cons will be muxed into 1
 };
 
 static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
