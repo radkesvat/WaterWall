@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 enum
 {
@@ -57,7 +58,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
 {
     idle_table_t *newtable = malloc(sizeof(idle_table_t));
     *newtable              = (idle_table_t){.loop           = loop,
-                                            .idle_handle    = htimer_add_period(loop, idleCallBack, 1, 0, 0, 0, 0, INFINITE),
+                                            .idle_handle    = htimer_add(loop, idleCallBack, 1000, INFINITE),
                                             .hqueue         = heapq_idles_t_with_capacity(kVecCap),
                                             .hmap           = hmap_idles_t_with_capacity(kVecCap),
                                             .last_update_ms = hloop_now_ms(loop)};
@@ -90,12 +91,12 @@ void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_
     heapq_idles_t_make_heap(&self->hqueue);
     hhybridmutex_unlock(&(self->mutex));
 }
-idle_item_t *getIdleItemByHash(idle_table_t *self, hash_t key)
+idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
 {
     hhybridmutex_lock(&(self->mutex));
 
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
-    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref)
+    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->tid != tid)
     {
         hhybridmutex_unlock(&(self->mutex));
         return NULL;
@@ -150,7 +151,7 @@ bool removeIdleItemByHash(idle_table_t *self, hash_t key)
 
 static void beforeCloseCallBack(hevent_t *ev)
 {
-    idle_item_t   *item  = hevent_userdata(ev);
+    idle_item_t *item = hevent_userdata(ev);
     item->cb(item);
     free(item);
 }

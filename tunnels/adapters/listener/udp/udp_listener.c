@@ -198,7 +198,7 @@ static void onFilteredRecv(hevent_t *ev)
     udp_payload_t *data          = (udp_payload_t *) hevent_userdata(ev);
     hash_t         peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(data->sock->io));
 
-    idle_item_t *idle = getIdleItemByHash(data->sock->table, peeraddr_hash);
+    idle_item_t *idle = getIdleItemByHash(data->tid,data->sock->table, peeraddr_hash);
     if (idle == NULL)
     {
         udp_listener_con_state_t *con =

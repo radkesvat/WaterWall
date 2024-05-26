@@ -14,7 +14,7 @@
     you also can keep updating the item timeout
 
     The time checking has no cost and won't syscall at all, and the checking is synced by the
-    eventloop which by default wakes up every 100 ms. (debug note: current interval is set to 60s)
+    eventloop which by default wakes up every 100 ms. (debug note: current interval is set to 1s)
 
     idle item is a threadlocal item, it belongs to the thread that created it
     and other threads must not change , remove or do anything to it
@@ -43,6 +43,6 @@ idle_item_t  *newIdleItem(idle_table_t *self, hash_t key, void *userdata, Expire
                           uint64_t age_ms);
 
 // [Notice] only the owner thread of an idle item can use these functios on it
-idle_item_t *getIdleItemByHash(idle_table_t *self, hash_t key);
+idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key);
 void         keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
 bool         removeIdleItemByHash(idle_table_t *self, hash_t key);
