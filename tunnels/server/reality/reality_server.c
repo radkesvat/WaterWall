@@ -101,7 +101,7 @@ static void upStream(tunnel_t *self, context_t *c)
             uint8_t tls_header[1 + 2 + 2];
 
             bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(buf));
-            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
+            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen && isAlive(c->line))
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
@@ -169,7 +169,7 @@ static void upStream(tunnel_t *self, context_t *c)
             c->payload = NULL;
         authorized:;
             uint8_t tls_header[1 + 2 + 2];
-            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
+            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen && isAlive(c->line))
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
@@ -177,7 +177,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
-                    bool is_tls_33 = ((uint16_t *) (((uint8_t *) rawBuf(buf)) + 1))[0] == kTLSVersion12;
+                    bool            is_tls_33 = ((uint16_t *) (((uint8_t *) rawBuf(buf)) + 1))[0] == kTLSVersion12;
 
                     shiftr(buf, kTLSHeaderlen);
 
@@ -195,11 +195,6 @@ static void upStream(tunnel_t *self, context_t *c)
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;
                     self->up->upStream(self->up, plain_data_ctx);
-                    if (! isAlive(c->line))
-                    {
-                        destroyContext(c);
-                        return;
-                    }
                 }
                 else
                 {
@@ -284,7 +279,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                while (bufLen(buf) > 0)
+                while (bufLen(buf) > 0 && isAlive(c->line))
                 {
                     const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
                     shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);

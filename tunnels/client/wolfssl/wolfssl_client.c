@@ -70,14 +70,9 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
     wssl_client_con_state_t *cstate = CSTATE(c);
 
-    while (contextQueueLen(cstate->queue) > 0)
+    while (contextQueueLen(cstate->queue) > 0 && isAlive(c->line))
     {
         self->upStream(self, contextQueuePop(cstate->queue));
-
-        if (! isAlive(c->line))
-        {
-            return;
-        }
     }
 }
 
@@ -98,7 +93,7 @@ static void upStream(tunnel_t *self, context_t *c)
         enum sslstatus status;
         int            len = (int) bufLen(c->payload);
 
-        while (len > 0)
+        while (len > 0 && isAlive(c->line))
         {
             int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
             status = getSslStatus(cstate->ssl, n);
@@ -242,7 +237,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         int len = (int) bufLen(c->payload);
 
-        while (len > 0)
+        while (len > 0 && isAlive(c->line))
         {
             n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
 
@@ -446,7 +441,7 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
 
     getBoolFromJsonObjectOrDefault(&(state->verify), settings, "verify", true);
 
-    getStringFromJsonObjectOrDefault(&(state->alpn), settings, "alpn","http/1.1");
+    getStringFromJsonObjectOrDefault(&(state->alpn), settings, "alpn", "http/1.1");
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;

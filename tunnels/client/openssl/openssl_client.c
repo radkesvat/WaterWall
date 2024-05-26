@@ -70,14 +70,9 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
     oss_client_con_state_t *cstate = CSTATE(c);
 
-    while (contextQueueLen(cstate->queue) > 0)
+    while (contextQueueLen(cstate->queue) > 0 && isAlive(c->line))
     {
         self->upStream(self, contextQueuePop(cstate->queue));
-
-        if (! isAlive(c->line))
-        {
-            return;
-        }
     }
 }
 
@@ -98,7 +93,7 @@ static void upStream(tunnel_t *self, context_t *c)
         enum sslstatus status;
         int            len = (int) bufLen(c->payload);
 
-        while (len > 0)
+        while (len > 0 && isAlive(c->line))
         {
             int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
             status = getSslStatus(cstate->ssl, n);
@@ -242,7 +237,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         int len = (int) bufLen(c->payload);
 
-        while (len > 0)
+        while (len > 0 && isAlive(c->line))
         {
             n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
 
@@ -321,7 +316,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     reuseBuffer(getContextBufferPool(c), buf);
                 }
 
-                if (!cstate->handshake_completed && SSL_is_init_finished(cstate->ssl) )
+                if (! cstate->handshake_completed && SSL_is_init_finished(cstate->ssl))
                 {
                     LOGD("OpensslClient: Tls handshake complete");
                     cstate->handshake_completed = true;

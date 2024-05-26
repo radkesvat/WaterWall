@@ -72,38 +72,31 @@ static enum sslstatus getSslStatus(SSL *ssl, int n)
 static void cleanup(tunnel_t *self, context_t *c)
 {
     reality_client_con_state_t *cstate = CSTATE(c);
-    if (cstate != NULL)
+    if (cstate->handshake_completed)
     {
-        if (cstate->handshake_completed)
-        {
-            destroyBufferStream(cstate->read_stream);
-        }
-        EVP_CIPHER_CTX_free(cstate->encryption_context);
-        EVP_CIPHER_CTX_free(cstate->decryption_context);
-        EVP_MD_CTX_free(cstate->sign_context);
-        EVP_MD_free(cstate->msg_digest);
-        EVP_PKEY_free(cstate->sign_key);
-
-        SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
-        destroyContextQueue(cstate->queue);
-
-        free(cstate);
-        CSTATE_MUT(c) = NULL;
+        destroyBufferStream(cstate->read_stream);
     }
+    EVP_CIPHER_CTX_free(cstate->encryption_context);
+    EVP_CIPHER_CTX_free(cstate->decryption_context);
+    EVP_MD_CTX_free(cstate->sign_context);
+    EVP_MD_free(cstate->msg_digest);
+    EVP_PKEY_free(cstate->sign_key);
+
+    SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
+    destroyContextQueue(cstate->queue);
+
+    free(cstate);
+    CSTATE_MUT(c) = NULL;
 }
 
 static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
     reality_client_con_state_t *cstate = CSTATE(c);
 
-    while (contextQueueLen(cstate->queue) > 0)
+    while (contextQueueLen(cstate->queue) > 0 &&  isAlive(c->line))
     {
         self->upStream(self, contextQueuePop(cstate->queue));
 
-        if (! isAlive(c->line))
-        {
-            return;
-        }
     }
 }
 
@@ -139,7 +132,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            while (bufLen(buf) > 0)
+            while (bufLen(buf) > 0 &&  isAlive(c->line))
             {
                 const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
                 shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);
@@ -253,7 +246,7 @@ static void downStream(tunnel_t *self, context_t *c)
             bufferStreamPush(cstate->read_stream, c->payload);
             c->payload = NULL;
             uint8_t tls_header[1 + 2 + 2];
-            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
+            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen && isAlive(c->line))
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
@@ -261,7 +254,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
-                    bool is_tls_33 = ((uint16_t *) (((uint8_t *) rawBuf(buf)) + 1))[0] == kTLSVersion12;
+                    bool            is_tls_33 = ((uint16_t *) (((uint8_t *) rawBuf(buf)) + 1))[0] == kTLSVersion12;
 
                     shiftr(buf, kTLSHeaderlen);
 
@@ -294,7 +287,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         int len = (int) bufLen(c->payload);
 
-        while (len > 0)
+        while (len > 0 && isAlive(c->line))
         {
             n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
 

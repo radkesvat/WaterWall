@@ -20,7 +20,6 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-
         if (c->fin)
         {
             const unsigned int          tid               = c->line->tid;
@@ -176,7 +175,6 @@ static void startReverseClient(htimer_t *timer)
     tunnel_t *self = hevent_userdata(timer);
     for (unsigned int i = 0; i < workers_count; i++)
     {
-
         initiateConnect(self, i, true);
     }
 

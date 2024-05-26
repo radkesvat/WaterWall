@@ -186,7 +186,7 @@ static void upStream(tunnel_t *self, context_t *c)
         int            n;
         unsigned int   len = bufLen(c->payload);
 
-        while (len > 0)
+        while (len > 0 && isAlive(c->line))
         {
             n = BIO_write(cstate->rbio, rawBuf(c->payload), (int) len);
 
@@ -457,7 +457,7 @@ static void downStream(tunnel_t *self, context_t *c)
             exit(1);
         }
         int len = (int) bufLen(c->payload);
-        while (len)
+        while (len > 0 && isAlive(c->line))
         {
             int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
             status = getSslstatus(cstate->ssl, n);
