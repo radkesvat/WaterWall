@@ -36,3 +36,8 @@ inline size_t bufferStreamLen(buffer_stream_t *self)
 {
     return self->size;
 }
+
+inline shift_buffer_t* bufferStreamFullRead(buffer_stream_t *self)
+{
+    return bufferStreamRead(self, bufferStreamLen(self));
+}

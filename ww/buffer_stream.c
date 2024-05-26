@@ -8,7 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern size_t bufferStreamLen(buffer_stream_t *self);
+extern size_t          bufferStreamLen(buffer_stream_t *self);
+extern shift_buffer_t *bufferStreamFullRead(buffer_stream_t *self);
 
 enum
 {
@@ -111,7 +112,6 @@ shift_buffer_t *bufferStreamIdealRead(buffer_stream_t *self)
     shift_buffer_t *container = queue_pull_front(&self->q);
     self->size -= bufLen(container);
     return container;
-
 }
 
 uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
@@ -149,7 +149,7 @@ void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
         size_t          blen = bufLen(b);
         if (len - buf_i <= blen - bufferstream_i)
         {
-            memcpy(buf + buf_i, ((char*)rawBuf(b))+bufferstream_i , len - buf_i);
+            memcpy(buf + buf_i, ((char *) rawBuf(b)) + bufferstream_i, len - buf_i);
             return;
         }
         while (bufferstream_i < blen)
