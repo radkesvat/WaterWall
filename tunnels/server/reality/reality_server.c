@@ -101,7 +101,7 @@ static void upStream(tunnel_t *self, context_t *c)
             uint8_t tls_header[1 + 2 + 2];
 
             bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(buf));
-            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen && isAlive(c->line))
+            while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
@@ -169,7 +169,7 @@ static void upStream(tunnel_t *self, context_t *c)
             c->payload = NULL;
         authorized:;
             uint8_t tls_header[1 + 2 + 2];
-            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen && isAlive(c->line))
+            while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));

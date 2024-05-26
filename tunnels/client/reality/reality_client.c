@@ -93,7 +93,7 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
     reality_client_con_state_t *cstate = CSTATE(c);
 
-    while (contextQueueLen(cstate->queue) > 0 &&  isAlive(c->line))
+    while (isAlive(c->line) && contextQueueLen(cstate->queue) > 0)
     {
         self->upStream(self, contextQueuePop(cstate->queue));
 
@@ -246,7 +246,7 @@ static void downStream(tunnel_t *self, context_t *c)
             bufferStreamPush(cstate->read_stream, c->payload);
             c->payload = NULL;
             uint8_t tls_header[1 + 2 + 2];
-            while (bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen && isAlive(c->line))
+            while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));

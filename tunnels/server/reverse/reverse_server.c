@@ -14,16 +14,9 @@ static void flushWriteQueue(tunnel_t *self, reverse_server_con_state_t *cstate)
     if (contextQueueLen(cstate->uqueue) > 0)
     {
         line_t *down_line = cstate->d;
-        while (contextQueueLen(cstate->uqueue) > 0)
+        while (isAlive(down_line) && contextQueueLen(cstate->uqueue) > 0)
         {
-
             self->dw->downStream(self->dw, switchLine(contextQueuePop(cstate->uqueue), down_line));
-
-            if (! isAlive(down_line))
-            {
-
-                return;
-            }
         }
     }
 }

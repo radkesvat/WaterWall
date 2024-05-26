@@ -70,7 +70,7 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
     oss_client_con_state_t *cstate = CSTATE(c);
 
-    while (contextQueueLen(cstate->queue) > 0 && isAlive(c->line))
+    while (isAlive(c->line) && contextQueueLen(cstate->queue) > 0)
     {
         self->upStream(self, contextQueuePop(cstate->queue));
     }
