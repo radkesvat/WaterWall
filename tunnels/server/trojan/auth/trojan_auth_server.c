@@ -126,7 +126,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
                 cstate->authenticated = true;
                 markAuthenticated(c->line);
-                cstate->init_sent   = true;
+                cstate->init_sent = true;
                 self->up->upStream(self->up, newInitContext(c->line));
                 if (! isAlive(c->line))
                 {
@@ -186,7 +186,7 @@ failed:;
         goto fallback;
     }
 
-// disconnect:;
+    // disconnect:;
     reuseContextBuffer(c);
     free(CSTATE(c));
     CSTATE_MUT(c)    = NULL;
@@ -197,7 +197,7 @@ failed:;
 fallback:;
     if (! cstate->init_sent)
     {
-        cstate->init_sent   = true;
+        cstate->init_sent = true;
         state->fallback->upStream(state->fallback, newInitContext(c->line));
         if (! isAlive(c->line))
         {
@@ -259,17 +259,19 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             memset(tuser, 0, sizeof(trojan_user_t));
             tuser->user = *user;
             free(user);
-            sha224((uint8_t *) tuser->user.uid, strlen(tuser->user.uid), &(tuser->hash_user[0]));
+            sha224((uint8_t *) tuser->user.uid, strlen(tuser->user.uid), &(tuser->sha224_of_user_uid[0]));
 
             for (size_t i = 0; i < sizeof(sha224_t); i++)
             {
-                sprintf((char *) &(tuser->hash_hexed_user[i * 2]), "%02x", (tuser->hash_user[i]));
+                sprintf((char *) &(tuser->hexed_sha224_of_user_uid[i * 2]), "%02x", (tuser->sha224_of_user_uid[i]));
             }
-            LOGD("TrojanAuthServer: user \"%s\" parsed, sha224: %.12s...", tuser->user.name, tuser->hash_hexed_user);
+            LOGD("TrojanAuthServer: user \"%s\" parsed, sha224: %.12s...", tuser->user.name,
+                 tuser->hexed_sha224_of_user_uid);
 
-            tuser->komihash_of_hex = CALC_HASH_BYTES(tuser->hash_hexed_user, sizeof(sha224_hex_t));
+            tuser->hash_of_hexed_sha224_of_user_uid =
+                CALC_HASH_BYTES(tuser->hexed_sha224_of_user_uid, sizeof(sha224_hex_t));
 
-            hmap_users_t_push(&(state->users), (hmap_users_t_value){tuser->komihash_of_hex, tuser});
+            hmap_users_t_push(&(state->users), (hmap_users_t_value){tuser->hash_of_hexed_sha224_of_user_uid, tuser});
         }
 
         total_users++;
@@ -290,22 +292,18 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             state->fallback_delay = 0;
         }
 
-
         hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
-        node_t *next_node = getNode(hash_next);
-        if (next_node == NULL)
+        node_t *fallback_node = getNode(hash_next);
+        if (fallback_node == NULL)
         {
             LOGF("TrojanAuthServer: fallback node not found");
             exit(1);
         }
-        if (next_node->instance == NULL)
+        if (fallback_node->instance == NULL)
         {
-            runNode(next_node, chain_index + 1);
+            runNode(fallback_node, chain_index + 1);
         }
-        else
-        {
-        }
-        state->fallback = next_node->instance;
+        state->fallback = fallback_node->instance;
 
         if (state->fallback != NULL)
         {
