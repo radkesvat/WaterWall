@@ -3,21 +3,7 @@
 #include <stdbool.h>
 
 #undef hlog
-#undef HLOG
-#define HLOG getDnsLogger() 
-
-#undef   LOGD
-#undef   LOGI
-#undef   LOGW
-#undef   LOGE
-#undef   LOGF
-#define  LOGD    hlogd
-#define  LOGI    hlogi
-#define  LOGW    hlogw
-#define  LOGE    hloge
-#define  LOGF    hlogf
-
-
+#define hlog getDnsLogger()  //NOLINT
 
 logger_t          *getDnsLogger(void);
 void               setDnsLogger(logger_t *newlogger);

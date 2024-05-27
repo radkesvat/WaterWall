@@ -3,20 +3,7 @@
 #include <stdbool.h>
 
 #undef hlog
-#undef HLOG
-#define HLOG getNetworkLogger() 
-
-#undef   LOGD
-#undef   LOGI
-#undef   LOGW
-#undef   LOGE
-#undef   LOGF
-#define  LOGD    hlogd
-#define  LOGI    hlogi
-#define  LOGW    hlogw
-#define  LOGE    hloge
-#define  LOGF    hlogf
-
+#define hlog getNetworkLogger()  //NOLINT
 
 logger_t          *getNetworkLogger(void);
 void               setNetworkLogger(logger_t *newlogger);

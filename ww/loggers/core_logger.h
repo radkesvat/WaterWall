@@ -3,20 +3,7 @@
 #include <stdbool.h>
 
 #undef hlog
-#undef HLOG
-#define HLOG getCoreLogger() 
-
-#undef   LOGD
-#undef   LOGI
-#undef   LOGW
-#undef   LOGE
-#undef   LOGF
-#define  LOGD    hlogd
-#define  LOGI    hlogi
-#define  LOGW    hlogw
-#define  LOGE    hloge
-#define  LOGF    hlogf
-
+#define hlog getCoreLogger()  //NOLINT
 
 
 logger_t          *getCoreLogger(void);
