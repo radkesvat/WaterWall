@@ -44,7 +44,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
 
     if (cstate->idle_handle != NULL)
     {
-        if (removeIdleItemByHash(cstate->idle_handle->tid,cstate->table, cstate->idle_handle->hash))
+        if (removeIdleItemByHash(cstate->idle_handle->tid, cstate->table, cstate->idle_handle->hash))
         {
             free(cstate);
         }
@@ -198,19 +198,29 @@ static void onFilteredRecv(hevent_t *ev)
     udp_payload_t *data          = (udp_payload_t *) hevent_userdata(ev);
     hash_t         peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(data->sock->io));
 
-    idle_item_t *idle = getIdleItemByHash(data->tid,data->sock->table, peeraddr_hash);
+    idle_item_t *idle = getIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
     if (idle == NULL)
     {
-        udp_listener_con_state_t *con =
-            newConnection(data->tid, data->tunnel, data->sock->io, data->sock->table, data->real_localport);
-        if (! con)
+        idle = newIdleItem(data->sock->table, peeraddr_hash, NULL, onUdpConnectonExpire, data->tid,
+                           (uint64_t) kUdpInitExpireTime);
+        if (! idle)
         {
             reuseBuffer(getThreadBufferPool(data->tid), data->buf);
             free(data);
             return;
         }
-        idle = con->idle_handle = newIdleItem(data->sock->table, peeraddr_hash, con, onUdpConnectonExpire, data->tid,
-                                              (uint64_t) kUdpInitExpireTime);
+        udp_listener_con_state_t *con =
+            newConnection(data->tid, data->tunnel, data->sock->io, data->sock->table, data->real_localport);
+
+        if (! con)
+        {
+            removeIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
+            reuseBuffer(getThreadBufferPool(data->tid), data->buf);
+            free(data);
+            return;
+        }
+        idle->userdata   = con;
+        con->idle_handle = idle;
     }
     else
     {

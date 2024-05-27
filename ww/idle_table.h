@@ -35,6 +35,7 @@ struct idle_item_s
     ExpireCallBack cb;
     hash_t         hash;
     uint8_t        tid;
+    bool           removed;
 };
 typedef struct idle_table_s idle_table_t;
 

@@ -22,11 +22,13 @@ typedef struct reverse_client_con_state_s
 
 typedef struct reverse_client_state_s
 {
+    idle_table_t *starved_connections;
+    tunnel_t     *self;
     atomic_uint   reverse_cons;
     atomic_uint   round_index;
     uint8_t       chain_index_d;
     unsigned int  min_unused_cons;
-    idle_table_t *starved_connections;
-    unsigned int  unused_cons[];
+
+    unsigned int unused_cons[];
 
 } reverse_client_state_t;

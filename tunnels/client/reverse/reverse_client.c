@@ -123,10 +123,9 @@ static void downStream(tunnel_t *self, context_t *c)
     }
     else
     {
-
+        reverse_client_con_state_t *ucstate = CSTATE_U(c);
         if (c->fin)
         {
-            reverse_client_con_state_t *ucstate              = CSTATE_U(c);
             CSTATE_U_MUT(c)                                  = NULL;
             (ucstate->d->chains_state)[state->chain_index_d] = NULL;
 
@@ -151,9 +150,7 @@ static void downStream(tunnel_t *self, context_t *c)
                          atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
                 }
                 cleanup(ucstate);
-
                 initiateConnect(self, tid, true);
-
                 destroyContext(c);
             }
         }
@@ -162,9 +159,8 @@ static void downStream(tunnel_t *self, context_t *c)
             CSTATE_U(c)->established = true;
             initiateConnect(self, tid, false);
 
-            idle_item_t* con_idle_item = newIdleItem(cstate->starved_connections,
-             hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid, uint64_t age_ms)
-            destroyContext(c);
+            idle_item_t *con_idle_item = newIdleItem(ucstate->starved_connections, (hash_t) (cstate), cstate,
+                                                     onStarvedConnectionExpire, c->tid, uint64_t age_ms) destroyContext(c);
         }
         else
         {

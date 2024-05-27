@@ -25,7 +25,6 @@ enum
 #define i_TYPE hmap_idles_t, uint64_t, struct idle_item_s *
 #include "stc/hmap.h"
 
-
 struct idle_table_s
 {
     hloop_t       *loop;
@@ -69,8 +68,8 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     *item = (idle_item_t){
         .expire_at_ms = hloop_now_ms(loops[tid]) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
 
-
-    if(NULL == hmap_idles_t_push(&(self->hmap), (hmap_idles_t_value){item->hash, item})){
+    if (NULL == hmap_idles_t_push(&(self->hmap), (hmap_idles_t_value){item->hash, item}))
+    {
         // hash is already in the table !
         free(item);
         hhybridmutex_unlock(&(self->mutex));
@@ -138,8 +137,8 @@ bool removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
     }
     idle_item_t *item = (find_result.ref->second);
     hmap_idles_t_erase_at(&(self->hmap), find_result);
-    *item = (idle_item_t){0};
-    heapq_idles_t_make_heap(&self->hqueue);
+    item->removed = true;
+    // heapq_idles_t_make_heap(&self->hqueue);
 
     hhybridmutex_unlock(&(self->mutex));
     return true;
@@ -151,6 +150,7 @@ static void beforeCloseCallBack(hevent_t *ev)
     item->cb(item);
     free(item);
 }
+
 void idleCallBack(htimer_t *timer)
 {
     idle_table_t  *self  = hevent_userdata(timer);
@@ -166,7 +166,12 @@ void idleCallBack(htimer_t *timer)
         {
             heapq_idles_t_pop(&(self->hqueue));
 
-            if (item->cb)
+            if (item->removed)
+            {
+                // already removed
+                free(item);
+            }
+            else
             {
                 // destruction must happen on other thread
                 hmap_idles_t_erase(&(self->hmap), item->hash);
@@ -177,11 +182,6 @@ void idleCallBack(htimer_t *timer)
                 hevent_set_userdata(&ev, item);
 
                 hloop_post_event(loops[item->tid], &ev);
-            }
-            else
-            {
-                // already removed
-                free(item);
             }
         }
         else

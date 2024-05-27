@@ -11,7 +11,8 @@
 enum
 {
     kPreconnectDelayShort = 10,
-    kPreconnectDelayHigh  = 750
+    kPreconnectDelayHigh  = 750,
+    kConnectionStarvationTimeOut = 3000
 };
 
 static void onLinePausedU(void *cstate)
@@ -73,7 +74,7 @@ static void doConnect(struct connect_arg *cg)
         destroyContext(hello_data_ctx);
         return;
     }
-    hello_data_ctx->first = true;
+    hello_data_ctx->first   = true;
     hello_data_ctx->payload = popBuffer(getContextBufferPool(hello_data_ctx));
     setLen(hello_data_ctx->payload, 1);
     writeUI8(hello_data_ctx->payload, 0xFF);
@@ -132,4 +133,15 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
     cg->delay              = delay ? kPreconnectDelayHigh : kPreconnectDelayShort;
 
     hloop_post_event(worker_loop, &ev);
+}
+static void onStarvedConnectionExpire(idle_item_t *idle_con)
+{
+    reverse_client_con_state_t *cstate            = idle_con->userdata;
+    tunnel
+    const unsigned int          tid               = c->line->tid;
+    reverse_client_con_state_t *dcstate           = CSTATE_D(c);
+    CSTATE_D_MUT(c)                               = NULL;
+    (dcstate->u->chains_state)[self->chain_index] = NULL;
+    context_t *fc                                 = switchLine(c, dcstate->u);
+    cleanup(dcstate);
 }
