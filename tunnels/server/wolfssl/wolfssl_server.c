@@ -110,13 +110,11 @@ static enum sslstatus getSslstatus(SSL *ssl, int n)
 static void cleanup(tunnel_t *self, context_t *c)
 {
     wssl_server_con_state_t *cstate = CSTATE(c);
-    if (cstate != NULL)
-    {
-        destroyBufferStream(cstate->fallback_buf);
-        SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
-        free(cstate);
-        CSTATE_MUT(c) = NULL;
-    }
+    assert(cstate != NULL);
+    destroyBufferStream(cstate->fallback_buf);
+    SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
+    free(cstate);
+    CSTATE_MUT(c) = NULL;
 }
 
 static void fallbackWrite(tunnel_t *self, context_t *c)
