@@ -25,16 +25,7 @@ enum
 #define i_TYPE hmap_idles_t, uint64_t, struct idle_item_s *
 #include "stc/hmap.h"
 
-struct udp_listener_state_s
-{
-    // settings
-    char    *address;
-    int      multiport_backend;
-    uint16_t port_min;
-    uint16_t port_max;
-    char   **white_list_raddr;
-    char   **black_list_raddr;
-};
+
 struct idle_table_s
 {
     hloop_t       *loop;
@@ -47,7 +38,7 @@ struct idle_table_s
 
 void idleCallBack(htimer_t *timer);
 
-void destoryIdleTable(idle_table_t *self)
+void destroyIdleTable(idle_table_t *self)
 {
     htimer_del(self->idle_handle);
     heapq_idles_t_drop(&(self->hqueue));
@@ -78,9 +69,14 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     *item = (idle_item_t){
         .expire_at_ms = hloop_now_ms(loops[tid]) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
 
-    heapq_idles_t_push(&(self->hqueue), item);
 
-    hmap_idles_t_push(&(self->hmap), (hmap_idles_t_value){item->hash, item});
+    if(NULL == hmap_idles_t_push(&(self->hmap), (hmap_idles_t_value){item->hash, item})){
+        // hash is already in the table !
+        free(item);
+        hhybridmutex_unlock(&(self->mutex));
+        return NULL;
+    }
+    heapq_idles_t_push(&(self->hqueue), item);
     hhybridmutex_unlock(&(self->mutex));
     return item;
 }
@@ -130,12 +126,12 @@ idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
 //     //     }
 //     // }
 // }
-bool removeIdleItemByHash(idle_table_t *self, hash_t key)
+bool removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
 {
     hhybridmutex_lock(&(self->mutex));
 
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
-    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref)
+    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->tid != tid)
     {
         hhybridmutex_unlock(&(self->mutex));
         return false;

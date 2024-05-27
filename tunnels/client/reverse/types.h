@@ -1,7 +1,6 @@
 #pragma once
 #include "api.h"
-#include "buffer_stream.h"
-#include "hatomic.h"
+#include "idle_table.h"
 
 struct connect_arg
 {
@@ -23,12 +22,11 @@ typedef struct reverse_client_con_state_s
 
 typedef struct reverse_client_state_s
 {
-    atomic_uint reverse_cons;
-    atomic_uint round_index;
-
-    uint8_t chain_index_d;
-
-    unsigned int min_unused_cons;
-    unsigned int unused_cons[];
+    atomic_uint   reverse_cons;
+    atomic_uint   round_index;
+    uint8_t       chain_index_d;
+    unsigned int  min_unused_cons;
+    idle_table_t *starved_connections;
+    unsigned int  unused_cons[];
 
 } reverse_client_state_t;

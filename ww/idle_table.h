@@ -18,6 +18,7 @@
 
     idle item is a threadlocal item, it belongs to the thread that created it
     and other threads must not change , remove or do anything to it
+    because of that, tid parameter is required in order to find the item
 
 */
 
@@ -31,18 +32,17 @@ struct idle_item_s
 {
     void          *userdata;
     uint64_t       expire_at_ms;
+    ExpireCallBack cb;
     hash_t         hash;
     uint8_t        tid;
-    ExpireCallBack cb;
 };
 typedef struct idle_table_s idle_table_t;
 
 idle_table_t *newIdleTable(hloop_t *loop);
 void          destoryIdleTable(idle_table_t *self);
-idle_item_t  *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
-                          uint64_t age_ms);
 
-// [Notice] only the owner thread of an idle item can use these functios on it
+idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
+                         uint64_t age_ms);
 idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key);
 void         keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
-bool         removeIdleItemByHash(idle_table_t *self, hash_t key);
+bool         removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key);

@@ -1,5 +1,6 @@
 #include "reverse_client.h"
 #include "helpers.h"
+#include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
@@ -160,6 +161,9 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             CSTATE_U(c)->established = true;
             initiateConnect(self, tid, false);
+
+            idle_item_t* con_idle_item = newIdleItem(cstate->starved_connections,
+             hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid, uint64_t age_ms)
             destroyContext(c);
         }
         else
@@ -198,6 +202,8 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     int     index        = reserveChainStateIndex(l);
     state->chain_index_d = index;
     destroyLine(l);
+
+    state->starved_connections = newIdleTable(loops[0]);
 
     tunnel_t *t           = newTunnel();
     t->state              = state;

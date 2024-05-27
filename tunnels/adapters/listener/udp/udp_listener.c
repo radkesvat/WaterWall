@@ -44,7 +44,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
 
     if (cstate->idle_handle != NULL)
     {
-        if (removeIdleItemByHash(cstate->table, cstate->idle_handle->hash))
+        if (removeIdleItemByHash(cstate->idle_handle->tid,cstate->table, cstate->idle_handle->hash))
         {
             free(cstate);
         }
@@ -135,7 +135,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
         free(cstate);
         return;
     }
-    LOGD("UdpListener: expired idle udp FD:%x ", (int) hio_fd(cstate->io));
+    LOGD("UdpListener: expired idle udp FD:%x ", hio_fd(cstate->io));
     cstate->idle_handle = NULL;
     tunnel_t  *self     = (cstate)->tunnel;
     line_t    *line     = (cstate)->line;
@@ -173,7 +173,7 @@ static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(cstate->io),
+        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", hio_fd(cstate->io),
              SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     }
 
