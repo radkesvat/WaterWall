@@ -1,8 +1,10 @@
 #pragma once
+#include "idle_table.h"
 #include "loggers/network_logger.h"
 #include "tunnel.h"
 #include "types.h"
 #include "utils/mathutils.h"
+#include <stdbool.h>
 
 #define CSTATE_D(x)     ((reverse_client_con_state_t *) ((((x)->line->chains_state)[state->chain_index_d])))
 #define CSTATE_U(x)     ((reverse_client_con_state_t *) ((((x)->line->chains_state)[self->chain_index])))
@@ -10,8 +12,8 @@
 #define CSTATE_U_MUT(x) ((x)->line->chains_state)[self->chain_index]
 enum
 {
-    kPreconnectDelayShort = 10,
-    kPreconnectDelayHigh  = 750,
+    kPreconnectDelayShort        = 10,
+    kPreconnectDelayHigh         = 750,
     kConnectionStarvationTimeOut = 3000
 };
 
@@ -34,35 +36,38 @@ static void onLineResumedD(void *cstate)
     resumeLineUpSide(((reverse_client_con_state_t *) cstate)->u);
 }
 
-static reverse_client_con_state_t *createCstate(uint8_t tid)
+static reverse_client_con_state_t *createCstate(tunnel_t *self, uint8_t tid)
 {
     reverse_client_con_state_t *cstate = malloc(sizeof(reverse_client_con_state_t));
-    memset(cstate, 0, sizeof(reverse_client_con_state_t));
-
-    line_t *up = newLine(tid);
-    line_t *dw = newLine(tid);
+    line_t                     *up     = newLine(tid);
+    line_t                     *dw     = newLine(tid);
     reserveChainStateIndex(dw); // we always take one from the down line
     setupLineDownSide(up, onLinePausedU, cstate, onLineResumedU);
     setupLineDownSide(dw, onLinePausedD, cstate, onLineResumedD);
-    cstate->u = up;
-    cstate->d = dw;
-
+    *cstate = (reverse_client_con_state_t){.u = up, .d = dw, .idle_handle_removed = true, .self = self};
     return cstate;
 }
 
 static void cleanup(reverse_client_con_state_t *cstate)
 {
+    if (! cstate->idle_handle_removed)
+    {
+        reverse_client_state_t *state = STATE(cstate->self);
+
+        removeIdleItemByHash(cstate->u->tid, state->starved_connections, (hash_t) (cstate));
+    }
     doneLineDownSide(cstate->u);
     doneLineDownSide(cstate->d);
     destroyLine(cstate->u);
     destroyLine(cstate->d);
+
     free(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t                   *self   = cg->t;
     reverse_client_state_t     *state  = STATE(self);
-    reverse_client_con_state_t *cstate = createCstate(cg->tid);
+    reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
     free(cg);
     (cstate->u->chains_state)[self->chain_index]    = cstate;
     (cstate->d->chains_state)[state->chain_index_d] = cstate;
@@ -136,12 +141,10 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
 }
 static void onStarvedConnectionExpire(idle_item_t *idle_con)
 {
-    reverse_client_con_state_t *cstate            = idle_con->userdata;
-    tunnel
-    const unsigned int          tid               = c->line->tid;
-    reverse_client_con_state_t *dcstate           = CSTATE_D(c);
-    CSTATE_D_MUT(c)                               = NULL;
-    (dcstate->u->chains_state)[self->chain_index] = NULL;
-    context_t *fc                                 = switchLine(c, dcstate->u);
-    cleanup(dcstate);
+    LOGW("ReverseClient: onStarvedConnectionExpire");
+    reverse_client_con_state_t *cstate = idle_con->userdata;
+    tunnel_t                   *self   = cstate->self;
+    cstate->idle_handle_removed        = true;
+    // old connection will expire anyway...
+    initiateConnect(self, cstate->u->tid, false);
 }

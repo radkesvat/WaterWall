@@ -156,11 +156,13 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else if (c->est)
         {
-            CSTATE_U(c)->established = true;
+            ucstate->established = true;
             initiateConnect(self, tid, false);
 
-            idle_item_t *con_idle_item = newIdleItem(ucstate->starved_connections, (hash_t) (cstate), cstate,
-                                                     onStarvedConnectionExpire, c->tid, uint64_t age_ms) destroyContext(c);
+            idle_item_t *con_idle_item = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
+                                                     onStarvedConnectionExpire, c->line->tid, kConnectionStarvationTimeOut);
+            (void)con_idle_item;
+            destroyContext(c);
         }
         else
         {
