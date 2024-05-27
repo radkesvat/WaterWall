@@ -152,56 +152,84 @@ HV_EXPORT void      hv_destroy_default_logger(void);
 #define hlog_will_write(level)          logger_will_write_level(hlog,level)
 
 
-static inline void hlogd(const char * fmt, ...){
-    va_list myargs;
-    va_start(myargs, fmt);
-    vlogger_print(hlog, LOG_LEVEL_DEBUG, fmt , myargs);
-    va_end(myargs);
-}
-
-static inline void hlogi(const char * fmt, ...){
-    va_list myargs;
-    va_start(myargs, fmt);
-    vlogger_print(hlog, LOG_LEVEL_INFO, fmt , myargs);
-    va_end(myargs);
-}
-
-static inline void hlogw(const char * fmt, ...){
-    va_list myargs;
-    va_start(myargs, fmt);
-    vlogger_print(hlog, LOG_LEVEL_WARN, fmt , myargs);
-    va_end(myargs);
-}
-
-static inline void hloge(const char * fmt, ...){
-    va_list myargs;
-    va_start(myargs, fmt);
-    vlogger_print(hlog, LOG_LEVEL_ERROR, fmt , myargs);
-    va_end(myargs);
-}
-static inline void hlogf(const char * fmt, ...){
-    va_list myargs;
-    va_start(myargs, fmt);
-    vlogger_print(hlog, LOG_LEVEL_FATAL, fmt , myargs);
-    va_end(myargs);
-}
 
 
 // below for android
 #if defined(ANDROID) || defined(__ANDROID__)
 #include <android/log.h>
 #define LOG_TAG "JNI"
-#undef  hlogd
-#undef  hlogi
-#undef  hlogw
-#undef  hloge
-#undef  hlogf
-#define hlogd(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
-#define hlogi(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
-#define hlogw(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
-#define hloge(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-#define hlogf(...) __android_log_print(ANDROID_LOG_FATAL, LOG_TAG, __VA_ARGS__)
+static inline void hlogd(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    __android_log_vprint(ANDROID_LOG_DEBUG, LOG_TAG, myargs);
+    va_end(myargs);
+}
+
+static inline void hlogi(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    __android_log_vprint(ANDROID_LOG_INFO, LOG_TAG, myargs);
+    va_end(myargs);
+}
+
+static inline void hlogw(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    __android_log_vprint(ANDROID_LOG_WARN, LOG_TAG, myargs);
+    va_end(myargs);
+}
+
+static inline void hloge(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    __android_log_vprint(ANDROID_LOG_ERROR, LOG_TAG, myargs);
+    va_end(myargs);
+}
+static inline void hlogf(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    __android_log_vprint(ANDROID_LOG_FATAL, LOG_TAG, myargs);
+    va_end(myargs);
+}
+#else
+
+static inline void hlogd(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_DEBUG, fmt, myargs);
+    va_end(myargs);
+}
+
+static inline void hlogi(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_INFO, fmt, myargs);
+    va_end(myargs);
+}
+
+static inline void hlogw(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_WARN, fmt, myargs);
+    va_end(myargs);
+}
+
+static inline void hloge(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_ERROR, fmt, myargs);
+    va_end(myargs);
+}
+static inline void hlogf(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_FATAL, fmt, myargs);
+    va_end(myargs);
+}
 #endif
+
+
+
 
 // macro alias
 #if !defined(LOGD) && !defined(LOGI) && !defined(LOGW) && !defined(LOGE) && !defined(LOGF)
