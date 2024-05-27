@@ -103,7 +103,6 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ada
 target_link_libraries(Waterwall TcpListener)
 endif()
 
-
 #udp listener
 if (INCLUDE_UDP_LISTENER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_UDP_LISTENER=1)
@@ -112,7 +111,6 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ada
 target_link_libraries(Waterwall UdpListener)
 endif()
 
-
 #listener
 if (INCLUDE_LISTENER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_LISTENER=1)
@@ -120,7 +118,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener)
 target_link_libraries(Waterwall Listener)
 endif()
-
 
 #connector
 if (INCLUDE_CONNECTOR)
@@ -251,7 +248,6 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall ProtoBufClient)
 endif()
 
-
 #reverse server
 if (INCLUDE_REVERSE_SERVER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_REVERSE_SERVER=1)
@@ -275,7 +271,6 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/header)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/header)
 target_link_libraries(Waterwall HeaderServer)
 endif()
-
 
 #header client
 if (INCLUDE_HEADER_CLIENT)
@@ -317,7 +312,6 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ser
 target_link_libraries(Waterwall RealityServer)
 endif()
 
-
 #reality client
 if (INCLUDE_REALITY_CLIENT)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_REALITY_CLIENT=1)
@@ -328,29 +322,19 @@ endif()
 
 
 
-# openssl (default version is latest 3.3.0 +)
-CPMAddPackage(
-    NAME openssl-cmake
-    URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
-    OPTIONS
-    "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-)
-
-
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 endif()
-
-
 
 if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_options(Waterwall PUBLIC -fsanitize=address)
   target_link_options(Waterwall PUBLIC -fsanitize=address)
 endif()
 
-
-message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
+if(OPENSSL_VERSION)
+  message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
+endif()
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
 # set output path to build/bin/
@@ -361,8 +345,6 @@ set_target_properties(Waterwall
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
-
-
 
 # get_target_property(target_options Waterwall COMPILE_OPTIONS)
 # list(REMOVE_ITEM target_options "-pedantic")
