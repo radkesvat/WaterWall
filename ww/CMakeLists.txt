@@ -125,7 +125,7 @@ target_compile_options(ww PUBLIC
   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Werror>
 )
 
-target_compile_options(ww PUBLIC -Wno-gnu-zero-variadic-macro-arguments -Wno-unused-function)
+target_compile_options(ww PUBLIC -Wno-unused-function)
 
 target_compile_options(ww PUBLIC -pedantic -pedantic-errors)
 
