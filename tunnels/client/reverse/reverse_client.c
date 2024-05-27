@@ -72,6 +72,13 @@ static void downStream(tunnel_t *self, context_t *c)
                     initiateConnect(self, tid, false);
                     atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
 
+                    if (! ucstate->idle_handle_removed)
+                    {
+                        ucstate->idle_handle_removed = true;
+                        reverse_client_state_t *state = STATE(ucstate->self);
+                        removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t) (ucstate));
+                    }
+
                     ucstate->pair_connected = true;
                     lockLine(ucstate->d);
                     self->dw->downStream(self->dw, newInitContext(ucstate->d));
@@ -159,9 +166,12 @@ static void downStream(tunnel_t *self, context_t *c)
             ucstate->established = true;
             initiateConnect(self, tid, false);
 
-            idle_item_t *con_idle_item = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
-                                                     onStarvedConnectionExpire, c->line->tid, kConnectionStarvationTimeOut);
-            (void)con_idle_item;
+            idle_item_t *con_idle_item =
+                newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate, onStarvedConnectionExpire,
+                            c->line->tid, kConnectionStarvationTimeOut);
+            ucstate->idle_handle_removed = false;
+            
+            (void) con_idle_item;
             destroyContext(c);
         }
         else

@@ -53,7 +53,6 @@ static void cleanup(reverse_client_con_state_t *cstate)
     if (! cstate->idle_handle_removed)
     {
         reverse_client_state_t *state = STATE(cstate->self);
-
         removeIdleItemByHash(cstate->u->tid, state->starved_connections, (hash_t) (cstate));
     }
     doneLineDownSide(cstate->u);
