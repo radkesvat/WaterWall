@@ -291,7 +291,7 @@ static void noTcpSocketConsumerFound(hio_t *io)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    LOGE("SocketManager: could not find consumer for Tcp socket FD:%x [%s] <= [%s]", (int) hio_fd(io),
+    LOGE("SocketManager: could not find consumer for Tcp socket FD:%x [%s] <= [%s]", hio_fd(io),
          SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     hio_close(io);
 }
@@ -383,7 +383,7 @@ static void onAcceptTcpMultiPort(hio_t *io)
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGE("SocketManger: multiport failure getting origin port FD:%x [%s] <= [%s]", (int) hio_fd(io),
+        LOGE("SocketManger: multiport failure getting origin port FD:%x [%s] <= [%s]", hio_fd(io),
              SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
         hio_close(io);
         return;

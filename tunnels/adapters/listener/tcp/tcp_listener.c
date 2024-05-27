@@ -233,11 +233,11 @@ static void onClose(hio_t *io)
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
     if (cstate != NULL)
     {
-        LOGD("TcpListener: received close for FD:%x ", (int) hio_fd(io));
+        LOGD("TcpListener: received close for FD:%x ", hio_fd(io));
     }
     else
     {
-        LOGD("TcpListener: sent close for FD:%x ", (int) hio_fd(io));
+        LOGD("TcpListener: sent close for FD:%x ", hio_fd(io));
     }
 
     if (cstate != NULL)
@@ -289,7 +289,7 @@ static void onInboundConnected(hevent_t *ev)
         struct sockaddr log_localaddr = *hio_localaddr(io);
         sockaddr_set_port((sockaddr_u *) &(log_localaddr), data->real_localport);
 
-        LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", (int) hio_fd(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
+        LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", hio_fd(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
              SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     }
 

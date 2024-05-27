@@ -101,11 +101,11 @@ static void onClose(hio_t *io)
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
     if (cstate != NULL)
     {
-        LOGD("TcpConnector: received close for FD:%x ", (int) hio_fd(io));
+        LOGD("TcpConnector: received close for FD:%x ", hio_fd(io));
     }
     else
     {
-        LOGD("TcpConnector: sent close for FD:%x ", (int) hio_fd(io));
+        LOGD("TcpConnector: sent close for FD:%x ", hio_fd(io));
     }
     if (cstate != NULL)
     {
@@ -150,7 +150,7 @@ static void onOutBoundConnected(hio_t *upstream_io)
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("TcpConnector: connection succeed FD:%x [%s] => [%s]", (int) hio_fd(upstream_io),
+        LOGD("TcpConnector: connection succeed FD:%x [%s] => [%s]", hio_fd(upstream_io),
              SOCKADDR_STR(hio_localaddr(upstream_io), localaddrstr),
              SOCKADDR_STR(hio_peeraddr(upstream_io), peeraddrstr));
     }
