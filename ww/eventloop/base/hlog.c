@@ -301,7 +301,7 @@ static int i2a(int i, char* buf, int len) {
     return len;
 }
 
-int logger_print(logger_t* logger, int level, const char* fmt, ...) {
+int vlogger_print(logger_t* logger, int level, const char* fmt, va_list ap) {
     if (level < logger->level)
         return -10;
 
@@ -391,10 +391,7 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
                     break;
                 case 's':
                 {
-                    va_list ap;
-                    va_start(ap, fmt);
                     len += vsnprintf(buf + len, bufsize - len, fmt, ap);
-                    va_end(ap);
                 }
                     break;
                 case '%':
@@ -412,10 +409,7 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
             year, month, day, hour, min, sec, us/1000,
             plevel);
 
-        va_list ap;
-        va_start(ap, fmt);
         len += vsnprintf(buf + len, bufsize - len, fmt, ap);
-        va_end(ap);
     }
 
     if (logger->enable_color) {

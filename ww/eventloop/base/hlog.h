@@ -6,6 +6,7 @@
  */
 
 #include <string.h>
+#include <stdarg.h>
 
 #ifdef _WIN32
 #define DIR_SEPARATOR       '\\'
@@ -108,7 +109,15 @@ HV_EXPORT logger_handler logger_handle(logger_t* logger);
 HV_EXPORT void logger_set_format(logger_t* logger, const char* format);
 HV_EXPORT void logger_set_max_bufsize(logger_t* logger, unsigned int bufsize);
 HV_EXPORT void logger_enable_color(logger_t* logger, int on);
-HV_EXPORT int  logger_print(logger_t* logger, int level, const char* fmt, ...);
+HV_EXPORT int  vlogger_print(logger_t* logger, int level, const char* fmt, va_list ap);
+
+static inline int  logger_print(logger_t* logger, int level, const char* fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    int ret = vlogger_print(logger, level, fmt , myargs);
+    va_end(myargs);
+    return ret;
+}
 
 // below for file logger
 HV_EXPORT void logger_set_file(logger_t* logger, const char* filepath);
@@ -142,11 +151,41 @@ HV_EXPORT void      hv_destroy_default_logger(void);
 #define hlog_get_cur_file()             logger_get_cur_file(hlog)
 #define hlog_will_write(level)          logger_will_write_level(hlog,level)
 
-#define hlogd(fmt, ...) logger_print(hlog, LOG_LEVEL_DEBUG, fmt , ## __VA_ARGS__)
-#define hlogi(fmt, ...) logger_print(hlog, LOG_LEVEL_INFO,  fmt , ## __VA_ARGS__)
-#define hlogw(fmt, ...) logger_print(hlog, LOG_LEVEL_WARN,  fmt , ## __VA_ARGS__)
-#define hloge(fmt, ...) logger_print(hlog, LOG_LEVEL_ERROR, fmt , ## __VA_ARGS__)
-#define hlogf(fmt, ...) logger_print(hlog, LOG_LEVEL_FATAL, fmt , ## __VA_ARGS__)
+
+static inline void hlogd(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_DEBUG, fmt , myargs);
+    va_end(myargs);
+}
+
+static inline void hlogi(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_INFO, fmt , myargs);
+    va_end(myargs);
+}
+
+static inline void hlogw(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_WARN, fmt , myargs);
+    va_end(myargs);
+}
+
+static inline void hloge(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_ERROR, fmt , myargs);
+    va_end(myargs);
+}
+static inline void hlogf(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
+    vlogger_print(hlog, LOG_LEVEL_FATAL, fmt , myargs);
+    va_end(myargs);
+}
+
 
 // below for android
 #if defined(ANDROID) || defined(__ANDROID__)
