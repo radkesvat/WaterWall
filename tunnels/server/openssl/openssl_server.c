@@ -343,7 +343,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(getContextBufferPool(c), buf);
                         reuseContextBuffer(c);
-                        goto failed_after_establishment;
+                        goto disconnect;
                     }
                     else
                     {
@@ -355,7 +355,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (status == kSslstatusFail)
             {
                 reuseContextBuffer(c);
-                goto failed_after_establishment;
+                goto disconnect;
             }
         }
         // done with socket data
@@ -417,10 +417,12 @@ static void upStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed_after_establishment:;
-    self->up->upStream(self->up, newFinContextFrom(c));
-
 disconnect:;
+    if (cstate->init_sent)
+    {
+        self->up->upStream(self->up, newFinContextFrom(c));
+    }
+
     context_t *fail_context = newFinContextFrom(c);
     cleanup(self, c);
     destroyContext(c);
@@ -493,7 +495,7 @@ static void downStream(tunnel_t *self, context_t *c)
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(getContextBufferPool(c), buf);
                         reuseContextBuffer(c);
-                        goto failed_after_establishment;
+                        goto disconnect;
                     }
                     else
                     {
@@ -505,7 +507,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (status == kSslstatusFail)
             {
                 reuseContextBuffer(c);
-                goto failed_after_establishment;
+                goto disconnect;
             }
 
             if (n == 0)
@@ -533,7 +535,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed_after_establishment:;
+disconnect:;
     context_t *fail_context_up = newFinContextFrom(c);
     self->up->upStream(self->up, fail_context_up);
 
