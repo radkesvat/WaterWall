@@ -389,8 +389,6 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     }
     self->up->upStream(self->up, c);
 
-    // line is alvie because caller is holding a context, but still  fin could received
-    // and state is gone
     if (! isAlive(line))
     {
         return true;
