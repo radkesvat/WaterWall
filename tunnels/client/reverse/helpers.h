@@ -12,9 +12,10 @@
 #define CSTATE_U_MUT(x) ((x)->line->chains_state)[self->chain_index]
 enum
 {
-    kPreconnectDelayShort        = 10,
-    kPreconnectDelayHigh         = 750,
-    kConnectionStarvationTimeOut = 3000
+    kPreconnectDelayShort                              = 10,
+    kPreconnectDelayHigh                               = 750,
+    kConnectionStarvationTimeOut                       = 5 * 1000,
+    kConnectionStarvationTimeOutAfterFirstConfirmation = 25 * 1000
 };
 
 static void onLinePausedU(void *cstate)
@@ -138,12 +139,29 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
 
     hloop_post_event(worker_loop, &ev);
 }
+
 static void onStarvedConnectionExpire(idle_item_t *idle_con)
 {
-    LOGW("ReverseClient: onStarvedConnectionExpire");
+    LOGW("ReverseClient: a starved connection detected and closed");
     reverse_client_con_state_t *cstate = idle_con->userdata;
     tunnel_t                   *self   = cstate->self;
-    cstate->idle_handle_removed        = true;
-    // old connection will expire anyway...
+    reverse_client_state_t     *state  = STATE(self);
+
+    if (cstate->handshaked)
+    {
+        if (state->unused_cons[cstate->u->tid] > 0)
+        {
+            state->unused_cons[cstate->u->tid] -= 1;
+        }
+    }
+
+    cstate->idle_handle_removed = true;
     initiateConnect(self, cstate->u->tid, false);
+
+    (cstate->u->chains_state)[self->chain_index]    = NULL;
+    (cstate->d->chains_state)[state->chain_index_d] = NULL;
+
+    context_t *fc = newFinContext(cstate->u);
+    cleanup(cstate);
+    self->up->upStream(self->up, fc);
 }

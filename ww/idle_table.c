@@ -82,7 +82,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
 void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
     hhybridmutex_lock(&(self->mutex));
-    item->expire_at_ms += self->last_update_ms + age_ms;
+    item->expire_at_ms = self->last_update_ms + age_ms;
     heapq_idles_t_make_heap(&self->hqueue);
     hhybridmutex_unlock(&(self->mutex));
 }
