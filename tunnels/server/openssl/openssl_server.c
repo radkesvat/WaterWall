@@ -11,7 +11,6 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
-#include <unistd.h>
 
 typedef struct
 {
