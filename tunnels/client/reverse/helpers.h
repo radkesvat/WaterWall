@@ -14,8 +14,8 @@ enum
 {
     kPreconnectDelayShort                              = 10,
     kPreconnectDelayHigh                               = 750,
-    kConnectionStarvationTimeOut                       = 5 * 1000,
-    kConnectionStarvationTimeOutAfterFirstConfirmation = 25 * 1000
+    kConnectionStarvationTimeOut                       = 3000,
+    kConnectionStarvationTimeOutAfterFirstConfirmation = 15000
 };
 
 static void onLinePausedU(void *cstate)
@@ -142,17 +142,29 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
 
 static void onStarvedConnectionExpire(idle_item_t *idle_con)
 {
-    LOGW("ReverseClient: a starved connection detected and closed");
     reverse_client_con_state_t *cstate = idle_con->userdata;
     tunnel_t                   *self   = cstate->self;
     reverse_client_state_t     *state  = STATE(self);
+    if (cstate->idle_handle_removed){
+        //this can happen if we are unlucky and 2 events are passed to eventloop in 
+        // a bad order, first connection to peer succeds and also the starvation cb call 
+        // is already in the queue
+        assert(cstate->pair_connected);
+        return;
+    }
 
     if (cstate->handshaked)
     {
+        assert(! cstate->pair_connected);
         if (state->unused_cons[cstate->u->tid] > 0)
         {
             state->unused_cons[cstate->u->tid] -= 1;
         }
+        LOGW("ReverseClient: a idle connection detected and closed");
+    }
+    else
+    {
+        LOGW("ReverseClient: a starved connection detected and closed");
     }
 
     cstate->idle_handle_removed = true;

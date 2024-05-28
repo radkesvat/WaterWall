@@ -116,14 +116,15 @@ static void downStream(tunnel_t *self, context_t *c)
                     state->unused_cons[tid] += 1;
                     LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
                          atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
-                    idle_item_t *con_idle = getIdleItemByHash(tid, state->starved_connections, (hash_t) (ucstate));
-                    if (con_idle != NULL)
-                    {
-                        keepIdleItemForAtleast(state->starved_connections,con_idle,
-                                               kConnectionStarvationTimeOutAfterFirstConfirmation);
-                    }
+
                     if (bufLen(c->payload) > 0)
                     {
+                        idle_item_t *con_idle = getIdleItemByHash(tid, state->starved_connections, (hash_t) (ucstate));
+                        if (con_idle != NULL)
+                        {
+                            keepIdleItemForAtleast(state->starved_connections, con_idle,
+                                                   kConnectionStarvationTimeOutAfterFirstConfirmation);
+                        }
                         continue;
                     }
                     reuseContextBuffer(c);
@@ -174,9 +175,12 @@ static void downStream(tunnel_t *self, context_t *c)
             idle_item_t *con_idle_item =
                 newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate, onStarvedConnectionExpire,
                             c->line->tid, kConnectionStarvationTimeOut);
-            ucstate->idle_handle_removed = false;
 
-            (void) con_idle_item;
+            if (con_idle_item)
+            {
+                ucstate->idle_handle_removed = false;
+            }
+
             destroyContext(c);
         }
         else
