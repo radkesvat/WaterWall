@@ -1,10 +1,8 @@
 
-
 add_library(RealityServer STATIC
         reality_server.c
       
 )
-
 
 #ww api
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
@@ -13,11 +11,8 @@ target_link_libraries(RealityServer ww)
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/reality)
 
-
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-
 
 # add openssl (default version is latest 3.3.0 +)
 CPMAddPackage(
@@ -35,9 +30,3 @@ target_link_libraries(RealityServer
 )
 
 target_compile_definitions(RealityServer PRIVATE RealityServer_VERSION=0.1)
-
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(RealityServer PRIVATE  DEBUG=1)
-
-endif()

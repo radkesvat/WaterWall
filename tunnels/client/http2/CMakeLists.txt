@@ -1,7 +1,7 @@
+
 add_library(Http2Client STATIC
       http2_client.c
 )
-
 
 #ww api
 target_include_directories(Http2Client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
@@ -12,9 +12,6 @@ target_include_directories(Http2Client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-
-
 
 CPMAddPackage(
     NAME nghttp2
@@ -29,7 +26,3 @@ CPMAddPackage(
 )
 
 target_link_libraries(Http2Client PUBLIC nghttp2_static)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(Http2Client PRIVATE DEBUG=1)
-endif()

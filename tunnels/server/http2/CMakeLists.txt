@@ -1,7 +1,7 @@
+
 add_library(Http2Server STATIC
       http2_server.c
 )
-
 
 #ww api
 target_include_directories(Http2Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
@@ -14,7 +14,6 @@ target_include_directories(Http2Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
-
 CPMAddPackage(
     NAME nghttp2
     GIT_TAG v1.60.0
@@ -24,12 +23,6 @@ CPMAddPackage(
     "BUILD_TESTING OFF"
     # "ENABLE_DEBUG ON "
     "BUILD_SHARED_LIBS OFF"
-         
-
 )
 
 target_link_libraries(Http2Server PUBLIC nghttp2_static)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(Http2Server PRIVATE  DEBUG=1)
-endif()

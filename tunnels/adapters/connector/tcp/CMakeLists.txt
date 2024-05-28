@@ -14,6 +14,3 @@ target_link_libraries(TcpConnector ww)
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 target_compile_definitions(TcpConnector PRIVATE TcpConnector_VERSION=0.1)
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(TcpConnector PRIVATE  DEBUG=1)
-endif()

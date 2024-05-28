@@ -1,5 +1,4 @@
 
-
 add_library(WolfSSLServer STATIC
       wolfssl_server.c                 
 )
@@ -18,10 +17,7 @@ add_library(WolfSSLServer STATIC
 target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WolfSSLServer ww)
 
-
-
 target_include_directories(WolfSSLServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)
-
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
@@ -46,10 +42,6 @@ CPMAddPackage(
 )
 target_compile_definitions(wolfssl PRIVATE  NO_WOLFSSL_STUB=1)
 target_compile_definitions(WolfSSLServer PRIVATE  WolfSSLServer_VERSION=0.1)
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(WolfSSLServer PRIVATE  DEBUG=1)
-endif()
-
 
 
 # this code is used for linking with prebuilt .a (which you built with autoconf)

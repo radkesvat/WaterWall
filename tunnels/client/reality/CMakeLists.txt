@@ -1,5 +1,4 @@
 
-
 add_library(RealityClient STATIC
     reality_client.c
       
@@ -32,8 +31,3 @@ target_link_libraries(RealityClient
 
 target_compile_definitions(RealityClient PRIVATE RealityClient_VERSION=0.1)
 
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(RealityClient PRIVATE  DEBUG=1)
-
-endif()

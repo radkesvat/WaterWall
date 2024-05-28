@@ -21,7 +21,6 @@ add_library(ww STATIC
                   loggers/network_logger.c
                   loggers/dns_logger.c
 
-
   
 )
 
@@ -56,8 +55,6 @@ if(stc_ADDED)
 
 endif()
 
-
-
 # add cJson
 CPMAddPackage(
     NAME cjson
@@ -67,6 +64,7 @@ CPMAddPackage(
     DOWNLOAD_ONLY True
 
 )
+
 if(cjson_ADDED)
   target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
   target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
@@ -129,9 +127,7 @@ target_compile_options(ww PUBLIC -Wno-unused-function)
 
 target_compile_options(ww PUBLIC -pedantic -pedantic-errors)
 
-
-
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(ww PRIVATE DEBUG=1)
+  target_compile_definitions(ww PUBLIC DEBUG=1)
 endif()
 

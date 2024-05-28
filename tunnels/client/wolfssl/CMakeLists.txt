@@ -1,5 +1,4 @@
 
-
 add_library(WolfSSLClient STATIC
       wolfssl_client.c                 
 )
@@ -13,15 +12,11 @@ add_library(WolfSSLClient STATIC
 ## if compiling for ARM: ./configure  --enable-distro --enable-sp=rsa2048,asm --enable-harden --enable-static --enable-fast-rsa --enable-opensslall --enable-opensslextra --enable-tls13 --disable-oldtls
 ## libs will be saved at: /src/.libs/libwolfssl.a
 
-
 #ww api
 target_include_directories(WolfSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WolfSSLClient ww)
 
-
-
 target_include_directories(WolfSSLClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)
-
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
@@ -46,10 +41,6 @@ CPMAddPackage(
 )
 target_compile_definitions(wolfssl PRIVATE  NO_WOLFSSL_STUB=1)
 target_compile_definitions(WolfSSLClient PRIVATE  WolfSSLClient_VERSION=0.1)
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(WolfSSLClient PRIVATE  DEBUG=1)
-endif()
-
 
 
 # this code is used for linking with prebuilt .a (which you built with autoconf)

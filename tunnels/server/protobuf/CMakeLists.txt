@@ -6,19 +6,14 @@ add_library(ProtoBufServer STATIC
       protobuf_server.c
 )
 
-
 #ww api
 target_include_directories(ProtoBufServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(ProtoBufServer PUBLIC ww)
 
-
 target_include_directories(ProtoBufServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/protobuf)
-
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-
 
 # CPMAddPackage(
 #     NAME nanopb
@@ -42,7 +37,3 @@ target_compile_definitions(ProtoBufServer PRIVATE ProtoBufServer_VERSION=0.1)
 #                         ${nanopb_SOURCE_DIR}/pb_encode.c
                         
 #  )
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(ProtoBufServer PRIVATE  DEBUG=1)
-endif()

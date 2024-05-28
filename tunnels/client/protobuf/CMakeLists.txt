@@ -9,7 +9,6 @@ add_library(ProtoBufClient STATIC
 )
 
 
-
 #ww api
 target_include_directories(ProtoBufClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(ProtoBufClient PUBLIC ww)
@@ -43,6 +42,3 @@ target_compile_definitions(ProtoBufClient PRIVATE  ProtoBufClient_VERSION=0.1)
                         
 #  )
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(ProtoBufClient PRIVATE  DEBUG=1)
-endif()
