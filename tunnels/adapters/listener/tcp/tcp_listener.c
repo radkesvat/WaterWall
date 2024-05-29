@@ -268,7 +268,7 @@ static void onInboundConnected(hevent_t *ev)
 
     *cstate = (tcp_listener_con_state_t){.line              = line,
                                          .buffer_pool       = getThreadBufferPool(tid),
-                                         .data_queue        = newContextQueue(cstate->buffer_pool),
+                                         .data_queue        = newContextQueue(getThreadBufferPool(tid)),
                                          .io                = io,
                                          .tunnel            = self,
                                          .write_paused      = false,
@@ -435,7 +435,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     t->downStream = &downStream;
     registerSocketAcceptor(t, filter_opt, onInboundConnected);
 
-    atomic_thread_fence(memory_order_release);
+    
     return t;
 }
 

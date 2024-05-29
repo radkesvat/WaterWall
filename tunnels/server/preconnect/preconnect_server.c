@@ -82,7 +82,7 @@ tunnel_t *newPreConnectServer(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    atomic_thread_fence(memory_order_release);
+    
 
     return t;
 }

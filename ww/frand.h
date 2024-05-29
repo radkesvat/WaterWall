@@ -12,14 +12,14 @@
 
 /*
 
-Compute a pseudorandom integer.
-Output value in range [0, 32767]
+    Compute a pseudorandom integer.
+    Output value in range [0, 32767]
 
-accessing this function from multiple threads will ofcourse corrupt the seed, since its not atomic
-but that is actually good, the output can be true random !
+    accessing this function from multiple threads will ofcourse corrupt the seed, since its not atomic
+    but that is actually good, the output can be true random !
 
-about 2 times faster than default rand()
-not a secure random!
+    about 2 times faster than default rand()
+    not a secure random!
 
 */
 inline uint32_t fastRand(void)

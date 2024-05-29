@@ -332,7 +332,7 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
     t->downStream = &downStream;
     parse(t, settings, instance_info->chain_index);
 
-    atomic_thread_fence(memory_order_release);
+    
     return t;
 }
 

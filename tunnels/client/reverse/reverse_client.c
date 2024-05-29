@@ -229,7 +229,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     htimer_t *start_timer = htimer_add(loops[0], startReverseClient, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
 
-    atomic_thread_fence(memory_order_release);
+    
 
     return t;
 }

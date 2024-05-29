@@ -70,7 +70,7 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     chainDown(t, state->tcp_connector);
     chainDown(t, state->udp_connector);
 
-    atomic_thread_fence(memory_order_release);
+    
     return t;
 }
 api_result_t apiConnector(tunnel_t *self, const char *msg)

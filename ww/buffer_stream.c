@@ -137,7 +137,6 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
     return 0;
 }
 
-// todo (test) this could be implemented incorrectly, you didn't write unit tests -> you choosed to suffer
 void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)
 {
     size_t bufferstream_i = at;

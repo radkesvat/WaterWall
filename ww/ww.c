@@ -48,7 +48,6 @@ struct ww_runtime_state_s
 
 void setWW(struct ww_runtime_state_s *state)
 {
-
     workers_count  = state->workers_count;
     workers        = state->workers;
     frand_seed     = state->frand_seed;

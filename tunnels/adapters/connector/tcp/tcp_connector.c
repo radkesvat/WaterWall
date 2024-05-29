@@ -196,7 +196,7 @@ static void upStream(tunnel_t *self, context_t *c)
             *cstate = (tcp_connector_con_state_t){.buffer_pool  = getContextBufferPool(c),
                                                   .tunnel       = self,
                                                   .line         = c->line,
-                                                  .data_queue   = newContextQueue(cstate->buffer_pool),
+                                                  .data_queue   = newContextQueue(getContextBufferPool(c)),
                                                   .write_paused = true};
 
 #ifdef PROFILE
@@ -394,7 +394,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    atomic_thread_fence(memory_order_release);
+    
     return t;
 }
 api_result_t apiTcpConnector(tunnel_t *self, const char *msg)

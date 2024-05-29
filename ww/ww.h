@@ -31,10 +31,12 @@
 
 #define MUSTALIGN2(n, w) assert(((w) & ((w) - 1)) == 0); /* alignment w is not a power of two */
 
-// kCpuLineCacheSize is the size of a cache line of the target CPU.
-// The value 64 covers i386, x86_64, arm32, arm64.
-// Note that Intel TBB uses 128 (max_nfs_size).
-// todo (platform code) set value depending on target preprocessor information.
+/*
+    kCpuLineCacheSize is the size of a cache line of the target CPU.
+    The value 64 covers i386, x86_64, arm32, arm64.
+    Note that Intel TBB uses 128 (max_nfs_size).
+    todo (platform code) set value depending on target preprocessor information.
+*/
 enum
 {
     kCpuLineCacheSize = 64
@@ -64,6 +66,7 @@ enum ram_profiles
     kRamProfileL1Memory = 16 * 3, // APPROX 56MB per thread
     kRamProfileL2Memory = 16 * 4  // APPROX 72MB per thread
 };
+
 typedef struct
 {
     unsigned int               workers_count;

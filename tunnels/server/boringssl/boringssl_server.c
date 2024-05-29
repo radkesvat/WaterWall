@@ -538,7 +538,7 @@
 //     t->packetUpStream = &openSSLPacketUpStream;
 //     t->downStream = &openSSLDownStream;
 //     t->packetDownStream = &openSSLPacketDownStream;
-//     atomic_thread_fence(memory_order_release);
+//     
 //     return t;
 // }
 

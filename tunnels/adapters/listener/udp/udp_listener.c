@@ -356,7 +356,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
     t->downStream = &downStream;
     registerSocketAcceptor(t, filter_opt, onFilteredRecv);
 
-    atomic_thread_fence(memory_order_release);
+    
     return t;
 }
 

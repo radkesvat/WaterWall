@@ -48,6 +48,7 @@ void runNode(node_t *n1, size_t chain_index)
         LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
         n1->instance                     = n1->lib->createHandle(&(n1->instance_context));
+        atomic_thread_fence(memory_order_release);
         if (n1->instance == NULL)
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
@@ -62,6 +63,7 @@ void runNode(node_t *n1, size_t chain_index)
         LOGD("NodeManager: starting node \"%s\"", n1->name);
         n1->instance_context.chain_index = chain_index;
         n1->instance                     = n1->lib->createHandle(&(n1->instance_context));
+        atomic_thread_fence(memory_order_release);
         if (n1->instance == NULL)
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
