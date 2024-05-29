@@ -14,15 +14,16 @@
     also, this buffer provides shallow copies ( simply think of it as a pointer duplicate )
     but, both of them can be destroyed and if a buffer has 0 owner, it will be freed
 
-    shallow copies are risky, you can corrupt the data since you are working with 2 or more
-    pointers to same memory, so if you don't know what you are doing,
-    don't create shallows at all and use other functions or simply copy.
+    shallow copies are frozen buffers, if they require more length or expanding in other words,
+    they first get unshallowd (allocate their own buffer)
 
     shallow functions are never used by ww, the only user of those are the final developer
+    who knows what they are doing
+
     non shallow slice/other functions use calculated minimal copy or buffer swapping
 
     This buffer is supposed to be taken out of a pool (buffer_pool.h)
-    and some of the other functions are defined there
+    and some of the other useful functions are defined there
 
 
 */
@@ -33,10 +34,9 @@ struct shift_buffer_s
     char         *pbuf;
     // unsigned int  base;
     unsigned int  calc_len;
-    unsigned int  lenpos;
     unsigned int  curpos;
-    unsigned int  cap; // half of full cap
     unsigned int  full_cap;
+    unsigned int  shallow_offset;
 };
 
 typedef struct shift_buffer_s shift_buffer_t;
@@ -56,6 +56,7 @@ inline bool isShallow(shift_buffer_t *self)
 {
     return (*(self->refc) > 1);
 }
+
 // caps mean how much memory we own to be able to shift left/right
 inline unsigned int lCap(shift_buffer_t *self)
 {
@@ -65,6 +66,7 @@ inline unsigned int rCap(shift_buffer_t *self)
 {
     return (self->full_cap - self->curpos);
 }
+
 
 inline void shiftl(shift_buffer_t *self, unsigned int bytes)
 {
@@ -98,7 +100,6 @@ inline void setLen(shift_buffer_t *self, unsigned int bytes)
     // {
     //     unShallow(self);
     // }
-    self->lenpos   = self->curpos + bytes;
     self->calc_len = bytes;
 }
 

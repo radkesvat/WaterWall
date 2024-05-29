@@ -28,11 +28,15 @@ extern void           readUI64(shift_buffer_t *self, uint64_t *dest);
 
 void destroyShiftBuffer(shift_buffer_t *self)
 {
-    // if its a shadow then the underlying buffer survives
+    // if its a shallow then the underlying buffer survives
     *(self->refc) -= 1;
 
     if (*(self->refc) <= 0)
     {
+        if (self->shallow_offset != 0)
+        {
+            self->pbuf -= self->shallow_offset;
+        }
         free(self->pbuf);
         free(self->refc);
     }
@@ -41,10 +45,15 @@ void destroyShiftBuffer(shift_buffer_t *self)
 
 shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
 {
+    if (pre_cap != 0 && pre_cap % 16 != 0)
+    {
+        pre_cap = (unsigned int) pow(2, ceil(16 + log2(pre_cap)));
+    }
+
     unsigned int real_cap = pre_cap * 2;
 
     shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
-    self->pbuf           = malloc(15 + real_cap + 15);
+    self->pbuf           = malloc(real_cap);
 
     if (real_cap > 0) // map the virtual memory page to physical memory
     {
@@ -57,9 +66,7 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
     }
 
     self->calc_len = 0;
-    self->lenpos   = pre_cap;
     self->curpos   = pre_cap;
-    self->cap      = pre_cap;
     self->full_cap = real_cap;
     self->refc     = malloc(sizeof(unsigned int));
     *(self->refc)  = 1;
@@ -69,24 +76,33 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
 shift_buffer_t *newShallowShiftBuffer(shift_buffer_t *owner)
 {
     *(owner->refc) += 1;
-    shift_buffer_t *shadow = malloc(sizeof(shift_buffer_t));
-    *shadow                = *owner;
-    return shadow;
+    shift_buffer_t *shallow = malloc(sizeof(shift_buffer_t));
+    *shallow                = *owner;
+    // freeze the shallow buffer
+    shallow->shallow_offset = owner->curpos;
+    shallow->pbuf += owner->curpos;
+    shallow->curpos   = 0;
+    shallow->full_cap = owner->calc_len;
+    return shallow;
 }
 
-void reset(shift_buffer_t *self, unsigned int cap)
+void reset(shift_buffer_t *self, unsigned int pre_cap)
 {
-    if (self->cap != cap)
+    assert(! isShallow(self));
+    if (pre_cap != 0 && pre_cap % 16 != 0)
+    {
+        pre_cap = (unsigned int) pow(2, ceil(16 + log2(pre_cap)));
+    }
+    unsigned int real_cap = pre_cap * 2;
+
+    if (self->full_cap != real_cap)
     {
         free(self->pbuf);
-        unsigned int real_cap = cap * 2;
-        self->pbuf            = malloc(real_cap);
-        self->cap             = cap;
-        self->full_cap        = real_cap;
+        self->pbuf     = malloc(real_cap);
+        self->full_cap = real_cap;
     }
     self->calc_len = 0;
-    self->lenpos   = self->cap;
-    self->curpos   = self->cap;
+    self->curpos   = pre_cap;
 }
 
 void unShallow(shift_buffer_t *self)
@@ -103,7 +119,7 @@ void unShallow(shift_buffer_t *self)
     *(self->refc) = 1;
     char *old_buf = self->pbuf;
     self->pbuf    = malloc(self->full_cap);
-    memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->lenpos]), (self->calc_len));
+    memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->curpos]), (self->calc_len));
 }
 
 void expand(shift_buffer_t *self, unsigned int increase)
@@ -118,28 +134,20 @@ void expand(shift_buffer_t *self, unsigned int increase)
         *(self->refc)    = 1;
         char *old_buf    = self->pbuf;
         self->pbuf       = malloc(new_realcap);
-        unsigned int dif = (new_realcap / 2) - self->cap;
+        unsigned int dif = new_realcap - self->full_cap;
         memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
-        self->lenpos += dif;
-        self->cap      = new_realcap / 2;
         self->full_cap = new_realcap;
     }
     else
     {
-        const unsigned int old_realcap = self->cap * 2;
+        const unsigned int old_realcap = self->full_cap;
         unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap * 2) + (increase * 2))));
-        // #ifdef DEBUG
-        //     LOGW("Allocated more memory! oldcap = %zu , increase = %zu , newcap = %zu", self->cap * 2, increase,
-        //     new_realcap);
-        // #endif
-        char *old_buf    = self->pbuf;
-        self->pbuf       = malloc(new_realcap);
-        unsigned int dif = (new_realcap / 2) - self->cap;
+        char              *old_buf     = self->pbuf;
+        self->pbuf                     = malloc(new_realcap);
+        unsigned int dif               = new_realcap - self->full_cap;
         memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
-        self->lenpos += dif;
-        self->cap      = new_realcap / 2;
         self->full_cap = new_realcap;
         free(old_buf);
     }
@@ -173,7 +181,7 @@ void sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int by
     *dest              = tmp;
 
     setLen(source, total - bytes);
-    memcpy(rawBufMut(source), &(((char*)rawBuf(dest))[bytes]), total - bytes);
+    memcpy(rawBufMut(source), &(((char *) rawBuf(dest))[bytes]), total - bytes);
     setLen(dest, bytes);
 }
 
@@ -183,27 +191,25 @@ shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes)
 
     if (bytes <= bufLen(self) / 2)
     {
-        shift_buffer_t *newbuf = newShiftBuffer(self->cap);
+        shift_buffer_t *newbuf = newShiftBuffer(self->full_cap / 2);
         setLen(newbuf, bytes);
         memcpy(rawBufMut(newbuf), rawBuf(self), bytes);
         shiftr(self, bytes);
         return newbuf;
     }
 
-    shift_buffer_t *newbuf   = newShiftBuffer(self->cap);
+    shift_buffer_t *newbuf   = newShiftBuffer(self->full_cap / 2);
     void           *tmp_refc = self->refc;
     void           *tmp_pbuf = self->pbuf;
     self->refc               = newbuf->refc;
     self->pbuf               = newbuf->pbuf;
     *newbuf                  = (struct shift_buffer_s){.calc_len = self->calc_len,
-                                                       .lenpos   = self->lenpos,
                                                        .curpos   = self->curpos,
-                                                       .cap      = self->cap,
                                                        .full_cap = self->full_cap,
                                                        .refc     = tmp_refc,
                                                        .pbuf     = tmp_pbuf};
 
-    memcpy(rawBufMut(self), &(((char*)rawBuf(newbuf))[bytes]), bufLen(newbuf) - bytes);
+    memcpy(rawBufMut(self), &(((char *) rawBuf(newbuf))[bytes]), bufLen(newbuf) - bytes);
     shiftr(self, bytes);
     setLen(newbuf, bytes);
     return newbuf;
