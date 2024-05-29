@@ -83,18 +83,25 @@ struct ww_runtime_state_s *getWW(void)
     return state;
 }
 
+// trimming should not be necessary, using it for test purposes
+// todo (remove) should be removed ?
+#ifdef OS_UNIX
 void idleFreeMem(htimer_t *timer)
 {
     (void) timer;
     malloc_trim(0);
 }
+#endif
 
 // just because timer is considered "possibly lost" pointer
 htimer_t *trim_timer = NULL;
 
 _Noreturn void runMainThread(void)
 {
+#ifdef OS_UNIX
     trim_timer = htimer_add_period(loops[0], idleFreeMem, 2, 0, 0, 0, 0, INFINITE);
+#endif
+
     hloop_run(loops[0]);
     hloop_free(&loops[0]);
     for (size_t i = 1; i < workers_count; i++)

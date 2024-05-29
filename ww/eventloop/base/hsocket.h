@@ -182,6 +182,8 @@ HV_INLINE int tcp_nopush(int sockfd, int on DEFAULT(1)) {
 #elif defined(TCP_CORK)
     return setsockopt(sockfd, IPPROTO_TCP, TCP_CORK, (const char*)&on, sizeof(int));
 #else
+    (void)sockfd;
+    (void)on;
     return 0;
 #endif
 }
@@ -259,6 +261,8 @@ HV_INLINE int so_reuseport(int sockfd, int on DEFAULT(1)) {
     // NOTE: SO_REUSEPORT allow multiple sockets to bind same port
     return setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, (const char*)&on, sizeof(int));
 #else
+    (void) sockfd;
+    (void) on;
     return 0;
 #endif
 }

@@ -58,17 +58,20 @@ BEGIN_EXTERN_C
 #define HONCE_INIT              INIT_ONCE_STATIC_INIT
 typedef void (*honce_fn)();
 static inline BOOL WINAPI s_once_func(INIT_ONCE* once, PVOID arg, PVOID* _) {
-    honce_fn fn = (honce_fn)arg;
+    (void)once;
+    (void)_;
+    honce_fn fn = NULL;
+    *(void **) (&fn) = arg;
     fn();
     return TRUE;
 }
 static inline void honce(honce_t* once, honce_fn fn) {
     PVOID dummy = NULL;
-    InitOnceExecuteOnce(once, s_once_func, (PVOID)fn, &dummy);
+    InitOnceExecuteOnce(once, s_once_func,  *(void **) (&fn), &dummy);
 }
 
 #define hsem_t                      HANDLE
-#define hsem_init(psem, value)      *(psem) = CreateSemaphore(NULL, value, value+100000, NULL)
+#define hsem_init(psem, value)      (*(psem) = CreateSemaphore(NULL, value, value+100000, NULL))
 #define hsem_destroy(psem)          CloseHandle(*(psem))
 #define hsem_wait(psem)             WaitForSingleObject(*(psem), INFINITE)
 #define hsem_post(psem)             ReleaseSemaphore(*(psem), 1, NULL)

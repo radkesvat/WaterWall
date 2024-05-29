@@ -376,6 +376,8 @@ static void onAcceptTcpSinglePort(hio_t *io)
 
 static void onAcceptTcpMultiPort(hio_t *io)
 {
+#ifdef OS_UNIX
+
     unsigned char pbuf[28] = {0};
     socklen_t     size     = 16; // todo ipv6 value is 28
     if (getsockopt(hio_fd(io), SOL_IP, kSoOriginalDest, &(pbuf[0]), &size) < 0)
@@ -390,6 +392,9 @@ static void onAcceptTcpMultiPort(hio_t *io)
     }
 
     distributeTcpSocket(io, (pbuf[2] << 8) | pbuf[3]);
+#else
+    onAcceptTcpSinglePort(io);
+#endif
 }
 
 static multiport_backend_t getDefaultMultiPortBackend(void)

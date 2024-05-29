@@ -212,7 +212,11 @@ static bool SemaSignal(hsem_t* sp, uint32_t count) {
 #define LSEMA_MAX_SPINS 10000
 
 static bool _LSemaWaitPartialSpin(hlsem_t* s, uint64_t timeout_usecs) {
+#ifdef OS_UNIX
     ssize_t oldCount;
+#else
+    int oldCount;
+#endif
     int spin = LSEMA_MAX_SPINS;
     while (--spin >= 0) {
         oldCount = atomic_load_explicit(&s->count, memory_order_relaxed);
@@ -257,7 +261,11 @@ bool LSemaWait(hlsem_t* s) {
 }
 
 bool LSemaTryWait(hlsem_t* s) {
+#ifdef OS_UNIX
     ssize_t oldCount = atomic_load_explicit(&s->count, memory_order_relaxed);
+#else
+    int oldCount = atomic_load_explicit(&s->count, memory_order_relaxed);
+#endif
     while (oldCount > 0) {
         if (atomic_compare_exchange_weak_explicit(&s->count, &oldCount, oldCount - 1, memory_order_acquire, memory_order_relaxed)) {
             return true;

@@ -334,11 +334,11 @@ hash_t sockAddrCalcHash(const sockaddr_u *saddr)
     // paddings are 0
     if (saddr->sa.sa_family == AF_INET)
     {
-        return CALC_HASH_BYTES(&(saddr->sin.sin_port), sizeof(struct sockaddr_in) + sizeof(in_port_t));
+        return CALC_HASH_BYTES(&(saddr->sin.sin_port), sizeof(struct sockaddr_in) + sizeof(uint16_t));
     }
     if (saddr->sa.sa_family == AF_INET6)
     {
-        return CALC_HASH_BYTES(&(saddr->sin6.sin6_port), sizeof(struct sockaddr_in6) + sizeof(in_port_t));
+        return CALC_HASH_BYTES(&(saddr->sin6.sin6_port), sizeof(struct sockaddr_in6) + sizeof(uint16_t));
     }
     return CALC_HASH_BYTES(&(saddr->sa), (sockaddr_len((sockaddr_u *) saddr)));
 }
