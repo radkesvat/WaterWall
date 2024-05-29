@@ -220,10 +220,18 @@ shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes)
     setLen(newbuf, bytes);
     return newbuf;
 }
+
 shift_buffer_t *shallowSliceBuffer(shift_buffer_t *self, unsigned int bytes)
 {
-    unsigned int blen = bufLen(self);
-    assert(bytes <= blen);
+    assert(bytes <= bufLen(self));
+
+    if (! isShallow(self) && self->_offset != 0)
+    {
+        self->curpos += self->_offset;
+        self->pbuf -= self->_offset;
+        self->full_cap += self->_offset;
+        self->_offset = 0;
+    }
 
     shift_buffer_t *shallow = newShallowShiftBuffer(self);
     setLen(shallow, bytes);
