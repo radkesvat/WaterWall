@@ -280,8 +280,8 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            CSTATE_MUT(c) = NULL;
             cleanup(cstate, true);
+            CSTATE_MUT(c) = NULL;
             destroyContext(c);
         }
     }
