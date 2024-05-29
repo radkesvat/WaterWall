@@ -1,5 +1,6 @@
 #pragma once
 
+#include "hplatform.h"
 #include "loggers/core_logger.h"
 
 #ifdef OS_UNIX

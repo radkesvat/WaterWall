@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
-
+#include "hplatform.h"
 #include "hmutex.h"
 
 

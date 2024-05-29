@@ -1,5 +1,4 @@
 #include "hsocket.h"
-
 #include "hdef.h"
 
 #ifdef OS_WIN

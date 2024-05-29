@@ -2,6 +2,7 @@
 #include "buffer_pool.h"
 #include "hlog.h"
 #include "hloop.h"
+#include "hplatform.h"
 #include "hthread.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
@@ -29,7 +30,6 @@ struct node_manager_s   *node_manager   = NULL;
 logger_t                *core_logger    = NULL;
 logger_t                *network_logger = NULL;
 logger_t                *dns_logger     = NULL;
-
 
 struct ww_runtime_state_s
 {
@@ -140,7 +140,6 @@ void createWW(ww_construction_data_t init_data)
         // libhv has a separate logger,  attach it to the network logger
         logger_set_level_by_str(hv_default_logger(), init_data.network_logger_data.log_level);
         logger_set_handler(hv_default_logger(), getNetworkLoggerHandle());
-
     }
     if (init_data.dns_logger_data.log_file_path)
     {

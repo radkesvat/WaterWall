@@ -1,4 +1,5 @@
 #include "hmutex.h"
+#include "hplatform.h"
 
 // This implementation is based on of Jeff Preshing's "lightweight semaphore"
 // https://github.com/preshing/cpp11-on-multicore/blob/master/common/sema.h
