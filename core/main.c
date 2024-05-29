@@ -45,8 +45,11 @@ int main(void)
                                                             .log_console   = getCoreSettings()->dns_log_console},
     };
 
-    createWW(runtime_data);
     // core logger is available after ww setup
+    createWW(runtime_data);
+    free(runtime_data.core_logger_data.log_file_path);
+    free(runtime_data.network_logger_data.log_file_path);
+    free(runtime_data.dns_logger_data.log_file_path);
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
