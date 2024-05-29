@@ -5,7 +5,6 @@
 #include <stdint.h>
 #include <string.h> // memmove,memcpy
 
-
 /*
 
     This is just a buffer, with parameters like length, cap
@@ -14,11 +13,11 @@
     also, this buffer provides shallow copies ( simply think of it as a pointer duplicate )
     but, both of them can be destroyed and if a buffer has 0 owner, it will be freed
 
-    shallow copies are frozen buffers, if they require more length or expanding in other words,
-    they first get unshallowd (allocate their own buffer)
-
     shallow functions are never used by ww, the only user of those are the final developer
     who knows what they are doing
+
+    if you want to use shallow copies, you can also use constrain functions to make sure
+    those buffers do not overflow to each other and each will allocate their own buffer before expanding
 
     non shallow slice/other functions use calculated minimal copy or buffer swapping
 
@@ -30,13 +29,12 @@
 
 struct shift_buffer_s
 {
-    unsigned int *refc;
     char         *pbuf;
-    // unsigned int  base;
-    unsigned int  calc_len;
-    unsigned int  curpos;
-    unsigned int  full_cap;
-    unsigned int  shallow_offset;
+    unsigned int *refc;
+    unsigned int calc_len;
+    unsigned int curpos;
+    unsigned int full_cap;
+    unsigned int _offset;
 };
 
 typedef struct shift_buffer_s shift_buffer_t;
@@ -67,6 +65,18 @@ inline unsigned int rCap(shift_buffer_t *self)
     return (self->full_cap - self->curpos);
 }
 
+inline void constrainRight(shift_buffer_t *self)
+{
+    self->full_cap = self->curpos + self->calc_len;
+}
+
+inline void constrainLeft(shift_buffer_t *self)
+{
+    self->_offset += self->curpos;
+    self->pbuf += self->curpos;
+    self->full_cap -= self->curpos;
+    self->curpos = 0;
+}
 
 inline void shiftl(shift_buffer_t *self, unsigned int bytes)
 {

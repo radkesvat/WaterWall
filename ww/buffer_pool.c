@@ -1,4 +1,5 @@
 #include "buffer_pool.h"
+#include "hplatform.h"
 #ifdef OS_UNIX
 #include <malloc.h>
 #endif
@@ -13,6 +14,7 @@
 #include <string.h>
 
 // NOLINTBEGIN
+
 #define MEMORY_PROFILE_SMALL    (ram_profile >= kRamProfileM1Memory ? kRamProfileM1Memory : ram_profile)
 #define MEMORY_PROFILE_SELECTED ram_profile
 
@@ -24,6 +26,9 @@
     (((int) (MEMORY_PROFILE_SELECTED / 16)) > 1 ? (((int) (MEMORY_PROFILE_SELECTED / 16)) - 1) : (0))
 
 #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
+
+
+#define BYPASS_POOL 0
 
 // NOLINTEND
 
@@ -66,12 +71,14 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 #ifdef OS_UNIX
     malloc_trim(0);
 #endif
-
 }
 
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
-    // return newShiftBuffer(BUFFER_SIZE);
+#if BYPASS_POOL
+    return newShiftBuffer(BUFFER_SIZE);
+#endif
+    
     if (pool->len <= 0)
     {
         reCharge(pool);
@@ -86,8 +93,11 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
-    // destroyShiftBuffer(b);
-    // return;
+#if BYPASS_POOL
+    destroyShiftBuffer(b);
+    return;
+#endif
+
     if (isShallow(b))
     {
         destroyShiftBuffer(b);
