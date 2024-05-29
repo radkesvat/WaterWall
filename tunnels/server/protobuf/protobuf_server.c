@@ -73,9 +73,13 @@ static void upStream(tunnel_t *self, context_t *c)
                 goto disconnect;
             }
 
+            shiftr(full_data, 1 + bytes_passed);
+
             context_t *upstream_ctx = newContextFrom(c);
-            upstream_ctx->payload   = shallowSliceBuffer(full_data, data_len + (bytes_passed + 1));
-            shiftr(upstream_ctx->payload, 1 + bytes_passed);
+            upstream_ctx->payload   = popBuffer(getContextBufferPool(c));
+
+            sliceBufferTo(upstream_ctx->payload, full_data, data_len);
+            // upstream_ctx->payload   = shallowSliceBuffer();
 
             if (bufLen(full_data) > 0)
             {
@@ -105,10 +109,10 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            cstate             = malloc(sizeof(protobuf_server_con_state_t));
-            cstate->first_sent = false;
-            cstate->stream_buf = newBufferStream(getContextBufferPool(c));
-            CSTATE_MUT(c)      = cstate;
+            cstate        = malloc(sizeof(protobuf_server_con_state_t));
+            *cstate       = (protobuf_server_con_state_t){.first_sent = false,
+                                                          .stream_buf = newBufferStream(getContextBufferPool(c))};
+            CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)
         {
