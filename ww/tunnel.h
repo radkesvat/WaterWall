@@ -47,8 +47,7 @@ typedef void (*LineFlowSignal)(void *state);
 typedef struct line_s
 {
     hloop_t         *loop;
-    socket_context_t src_ctx;
-    socket_context_t dest_ctx;
+    void            *chains_state[kMaxChainLen];
     void            *up_state;
     void            *dw_state;
     LineFlowSignal   up_pause_cb;
@@ -60,8 +59,8 @@ typedef struct line_s
     uint8_t          lcid;
     uint8_t          auth_cur;
     bool             alive;
-
-    void *chains_state[];
+    socket_context_t src_ctx;
+    socket_context_t dest_ctx;
 
 } line_t;
 
@@ -69,7 +68,6 @@ typedef struct context_s
 {
     line_t         *line;
     shift_buffer_t *payload;
-    int             fd;
     bool            init;
     bool            est;
     bool            first;
@@ -103,21 +101,22 @@ void      defaultDownStream(tunnel_t *self, context_t *c);
 
 inline line_t *newLine(uint8_t tid)
 {
-    size_t  size   = sizeof(line_t) + (sizeof(void *) * kMaxChainLen);
+    size_t  size   = sizeof(line_t);
     line_t *result = malloc(size);
     // memset(result, 0, size);
     *result = (line_t){
-        .tid      = tid,
-        .refc     = 1,
-        .lcid     = kMaxChainLen - 1,
-        .auth_cur = 0,
-        .loop     = loops[tid],
-        .alive    = true,
+        .tid          = tid,
+        .refc         = 1,
+        .lcid         = kMaxChainLen - 1,
+        .auth_cur     = 0,
+        .loop         = loops[tid],
+        .alive        = true,
+        .chains_state = {0},
         // to set a port we need to know the AF family, default v4
         .dest_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
         .src_ctx  = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
     };
-    memset(&(result->chains_state), 0, (sizeof(void *) * kMaxChainLen));
+
     return result;
 }
 inline bool isAlive(line_t *line)
