@@ -63,8 +63,11 @@ logger_t* logger_create(void) {
     // init gmtoff here
     time_t ts = time(NULL);
     static _Thread_local  struct tm local_tm;
+#ifdef OS_UNIX
     localtime_r(&ts,&local_tm);
-
+#else
+    localtime_s(&local_tm,&ts);
+#endif
     int local_hour = local_tm.tm_hour;
     struct tm* gmt_tm = gmtime(&ts);
     int gmt_hour = gmt_tm->tm_hour;
@@ -206,7 +209,11 @@ const char* logger_get_cur_file(logger_t* logger) {
 
 static void logfile_name(const char* filepath, time_t ts, char* buf, int len) {
     static _Thread_local  struct tm tm;
+#ifdef OS_UNIX
     localtime_r(&ts,&tm);
+#else
+    localtime_s(&tm,&ts);
+#endif
     snprintf(buf, len, "%s.%04d%02d%02d.log",
             filepath,
             tm.tm_year+1900,

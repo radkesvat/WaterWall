@@ -1,4 +1,5 @@
 #include "htime.h"
+#define __STDC_WANT_LIB_EXT1__ 1
 #include <time.h>
 
 static const char* s_weekdays[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
@@ -75,7 +76,11 @@ datetime_t datetime_now(void) {
 
 datetime_t datetime_localtime(time_t seconds) {
     static _Thread_local  struct tm tm;
+#ifdef OS_UNIX
     localtime_r(&seconds,&tm);
+#else
+    localtime_s(&tm,&seconds);
+#endif
     datetime_t dt;
     dt.year  = tm.tm_year + 1900;
     dt.month = tm.tm_mon  + 1;
@@ -91,8 +96,11 @@ time_t datetime_mktime(datetime_t* dt) {
     time_t ts;
     time(&ts);
     static _Thread_local  struct tm ptm;
+#ifdef OS_UNIX
     localtime_r(&ts,&ptm);
-
+#else
+    localtime_s(&ptm,&ts);
+#endif
     memcpy(&tm, &ptm, sizeof(struct tm));
     tm.tm_year = dt->year  - 1900;
     tm.tm_mon  = dt->month - 1;
@@ -232,7 +240,11 @@ time_t cron_next_timeout(int minute, int hour, int day, int week, int month) {
     time_t tt;
     time(&tt);
     static _Thread_local  struct tm tm;
+#ifdef OS_UNIX
     localtime_r(&tt,&tm);
+#else
+    localtime_s(&tm,&tt);
+#endif
     time_t tt_round = 0;
 
     tm.tm_sec = 0;
