@@ -60,6 +60,7 @@ inline unsigned int lCap(shift_buffer_t *self)
 {
     return self->curpos;
 }
+
 inline unsigned int rCap(shift_buffer_t *self)
 {
     return (self->full_cap - self->curpos);
@@ -136,14 +137,17 @@ inline const void *rawBuf(shift_buffer_t *self)
 {
     return (void *) &(self->pbuf[self->curpos]);
 }
+
 inline void readUI8(shift_buffer_t *self, uint8_t *dest)
 {
     *dest = *(uint8_t *) rawBuf(self);
 }
+
 inline void readUI16(shift_buffer_t *self, uint16_t *dest)
 {
     *dest = *(uint16_t *) rawBuf(self);
 }
+
 inline void readUI64(shift_buffer_t *self, uint64_t *dest)
 {
     *dest = *(uint64_t *) rawBuf(self);

@@ -38,9 +38,16 @@ enum
     kMaxChainLen = (16 * 2)
 };
 
-#define STATE(x)      ((void *) ((x)->state))
-#define CSTATE(x)     ((void *) ((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
+#define STATE(x) ((void *) ((x)->state))
+
+#define LSTATE_I(x, y)     ((void *) ((((x)->chains_state)[y])))
+#define LSTATE_I_MUT(x, y) (x)->chains_state[y]
+
+#define LSTATE(x)     LSTATE_I(x, self->chain_index)
+#define LSTATE_MUT(x) LSTATE_I_MUT(x, self->chain_index)
+
+#define CSTATE(x)     LSTATE((x)->line)
+#define CSTATE_MUT(x) LSTATE_MUT((x)->line)
 
 typedef void (*LineFlowSignal)(void *state);
 
@@ -103,7 +110,7 @@ inline line_t *newLine(uint8_t tid)
 {
     size_t  size   = sizeof(line_t);
     line_t *result = malloc(size);
-    // memset(result, 0, size);
+
     *result = (line_t){
         .tid          = tid,
         .refc         = 1,
@@ -119,6 +126,7 @@ inline line_t *newLine(uint8_t tid)
 
     return result;
 }
+
 inline bool isAlive(line_t *line)
 {
     return line->alive;
@@ -130,16 +138,19 @@ inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, Lin
     l->up_pause_cb  = pause_cb;
     l->up_resume_cb = resume_cb;
 }
+
 inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
     l->dw_state     = state;
     l->dw_pause_cb  = pause_cb;
     l->dw_resume_cb = resume_cb;
 }
+
 inline void doneLineUpSide(line_t *l)
 {
     l->up_state = NULL;
 }
+
 inline void doneLineDownSide(line_t *l)
 {
     l->dw_state = NULL;
@@ -183,6 +194,7 @@ inline uint8_t reserveChainStateIndex(line_t *l)
     l->lcid -= 1;
     return result;
 }
+
 inline void internalUnRefLine(line_t *l)
 {
     l->refc -= 1;
@@ -209,10 +221,12 @@ inline void internalUnRefLine(line_t *l)
 
     free(l);
 }
+
 inline void lockLine(line_t *line)
 {
     line->refc++;
 }
+
 inline void unLockLine(line_t *line)
 {
     internalUnRefLine(line);
@@ -230,6 +244,7 @@ inline void destroyContext(context_t *c)
     unLockLine(c->line);
     free(c);
 }
+
 inline context_t *newContext(line_t *line)
 {
     context_t *new_ctx = malloc(sizeof(context_t));
@@ -245,6 +260,7 @@ inline context_t *newContextFrom(context_t *source)
     *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
 }
+
 inline context_t *newEstContext(line_t *line)
 {
     context_t *c = newContext(line);
@@ -272,6 +288,7 @@ inline context_t *newInitContext(line_t *line)
     c->init      = true;
     return c;
 }
+
 inline context_t *switchLine(context_t *c, line_t *line)
 {
     lockLine(line);
@@ -284,6 +301,7 @@ inline void markAuthenticated(line_t *line)
 {
     line->auth_cur += 1;
 }
+
 inline bool isAuthenticated(line_t *line)
 {
     return line->auth_cur > 0;
@@ -293,14 +311,17 @@ inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
 {
     return buffer_pools[tid];
 }
+
 inline buffer_pool_t *getLineBufferPool(line_t *l)
 {
     return buffer_pools[l->tid];
 }
+
 inline buffer_pool_t *getContextBufferPool(context_t *c)
 {
     return buffer_pools[c->line->tid];
 }
+
 inline void reuseContextBuffer(context_t *c)
 {
     assert(c->payload != NULL);

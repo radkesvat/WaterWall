@@ -62,6 +62,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
                          uint64_t age_ms)
 {
     assert(self);
+    assert(cb);
     idle_item_t *item = malloc(sizeof(idle_item_t));
     hhybridmutex_lock(&(self->mutex));
 

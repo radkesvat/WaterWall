@@ -74,39 +74,8 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
         }
         container = appendBufferMerge(self->pool, container, queue_pull_front(&self->q));
     }
-
-    // shift_buffer_t *b = queue_pull_front(&self->q);
-
-    // size_t needed = bytes - available;
-    // size_t wi     = available;
-    // setLen(result, bytes);
-    // uint8_t *dest = rawBufMut(result);
-
-    // while (true)
-    // {
-    //     shift_buffer_t *b    = queue_pull_front(&self->q);
-    //     size_t          blen = bufLen(b);
-
-    //     if (blen > needed)
-    //     {
-    //         memcpy(dest + wi, rawBuf(b), needed);
-    //         shiftr(b, needed);
-    //         queue_push_front(&self->q, b);
-    //         return result;
-    //     }
-    //     if (blen == needed)
-    //     {
-    //         memcpy(dest + wi, rawBuf(b), needed);
-    //         reuseBuffer(self->pool, b);
-    //         return result;
-    //     }
-
-    //     memcpy(dest + wi, rawBuf(b), blen);
-    //     wi += blen;
-    //     needed -= blen;
-    //     reuseBuffer(self->pool, b);
-    // }
 }
+
 shift_buffer_t *bufferStreamIdealRead(buffer_stream_t *self)
 {
     assert(self->size > 0);
@@ -122,7 +91,6 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
     uint8_t result = 0;
     c_foreach(i, queue, self->q)
     {
-
         shift_buffer_t *b    = *i.ref;
         size_t          blen = bufLen(b);
 
@@ -147,14 +115,15 @@ void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
 
         shift_buffer_t *b    = *qi.ref;
         size_t          blen = bufLen(b);
+        
         if (len - buf_i <= blen - bufferstream_i)
         {
             memcpy(buf + buf_i, ((char *) rawBuf(b)) + bufferstream_i, len - buf_i);
             return;
         }
+
         while (bufferstream_i < blen)
         {
-
             buf[buf_i++] = ((uint8_t *) rawBuf(b))[bufferstream_i++];
             if (buf_i == len)
             {
