@@ -70,7 +70,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     context_t *hello_data_ctx = NULL;
                     if (contextQueueLen(ucstate->uqueue) > 0)
                     {
-                        hello_data_ctx = contextQueuePop(ucstate->uqueue);
+                        hello_data_ctx = switchLine(contextQueuePop(ucstate->uqueue), ucstate->d);
                     }
                     else
                     {
