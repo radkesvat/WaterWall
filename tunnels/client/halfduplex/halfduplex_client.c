@@ -3,6 +3,7 @@
 #include "frand.h"
 #include "shiftbuffer.h"
 #include "halfduplex_constants.h"
+#include "tunnel.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -76,7 +77,14 @@ static void upStream(tunnel_t *self, context_t *c)
             writeUI8(intro_context->payload, kHLFDCmdDownload);
 
             self->up->upStream(self->up, intro_context);
-
+            
+            if (! isAlive(c->line))
+            {
+                reuseContextBuffer(c);
+                destroyContext(c);
+                return;
+            }
+            
             shiftl(c->payload, 2);
             writeUI16(c->payload, cid);
             shiftl(intro_context->payload, 1);
