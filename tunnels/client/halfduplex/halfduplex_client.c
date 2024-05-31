@@ -1,9 +1,8 @@
 #include "halfduplex_client.h"
 #include "buffer_pool.h"
-#include "context_queue.h"
 #include "frand.h"
 #include "shiftbuffer.h"
-#include "tunnel.h"
+#include "halfduplex_constants.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -18,23 +17,13 @@ typedef struct halfduplex_con_state_s
     line_t *main_line;
     line_t *upload_line;
     line_t *download_line;
-    //--------------
-    context_queue_t *write_queue;
 
 } halfduplex_con_state_t;
 
-enum
-{
-    kCmdUpload   = 0x1,
-    kCmdDownload = 0x2,
-};
 
 static void cleanup(halfduplex_con_state_t *cstate)
 {
-    if (cstate->write_queue != NULL)
-    {
-        destroyContextQueue(cstate->write_queue);
-    }
+
     if (cstate->upload_line)
     {
         doneLineDownSide(cstate->upload_line);
@@ -47,16 +36,6 @@ static void cleanup(halfduplex_con_state_t *cstate)
     }
     doneLineUpSide(cstate->main_line);
     free(cstate);
-}
-
-static void flushWriteQueue(tunnel_t *self, context_t *c)
-{
-    halfduplex_con_state_t *cstate = CSTATE(c);
-
-    while (isAlive(c->line) && contextQueueLen(cstate->write_queue) > 0)
-    {
-        self->upStream(self, contextQueuePop(cstate->write_queue));
-    }
 }
 
 static void onMainLinePaused(void *cstate)
@@ -94,14 +73,14 @@ static void upStream(tunnel_t *self, context_t *c)
             shiftl(intro_context->payload, 2);
             writeUI16(intro_context->payload, cid);
             shiftl(intro_context->payload, 1);
-            writeUI8(intro_context->payload, kCmdDownload);
+            writeUI8(intro_context->payload, kHLFDCmdDownload);
 
             self->up->upStream(self->up, intro_context);
 
             shiftl(c->payload, 2);
             writeUI16(c->payload, cid);
             shiftl(intro_context->payload, 1);
-            writeUI8(intro_context->payload, kCmdUpload);
+            writeUI8(intro_context->payload, kHLFDCmdUpload);
         }
         self->up->upStream(self->up, switchLine(c, cstate->upload_line));
     }
@@ -112,10 +91,8 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             halfduplex_con_state_t *cstate = malloc(sizeof(halfduplex_con_state_t));
 
-            *cstate = (halfduplex_con_state_t){.download_line = newLine(c->line->tid),
-                                               .upload_line   = newLine(c->line->tid),
-                                               .main_line     = c->line,
-                                               .write_queue   = newContextQueue(getContextBufferPool(c))};
+            *cstate = (halfduplex_con_state_t){
+                .download_line = newLine(c->line->tid), .upload_line = newLine(c->line->tid), .main_line = c->line};
 
             CSTATE_MUT(c)                     = cstate;
             LSTATE_MUT(cstate->upload_line)   = cstate;
