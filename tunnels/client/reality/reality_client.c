@@ -110,6 +110,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
+            c->first = false;
             contextQueuePush(cstate->queue, c);
             return;
         }
