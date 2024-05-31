@@ -63,6 +63,8 @@ option(INCLUDE_SOCKS_5_SERVER "link Socks5Server staticly to the core"  TRUE)
 option(INCLUDE_REALITY_SERVER "link RealityServer staticly to the core"  TRUE)
 option(INCLUDE_REALITY_CLIENT "link RealityClient staticly to the core"  TRUE)
 
+option(INCLUDE_HALFDUPLEX_CLIENT "link HalfDuplexClient staticly to the core"  TRUE)
+
 set(OPENSSL_CONFIGURE_VERBOSE ON)
 
 # add executable
@@ -318,6 +320,14 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_REALITY_CLIENT=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/reality)
 target_link_libraries(Waterwall RealityClient)
+endif()
+
+#halfduplex client
+if (INCLUDE_HALFDUPLEX_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_HALFDUPLEX_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/halfduplex)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/halfduplex)
+target_link_libraries(Waterwall HalfDuplexClient)
 endif()
 
 

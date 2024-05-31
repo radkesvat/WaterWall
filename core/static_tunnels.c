@@ -124,6 +124,11 @@
 #include "tunnels/client/reality/reality_client.h"
 #endif
 
+#ifdef INCLUDE_HALFDUPLEX_CLIENT
+#include "tunnels/client/halfduplex/halfduplex_client.h"
+#endif
+
+
 void loadStaticTunnelsIntoCore(void)
 {
 #ifdef INCLUDE_TCP_LISTENER
@@ -233,4 +238,10 @@ void loadStaticTunnelsIntoCore(void)
 #ifdef INCLUDE_REALITY_CLIENT
     USING(RealityClient);
 #endif
+
+
+#ifdef INCLUDE_HALFDUPLEX_CLIENT
+    USING(HalfDuplexClient);
+#endif
+
 }
