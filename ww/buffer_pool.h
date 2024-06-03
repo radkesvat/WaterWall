@@ -31,7 +31,7 @@ struct buffer_pool_s
     unsigned int cap;
     unsigned int free_threshould;
     unsigned int buffers_size;
-#ifdef DEBUG
+#if defined(DEBUG) && defined(POOL_DEBUG)
     atomic_size_t in_use;
 #endif
     shift_buffer_t *available[];
@@ -48,7 +48,7 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 // [not used] when you change the owner thread of a buffer, you should
 // notify the original buffer pool that 1 buffer is lost form it
 // this however, is not used
-#ifdef DEBUG
+#if defined(DEBUG) && defined(POOL_DEBUG)
 static inline void notifyDetached(buffer_pool_t *pool)
 {
     pool->in_use -= 1;

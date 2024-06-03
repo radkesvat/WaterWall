@@ -27,7 +27,6 @@
 
 #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
 
-#define BYPASS_POOL 0
 
 // NOLINTEND
 
@@ -49,7 +48,7 @@ static void reCharge(buffer_pool_t *pool)
         pool->available[i] = newShiftBuffer(pool->buffers_size);
     }
     pool->len += increase;
-#ifdef DEBUG
+#if defined(DEBUG) && defined(POOL_DEBUG)
     LOGD("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
@@ -64,7 +63,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
     }
     pool->len -= decrease;
 
-#ifdef DEBUG
+#if defined(DEBUG) && defined(POOL_DEBUG)
     LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
 #ifdef OS_UNIX
@@ -74,7 +73,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
-#if BYPASS_POOL
+#if defined(DEBUG) && defined(BYPASS_POOL)
     return newShiftBuffer(BUFFER_SIZE);
 #endif
 
@@ -83,7 +82,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
         reCharge(pool);
     }
 
-#ifdef DEBUG
+#if defined(DEBUG) && defined(BYPASS_POOL)
     pool->in_use += 1;
 #endif
     --(pool->len);
@@ -92,7 +91,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
-#if BYPASS_POOL
+#if defined(DEBUG) && defined(BYPASS_POOL)
     destroyShiftBuffer(b);
     return;
 #endif
@@ -102,7 +101,7 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
         destroyShiftBuffer(b);
         return;
     }
-#ifdef DEBUG
+#if defined(DEBUG) && defined(BYPASS_POOL)
     pool->in_use -= 1;
 #endif
     if (pool->len > pool->free_threshould)
