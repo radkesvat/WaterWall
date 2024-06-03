@@ -27,7 +27,6 @@
 
 #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
 
-
 #define BYPASS_POOL 0
 
 // NOLINTEND
@@ -78,7 +77,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 #if BYPASS_POOL
     return newShiftBuffer(BUFFER_SIZE);
 #endif
-    
+
     if (pool->len <= 0)
     {
         reCharge(pool);

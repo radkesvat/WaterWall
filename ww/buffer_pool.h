@@ -21,6 +21,8 @@
 
     so the pool width is affected by ww memory profile
 
+    for performance reasons, this pool dose not inherit from generic_pool and 80% of the code is the same
+    
 */
 
 struct buffer_pool_s

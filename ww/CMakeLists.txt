@@ -9,6 +9,7 @@ add_library(ww STATIC
                   buffer_stream.c
                   config_file.c
                   buffer_pool.c
+                  generic_pool.c
                   http_def.c
                   cacert.c
                   sync_dns.c

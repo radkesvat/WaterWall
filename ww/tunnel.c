@@ -67,6 +67,29 @@ tunnel_t *newTunnel(void)
     return t;
 }
 
+pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool)
+{
+    (void) pool;
+    return malloc(sizeof(line_t));
+}
+void destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+{
+    (void) pool;
+    free(item);
+}
+
+pool_item_t *allocContextPoolHandle(struct generic_pool_s *pool)
+{
+    (void) pool;
+    return malloc(sizeof(context_t));
+}
+
+void destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+{
+    (void) pool;
+    free(item);
+}
+
 void defaultUpStream(tunnel_t *self, context_t *c)
 {
     if (self->up != NULL)

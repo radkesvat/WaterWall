@@ -2,6 +2,7 @@
 
 #include "basic_types.h"
 #include "buffer_pool.h"
+#include "generic_pool.h"
 #include "hloop.h"
 #include "shiftbuffer.h"
 #include "ww.h"
@@ -106,10 +107,12 @@ void      chainUp(tunnel_t *from, tunnel_t *to);
 void      defaultUpStream(tunnel_t *self, context_t *c);
 void      defaultDownStream(tunnel_t *self, context_t *c);
 
+pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool);
+void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item);
+
 inline line_t *newLine(uint8_t tid)
 {
-    size_t  size   = sizeof(line_t);
-    line_t *result = malloc(size);
+    line_t *result = popPoolItem(line_pools[tid]);
 
     *result = (line_t){
         .tid          = tid,
@@ -219,7 +222,7 @@ inline void internalUnRefLine(line_t *l)
         free(l->dest_ctx.domain);
     }
 
-    free(l);
+    reusePoolItem(line_pools[l->tid], l);
 }
 
 inline void lockLine(line_t *line)
@@ -238,16 +241,20 @@ inline void destroyLine(line_t *l)
     unLockLine(l);
 }
 
+pool_item_t *allocContextPoolHandle(struct generic_pool_s *pool);
+void         destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
+
 inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
+    const uint8_t tid = c->line->tid;
     unLockLine(c->line);
-    free(c);
+    reusePoolItem(context_pools[tid], c);
 }
 
 inline context_t *newContext(line_t *line)
 {
-    context_t *new_ctx = malloc(sizeof(context_t));
+    context_t *new_ctx = popPoolItem(context_pools[line->tid]);
     *new_ctx           = (context_t){.line = line};
     lockLine(line);
     return new_ctx;
@@ -256,7 +263,7 @@ inline context_t *newContext(line_t *line)
 inline context_t *newContextFrom(context_t *source)
 {
     lockLine(source->line);
-    context_t *new_ctx = malloc(sizeof(context_t));
+    context_t *new_ctx = popPoolItem(context_pools[source->line->tid]);
     *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
 }

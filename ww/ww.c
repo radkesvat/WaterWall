@@ -1,5 +1,6 @@
 #include "ww.h"
 #include "buffer_pool.h"
+#include "generic_pool.h"
 #include "hlog.h"
 #include "hloop.h"
 #include "hplatform.h"
@@ -25,6 +26,8 @@ unsigned int             frand_seed     = 0;
 unsigned int             ram_profile    = 0;
 struct hloop_s         **loops          = NULL;
 struct buffer_pool_s   **buffer_pools   = NULL;
+struct generic_pool_s  **context_pools  = NULL;
+struct generic_pool_s  **line_pools     = NULL;
 struct socket_manager_s *socekt_manager = NULL;
 struct node_manager_s   *node_manager   = NULL;
 logger_t                *core_logger    = NULL;
@@ -39,6 +42,8 @@ struct ww_runtime_state_s
     unsigned int             ram_profile;
     struct hloop_s         **loops;
     struct buffer_pool_s   **buffer_pools;
+    struct generic_pool_s  **context_pools;
+    struct generic_pool_s  **line_pools;
     struct socket_manager_s *socekt_manager;
     struct node_manager_s   *node_manager;
     logger_t                *core_logger;
@@ -54,6 +59,8 @@ void setWW(struct ww_runtime_state_s *state)
     ram_profile    = state->ram_profile;
     loops          = state->loops;
     buffer_pools   = state->buffer_pools;
+    context_pools  = state->context_pools;
+    line_pools     = state->line_pools;
     socekt_manager = state->socekt_manager;
     node_manager   = state->node_manager;
     setCoreLogger(state->core_logger);
@@ -74,6 +81,8 @@ struct ww_runtime_state_s *getWW(void)
     state->ram_profile    = ram_profile;
     state->loops          = loops;
     state->buffer_pools   = buffer_pools;
+    state->context_pools  = context_pools;
+    state->line_pools     = line_pools;
     state->socekt_manager = socekt_manager;
     state->node_manager   = node_manager;
     state->core_logger    = core_logger;
@@ -153,14 +162,20 @@ void createWW(ww_construction_data_t init_data)
         fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - 255]\n", workers_count);
     }
 
-    workers      = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
-    frand_seed   = time(NULL);
-    ram_profile  = init_data.ram_profile;
-    buffer_pools = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
+    workers       = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
+    frand_seed    = time(NULL);
+    ram_profile   = init_data.ram_profile;
+    buffer_pools  = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
+    context_pools = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
+    line_pools    = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
 
     for (unsigned int i = 0; i < workers_count; ++i)
     {
         buffer_pools[i] = createBufferPool();
+        context_pools[i] =
+            newGenericPoolWithSize((16 * 8) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
+        context_pools[i] =
+            newGenericPoolWithSize((16 * 4) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
     }
 
     loops      = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
