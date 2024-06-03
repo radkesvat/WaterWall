@@ -10,6 +10,7 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
+#include "tunnel.h"
 #include "utils/stringutils.h"
 #include <malloc.h>
 #include <stddef.h>
@@ -174,8 +175,7 @@ void createWW(ww_construction_data_t init_data)
         buffer_pools[i] = createBufferPool();
         context_pools[i] =
             newGenericPoolWithSize((16 * 8) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
-        context_pools[i] =
-            newGenericPoolWithSize((16 * 4) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
+        line_pools[i] = newGenericPoolWithSize((16 * 4) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
     }
 
     loops      = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
