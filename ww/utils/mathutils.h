@@ -1,4 +1,5 @@
 #pragma once
+#include <math.h> //cel,log2,pow
 #include <stdlib.h>
 #include <sys/types.h>
 #undef max
