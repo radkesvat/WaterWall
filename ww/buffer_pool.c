@@ -19,13 +19,14 @@
 #define MEMORY_PROFILE_SELECTED ram_profile
 
 #define BASE_READ_BUFSIZE              (1U << 13) // 8k
-#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((16 * MEMORY_PROFILE_SMALL)))
-#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((16 * MEMORY_PROFILE_SELECTED)))
+#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((8 * MEMORY_PROFILE_SMALL)))
+#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((8 * MEMORY_PROFILE_SELECTED)))
 
 #define BUFFER_SIZE_MORE                                                                                               \
     (((int) (MEMORY_PROFILE_SELECTED / 16)) > 1 ? (((int) (MEMORY_PROFILE_SELECTED / 16)) - 1) : (0))
 
-#define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
+// #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
+#define BUFFER_SIZE (1U << 15) // 32k
 
 
 // NOLINTEND
