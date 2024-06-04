@@ -15,6 +15,7 @@ add_library(ww STATIC
                   sync_dns.c
                   idle_table.c
                   frand.c
+                  pipe_line.c
                   utils/utils.c
                   managers/socket_manager.c
                   managers/node_manager.c
