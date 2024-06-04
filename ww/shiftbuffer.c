@@ -1,4 +1,5 @@
 #include "shiftbuffer.h"
+#include "utils/mathutils.h"
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
 #include <stdint.h>
@@ -45,7 +46,7 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
 {
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
-        pre_cap = (unsigned int) pow(2, ceil(log2(16 + pre_cap)));
+        pre_cap = (unsigned int) pow(2, ceil(log2((double)max(16,pre_cap))));
     }
 
     unsigned int real_cap = pre_cap * 2;
@@ -89,7 +90,7 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
     assert(! isShallow(self));
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
-        pre_cap = (unsigned int) pow(2, ceil(log2(16 + pre_cap)));
+        pre_cap = (unsigned int) pow(2, ceil(log2(((double) max(16,pre_cap)))));
     }
     unsigned int real_cap = pre_cap * 2;
 

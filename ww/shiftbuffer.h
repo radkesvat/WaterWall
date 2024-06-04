@@ -31,10 +31,10 @@ struct shift_buffer_s
 {
     char         *pbuf;
     unsigned int *refc;
-    unsigned int calc_len;
-    unsigned int curpos;
-    unsigned int full_cap;
-    unsigned int _offset;
+    unsigned int  calc_len;
+    unsigned int  curpos;
+    unsigned int  full_cap;
+    unsigned int  _offset;
 };
 
 typedef struct shift_buffer_s shift_buffer_t;
@@ -83,12 +83,18 @@ inline void shiftl(shift_buffer_t *self, unsigned int bytes)
 {
     if (lCap(self) < bytes)
     {
+        if (! isShallow(self) && self->_offset != 0)
+        {
+            self->curpos += self->_offset;
+            self->pbuf -= self->_offset;
+            self->full_cap += self->_offset;
+            self->_offset = 0;
+            shiftl(self, bytes);
+            return;
+        }
         expand(self, (bytes - lCap(self)));
     }
-    // else if (isShallow(self) && bytes > 0)
-    // {
-    //     unShallow(self);
-    // }
+    
     self->curpos -= bytes;
     self->calc_len += bytes;
 }
@@ -107,10 +113,7 @@ inline void setLen(shift_buffer_t *self, unsigned int bytes)
     {
         expand(self, (bytes - rCap(self)));
     }
-    // else if (isShallow(self) && self->curpos + bytes > self->lenpos)
-    // {
-    //     unShallow(self);
-    // }
+   
     self->calc_len = bytes;
 }
 
