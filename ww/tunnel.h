@@ -200,9 +200,7 @@ inline uint8_t reserveChainStateIndex(line_t *l)
 
 inline void internalUnRefLine(line_t *l)
 {
-    l->refc -= 1;
-    // check line
-    if (l->refc > 0)
+    if (--(l->refc) > 0)
     {
         return;
     }
@@ -214,8 +212,10 @@ inline void internalUnRefLine(line_t *l)
     {
         assert(l->chains_state[i] == NULL);
     }
+    assert(l->up_state == NULL);
+    assert(l->dw_state == NULL);
 
-    assert(l->src_ctx.domain == NULL); // impossible (source domain?)
+    // assert(l->src_ctx.domain == NULL); // impossible (source domain?) (no need to assert)
 
     if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_constant)
     {
