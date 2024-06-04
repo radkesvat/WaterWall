@@ -23,7 +23,6 @@ add_library(ww STATIC
                   loggers/network_logger.c
                   loggers/dns_logger.c
 
-  
 )
 
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -38,7 +37,6 @@ CPMAddPackage(
   GIT_TAG 5.10
   DOWNLOAD_ONLY True
 )
-
 
 if(komihash_ADDED)
   target_include_directories(ww PUBLIC ${komihash_SOURCE_DIR})
@@ -59,11 +57,11 @@ endif()
 
 # add cJson
 CPMAddPackage(
-    NAME cjson
-    VERSION 1.7.17
-    GITHUB_REPOSITORY DaveGamble/cJSON
-    OPTIONS "BUILD_SHARED_LIBS OFF" "BUILD_SHARED_AND_STATIC_LIBS On"
-    DOWNLOAD_ONLY True
+  NAME cjson
+  VERSION 1.7.17
+  GITHUB_REPOSITORY DaveGamble/cJSON
+  OPTIONS "BUILD_SHARED_LIBS OFF" "BUILD_SHARED_AND_STATIC_LIBS On"
+  DOWNLOAD_ONLY True
 
 )
 
@@ -85,19 +83,6 @@ set(BUILD_EXAMPLES OFF CACHE BOOL "ibhv dont build examples")
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/eventloop)
 
-# CPMAddPackage(
-#     NAME libhv
-#     GIT_TAG HEAD
-#     GITHUB_REPOSITORY radkesvat/libhv
-#     OPTIONS 
-#     "WITH_OPENSSL OFF"
-#     "WITH_EVPP OFF"
-#     "WITH_HTTP OFF"
-#     "WITH_HTTP_SERVER OFF"
-#     "WITH_HTTP_CLIENT OFF"
-#     "BUILD_SHARED OFF"
-#     "BUILD_EXAMPLES OFF"
-# )
 
 # target_compile_options(hv_static PRIVATE -fPIC) 
 # target_compile_options(ww PUBLIC -fPIC)  
@@ -116,7 +101,6 @@ endif()
 # target_compile_options(ww PUBLIC -ftrack-macro-expansion=0)
 # endif()
 
-# todo (:<)
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
