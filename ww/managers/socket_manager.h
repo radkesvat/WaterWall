@@ -21,7 +21,7 @@ typedef enum
 typedef struct socket_filter_option_s
 {
     char                        *host;
-    enum socket_address_protocol proto;
+    enum socket_address_protocol protocol;
     multiport_backend_t          multiport_backend;
     uint16_t                     port_min;
     uint16_t                     port_max;
@@ -30,6 +30,15 @@ typedef struct socket_filter_option_s
     bool                         fast_open;
     bool                         no_delay;
 
+    // private
+    unsigned int white_list_parsed_length;
+    struct
+    {
+        struct in6_addr ip_bytes_buf;
+        struct in6_addr mask_bytes_buf;
+
+    } *white_list_parsed;
+
 } socket_filter_option_t;
 
 // user data of accept event
@@ -37,7 +46,7 @@ typedef struct socket_accept_result_s
 {
     hio_t                       *io; // it also has the owner loop
     tunnel_t                    *tunnel;
-    enum socket_address_protocol proto;
+    enum socket_address_protocol protocol;
     uint8_t                      tid;
     uint16_t                     real_localport;
 

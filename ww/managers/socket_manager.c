@@ -1,6 +1,7 @@
 #include "socket_manager.h"
 #include "basic_types.h"
 #include "buffer_pool.h"
+#include "hlog.h"
 #include "hloop.h"
 #include "hmutex.h"
 #include "idle_table.h"
@@ -9,6 +10,7 @@
 #include "tunnel.h"
 #include "utils/procutils.h"
 #include "ww.h"
+#include <stdlib.h>
 
 typedef struct socket_filter_s
 {
@@ -26,7 +28,7 @@ typedef struct socket_filter_s
 #define i_use_cmp                   // NOLINT
 #include "stc/vec.h"
 
-#define SUPOPRT_V6 false
+#define SUPPORT_V6 false
 enum
 {
     kSoOriginalDest = 80,
@@ -53,7 +55,7 @@ static socket_manager_state_t *state = NULL;
 static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
     char b[300];
-#if SUPOPRT_V6
+#if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
     execCmd(b);
 #endif
@@ -65,7 +67,7 @@ static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned 
 static bool redirectPortRangeUdp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
     char b[300];
-#if SUPOPRT_V6
+#if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
     execCmd(b);
 #endif
@@ -76,7 +78,7 @@ static bool redirectPortRangeUdp(unsigned int pmin, unsigned int pmax, unsigned 
 static bool redirectPortTcp(unsigned int port, unsigned int to)
 {
     char b[300];
-#if SUPOPRT_V6
+#if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u -j REDIRECT --to-port %u", port, to);
     execCmd(b);
 #endif
@@ -87,7 +89,7 @@ static bool redirectPortTcp(unsigned int port, unsigned int to)
 static bool redirectPortUdp(unsigned int port, unsigned int to)
 {
     char b[300];
-#if SUPOPRT_V6
+#if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u -j REDIRECT --to-port %u", port, to);
     execCmd(b);
 #endif
@@ -98,7 +100,7 @@ static bool redirectPortUdp(unsigned int port, unsigned int to)
 static bool resetIptables(void)
 {
     LOGD("SocketManager: clearing iptables nat rules");
-#if SUPOPRT_V6
+#if SUPPORT_V6
     execCmd("ip6tables -t nat -F");
     execCmd("ip6tables -t nat -X");
 #endif
@@ -206,7 +208,6 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
     else if (inet_pton(AF_INET6, ip_part, base_addr) == 1)
     {
         // IPv6 address
-
         int prefix_length = atoi(subnet_part);
         if (prefix_length < 0 || prefix_length > 128)
         {
@@ -233,13 +234,39 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
     return 0;
 }
 
+void parseWhiteListOption(socket_filter_option_t *option)
+{
+    assert(option->white_list_raddr != NULL);
+
+    int   len = 0;
+    char *cur = NULL;
+
+    while ((cur = option->white_list_raddr[len]))
+    {
+        len++;
+    }
+
+    option->white_list_parsed_length = len;
+    option->white_list_parsed        = malloc(sizeof(option->white_list_parsed[0]) * len);
+    for (int i = 0; i < len; i++)
+    {
+        cur              = option->white_list_raddr[i];
+        int parse_result = parseIPWithSubnetMask(&(option->white_list_parsed[i].ip_bytes_buf), cur,
+                                                 &(option->white_list_parsed[i].mask_bytes_buf));
+
+        if (parse_result == -1)
+        {
+            LOGF("SocketManager: stopping due to whitelist address [%d] \"%s\" parse failure", i, cur);
+            exit(1);
+        }
+    }
+}
+
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
 
-    socket_filter_t *filter = malloc(sizeof(socket_filter_t));
-    *filter                 = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
-
-    unsigned int pirority = 0;
+    socket_filter_t *filter   = malloc(sizeof(socket_filter_t));
+    unsigned int     pirority = 0;
     if (option.multiport_backend == kMultiportBackendNothing)
     {
         pirority++;
@@ -252,6 +279,11 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     {
         pirority++;
     }
+    if (option.white_list_raddr != NULL)
+    {
+        parseWhiteListOption(&option);
+    }
+    *filter = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
     hhybridmutex_lock(&(state->mutex));
     filters_t_push(&(state->filters[pirority]), filter);
@@ -296,34 +328,38 @@ static void noTcpSocketConsumerFound(hio_t *io)
     hio_close(io);
 }
 
-// todo (optimize) preparse + avoid copy
-static bool checkIpIsWhiteList(sockaddr_u *addr, char **white_list_raddr)
+static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t option)
 {
-    bool  matches = false;
-    int   i       = 0;
-    char *cur     = white_list_raddr[i];
-    do
+    struct in6_addr test_addr = {0};
+    const bool      is_v4     = addr->sa.sa_family == AF_INET;
+    if (is_v4)
     {
-        struct in6_addr ip_strbuf     = {0};
-        struct in6_addr mask_stripbuf = {0};
-        parseIPWithSubnetMask(&ip_strbuf, cur, &mask_stripbuf);
-        struct in6_addr test_addr = {0};
-        if (addr->sa.sa_family == AF_INET)
+        memcpy(&test_addr, &addr->sin.sin_addr, 4);
+
+        for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
-            memcpy(&test_addr, &addr->sin.sin_addr, 4);
-            matches = checkIPRange(false, test_addr, ip_strbuf, mask_stripbuf);
+
+            if (checkIPRange(false, test_addr, option.white_list_parsed[i].ip_bytes_buf,
+                             option.white_list_parsed[i].mask_bytes_buf))
+            {
+                return true;
+            }
         }
-        else
+    }
+    else
+    {
+        memcpy(&test_addr, &addr->sin6.sin6_addr, 16);
+        for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
-            memcpy(&test_addr, &addr->sin6.sin6_addr, 16);
-            matches = checkIPRange(true, test_addr, ip_strbuf, mask_stripbuf);
+
+            if (checkIPRange(true, test_addr, option.white_list_parsed[i].ip_bytes_buf,
+                             option.white_list_parsed[i].mask_bytes_buf))
+            {
+                return true;
+            }
         }
-        if (matches)
-        {
-            return true;
-        }
-        i++;
-    } while ((cur = white_list_raddr[i]));
+    }
+
 
     return false;
 }
@@ -342,13 +378,13 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
             uint16_t               port_min = option.port_min;
             uint16_t               port_max = option.port_max;
 
-            if (option.proto != kSapTcp || port_min > local_port || port_max < local_port)
+            if (option.protocol != kSapTcp || port_min > local_port || port_max < local_port)
             {
                 continue;
             }
             if (option.white_list_raddr != NULL)
             {
-                if (! checkIpIsWhiteList(paddr, option.white_list_raddr))
+                if (! checkIpIsWhiteList(paddr, option))
                 {
                     continue;
                 }
@@ -519,7 +555,7 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
             {
                 option.multiport_backend = kMultiportBackendNothing;
             }
-            if (option.proto == kSapTcp)
+            if (option.protocol == kSapTcp)
             {
                 if (option.multiport_backend == kMultiportBackendIptables)
                 {
@@ -587,13 +623,13 @@ static void distributeUdpPayload(const udp_payload_t pl)
             uint16_t               port_min = option.port_min;
             uint16_t               port_max = option.port_max;
 
-            if (option.proto != kSapUdp || port_min > local_port || port_max < local_port)
+            if (option.protocol != kSapUdp || port_min > local_port || port_max < local_port)
             {
                 continue;
             }
             if (option.white_list_raddr != NULL)
             {
-                if (! checkIpIsWhiteList(paddr, option.white_list_raddr))
+                if (! checkIpIsWhiteList(paddr, option))
                 {
                     continue;
                 }
@@ -676,7 +712,7 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
             {
                 option.multiport_backend = kMultiportBackendNothing;
             }
-            if (option.proto == kSapUdp)
+            if (option.protocol == kSapUdp)
             {
                 if (option.multiport_backend == kMultiportBackendIptables)
                 {
@@ -695,7 +731,7 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
         }
     }
 }
-// todo (async channel) :(
+
 struct udp_sb
 {
     hio_t          *socket_io;
@@ -774,7 +810,7 @@ socket_manager_state_t *createSocketManager(void)
 
     state->iptables_installed = checkCommandAvailable("iptables");
     state->lsof_installed     = checkCommandAvailable("lsof");
-#if SUPOPRT_V6
+#if SUPPORT_V6
     state->ip6tables_installed = checkCommandAvailable("ip6tables");
 #endif
 
