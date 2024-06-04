@@ -347,7 +347,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
     filter_opt.host             = state->address;
     filter_opt.port_min         = state->port_min;
     filter_opt.port_max         = state->port_max;
-    filter_opt.proto            = kSapUdp;
+    filter_opt.protocol         = kSapUdp;
     filter_opt.black_list_raddr = NULL;
 
     tunnel_t *t   = newTunnel();
@@ -356,7 +356,6 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
     t->downStream = &downStream;
     registerSocketAcceptor(t, filter_opt, onFilteredRecv);
 
-    
     return t;
 }
 
