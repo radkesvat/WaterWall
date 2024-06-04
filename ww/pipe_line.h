@@ -2,6 +2,7 @@
 
 #include "tunnel.h"
 #include "ww.h"
+#include <stdatomic.h>
 
 /*
 
@@ -15,8 +16,8 @@
 
 struct pipe_line_s
 {
-    bool           direct_mode;
     atomic_bool    closed;
+    atomic_int    refc;
 
     // thread local:
     tunnel_t *self;
@@ -34,5 +35,4 @@ typedef struct pipe_line_s pipe_line_t;
 
 bool         writePipeLineLTR(pipe_line_t *p, context_t *c);
 bool         writePipeLineRTL(pipe_line_t *p, context_t *c);
-void         freePipeLine(pipe_line_t *p);
 pipe_line_t *newPipeLine(uint8_t tid_left, tunnel_t *self, uint8_t tid_right);
