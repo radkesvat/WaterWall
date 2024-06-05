@@ -12,14 +12,17 @@ struct core_settings_s
     char *core_log_file;
     char *core_log_level;
     bool  core_log_console;
+    char *core_log_file_fullpath;
 
     char *network_log_file;
     char *network_log_level;
     bool  network_log_console;
+    char *network_log_file_fullpath;
 
     char *dns_log_file;
     char *dns_log_level;
     bool  dns_log_console;
+    char *dns_log_file_fullpath;
 
     int   workers_count;
     int   ram_profile;
@@ -28,11 +31,5 @@ struct core_settings_s
     vec_config_path_t config_paths;
 };
 
-void parseCoreSettings(char *data_json);
-
-char *getCoreLoggerFullPath(void);
-char *getNetworkLoggerFullPath(void);
-char *getDnsLoggerFullPath(void);
-
+void                    parseCoreSettings(char *data_json);
 struct core_settings_s *getCoreSettings(void);
-void                    initCoreSettings(void);

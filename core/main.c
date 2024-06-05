@@ -16,7 +16,6 @@ int main(void)
     // int test[3] = {0};
     // printf("hello world %d", test[4]);
 
-    initCoreSettings();
     const char *core_file_name    = "core.json";
     char       *core_file_content = readFile(core_file_name);
     if (core_file_content == NULL)
@@ -34,22 +33,19 @@ int main(void)
     ww_construction_data_t runtime_data = {
         .workers_count       = getCoreSettings()->workers_count,
         .ram_profile         = getCoreSettings()->ram_profile,
-        .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreLoggerFullPath(),
+        .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreSettings()->core_log_file_fullpath,
                                                             .log_level     = getCoreSettings()->core_log_level,
                                                             .log_console   = getCoreSettings()->core_log_console},
-        .network_logger_data = (logger_construction_data_t){.log_file_path = getNetworkLoggerFullPath(),
+        .network_logger_data = (logger_construction_data_t){.log_file_path = getCoreSettings()->network_log_file_fullpath,
                                                             .log_level     = getCoreSettings()->network_log_level,
                                                             .log_console   = getCoreSettings()->network_log_console},
-        .dns_logger_data     = (logger_construction_data_t){.log_file_path = getDnsLoggerFullPath(),
+        .dns_logger_data     = (logger_construction_data_t){.log_file_path = getCoreSettings()->dns_log_file_fullpath,
                                                             .log_level     = getCoreSettings()->dns_log_level,
                                                             .log_console   = getCoreSettings()->dns_log_console},
     };
 
     // core logger is available after ww setup
     createWW(runtime_data);
-    free(runtime_data.core_logger_data.log_file_path);
-    free(runtime_data.network_logger_data.log_file_path);
-    free(runtime_data.dns_logger_data.log_file_path);
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");

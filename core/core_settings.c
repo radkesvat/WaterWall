@@ -31,6 +31,16 @@ enum settings_ram_profiles
 
 static struct core_settings_s *settings = NULL;
 
+static void initCoreSettings(void)
+{
+    assert(settings == NULL);
+
+    settings = malloc(sizeof(struct core_settings_s));
+    memset(settings, 0, sizeof(struct core_settings_s));
+
+    settings->config_paths = vec_config_path_t_with_capacity(2);
+}
+
 static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
 {
     getStringFromJsonObjectOrDefault(&(settings->log_path), log_obj, "path", DEFAULT_LOG_PATH);
@@ -123,6 +133,9 @@ static void parseLogPartOfJson(cJSON *log_obj)
         strcpy(settings->log_path, DEFAULT_DNS_LOG_LEVEL);
         settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
     }
+    settings->core_log_file_fullpath    = concat(settings->log_path, settings->core_log_file);
+    settings->network_log_file_fullpath = concat(settings->log_path, settings->network_log_file);
+    settings->dns_log_file_fullpath     = concat(settings->log_path, settings->dns_log_file);
 }
 
 static void parseConfigPartOfJson(const cJSON *config_array)
@@ -241,7 +254,10 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
 }
 void parseCoreSettings(char *data_json)
 {
-    assert(settings != NULL);
+    if (settings == NULL)
+    {
+        initCoreSettings();
+    }
 
     cJSON *json = cJSON_Parse(data_json);
     if (json == NULL)
@@ -263,40 +279,18 @@ void parseCoreSettings(char *data_json)
         fprintf(stderr, "CoreSettings: the workers count is invalid");
         exit(1);
     }
-
     if (settings->workers_count > 255)
     {
         fprintf(stderr, "CoreSettings: workers count is shrinked to maximum supported value -> 255");
         settings->workers_count = 255;
     }
-    cJSON_Delete(json);
-    // TODO (DNS) Implement dns settings and backend
-}
 
-char *getCoreLoggerFullPath(void)
-{
-    return concat(settings->log_path, settings->core_log_file);
-}
-char *getNetworkLoggerFullPath(void)
-{
-    return concat(settings->log_path, settings->network_log_file);
-}
-char *getDnsLoggerFullPath(void)
-{
-    return concat(settings->log_path, settings->dns_log_file);
+    cJSON_Delete(json);
+
+    // TODO (DNS) Implement dns settings and backend
 }
 
 struct core_settings_s *getCoreSettings(void)
 {
     return settings;
-}
-
-void initCoreSettings(void)
-{
-    assert(settings == NULL); // we can't use logs here, so just assert
-
-    settings = malloc(sizeof(struct core_settings_s));
-    memset(settings, 0, sizeof(struct core_settings_s));
-
-    settings->config_paths = vec_config_path_t_with_capacity(2);
 }
