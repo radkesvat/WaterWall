@@ -93,7 +93,7 @@ struct ww_runtime_state_s *getWW(void)
 }
 
 // trimming should not be necessary, using it for test purposes
-// todo (remove) should be removed ?
+// todo (remove) should be removed ? (status: disabled)
 #ifdef OS_UNIX
 void idleFreeMem(htimer_t *timer)
 {
@@ -107,7 +107,8 @@ htimer_t *trim_timer = NULL;
 
 _Noreturn void runMainThread(void)
 {
-#ifdef OS_UNIX
+
+#if defined(OS_UNIX) && false
     trim_timer = htimer_add_period(loops[0], idleFreeMem, 2, 0, 0, 0, 0, INFINITE);
 #endif
 
