@@ -25,8 +25,14 @@
 #define BUFFER_SIZE_MORE                                                                                               \
     (((int) (MEMORY_PROFILE_SELECTED / 16)) > 1 ? (((int) (MEMORY_PROFILE_SELECTED / 16)) - 1) : (0))
 
+
+#define BUFFER_SIZE (1U << 15) // 32k (same as nginx file streaming)
+
 // #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
-#define BUFFER_SIZE (1U << 15) // 32k
+
+// #define BUFFER_SIZE  (((int) (MEMORY_PROFILE_SELECTED / 16)) >= 1 ? (1U << 15) : (1U << 12) ) //  [4k,32k]
+
+#define BUFFER_SIZE_SMALL (1U << 12) // 4k
 
 
 // NOLINTEND
@@ -75,7 +81,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_POOL)
-    return newShiftBuffer(BUFFER_SIZE);
+    return newShiftBuffer(pool->buffers_size);
 #endif
 
     if (pool->len <= 0)
@@ -128,10 +134,11 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     reuseBuffer(pool, b1);
     return b2;
 }
-static buffer_pool_t *allocBufferPool(unsigned long bufcount)
+
+static buffer_pool_t *allocBufferPool(unsigned long bufcount,unsigned int buffer_size) // NOLINT
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
-    assert(bufcount >= 10);
+    assert(bufcount >= 4);
 
     // half of the pool is used, other half is free at startup
     bufcount = 2 * bufcount;
@@ -143,7 +150,7 @@ static buffer_pool_t *allocBufferPool(unsigned long bufcount)
 #endif
     memset(pool, 0, sizeof(buffer_pool_t));
     pool->cap             = bufcount;
-    pool->buffers_size    = BUFFER_SIZE;
+    pool->buffers_size    = buffer_size;
     pool->free_threshould = (pool->cap * 2) / 3;
     firstCharge(pool);
     return pool;
@@ -151,10 +158,10 @@ static buffer_pool_t *allocBufferPool(unsigned long bufcount)
 
 buffer_pool_t *createBufferPool(void)
 {
-    return allocBufferPool(BUFFERPOOL_CONTAINER_LEN);
+    return allocBufferPool(BUFFERPOOL_CONTAINER_LEN,BUFFER_SIZE);
 }
 
 buffer_pool_t *createSmallBufferPool(void)
 {
-    return allocBufferPool(BUFFERPOOL_SMALL_CONTAINER_LEN);
+    return allocBufferPool(BUFFERPOOL_SMALL_CONTAINER_LEN,BUFFER_SIZE_SMALL);
 }
