@@ -1,8 +1,8 @@
 #include "halfduplex_client.h"
 #include "buffer_pool.h"
 #include "frand.h"
-#include "shiftbuffer.h"
 #include "halfduplex_constants.h"
+#include "shiftbuffer.h"
 #include "tunnel.h"
 #include <stdatomic.h>
 #include <stdint.h>
@@ -20,7 +20,6 @@ typedef struct halfduplex_con_state_s
     line_t *download_line;
 
 } halfduplex_con_state_t;
-
 
 static void cleanup(halfduplex_con_state_t *cstate)
 {
@@ -67,28 +66,35 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->first)
         {
-            uint16_t   cid           = (uint16_t) fastRand();
+            // 63 bits of random is enough and is better than hashing sender addr on halfduplex server, i believe so...
+            uint32_t cids[2] = {fastRand(), fastRand()};
+
             context_t *intro_context = newContext(cstate->download_line);
             intro_context->first     = true;
             intro_context->payload   = popBuffer(getContextBufferPool(c));
-            shiftl(intro_context->payload, 2);
-            writeUI16(intro_context->payload, cid);
-            shiftl(intro_context->payload, 1);
-            writeUI8(intro_context->payload, kHLFDCmdDownload);
+
+            cids[0] = htonl(cids[0] | (1 << 31)); // kHLFDCmdDownload
+            shiftl(intro_context->payload, 16);
+            writeRaw(intro_context->payload, &cids[0], sizeof(cids));
+
+            // shiftl(intro_context->payload, 1);
+            // writeUI8(intro_context->payload, kHLFDCmdDownload);
 
             self->up->upStream(self->up, intro_context);
-            
+
             if (! isAlive(c->line))
             {
                 reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }
-            
-            shiftl(c->payload, 2);
-            writeUI16(c->payload, cid);
-            shiftl(intro_context->payload, 1);
-            writeUI8(intro_context->payload, kHLFDCmdUpload);
+
+            cids[0] =  htonl(cids[0] & 0x7FFFFFFF); // kHLFDCmdUpload
+            shiftl(intro_context->payload, 16);
+            writeRaw(intro_context->payload, &cids[0], sizeof(cids));
+
+            // shiftl(intro_context->payload, 1);
+            // writeUI8(intro_context->payload, kHLFDCmdUpload);
         }
         self->up->upStream(self->up, switchLine(c, cstate->upload_line));
     }
