@@ -81,6 +81,7 @@ inline void constrainLeft(shift_buffer_t *self)
 
 inline void shiftl(shift_buffer_t *self, unsigned int bytes)
 {
+begin:;
     if (lCap(self) < bytes)
     {
         if (! isShallow(self) && self->_offset != 0)
@@ -89,7 +90,8 @@ inline void shiftl(shift_buffer_t *self, unsigned int bytes)
             self->pbuf -= self->_offset;
             self->full_cap += self->_offset;
             self->_offset = 0;
-            shiftl(self, bytes);
+            // shiftl(self, bytes);
+            goto begin;
             return;
         }
         expand(self, (bytes - lCap(self)));
