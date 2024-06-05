@@ -13,9 +13,9 @@
 enum
 {
     kPreconnectDelayShort                              = 10,
-    kPreconnectDelayHigh                               = 750,
-    kConnectionStarvationTimeOut                       = 3000,
-    kConnectionStarvationTimeOutAfterFirstConfirmation = 15000
+    kPreconnectDelayLong                               = 750,
+    kConnectionStarvationTimeOut                       = 15000,
+    kConnectionStarvationTimeOutAfterFirstConfirmation = 5000
 };
 
 static void onLinePausedU(void *cstate)
@@ -135,7 +135,7 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;
-    cg->delay              = delay ? kPreconnectDelayHigh : kPreconnectDelayShort;
+    cg->delay              = delay ? kPreconnectDelayLong : kPreconnectDelayShort;
 
     hloop_post_event(worker_loop, &ev);
 }

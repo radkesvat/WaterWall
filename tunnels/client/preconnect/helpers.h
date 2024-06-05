@@ -6,7 +6,7 @@
 enum
 {
     kPreconnectDelayShort = 10,
-    kPreconnectDelayHigh  = 750
+    kPreconnectDelayLong  = 750
 };
 
 static void addConnection(thread_box_t *box, preconnect_client_con_state_t *con)
@@ -100,7 +100,7 @@ static void initiateConnect(tunnel_t *self, bool delay)
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;
-    cg->delay              = delay ? kPreconnectDelayHigh : kPreconnectDelayShort;
+    cg->delay              = delay ? kPreconnectDelayLong : kPreconnectDelayShort;
 
     hloop_post_event(worker_loop, &ev);
 }

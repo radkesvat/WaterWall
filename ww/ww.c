@@ -130,7 +130,7 @@ static HTHREAD_ROUTINE(worker_thread) // NOLINT
     return 0;
 }
 
-void createWW(ww_construction_data_t init_data)
+void createWW(const ww_construction_data_t init_data)
 {
     if (init_data.core_logger_data.log_file_path)
     {
