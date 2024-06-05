@@ -1,7 +1,7 @@
 #pragma once
 
-#include "tunnel.h"
 #include "hmutex.h"
+#include "tunnel.h"
 
 /*
 
@@ -34,7 +34,8 @@ typedef struct pipe_line_s pipe_line_t;
 bool writePipeLineLTR(pipe_line_t *pl, context_t *c);
 bool writePipeLineRTL(pipe_line_t *pl, context_t *c);
 
-pipe_line_t *newPipeLineLeft(uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
+pipe_line_t *newPipeLineLeft(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
                              TunnelFlowRoutine local_up_stream, TunnelFlowRoutine local_down_stream);
-pipe_line_t *newPipeLineRight(uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
-                              TunnelFlowRoutine local_up_stream, TunnelFlowRoutine local_down_stream);
+pipe_line_t *newPipeLineRight(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
+                              line_t *right_line, TunnelFlowRoutine local_up_stream,
+                              TunnelFlowRoutine local_down_stream);

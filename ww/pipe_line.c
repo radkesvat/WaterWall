@@ -277,11 +277,12 @@ void initLeft(pipe_line_t *pl, void *arg)
     setupLineUpSide(pl->left_line, onLeftLinePaused, pl, onLeftLineResumed);
 }
 
-pipe_line_t *newPipeLineLeft(uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
+pipe_line_t *newPipeLineLeft(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
                              TunnelFlowRoutine local_up_stream, TunnelFlowRoutine local_down_stream)
 {
     pipe_line_t *pl = malloc(sizeof(pipe_line_t));
-    *pl             = (pipe_line_t){.left_tid          = tid_left,
+    *pl             = (pipe_line_t){.self              = self,
+                                    .left_tid          = tid_left,
                                     .right_tid         = tid_right,
                                     .left_line         = left_line,
                                     .right_line        = right_line,
@@ -295,11 +296,13 @@ pipe_line_t *newPipeLineLeft(uint8_t tid_left, line_t *left_line, uint8_t tid_ri
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);
     return pl;
 }
-pipe_line_t *newPipeLineRight(uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
-                              TunnelFlowRoutine local_up_stream, TunnelFlowRoutine local_down_stream)
+pipe_line_t *newPipeLineRight(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
+                              line_t *right_line, TunnelFlowRoutine local_up_stream,
+                              TunnelFlowRoutine local_down_stream)
 {
     pipe_line_t *pl = malloc(sizeof(pipe_line_t));
-    *pl             = (pipe_line_t){.left_tid          = tid_left,
+    *pl             = (pipe_line_t){.self              = self,
+                                    .left_tid          = tid_left,
                                     .right_tid         = tid_right,
                                     .left_line         = left_line,
                                     .right_line        = right_line,
