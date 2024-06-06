@@ -67,13 +67,14 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->first)
         {
             // 63 bits of random is enough and is better than hashing sender addr on halfduplex server, i believe so...
-            uint32_t cids[2] = {fastRand(), fastRand()};
+            uint32_t cids[2]   = {fastRand(), fastRand()};
+            uint8_t *cid_bytes = (uint8_t *) &cids[0];
 
             context_t *intro_context = newContext(cstate->download_line);
             intro_context->first     = true;
             intro_context->payload   = popBuffer(getContextBufferPool(c));
 
-            cids[0] = htonl(cids[0] | (1 << 31)); // kHLFDCmdDownload
+            cid_bytes[0] = cid_bytes[0] | (1 << 7); // kHLFDCmdDownload
             shiftl(intro_context->payload, 16);
             writeRaw(intro_context->payload, &cids[0], sizeof(cids));
 
@@ -89,7 +90,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
 
-            cids[0] =  htonl(cids[0] & 0x7FFFFFFF); // kHLFDCmdUpload
+            cid_bytes[0] = cid_bytes[0] & 0x7f; // kHLFDCmdDownload
             shiftl(intro_context->payload, 16);
             writeRaw(intro_context->payload, &cids[0], sizeof(cids));
 
