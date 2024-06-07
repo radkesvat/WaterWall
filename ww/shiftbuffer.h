@@ -46,7 +46,7 @@ void            reset(shift_buffer_t *self, unsigned int cap);
 void            unShallow(shift_buffer_t *self);
 void            expand(shift_buffer_t *self, unsigned int increase);
 void            concatBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf);
-void            sliceBufferTo(shift_buffer_t *dest, shift_buffer_t *source, unsigned int bytes);
+void            sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, unsigned int bytes);
 shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes);
 shift_buffer_t *shallowSliceBuffer(shift_buffer_t *self, unsigned int bytes);
 
@@ -96,7 +96,7 @@ begin:;
         }
         expand(self, (bytes - lCap(self)));
     }
-    
+
     self->curpos -= bytes;
     self->calc_len += bytes;
 }
@@ -115,7 +115,7 @@ inline void setLen(shift_buffer_t *self, unsigned int bytes)
     {
         expand(self, (bytes - rCap(self)));
     }
-   
+
     self->calc_len = bytes;
 }
 
