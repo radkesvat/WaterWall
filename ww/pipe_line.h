@@ -12,6 +12,9 @@
     i hope you don't use it, currently only used for halfduplex server since there were no other way...
 
 */
+struct pipe_line_s;
+
+typedef void (*PipeLineFlowRoutine)(struct tunnel_s *, struct context_s *,struct pipe_line_s*pl);
 
 struct pipe_line_s
 {
@@ -25,8 +28,8 @@ struct pipe_line_s
     line_t   *left_line;
     line_t   *right_line;
 
-    TunnelFlowRoutine local_up_stream;
-    TunnelFlowRoutine local_down_stream;
+    PipeLineFlowRoutine local_up_stream;
+    PipeLineFlowRoutine local_down_stream;
 };
 
 typedef struct pipe_line_s pipe_line_t;
@@ -34,8 +37,5 @@ typedef struct pipe_line_s pipe_line_t;
 bool writePipeLineLTR(pipe_line_t *pl, context_t *c);
 bool writePipeLineRTL(pipe_line_t *pl, context_t *c);
 
-pipe_line_t *newPipeLineLeft(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
-                             TunnelFlowRoutine local_up_stream, TunnelFlowRoutine local_down_stream);
-pipe_line_t *newPipeLineRight(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
-                              line_t *right_line, TunnelFlowRoutine local_up_stream,
-                              TunnelFlowRoutine local_down_stream);
+void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
+                PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream);

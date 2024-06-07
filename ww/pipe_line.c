@@ -2,6 +2,7 @@
 #include "buffer_pool.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
+#include "tunnel.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -18,22 +19,22 @@ typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
 
 static void lock(pipe_line_t *pl)
 {
-    int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_relaxed);
+    int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_release);
     if (old_refc == 0)
     {
-        // this should not happen, otherwise we must use acquire/release
+        // this should not happen, otherwise we must use memory_order_seq_cst
         LOGF("PipeLine: thread-safety done incorrectly lock()");
         exit(1);
     }
 }
 static void unlock(pipe_line_t *pl)
 {
-    int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_relaxed);
+    int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_acquire);
     if (old_refc == 1)
     {
         if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
         {
-            // this should not happen, otherwise we must use acquire/release
+            // this should not happen, otherwise we must use memory_order_seq_cst
             LOGF("PipeLine: thread-safety done incorrectly unlock()");
             exit(1);
         }
@@ -77,7 +78,7 @@ void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
     }
     context_t *ctx = newContext(pl->left_line);
     ctx->payload   = buf;
-    pl->local_down_stream(pl->self, ctx);
+    pl->local_down_stream(pl->self, ctx,pl);
 }
 
 void writeBufferToRightSide(pipe_line_t *pl, void *arg)
@@ -90,7 +91,7 @@ void writeBufferToRightSide(pipe_line_t *pl, void *arg)
     }
     context_t *ctx = newContext(pl->right_line);
     ctx->payload   = buf;
-    pl->local_up_stream(pl->self, ctx);
+    pl->local_up_stream(pl->self, ctx,pl);
 }
 
 void finishLeftSide(pipe_line_t *pl, void *arg)
@@ -103,9 +104,9 @@ void finishLeftSide(pipe_line_t *pl, void *arg)
     }
     context_t *fctx = newFinContext(pl->left_line);
     doneLineUpSide(pl->left_line);
-    destroyLine(pl->left_line);
+    // destroyLine(pl->left_line);
     pl->left_line = NULL;
-    pl->local_down_stream(pl->self, fctx);
+    pl->local_down_stream(pl->self, fctx,pl);
 }
 
 void finishRightSide(pipe_line_t *pl, void *arg)
@@ -119,7 +120,7 @@ void finishRightSide(pipe_line_t *pl, void *arg)
     doneLineDownSide(pl->right_line);
     destroyLine(pl->right_line);
     pl->right_line = NULL;
-    pl->local_up_stream(pl->self, fctx);
+    pl->local_up_stream(pl->self, fctx,pl);
 }
 
 void pauseLeftLine(pipe_line_t *pl, void *arg)
@@ -200,7 +201,7 @@ bool writePipeLineLTR(pipe_line_t *pl, context_t *c)
     {
         assert(pl->left_line);
         doneLineUpSide(pl->left_line);
-        destroyLine(pl->left_line);
+        // destroyLine(pl->left_line);
         pl->left_line = NULL;
 
         bool expected = false;
@@ -269,50 +270,39 @@ bool writePipeLineRTL(pipe_line_t *pl, context_t *c)
 void initRight(pipe_line_t *pl, void *arg)
 {
     (void) arg;
+    line_t *rline = newLine(pl->right_tid);
     setupLineDownSide(pl->right_line, onRightLinePaused, pl, onRightLineResumed);
+    context_t *context = newInitContext(rline);
+    pl->local_up_stream(pl->self, context,pl);
+
+    // lockLine(pl->right_line);
 }
 void initLeft(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     setupLineUpSide(pl->left_line, onLeftLinePaused, pl, onLeftLineResumed);
+    // lockLine(pl->left_line);
 }
 
-pipe_line_t *newPipeLineLeft(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right, line_t *right_line,
-                             TunnelFlowRoutine local_up_stream, TunnelFlowRoutine local_down_stream)
+void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
+                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream);
+
 {
+    assert(*result == NULL);
+
     pipe_line_t *pl = malloc(sizeof(pipe_line_t));
     *pl             = (pipe_line_t){.self              = self,
                                     .left_tid          = tid_left,
                                     .right_tid         = tid_right,
                                     .left_line         = left_line,
-                                    .right_line        = right_line,
+                                    .right_line        = NULL,
                                     .closed            = false,
                                     .refc              = 1,
                                     .local_up_stream   = local_up_stream,
                                     .local_down_stream = local_down_stream};
+    *result         = pl;
 
-    atomic_thread_fence(memory_order_release);
     initLeft(pl, NULL);
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);
-    return pl;
-}
-pipe_line_t *newPipeLineRight(tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
-                              line_t *right_line, TunnelFlowRoutine local_up_stream,
-                              TunnelFlowRoutine local_down_stream)
-{
-    pipe_line_t *pl = malloc(sizeof(pipe_line_t));
-    *pl             = (pipe_line_t){.self              = self,
-                                    .left_tid          = tid_left,
-                                    .right_tid         = tid_right,
-                                    .left_line         = left_line,
-                                    .right_line        = right_line,
-                                    .closed            = false,
-                                    .refc              = 1,
-                                    .local_up_stream   = local_up_stream,
-                                    .local_down_stream = local_down_stream};
-
-    atomic_thread_fence(memory_order_release);
-    initRight(pl, NULL);
-    sendMessage(pl, initLeft, NULL, pl->right_tid, pl->left_tid);
     return pl;
 }
