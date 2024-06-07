@@ -285,7 +285,7 @@ void initLeft(pipe_line_t *pl, void *arg)
 }
 
 void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
-                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream);
+                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream)
 
 {
     assert(*result == NULL);
@@ -304,5 +304,4 @@ void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t 
 
     initLeft(pl, NULL);
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);
-    return pl;
 }
