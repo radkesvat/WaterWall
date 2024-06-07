@@ -9,6 +9,10 @@
 
     it manages the thread safety and efficiency
 
+    pipe dose not require free call, it automatically gets freed after both lines are finished
+
+    sending a fin context to pipe will make it quiet, it will not send anything back even the queued items
+
     i hope you don't use it, currently only used for halfduplex server since there were no other way...
 
 */
