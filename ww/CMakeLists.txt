@@ -84,6 +84,17 @@ set(BUILD_EXAMPLES OFF CACHE BOOL "ibhv dont build examples")
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/eventloop)
 
 
+if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  message( FATAL_ERROR
+   "MSVC compiler is not supported, because WW relies on <stdatomic.h>"
+   "on windows you can still use GCC or CLANG to compile."
+   )
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  target_link_options(ww PUBLIC -s)
+endif()
+
 # target_compile_options(hv_static PRIVATE -fPIC) 
 # target_compile_options(ww PUBLIC -fPIC)  
 # message( FATAL_ERROR "OEUOUEOU: ${CMAKE_INSTALL_PREFIX}" )
