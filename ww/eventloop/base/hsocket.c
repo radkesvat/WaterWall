@@ -29,10 +29,7 @@ const char* socket_strerror(int err) {
 #ifdef OS_WIN
     static char buffer[128];
 
-    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM |
-        FORMAT_MESSAGE_IGNORE_INSERTS |
-        FORMAT_MESSAGE_MAX_WIDTH_MASK,
-        0, ABS(err), 0, buffer, sizeof(buffer), NULL);
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, 0, ABS(err), 0, buffer, sizeof(buffer), NULL);
 
     return buffer;
 #else
@@ -80,7 +77,7 @@ int ResolveAddr(const char* host, sockaddr_u* addr) {
     return 0;
 }
 
-const char* sockaddr_ip(sockaddr_u* addr, char *ip, int len) {
+const char* sockaddr_ip(sockaddr_u* addr, char* ip, int len) {
     if (addr->sa.sa_family == AF_INET) {
         return inet_ntop(AF_INET, &addr->sin.sin_addr, ip, len);
     }
@@ -239,11 +236,11 @@ static int ListenFD(int sockfd) {
 static int ConnectFDTimeout(int connfd, int ms) {
     int err = 0;
     socklen_t optlen = sizeof(err);
-    struct timeval tv = { ms / 1000, (ms % 1000) * 1000 };
+    struct timeval tv = {ms / 1000, (ms % 1000) * 1000};
     fd_set writefds;
     FD_ZERO(&writefds);
     FD_SET(connfd, &writefds);
-    int ret = select(connfd+1, 0, &writefds, 0, &tv);
+    int ret = select(connfd + 1, 0, &writefds, 0, &tv);
     if (ret < 0) {
         perror("select");
         goto error;
@@ -344,6 +341,7 @@ int Socketpair(int family, int type, int protocol, int sv[2]) {
         return -1;
     }
 #ifdef OS_WIN
+    (void)protocol;
     WSAInit();
 #endif
     int listenfd, connfd, acceptfd;

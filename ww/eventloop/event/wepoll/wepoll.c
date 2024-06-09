@@ -874,6 +874,8 @@ int init(void) {
  * To compile cleanly with either compiler, do casts with this "bridge" type:
  *   MY_FUNC func = (MY_FUNC) (nt__fn_ptr_cast_t) addr; */
 #ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic" 
 typedef void* nt__fn_ptr_cast_t;
 #else
 typedef FARPROC nt__fn_ptr_cast_t;
@@ -902,6 +904,10 @@ int nt_global_init(void) {
 
   return 0;
 }
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 
 #include <string.h>
 

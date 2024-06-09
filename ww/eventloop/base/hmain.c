@@ -503,6 +503,12 @@ int signal_init(procedure_t reload_fn, void* reload_userdata) {
 static HANDLE s_hEventReload = NULL;
 
 static void WINAPI on_timer(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) {
+    (void)dwUser;
+    (void)dw1;
+    (void)dw2;
+    (void)uTimerID;
+    (void)uMsg;
+
     DWORD ret;
     /*
     ret = WaitForSingleObject(s_hEventTerm, 0);
@@ -566,7 +572,13 @@ static void kill_proc(int pid) {
 void signal_handle(const char* signal) {
     if (strcmp(signal, "start") == 0) {
         if (g_main_ctx.oldpid > 0) {
+#ifdef OS_WIN
+            printf("%s is already running, pid=%lld\n", g_main_ctx.program_name, g_main_ctx.oldpid);
+
+#else
             printf("%s is already running, pid=%d\n", g_main_ctx.program_name, g_main_ctx.oldpid);
+
+#endif
             exit(0);
         }
     }
@@ -589,7 +601,13 @@ void signal_handle(const char* signal) {
     }
     else if (strcmp(signal, "status") == 0) {
         if (g_main_ctx.oldpid > 0) {
+            #ifdef OS_WIN
+            printf("%s start/running, pid=%lld\n", g_main_ctx.program_name, g_main_ctx.oldpid);
+
+#else
             printf("%s start/running, pid=%d\n", g_main_ctx.program_name, g_main_ctx.oldpid);
+
+#endif
         }
         else {
             printf("%s stop/waiting\n", g_main_ctx.program_name);
