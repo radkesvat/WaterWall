@@ -95,7 +95,12 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
 
                 uint8_t tid_download_line = (*f_iter.ref).second->download_line->tid;
 
-                assert(tid_download_line == c->line->tid);
+                if (tid_download_line != c->line->tid)
+                {
+                    LOGF("HalfDuplexServer: Unexpected  [%s:%d]", __FILENAME__, __LINE__);
+                    exit(1);
+                }
+
                 hmap_cons_t_erase_at(&(state->download_line_map), f_iter);
                 hhybridmutex_unlock(&(state->download_line_map_mutex));
 
