@@ -183,7 +183,15 @@ char* datetime_fmt_iso(datetime_t* dt, char* buf) {
 }
 
 char* gmtime_fmt(time_t time, char* buf) {
+
+#ifdef OS_UNIX
     struct tm* tm = gmtime(&time);
+#else
+    struct tm gmt_tm_buf;
+    struct tm* tm = &gmt_tm_buf;
+    gmtime_s(tm, &time);
+#endif
+
     //strftime(buf, GMTIME_FMT_BUFLEN, "%a, %d %b %Y %H:%M:%S GMT", tm);
     sprintf(buf, GMTIME_FMT,
         s_weekdays[tm->tm_wday],

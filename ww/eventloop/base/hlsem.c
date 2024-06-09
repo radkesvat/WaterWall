@@ -216,7 +216,7 @@ static bool _LSemaWaitPartialSpin(hlsem_t* s, uint64_t timeout_usecs) {
 #ifdef OS_UNIX
     ssize_t oldCount;
 #else
-    int oldCount;
+    long oldCount;
 #endif
     int spin = LSEMA_MAX_SPINS;
     while (--spin >= 0) {
@@ -265,7 +265,7 @@ bool LSemaTryWait(hlsem_t* s) {
 #ifdef OS_UNIX
     ssize_t oldCount = atomic_load_explicit(&s->count, memory_order_relaxed);
 #else
-    int oldCount = atomic_load_explicit(&s->count, memory_order_relaxed);
+    long oldCount = atomic_load_explicit(&s->count, memory_order_relaxed);
 #endif
     while (oldCount > 0) {
         if (atomic_compare_exchange_weak_explicit(&s->count, &oldCount, oldCount - 1, memory_order_acquire, memory_order_relaxed)) {
@@ -281,12 +281,22 @@ bool LSemaTimedWait(hlsem_t* s, uint64_t timeout_usecs) {
 
 void LSemaSignal(hlsem_t* s, uint32_t count) {
     assert(count > 0);
+#ifdef OS_UNIX
     ssize_t oldCount = atomic_fetch_add_explicit(&s->count, (ssize_t)count, memory_order_release);
     ssize_t toRelease = -oldCount < count ? -oldCount : (ssize_t)count;
+#else
+    long oldCount = atomic_fetch_add_explicit(&s->count, (long)count, memory_order_release);
+    long toRelease = -oldCount < (long)count ? -oldCount : (long)count;
+#endif
     if (toRelease > 0) SemaSignal(&s->sema, (uint32_t)toRelease);
 }
 
 size_t LSemaApproxAvail(hlsem_t* s) {
+
+#ifdef OS_UNIX
     ssize_t count = atomic_load_explicit(&s->count, memory_order_relaxed);
+#else
+    long count = atomic_load_explicit(&s->count, memory_order_relaxed);
+#endif
     return count > 0 ? (size_t)(count) : 0;
 }

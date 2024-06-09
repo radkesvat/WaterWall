@@ -58,9 +58,16 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         else
         {
             settings->core_log_level = malloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
+            settings->core_log_file  = malloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
+
+#if defined(OS_UNIX)
             strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
-            settings->core_log_file = malloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
             strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
+#else
+            strcpy_s(settings->core_log_level, strlen(DEFAULT_CORE_LOG_LEVEL) + 1, DEFAULT_CORE_LOG_LEVEL);
+            strcpy_s(settings->core_log_file, strlen(DEFAULT_CORE_LOG_FILE) + 1, DEFAULT_CORE_LOG_FILE);
+#endif
+
             settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
         }
     }
@@ -80,9 +87,15 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         else
         {
             settings->network_log_level = malloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
+            settings->network_log_file  = malloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
+#if defined(OS_UNIX)
             strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
-            settings->network_log_file = malloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
             strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
+#else
+            strcpy_s(settings->network_log_level, strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1, DEFAULT_NETWORK_LOG_LEVEL);
+            strcpy_s(settings->network_log_file, strlen(DEFAULT_NETWORK_LOG_FILE) + 1, DEFAULT_NETWORK_LOG_FILE);
+#endif
+
             settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
         }
     }
@@ -99,9 +112,15 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         else
         {
             settings->dns_log_level = malloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
+            settings->dns_log_file  = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
+
+#if defined(OS_UNIX)
             strcpy(settings->dns_log_level, DEFAULT_DNS_LOG_LEVEL);
-            settings->dns_log_file = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
             strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
+#else
+            strcpy_s(settings->dns_log_level, strlen(DEFAULT_DNS_LOG_LEVEL) + 1, DEFAULT_DNS_LOG_LEVEL);
+            strcpy_s(settings->dns_log_file, strlen(DEFAULT_DNS_LOG_FILE) + 1, DEFAULT_DNS_LOG_FILE);
+#endif
             settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
         }
     }
@@ -115,23 +134,38 @@ static void parseLogPartOfJson(cJSON *log_obj)
     }
     else
     {
-        settings->log_path = malloc(strlen(DEFAULT_LOG_PATH) + 1);
-        strcpy(settings->log_path, DEFAULT_LOG_PATH);
-        settings->core_log_file = malloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
-        strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
-        settings->core_log_level = malloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
-        strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
-        settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
-        settings->network_log_file = malloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
-        strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
+
+        settings->log_path          = malloc(strlen(DEFAULT_LOG_PATH) + 1);
+        settings->core_log_file     = malloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
+        settings->core_log_level    = malloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
+        settings->network_log_file  = malloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
         settings->network_log_level = malloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
+        settings->dns_log_file      = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
+        settings->dns_log_level     = malloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
+
+#if defined(OS_UNIX)
+        strcpy(settings->log_path, DEFAULT_LOG_PATH);
+        strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
+        strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
+        strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
         strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
-        settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
-        settings->dns_log_file        = malloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
         strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
-        settings->dns_log_level = malloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
         strcpy(settings->log_path, DEFAULT_DNS_LOG_LEVEL);
-        settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
+
+#else
+        strcpy_s(settings->log_path, strlen(DEFAULT_LOG_PATH) + 1, DEFAULT_LOG_PATH);
+        strcpy_s(settings->core_log_file, strlen(DEFAULT_CORE_LOG_FILE) + 1, DEFAULT_CORE_LOG_FILE);
+        strcpy_s(settings->core_log_level, strlen(DEFAULT_CORE_LOG_LEVEL) + 1, DEFAULT_CORE_LOG_LEVEL);
+        strcpy_s(settings->network_log_file, strlen(DEFAULT_NETWORK_LOG_FILE) + 1, DEFAULT_NETWORK_LOG_FILE);
+        strcpy_s(settings->network_log_level, strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1, DEFAULT_NETWORK_LOG_LEVEL);
+        strcpy_s(settings->dns_log_file, strlen(DEFAULT_DNS_LOG_FILE) + 1, DEFAULT_DNS_LOG_FILE);
+        strcpy_s(settings->log_path, strlen(DEFAULT_DNS_LOG_LEVEL) + 1, DEFAULT_DNS_LOG_LEVEL);
+
+#endif
+
+        settings->core_log_console    = DEFAULT_CORE_ENABLE_CONSOLE;
+        settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
+        settings->dns_log_console     = DEFAULT_DNS_ENABLE_CONSOLE;
     }
     settings->core_log_file_fullpath    = concat(settings->log_path, settings->core_log_file);
     settings->network_log_file_fullpath = concat(settings->log_path, settings->network_log_file);
@@ -151,10 +185,14 @@ static void parseConfigPartOfJson(const cJSON *config_array)
     {
         if (cJSON_IsString(path) && path->valuestring != NULL)
         {
-            had_child = true;
-
-            char *buf = malloc(strlen(path->valuestring) + 1);
+            had_child          = true;
+            unsigned long size = strlen(path->valuestring) + 1;
+            char         *buf  = malloc(size);
+#if defined(OS_UNIX)
             strcpy(buf, path->valuestring);
+#else
+            strcpy_s(buf, size + 1, path->valuestring);
+#endif
             vec_config_path_t_push(&settings->config_paths, buf);
         }
     }
@@ -246,8 +284,13 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     }
     else
     {
-        settings->libs_path = malloc(strlen(DEFAULT_LIBS_PATH) + 1);
+        unsigned long size  = strlen(DEFAULT_LIBS_PATH) + 1;
+        settings->libs_path = malloc(size);
+#if defined(OS_UNIX)
         strcpy(settings->libs_path, DEFAULT_LIBS_PATH);
+#else
+        strcpy_s(settings->libs_path, size, DEFAULT_LIBS_PATH);
+#endif
         settings->workers_count = get_ncpu();
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }

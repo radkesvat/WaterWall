@@ -81,7 +81,12 @@ int main_ctx_init(int argc, char** argv) {
 
     get_run_dir(g_main_ctx.run_dir, sizeof(g_main_ctx.run_dir));
     // printf("run_dir=%s\n", g_main_ctx.run_dir);
-    strncpy(g_main_ctx.program_name, hv_basename(argv[0]), sizeof(g_main_ctx.program_name));
+#if defined(OS_UNIX)
+    strncpy(g_main_ctx.program_name, hv_basename(argv[0]), sizeof(g_main_ctx.program_name) - 1);
+#else
+    strncpy_s(g_main_ctx.program_name, sizeof(g_main_ctx.program_name), hv_basename(argv[0]), sizeof(g_main_ctx.program_name) - 1);
+#endif
+
 #ifdef OS_WIN
     if (strcmp(g_main_ctx.program_name + strlen(g_main_ctx.program_name) - 4, ".exe") == 0) {
         *(g_main_ctx.program_name + strlen(g_main_ctx.program_name) - 4) = '\0';
@@ -311,7 +316,11 @@ int parse_opt_long(int argc, char** argv, const option_t* long_options, int size
                 opt[1] = '\0';
             }
             else {
+#if defined(OS_UNIX)
                 strncpy(opt, arg, MAX_OPTION);
+#else
+                strncpy_s(opt, MAX_OPTION + 1, arg, MAX_OPTION);
+#endif
             }
         }
         // get_option
@@ -376,7 +385,11 @@ void setproctitle(const char* fmt, ...) {
 
     int len = g_main_ctx.arg_len + g_main_ctx.env_len;
     if (g_main_ctx.os_argv && len) {
+#if defined(OS_UNIX)
         strncpy(g_main_ctx.os_argv[0], buf, len - 1);
+#else
+        strncpy_s(g_main_ctx.os_argv[0], len, buf, len - 1);
+#endif
     }
 }
 #endif
@@ -572,13 +585,7 @@ static void kill_proc(int pid) {
 void signal_handle(const char* signal) {
     if (strcmp(signal, "start") == 0) {
         if (g_main_ctx.oldpid > 0) {
-#ifdef OS_WIN
-            printf("%s is already running, pid=%lld\n", g_main_ctx.program_name, g_main_ctx.oldpid);
-
-#else
-            printf("%s is already running, pid=%d\n", g_main_ctx.program_name, g_main_ctx.oldpid);
-
-#endif
+            printf("%s is already running, pid=%d\n", g_main_ctx.program_name, (int)g_main_ctx.oldpid);
             exit(0);
         }
     }
@@ -601,13 +608,7 @@ void signal_handle(const char* signal) {
     }
     else if (strcmp(signal, "status") == 0) {
         if (g_main_ctx.oldpid > 0) {
-            #ifdef OS_WIN
-            printf("%s start/running, pid=%lld\n", g_main_ctx.program_name, g_main_ctx.oldpid);
-
-#else
-            printf("%s start/running, pid=%d\n", g_main_ctx.program_name, g_main_ctx.oldpid);
-
-#endif
+            printf("%s start/running, pid=%d\n", g_main_ctx.program_name, (int)g_main_ctx.oldpid);
         }
         else {
             printf("%s stop/waiting\n", g_main_ctx.program_name);

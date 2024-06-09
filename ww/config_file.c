@@ -5,7 +5,6 @@
 #include "utils/fileutils.h"
 #include "utils/jsonutils.h"
 #include <hmutex.h>
-#include <pthread.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>

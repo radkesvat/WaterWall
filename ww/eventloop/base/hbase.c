@@ -47,7 +47,7 @@ void* hv_realloc(void* oldptr, size_t newsize, size_t oldsize) {
 
 void* hv_calloc(size_t nmemb, size_t size) {
     hatomic_inc(&s_alloc_cnt);
-    void* ptr =  calloc(nmemb, size);
+    void* ptr = calloc(nmemb, size);
     if (!ptr) {
         fprintf(stderr, "calloc failed!\n");
         exit(-1);
@@ -330,7 +330,12 @@ char* get_executable_dir(char* buf, int size) {
     char* pos = hv_strrchr_dir(filepath);
     if (pos) {
         *pos = '\0';
+
+#if defined(OS_UNIX)
         strncpy(buf, filepath, size);
+#else
+        strncpy_s(buf, size + 1, filepath, size);
+#endif
     }
     return buf;
 }
@@ -340,7 +345,12 @@ char* get_executable_file(char* buf, int size) {
     get_executable_path(filepath, sizeof(filepath));
     char* pos = hv_strrchr_dir(filepath);
     if (pos) {
-        strncpy(buf, pos+1, size);
+
+#if defined(OS_UNIX)
+        strncpy(buf, pos + 1, size);
+#else
+        strncpy_s(buf, size + 1, pos + 1, size);
+#endif
     }
     return buf;
 }
@@ -359,11 +369,11 @@ int hv_rand(int min, int max) {
     }
 
     int _rand = rand();
-    _rand = min + (int) ((double) ((double) (max) - (min) + 1.0) * ((_rand) / ((RAND_MAX) + 1.0)));
+    _rand = min + (int)((double)((double)(max) - (min) + 1.0) * ((_rand) / ((RAND_MAX) + 1.0)));
     return _rand;
 }
 
-char* hv_random_string(char *buf, int len) {
+char* hv_random_string(char* buf, int len) {
     static char s_characters[] = {
         'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
         'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',

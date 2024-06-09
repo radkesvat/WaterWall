@@ -47,7 +47,11 @@ static void logger_init(logger_t* logger) {
     logger->enable_color = 0;
     // NOTE: format is faster 6% than snprintf
     // logger->format[0] = '\0';
+#if defined(OS_UNIX)
     strncpy(logger->format, DEFAULT_LOG_FORMAT, sizeof(logger->format) - 1);
+#else
+    strncpy_s(logger->format, sizeof(logger->format), DEFAULT_LOG_FORMAT, sizeof(logger->format) - 1);
+#endif
 
     logger->fp_ = NULL;
     logger->max_filesize = DEFAULT_LOG_MAX_FILESIZE;
@@ -62,14 +66,22 @@ static void logger_init(logger_t* logger) {
 logger_t* logger_create(void) {
     // init gmtoff here
     time_t ts = time(NULL);
-    static _Thread_local  struct tm local_tm;
+    static _Thread_local struct tm local_tm;
 #ifdef OS_UNIX
-    localtime_r(&ts,&local_tm);
+    localtime_r(&ts, &local_tm);
 #else
-    localtime_s(&local_tm,&ts);
+    localtime_s(&local_tm, &ts);
 #endif
     int local_hour = local_tm.tm_hour;
+
+#ifdef OS_UNIX
     struct tm* gmt_tm = gmtime(&ts);
+#else
+    struct tm gmt_tm_buf;
+    struct tm* gmt_tm = &gmt_tm_buf;
+    gmtime_s(gmt_tm, &ts);
+#endif
+
     int gmt_hour = gmt_tm->tm_hour;
     s_gmtoff = (local_hour - gmt_hour) * SECONDS_PER_HOUR;
 
@@ -130,11 +142,15 @@ logger_handler logger_handle(logger_t* logger){
     return logger->handler;
 }
 
-
 void logger_set_format(logger_t* logger, const char* format) {
     if (format) {
+#if defined(OS_UNIX)
         strncpy(logger->format, format, sizeof(logger->format) - 1);
-    } else {
+#else
+        strncpy_s(logger->format, sizeof(logger->format), format, sizeof(logger->format) - 1);
+#endif
+    }
+    else {
         logger->format[0] = '\0';
     }
 }
@@ -153,7 +169,12 @@ void logger_enable_color(logger_t* logger, int on) {
 }
 
 void logger_set_file(logger_t* logger, const char* filepath) {
+#if defined(OS_UNIX)
     strncpy(logger->filepath, filepath, sizeof(logger->filepath) - 1);
+#else
+    strncpy_s(logger->filepath, sizeof(logger->filepath), filepath, sizeof(logger->filepath) - 1);
+#endif
+
     // remove suffix .log
     char* suffix = strrchr(logger->filepath, '.');
     if (suffix && strcmp(suffix, ".log") == 0) {
@@ -208,11 +229,11 @@ const char* logger_get_cur_file(logger_t* logger) {
 #endif
 
 static void logfile_name(const char* filepath, time_t ts, char* buf, int len) {
-    static _Thread_local  struct tm tm;
+    static _Thread_local struct tm tm;
 #ifdef OS_UNIX
-    localtime_r(&ts,&tm);
+    localtime_r(&ts, &tm);
 #else
-    localtime_s(&tm,&ts);
+    localtime_s(&tm, &ts);
 #endif
     snprintf(buf, len, "%s.%04d%02d%02d.log",
             filepath,
@@ -226,7 +247,7 @@ static void logfile_name(const char* filepath, time_t ts, char* buf, int len) {
 
 static FILE* logfile_shift(logger_t* logger) {
     time_t ts_now = time(NULL);
-    int interval_days = logger->last_logfile_ts == 0 ? 0 : (ts_now+s_gmtoff) / SECONDS_PER_DAY - (logger->last_logfile_ts+s_gmtoff) / SECONDS_PER_DAY;
+    int interval_days = logger->last_logfile_ts == 0 ? 0 : (ts_now + s_gmtoff) / SECONDS_PER_DAY - (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY;
     if (logger->fp_ == NULL || interval_days > 0) {
         // close old logfile
         if (logger->fp_) {
@@ -242,14 +263,14 @@ static FILE* logfile_shift(logger_t* logger) {
             if (interval_days >= logger->remain_days) {
                 // remove [today-interval_days, today-remain_days] logfile
                 for (int i = interval_days; i >= logger->remain_days; --i) {
-                    time_t ts_rm  = ts_now - i * SECONDS_PER_DAY;
+                    time_t ts_rm = ts_now - i * SECONDS_PER_DAY;
                     logfile_name(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                     remove(rm_logfile);
                 }
             }
             else {
                 // remove today-remain_days logfile
-                time_t ts_rm  = ts_now - logger->remain_days * SECONDS_PER_DAY;
+                time_t ts_rm = ts_now - logger->remain_days * SECONDS_PER_DAY;
                 logfile_name(logger->filepath, ts_rm, rm_logfile, sizeof(rm_logfile));
                 remove(rm_logfile);
             }
@@ -259,7 +280,12 @@ static FILE* logfile_shift(logger_t* logger) {
     // open today logfile
     if (logger->fp_ == NULL) {
         logfile_name(logger->filepath, ts_now, logger->cur_logfile, sizeof(logger->cur_logfile));
+
+#if defined(OS_UNIX)
         logger->fp_ = fopen(logger->cur_logfile, "a");
+#else
+        fopen_s(&(logger->fp_), logger->cur_logfile, "a");
+#endif
         logger->last_logfile_ts = ts_now;
     }
 
@@ -271,11 +297,20 @@ static FILE* logfile_shift(logger_t* logger) {
             fclose(logger->fp_);
             logger->fp_ = NULL;
             // ftruncate
+#if defined(OS_UNIX)
             logger->fp_ = fopen(logger->cur_logfile, "w");
+#else
+            fopen_s(&(logger->fp_), logger->cur_logfile, "w");
+#endif
+
             // reopen with O_APPEND for multi-processes
             if (logger->fp_) {
                 fclose(logger->fp_);
+#if defined(OS_UNIX)
                 logger->fp_ = fopen(logger->cur_logfile, "a");
+#else
+                fopen_s(&(logger->fp_), logger->cur_logfile, "a");
+#endif
             }
         }
         else {
@@ -300,7 +335,8 @@ static int i2a(int i, char* buf, int len) {
     for (int l = len - 1; l >= 0; --l) {
         if (i == 0) {
             buf[l] = '0';
-        } else {
+        }
+        else {
             buf[l] = i % 10 + '0';
             i /= 10;
         }
@@ -309,10 +345,9 @@ static int i2a(int i, char* buf, int len) {
 }
 
 int vlogger_print(logger_t* logger, int level, const char* fmt, va_list ap) {
-    if (level < logger->level)
-        return -10;
+    if (level < logger->level) return -10;
 
-    int year,month,day,hour,min,sec,us;
+    int year, month, day, hour, min, sec, us;
 #ifdef _WIN32
     SYSTEMTIME tm;
     GetLocalTime(&tm);
@@ -325,7 +360,7 @@ int vlogger_print(logger_t* logger, int level, const char* fmt, va_list ap) {
     us       = tm.wMilliseconds * 1000;
 #else
     struct timeval tv;
-    static _Thread_local  struct tm tm;
+    static _Thread_local struct tm tm;
     gettimeofday(&tv, NULL);
     time_t tt = tv.tv_sec;
     localtime_r(&tt,&tm);
@@ -423,7 +458,7 @@ int vlogger_print(logger_t* logger, int level, const char* fmt, va_list ap) {
         len += snprintf(buf + len, bufsize - len, "%s", CLR_CLR);
     }
 
-    if(len<bufsize) {
+    if (len < bufsize) {
         buf[len++] = '\n';
     }
 

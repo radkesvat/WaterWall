@@ -9,10 +9,7 @@
 #include "tunnel.h"
 #include "utils/jsonutils.h"
 #include "utils/mathutils.h"
-#include <netinet/in.h>
 #include <openssl/evp.h>
-#include <stdint.h>
-#include <string.h>
 
 enum connection_auth_state
 {

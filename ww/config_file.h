@@ -1,6 +1,5 @@
 #pragma once
 
-#include "cJSON.h"
 #include "hmutex.h"
 #include <stddef.h>
 
@@ -13,8 +12,8 @@ typedef struct config_file_s
     int   core_minimum_version;
     bool  encrypted;
 
-    cJSON   *root;
-    cJSON   *nodes;
+    struct cJSON   *root;
+    struct cJSON   *nodes;
     size_t   file_prebuffer_size;
     hmutex_t guard;
 } config_file_t;

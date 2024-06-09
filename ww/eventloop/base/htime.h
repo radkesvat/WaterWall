@@ -40,7 +40,7 @@ struct timezone {
 #include <sys/timeb.h>
 HV_INLINE int gettimeofday(struct timeval *tv, struct timezone *tz) {
     struct _timeb tb;
-    _ftime(&tb);
+    _ftime64_s(&tb);
     if (tv) {
         tv->tv_sec =  (long)tb.time;
         tv->tv_usec = tb.millitm * 1000;

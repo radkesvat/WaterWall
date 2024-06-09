@@ -3,6 +3,7 @@
 #include "fileutils.h"
 #include "hashutils.h"
 #include "hlog.h"
+#include "hplatform.h"
 #include "jsonutils.h"
 #include "procutils.h"
 #include "sockutils.h"
@@ -531,7 +532,12 @@ cmdresult_t execCmd(const char *str)
     cmdresult_t result = (cmdresult_t){{0}, -1};
     char       *buf    = &(result.output[0]);
     /* Open the command for reading. */
+#if defined(OS_UNIX)
     fp = popen(str, "r");
+#else
+    fp               = _popen(str, "r");
+#endif
+
     if (fp == NULL)
     {
         printf("Failed to run command \"%s\"\n", str);
@@ -540,7 +546,11 @@ cmdresult_t execCmd(const char *str)
 
     int read = fscanf(fp, "%2047s", buf);
     (void) read;
+#if defined(OS_UNIX)
     result.exit_code = pclose(fp);
+#else
+    result.exit_code = _pclose(fp);
+#endif
 
     return result;
     /* close */

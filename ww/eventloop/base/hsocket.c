@@ -4,14 +4,14 @@
 #ifdef OS_WIN
 #include "hatomic.h"
 static hatomic_flag_t s_wsa_initialized = HATOMIC_FLAG_INIT;
-void WSAInit() {
+void WSAInit(void) {
     if (!hatomic_flag_test_and_set(&s_wsa_initialized)) {
         WSADATA wsadata;
         WSAStartup(MAKEWORD(2, 2), &wsadata);
     }
 }
 
-void WSADeinit() {
+void WSADeinit(void) {
     if (hatomic_flag_test_and_set(&s_wsa_initialized)) {
         hatomic_flag_clear(&s_wsa_initialized);
         WSACleanup();
@@ -239,7 +239,11 @@ static int ConnectFDTimeout(int connfd, int ms) {
     struct timeval tv = {ms / 1000, (ms % 1000) * 1000};
     fd_set writefds;
     FD_ZERO(&writefds);
+#if defined(OS_UNIX)
     FD_SET(connfd, &writefds);
+#else
+    FD_SET((unsigned long long)connfd, &writefds);
+#endif
     int ret = select(connfd + 1, 0, &writefds, 0, &tv);
     if (ret < 0) {
         perror("select");

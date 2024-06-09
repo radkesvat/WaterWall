@@ -5,7 +5,6 @@
 #include "hplatform.h"
 #include "hatomic.h"
 #include "htime.h"
-#include <stdatomic.h>
 
 BEGIN_EXTERN_C
 
@@ -56,7 +55,7 @@ BEGIN_EXTERN_C
 
 #define honce_t                 INIT_ONCE
 #define HONCE_INIT              INIT_ONCE_STATIC_INIT
-typedef void (*honce_fn)();
+typedef void (*honce_fn)(void);
 static inline BOOL WINAPI s_once_func(INIT_ONCE* once, PVOID arg, PVOID* _) {
     (void)once;
     (void)_;

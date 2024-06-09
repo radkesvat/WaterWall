@@ -35,8 +35,8 @@ HV_EXPORT const char* socket_strerror(int err);
 typedef SOCKET  hsocket_t;
 typedef int     socklen_t;
 
-void WSAInit();
-void WSADeinit();
+void WSAInit(void);
+void WSADeinit(void);
 
 HV_INLINE int blocking(int sockfd) {
     unsigned long nb = 0;
@@ -126,7 +126,11 @@ HV_EXPORT const char* sockaddr_str(sockaddr_u* addr, char* buf, int len);
 #define SOCKADDR_STRLEN     sizeof(((struct sockaddr_un*)(NULL))->sun_path)
 HV_INLINE void sockaddr_set_path(sockaddr_u* addr, const char* path) {
     addr->sa.sa_family = AF_UNIX;
-    strncpy(addr->sun.sun_path, path, sizeof(addr->sun.sun_path));
+#if defined(OS_UNIX)
+    strncpy(addr->sun.sun_path, path, sizeof(addr->sun.sun_path) - 1);
+#else
+    strncpy_s(addr->sun.sun_path, sizeof(addr->sun.sun_path), path, sizeof(addr->sun.sun_path) - 1);
+#endif
 }
 #else
 #define SOCKADDR_STRLEN     64 // ipv4:port | [ipv6]:port

@@ -64,8 +64,9 @@
 #endif
 
 // COMPILER
-#if defined (_MSC_VER)
+#if defined (_MSC_VER) && ! defined(__clang__)
 #define COMPILER_MSVC
+#error "we do not support msvc, because dose not have stdatomic, use clang or gcc"
 
 #if (_MSC_VER < 1200) // Visual C++ 6.0
 #define MSVS_VERSION    1998
@@ -101,6 +102,7 @@
 #define MSVS_VERSION    2019
 #define MSVC_VERSION    160
 #endif
+
 
 #undef  HAVE_STDATOMIC_H
 #define HAVE_STDATOMIC_H        0

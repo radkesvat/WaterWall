@@ -264,7 +264,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (state->tcp_fast_open)
             {
                 const int yes = 1;
-                setsockopt(sockfd, SOL_TCP, TCP_FASTOPEN, &yes, sizeof(yes));
+                setsockopt(sockfd, IPPROTO_TCP, TCP_FASTOPEN, (const char *) &yes, sizeof(yes));
             }
 
             hio_t *upstream_io = hio_get(loop, sockfd);
@@ -394,7 +394,6 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    
     return t;
 }
 api_result_t apiTcpConnector(tunnel_t *self, const char *msg)
