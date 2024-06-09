@@ -11,14 +11,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [1.1.1w, 3.0.14, 3.1.6, 3.2.2, 3.3.1]
-    name: mingw64-${{ matrix.version }}
+        version: [3.0.14, 3.1.6, 3.2.2, 3.3.1]
+    name: mingw64 openssl-${{ matrix.version }}
     runs-on: windows-latest
     defaults:
       run:
         shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
+      - name: Install dependencies on Windows
+        run: |
+          choco install -y jom nasm ccache
+          echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -35,6 +39,7 @@ jobs:
           cmake -B build -G Ninja
           -DOPENSSL_BUILD_VERBOSE=ON
           -DOPENSSL_CONFIGURE_VERBOSE=ON
+          -DCMAKE_BUILD_TYPE=Release
           -DOPENSSL_TARGET_VERSION=${{ matrix.version }}
 
       - name: Build

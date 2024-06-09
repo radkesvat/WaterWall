@@ -1,6 +1,7 @@
 Waterwall!
 
 [![linux](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml)
+[![Windows Mingw64](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml)
 
 A simple core for tunneling and even direct user-server connections. based on high-performance, fully customizeable nodes for creating any kind of protocol without writing code for it.
 
