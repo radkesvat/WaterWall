@@ -1,0 +1,44 @@
+name: Windows Mingw64
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-mingw64:
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [1.1.1w, 3.0.14, 3.1.6, 3.2.2, 3.3.1]
+    name: mingw64-${{ matrix.version }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          pacboy: >-
+            ccache:p
+            cmake:p
+            gcc:p
+            make:p
+            ninja:p
+
+      - name: Configure CMake
+        run: >
+          cmake -B build -G Ninja
+          -DOPENSSL_BUILD_VERBOSE=ON
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          -DOPENSSL_TARGET_VERSION=${{ matrix.version }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Show ccache statistics
+        run: ccache -sv
