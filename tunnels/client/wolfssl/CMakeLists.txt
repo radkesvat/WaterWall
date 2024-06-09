@@ -24,7 +24,7 @@ include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 # todo (WOLFSSL_CRYPTOCB) check this option doing anything useful and required or not (enables padding settings like openssl?)
 CPMAddPackage(
     NAME wolfssl
-    VERSION 5.6.6-stable
+    VERSION 5.7.0-stable
     GITHUB_REPOSITORY wolfSSL/wolfssl
     OPTIONS
     "WOLFSSL_REPRODUCIBLE_BUILD ON"
@@ -39,7 +39,7 @@ CPMAddPackage(
     "WOLFSSL_ASYNC_THREADS OFF"
     "BUILD_SHARED_LIBS OFF"
 )
-target_compile_definitions(wolfssl PRIVATE  NO_WOLFSSL_STUB=1)
+target_compile_definitions(wolfssl PRIVATE  NO_WOLFSSL_STUB=1 DEBUG_WOLFSSL_VERBOSE=1)
 target_compile_definitions(WolfSSLClient PRIVATE  WolfSSLClient_VERSION=0.1)
 
 
