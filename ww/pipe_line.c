@@ -3,10 +3,26 @@
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
-#include <stdatomic.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
+#include "ww.h"
+
+struct pipe_line_s
+{
+    atomic_bool closed;
+    atomic_int  refc;
+
+    // thread local:
+    tunnel_t *self;
+
+    line_t *left_line;
+    line_t *right_line;
+
+    PipeLineFlowRoutine local_up_stream;
+    PipeLineFlowRoutine local_down_stream;
+
+    bool    first_sent;
+    uint8_t left_tid;
+    uint8_t right_tid;
+};
 
 struct msg_event
 {
@@ -19,22 +35,26 @@ typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
 
 static void lock(pipe_line_t *pl)
 {
-    int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_release);
+    // int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_release);
+    int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_relaxed);
     if (old_refc == 0)
     {
-        // this should not happen, otherwise we must use memory_order_seq_cst
+        // this should not happen, otherwise we must use change memory order
+        // but i think its ok because threads synchronize around mutex
         LOGF("PipeLine: thread-safety done incorrectly lock()");
         exit(1);
     }
 }
 static void unlock(pipe_line_t *pl)
 {
-    int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_acquire);
+    // int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_acquire);
+    int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_relaxed);
     if (old_refc == 1)
     {
         if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
         {
-            // this should not happen, otherwise we must use memory_order_seq_cst
+            // this should not happen, otherwise we must use change memory order
+            // but i think its ok because threads synchronize around mutex
             LOGF("PipeLine: thread-safety done incorrectly unlock()");
             exit(1);
         }
@@ -78,7 +98,7 @@ void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
     }
     context_t *ctx = newContext(pl->left_line);
     ctx->payload   = buf;
-    pl->local_down_stream(pl->self, ctx,pl);
+    pl->local_down_stream(pl->self, ctx, pl);
 }
 
 void writeBufferToRightSide(pipe_line_t *pl, void *arg)
@@ -91,7 +111,12 @@ void writeBufferToRightSide(pipe_line_t *pl, void *arg)
     }
     context_t *ctx = newContext(pl->right_line);
     ctx->payload   = buf;
-    pl->local_up_stream(pl->self, ctx,pl);
+    if (WW_UNLIKELY(! pl->first_sent))
+    {
+        pl->first_sent = true;
+        ctx->first     = true;
+    }
+    pl->local_up_stream(pl->self, ctx, pl);
 }
 
 void finishLeftSide(pipe_line_t *pl, void *arg)
@@ -106,7 +131,7 @@ void finishLeftSide(pipe_line_t *pl, void *arg)
     doneLineUpSide(pl->left_line);
     // destroyLine(pl->left_line);
     pl->left_line = NULL;
-    pl->local_down_stream(pl->self, fctx,pl);
+    pl->local_down_stream(pl->self, fctx, pl);
 }
 
 void finishRightSide(pipe_line_t *pl, void *arg)
@@ -120,7 +145,7 @@ void finishRightSide(pipe_line_t *pl, void *arg)
     doneLineDownSide(pl->right_line);
     destroyLine(pl->right_line);
     pl->right_line = NULL;
-    pl->local_up_stream(pl->self, fctx,pl);
+    pl->local_up_stream(pl->self, fctx, pl);
 }
 
 void pauseLeftLine(pipe_line_t *pl, void *arg)
@@ -187,7 +212,7 @@ void onRightLineResumed(void *state)
     sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
 }
 
-bool writePipeLineLTR(pipe_line_t *pl, context_t *c)
+bool pipeUpStream(pipe_line_t *pl, context_t *c)
 {
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
@@ -227,8 +252,16 @@ bool writePipeLineLTR(pipe_line_t *pl, context_t *c)
     return true;
 }
 
-bool writePipeLineRTL(pipe_line_t *pl, context_t *c)
+bool pipeDownStream(pipe_line_t *pl, context_t *c)
 {
+    // est context is ignored, only fin or data makes sense
+
+    if (WW_UNLIKELY(c->est))
+    {
+        destroyContext(c);
+        return true;
+    }
+
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
 
@@ -273,7 +306,7 @@ void initRight(pipe_line_t *pl, void *arg)
     line_t *rline = newLine(pl->right_tid);
     setupLineDownSide(pl->right_line, onRightLinePaused, pl, onRightLineResumed);
     context_t *context = newInitContext(rline);
-    pl->local_up_stream(pl->self, context,pl);
+    pl->local_up_stream(pl->self, context, pl);
 
     // lockLine(pl->right_line);
 }
@@ -285,7 +318,7 @@ void initLeft(pipe_line_t *pl, void *arg)
 }
 
 void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
-                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream)
+                 PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream)
 
 {
     assert(*result == NULL);
@@ -297,6 +330,7 @@ void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t 
                                     .left_line         = left_line,
                                     .right_line        = NULL,
                                     .closed            = false,
+                                    .first_sent        = false,
                                     .refc              = 1,
                                     .local_up_stream   = local_up_stream,
                                     .local_down_stream = local_down_stream};

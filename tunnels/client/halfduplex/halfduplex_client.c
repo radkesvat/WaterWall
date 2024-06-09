@@ -1,12 +1,8 @@
 #include "halfduplex_client.h"
 #include "buffer_pool.h"
 #include "frand.h"
-#include "halfduplex_constants.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
-#include <stdatomic.h>
-#include <stdint.h>
-#include <stdlib.h>
 
 typedef struct halfduplex_state_s
 {

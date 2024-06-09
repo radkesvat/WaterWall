@@ -62,7 +62,7 @@ option(INCLUDE_PRECONNECT_CLIENT "link PreConnectClient staticly to the core"  T
 option(INCLUDE_SOCKS_5_SERVER "link Socks5Server staticly to the core"  TRUE)
 option(INCLUDE_REALITY_SERVER "link RealityServer staticly to the core"  TRUE)
 option(INCLUDE_REALITY_CLIENT "link RealityClient staticly to the core"  TRUE)
-
+option(INCLUDE_HALFDUPLEX_SERVER "link HalfDuplexServer staticly to the core"  TRUE)
 option(INCLUDE_HALFDUPLEX_CLIENT "link HalfDuplexClient staticly to the core"  TRUE)
 
 set(OPENSSL_CONFIGURE_VERBOSE ON)
@@ -322,6 +322,14 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall RealityClient)
 endif()
 
+#halfduplex server
+if (INCLUDE_HALFDUPLEX_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_HALFDUPLEX_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/halfduplex)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/halfduplex)
+target_link_libraries(Waterwall HalfDuplexServer)
+endif()
+
 #halfduplex client
 if (INCLUDE_HALFDUPLEX_CLIENT)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_HALFDUPLEX_CLIENT=1)
@@ -350,10 +358,10 @@ message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 # set output path to build/bin/
 
 set_target_properties(Waterwall
-    PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  PROPERTIES
+  ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
 # get_target_property(target_options Waterwall COMPILE_OPTIONS)
