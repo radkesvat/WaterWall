@@ -32,7 +32,7 @@ jobs:
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
-   - name: Install dependencies on macOS
+    - name: Install dependencies on macOS
       run: |
         brew update
         brew install ccache
