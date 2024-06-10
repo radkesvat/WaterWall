@@ -109,7 +109,7 @@ static inline void honce(honce_t* once, honce_fn fn) {
 #define hspinlock_destroy       pthread_mutex_destroy
 #define hspinlock_lock          pthread_mutex_lock
 #define hspinlock_unlock        pthread_mutex_unlock
-#endif
+#endif //OS_WIN
 
 #define hrwlock_t               pthread_rwlock_t
 #define hrwlock_init(prwlock)   pthread_rwlock_init(prwlock, NULL)
@@ -172,11 +172,76 @@ static inline int hcondvar_wait_for(hcondvar_t* cond, hmutex_t* mutex, unsigned 
 #define HONCE_INIT              PTHREAD_ONCE_INIT
 #define honce                   pthread_once
 
+// apple semaphore is not posix!
+
+#if defined(__MACH__) 
+// Can't use POSIX semaphores due to
+// https://web.archive.org/web/20140109214515/
+// http://lists.apple.com/archives/darwin-kernel/2009/Apr/msg00010.html
+#include <mach/mach.h>
+#define hsem_t                  semaphore_t
+#define hsem_init(psem, value)  semaphore_create(mach_task_self(), psem, SYNC_POLICY_FIFO, value)   // (KERN_SUCCESS == 0 like linux)
+#define hsem_destroy(psem)      semaphore_destroy(mach_task_self(), *psem);
+    
+static bool hsem_wait(hsem_t* sp) {
+    semaphore_t s = *sp;
+    while (1) {
+        kern_return_t rc = semaphore_wait(s);
+        if (rc != KERN_ABORTED) return rc == KERN_SUCCESS;
+    }
+}
+
+static bool hsem_post(hsem_t* sp, uint32_t count) {
+    assert(count > 0);
+    semaphore_t s = *(semaphore_t*)sp;
+    kern_return_t rc = 0; // KERN_SUCCESS
+    while (count-- > 0) {
+        rc += semaphore_signal(s); // == ...
+                                   // auto rc1 = semaphore_signal(s);
+                                   // if (rc1 != KERN_SUCCESS) {
+                                   //   rc = rc1;
+                                   // }
+    }
+    return rc == KERN_SUCCESS;
+}
+
+static bool hsem_wait_for(hsem_t* sp, uint64_t timeout_usecs) {
+    mach_timespec_t ts;
+    ts.tv_sec = (uint32_t)(timeout_usecs / USECS_IN_1_SEC);
+    ts.tv_nsec = (int)((timeout_usecs % USECS_IN_1_SEC) * 1000);
+    // Note:
+    // semaphore_wait_deadline was introduced in macOS 10.6
+    // semaphore_timedwait was introduced in macOS 10.10
+    // https://developer.apple.com/library/prerelease/mac/documentation/General/Reference/
+    //   APIDiffsMacOSX10_10SeedDiff/modules/Darwin.html
+    semaphore_t s = *sp;
+    while (1) {
+        kern_return_t rc = semaphore_timedwait(s, ts);
+        if (rc != KERN_ABORTED) return rc == KERN_SUCCESS;
+        // TODO: update ts; subtract time already waited and retry (loop).
+        // For now, let's just return with an error:
+        return false;
+    }
+}
+
+
+#else // linux semaphore
+
 #include <semaphore.h>
 #define hsem_t                  sem_t
 #define hsem_init(psem, value)  sem_init(psem, 0, value)
 #define hsem_destroy            sem_destroy
-#define hsem_wait               sem_wait
+
+
+static bool hsem_wait(hsem_t* sp) {
+    // http://stackoverflow.com/questions/2013181/gdb-causes-sem-wait-to-fail-with-eintr-error
+    int rc;
+    do {
+        rc = sem_wait((sem_t*)sp);
+    } while (rc == -1 && errno == EINTR);
+    return rc == 0;
+}
+
 #define hsem_post               sem_post
 // true:  OK
 // false: ETIMEDOUT
@@ -198,7 +263,13 @@ static inline int hsem_wait_for(hsem_t* sem, unsigned int ms) {
 #endif
 }
 
-#endif
+#endif// linux semaphore
+
+
+
+
+
+#endif // ! OS_WIN
 
 
 
