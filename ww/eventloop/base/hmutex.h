@@ -191,8 +191,8 @@ static bool hsem_wait(hsem_t* sp) {
     }
 }
 
-static bool hsem_post(hsem_t* sp, uint32_t count) {
-    assert(count > 0);
+static bool hsem_post(hsem_t* sp) {
+    uint32_t count = 1;
     semaphore_t s = *(semaphore_t*)sp;
     kern_return_t rc = 0; // KERN_SUCCESS
     while (count-- > 0) {
@@ -204,7 +204,8 @@ static bool hsem_post(hsem_t* sp, uint32_t count) {
     }
     return rc == KERN_SUCCESS;
 }
-
+#define USECS_IN_1_SEC 1000000
+#define NSECS_IN_1_SEC 1000000000
 static bool hsem_wait_for(hsem_t* sp, uint64_t timeout_usecs) {
     mach_timespec_t ts;
     ts.tv_sec = (uint32_t)(timeout_usecs / USECS_IN_1_SEC);
@@ -223,7 +224,8 @@ static bool hsem_wait_for(hsem_t* sp, uint64_t timeout_usecs) {
         return false;
     }
 }
-
+#undef USECS_IN_1_SEC 
+#undef NSECS_IN_1_SEC
 
 #else // linux semaphore
 
