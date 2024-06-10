@@ -19,10 +19,13 @@ jobs:
         shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
+    
       - name: Install dependencies on Windows
+        shell: bash
         run: |
           choco install -y jom nasm ccache
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
+
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -33,6 +36,8 @@ jobs:
             gcc:p
             make:p
             ninja:p
+      
+     
 
       - name: Configure CMake
         run: >
