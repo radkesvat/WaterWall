@@ -67,7 +67,7 @@ void commitChangesSoft(config_file_t *state)
 #ifdef OS_WIN
     commitChangesHard(state);
 #else
-    if (0 == pthread_mutex_trylock(&(state->guard)))
+    if (0 == hmutex_lock(&(state->guard)))
     {
         unsafeCommitChanges(state);
         releaseUpdateLock(state);

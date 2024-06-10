@@ -93,6 +93,9 @@ endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   target_link_options(ww PUBLIC -s)
+  if (WIN32)
+    target_link_options(ww PUBLIC -static-libgcc -static)
+  endif()
 endif()
 
 # target_compile_options(hv_static PRIVATE -fPIC) 
