@@ -10,32 +10,27 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
+#include "pipe_line.h"
 #include "tunnel.h"
 #include "utils/stringutils.h"
 #ifdef OS_LINUX
 #include <malloc.h>
 #endif
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <time.h>
 
-unsigned int             workers_count  = 0;
-hthread_t               *workers        = NULL;
-unsigned int             frand_seed     = 0;
-unsigned int             ram_profile    = 0;
-struct hloop_s         **loops          = NULL;
-struct buffer_pool_s   **buffer_pools   = NULL;
-struct generic_pool_s  **context_pools  = NULL;
-struct generic_pool_s  **line_pools     = NULL;
-struct socket_manager_s *socekt_manager = NULL;
-struct node_manager_s   *node_manager   = NULL;
-logger_t                *core_logger    = NULL;
-logger_t                *network_logger = NULL;
-logger_t                *dns_logger     = NULL;
+unsigned int             workers_count      = 0;
+hthread_t               *workers            = NULL;
+unsigned int             frand_seed         = 0;
+unsigned int             ram_profile        = 0;
+struct hloop_s         **loops              = NULL;
+struct buffer_pool_s   **buffer_pools       = NULL;
+struct generic_pool_s  **context_pools      = NULL;
+struct generic_pool_s  **line_pools         = NULL;
+struct generic_pool_s  **pipeline_msg_pools = NULL;
+struct socket_manager_s *socekt_manager     = NULL;
+struct node_manager_s   *node_manager       = NULL;
+logger_t                *core_logger        = NULL;
+logger_t                *network_logger     = NULL;
+logger_t                *dns_logger         = NULL;
 
 struct ww_runtime_state_s
 {
@@ -47,6 +42,7 @@ struct ww_runtime_state_s
     struct buffer_pool_s   **buffer_pools;
     struct generic_pool_s  **context_pools;
     struct generic_pool_s  **line_pools;
+    struct generic_pool_s  **pipeline_msg_pools;
     struct socket_manager_s *socekt_manager;
     struct node_manager_s   *node_manager;
     logger_t                *core_logger;
@@ -56,16 +52,17 @@ struct ww_runtime_state_s
 
 void setWW(struct ww_runtime_state_s *state)
 {
-    workers_count  = state->workers_count;
-    workers        = state->workers;
-    frand_seed     = state->frand_seed;
-    ram_profile    = state->ram_profile;
-    loops          = state->loops;
-    buffer_pools   = state->buffer_pools;
-    context_pools  = state->context_pools;
-    line_pools     = state->line_pools;
-    socekt_manager = state->socekt_manager;
-    node_manager   = state->node_manager;
+    workers_count      = state->workers_count;
+    workers            = state->workers;
+    frand_seed         = state->frand_seed;
+    ram_profile        = state->ram_profile;
+    loops              = state->loops;
+    buffer_pools       = state->buffer_pools;
+    context_pools      = state->context_pools;
+    line_pools         = state->line_pools;
+    pipeline_msg_pools = state->pipeline_msg_pools;
+    socekt_manager     = state->socekt_manager;
+    node_manager       = state->node_manager;
     setCoreLogger(state->core_logger);
     setNetworkLogger(state->network_logger);
     setDnsLogger(state->dns_logger);
@@ -78,19 +75,20 @@ struct ww_runtime_state_s *getWW(void)
 {
     struct ww_runtime_state_s *state = malloc(sizeof(struct ww_runtime_state_s));
     memset(state, 0, sizeof(struct ww_runtime_state_s));
-    state->workers_count  = workers_count;
-    state->workers        = workers;
-    state->frand_seed     = frand_seed;
-    state->ram_profile    = ram_profile;
-    state->loops          = loops;
-    state->buffer_pools   = buffer_pools;
-    state->context_pools  = context_pools;
-    state->line_pools     = line_pools;
-    state->socekt_manager = socekt_manager;
-    state->node_manager   = node_manager;
-    state->core_logger    = core_logger;
-    state->network_logger = network_logger;
-    state->dns_logger     = dns_logger;
+    state->workers_count      = workers_count;
+    state->workers            = workers;
+    state->frand_seed         = frand_seed;
+    state->ram_profile        = ram_profile;
+    state->loops              = loops;
+    state->buffer_pools       = buffer_pools;
+    state->context_pools      = context_pools;
+    state->line_pools         = line_pools;
+    state->pipeline_msg_pools = pipeline_msg_pools;
+    state->socekt_manager     = socekt_manager;
+    state->node_manager       = node_manager;
+    state->core_logger        = core_logger;
+    state->network_logger     = network_logger;
+    state->dns_logger         = dns_logger;
     return state;
 }
 
@@ -166,12 +164,13 @@ void createWW(const ww_construction_data_t init_data)
         fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - 255]\n", workers_count);
     }
 
-    workers       = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
-    frand_seed    = time(NULL);
-    ram_profile   = init_data.ram_profile;
-    buffer_pools  = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
-    context_pools = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
-    line_pools    = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
+    workers            = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
+    frand_seed         = time(NULL);
+    ram_profile        = init_data.ram_profile;
+    buffer_pools       = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
+    context_pools      = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
+    line_pools         = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
+    pipeline_msg_pools = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
 
     for (unsigned int i = 0; i < workers_count; ++i)
     {
@@ -179,6 +178,8 @@ void createWW(const ww_construction_data_t init_data)
         context_pools[i] =
             newGenericPoolWithSize((16 * 8) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
         line_pools[i] = newGenericPoolWithSize((16 * 4) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
+        pipeline_msg_pools[i] =
+            newGenericPoolWithSize((16 * 8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
     }
 
     loops      = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);

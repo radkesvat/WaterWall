@@ -90,6 +90,7 @@ extern struct hloop_s         **loops;
 extern struct buffer_pool_s   **buffer_pools;
 extern struct generic_pool_s  **context_pools;
 extern struct generic_pool_s  **line_pools;
+extern struct generic_pool_s  **pipeline_msg_pools;
 extern struct socket_manager_s *socket_disp_state;
 extern struct node_manager_s   *node_disp_state;
 extern struct logger_s         *core_logger;

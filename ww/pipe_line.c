@@ -1,5 +1,6 @@
 #include "pipe_line.h"
 #include "buffer_pool.h"
+#include "generic_pool.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
@@ -9,20 +10,17 @@ struct pipe_line_s
 {
     atomic_bool closed;
     atomic_int  refc;
+    bool        first_sent;
+    uint8_t     left_tid;
+    uint8_t     right_tid;
 
-    // thread local:
     tunnel_t *self;
-
     line_t *left_line;
     line_t *right_line;
-
     PipeLineFlowRoutine local_up_stream;
     PipeLineFlowRoutine local_down_stream;
 
-    bool    first_sent;
-    uint8_t left_tid;
-    uint8_t right_tid;
-};
+} ATTR_ALIGNED_LINE_CACHE;
 
 struct msg_event
 {
@@ -32,6 +30,18 @@ struct msg_event
 };
 
 typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
+
+
+pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool)
+{
+    (void) pool;
+    return malloc(sizeof(struct msg_event));
+}
+void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+{
+    (void) pool;
+    free(item);
+}
 
 static void lock(pipe_line_t *pl)
 {
@@ -65,8 +75,9 @@ static void onMsgReceived(hevent_t *ev)
 {
     struct msg_event *msg_ev = hevent_userdata(ev);
     (*(MsgTargetFunction *) (&(msg_ev->function)))(msg_ev->pl, msg_ev->arg);
+    reusePoolItem(pipeline_msg_pools[msg_ev->pl->right_tid], msg_ev);
     unlock(msg_ev->pl);
-    free(msg_ev);
+
 }
 
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
@@ -77,7 +88,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
         return;
     }
     lock(pl);
-    struct msg_event *evdata = malloc(sizeof(struct msg_event));
+    struct msg_event *evdata = popPoolItem(pipeline_msg_pools[tid_from]);
     *evdata                  = (struct msg_event){.pl = pl, .function = *(void **) (&fn), .arg = arg};
 
     hevent_t ev;
@@ -132,6 +143,8 @@ void finishLeftSide(pipe_line_t *pl, void *arg)
     // destroyLine(pl->left_line);
     pl->left_line = NULL;
     pl->local_down_stream(pl->self, fctx, pl);
+    unlock(pl);
+
 }
 
 void finishRightSide(pipe_line_t *pl, void *arg)
@@ -146,6 +159,8 @@ void finishRightSide(pipe_line_t *pl, void *arg)
     destroyLine(pl->right_line);
     pl->right_line = NULL;
     pl->local_up_stream(pl->self, fctx, pl);
+    unlock(pl);
+
 }
 
 void pauseLeftLine(pipe_line_t *pl, void *arg)
@@ -237,7 +252,6 @@ bool pipeUpStream(pipe_line_t *pl, context_t *c)
             // we managed to close the channel
             destroyContext(c);
             sendMessage(pl, finishRightSide, NULL, pl->left_tid, pl->right_tid);
-            unlock(pl);
             return true;
         }
         // other line managed to close first and also queued us the fin packet
@@ -314,10 +328,9 @@ void initLeft(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     setupLineUpSide(pl->left_line, onLeftLinePaused, pl, onLeftLineResumed);
-    // lockLine(pl->left_line);
 }
 
-void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t *left_line, uint8_t tid_right,
+void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t *left_line, uint8_t dest_tid,
                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream)
 
 {
@@ -325,8 +338,8 @@ void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t tid_left, line_t 
 
     pipe_line_t *pl = malloc(sizeof(pipe_line_t));
     *pl             = (pipe_line_t){.self              = self,
-                                    .left_tid          = tid_left,
-                                    .right_tid         = tid_right,
+                                    .left_tid          = this_tid,
+                                    .right_tid         = dest_tid,
                                     .left_line         = left_line,
                                     .right_line        = NULL,
                                     .closed            = false,
