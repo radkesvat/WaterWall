@@ -6,14 +6,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
-
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-
-
       matrix:
         os: [macos-latest]
         build_type: [Release]
@@ -26,11 +23,9 @@ jobs:
             c_compiler: clang
             cpp_compiler: clang++
     
-
     steps:
     - uses: actions/checkout@v3
     
-        
     - name: Set reusable strings
 
       id: strings
