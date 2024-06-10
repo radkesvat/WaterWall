@@ -12,7 +12,9 @@
 #include "managers/socket_manager.h"
 #include "tunnel.h"
 #include "utils/stringutils.h"
+#ifdef OS_LINUX
 #include <malloc.h>
+#endif
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -94,7 +96,7 @@ struct ww_runtime_state_s *getWW(void)
 
 // trimming should not be necessary, using it for test purposes
 // todo (remove) should be removed ? (status: disabled)
-#ifdef OS_UNIX
+#ifdef OS_LINUX
 void idleFreeMem(htimer_t *timer)
 {
     (void) timer;
@@ -108,7 +110,7 @@ htimer_t *trim_timer = NULL;
 _Noreturn void runMainThread(void)
 {
 
-#if defined(OS_UNIX) && false
+#if defined(OS_LINUX) && false
     trim_timer = htimer_add_period(loops[0], idleFreeMem, 2, 0, 0, 0, 0, INFINITE);
 #endif
 

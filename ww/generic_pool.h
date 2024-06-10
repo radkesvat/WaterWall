@@ -1,7 +1,7 @@
 #pragma once
 #include <stdatomic.h>
 #include <stddef.h>
-#ifdef OS_UNIX
+#ifdef OS_LINUX
 #include <malloc.h>
 #endif
 
@@ -83,7 +83,7 @@ inline void poolShrink(generic_pool_t *pool)
 #if defined(DEBUG) && defined(POOL_DEBUG)
     LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
-#ifdef OS_UNIX
+#ifdef OS_LINUX
     malloc_trim(0);
 #endif
 }
