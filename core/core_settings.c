@@ -191,7 +191,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
 #if defined(OS_UNIX)
             strcpy(buf, path->valuestring);
 #else
-            strcpy_s(buf, size + 1, path->valuestring);
+            strcpy_s(buf, size, path->valuestring);
 #endif
             vec_config_path_t_push(&settings->config_paths, buf);
         }
