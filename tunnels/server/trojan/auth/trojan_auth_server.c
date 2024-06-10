@@ -87,7 +87,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
 
                 // beware! trojan auth will not use stream buffer, at least the auth chunk must come in first sequence
-                // the payload must not come buffeered here (gfw can do this and detect trojan authentication
+                // the payload must not come buffered here (gfw can do this and detect trojan authentication
                 // but the client is not supposed to send small segments)
                 // so , if its incomplete we go to fallback!
                 // this is also mentioned in standard trojan docs (first packet also contains part of final payload)
@@ -98,7 +98,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
                     goto failed;
                 }
-                // save time easily
+
                 if (((unsigned char *) rawBuf(c->payload))[sizeof(sha224_hex_t)] != '\r' ||
                     ((unsigned char *) rawBuf(c->payload))[sizeof(sha224_hex_t) + 1] != '\n')
                 {
