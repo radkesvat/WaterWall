@@ -28,12 +28,13 @@ typedef void (*ExpireCallBack)(struct idle_item_s *);
 struct idle_item_s;
 typedef struct idle_item_s idle_item_t;
 
+// idle item is threadlocal
 struct idle_item_s
 {
     void          *userdata;
-    uint64_t       expire_at_ms;
-    ExpireCallBack cb;
     hash_t         hash;
+    ExpireCallBack cb;
+    uint64_t       expire_at_ms;
     uint8_t        tid;
     bool           removed;
 };

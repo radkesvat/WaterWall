@@ -4,12 +4,6 @@
 #include "hloop.h"
 #include "hmutex.h"
 #include "ww.h"
-#include <assert.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
 
 enum
 {
@@ -33,7 +27,7 @@ struct idle_table_s
     hmap_idles_t   hmap;
     hhybridmutex_t mutex;
     uint64_t       last_update_ms;
-};
+} ATTR_ALIGNED_LINE_CACHE;
 
 void idleCallBack(htimer_t *timer);
 
@@ -101,31 +95,6 @@ idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
     return (find_result.ref->second);
 }
 
-// static void removeIdleItemByHandle(idle_table_t *self, idle_item_t *item)
-// {
-//     hash_t item_hash = item->hash;
-
-//     // enough to say its no longer in heap queue
-//     *item = (idle_item_t){};
-
-//     hhybridmutex_lock(&(self->mutex));
-//     hmap_idles_t_erase(&(self->hmap), item_hash);
-//     heapq_idles_t_make_heap(&self->hqueue);
-//     hhybridmutex_unlock(&(self->mutex));
-
-//     // alternative:
-//     // const uint64_t et         = item->expire_at_ms;
-//     // idle_item_t  **heap_items = (idle_item_t **) heapq_idles_t_top(&(self->hqueue));
-//     // size_t         heap_size  = heapq_idles_t_size(&(self->hqueue));
-//     // for (size_t i = 0; i < heap_size; i++)
-//     // {
-//     //     if (et == heap_items[i]->expire_at_ms)
-//     //     {
-//     //         heapq_idles_t_erase_at(&(self->hqueue), i);
-//     //         break;
-//     //     }
-//     // }
-// }
 bool removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
 {
     hhybridmutex_lock(&(self->mutex));
