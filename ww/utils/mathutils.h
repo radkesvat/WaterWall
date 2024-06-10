@@ -2,10 +2,11 @@
 #include <math.h> //cel,log2,pow
 #include <stdlib.h>
 #include <stdint.h>
+#include "hplatform.h"
 
-#ifdef OS_UNIX
+#if defined(OS_UNIX)
 #include <sys/types.h>
-#else
+#elif ! defined(ssize_t)
 typedef int64_t    ssize_t;
 #endif
 
