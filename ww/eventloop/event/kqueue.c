@@ -135,7 +135,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
     if (kqueue_ctx == NULL) return 0;
     if (kqueue_ctx->nchanges == 0) return 0;
     struct timespec ts, *tp;
-    if (timeout == INFINITE) {
+    if (timeout == (int)INFINITE) {
         tp = NULL;
     }
     else {

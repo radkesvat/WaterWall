@@ -107,7 +107,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
     evport_ctx_t* evport_ctx = (evport_ctx_t*)loop->iowatcher;
     if (evport_ctx == NULL) return 0;
     struct timespec ts, *tp;
-    if (timeout == INFINITE) {
+    if (timeout == (int)INFINITE) {
         tp = NULL;
     } else {
         ts.tv_sec = timeout / 1000;
