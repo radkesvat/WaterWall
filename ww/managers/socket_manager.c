@@ -360,7 +360,6 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
         }
     }
 
-
     return false;
 }
 
@@ -416,7 +415,7 @@ static void onAcceptTcpMultiPort(hio_t *io)
 
     unsigned char pbuf[28] = {0};
     socklen_t     size     = 16; // todo ipv6 value is 28
-    if (getsockopt(hio_fd(io), SOL_IP, kSoOriginalDest, &(pbuf[0]), &size) < 0)
+    if (getsockopt(hio_fd(io), IPPROTO_IP, kSoOriginalDest, &(pbuf[0]), &size) < 0)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};

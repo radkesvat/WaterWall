@@ -100,9 +100,7 @@ static bool SemaWait(hsem_t* sp) {
     }
 }
 
-static bool SemaTryWait(hsem_t* sp) {
-    return SemaTimedWait(sp, 0);
-}
+
 
 static bool SemaTimedWait(hsem_t* sp, uint64_t timeout_usecs) {
     mach_timespec_t ts;
@@ -121,6 +119,10 @@ static bool SemaTimedWait(hsem_t* sp, uint64_t timeout_usecs) {
         // For now, let's just return with an error:
         return false;
     }
+}
+
+static bool SemaTryWait(hsem_t* sp) {
+    return SemaTimedWait(sp, 0);
 }
 
 static bool SemaSignal(hsem_t* sp, uint32_t count) {

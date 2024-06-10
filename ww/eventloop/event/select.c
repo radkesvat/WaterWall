@@ -121,7 +121,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
         select_ctx->max_fd = max_fd = find_max_active_fd(loop);
     }
     struct timeval tv, *tp;
-    if (timeout == INFINITE) {
+    if (timeout == (int)INFINITE) {
         tp = NULL;
     }
     else {

@@ -15,14 +15,16 @@ include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 CPMAddPackage(
     NAME nghttp2
-    GIT_TAG v1.60.0
+    GIT_TAG v1.62.1
     GITHUB_REPOSITORY nghttp2/nghttp2
     OPTIONS 
     "BUILD_STATIC_LIBS ON"
     "BUILD_TESTING OFF"
-    # "ENABLE_DEBUG ON"
     "BUILD_SHARED_LIBS OFF"
-
+    "ENABLE_EXAMPLES OFF"
+    "ENABLE_DOC OFF"
+    # "ENABLE_DEBUG ON"
 )
+
 
 target_link_libraries(Http2Client PUBLIC nghttp2_static)
