@@ -61,11 +61,12 @@ typedef struct
 enum ram_profiles
 {
     kRamProfileInvalid  = 0,      // 0 is invalid memory multiplier
-    kRamProfileS1Memory = 1,      // APPROX 2MB  per thread
-    kRamProfileM1Memory = 16 * 1, // APPROX 8MB  per thread
-    kRamProfileM2Memory = 16 * 2, // APPROX 16MB per thread
-    kRamProfileL1Memory = 16 * 3, // APPROX 28MB per thread
-    kRamProfileL2Memory = 16 * 4  // APPROX 36MB per thread
+    kRamProfileS1Memory = 1,      
+    kRamProfileS2Memory = 8,      
+    kRamProfileM1Memory = 8 * 16 * 1, 
+    kRamProfileM2Memory = 8 * 16 * 2, 
+    kRamProfileL1Memory = 8 * 16 * 3, 
+    kRamProfileL2Memory = 8 * 16 * 4  
 };
 
 typedef struct

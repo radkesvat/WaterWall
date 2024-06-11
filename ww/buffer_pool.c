@@ -19,14 +19,14 @@
 #define MEMORY_PROFILE_SELECTED ram_profile
 
 #define BASE_READ_BUFSIZE              (1U << 13) // 8k
-#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((8 * MEMORY_PROFILE_SMALL)))
-#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((8 * MEMORY_PROFILE_SELECTED)))
+#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((MEMORY_PROFILE_SMALL)))
+#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((MEMORY_PROFILE_SELECTED)))
 
 #define BUFFER_SIZE_MORE                                                                                               \
     (((int) (MEMORY_PROFILE_SELECTED / 16)) > 1 ? (((int) (MEMORY_PROFILE_SELECTED / 16)) - 1) : (0))
 
 
-#define BUFFER_SIZE (1U << 15) // 32k (same as nginx file streaming)
+#define BUFFER_SIZE (ram_profile >= kRamProfileS2Memory ? (1U << 15) : (1U << 12))  // 32k (same as nginx file streaming)
 
 // #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
 
@@ -138,7 +138,7 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 static buffer_pool_t *allocBufferPool(unsigned long bufcount,unsigned int buffer_size) // NOLINT
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
-    assert(bufcount >= 4);
+    assert(bufcount >= 1);
 
     // half of the pool is used, other half is free at startup
     bufcount = 2 * bufcount;

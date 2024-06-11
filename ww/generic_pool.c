@@ -2,7 +2,7 @@
 #include "utils/mathutils.h"
 #include "ww.h"
 
-#define GENERIC_POOL_DEFAULT_WIDTH ((unsigned long) ((16 * ram_profile)))
+#define GENERIC_POOL_DEFAULT_WIDTH ((unsigned long) ((ram_profile)))
 
 extern void         poolReCharge(generic_pool_t *pool);
 extern void         poolShrink(generic_pool_t *pool);

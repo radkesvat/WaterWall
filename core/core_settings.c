@@ -22,8 +22,9 @@
 enum settings_ram_profiles
 {
     kRamProfileServer        = kRamProfileL2Memory,
-    kRamProfileClientGeneric = kRamProfileS1Memory,
-    kRamProfileClientLarger  = kRamProfileM2Memory
+    kRamProfileClientGeneric = kRamProfileS2Memory,
+    kRamProfileClientLarger  = kRamProfileM2Memory,
+    kRamProfileMinimal       = kRamProfileS1Memory,
 };
 
 #define DEFAULT_LIBS_PATH "libs/"
@@ -232,15 +233,18 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
                 settings->ram_profile = kRamProfileS1Memory;
                 break;
             case 2:
-                settings->ram_profile = kRamProfileM1Memory;
+                settings->ram_profile = kRamProfileS2Memory;
                 break;
             case 3:
-                settings->ram_profile = kRamProfileM2Memory;
+                settings->ram_profile = kRamProfileM1Memory;
                 break;
             case 4:
-                settings->ram_profile = kRamProfileL1Memory;
+                settings->ram_profile = kRamProfileM2Memory;
                 break;
             case 5:
+                settings->ram_profile = kRamProfileL1Memory;
+                break;
+            case 6:
                 settings->ram_profile = kRamProfileL2Memory;
                 break;
             default:
@@ -267,11 +271,15 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
             {
                 settings->ram_profile = kRamProfileClientLarger;
             }
+            else if (0 == strcmp(string_ram_profile, "ultralow") || 0 == strcmp(string_ram_profile, "minimal"))
+            {
+                settings->ram_profile = kRamProfileMinimal;
+            }
 
             if (settings->ram_profile <= 0)
             {
                 fprintf(stderr, "CoreSettings: ram-profile can hold \"server\" or \"client\" "
-                                "or \"client-larger\"\n");
+                                "or \"client-larger\" or \"ultralow\" \n");
 
                 exit(1);
             }

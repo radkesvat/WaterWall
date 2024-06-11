@@ -1,5 +1,6 @@
 #include "shiftbuffer.h"
 #include "utils/mathutils.h"
+#include "ww.h"
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
 #include <stdint.h>
@@ -29,6 +30,8 @@ extern void           readUI8(shift_buffer_t *self, uint8_t *dest);
 extern void           readUI16(shift_buffer_t *self, uint16_t *dest);
 extern void           readUI64(shift_buffer_t *self, uint64_t *dest);
 
+#define PREPADDING ((ram_profile >= kRamProfileS2Memory ? (1U << 11) : (1U << 8)) + 512)
+
 void destroyShiftBuffer(shift_buffer_t *self)
 {
     // if its a shallow then the underlying buffer survives
@@ -49,14 +52,14 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
         pre_cap = (unsigned int) pow(2, ceil(log2((double) max(16, pre_cap))));
     }
 
-    unsigned int real_cap = pre_cap * 2;
+    unsigned int real_cap = pre_cap +  (PREPADDING * 2);
 
     shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
 
     // todo (optimize) i think refc and pbuf could be in 1 malloc
     *self         = (shift_buffer_t){.calc_len = 0,
                                      ._offset  = 0,
-                                     .curpos   = pre_cap,
+                                     .curpos   = PREPADDING,
                                      .full_cap = real_cap,
                                      .refc     = malloc(sizeof(self->refc[0])),
                                      .pbuf     = malloc(real_cap)};
@@ -88,11 +91,13 @@ shift_buffer_t *newShallowShiftBuffer(shift_buffer_t *owner)
 void reset(shift_buffer_t *self, unsigned int pre_cap)
 {
     assert(! isShallow(self));
+    
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
         pre_cap = (unsigned int) pow(2, ceil(log2(((double) max(16, pre_cap)))));
     }
-    unsigned int real_cap = pre_cap * 2;
+
+    unsigned int real_cap = pre_cap +  (PREPADDING * 2);
 
     if (self->full_cap != real_cap)
     {
@@ -102,7 +107,7 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
     }
     self->calc_len = 0;
     self->_offset  = 0;
-    self->curpos   = pre_cap;
+    self->curpos   = PREPADDING;
 }
 
 void unShallow(shift_buffer_t *self)

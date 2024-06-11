@@ -176,10 +176,10 @@ void createWW(const ww_construction_data_t init_data)
     {
         buffer_pools[i] = createBufferPool();
         context_pools[i] =
-            newGenericPoolWithSize((16 * 8) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
-        line_pools[i] = newGenericPoolWithSize((16 * 4) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
+            newGenericPoolWithSize((16) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
+        line_pools[i] = newGenericPoolWithSize((8) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
         pipeline_msg_pools[i] =
-            newGenericPoolWithSize((16 * 8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
+            newGenericPoolWithSize((8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
     }
 
     loops      = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
