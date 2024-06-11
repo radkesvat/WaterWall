@@ -135,7 +135,7 @@ static void cycleProcess(void)
                     LOGF("Node Map Failure: no more than 1 node can be chained to node (\"%s\")", n2.ref->second->name);
                     exit(1);
                 }
-                LOGD("%-17s -> %s", n1.ref->second->name, n2.ref->second->name);
+                // LOGD("%-17s -> %s", n1.ref->second->name, n2.ref->second->name);
 
                 found = true;
             }
