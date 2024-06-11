@@ -10,10 +10,10 @@
     ----------------------------|------------------|
 
     |------------------|----------------------------
-    |  Pipe 1 thread 2              <- con ->        
+    |  Pipe 1 thread 2              <- con ->
     |------------------|----------------------------
-   
-   
+
+
     pipeline helps you connect 2 lines that are not in the same thread/worker
 
     it manages the thread safety and efficiency
@@ -31,16 +31,20 @@
 
 struct pipe_line_s;
 
-typedef void (*PipeLineFlowRoutine)(struct tunnel_s *, struct context_s *,struct pipe_line_s*pl);
+typedef void (*PipeLineFlowRoutine)(struct tunnel_s *, struct context_s *, struct pipe_line_s *pl);
 
 typedef struct pipe_line_s pipe_line_t;
 
 pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool);
-void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
+void         destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
+void onUpLinePaused(void *state);
+void onUpLineResumed(void *state);
+void onDownLineResumed(void *state);
+void onDownLinePaused(void *state);
 
 bool pipeUpStream(pipe_line_t *pl, context_t *c);
 bool pipeDownStream(pipe_line_t *pl, context_t *c);
 
 void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t *left_line, uint8_t dest_tid,
-                PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream);
+                 PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream);

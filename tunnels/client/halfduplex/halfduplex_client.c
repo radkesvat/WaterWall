@@ -87,11 +87,11 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 
             cid_bytes[0] = cid_bytes[0] & 0x7f; // kHLFDCmdDownload
-            shiftl(intro_context->payload, 16);
-            writeRaw(intro_context->payload, &cids[0], sizeof(cids));
+            shiftl(c->payload, 16);
+            writeRaw(c->payload, &cids[0], sizeof(cids));
 
-            // shiftl(intro_context->payload, 1);
-            // writeUI8(intro_context->payload, kHLFDCmdUpload);
+            // shiftl(c->payload, 1);
+            // writeUI8(c->payload, kHLFDCmdUpload);
         }
         self->up->upStream(self->up, switchLine(c, cstate->upload_line));
     }

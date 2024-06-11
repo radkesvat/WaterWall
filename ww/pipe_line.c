@@ -37,6 +37,7 @@ pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool)
     (void) pool;
     return malloc(sizeof(struct msg_event));
 }
+
 void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
@@ -55,6 +56,7 @@ static void lock(pipe_line_t *pl)
         exit(1);
     }
 }
+
 static void unlock(pipe_line_t *pl)
 {
     // int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_acquire);
@@ -71,6 +73,7 @@ static void unlock(pipe_line_t *pl)
         free(pl);
     }
 }
+
 static void onMsgReceived(hevent_t *ev)
 {
     struct msg_event *msg_ev = hevent_userdata(ev);
@@ -82,6 +85,10 @@ static void onMsgReceived(hevent_t *ev)
 
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
 {
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return ;
+    }
     if (tid_from == tid_to)
     {
         fn(pl, arg);
@@ -99,7 +106,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
     hloop_post_event(loops[tid_to], &ev);
 }
 
-void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
+static void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
 {
     shift_buffer_t *buf = arg;
     if (pl->right_line == NULL)
@@ -112,7 +119,7 @@ void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
     pl->local_down_stream(pl->self, ctx, pl);
 }
 
-void writeBufferToRightSide(pipe_line_t *pl, void *arg)
+static void writeBufferToRightSide(pipe_line_t *pl, void *arg)
 {
     shift_buffer_t *buf = arg;
     if (pl->right_line == NULL)
@@ -130,7 +137,7 @@ void writeBufferToRightSide(pipe_line_t *pl, void *arg)
     pl->local_up_stream(pl->self, ctx, pl);
 }
 
-void finishLeftSide(pipe_line_t *pl, void *arg)
+static void finishLeftSide(pipe_line_t *pl, void *arg)
 {
     (void) arg;
 
@@ -147,7 +154,7 @@ void finishLeftSide(pipe_line_t *pl, void *arg)
 
 }
 
-void finishRightSide(pipe_line_t *pl, void *arg)
+static void finishRightSide(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     if (pl->right_line == NULL)
@@ -163,7 +170,7 @@ void finishRightSide(pipe_line_t *pl, void *arg)
 
 }
 
-void pauseLeftLine(pipe_line_t *pl, void *arg)
+static void pauseLeftLine(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     if (pl->left_line == NULL)
@@ -173,7 +180,7 @@ void pauseLeftLine(pipe_line_t *pl, void *arg)
     pauseLineDownSide(pl->left_line);
 }
 
-void pauseRightLine(pipe_line_t *pl, void *arg)
+static void pauseRightLine(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     if (pl->right_line == NULL)
@@ -183,7 +190,7 @@ void pauseRightLine(pipe_line_t *pl, void *arg)
     pauseLineUpSide(pl->right_line);
 }
 
-void resumeLeftLine(pipe_line_t *pl, void *arg)
+static void resumeLeftLine(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     if (pl->left_line == NULL)
@@ -193,7 +200,7 @@ void resumeLeftLine(pipe_line_t *pl, void *arg)
     resumeLineDownSide(pl->left_line);
 }
 
-void resumeRightLine(pipe_line_t *pl, void *arg)
+static void resumeRightLine(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     if (pl->right_line == NULL)
@@ -203,25 +210,25 @@ void resumeRightLine(pipe_line_t *pl, void *arg)
     resumeLineUpSide(pl->right_line);
 }
 
-void onLeftLinePaused(void *state)
+void onUpLinePaused(void *state)
 {
     pipe_line_t *pl = state;
     sendMessage(pl, pauseRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
-void onRightLinePaused(void *state)
+void onDownLinePaused(void *state)
 {
     pipe_line_t *pl = state;
     sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
 }
 
-void onLeftLineResumed(void *state)
+void onUpLineResumed(void *state)
 {
     pipe_line_t *pl = state;
     sendMessage(pl, resumeRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
-void onRightLineResumed(void *state)
+void onDownLineResumed(void *state)
 {
     pipe_line_t *pl = state;
     sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
@@ -232,10 +239,6 @@ bool pipeUpStream(pipe_line_t *pl, context_t *c)
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
 
-    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
-    {
-        return false;
-    }
 
     if (c->fin)
     {
@@ -279,10 +282,6 @@ bool pipeDownStream(pipe_line_t *pl, context_t *c)
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
 
-    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
-    {
-        return false;
-    }
 
     if (c->fin)
     {
@@ -314,20 +313,20 @@ bool pipeDownStream(pipe_line_t *pl, context_t *c)
     return true;
 }
 
-void initRight(pipe_line_t *pl, void *arg)
+static void initRight(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     line_t *rline = newLine(pl->right_tid);
-    setupLineDownSide(pl->right_line, onRightLinePaused, pl, onRightLineResumed);
+    setupLineDownSide(pl->right_line, onDownLinePaused, pl, onDownLineResumed);
     context_t *context = newInitContext(rline);
     pl->local_up_stream(pl->self, context, pl);
 
     // lockLine(pl->right_line);
 }
-void initLeft(pipe_line_t *pl, void *arg)
+static void initLeft(pipe_line_t *pl, void *arg)
 {
     (void) arg;
-    setupLineUpSide(pl->left_line, onLeftLinePaused, pl, onLeftLineResumed);
+    setupLineUpSide(pl->left_line, onUpLinePaused, pl, onUpLineResumed);
 }
 
 void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t *left_line, uint8_t dest_tid,
