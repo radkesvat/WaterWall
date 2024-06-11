@@ -119,8 +119,9 @@ static void signalHandler(int signum)
     signal(signum, SIG_DFL);
     if (signum == SIGTERM || signum == SIGINT)
     {
-        exit(0); // exit hook gets called NOLINT
+        exitHook();
     }
+    raise(signum);
 }
 
 int checkIPRange(bool ipver6, const struct in6_addr test_addr, const struct in6_addr base_addr,
