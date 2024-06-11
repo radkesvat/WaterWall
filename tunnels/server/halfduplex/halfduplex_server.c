@@ -100,30 +100,28 @@ static void onDownloadLineResumed(void *_cstate)
     }
 }
 
-static void onUploadLinePaused(void *_cstate)
+static void onUploadInDirectLinePaused(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    if (cstate->pipe)
-    {
-        onDownloadLinePaused(cstate->pipe);
-    }
-    else if (cstate->main_line)
-    {
-        pauseLineUpSide(cstate->main_line);
-    }
+    onDownloadLinePaused(cstate->pipe);
 }
 
-static void onUploadLineResumed(void *_cstate)
+static void onUploadInDirectLineResumed(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    if (cstate->pipe)
-    {
-        onDownloadLineResumed(cstate->pipe);
-    }
-    else if (cstate->main_line)
-    {
-        resumeLineDownSide(cstate->main_line);
-    }
+    onDownloadLineResumed(cstate->pipe);
+}
+
+static void onUploadDirectLinePaused(void *_cstate)
+{
+    halfduplex_server_con_state_t *cstate = _cstate;
+    pauseLineUpSide(cstate->main_line);
+}
+
+static void onUploadDirectLineResumed(void *_cstate)
+{
+    halfduplex_server_con_state_t *cstate = _cstate;
+    resumeLineDownSide(cstate->main_line);
 }
 
 static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
@@ -237,6 +235,9 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
                                                       .first_sent    = false};
             // pipe dose not need est
             CSTATE_MUT(c) = cstate;
+                
+            setupLineUpSide(c->line, onUploadDirectLinePaused, cstate, onUploadDirectLineResumed);
+
         }
         else
         {
@@ -300,11 +301,13 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
             uint8_t tid_download_line = (*f_iter.ref).second->download_line->tid;
             hhybridmutex_unlock(&(state->download_line_map_mutex));
 
-            if (this_tid == tid_download_line || upload_line_cstate->state != kCsUploadPipedIndirect)
+            if (this_tid == tid_download_line || upload_line_cstate->state != kCsUploadInTable)
             {
                 LOGF("HalfDuplexServer: Logic is incorrect.  [%s:%d]", __FILENAME__, __LINE__);
                 exit(1);
             }
+            upload_line_cstate->state = kCsUploadPipedIndirect;
+            setupLineUpSide(upload_line_cstate->upload_line, onUploadDirectLinePaused, upload_line_cstate, onUploadDirectLineResumed);
 
             newPipeLine(&upload_line_cstate->pipe, self, tid_upload_line, upload_line_cstate->upload_line,
                         tid_download_line, localUpStream, localDownStream);
@@ -379,7 +382,6 @@ static void upStream(tunnel_t *self, context_t *c)
             if (is_upload)
             {
                 cstate->upload_line = c->line;
-                setupLineUpSide(c->line, onUploadLinePaused, cstate, onUploadLineResumed);
                 hhybridmutex_lock(&(state->download_line_map_mutex));
                 hmap_cons_t_iter f_iter = hmap_cons_t_find(&(state->download_line_map), hash);
                 bool             found  = f_iter.ref != hmap_cons_t_end(&(state->download_line_map)).ref;
@@ -394,7 +396,8 @@ static void upStream(tunnel_t *self, context_t *c)
                         hmap_cons_t_erase_at(&(state->download_line_map), f_iter);
                         hhybridmutex_unlock(&(state->download_line_map_mutex));
                         cstate->state = kCsUploadDirect;
-
+                        setupLineUpSide(c->line, onUploadDirectLinePaused, cstate, onUploadDirectLineResumed);
+                        
                         line_t *download_line =
                             ((halfduplex_server_con_state_t *) ((*f_iter.ref).second))->download_line;
                         cstate->download_line = download_line;
@@ -442,6 +445,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         hhybridmutex_unlock(&(state->download_line_map_mutex));
                         cstate->state = kCsUploadPipedIndirect;
+                        setupLineUpSide(c->line, onUploadInDirectLinePaused, cstate, onUploadInDirectLineResumed);
 
                         newPipeLine(&cstate->pipe, self, c->line->tid, c->line, tid_download_line, localUpStream,
                                     localDownStream);
@@ -486,7 +490,6 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 reuseContextBuffer(c);
                 cstate->download_line = c->line;
-                setupLineUpSide(c->line, onDownloadLinePaused, cstate, onDownloadLineResumed);
 
                 hhybridmutex_lock(&(state->upload_line_map_mutex));
                 hmap_cons_t_iter f_iter = hmap_cons_t_find(&(state->upload_line_map), hash);
@@ -502,6 +505,8 @@ static void upStream(tunnel_t *self, context_t *c)
                         hmap_cons_t_erase_at(&(state->upload_line_map), f_iter);
                         hhybridmutex_unlock(&(state->upload_line_map_mutex));
                         cstate->state = kCsDownloadDirect;
+                        setupLineUpSide(c->line, onDownloadLinePaused, cstate, onDownloadLineResumed);
+
 
                         halfduplex_server_con_state_t *upload_line_cstate =
                             ((halfduplex_server_con_state_t *) ((*f_iter.ref).second));
@@ -727,6 +732,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     self->dw->downStream(self->dw, newFinContext(cstate_upload->upload_line));
                 }
+                doneLineUpSide(c->line);
                 free(cstate_upload);
                 free(cstate_download);
 
@@ -745,6 +751,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 self->up->upStream(self->up, newFinContext(cstate_download->download_line));
                 self->dw->downStream(self->dw, newFinContext(cstate_upload->download_line));
+                doneLineUpSide(c->line);
                 free(cstate_upload);
                 free(cstate_download);
 
@@ -755,7 +762,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCsUploadPipedIndirect: {
                 halfduplex_server_con_state_t *cstate_upload = LSTATE(cstate->upload_line);
                 CSTATE_MUT(c)                                = NULL;
-
+                doneLineUpSide(c->line);
                 if (! pipeUpStream(cstate_upload->pipe, c))
                 {
                     destroyContext(c);
@@ -813,6 +820,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else if (upload_line_cstate->state == kCsUploadPipedIndirect)
                 {
+                    doneLineUpSide(cstate->upload_line);
                     pipeDownStream(upload_line_cstate->pipe, newFinContext(cstate->upload_line));
                     free(upload_line_cstate);
                 }
