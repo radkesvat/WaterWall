@@ -1,7 +1,6 @@
 #include "ww.h"
 #include "buffer_pool.h"
 #include "generic_pool.h"
-#include "hlog.h"
 #include "hloop.h"
 #include "hplatform.h"
 #include "hthread.h"

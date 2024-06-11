@@ -27,6 +27,7 @@ struct idle_table_s
     hmap_idles_t   hmap;
     hhybridmutex_t mutex;
     uint64_t       last_update_ms;
+    uintptr_t      memptr;
 } ATTR_ALIGNED_LINE_CACHE;
 
 void idleCallBack(htimer_t *timer);
@@ -40,12 +41,33 @@ void destroyIdleTable(idle_table_t *self)
 
 idle_table_t *newIdleTable(hloop_t *loop)
 {
-    idle_table_t *newtable = malloc(sizeof(idle_table_t));
-    *newtable              = (idle_table_t){.loop           = loop,
-                                            .idle_handle    = htimer_add(loop, idleCallBack, 1000, INFINITE),
-                                            .hqueue         = heapq_idles_t_with_capacity(kVecCap),
-                                            .hmap           = hmap_idles_t_with_capacity(kVecCap),
-                                            .last_update_ms = hloop_now_ms(loop)};
+    assert(sizeof(struct idle_table_s) <= kCpuLineCacheSize);
+    int64_t memsize = (int64_t) sizeof(struct idle_table_s);
+    // ensure we have enough space to offset the allocation by line cache (for alignment)
+    MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+
+    // check for overflow
+    if (memsize < (int64_t) sizeof(struct idle_table_s))
+    {
+        fprintf(stderr, "buffer size out of range");
+        exit(1);
+    }
+
+    // allocate memory, placing hchan_t at a line cache address boundary
+    uintptr_t ptr = (uintptr_t) malloc(memsize);
+
+    // align c to line cache boundary
+    MUSTALIGN2(ptr, kCpuLineCacheSize);
+
+    idle_table_t *newtable = (idle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
+
+    *newtable = (idle_table_t){.memptr         = ptr,
+                               .loop           = loop,
+                               .idle_handle    = htimer_add(loop, idleCallBack, 1000, INFINITE),
+                               .hqueue         = heapq_idles_t_with_capacity(kVecCap),
+                               .hmap           = hmap_idles_t_with_capacity(kVecCap),
+                               .last_update_ms = hloop_now_ms(loop)};
 
     hhybridmutex_init(&(newtable->mutex));
     hevent_set_userdata(newtable->idle_handle, newtable);
@@ -160,4 +182,9 @@ void idleCallBack(htimer_t *timer)
         }
     }
     hhybridmutex_unlock(&(self->mutex));
+}
+
+void destoryIdleTable(idle_table_t *self)
+{
+    free((void *) (self->memptr)); // NOLINT
 }

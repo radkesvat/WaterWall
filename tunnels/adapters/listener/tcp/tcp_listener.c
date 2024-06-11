@@ -1,6 +1,5 @@
 #include "tcp_listener.h"
 #include "buffer_pool.h"
-#include "hlog.h"
 #include "hloop.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"

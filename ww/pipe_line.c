@@ -14,6 +14,7 @@ struct pipe_line_s
     uint8_t     left_tid;
     uint8_t     right_tid;
 
+    uintptr_t           memptr;
     tunnel_t           *self;
     line_t             *left_line;
     line_t             *right_line;
@@ -69,7 +70,7 @@ static void unlock(pipe_line_t *pl)
             LOGF("PipeLine: thread-safety done incorrectly unlock()");
             exit(1);
         }
-        free(pl);
+        free((void*) pl->memptr); // NOLINT
     }
 }
 
@@ -351,18 +352,37 @@ void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t 
 {
     assert(*result == NULL);
 
-    pipe_line_t *pl = malloc(sizeof(pipe_line_t));
-    *pl             = (pipe_line_t){.self              = self,
-                                    .left_tid          = this_tid,
-                                    .right_tid         = dest_tid,
-                                    .left_line         = left_line,
-                                    .right_line        = NULL,
-                                    .closed            = false,
-                                    .first_sent        = false,
-                                    .refc              = 1,
-                                    .local_up_stream   = local_up_stream,
-                                    .local_down_stream = local_down_stream};
-    *result         = pl;
+    assert(sizeof(struct pipe_line_s) <= kCpuLineCacheSize);
+    int64_t memsize = (int64_t) sizeof(struct pipe_line_s);
+    // ensure we have enough space to offset the allocation by line cache (for alignment)
+    MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+
+    // check for overflow
+    if (memsize < (int64_t) sizeof(struct pipe_line_s))
+    {
+        fprintf(stderr, "buffer size out of range");
+        exit(1);
+    }
+
+    // allocate memory, placing hchan_t at a line cache address boundary
+    uintptr_t ptr = (uintptr_t) malloc(memsize);
+
+    // align c to line cache boundary
+    MUSTALIGN2(ptr, kCpuLineCacheSize);
+
+    pipe_line_t  *pl       = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
+    *pl                    = (pipe_line_t){.self              = self,
+                                           .left_tid          = this_tid,
+                                           .right_tid         = dest_tid,
+                                           .left_line         = left_line,
+                                           .right_line        = NULL,
+                                           .closed            = false,
+                                           .first_sent        = false,
+                                           .refc              = 1,
+                                           .local_up_stream   = local_up_stream,
+                                           .local_down_stream = local_down_stream};
+    *result                = pl;
 
     initLeft(pl, NULL);
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);

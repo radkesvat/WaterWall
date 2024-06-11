@@ -45,6 +45,11 @@ enum
 
 #define ATTR_ALIGNED_LINE_CACHE __attribute__((aligned(kCpuLineCacheSize)))
 
+#define MUSTALIGN2(n, w) assert(((w) & ((w) - 1)) == 0); /* alignment w is not a power of two */
+
+#define ALIGN2(n, w) (((n) + ((w) - 1)) & ~((w) - 1))
+
+
 struct ww_runtime_state_s;
 
 WWEXPORT void setWW(struct ww_runtime_state_s *state);

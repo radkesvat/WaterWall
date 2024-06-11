@@ -134,7 +134,9 @@ HV_EXPORT logger_t* hv_default_logger(void);
 HV_EXPORT void      hv_destroy_default_logger(void);
 
 // macro hlog*
+#ifndef hlog
 #define hlog                            hv_default_logger()
+#endif
 #define hlog_destroy()                  hv_destroy_default_logger()
 #define hlog_disable()                  logger_set_level(hlog, LOG_LEVEL_SILENT)
 #define hlog_set_file(filepath)         logger_set_file(hlog, filepath)

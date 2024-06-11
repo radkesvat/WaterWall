@@ -1,5 +1,4 @@
 #include "network_logger.h"
-#include "hlog.h"
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>

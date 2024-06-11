@@ -138,7 +138,6 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
             assert(bufLen(buf) >= sizeof(uint64_t));
             hash_t hash = 0x0;
             readUI64(c->payload, (uint64_t *) &hash);
-            hash         = hash & (0x7FFFFFFFFFFFFFFFULL);
             cstate->hash = hash;
             shiftr(buf, sizeof(uint64_t));
 
@@ -462,6 +461,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 else
                 {
                     hhybridmutex_unlock(&(state->download_line_map_mutex));
+                    cstate->state = kCsUploadInTable;
 
                     hhybridmutex_lock(&(state->upload_line_map_mutex));
                     bool push_succeed = hmap_cons_t_push(&(state->upload_line_map), (hmap_cons_t_value){hash, cstate});
@@ -477,7 +477,6 @@ static void upStream(tunnel_t *self, context_t *c)
                         destroyContext(c);
                         return;
                     }
-                    cstate->state = kCsUploadInTable;
 
                     if (bufLen(buf) > 0)
                     {
