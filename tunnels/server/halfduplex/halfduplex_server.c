@@ -121,7 +121,7 @@ static void onUploadDirectLinePaused(void *_cstate)
 static void onUploadDirectLineResumed(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    resumeLineDownSide(cstate->main_line);
+    resumeLineUpSide(cstate->main_line);
 }
 
 static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
@@ -172,7 +172,8 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
 
                 download_line_cstate->state       = kCsDownloadDirect;
                 download_line_cstate->upload_line = c->line;
-
+                
+                setupLineUpSide(c->line, onUploadDirectLinePaused, cstate, onUploadDirectLineResumed);
                 line_t *main_line               = newLine(tid_download_line);
                 download_line_cstate->main_line = main_line;
                 cstate->main_line               = main_line;
@@ -236,7 +237,6 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
             // pipe dose not need est
             CSTATE_MUT(c) = cstate;
 
-            setupLineUpSide(c->line, onUploadDirectLinePaused, cstate, onUploadDirectLineResumed);
         }
         else
         {
@@ -516,7 +516,8 @@ static void upStream(tunnel_t *self, context_t *c)
                             ((halfduplex_server_con_state_t *) ((*f_iter.ref).second));
 
                         assert(upload_line_cstate->state == kCsUploadInTable);
-
+                        
+                        setupLineUpSide(upload_line_cstate->upload_line, onUploadDirectLinePaused, cstate, onUploadDirectLineResumed);
                         upload_line_cstate->state         = kCsUploadDirect;
                         upload_line_cstate->download_line = c->line;
 
@@ -600,22 +601,6 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 reuseBuffer(getContextBufferPool(c), cstate->buffering);
                 cstate->buffering = NULL;
-                hhybridmutex_lock(&(state->upload_line_map_mutex));
-
-                hmap_cons_t_iter f_iter = hmap_cons_t_find(&(state->upload_line_map), cstate->hash);
-                bool             found  = f_iter.ref != hmap_cons_t_end(&(state->upload_line_map)).ref;
-                if (! found)
-                {
-                    LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
-                    exit(1);
-                }
-                hmap_cons_t_erase_at(&(state->upload_line_map), f_iter);
-
-                hhybridmutex_unlock(&(state->upload_line_map_mutex));
-
-                free(cstate);
-                CSTATE_MUT(c) = NULL;
-                destroyContext(c);
             }
             destroyContext(c);
             break;
