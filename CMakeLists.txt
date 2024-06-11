@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
-project(Waterwall VERSION 0.99)
+project(Waterwall VERSION 1.00)
 
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
@@ -15,6 +15,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
   check_ipo_supported()
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
+  # enabling lto for clang is done thisway, because thin-lto is the clang default 
   if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(CMAKE_C_COMPILE_OPTIONS_IPO  "-flto")
     set(CMAKE_CXX_COMPILE_OPTIONS_IPO  "-flto")
@@ -31,7 +32,12 @@ endif()
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include  ${CMAKE_CURRENT_SOURCE_DIR}/core/force_link_glibc_2.27.h")
 
 
-set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
+set(ENABLE_ASAN ON CACHE BOOL "enable address sanitizer" FORCE)
+set(ENABLE_TSAN OFF CACHE BOOL "enable thread sanitizer" FORCE)
+set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
+set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
+
+
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  TRUE)
@@ -46,8 +52,8 @@ option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_CLIENT "link OpenSSLClient staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
-option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  FALSE)
-option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  FALSE)
+option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  FALSE)  # temporarely disabled for compile speed
+option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  FALSE)  # temporarely disabled for compile speed
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix ?
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
@@ -71,7 +77,6 @@ set(OPENSSL_CONFIGURE_VERBOSE ON)
 add_executable(Waterwall core/main.c
                   core/core_settings.c
                   core/static_tunnels.c
-               
 )
 
 
@@ -345,10 +350,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 endif()
 
-if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-  target_compile_options(Waterwall PUBLIC -fsanitize=address)
-  target_link_options(Waterwall PUBLIC -fsanitize=address)
-endif()
 
 if(OPENSSL_VERSION)
   message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
@@ -364,7 +365,3 @@ set_target_properties(Waterwall
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
-# get_target_property(target_options Waterwall COMPILE_OPTIONS)
-# list(REMOVE_ITEM target_options "-pedantic")
-# set_property(TARGET Waterwall PROPERTY COMPILE_OPTIONS ${target_options})
-# set_property(TARGET Waterwall PROPERTY C_STANDARD 11)

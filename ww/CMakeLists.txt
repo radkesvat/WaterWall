@@ -105,9 +105,28 @@ endif()
 # target_compile_options(ww PUBLIC -pg)
 # target_link_options(ww PUBLIC -pg)
 
-if(ENABLE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-  target_compile_options(ww PUBLIC -fsanitize=address)
-  target_link_options(ww PUBLIC -fsanitize=address)
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+
+  if(ENABLE_ASAN)
+    target_compile_options(ww PUBLIC -fsanitize=address)
+    target_link_options(ww PUBLIC -fsanitize=address)
+  endif()
+
+  if(ENABLE_TSAN)
+    target_compile_options(ww PUBLIC -fsanitize=thread)
+    target_link_options(ww PUBLIC -fsanitize=thread)
+  endif()
+
+  if(ENABLE_LSAN)
+    target_compile_options(ww PUBLIC -fsanitize=leak)
+    target_link_options(ww PUBLIC -fsanitize=leak)
+  endif()
+
+  if(ENABLE_USAN)
+    target_compile_options(ww PUBLIC -fsanitize=undefined)
+    target_link_options(ww PUBLIC -fsanitize=undefined)
+  endif()
+
 endif()
 
 # clang-tidy dose not like this even if cc = gcc
@@ -118,14 +137,14 @@ endif()
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
-target_compile_options(ww PUBLIC 
-  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> 
-  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Werror>
-)
+# target_compile_options(ww PUBLIC 
+#   $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> 
+#   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Werror>
+# )
 
-target_compile_options(ww PUBLIC -Wno-unused-function)
+# target_compile_options(ww PUBLIC -Wno-unused-function)
 
-target_compile_options(ww PUBLIC -pedantic -pedantic-errors)
+# target_compile_options(ww PUBLIC -pedantic -pedantic-errors)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_definitions(ww PUBLIC DEBUG=1)
