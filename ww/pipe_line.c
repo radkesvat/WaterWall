@@ -14,9 +14,9 @@ struct pipe_line_s
     uint8_t     left_tid;
     uint8_t     right_tid;
 
-    tunnel_t *self;
-    line_t *left_line;
-    line_t *right_line;
+    tunnel_t           *self;
+    line_t             *left_line;
+    line_t             *right_line;
     PipeLineFlowRoutine local_up_stream;
     PipeLineFlowRoutine local_down_stream;
 
@@ -30,7 +30,6 @@ struct msg_event
 };
 
 typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
-
 
 pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool)
 {
@@ -80,15 +79,11 @@ static void onMsgReceived(hevent_t *ev)
     (*(MsgTargetFunction *) (&(msg_ev->function)))(msg_ev->pl, msg_ev->arg);
     reusePoolItem(pipeline_msg_pools[msg_ev->pl->right_tid], msg_ev);
     unlock(msg_ev->pl);
-
 }
 
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
 {
-    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
-    {
-        return ;
-    }
+
     if (tid_from == tid_to)
     {
         fn(pl, arg);
@@ -151,7 +146,6 @@ static void finishLeftSide(pipe_line_t *pl, void *arg)
     pl->left_line = NULL;
     pl->local_down_stream(pl->self, fctx, pl);
     unlock(pl);
-
 }
 
 static void finishRightSide(pipe_line_t *pl, void *arg)
@@ -167,7 +161,6 @@ static void finishRightSide(pipe_line_t *pl, void *arg)
     pl->right_line = NULL;
     pl->local_up_stream(pl->self, fctx, pl);
     unlock(pl);
-
 }
 
 static void pauseLeftLine(pipe_line_t *pl, void *arg)
@@ -213,24 +206,41 @@ static void resumeRightLine(pipe_line_t *pl, void *arg)
 void onUpLinePaused(void *state)
 {
     pipe_line_t *pl = state;
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return;
+    }
     sendMessage(pl, pauseRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
 void onDownLinePaused(void *state)
 {
     pipe_line_t *pl = state;
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return;
+    }
     sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
 }
 
 void onUpLineResumed(void *state)
 {
     pipe_line_t *pl = state;
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return;
+    }
     sendMessage(pl, resumeRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
 void onDownLineResumed(void *state)
 {
+
     pipe_line_t *pl = state;
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return;
+    }
     sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
 }
 
@@ -238,7 +248,6 @@ bool pipeUpStream(pipe_line_t *pl, context_t *c)
 {
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
-
 
     if (c->fin)
     {
@@ -261,6 +270,10 @@ bool pipeUpStream(pipe_line_t *pl, context_t *c)
         return false;
     }
 
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return false;
+    }
     assert(c->payload != NULL);
     sendMessage(pl, writeBufferToRightSide, c->payload, pl->left_tid, pl->right_tid);
     c->payload = NULL;
@@ -272,21 +285,20 @@ bool pipeUpStream(pipe_line_t *pl, context_t *c)
 bool pipeDownStream(pipe_line_t *pl, context_t *c)
 {
     // est context is ignored, only fin or data makes sense
-
-    if (WW_UNLIKELY(c->est))
-    {
-        destroyContext(c);
-        return true;
-    }
+    // if (WW_UNLIKELY(c->est))
+    // {
+    //     destroyContext(c);
+    //     return true;
+    // }
+    assert(! c->est);
 
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
 
-
     if (c->fin)
     {
         assert(pl->right_line);
-        doneLineUpSide(pl->right_line);
+        doneLineDownSide(pl->right_line);
         destroyLine(pl->right_line);
         pl->right_line = NULL;
 
@@ -305,6 +317,10 @@ bool pipeDownStream(pipe_line_t *pl, context_t *c)
         return false;
     }
 
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return false;
+    }
     assert(c->payload != NULL);
     sendMessage(pl, writeBufferToLeftSide, c->payload, pl->right_tid, pl->left_tid);
     c->payload = NULL;
