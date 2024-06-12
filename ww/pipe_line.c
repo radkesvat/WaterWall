@@ -50,7 +50,7 @@ static void lock(pipe_line_t *pl)
     int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_relaxed);
     if (old_refc == 0)
     {
-        // this should not happen, otherwise we must use change memory order
+        // this should not happen, otherwise we must change memory order
         // but i think its ok because threads synchronize around mutex
         LOGF("PipeLine: thread-safety done incorrectly lock()");
         exit(1);
@@ -65,12 +65,12 @@ static void unlock(pipe_line_t *pl)
     {
         if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
         {
-            // this should not happen, otherwise we must use change memory order
+            // this should not happen, otherwise we must change memory order
             // but i think its ok because threads synchronize around mutex
             LOGF("PipeLine: thread-safety done incorrectly unlock()");
             exit(1);
         }
-        free((void*) pl->memptr); // NOLINT
+        free((void *) pl->memptr); // NOLINT
     }
 }
 
@@ -204,7 +204,7 @@ static void resumeRightLine(pipe_line_t *pl, void *arg)
     resumeLineUpSide(pl->right_line);
 }
 
-void onUpLinePaused(void *state)
+void pipeOnUpLinePaused(void *state)
 {
     pipe_line_t *pl = state;
     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
@@ -214,7 +214,7 @@ void onUpLinePaused(void *state)
     sendMessage(pl, pauseRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
-void onDownLinePaused(void *state)
+void pipeOnDownLinePaused(void *state)
 {
     pipe_line_t *pl = state;
     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
@@ -224,7 +224,7 @@ void onDownLinePaused(void *state)
     sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
 }
 
-void onUpLineResumed(void *state)
+void pipeOnUpLineResumed(void *state)
 {
     pipe_line_t *pl = state;
     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
@@ -234,7 +234,7 @@ void onUpLineResumed(void *state)
     sendMessage(pl, resumeRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
-void onDownLineResumed(void *state)
+void pipeOnDownLineResumed(void *state)
 {
 
     pipe_line_t *pl = state;
@@ -249,10 +249,10 @@ bool pipeUpStream(pipe_line_t *pl, context_t *c)
 {
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
+    assert(pl->left_line);
 
     if (c->fin)
     {
-        assert(pl->left_line);
         doneLineUpSide(pl->left_line);
         // destroyLine(pl->left_line);
         pl->left_line = NULL;
@@ -295,10 +295,10 @@ bool pipeDownStream(pipe_line_t *pl, context_t *c)
 
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
+    assert(pl->right_line);
 
     if (c->fin)
     {
-        assert(pl->right_line);
         doneLineDownSide(pl->right_line);
         destroyLine(pl->right_line);
         pl->right_line = NULL;
@@ -311,7 +311,6 @@ bool pipeDownStream(pipe_line_t *pl, context_t *c)
             // we managed to close the channel
             destroyContext(c);
             sendMessage(pl, finishLeftSide, NULL, pl->right_tid, pl->left_tid);
-            unlock(pl);
             return true;
         }
         // other line managed to close first and also queued us the fin packet
@@ -333,9 +332,9 @@ bool pipeDownStream(pipe_line_t *pl, context_t *c)
 static void initRight(pipe_line_t *pl, void *arg)
 {
     (void) arg;
-    line_t *rline = newLine(pl->right_tid);
-    setupLineDownSide(pl->right_line, onDownLinePaused, pl, onDownLineResumed);
-    context_t *context = newInitContext(rline);
+    pl->right_line = newLine(pl->right_tid);
+    setupLineDownSide(pl->right_line, pipeOnDownLinePaused, pl, pipeOnDownLineResumed);
+    context_t *context = newInitContext(pl->right_line);
     pl->local_up_stream(pl->self, context, pl);
 
     // lockLine(pl->right_line);
@@ -343,7 +342,7 @@ static void initRight(pipe_line_t *pl, void *arg)
 static void initLeft(pipe_line_t *pl, void *arg)
 {
     (void) arg;
-    setupLineUpSide(pl->left_line, onUpLinePaused, pl, onUpLineResumed);
+    setupLineUpSide(pl->left_line, pipeOnUpLinePaused, pl, pipeOnUpLineResumed);
 }
 
 void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t *left_line, uint8_t dest_tid,
@@ -365,24 +364,25 @@ void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t 
         exit(1);
     }
 
-    // allocate memory, placing hchan_t at a line cache address boundary
+    // allocate memory, placing pipe_line_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t) malloc(memsize);
 
     // align c to line cache boundary
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 
-    pipe_line_t  *pl       = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
-    *pl                    = (pipe_line_t){.self              = self,
-                                           .left_tid          = this_tid,
-                                           .right_tid         = dest_tid,
-                                           .left_line         = left_line,
-                                           .right_line        = NULL,
-                                           .closed            = false,
-                                           .first_sent        = false,
-                                           .refc              = 1,
-                                           .local_up_stream   = local_up_stream,
-                                           .local_down_stream = local_down_stream};
-    *result                = pl;
+    pipe_line_t *pl = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
+    *pl             = (pipe_line_t){.memptr            = ptr,
+                                    .self              = self,
+                                    .left_tid          = this_tid,
+                                    .right_tid         = dest_tid,
+                                    .left_line         = left_line,
+                                    .right_line        = NULL,
+                                    .closed            = false,
+                                    .first_sent        = false,
+                                    .refc              = 1,
+                                    .local_up_stream   = local_up_stream,
+                                    .local_down_stream = local_down_stream};
+    *result         = pl;
 
     initLeft(pl, NULL);
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);

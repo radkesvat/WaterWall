@@ -54,7 +54,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
         exit(1);
     }
 
-    // allocate memory, placing hchan_t at a line cache address boundary
+    // allocate memory, placing idle_table_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t) malloc(memsize);
 
     // align c to line cache boundary
@@ -85,7 +85,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     *item = (idle_item_t){
         .expire_at_ms = hloop_now_ms(loops[tid]) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
 
-    if (NULL == hmap_idles_t_push(&(self->hmap), (hmap_idles_t_value){item->hash, item}))
+    if (hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
     {
         // hash is already in the table !
         free(item);

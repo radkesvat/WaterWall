@@ -38,10 +38,10 @@ typedef struct pipe_line_s pipe_line_t;
 pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool);
 void         destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
-void onUpLinePaused(void *state);
-void onUpLineResumed(void *state);
-void onDownLineResumed(void *state);
-void onDownLinePaused(void *state);
+void pipeOnUpLinePaused(void *state);
+void pipeOnUpLineResumed(void *state);
+void pipeOnDownLineResumed(void *state);
+void pipeOnDownLinePaused(void *state);
 
 bool pipeUpStream(pipe_line_t *pl, context_t *c);
 bool pipeDownStream(pipe_line_t *pl, context_t *c);

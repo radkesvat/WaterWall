@@ -32,7 +32,7 @@ endif()
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include  ${CMAKE_CURRENT_SOURCE_DIR}/core/force_link_glibc_2.27.h")
 
 
-set(ENABLE_ASAN ON CACHE BOOL "enable address sanitizer" FORCE)
+set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
 set(ENABLE_TSAN OFF CACHE BOOL "enable thread sanitizer" FORCE)
 set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
