@@ -271,7 +271,9 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             tuser->hash_of_hexed_sha224_of_user_uid =
                 CALC_HASH_BYTES(tuser->hexed_sha224_of_user_uid, sizeof(sha224_hex_t));
 
-            hmap_users_t_push(&(state->users), (hmap_users_t_value){tuser->hash_of_hexed_sha224_of_user_uid, tuser});
+            if(!hmap_users_t_insert(&(state->users), tuser->hash_of_hexed_sha224_of_user_uid, tuser).inserted){
+                LOGW("TrojanAuthServer: duplicate passwords, 2 users have exactly same password");
+            }
         }
 
         total_users++;
