@@ -12,6 +12,7 @@
 #include <assert.h> // for assert
 #include <stdlib.h>
 #include <string.h>
+#define BYPASS_BUFFERPOOL
 
 // NOLINTBEGIN
 
@@ -37,6 +38,18 @@
 
 // NOLINTEND
 
+struct buffer_pool_s
+{
+    unsigned int len;
+    unsigned int cap;
+    unsigned int free_threshould;
+    unsigned int buffers_size;
+#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+    atomic_size_t in_use;
+#endif
+    shift_buffer_t *available[];
+};
+
 static void firstCharge(buffer_pool_t *pool)
 {
     for (size_t i = 0; i < (pool->cap / 2); i++)
@@ -55,7 +68,7 @@ static void reCharge(buffer_pool_t *pool)
         pool->available[i] = newShiftBuffer(pool->buffers_size);
     }
     pool->len += increase;
-#if defined(DEBUG) && defined(POOL_DEBUG)
+#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     LOGD("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
@@ -70,7 +83,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
     }
     pool->len -= decrease;
 
-#if defined(DEBUG) && defined(POOL_DEBUG)
+#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
 #ifdef OS_LINUX
@@ -80,7 +93,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
-#if defined(DEBUG) && defined(BYPASS_POOL)
+#if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
     return newShiftBuffer(pool->buffers_size);
 #endif
 
@@ -89,7 +102,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
         reCharge(pool);
     }
 
-#if defined(DEBUG) && defined(BYPASS_POOL)
+#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
 #endif
     --(pool->len);
@@ -98,7 +111,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
-#if defined(DEBUG) && defined(BYPASS_POOL)
+#if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
     destroyShiftBuffer(b);
     return;
 #endif
@@ -108,7 +121,7 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
         destroyShiftBuffer(b);
         return;
     }
-#if defined(DEBUG) && defined(BYPASS_POOL)
+#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use -= 1;
 #endif
     if (pool->len > pool->free_threshould)

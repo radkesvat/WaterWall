@@ -77,9 +77,10 @@ static void unlock(pipe_line_t *pl)
 static void onMsgReceived(hevent_t *ev)
 {
     struct msg_event *msg_ev = hevent_userdata(ev);
-    (*(MsgTargetFunction *) (&(msg_ev->function)))(msg_ev->pl, msg_ev->arg);
-    reusePoolItem(pipeline_msg_pools[msg_ev->pl->right_tid], msg_ev);
-    unlock(msg_ev->pl);
+    pipe_line_t *pl = msg_ev->pl;
+    (*(MsgTargetFunction *) (&(msg_ev->function)))(pl, msg_ev->arg);
+    reusePoolItem(pipeline_msg_pools[pl->right_tid], msg_ev);
+    unlock(pl);
 }
 
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
