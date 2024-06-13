@@ -12,7 +12,7 @@
 #include <assert.h> // for assert
 #include <stdlib.h>
 #include <string.h>
-#define BYPASS_BUFFERPOOL
+// #define BYPASS_BUFFERPOOL
 
 // NOLINTBEGIN
 
