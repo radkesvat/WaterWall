@@ -137,14 +137,14 @@ endif()
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
-# target_compile_options(ww PUBLIC 
-#   $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> 
-#   $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Werror>
-# )
+target_compile_options(ww PUBLIC 
+  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> 
+  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Werror>
+)
 
-# target_compile_options(ww PUBLIC -Wno-unused-function)
+target_compile_options(ww PUBLIC -Wno-unused-function)
 
-# target_compile_options(ww PUBLIC -pedantic -pedantic-errors)
+target_compile_options(ww PUBLIC -pedantic -pedantic-errors)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_definitions(ww PUBLIC DEBUG=1)
