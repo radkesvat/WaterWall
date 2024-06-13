@@ -72,9 +72,9 @@ static void downStream(tunnel_t *self, context_t *c)
                     initiateConnect(self, tid, false);
                     atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
 
-                    if (! ucstate->idle_handle_removed)
+                    if (ucstate->idle_handle)
                     {
-                        ucstate->idle_handle_removed  = true;
+                        ucstate->idle_handle  = NULL;
                         reverse_client_state_t *state = STATE(ucstate->self);
                         removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t) (ucstate));
                     }
@@ -172,14 +172,9 @@ static void downStream(tunnel_t *self, context_t *c)
             ucstate->established = true;
             initiateConnect(self, tid, false);
 
-            idle_item_t *con_idle_item =
-                newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate, onStarvedConnectionExpire,
+            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate, onStarvedConnectionExpire,
                             c->line->tid, kConnectionStarvationTimeOut);
 
-            if (con_idle_item)
-            {
-                ucstate->idle_handle_removed = false;
-            }
 
             destroyContext(c);
         }
@@ -228,8 +223,6 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     t->downStream         = &downStream;
     htimer_t *start_timer = htimer_add(loops[0], startReverseClient, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
-
-    
 
     return t;
 }

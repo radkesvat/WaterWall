@@ -271,7 +271,8 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             tuser->hash_of_hexed_sha224_of_user_uid =
                 CALC_HASH_BYTES(tuser->hexed_sha224_of_user_uid, sizeof(sha224_hex_t));
 
-            if(!hmap_users_t_insert(&(state->users), tuser->hash_of_hexed_sha224_of_user_uid, tuser).inserted){
+            if (! hmap_users_t_insert(&(state->users), tuser->hash_of_hexed_sha224_of_user_uid, tuser).inserted)
+            {
                 LOGW("TrojanAuthServer: duplicate passwords, 2 users have exactly same password");
             }
         }
@@ -294,7 +295,7 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
             state->fallback_delay = 0;
         }
 
-        hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
+        hash_t  hash_next     = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
         node_t *fallback_node = getNode(hash_next);
         if (fallback_node == NULL)
         {
@@ -334,7 +335,6 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
     t->downStream = &downStream;
     parse(t, settings, instance_info->chain_index);
 
-    
     return t;
 }
 

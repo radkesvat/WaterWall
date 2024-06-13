@@ -11,14 +11,14 @@ struct connect_arg
 
 typedef struct reverse_client_con_state_s
 {
-    bool      pair_connected;
-    bool      established;
-    bool      handshaked;
-    bool      first_sent_d;
-    bool      idle_handle_removed;
-    line_t   *u;
-    line_t   *d;
-    tunnel_t *self;
+    bool         pair_connected;
+    bool         established;
+    bool         handshaked;
+    bool         first_sent_d;
+    idle_item_t *idle_handle;
+    line_t      *u;
+    line_t      *d;
+    tunnel_t    *self;
 
 } reverse_client_con_state_t;
 

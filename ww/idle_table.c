@@ -41,7 +41,7 @@ void destroyIdleTable(idle_table_t *self)
 
 idle_table_t *newIdleTable(hloop_t *loop)
 {
-    assert(sizeof(struct idle_table_s) <= kCpuLineCacheSize);
+    // assert(sizeof(struct idle_table_s) <= kCpuLineCacheSize); promotion to 128 bytes
     int64_t memsize = (int64_t) sizeof(struct idle_table_s);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
@@ -85,11 +85,11 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     *item = (idle_item_t){
         .expire_at_ms = hloop_now_ms(loops[tid]) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
 
-    if (hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
+    if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
     {
         // hash is already in the table !
-        free(item);
         hhybridmutex_unlock(&(self->mutex));
+        free(item);
         return NULL;
     }
     heapq_idles_t_push(&(self->hqueue), item);

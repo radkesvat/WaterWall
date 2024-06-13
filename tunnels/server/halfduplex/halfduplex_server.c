@@ -121,7 +121,6 @@ static void onUploadDirectLinePaused(void *_cstate)
 static void onUploadDirectLineResumed(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    assert(cstate->state != kCsDownloadDirect);
     resumeLineUpSide(cstate->main_line);
 }
 
@@ -360,7 +359,8 @@ static void upStream(tunnel_t *self, context_t *c)
     halfduplex_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {
-        if (cstate == NULL)
+        // todo (remove) its hard to say but i think it can be romeved and not required anymore
+        if (WW_UNLIKELY(cstate == NULL))
         {
             reuseContextBuffer(c);
             destroyContext(c);
@@ -691,7 +691,8 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            if (cstate == NULL)
+            // todo (remove) its hard to say but i think it can be romeved and not required anymore
+            if (WW_UNLIKELY(cstate == NULL))
             {
                 destroyContext(c);
                 return;
@@ -906,7 +907,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 self->dw->downStream(self->dw, newFinContext(c->line));
 
-                upload_line_cstate = LSTATE(cstate->upload_line);
+                upload_line_cstate = cstate->upload_line == NULL ? NULL : LSTATE(cstate->upload_line);
                 if (upload_line_cstate)
                 {
                     line_t *upload_line             = cstate->upload_line;

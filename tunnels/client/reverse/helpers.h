@@ -45,13 +45,13 @@ static reverse_client_con_state_t *createCstate(tunnel_t *self, uint8_t tid)
     reserveChainStateIndex(dw); // we always take one from the down line
     setupLineDownSide(up, onLinePausedU, cstate, onLineResumedU);
     setupLineDownSide(dw, onLinePausedD, cstate, onLineResumedD);
-    *cstate = (reverse_client_con_state_t){.u = up, .d = dw, .idle_handle_removed = true, .self = self};
+    *cstate = (reverse_client_con_state_t){.u = up, .d = dw, .idle_handle = NULL, .self = self};
     return cstate;
 }
 
 static void cleanup(reverse_client_con_state_t *cstate)
 {
-    if (! cstate->idle_handle_removed)
+    if (cstate->idle_handle)
     {
         reverse_client_state_t *state = STATE(cstate->self);
         removeIdleItemByHash(cstate->u->tid, state->starved_connections, (hash_t) (cstate));
@@ -145,9 +145,9 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
     reverse_client_con_state_t *cstate = idle_con->userdata;
     tunnel_t                   *self   = cstate->self;
     reverse_client_state_t     *state  = STATE(self);
-    if (cstate->idle_handle_removed){
+    if (cstate->idle_handle == NULL){
         //this can happen if we are unlucky and 2 events are passed to eventloop in 
-        // a bad order, first connection to peer succeds and also the starvation cb call 
+        // a bad order, first connection to peer succeeds and also the starvation cb call 
         // is already in the queue
         assert(cstate->pair_connected);
         return;
@@ -167,7 +167,7 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
         LOGW("ReverseClient: a starved connection detected and closed");
     }
 
-    cstate->idle_handle_removed = true;
+    cstate->idle_handle = NULL;
     initiateConnect(self, cstate->u->tid, false);
 
     (cstate->u->chains_state)[self->chain_index]    = NULL;
