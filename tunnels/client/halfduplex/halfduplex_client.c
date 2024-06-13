@@ -208,7 +208,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, newFinContext(cstate->download_line));
                 destroyLine(cstate->download_line);
                 self->dw->downStream(self->dw, newFinContext(cstate->main_line));
-                destroyLine(cstate->download_line);
+                destroyLine(cstate->upload_line);
             }
 
             free(cstate);

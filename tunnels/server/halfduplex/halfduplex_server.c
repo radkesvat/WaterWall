@@ -935,7 +935,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
 
                 free(cstate);
-                destroyContext(c);
+                // destroyContext(c);
 
                 break;
 
