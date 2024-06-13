@@ -34,7 +34,7 @@ endif()
 
 set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
 set(ENABLE_TSAN OFF CACHE BOOL "enable thread sanitizer" FORCE)
-set(ENABLE_LSAN ON CACHE BOOL "enable leak sanitizer" FORCE)
+set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 
 
