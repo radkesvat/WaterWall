@@ -353,6 +353,7 @@ static void callNotifyDownloadLineIsReadyForBind(hevent_t *ev)
     free(args);
 }
 
+// todo (rename+format) names are not meaningful at all!
 static void upStream(tunnel_t *self, context_t *c)
 {
     halfduplex_server_state_t     *state  = STATE(self);

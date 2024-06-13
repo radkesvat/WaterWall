@@ -17,7 +17,6 @@ typedef struct halfduplex_con_state_s
 
 } halfduplex_con_state_t;
 
-
 static void onMainLinePaused(void *cstate)
 {
     pauseLineUpSide(((halfduplex_con_state_t *) cstate)->upload_line);
@@ -70,9 +69,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
 
-            cid_bytes[0] = cid_bytes[0] & 0x7f; // kHLFDCmdUpload
+            cid_bytes[0]      = cid_bytes[0] & 0x7f; // kHLFDCmdUpload
             unsigned int blen = bufLen(c->payload);
-            setLen(c->payload,blen + sizeof(uint64_t));
+            setLen(c->payload, blen + sizeof(uint64_t));
             shiftr(c->payload, blen);
             writeRaw(c->payload, cid_bytes, sizeof(cids));
             shiftl(c->payload, blen);

@@ -77,7 +77,7 @@ static void unlock(pipe_line_t *pl)
 static void onMsgReceived(hevent_t *ev)
 {
     struct msg_event *msg_ev = hevent_userdata(ev);
-    pipe_line_t *pl = msg_ev->pl;
+    pipe_line_t      *pl     = msg_ev->pl;
     (*(MsgTargetFunction *) (&(msg_ev->function)))(pl, msg_ev->arg);
     reusePoolItem(pipeline_msg_pools[pl->right_tid], msg_ev);
     unlock(pl);
@@ -340,6 +340,7 @@ static void initRight(pipe_line_t *pl, void *arg)
 
     // lockLine(pl->right_line);
 }
+
 static void initLeft(pipe_line_t *pl, void *arg)
 {
     (void) arg;

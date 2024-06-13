@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
 project(Waterwall VERSION 1.00)
 
-
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
 set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL  "CXX standard version" FORCE)
 set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
+
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   cmake_policy(SET CMP0069 NEW) 
@@ -36,8 +36,6 @@ set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
 set(ENABLE_TSAN OFF CACHE BOOL "enable thread sanitizer" FORCE)
 set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
-
-
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  TRUE)

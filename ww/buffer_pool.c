@@ -26,15 +26,13 @@
 #define BUFFER_SIZE_MORE                                                                                               \
     (((int) (MEMORY_PROFILE_SELECTED / 16)) > 1 ? (((int) (MEMORY_PROFILE_SELECTED / 16)) - 1) : (0))
 
-
-#define BUFFER_SIZE (ram_profile >= kRamProfileS2Memory ? (1U << 15) : (1U << 12))  // 32k (same as nginx file streaming)
+#define BUFFER_SIZE (ram_profile >= kRamProfileS2Memory ? (1U << 15) : (1U << 12)) // 32k (same as nginx file streaming)
 
 // #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
 
 // #define BUFFER_SIZE  (((int) (MEMORY_PROFILE_SELECTED / 16)) >= 1 ? (1U << 15) : (1U << 12) ) //  [4k,32k]
 
 #define BUFFER_SIZE_SMALL (1U << 12) // 4k
-
 
 // NOLINTEND
 
@@ -148,7 +146,7 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     return b2;
 }
 
-static buffer_pool_t *allocBufferPool(unsigned long bufcount,unsigned int buffer_size) // NOLINT
+static buffer_pool_t *allocBufferPool(unsigned long bufcount, unsigned int buffer_size) // NOLINT
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
     assert(bufcount >= 1);
@@ -171,10 +169,10 @@ static buffer_pool_t *allocBufferPool(unsigned long bufcount,unsigned int buffer
 
 buffer_pool_t *createBufferPool(void)
 {
-    return allocBufferPool(BUFFERPOOL_CONTAINER_LEN,BUFFER_SIZE);
+    return allocBufferPool(BUFFERPOOL_CONTAINER_LEN, BUFFER_SIZE);
 }
 
 buffer_pool_t *createSmallBufferPool(void)
 {
-    return allocBufferPool(BUFFERPOOL_SMALL_CONTAINER_LEN,BUFFER_SIZE_SMALL);
+    return allocBufferPool(BUFFERPOOL_SMALL_CONTAINER_LEN, BUFFER_SIZE_SMALL);
 }

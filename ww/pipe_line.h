@@ -27,6 +27,8 @@
 
     i hope you don't use it, currently only used for halfduplex server since there were no other way...
 
+    -- valgrind unfriendly, mem align is not detected correctly , so it might log leaks
+
 */
 
 struct pipe_line_s;
