@@ -145,17 +145,23 @@ inline const void *rawBuf(shift_buffer_t *self)
 
 inline void readUI8(shift_buffer_t *self, uint8_t *dest)
 {
-    *dest = *(uint8_t *) rawBuf(self);
+    // *dest = *(uint8_t *) rawBuf(self); address could be misaligned
+    memcpy(dest, rawBuf(self), sizeof(*dest));
+
 }
 
 inline void readUI16(shift_buffer_t *self, uint16_t *dest)
 {
-    *dest = *(uint16_t *) rawBuf(self);
+    // *dest = *(uint16_t *) rawBuf(self); address could be misaligned
+    memcpy(dest, rawBuf(self), sizeof(*dest));
+
 }
 
 inline void readUI64(shift_buffer_t *self, uint64_t *dest)
 {
-    *dest = *(uint64_t *) rawBuf(self);
+
+    // *dest = *(uint64_t *) rawBuf(self); address could be misaligned
+    memcpy(dest, rawBuf(self), sizeof(*dest));
 }
 
 /*
@@ -174,25 +180,30 @@ inline void writeRaw(shift_buffer_t *restrict self, const void *restrict buffer,
 
 inline void writeI32(shift_buffer_t *self, int32_t data)
 {
-    *(int32_t *) rawBufMut(self) = data;
+    // *(int32_t *) rawBufMut(self) = data; address could be misaligned
+    memcpy(rawBufMut(self) , &data, sizeof(data));
 }
 
 inline void writeUI32(shift_buffer_t *self, uint32_t data)
 {
-    *(uint32_t *) rawBufMut(self) = data;
+    // *(uint32_t *) rawBufMut(self) = data; address could be misaligned
+    memcpy(rawBufMut(self) , &data, sizeof(data));
 }
 
 inline void writeI16(shift_buffer_t *self, int16_t data)
 {
-    *(int16_t *) rawBufMut(self) = data;
+    // *(int16_t *) rawBufMut(self) = data; address could be misaligned
+    memcpy(rawBufMut(self) , &data, sizeof(data));
 }
 
 inline void writeUI16(shift_buffer_t *self, uint16_t data)
 {
-    *(uint16_t *) rawBufMut(self) = data;
+    // *(uint16_t *) rawBufMut(self) = data; address could be misaligned
+    memcpy(rawBufMut(self) , &data, sizeof(data));
 }
 
 inline void writeUI8(shift_buffer_t *self, uint8_t data)
 {
-    *(uint8_t *) rawBufMut(self) = data;
+    // *(uint8_t *) rawBufMut(self) = data; address could be misaligned
+    memcpy(rawBufMut(self) , &data, sizeof(data));
 }

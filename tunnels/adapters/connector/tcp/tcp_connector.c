@@ -102,17 +102,14 @@ static void onClose(hio_t *io)
     if (cstate != NULL)
     {
         LOGD("TcpConnector: received close for FD:%x ", hio_fd(io));
-    }
-    else
-    {
-        LOGD("TcpConnector: sent close for FD:%x ", hio_fd(io));
-    }
-    if (cstate != NULL)
-    {
         tunnel_t  *self    = (cstate)->tunnel;
         line_t    *line    = (cstate)->line;
         context_t *context = newFinContext(line);
         self->downStream(self, context);
+    }
+    else
+    {
+        LOGD("TcpConnector: sent close for FD:%x ", hio_fd(io));
     }
 }
 static void onLinePaused(void *cstate)

@@ -233,18 +233,14 @@ static void onClose(hio_t *io)
     if (cstate != NULL)
     {
         LOGD("TcpListener: received close for FD:%x ", hio_fd(io));
-    }
-    else
-    {
-        LOGD("TcpListener: sent close for FD:%x ", hio_fd(io));
-    }
-
-    if (cstate != NULL)
-    {
         tunnel_t  *self    = (cstate)->tunnel;
         line_t    *line    = (cstate)->line;
         context_t *context = newFinContext(line);
         self->upStream(self, context);
+    }
+    else
+    {
+        LOGD("TcpListener: sent close for FD:%x ", hio_fd(io));
     }
 }
 
