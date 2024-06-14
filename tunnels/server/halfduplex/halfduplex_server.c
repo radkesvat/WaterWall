@@ -146,12 +146,10 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
         if (c->first)
         {
             assert(bufLen(buf) >= sizeof(uint64_t));
-            unsigned int blen = bufLen(buf);
-            shiftr(c->payload, blen - sizeof(uint64_t));
-            hash_t hash = 0x0;
+            hash_t       hash = 0x0;
             readUI64(c->payload, (uint64_t *) &hash);
             cstate->hash = hash;
-            shiftl(c->payload, blen - sizeof(uint64_t));
+            shiftr(c->payload, sizeof(uint64_t));
 
             hhybridmutex_lock(&(state->download_line_map_mutex));
             hmap_cons_t_iter f_iter = hmap_cons_t_find(&(state->download_line_map), hash);
@@ -199,7 +197,6 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
                 }
 
                 unLockLine(main_line);
-                setLen(buf, blen - sizeof(uint64_t)); // dont need the hash part
 
                 if (bufLen(buf) > 0)
                 {
@@ -394,15 +391,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
-            unsigned int blen = bufLen(buf);
-            shiftr(c->payload, blen - sizeof(uint64_t));
             const bool is_upload                   = (((uint8_t *) rawBuf(c->payload))[0] & 0x80) == 0x0;
             ((uint8_t *) rawBufMut(c->payload))[0] = (((uint8_t *) rawBuf(c->payload))[0] & 0x7F);
 
             hash_t hash = 0x0;
             readUI64(c->payload, (uint64_t *) &hash);
             cstate->hash = hash;
-            shiftl(c->payload, blen - sizeof(uint64_t));
 
             if (is_upload)
             {
@@ -454,8 +448,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         }
 
                         unLockLine(main_line);
-
-                        setLen(buf, blen - sizeof(uint64_t)); // dont need the hash part
+                        shiftr(c->payload, sizeof(uint64_t));
                         if (bufLen(buf) > 0)
                         {
                             if (! cstate->first_sent)
@@ -505,15 +498,8 @@ static void upStream(tunnel_t *self, context_t *c)
                         return;
                     }
 
-                    if (bufLen(buf) > 0)
-                    {
-                        cstate->buffering = buf;
-                        c->payload        = NULL;
-                    }
-                    else
-                    {
-                        reuseContextBuffer(c);
-                    }
+                    cstate->buffering = buf;
+                    c->payload        = NULL;
                     // upload connection is waiting in the pool
                 }
             }
@@ -565,8 +551,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         assert(upload_line_cstate->buffering);
 
-                        setLen(upload_line_cstate->buffering,
-                               bufLen(upload_line_cstate->buffering) - sizeof(uint64_t)); // dont need the hash part
+                     
+                        shiftr(upload_line_cstate->buffering, sizeof(uint64_t));
                         if (bufLen(upload_line_cstate->buffering) > 0)
                         {
                             context_t *buf_ctx             = newContext(main_line);
@@ -574,6 +560,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             buf_ctx->first                 = true;
                             upload_line_cstate->buffering  = NULL;
                             upload_line_cstate->first_sent = true;
+                            shiftr(buf_ctx->payload, sizeof(uint64_t));
                             self->up->upStream(self->up, buf_ctx);
                         }
                         else

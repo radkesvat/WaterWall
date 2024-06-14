@@ -43,7 +43,6 @@ typedef struct reality_server_con_state_s
     uint8_t                    giveup_counter;
     enum connection_auth_state auth_state;
     bool                       first_sent;
-    bool                       init_sent;
     uint32_t                   reply_sent_tit;
 
 } reality_server_con_state_t;
@@ -124,9 +123,10 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
                                              getContextBufferPool(c));
-
+                        cstate->first_sent = true;
                         context_t *plain_data_ctx = newContextFrom(c);
                         plain_data_ctx->payload   = buf;
+                        plain_data_ctx->first = true;
                         self->up->upStream(self->up, plain_data_ctx);
 
                         if (! isAlive(c->line))
@@ -192,10 +192,10 @@ static void upStream(tunnel_t *self, context_t *c)
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;
 
-                    if (WW_UNLIKELY(! cstate->init_sent))
+                    if (WW_UNLIKELY(! cstate->first_sent))
                     {
                         plain_data_ctx->first = true;
-                        cstate->init_sent     = true;
+                        cstate->first_sent     = true;
                     }
                     self->up->upStream(self->up, plain_data_ctx);
                 }

@@ -67,11 +67,8 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 
             cid_bytes[0]      = cid_bytes[0] & 0x7f; // kHLFDCmdUpload
-            unsigned int blen = bufLen(c->payload);
-            setLen(c->payload, blen + sizeof(uint64_t));
-            shiftr(c->payload, blen);
+            shiftl(c->payload,8);
             writeRaw(c->payload, cid_bytes, sizeof(cids));
-            shiftl(c->payload, blen);
         }
         self->up->upStream(self->up, switchLine(c, cstate->upload_line));
     }
