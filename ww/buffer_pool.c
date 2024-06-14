@@ -162,7 +162,7 @@ static buffer_pool_t *allocBufferPool(unsigned long bufcount, unsigned int buffe
     memset(pool, 0, sizeof(buffer_pool_t));
     pool->cap             = bufcount;
     pool->buffers_size    = buffer_size;
-    pool->free_threshould = (pool->cap * 2) / 3;
+    pool->free_threshould = max(pool->cap / 2, (pool->cap * 2) / 3);
     firstCharge(pool);
     return pool;
 }

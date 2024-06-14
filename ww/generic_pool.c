@@ -33,7 +33,7 @@ static generic_pool_t *allocateGenericPool(unsigned long pool_width, PoolItemCre
 #endif
     memset(pool, 0, sizeof(generic_pool_t));
     pool->cap                 = pool_width;
-    pool->free_threshould     = (pool->cap * 2) / 3;
+    pool->free_threshould     = max(pool->cap / 2, (pool->cap * 2) / 3);
     pool->create_item_handle  = create_h;
     pool->destroy_item_handle = destroy_h;
     poolFirstCharge(pool);
