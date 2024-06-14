@@ -80,6 +80,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             flushWriteQueue(self, ucstate);
                             if (! isAlive(c->line))
                             {
+                                cleanup(dcstate);
                                 destroyContext(c);
                                 return;
                             }
@@ -92,6 +93,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             {
                                 destroyContext(c);
                             }
+                            cleanup(dcstate);
                         }
                         else
                         {
@@ -111,7 +113,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 else
                 {
                     destroyContext(c);
-                    return;
                 }
             }
 

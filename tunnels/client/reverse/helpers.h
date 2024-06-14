@@ -14,8 +14,7 @@ enum
 {
     kPreconnectDelayShort                              = 10,
     kPreconnectDelayLong                               = 750,
-    kConnectionStarvationTimeOut                       = 15000,
-    kConnectionStarvationTimeOutAfterFirstConfirmation = 5000
+    kConnectionStarvationTimeOut                       = 30000
 };
 
 static void onLinePausedU(void *cstate)
