@@ -85,7 +85,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
     LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
 #ifdef OS_LINUX
-    malloc_trim(0);
+    // malloc_trim(0);
 #endif
 }
 
