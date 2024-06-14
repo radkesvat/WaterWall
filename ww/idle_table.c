@@ -98,8 +98,12 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
 }
 void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
-    hhybridmutex_lock(&(self->mutex));
+    if(item->removed){
+        return;
+    }
     item->expire_at_ms = self->last_update_ms + age_ms;
+
+    hhybridmutex_lock(&(self->mutex));
     heapq_idles_t_make_heap(&self->hqueue);
     hhybridmutex_unlock(&(self->mutex));
 }
@@ -120,7 +124,6 @@ idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
 bool removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
 {
     hhybridmutex_lock(&(self->mutex));
-
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
     if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->tid != tid)
     {
@@ -139,7 +142,11 @@ bool removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
 static void beforeCloseCallBack(hevent_t *ev)
 {
     idle_item_t *item = hevent_userdata(ev);
-    item->cb(item);
+    if (! item->removed)
+    {
+        item->cb(item);
+    }
+
     free(item);
 }
 
@@ -166,13 +173,12 @@ void idleCallBack(htimer_t *timer)
             else
             {
                 // destruction must happen on other thread
-                hmap_idles_t_erase(&(self->hmap), item->hash);
+                // hmap_idles_t_erase(&(self->hmap), item->hash);
                 hevent_t ev;
                 memset(&ev, 0, sizeof(ev));
                 ev.loop = loops[item->tid];
                 ev.cb   = beforeCloseCallBack;
                 hevent_set_userdata(&ev, item);
-
                 hloop_post_event(loops[item->tid], &ev);
             }
         }
