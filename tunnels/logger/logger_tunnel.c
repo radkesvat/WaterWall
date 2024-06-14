@@ -2,21 +2,16 @@
 #include "buffer_pool.h"
 #include "loggers/network_logger.h"
 #include "tunnel.h"
-
-#undef min
-static inline size_t min(size_t x, size_t y)
-{
-    return (((x) < (y)) ? (x) : (y));
-}
+#include "utils/mathutils.h"
 
 typedef struct logger_tunnel_state_s
 {
-    void*_;
+    void *_;
 } logger_tunnel_state_t;
 
 typedef struct logger_tunnel_con_state_s
 {
-    void*_;
+    void *_;
 
 } logger_tunnel_con_state_t;
 
@@ -44,7 +39,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 setLen(reply->payload, strlen("salam"));
                 self->dw->downStream(self->dw, reply);
             }
-
         }
     }
     else
@@ -129,7 +123,9 @@ static void downStream(tunnel_t *self, context_t *c)
             if (self->dw != NULL)
             {
                 self->dw->downStream(self->dw, c);
-            }else {
+            }
+            else
+            {
                 destroyContext(c);
             }
         }
@@ -139,7 +135,9 @@ static void downStream(tunnel_t *self, context_t *c)
             if (self->dw != NULL)
             {
                 self->dw->downStream(self->dw, c);
-            }else {
+            }
+            else
+            {
                 destroyContext(c);
             }
         }
