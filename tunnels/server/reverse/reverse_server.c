@@ -74,7 +74,6 @@ static void upStream(tunnel_t *self, context_t *c)
                             setupLineUpSide(ucstate->u, onLinePausedU, ucstate, onLineResumedU);
                             setupLineUpSide(ucstate->d, onLinePausedD, ucstate, onLineResumedD);
 
-                            cleanup(CSTATE_D(c));
                             CSTATE_D_MUT(c)                                  = ucstate;
                             (ucstate->u->chains_state)[state->chain_index_u] = ucstate;
 

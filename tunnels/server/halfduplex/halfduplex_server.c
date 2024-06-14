@@ -69,6 +69,10 @@ static void onMainLinePaused(void *_cstate)
     {
         pipeOnUpLinePaused(cstate->pipe);
     }
+    else
+    {
+        pauseLineDownSide(cstate->upload_line);
+    }
     pauseLineDownSide(cstate->download_line);
 }
 
@@ -78,6 +82,10 @@ static void onMainLineResumed(void *_cstate)
     if (cstate->pipe)
     {
         pipeOnUpLineResumed(cstate->pipe);
+    }
+    else
+    {
+        resumeLineDownSide(cstate->upload_line);
     }
     resumeLineDownSide(cstate->download_line);
 }

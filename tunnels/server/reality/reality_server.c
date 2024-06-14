@@ -191,6 +191,12 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;
+
+                    if (WW_UNLIKELY(! cstate->init_sent))
+                    {
+                        plain_data_ctx->first = true;
+                        cstate->init_sent     = true;
+                    }
                     self->up->upStream(self->up, plain_data_ctx);
                 }
                 else
