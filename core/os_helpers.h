@@ -27,7 +27,7 @@ static void increaseFileLimit(void)
     {
         LOGD("Core: File limit  %lu -> %lu", (unsigned long) rlim.rlim_cur, (unsigned long) rlim.rlim_max);
     }
-    // Set the hard limit to the maximum allowed value
+    // Set the soft limit to the maximum allowed value
     rlim.rlim_cur = rlim.rlim_max;
     // Apply the new limit
     if (setrlimit(RLIMIT_NOFILE, &rlim) == -1)
