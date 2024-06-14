@@ -22,8 +22,9 @@
 
 */
 
-#define POOL_DEBUG
-#define BYPASS_POOL
+// #define POOL_DEBUG
+// #define BYPASS_POOL
+
 
 struct generic_pool_s;
 
@@ -59,37 +60,8 @@ struct generic_pool_s
 
 typedef struct generic_pool_s generic_pool_t;
 
-inline void poolReCharge(generic_pool_t *pool)
-{
-    const size_t increase = ((pool->cap - pool->len) < (pool->cap) / 2 ? (pool->cap - pool->len) : (pool->cap / 2));
-
-    for (size_t i = pool->len; i < (pool->len + increase); i++)
-    {
-        pool->available[i] = pool->create_item_handle(pool);
-    }
-    pool->len += increase;
-#if defined(DEBUG) && defined(POOL_DEBUG)
-    LOGD("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
-#endif
-}
-
-inline void poolShrink(generic_pool_t *pool)
-{
-    const size_t decrease = (pool->len < (pool->cap / 2) ? pool->len : (pool->cap / 2));
-
-    for (size_t i = pool->len - decrease; i < pool->len; i++)
-    {
-        pool->destroy_item_handle(pool, pool->available[i]);
-    }
-    pool->len -= decrease;
-
-#if defined(DEBUG) && defined(POOL_DEBUG)
-    LOGD("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
-#endif
-#ifdef OS_LINUX
-    // malloc_trim(0);
-#endif
-}
+void poolReCharge(generic_pool_t *pool);
+void poolShrink(generic_pool_t *pool);
 
 inline pool_item_t *popPoolItem(generic_pool_t *pool)
 {
