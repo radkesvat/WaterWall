@@ -370,7 +370,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         LOGF("JSON Error: TcpListener->settings->address (string field) : The data was empty or invalid");
         return NULL;
     }
-    socket_filter_option_t filter_opt = {0};
+    socket_filter_option_t filter_opt = {.no_delay = state->no_delay};
 
     filter_opt.multiport_backend = kMultiportBackendNothing;
     parsePortSection(state, settings);

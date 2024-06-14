@@ -78,6 +78,7 @@ static reverse_server_con_state_t *createCstate(bool isup, line_t *line)
     }
     else
     {
+        cstate->wait_stream = newBufferStream(getLineBufferPool(line));
         cstate->d = line;
     }
     return cstate;
@@ -86,11 +87,12 @@ static reverse_server_con_state_t *createCstate(bool isup, line_t *line)
 static void cleanup(reverse_server_con_state_t *cstate)
 {
 
-    assert(cstate->waiting_d == NULL);
-    
     if (cstate->uqueue)
     {
         destroyContextQueue(cstate->uqueue);
+    }else{
+        destroyBufferStream(cstate->wait_stream);
+
     }
     free(cstate);
 }

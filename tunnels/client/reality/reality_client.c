@@ -20,13 +20,13 @@ typedef struct reality_client_state_s
 
     ssl_ctx_t ssl_context;
     // settings
+    uint8_t hashes[EVP_MAX_MD_SIZE];
+    char    context_password[kSignPasswordLen];
     char   *alpn;
     char   *sni;
     char   *password;
-    int     password_length;
     bool    verify;
-    uint8_t hashes[EVP_MAX_MD_SIZE];
-    char    context_password[kSignPasswordLen];
+    int     password_length;
 
 } reality_client_state_t;
 
@@ -96,7 +96,6 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
     while (isAlive(c->line) && contextQueueLen(cstate->queue) > 0)
     {
         self->upStream(self, contextQueuePop(cstate->queue));
-
     }
 }
 
@@ -133,7 +132,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            while (bufLen(buf) > 0 &&  isAlive(c->line))
+            while (bufLen(buf) > 0 && isAlive(c->line))
             {
                 const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
                 shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);
@@ -255,8 +254,10 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
-                    bool            is_tls_33 = ((uint16_t *) (((uint8_t *) rawBuf(buf)) + 1))[0] == kTLSVersion12;
-
+                    uint16_t        tls_ver_b;
+                    memcpy(&tls_ver_b, ((uint8_t *) rawBuf(buf)) + 1, sizeof(uint16_t));
+                    bool is_tls_33 = tls_ver_b == kTLSVersion12;
+                
                     shiftr(buf, kTLSHeaderlen);
 
                     if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key) ||
@@ -363,6 +364,12 @@ static void downStream(tunnel_t *self, context_t *c)
                     context_t *data_ctx = newContext(c->line);
                     data_ctx->payload   = buf;
                     self->up->upStream(self->up, data_ctx);
+                    if (! isAlive(c->line))
+                    {
+                        reuseContextBuffer(c);
+                        destroyContext(c);
+                        return;
+                    }
                 }
                 else
                 {
@@ -378,12 +385,6 @@ static void downStream(tunnel_t *self, context_t *c)
 
                     flushWriteQueue(self, c);
 
-                    if (! isAlive(c->line))
-                    {
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                        return;
-                    }
                     context_t *dw_est_ctx = newContextFrom(c);
                     dw_est_ctx->est       = true;
                     self->dw->downStream(self->dw, dw_est_ctx);
@@ -505,7 +506,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 

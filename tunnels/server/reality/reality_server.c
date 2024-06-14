@@ -23,13 +23,12 @@ typedef struct reality_server_state_s
 
     tunnel_t *dest;
     // settings
-    bool         anti_tit; // solve tls in tls using paddings
+    uint8_t      hashes[EVP_MAX_MD_SIZE];
+    char         context_password[kSignPasswordLen];
     uint32_t     max_delta_time;
     uint32_t     counter_threshould;
     char        *password;
     unsigned int password_length;
-    uint8_t      hashes[EVP_MAX_MD_SIZE];
-    char         context_password[kSignPasswordLen];
 
 } reality_server_state_t;
 
@@ -174,8 +173,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
-                    bool            is_tls_33 = ((uint16_t *) (((uint8_t *) rawBuf(buf)) + 1))[0] == kTLSVersion12;
-
+                    uint16_t        tls_ver_b;
+                    memcpy(&tls_ver_b, ((uint8_t *) rawBuf(buf)) + 1, sizeof(uint16_t));
+                    bool is_tls_33 = tls_ver_b == kTLSVersion12;
                     shiftr(buf, kTLSHeaderlen);
 
                     if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key) ||
@@ -249,10 +249,6 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        if (state->anti_tit && isAuthenticated(c->line))
-        {
-            cstate->reply_sent_tit += 1;
-        }
 
         switch (cstate->auth_state)
         {
@@ -378,14 +374,13 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 
     state->dest = next_node->instance;
     free(dest_node_name);
-    getBoolFromJsonObjectOrDefault(&(state->anti_tit), settings, "anti-tls-in-tls", false);
 
     tunnel_t *t = newTunnel();
     chainDown(t, state->dest);
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 

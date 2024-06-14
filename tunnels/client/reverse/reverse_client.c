@@ -60,78 +60,35 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            while (true)
+            if (state->unused_cons[tid] > 0)
             {
+                state->unused_cons[tid] -= 1;
+            }
+            initiateConnect(self, tid, false);
+            atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
 
-                if (ucstate->handshaked)
-                {
-                    if (state->unused_cons[tid] > 0)
-                    {
-                        state->unused_cons[tid] -= 1;
-                    }
-                    initiateConnect(self, tid, false);
-                    atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
+            if (ucstate->idle_handle)
+            {
+                ucstate->idle_handle          = NULL;
+                reverse_client_state_t *state = STATE(ucstate->self);
+                removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t) (ucstate));
+            }
 
-                    if (ucstate->idle_handle)
-                    {
-                        ucstate->idle_handle  = NULL;
-                        reverse_client_state_t *state = STATE(ucstate->self);
-                        removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t) (ucstate));
-                    }
-
-                    ucstate->pair_connected = true;
-                    lockLine(ucstate->d);
-                    self->dw->downStream(self->dw, newInitContext(ucstate->d));
-                    if (! isAlive(ucstate->d))
-                    {
-                        unLockLine(ucstate->d);
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                        return;
-                    }
-                    unLockLine(ucstate->d);
-                    ucstate->first_sent_d = true;
-                    context_t *turned     = switchLine(c, ucstate->d);
-                    turned->first         = true;
-                    self->dw->downStream(self->dw, turned);
-                }
-                else
-                {
-                    // first byte is 0xFF a signal from reverse server
-                    uint8_t check = 0x0;
-                    readUI8(c->payload, &check);
-                    shiftr(c->payload, 1);
-                    if (check != (unsigned char) 0xFF)
-                    {
-
-                        reuseContextBuffer(c);
-                        CSTATE_U_MUT(c)                                  = NULL;
-                        (ucstate->d->chains_state)[state->chain_index_d] = NULL;
-                        cleanup(ucstate);
-                        self->up->upStream(self->up, newFinContextFrom(c));
-                        destroyContext(c);
-                        return;
-                    }
-                    ucstate->handshaked = true;
-                    state->unused_cons[tid] += 1;
-                    LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
-                         atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
-
-                    if (bufLen(c->payload) > 0)
-                    {
-                        idle_item_t *con_idle = getIdleItemByHash(tid, state->starved_connections, (hash_t) (ucstate));
-                        if (con_idle != NULL)
-                        {
-                            keepIdleItemForAtleast(state->starved_connections, con_idle,
-                                                   kConnectionStarvationTimeOutAfterFirstConfirmation);
-                        }
-                        continue;
-                    }
-                    reuseContextBuffer(c);
-                    destroyContext(c);
-                }
+            ucstate->pair_connected = true;
+            lockLine(ucstate->d);
+            self->dw->downStream(self->dw, newInitContext(ucstate->d));
+            if (! isAlive(ucstate->d))
+            {
+                unLockLine(ucstate->d);
+                reuseContextBuffer(c);
+                destroyContext(c);
                 return;
             }
+            unLockLine(ucstate->d);
+            ucstate->first_sent_d = true;
+            context_t *turned     = switchLine(c, ucstate->d);
+            turned->first         = true;
+            self->dw->downStream(self->dw, turned);
         }
     }
     else
@@ -153,15 +110,12 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                if (ucstate->handshaked)
+                if (state->unused_cons[tid] > 0)
                 {
-                    if (state->unused_cons[tid] > 0)
-                    {
-                        state->unused_cons[tid] -= 1;
-                    }
-                    LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
-                         atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+                    state->unused_cons[tid] -= 1;
                 }
+                LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
+                     atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
                 cleanup(ucstate);
                 initiateConnect(self, tid, true);
                 destroyContext(c);
@@ -170,11 +124,14 @@ static void downStream(tunnel_t *self, context_t *c)
         else if (c->est)
         {
             ucstate->established = true;
+            state->unused_cons[tid] += 1;
+            LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid, state->unused_cons[tid],
+                 atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+
             initiateConnect(self, tid, false);
 
-            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate, onStarvedConnectionExpire,
-                            c->line->tid, kConnectionStarvationTimeOut);
-
+            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
+                                               onStarvedConnectionExpire, c->line->tid, kConnectionStarvationTimeOut);
 
             destroyContext(c);
         }

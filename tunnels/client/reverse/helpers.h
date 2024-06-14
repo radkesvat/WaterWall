@@ -81,8 +81,8 @@ static void doConnect(struct connect_arg *cg)
     }
     hello_data_ctx->first   = true;
     hello_data_ctx->payload = popBuffer(getContextBufferPool(hello_data_ctx));
-    setLen(hello_data_ctx->payload, 1);
-    writeUI8(hello_data_ctx->payload, 0xFF);
+    setLen(hello_data_ctx->payload, 96);
+    memset(rawBufMut(hello_data_ctx->payload), 0xFF,96);
     self->up->upStream(self->up, hello_data_ctx);
 }
 
@@ -145,27 +145,21 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
     reverse_client_con_state_t *cstate = idle_con->userdata;
     tunnel_t                   *self   = cstate->self;
     reverse_client_state_t     *state  = STATE(self);
-    if (cstate->idle_handle == NULL){
-        //this can happen if we are unlucky and 2 events are passed to eventloop in 
-        // a bad order, first connection to peer succeeds and also the starvation cb call 
-        // is already in the queue
+    if (cstate->idle_handle == NULL)
+    {
+        // this can happen if we are unlucky and 2 events are passed to eventloop in
+        //  a bad order, first connection to peer succeeds and also the starvation cb call
+        //  is already in the queue
         assert(cstate->pair_connected);
         return;
     }
 
-    if (cstate->handshaked)
+    assert(! cstate->pair_connected);
+    if (state->unused_cons[cstate->u->tid] > 0)
     {
-        assert(! cstate->pair_connected);
-        if (state->unused_cons[cstate->u->tid] > 0)
-        {
-            state->unused_cons[cstate->u->tid] -= 1;
-        }
-        LOGW("ReverseClient: a idle connection detected and closed");
+        state->unused_cons[cstate->u->tid] -= 1;
     }
-    else
-    {
-        LOGW("ReverseClient: a starved connection detected and closed");
-    }
+    LOGW("ReverseClient: a idle connection detected and closed");
 
     cstate->idle_handle = NULL;
     initiateConnect(self, cstate->u->tid, false);

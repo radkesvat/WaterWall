@@ -310,6 +310,12 @@ static void downStream(tunnel_t *self, context_t *c)
                     context_t *data_ctx = newContext(c->line);
                     data_ctx->payload   = buf;
                     self->up->upStream(self->up, data_ctx);
+                    if (! isAlive(c->line))
+                    {
+                        reuseContextBuffer(c);
+                        destroyContext(c);
+                        return;
+                    }
                 }
                 else
                 {
@@ -321,13 +327,6 @@ static void downStream(tunnel_t *self, context_t *c)
                     LOGD("OpensslClient: Tls handshake complete");
                     cstate->handshake_completed = true;
                     flushWriteQueue(self, c);
-
-                    if (! isAlive(c->line))
-                    {
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                        return;
-                    }
 
                     context_t *dw_est_ctx = newContextFrom(c);
                     dw_est_ctx->est       = true;
@@ -470,7 +469,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 

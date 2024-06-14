@@ -1,6 +1,7 @@
 #include "reverse_server.h"
 #include "buffer_pool.h"
 #include "helpers.h"
+#include "hplatform.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
@@ -22,133 +23,99 @@ static void flushWriteQueue(tunnel_t *self, reverse_server_con_state_t *cstate)
 static void upStream(tunnel_t *self, context_t *c)
 {
 
-    reverse_server_state_t *state = STATE(self);
+    reverse_server_state_t     *state   = STATE(self);
+    reverse_server_con_state_t *dcstate = CSTATE_D(c);
+
     if (c->payload != NULL)
     {
-        if (CSTATE_D(c)->paired)
+        if (dcstate->paired)
         {
             self->up->upStream(self->up, switchLine(c, CSTATE_D(c)->u));
         }
         else
         {
-            if (c->first)
+            if (dcstate->handshaked)
             {
-
-                thread_box_t               *this_tb = &(state->threadlocal_pool[c->line->tid]);
-                reverse_server_con_state_t *dcstate = CSTATE_D(c);
-
-                // first byte is 0xFF a signal from reverse client
-                uint8_t check = 0x0;
-                readUI8(c->payload, &check);
-                shiftr(c->payload, 1);
-                if (dcstate->handshaked || check != (unsigned char) 0xFF)
-                {
-                    CSTATE_D_MUT(c)                                  = NULL;
-                    (dcstate->u->chains_state)[state->chain_index_u] = NULL;
-                    cleanup(dcstate);
-                    self->dw->downStream(self->dw, newFinContextFrom(c));
-                    reuseContextBuffer(c);
-                    destroyContext(c);
-                    return;
-                }
-                dcstate->handshaked = true;
-
-                if (this_tb->u_count > 0)
-                {
-
-                    reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
-                    removeConnectionU(this_tb, ucstate);
-                    ucstate->d      = c->line;
-                    ucstate->paired = true;
-                    setupLineUpSide(ucstate->u, onLinePausedU, ucstate, onLineResumedU);
-                    setupLineUpSide(ucstate->d, onLinePausedD, ucstate, onLineResumedD);
-
-                    cleanup(CSTATE_D(c));
-                    CSTATE_D_MUT(c)                                  = ucstate;
-                    (ucstate->u->chains_state)[state->chain_index_u] = ucstate;
-
-                    context_t *hello_data_ctx = NULL;
-                    if (contextQueueLen(ucstate->uqueue) > 0)
-                    {
-                        hello_data_ctx = switchLine(contextQueuePop(ucstate->uqueue), ucstate->d);
-                    }
-                    else
-                    {
-                        hello_data_ctx          = newContextFrom(c);
-                        hello_data_ctx->payload = popBuffer(getContextBufferPool(c));
-                    }
-
-                    shiftl(hello_data_ctx->payload, 1);
-                    writeUI8(hello_data_ctx->payload, 0xFF);
-                    self->dw->downStream(self->dw, hello_data_ctx);
-
-                    if (! isAlive(c->line))
-                    {
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                        return;
-                    }
-                    flushWriteQueue(self, ucstate);
-
-                    if (bufLen(c->payload) > 0)
-                    {
-                        if (! isAlive(c->line))
-                        {
-                            reuseContextBuffer(c);
-                            destroyContext(c);
-                            return;
-                        }
-                        self->up->upStream(self->up, switchLine(c, ucstate->u));
-                    }
-                    else
-                    {
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                    }
-                }
-                else
-                {
-
-                    context_t *hello_data_ctx = newContextFrom(c);
-                    hello_data_ctx->payload   = popBuffer(getContextBufferPool(c));
-                    setLen(hello_data_ctx->payload, 1);
-                    writeUI8(hello_data_ctx->payload, 0xFF);
-                    self->dw->downStream(self->dw, hello_data_ctx);
-
-                    if (! isAlive(c->line))
-                    {
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                        return;
-                    }
-
-                    if (bufLen(c->payload) > 0)
-                    {
-                        dcstate->waiting_d = c->payload;
-                        c->payload         = NULL;
-                    }
-                    else
-                    {
-                        reuseContextBuffer(c);
-                    }
-                    addConnectionD(this_tb, dcstate);
-                    destroyContext(c);
-                }
-            }
-            else
-            {
-                reverse_server_con_state_t *dcstate = CSTATE_D(c);
-                if (dcstate->waiting_d != NULL)
-                {
-                    dcstate->waiting_d = appendBufferMerge(getContextBufferPool(c), dcstate->waiting_d, c->payload);
-                }
-                else
-                {
-                    dcstate->waiting_d = c->payload;
-                }
+                bufferStreamPush(dcstate->wait_stream, c->payload);
                 c->payload = NULL;
                 destroyContext(c);
             }
+            else
+            {
+                bufferStreamPush(dcstate->wait_stream, c->payload);
+                c->payload = NULL;
+
+                if (bufferStreamLen(dcstate->wait_stream) >= 96)
+                {
+                    shift_buffer_t *data = bufferStreamRead(dcstate->wait_stream,96);
+
+                    dcstate->handshaked = true;
+                    for (int i = 0; i < 96; i++)
+                    {
+                        if (((uint8_t *) rawBuf(data))[i] != 0xFF)
+                        {
+                            dcstate->handshaked = false;
+                            break;
+                        }
+                    }
+                    reuseBuffer(getContextBufferPool(c), data);
+
+                    thread_box_t *this_tb = &(state->threadlocal_pool[c->line->tid]);
+
+                    if (dcstate->handshaked)
+                    {
+                        if (this_tb->u_count > 0)
+                        {
+
+                            reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
+                            removeConnectionU(this_tb, ucstate);
+                            ucstate->d      = c->line;
+                            ucstate->paired = true;
+                            setupLineUpSide(ucstate->u, onLinePausedU, ucstate, onLineResumedU);
+                            setupLineUpSide(ucstate->d, onLinePausedD, ucstate, onLineResumedD);
+
+                            cleanup(CSTATE_D(c));
+                            CSTATE_D_MUT(c)                                  = ucstate;
+                            (ucstate->u->chains_state)[state->chain_index_u] = ucstate;
+
+                            flushWriteQueue(self, ucstate);
+                            if (! isAlive(c->line))
+                            {
+                                destroyContext(c);
+                                return;
+                            }
+                            if (bufferStreamLen(dcstate->wait_stream) > 0)
+                            {
+                                c->payload = bufferStreamFullRead(dcstate->wait_stream);
+                                self->up->upStream(self->up, switchLine(c, ucstate->u));
+                            }
+                            else
+                            {
+                                destroyContext(c);
+                            }
+                        }
+                        else
+                        {
+                            addConnectionD(this_tb, dcstate);
+                            destroyContext(c);
+                        }
+                    }
+                    else
+                    {
+                        CSTATE_D_MUT(c)                                  = NULL;
+                        cleanup(dcstate);
+                        self->dw->downStream(self->dw, newFinContextFrom(c));
+                        destroyContext(c);
+                        return;
+                    }
+                }
+                else
+                {
+                    destroyContext(c);
+                    return;
+                }
+            }
+
             return;
         }
     }
@@ -186,11 +153,6 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (dcstate->handshaked)
                 {
-                    if (dcstate->waiting_d)
-                    {
-                        reuseBuffer(getContextBufferPool(c), dcstate->waiting_d);
-                        dcstate->waiting_d = NULL;
-                    }
                     removeConnectionD(this_tb, dcstate);
                 }
                 cleanup(dcstate);
@@ -227,27 +189,19 @@ static void downStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
-                if (! isAlive(c->line))
+                if (bufferStreamLen(dcstate->wait_stream) > 0)
                 {
-                    reuseContextBuffer(c);
-                    destroyContext(c);
-                    return;
-                }
-                if (dcstate->waiting_d)
-                {
+                    bufferStreamPush(dcstate->wait_stream, c->payload);
+                    c->payload                  = NULL;
                     context_t *data_waiting_ctx = newContext(c->line);
-                    data_waiting_ctx->payload   = dcstate->waiting_d;
-                    dcstate->waiting_d          = NULL;
+                    data_waiting_ctx->payload   = bufferStreamFullRead(dcstate->wait_stream);
                     self->up->upStream(self->up, data_waiting_ctx);
-
-                    if (! isAlive(c->line))
-                    {
-                        reuseContextBuffer(c);
-                        destroyContext(c);
-                        return;
-                    }
                 }
-                self->dw->downStream(self->dw, switchLine(c, dcstate->d));
+                else
+                {
+
+                    self->dw->downStream(self->dw, switchLine(c, dcstate->d));
+                }
             }
             else
             {
