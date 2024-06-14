@@ -78,7 +78,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         while (true)
         {
-            if (bufferStreamLen(bstream) < 1)
+            if (bufferStreamLen(bstream) < 2)
             {
                 destroyContext(c);
                 return;
