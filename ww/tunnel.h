@@ -1,5 +1,4 @@
 #pragma once
-
 #include "basic_types.h"
 #include "buffer_pool.h"
 #include "generic_pool.h"
@@ -52,27 +51,28 @@ enum
 
 typedef void (*LineFlowSignal)(void *state);
 
-typedef struct line_s
+typedef uint32_t line_refc_t;
+
+typedef struct line_s // 448
 {
-    hloop_t         *loop;
     void            *chains_state[kMaxChainLen];
+    bool             alive;
+    uint8_t          tid;
+    uint8_t          lcid;
+    uint8_t          auth_cur;
+    line_refc_t      refc;
     void            *up_state;
     void            *dw_state;
     LineFlowSignal   up_pause_cb;
     LineFlowSignal   up_resume_cb;
     LineFlowSignal   dw_pause_cb;
     LineFlowSignal   dw_resume_cb;
-    uint16_t         refc;
-    uint8_t          tid;
-    uint8_t          lcid;
-    uint8_t          auth_cur;
-    bool             alive;
+    hloop_t         *loop;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
-
 } line_t;
 
-typedef struct context_s
+typedef struct context_s // 24
 {
     line_t         *line;
     shift_buffer_t *payload;
@@ -86,7 +86,7 @@ struct tunnel_s;
 
 typedef void (*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
 
-struct tunnel_s
+typedef struct tunnel_s // 48
 {
     void            *state;
     struct tunnel_s *dw, *up;
@@ -95,9 +95,7 @@ struct tunnel_s
     TunnelFlowRoutine downStream;
 
     uint8_t chain_index;
-};
-
-typedef struct tunnel_s tunnel_t;
+} tunnel_t;
 
 tunnel_t *newTunnel(void);
 void      destroyTunnel(tunnel_t *self);
@@ -227,6 +225,9 @@ inline void internalUnRefLine(line_t *l)
 
 inline void lockLine(line_t *line)
 {
+    // basic overflow protection
+    assert(line->refc < (((0x1ULL << ((sizeof(line->refc) * 8ULL) - 1ULL)) - 1ULL) |
+                         (0xFULL << ((sizeof(line->refc) * 8ULL) - 4ULL))));
     line->refc++;
 }
 
