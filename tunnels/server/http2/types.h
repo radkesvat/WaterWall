@@ -27,28 +27,28 @@ typedef enum
 typedef struct http2_server_child_con_state_s
 {
     struct http2_server_child_con_state_s *prev, *next;
-    char *                                 request_path;
+    char                                  *request_path;
     int32_t                                stream_id;
     bool                                   first_sent;
 
     buffer_stream_t *chunkbs; // used for grpc
     size_t           bytes_needed;
-    line_t *         parent;
-    line_t *         line;
-    tunnel_t *       tunnel;
+    line_t          *parent;
+    line_t          *line;
+    tunnel_t        *tunnel;
 } http2_server_child_con_state_t;
 
 typedef struct http2_server_con_state_s
 {
 
-    nghttp2_session *      session;
-    http2_session_state    state;
-    int                    error;
-    int                    frame_type_when_stream_closed;
-    enum http_content_type content_type;
-
-    tunnel_t *                     tunnel;
-    line_t *                       line;
+    nghttp2_session               *session;
+    http2_session_state            state;
+    uint32_t                       pause_counter;
+    int                            error;
+    int                            frame_type_when_stream_closed;
+    enum http_content_type         content_type;
+    tunnel_t                      *tunnel;
+    line_t                        *line;
     http2_server_child_con_state_t root;
 
 } http2_server_con_state_t;
@@ -56,7 +56,7 @@ typedef struct http2_server_con_state_s
 typedef struct http2_server_state_s
 {
     nghttp2_session_callbacks *cbs;
-    tunnel_t *                 fallback;
-    nghttp2_option *           ngoptions;
+    tunnel_t                  *fallback;
+    nghttp2_option            *ngoptions;
 
 } http2_server_state_t;

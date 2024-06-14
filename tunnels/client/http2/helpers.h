@@ -7,7 +7,7 @@
 
 enum
 {
-    kPingInterval = 5000
+    kPingInterval = 10000
 };
 
 static void onPingTimer(htimer_t *timer);
@@ -43,18 +43,23 @@ static void onStreamLineResumed(void *arg)
 
 static void onH2LinePaused(void *arg)
 {
-    http2_client_con_state_t       *con = (http2_client_con_state_t *) arg;
-    http2_client_child_con_state_t *stream_i;
-    for (stream_i = con->root.next; stream_i;)
+    http2_client_con_state_t *con = (http2_client_con_state_t *) arg;
+    ++(con->pause_counter);
+    if (con->pause_counter > 8)
     {
-        pauseLineDownSide(stream_i->line);
-        stream_i = stream_i->next;
+        http2_client_child_con_state_t *stream_i;
+        for (stream_i = con->root.next; stream_i;)
+        {
+            pauseLineDownSide(stream_i->line);
+            stream_i = stream_i->next;
+        }
     }
 }
 
 static void onH2LineResumed(void *arg)
 {
-    http2_client_con_state_t       *con = (http2_client_con_state_t *) arg;
+    http2_client_con_state_t *con = (http2_client_con_state_t *) arg;
+    con->pause_counter            = con->pause_counter > 0 ? (con->pause_counter - 1) : con->pause_counter;
     http2_client_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
@@ -274,13 +279,14 @@ static void onPingTimer(htimer_t *timer)
         nghttp2_submit_ping(con->session, 0, NULL);
         char  *data = NULL;
         size_t len;
-        len = nghttp2_session_mem_send(con->session, (const uint8_t **) &data);
-        if (len > 0)
+        line_t* h2line = con->line;
+        lockLine(h2line);
+        while (0 < (len = nghttp2_session_mem_send2(con->session, (const uint8_t **) &data)))
         {
-            shift_buffer_t *send_buf = popBuffer(getLineBufferPool(con->line));
+            shift_buffer_t *send_buf = popBuffer(getLineBufferPool(h2line));
             setLen(send_buf, len);
             writeRaw(send_buf, data, len);
-            context_t *req = newContext(con->line);
+            context_t *req = newContext(h2line);
             req->payload   = send_buf;
             if (! con->first_sent)
             {
@@ -288,6 +294,12 @@ static void onPingTimer(htimer_t *timer)
                 req->first      = true;
             }
             con->tunnel->up->upStream(con->tunnel->up, req);
+            if(!isAlive(h2line)){
+                unLockLine(h2line);
+                return;
+            }
         }
+        unLockLine(h2line);
+
     }
 }

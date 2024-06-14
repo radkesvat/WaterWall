@@ -7,7 +7,7 @@
 
 enum
 {
-    kDefaultConcurrency = 100 // cons will be muxed into 1
+    kDefaultConcurrency = 64 // cons will be muxed into 1
 };
 
 static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
@@ -25,6 +25,7 @@ static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
     endstream_ctx->payload   = buf;
     self->up->upStream(self->up, endstream_ctx);
 }
+
 static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t stream_id, shift_buffer_t *buf)
 {
     line_t *line = con->line;
@@ -116,6 +117,7 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
     // LOGD("GetSendData %d\n", len);
     return false;
 }
+
 static void flushWriteQueue(http2_client_con_state_t *con)
 {
     tunnel_t *self = con->tunnel;

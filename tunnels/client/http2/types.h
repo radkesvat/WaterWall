@@ -44,6 +44,7 @@ typedef struct http2_client_con_state_s
     http2_session_state            state;
     context_queue_t               *queue;
     size_t                         childs_added;
+    uint32_t                       pause_counter;
     int                            error;
     int                            frame_type_when_stream_closed;
     bool                           handshake_completed;

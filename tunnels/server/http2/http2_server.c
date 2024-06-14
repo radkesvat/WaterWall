@@ -160,6 +160,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         con->state = kH2RecvSettings;
         break;
     case kHttP2Ping:
+        // LOGW("Http2Client: GOT PING");
         con->state = kH2RecvPing;
         break;
     case NGHTTP2_RST_STREAM:
