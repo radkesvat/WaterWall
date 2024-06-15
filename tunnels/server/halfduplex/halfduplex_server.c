@@ -93,7 +93,7 @@ static void onMainLineResumed(void *_cstate)
 static void onDownloadLinePaused(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    //todo (no if) not required
+    // todo (no if) not required
     if (cstate->main_line)
     {
         pauseLineUpSide(cstate->main_line);
@@ -103,7 +103,7 @@ static void onDownloadLinePaused(void *_cstate)
 static void onDownloadLineResumed(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    //todo (no if) not required
+    // todo (no if) not required
     if (cstate->main_line)
     {
         resumeLineUpSide(cstate->main_line);
@@ -148,7 +148,7 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
         if (c->first)
         {
             assert(bufLen(buf) >= sizeof(uint64_t));
-            hash_t       hash = 0x0;
+            hash_t hash = 0x0;
             readUI64(c->payload, (uint64_t *) &hash);
             cstate->hash = hash;
             shiftr(c->payload, sizeof(uint64_t));

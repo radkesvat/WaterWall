@@ -307,14 +307,6 @@ static void upStream(tunnel_t *self, context_t *c)
         con->state                    = kH2WantRecv;
         size_t len                    = bufLen(c->payload);
 
-        while (trySendResponse(self, con, 0, NULL))
-        {
-            if (! isAlive(c->line))
-            {
-                destroyContext(c);
-                return;
-            }
-        }
         ssize_t ret = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), len);
 
         if (! isAlive(c->line))
@@ -336,6 +328,15 @@ static void upStream(tunnel_t *self, context_t *c)
             context_t *fin_ctx = newFinContext(con->line);
             deleteHttp2Connection(con);
             self->dw->downStream(self->dw, fin_ctx);
+        }
+
+        while (trySendResponse(self, con, 0, NULL))
+        {
+            if (! isAlive(c->line))
+            {
+                destroyContext(c);
+                return;
+            }
         }
 
         reuseContextBuffer(c);

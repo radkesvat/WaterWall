@@ -178,10 +178,9 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 
     hevent_set_userdata(con->ping_timer, con);
     nghttp2_session_client_new2(&con->session, state->cbs, con, state->ngoptions);
-    nghttp2_settings_entry settings[] = {
-        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, kMaxConcurrentStreams},
-        {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (1U << 18)},
-        {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 18) }
+    nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, kMaxConcurrentStreams},
+                                         {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (1U << 18)},
+                                         {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 18)}
 
     };
     nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
@@ -279,9 +278,9 @@ static void onPingTimer(htimer_t *timer)
     {
         con->no_ping_ack = true;
         nghttp2_submit_ping(con->session, 0, NULL);
-        char  *data = NULL;
-        size_t len;
-        line_t* h2line = con->line;
+        char   *data = NULL;
+        size_t  len;
+        line_t *h2line = con->line;
         lockLine(h2line);
         while (0 < (len = nghttp2_session_mem_send2(con->session, (const uint8_t **) &data)))
         {
@@ -296,12 +295,12 @@ static void onPingTimer(htimer_t *timer)
                 req->first      = true;
             }
             con->tunnel->up->upStream(con->tunnel->up, req);
-            if(!isAlive(h2line)){
+            if (! isAlive(h2line))
+            {
                 unLockLine(h2line);
                 return;
             }
         }
         unLockLine(h2line);
-
     }
 }
