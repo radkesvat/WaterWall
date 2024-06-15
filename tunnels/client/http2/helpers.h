@@ -252,7 +252,7 @@ static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid)
             }
             return con;
         }
-
+        // assert(false);
         con = createHttp2Connection(self, tid);
         vec_cons_push(vector, con);
         return con;

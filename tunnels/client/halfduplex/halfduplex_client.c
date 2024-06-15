@@ -19,7 +19,7 @@ typedef struct halfduplex_con_state_s
 
 static void onMainLinePaused(void *cstate)
 {
-    pauseLineUpSide(((halfduplex_con_state_t *) cstate)->upload_line);
+    // pauseLineUpSide(((halfduplex_con_state_t *) cstate)->upload_line);
     pauseLineUpSide(((halfduplex_con_state_t *) cstate)->download_line);
 }
 
@@ -36,6 +36,9 @@ static void onUDLinePaused(void *cstate)
 static void onUDLineResumed(void *cstate)
 {
     resumeLineDownSide(((halfduplex_con_state_t *) cstate)->main_line);
+    resumeLineUpSide(((halfduplex_con_state_t *) cstate)->download_line);
+    resumeLineUpSide(((halfduplex_con_state_t *) cstate)->upload_line);
+
 }
 
 static void upStream(tunnel_t *self, context_t *c)

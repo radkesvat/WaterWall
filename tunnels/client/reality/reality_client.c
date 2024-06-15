@@ -117,7 +117,7 @@ static void upStream(tunnel_t *self, context_t *c)
         shift_buffer_t *buf = c->payload;
         c->payload          = NULL;
 
-        const unsigned int chunk_size = ((1 << 15) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
+        const unsigned int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
         if (bufLen(buf) < chunk_size)
         {
@@ -257,7 +257,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     uint16_t        tls_ver_b;
                     memcpy(&tls_ver_b, ((uint8_t *) rawBuf(buf)) + 1, sizeof(uint16_t));
                     bool is_tls_33 = tls_ver_b == kTLSVersion12;
-                
+
                     shiftr(buf, kTLSHeaderlen);
 
                     if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key) ||

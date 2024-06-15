@@ -12,9 +12,9 @@
 #define CSTATE_U_MUT(x) ((x)->line->chains_state)[self->chain_index]
 enum
 {
-    kPreconnectDelayShort                              = 10,
-    kPreconnectDelayLong                               = 750,
-    kConnectionStarvationTimeOut                       = 30000
+    kPreconnectDelayShort        = 10,
+    kPreconnectDelayLong         = 750,
+    kConnectionStarvationTimeOut = 30000
 };
 
 static void onLinePausedU(void *cstate)
@@ -81,7 +81,7 @@ static void doConnect(struct connect_arg *cg)
     hello_data_ctx->first   = true;
     hello_data_ctx->payload = popBuffer(getContextBufferPool(hello_data_ctx));
     setLen(hello_data_ctx->payload, 96);
-    memset(rawBufMut(hello_data_ctx->payload), 0xFF,96);
+    memset(rawBufMut(hello_data_ctx->payload), 0xFF, 96);
     self->up->upStream(self->up, hello_data_ctx);
 }
 
@@ -108,12 +108,14 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
 {
     reverse_client_state_t *state = STATE(self);
 
-    if (state->unused_cons[tid] >= state->min_unused_cons)
+    if (state->threadlocal_pool[tid].unused_cons_count + state->threadlocal_pool[tid].connecting_cons_count >=
+        state->min_unused_cons)
     {
         return;
     }
-    // bool more_delay = state->unused_cons[tid] <= 0;
-    // state->unused_cons[tid] += 1;
+    state->threadlocal_pool[tid].connecting_cons_count += 1;
+    // bool more_delay = state->threadlocal_pool[tid].unused_cons_count <= 0;
+    // state->threadlocal_pool[tid].unused_cons_count += 1;
 
     // int tid = 0;
     // if (workers_count > 0)
@@ -154,9 +156,9 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
     }
 
     assert(! cstate->pair_connected);
-    if (state->unused_cons[cstate->u->tid] > 0)
+    if (state->threadlocal_pool[cstate->u->tid].unused_cons_count > 0)
     {
-        state->unused_cons[cstate->u->tid] -= 1;
+        state->threadlocal_pool[cstate->u->tid].unused_cons_count -= 1;
     }
     LOGW("ReverseClient: a idle connection detected and closed");
 

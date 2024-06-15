@@ -73,7 +73,7 @@ static void onMainLinePaused(void *_cstate)
     {
         pauseLineDownSide(cstate->upload_line);
     }
-    pauseLineDownSide(cstate->download_line);
+    // pauseLineDownSide(cstate->download_line);
 }
 
 static void onMainLineResumed(void *_cstate)
@@ -93,21 +93,13 @@ static void onMainLineResumed(void *_cstate)
 static void onDownloadLinePaused(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    // todo (no if) not required
-    if (cstate->main_line)
-    {
-        pauseLineUpSide(cstate->main_line);
-    }
+    pauseLineUpSide(cstate->main_line);
 }
 
 static void onDownloadLineResumed(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    // todo (no if) not required
-    if (cstate->main_line)
-    {
-        resumeLineUpSide(cstate->main_line);
-    }
+    resumeLineUpSide(cstate->main_line);
 }
 
 static void onUploadInDirectLinePaused(void *_cstate)

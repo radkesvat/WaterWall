@@ -304,36 +304,51 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         http2_server_con_state_t *con = CSTATE(c);
-        con->state                    = kH2WantRecv;
-        size_t len                    = bufLen(c->payload);
+        size_t                    len = 0;
 
-        ssize_t ret = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), len);
-
-        if (! isAlive(c->line))
+        while ((len = bufLen(c->payload)) > 0)
         {
-            destroyContext(c);
-            return;
-        }
+            size_t consumed = min(1 << 15UL, (ssize_t) len);
+            con->state      = kH2WantRecv;
+            ssize_t ret     = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), consumed);
+            shiftr(c->payload, consumed);
 
-        if (ret != (ssize_t) len)
-        {
-            deleteHttp2Connection(con);
-            self->dw->downStream(self->dw, newFinContext(c->line));
-            destroyContext(c);
-            return;
-        }
-
-        if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
-        {
-            context_t *fin_ctx = newFinContext(con->line);
-            deleteHttp2Connection(con);
-            self->dw->downStream(self->dw, fin_ctx);
-        }
-
-        while (trySendResponse(self, con, 0, NULL))
-        {
             if (! isAlive(c->line))
             {
+                reuseContextBuffer(c);
+                destroyContext(c);
+                return;
+            }
+
+            if (ret != (ssize_t) consumed)
+            {
+                assert(false);
+                deleteHttp2Connection(con);
+                self->dw->downStream(self->dw, newFinContext(c->line));
+                destroyContext(c);
+                return;
+            }
+
+            if (nghttp2_session_want_write(con->session) != 0)
+            {
+
+                while (trySendResponse(self, con, 0, NULL))
+                {
+                    if (! isAlive(c->line))
+                    {
+                        reuseContextBuffer(c);
+                        destroyContext(c);
+                        return;
+                    }
+                }
+            }
+            if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
+            {
+                assert(false);
+                context_t *fin_ctx = newFinContext(con->line);
+                deleteHttp2Connection(con);
+                self->dw->downStream(self->dw, fin_ctx);
+                reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }
