@@ -57,6 +57,8 @@ static void onStreamLineResumed(void *arg)
 static void onH2LinePaused(void *arg)
 {
     http2_server_con_state_t *con = (http2_server_con_state_t *) arg;
+    //  this kind of buffer actually reduces the speed instead of increasing it
+    // so its now disabled
     // ++(con->pause_counter);
     // if (con->pause_counter > 8)
     // {

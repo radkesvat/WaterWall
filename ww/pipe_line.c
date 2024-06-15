@@ -51,7 +51,7 @@ static void lock(pipe_line_t *pl)
     if (old_refc == 0)
     {
         // this should not happen, otherwise we must change memory order
-        // but i think its ok because threads synchronize around mutex
+        // but i think its ok because threads synchronize around the mutex in eventloop
         LOGF("PipeLine: thread-safety done incorrectly lock()");
         exit(1);
     }
@@ -66,7 +66,7 @@ static void unlock(pipe_line_t *pl)
         if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
         {
             // this should not happen, otherwise we must change memory order
-            // but i think its ok because threads synchronize around mutex
+            // but i think its ok because threads synchronize around the mutex in eventloop
             LOGF("PipeLine: thread-safety done incorrectly unlock()");
             exit(1);
         }

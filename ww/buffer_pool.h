@@ -21,7 +21,8 @@
 
     so the pool width is affected by ww memory profile
 
-    for performance reasons, this pool dose not inherit from generic_pool and 80% of the code is the same
+    for performance reasons, this pool dose not inherit from generic_pool, so 80% of the code is the same
+    but also it has its own differences ofcourse
     
 */
 

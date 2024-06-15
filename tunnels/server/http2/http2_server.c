@@ -325,6 +325,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 assert(false);
                 deleteHttp2Connection(con);
                 self->dw->downStream(self->dw, newFinContext(c->line));
+                reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }

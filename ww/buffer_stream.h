@@ -5,9 +5,12 @@
 #include <stdint.h>
 
 /*
-    buffers look like packets , you want a stream? you want to read the length you want?
-    then use buffer stream! put every buffer into this mix box and now you have a flow of bytes
-    which you can read but not consume, save and keep appending data to it untill it statisfy your protocol
+
+    This implements a simple container that holds buffers, some opmizations are also applied.
+
+    you can for example check byte index 1 or 5 of the buffers without concating them, then 
+    you'll be able to read only when your protocol is satisfied, the size you want
+    
 
 */
 

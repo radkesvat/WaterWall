@@ -4,10 +4,16 @@
 
 /*
 
-
+    
+    <---------------  Down Line  ------------------>
+    
     ----------------------------|------------------|
                <- con ->           Pipe 1 thread 1 |
     ----------------------------|------------------|
+
+
+
+    <----------------  Up Line   ------------------>
 
     |------------------|----------------------------
     |  Pipe 1 thread 2              <- con ->
@@ -27,7 +33,8 @@
 
     i hope you don't use it, currently only used for halfduplex server since there were no other way...
 
-    -- valgrind unfriendly, mem align is not detected correctly , so it might log leaks
+    -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly lost"
+       but the pointer is saved in "memptr" field inside the object
 
 */
 

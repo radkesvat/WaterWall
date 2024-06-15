@@ -443,13 +443,13 @@ static void downStream(tunnel_t *self, context_t *c)
                 assert(false);
                 deleteHttp2Connection(con);
                 self->up->upStream(self->up, newFinContext(c->line));
+                reuseContextBuffer(c);
                 destroyContext(c);
                 return;
             }
 
             if (nghttp2_session_want_write(con->session) != 0)
             {
-
                 while (trySendRequest(self, con, 0, NULL))
                 {
                     if (! isAlive(c->line))

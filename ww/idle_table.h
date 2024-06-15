@@ -14,12 +14,14 @@
     you also can keep updating the item timeout
 
     The time checking has no cost and won't syscall at all, and the checking is synced by the
-    eventloop which by default wakes up every 100 ms. (debug note: current interval is set to 1s)
+    eventloop which by default wakes up every 100 ms. (debug note: current idletable interval is set to 1s)
 
     idle item is a threadlocal item, it belongs to the thread that created it
     and other threads must not change , remove or do anything to it
     because of that, tid parameter is required in order to find the item
 
+    -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly lost"
+       but the pointer is saved in "memptr" field inside the object
 */
 
 struct idle_item_s;
@@ -38,6 +40,7 @@ struct idle_item_s
     uint8_t        tid;
     bool           removed;
 };
+
 typedef struct idle_table_s idle_table_t;
 
 idle_table_t *newIdleTable(hloop_t *loop);
