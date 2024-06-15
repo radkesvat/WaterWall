@@ -181,6 +181,8 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
     nghttp2_settings_entry settings[] = {
         {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, kMaxConcurrentStreams},
         {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (1U << 18)},
+        {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 18) }
+
     };
     nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
 

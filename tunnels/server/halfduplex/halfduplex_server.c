@@ -551,8 +551,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         assert(upload_line_cstate->buffering);
 
-                     
-                        shiftr(upload_line_cstate->buffering, sizeof(uint64_t));
                         if (bufLen(upload_line_cstate->buffering) > 0)
                         {
                             context_t *buf_ctx             = newContext(main_line);

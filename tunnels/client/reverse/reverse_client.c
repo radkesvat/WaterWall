@@ -2,7 +2,6 @@
 #include "helpers.h"
 #include "idle_table.h"
 #include "loggers/network_logger.h"
-#include "shiftbuffer.h"
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
@@ -130,8 +129,8 @@ static void downStream(tunnel_t *self, context_t *c)
 
             initiateConnect(self, tid, false);
 
-            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
-                                               onStarvedConnectionExpire, c->line->tid, kConnectionStarvationTimeOut);
+            // ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
+            //                                    onStarvedConnectionExpire, c->line->tid, kConnectionStarvationTimeOut);
 
             destroyContext(c);
         }

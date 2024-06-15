@@ -4,6 +4,7 @@
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
+#include "utils/mathutils.h"
 
 enum
 {
@@ -424,10 +425,10 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 
-        con->state = kH2WantRecv;
-        size_t len = bufLen(c->payload);
-        size_t ret = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), len);
-        assert(ret == len);
+        con->state  = kH2WantRecv;
+        size_t  len = bufLen(c->payload);
+        ssize_t ret = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), len);
+        assert(ret == (ssize_t) len);
         reuseContextBuffer(c);
 
         if (! isAlive(c->line))
@@ -436,7 +437,7 @@ static void downStream(tunnel_t *self, context_t *c)
             return;
         }
 
-        if (ret != len)
+        if (ret != (ssize_t) len)
         {
             deleteHttp2Connection(con);
             self->dw->downStream(self->dw, newFinContext(c->line));
@@ -528,7 +529,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 

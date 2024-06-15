@@ -1,10 +1,11 @@
 #include "http2_server.h"
 #include "grpc_def.h"
-#include "http2_def.h"
 #include "helpers.h"
+#include "http2_def.h"
 #include "loggers/network_logger.h"
 #include "nghttp2/nghttp2.h"
 #include "types.h"
+#include "utils/mathutils.h"
 
 static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *_name, size_t namelen,
                             const uint8_t *_value, size_t valuelen, uint8_t flags, void *userdata)
@@ -24,7 +25,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     const char *value = (const char *) _value;
     // LOGD("%s: %s\n", name, value);
 
-    http2_server_con_state_t *con  = (http2_server_con_state_t *) userdata;
+    http2_server_con_state_t *con = (http2_server_con_state_t *) userdata;
 
     if (*name == ':')
     {
@@ -66,7 +67,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     {
         return 0;
     }
-    http2_server_con_state_t *con  = (http2_server_con_state_t *) userdata;
+    http2_server_con_state_t *con = (http2_server_con_state_t *) userdata;
 
     http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
     if (! stream)
@@ -146,7 +147,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     // LOGD("onFrameRecvCallback\n");
     printFrameHd(&frame->hd);
     http2_server_con_state_t *con  = (http2_server_con_state_t *) userdata;
-    tunnel_t *                self = con->tunnel;
+    tunnel_t                 *self = con->tunnel;
 
     switch (frame->hd.type)
     {
@@ -184,7 +185,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         }
         nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
         context_t *fc   = newFinContext(stream->line);
-        tunnel_t * dest = stream->tunnel;
+        tunnel_t  *dest = stream->tunnel;
         removeStream(con, stream);
         deleteHttp2Stream(stream);
         CSTATE_MUT(fc) = NULL;
@@ -220,8 +221,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     return 0;
 }
 
-static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_t stream_id,
-                            shift_buffer_t *buf)
+static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_t stream_id, shift_buffer_t *buf)
 {
     line_t *line = con->line;
     // http2_server_con_state_t *con = ((http2_server_con_state_t *)(((line->chains_state)[self->chain_index])));
@@ -230,7 +230,7 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
         return false;
     }
 
-    char * data = NULL;
+    char  *data = NULL;
     size_t len;
     len = nghttp2_session_mem_send(con->session, (const uint8_t **) &data);
     // LOGD("nghttp2_session_mem_send %d\n", len);
@@ -306,22 +306,6 @@ static void upStream(tunnel_t *self, context_t *c)
         http2_server_con_state_t *con = CSTATE(c);
         con->state                    = kH2WantRecv;
         size_t len                    = bufLen(c->payload);
-        size_t ret = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), len);
-        reuseContextBuffer(c);
-
-        if (! isAlive(c->line))
-        {
-            destroyContext(c);
-            return;
-        }
-
-        if (ret != len)
-        {
-            deleteHttp2Connection(con);
-            self->dw->downStream(self->dw, newFinContext(c->line));
-            destroyContext(c);
-            return;
-        }
 
         while (trySendResponse(self, con, 0, NULL))
         {
@@ -331,6 +315,30 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
+        ssize_t ret = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), len);
+
+        if (! isAlive(c->line))
+        {
+            destroyContext(c);
+            return;
+        }
+
+        if (ret != (ssize_t) len)
+        {
+            deleteHttp2Connection(con);
+            self->dw->downStream(self->dw, newFinContext(c->line));
+            destroyContext(c);
+            return;
+        }
+
+        if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
+        {
+            context_t *fin_ctx = newFinContext(con->line);
+            deleteHttp2Connection(con);
+            self->dw->downStream(self->dw, fin_ctx);
+        }
+
+        reuseContextBuffer(c);
         destroyContext(c);
     }
     else
@@ -353,7 +361,7 @@ static void upStream(tunnel_t *self, context_t *c)
 static void downStream(tunnel_t *self, context_t *c)
 {
     http2_server_child_con_state_t *stream = CSTATE(c);
-    http2_server_con_state_t *      con    = stream->parent->chains_state[self->chain_index];
+    http2_server_con_state_t       *con    = stream->parent->chains_state[self->chain_index];
 
     if (c->payload != NULL)
     {
@@ -389,7 +397,7 @@ static void downStream(tunnel_t *self, context_t *c)
             deleteHttp2Stream(stream);
             CSTATE_MUT(c) = NULL;
 
-            while (trySendResponse(self, con, 0,  NULL))
+            while (trySendResponse(self, con, 0, NULL))
             {
                 if (! isAlive(c->line))
                 {
@@ -414,11 +422,9 @@ static void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-
-
 tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
 {
-    (void)instance_info;
+    (void) instance_info;
     http2_server_state_t *state = malloc(sizeof(http2_server_state_t));
     memset(state, 0, sizeof(http2_server_state_t));
 
@@ -432,11 +438,11 @@ tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
     nghttp2_option_set_no_closed_streams(state->ngoptions, 1);
     nghttp2_option_set_no_http_messaging(state->ngoptions, 1);
 
-    tunnel_t *t         = newTunnel();
-    t->state            = state;
-    t->upStream         = &upStream;
-    t->downStream       = &downStream;
-    
+    tunnel_t *t   = newTunnel();
+    t->state      = state;
+    t->upStream   = &upStream;
+    t->downStream = &downStream;
+
     return t;
 }
 
