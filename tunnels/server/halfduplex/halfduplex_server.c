@@ -93,6 +93,7 @@ static void onMainLineResumed(void *_cstate)
 static void onDownloadLinePaused(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
+    //todo (no if) not required
     if (cstate->main_line)
     {
         pauseLineUpSide(cstate->main_line);
@@ -102,9 +103,10 @@ static void onDownloadLinePaused(void *_cstate)
 static void onDownloadLineResumed(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
+    //todo (no if) not required
     if (cstate->main_line)
     {
-        resumeLineDownSide(cstate->main_line);
+        resumeLineUpSide(cstate->main_line);
     }
 }
 
