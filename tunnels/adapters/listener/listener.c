@@ -77,7 +77,7 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
 
     state->tcp_inbound_node = tcp_inbound_node;
     state->udp_inbound_node = udp_inbound_node;
-    // this is enough, node map will run these and perform chainging
+    // this is enough, node map will run these and perform chaining
     registerNode(tcp_inbound_node, settings);
     registerNode(udp_inbound_node, settings);
 
