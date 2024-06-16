@@ -98,15 +98,16 @@ static bool redirectPortUdp(unsigned int port, unsigned int to)
 
 static bool resetIptables(bool safe_mode)
 {
-    char msg[] = "SocketManager: clearing iptables nat rules\n";
 
     if (safe_mode)
     {
+        char msg[] = "SocketManager: clearing iptables nat rules\n";
         ssize_t _ = write(STDOUT_FILENO, msg, sizeof(msg));
         (void) _;
     }
     else
     {
+        char msg[] = "SocketManager: clearing iptables nat rules";
         LOGD(msg);
     }
 
