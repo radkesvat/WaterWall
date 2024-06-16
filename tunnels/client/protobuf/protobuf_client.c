@@ -85,7 +85,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             shift_buffer_t *full_data    = bufferStreamFullRead(bstream);
             const uint8_t  *uleb_data    = &(((uint8_t *) rawBuf(full_data))[1]); // first byte is \n (protobuf)
-            uint64_t          data_len     = 0;
+            uint64_t        data_len     = 0;
             size_t          bytes_passed = readUleb128ToUint64(uleb_data, uleb_data + bufLen(full_data) - 1, &data_len);
             if (data_len == 0 || (bufLen(full_data) - (bytes_passed + 1)) < data_len)
             {
@@ -156,7 +156,7 @@ tunnel_t *newProtoBufClient(node_instance_context_t *instance_info)
     tunnel_t *t   = newTunnel();
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 
