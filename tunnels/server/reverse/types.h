@@ -7,13 +7,13 @@
 typedef struct reverse_server_con_state_s
 {
     struct reverse_server_con_state_s *prev, *next;
-    bool                               paired;
-    bool                               handshaked;
-    buffer_stream_t                   *wait_stream;
-    context_queue_t                   *uqueue;
-    line_t                            *u;
-    line_t                            *d;
 
+    buffer_stream_t *wait_stream;
+    context_queue_t *uqueue;
+    line_t          *u;
+    line_t          *d;
+    bool             paired;
+    bool             handshaked;
 } reverse_server_con_state_t;
 
 typedef struct thread_box_s

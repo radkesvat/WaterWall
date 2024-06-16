@@ -1,10 +1,17 @@
 #pragma once
 #include "hmutex.h"
+#include "hplatform.h"
 #include "hsocket.h"
 #include "htime.h"
-#include <stdint.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#include <stdint.h>
+
+#if defined(OS_UNIX)
+#include <sys/types.h>
+#elif ! defined(ssize_t)
+typedef int64_t ssize_t;
+#endif
 
 typedef uint64_t hash_t;
 
@@ -39,36 +46,32 @@ typedef struct user_time_info_s
 
 typedef struct user_stat_s
 {
-    ud_t          speed;
-    ud_t          traffic;
+
     atomic_ullong ips;
     atomic_ullong devices;
     atomic_ullong cons_in;
     atomic_ullong cons_out;
-
+    ud_t          speed;
+    ud_t          traffic;
 } user_stat_t;
 
 typedef struct user_s
 {
-    struct cJSON *json;
-    hhybridmutex_t     *fsync_lock;
+    struct cJSON   *json;
+    hhybridmutex_t *fsync_lock;
     //-----------------
-    char  *name;
-    char  *email;
-    char  *notes;
-    char  *uid; // unique id
-    int    gid; // group id
-    hash_t hash_uid;
-
+    char            *name;
+    char            *email;
+    char            *notes;
+    char            *uid; // unique id
+    int              gid; // group id
+    hash_t           hash_uid;
     atomic_bool      enable;
     user_limit_t     limit;
     user_time_info_t timeinfo;
     user_stat_t      stats;
 
 } user_t;
-
-
-
 
 typedef struct api_result_s
 {
@@ -115,8 +118,6 @@ typedef struct socket_context_s
     enum socket_address_protocol address_protocol;
     enum socket_address_type     address_type;
     sockaddr_u                   address;
-    // sockaddr_u                   address_local;
-    // sockaddr_u                   address_peer;
     char                        *domain;
     unsigned int                 domain_len;
     bool                         domain_constant;

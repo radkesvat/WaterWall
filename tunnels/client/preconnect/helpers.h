@@ -49,7 +49,7 @@ static void doConnect(struct connect_arg *cg)
     tunnel_t                      *self   = cg->t;
     preconnect_client_con_state_t *cstate = createCstate(cg->tid);
     free(cg);
-    (cstate->u->chains_state)[self->chain_index] = cstate;
+    LSTATE_MUT(cstate->u) = cstate;
     self->up->upStream(self->up, newInitContext(cstate->u));
 }
 

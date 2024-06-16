@@ -40,8 +40,8 @@ enum
 
 #define STATE(x) ((void *) ((x)->state))
 
-#define LSTATE_I(x, y)     ((void *) ((((x)->chains_state)[y])))
-#define LSTATE_I_MUT(x, y) (x)->chains_state[y]
+#define LSTATE_I(x, y)     ((void *) ((((x)->chains_state)[(y)])))
+#define LSTATE_I_MUT(x, y) (x)->chains_state[(y)]
 
 #define LSTATE(x)     LSTATE_I(x, self->chain_index)
 #define LSTATE_MUT(x) LSTATE_I_MUT(x, self->chain_index)
@@ -207,8 +207,8 @@ inline void internalUnRefLine(line_t *l)
 
     // there should not be any conn-state alive at this point
     for (size_t i = 0; i < kMaxChainLen; i++)
-    {
-        assert(l->chains_state[i] == NULL);
+    {   
+        assert(LSTATE_I(l, i) == NULL);
     }
     assert(l->up_state == NULL);
     assert(l->dw_state == NULL);

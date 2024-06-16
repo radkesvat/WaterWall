@@ -108,7 +108,7 @@ inline void shiftr(shift_buffer_t *self, unsigned int bytes)
     self->calc_len -= bytes;
 }
 
-// developer should call this function before writing
+// developer should call this function or reserve function before writing
 inline void setLen(shift_buffer_t *self, unsigned int bytes)
 {
     if (rCap(self) < bytes)

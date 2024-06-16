@@ -47,7 +47,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (bufferStreamLen(dcstate->wait_stream) >= 96)
                 {
-                    shift_buffer_t *data = bufferStreamRead(dcstate->wait_stream,96);
+                    shift_buffer_t *data = bufferStreamRead(dcstate->wait_stream, 96);
 
                     dcstate->handshaked = true;
                     for (int i = 0; i < 96; i++)
@@ -74,9 +74,8 @@ static void upStream(tunnel_t *self, context_t *c)
                             setupLineUpSide(ucstate->u, onLinePausedU, ucstate, onLineResumedU);
                             setupLineUpSide(ucstate->d, onLinePausedD, ucstate, onLineResumedD);
 
-                            CSTATE_D_MUT(c)                                  = ucstate;
-                            (ucstate->u->chains_state)[state->chain_index_u] = ucstate;
-
+                            CSTATE_D_MUT(c)                                = ucstate;
+                            LSTATE_I_MUT(ucstate->u, state->chain_index_u) = ucstate;
                             flushWriteQueue(self, ucstate);
                             if (! isAlive(c->line))
                             {
@@ -103,7 +102,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                     else
                     {
-                        CSTATE_D_MUT(c)                                  = NULL;
+                        CSTATE_D_MUT(c) = NULL;
                         cleanup(dcstate);
                         self->dw->downStream(self->dw, newFinContextFrom(c));
                         destroyContext(c);
@@ -144,13 +143,14 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 doneLineUpSide(dcstate->d);
                 doneLineUpSide(dcstate->u);
-                line_t *u_line                                   = dcstate->u;
-                (dcstate->u->chains_state)[state->chain_index_u] = NULL;
+                line_t *u_line                                 = dcstate->u;
+                LSTATE_I_MUT(dcstate->u, state->chain_index_u) = NULL;
                 cleanup(dcstate);
                 self->up->upStream(self->up, switchLine(c, u_line));
             }
             else
             {
+                // unpaired connections have no line setup
                 if (dcstate->handshaked)
                 {
                     removeConnectionD(this_tb, dcstate);
@@ -181,8 +181,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 dcstate->paired = true;
                 setupLineUpSide(dcstate->u, onLinePausedU, dcstate, onLineResumedU);
                 setupLineUpSide(dcstate->d, onLinePausedD, dcstate, onLineResumedD);
-                CSTATE_U_MUT(c)                                  = dcstate;
-                (dcstate->d->chains_state)[state->chain_index_d] = dcstate;
+                CSTATE_U_MUT(c)                                = dcstate;
+                LSTATE_I_MUT(dcstate->d, state->chain_index_d) = dcstate;
                 if (! isAlive(c->line))
                 {
                     reuseContextBuffer(c);
@@ -252,8 +252,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 doneLineUpSide(ucstate->d);
                 doneLineUpSide(ucstate->u);
                 line_t *d_line                                   = ucstate->d;
-                (ucstate->d->chains_state)[state->chain_index_d] = NULL;
-
+                LSTATE_I_MUT(ucstate->d, state->chain_index_d) = NULL;
                 cleanup(ucstate);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
             }

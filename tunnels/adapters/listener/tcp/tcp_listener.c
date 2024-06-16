@@ -257,9 +257,9 @@ static void onInboundConnected(hevent_t *ev)
     line_t                   *line   = newLine(tid);
     tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
 
-    line->chains_state[self->chain_index] = cstate;
-    line->src_ctx.address_protocol        = kSapTcp;
-    line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
+    LSTATE_MUT(line)               = cstate;
+    line->src_ctx.address_protocol = kSapTcp;
+    line->src_ctx.address          = *(sockaddr_u *) hio_peeraddr(io);
 
     *cstate = (tcp_listener_con_state_t){.line              = line,
                                          .buffer_pool       = getThreadBufferPool(tid),

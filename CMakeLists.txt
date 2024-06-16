@@ -39,7 +39,7 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  TRUE)
-option(INCLUDE_LISTENER "link istener staticly to the core"  TRUE)
+option(INCLUDE_LISTENER "link Listener staticly to the core"  TRUE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  TRUE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)

@@ -75,9 +75,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 break;
 
             case kConnectedPair:;
-                line_t *u_line                             = dcon->u;
-                (dcon->u->chains_state)[self->chain_index] = NULL;
-                context_t *fctx = switchLine(c, u_line); // created here to prevent destruction of line
+                line_t *u_line      = dcon->u;
+                LSTATE_MUT(dcon->u) = NULL;
+                context_t *fctx     = switchLine(c, u_line); // created here to prevent destruction of line
                 destroyCstate(dcon);
                 self->up->upStream(self->up, fctx);
                 break;
@@ -142,8 +142,8 @@ static void downStream(tunnel_t *self, context_t *c)
 
             case kConnectedPair:;
                 atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
-                line_t *d_line                             = ucon->d;
-                (ucon->d->chains_state)[self->chain_index] = NULL;
+                line_t *d_line      = ucon->d;
+                LSTATE_MUT(ucon->d) = NULL;
                 destroyCstate(ucon);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
                 initiateConnect(self, false);
@@ -226,7 +226,7 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 
     htimer_t *start_timer = htimer_add(loops[0], startPreconnect, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
-    
+
     return t;
 }
 

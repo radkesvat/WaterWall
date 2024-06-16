@@ -5,9 +5,10 @@
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
+#include "utils/mathutils.h"
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/types.h>
+
 
 static void upStream(tunnel_t *self, context_t *c)
 {
@@ -22,11 +23,11 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
-            const unsigned int          tid               = c->line->tid;
-            reverse_client_con_state_t *dcstate           = CSTATE_D(c);
-            CSTATE_D_MUT(c)                               = NULL;
-            (dcstate->u->chains_state)[self->chain_index] = NULL;
-            context_t *fc                                 = switchLine(c, dcstate->u);
+            const unsigned int          tid     = c->line->tid;
+            reverse_client_con_state_t *dcstate = CSTATE_D(c);
+            CSTATE_D_MUT(c)                     = NULL;
+            LSTATE_MUT(dcstate->u)              = NULL;
+            context_t *fc                       = switchLine(c, dcstate->u);
             cleanup(dcstate);
             state->reverse_cons -= 1;
             LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid,
@@ -92,8 +93,8 @@ static void downStream(tunnel_t *self, context_t *c)
         reverse_client_con_state_t *ucstate = CSTATE_U(c);
         if (c->fin)
         {
-            CSTATE_U_MUT(c)                                  = NULL;
-            (ucstate->d->chains_state)[state->chain_index_d] = NULL;
+            CSTATE_U_MUT(c)                                = NULL;
+            LSTATE_I_MUT(ucstate->d, state->chain_index_d) = NULL;
 
             if (ucstate->pair_connected)
             {

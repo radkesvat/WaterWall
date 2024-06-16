@@ -340,7 +340,7 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         http2_client_child_con_state_t *stream = CSTATE(c);
-        http2_client_con_state_t       *con    = stream->parent->chains_state[self->chain_index];
+        http2_client_con_state_t       *con    = LSTATE(stream->parent);
 
         if (! con->handshake_completed)
         {
@@ -394,7 +394,7 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             http2_client_child_con_state_t *stream = CSTATE(c);
-            http2_client_con_state_t       *con    = stream->parent->chains_state[self->chain_index];
+            http2_client_con_state_t       *con    = LSTATE(stream->parent);
             if (con->content_type == kApplicationGrpc)
             {
                 sendGrpcFinalData(self, con->line, stream->stream_id);

@@ -92,12 +92,12 @@ struct ww_runtime_state_s *getWW(void)
 }
 
 // trimming should not be necessary, using it for test purposes
-// todo (remove) should be removed ? (status: enabled)
+// todo (remove) should be removed ? (status: disabled, ridiculous)
 #ifdef OS_LINUX
 void idleFreeMem(htimer_t *timer)
 {
     (void) timer;
-    malloc_trim(0);
+    // malloc_trim(0);
 }
 #endif
 
@@ -107,7 +107,7 @@ htimer_t *trim_timer = NULL;
 _Noreturn void runMainThread(void)
 {
 
-#if defined(OS_LINUX) && true
+#if defined(OS_LINUX) && false
     trim_timer = htimer_add_period(loops[0], idleFreeMem, 2, 0, 0, 0, 0, INFINITE);
 #endif
 
@@ -173,10 +173,9 @@ void createWW(const ww_construction_data_t init_data)
 
     for (unsigned int i = 0; i < workers_count; ++i)
     {
-        buffer_pools[i] = createBufferPool();
-        context_pools[i] =
-            newGenericPoolWithSize((16) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
-        line_pools[i] = newGenericPoolWithSize((8) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
+        buffer_pools[i]  = createBufferPool();
+        context_pools[i] = newGenericPoolWithSize((16) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
+        line_pools[i]    = newGenericPoolWithSize((8) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
         pipeline_msg_pools[i] =
             newGenericPoolWithSize((8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
     }

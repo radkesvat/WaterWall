@@ -98,12 +98,15 @@ static bool redirectPortUdp(unsigned int port, unsigned int to)
 
 static bool resetIptables(void)
 {
-    LOGD("SocketManager: clearing iptables nat rules");
+    char msg[] = "SocketManager: clearing iptables nat rules";
+    ssize_t _ = write(STDOUT_FILENO, msg, sizeof(msg));
+    (void)_;
+
 #if SUPPORT_V6
     execCmd("ip6tables -t nat -F");
     execCmd("ip6tables -t nat -X");
 #endif
-
+    // todo (async unsafe) this works but should be replaced with a asyncsafe execcmd function
     return execCmd("iptables -t nat -F").exit_code == 0 && execCmd("iptables -t nat -X").exit_code == 0;
 }
 static void exitHook(void)

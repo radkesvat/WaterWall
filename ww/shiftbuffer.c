@@ -52,7 +52,7 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
         pre_cap = (unsigned int) pow(2, ceil(log2((double) max(16, pre_cap))));
     }
 
-    unsigned int real_cap = pre_cap +  (PREPADDING * 2);
+    unsigned int real_cap = pre_cap + (PREPADDING * 2);
 
     shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
 
@@ -91,13 +91,13 @@ shift_buffer_t *newShallowShiftBuffer(shift_buffer_t *owner)
 void reset(shift_buffer_t *self, unsigned int pre_cap)
 {
     assert(! isShallow(self));
-    
+
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
         pre_cap = (unsigned int) pow(2, ceil(log2(((double) max(16, pre_cap)))));
     }
 
-    unsigned int real_cap = pre_cap +  (PREPADDING * 2);
+    unsigned int real_cap = pre_cap + (PREPADDING * 2);
 
     if (self->full_cap != real_cap)
     {

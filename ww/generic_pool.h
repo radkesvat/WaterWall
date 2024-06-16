@@ -25,7 +25,6 @@
 // #define POOL_DEBUG
 // #define BYPASS_POOL
 
-
 struct generic_pool_s;
 
 typedef void pool_item_t;

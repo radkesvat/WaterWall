@@ -3,13 +3,13 @@
 #include "loggers/network_logger.h"
 #include "tunnel.h"
 #include "types.h"
-#include "utils/mathutils.h"
 #include <stdbool.h>
 
-#define CSTATE_D(x)     ((reverse_client_con_state_t *) ((((x)->line->chains_state)[state->chain_index_d])))
-#define CSTATE_U(x)     ((reverse_client_con_state_t *) ((((x)->line->chains_state)[self->chain_index])))
-#define CSTATE_D_MUT(x) ((x)->line->chains_state)[state->chain_index_d]
-#define CSTATE_U_MUT(x) ((x)->line->chains_state)[self->chain_index]
+#define CSTATE_D(x)     ((reverse_client_con_state_t *) (LSTATE_I((x)->line, state->chain_index_d)))
+#define CSTATE_U(x)     ((reverse_client_con_state_t *) CSTATE((x)))
+#define CSTATE_D_MUT(x) LSTATE_I_MUT((x)->line, state->chain_index_d)
+#define CSTATE_U_MUT(x) CSTATE_MUT((x))
+
 enum
 {
     kPreconnectDelayShort        = 10,
@@ -68,9 +68,9 @@ static void doConnect(struct connect_arg *cg)
     reverse_client_state_t     *state  = STATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
     free(cg);
-    (cstate->u->chains_state)[self->chain_index]    = cstate;
-    (cstate->d->chains_state)[state->chain_index_d] = cstate;
-    context_t *hello_data_ctx                       = newContext(cstate->u);
+    LSTATE_MUT(cstate->u)                         = cstate;
+    LSTATE_I_MUT(cstate->d, state->chain_index_d) = cstate;
+    context_t *hello_data_ctx                     = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
 
     if (! isAlive(cstate->u))
@@ -165,8 +165,8 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
     cstate->idle_handle = NULL;
     initiateConnect(self, cstate->u->tid, false);
 
-    (cstate->u->chains_state)[self->chain_index]    = NULL;
-    (cstate->d->chains_state)[state->chain_index_d] = NULL;
+    LSTATE_MUT(cstate->u)                         = NULL;
+    LSTATE_I_MUT(cstate->d, state->chain_index_d) = NULL;
 
     context_t *fc = newFinContext(cstate->u);
     cleanup(cstate);

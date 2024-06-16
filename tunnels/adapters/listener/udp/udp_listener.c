@@ -146,12 +146,12 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
 static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_t *io, idle_table_t *table,
                                                uint16_t real_localport)
 {
-    line_t                   *line        = newLine(tid);
-    udp_listener_con_state_t *cstate      = malloc(sizeof(udp_listener_con_state_t));
-    line->chains_state[self->chain_index] = cstate;
-    line->src_ctx.address_type            = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
-    line->src_ctx.address_protocol        = kSapUdp;
-    line->src_ctx.address                 = *(sockaddr_u *) hio_peeraddr(io);
+    line_t                   *line   = newLine(tid);
+    udp_listener_con_state_t *cstate = malloc(sizeof(udp_listener_con_state_t));
+    LSTATE_MUT(line)                 = cstate;
+    line->src_ctx.address_type       = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
+    line->src_ctx.address_protocol   = kSapUdp;
+    line->src_ctx.address            = *(sockaddr_u *) hio_peeraddr(io);
 
     *cstate = (udp_listener_con_state_t){.loop              = loops[tid],
                                          .line              = line,

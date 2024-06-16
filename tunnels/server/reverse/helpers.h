@@ -2,10 +2,10 @@
 #include "tunnel.h"
 #include "types.h"
 
-#define CSTATE_D(x)     ((reverse_server_con_state_t *) ((((x)->line->chains_state)[state->chain_index_d])))
-#define CSTATE_U(x)     ((reverse_server_con_state_t *) ((((x)->line->chains_state)[state->chain_index_u])))
-#define CSTATE_D_MUT(x) ((x)->line->chains_state)[state->chain_index_d]
-#define CSTATE_U_MUT(x) ((x)->line->chains_state)[state->chain_index_u]
+#define CSTATE_D(x)     ((reverse_server_con_state_t *) (LSTATE_I((x)->line, state->chain_index_d)))
+#define CSTATE_U(x)     ((reverse_server_con_state_t *) (LSTATE_I((x)->line, state->chain_index_u)))
+#define CSTATE_D_MUT(x) LSTATE_I_MUT((x)->line, state->chain_index_d)
+#define CSTATE_U_MUT(x) LSTATE_I_MUT((x)->line, state->chain_index_u)
 
 static void addConnectionU(thread_box_t *box, reverse_server_con_state_t *con)
 {

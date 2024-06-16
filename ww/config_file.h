@@ -5,17 +5,16 @@
 
 typedef struct config_file_s
 {
-    char *file_path;
-    char *name;
-    char *author;
-    int   config_version;
-    int   core_minimum_version;
-    bool  encrypted;
-
-    struct cJSON   *root;
-    struct cJSON   *nodes;
-    size_t   file_prebuffer_size;
-    hmutex_t guard;
+    char         *file_path;
+    char         *name;
+    char         *author;
+    int           config_version;
+    int           core_minimum_version;
+    bool          encrypted;
+    struct cJSON *root;
+    struct cJSON *nodes;
+    size_t        file_prebuffer_size;
+    hmutex_t      guard;
 } config_file_t;
 
 // a config is loaded in ram and can be updated continously by other threads forexample when a user

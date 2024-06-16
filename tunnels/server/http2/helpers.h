@@ -94,7 +94,7 @@ http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con,
     stream->chunkbs                                         = newBufferStream(getLineBufferPool(this_line));
     stream->parent                                          = this_line;
     stream->line                                            = newLine(this_line->tid);
-    stream->line->chains_state[target_tun->chain_index - 1] = stream;
+    LSTATE_I_MUT(stream->line, target_tun->chain_index - 1) = stream;
     stream->tunnel                                          = target_tun;
     nghttp2_session_set_stream_user_data(con->session, stream_id, stream);
     setupLineDownSide(stream->line, onStreamLinePaused, stream, onStreamLineResumed);
@@ -103,8 +103,7 @@ http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con,
 }
 static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
 {
-
-    stream->line->chains_state[stream->tunnel->chain_index - 1] = NULL;
+    LSTATE_I_MUT(stream->line, stream->tunnel->chain_index - 1) = NULL;
     destroyBufferStream(stream->chunkbs);
     doneLineDownSide(stream->line);
     resumeLineDownSide(stream->parent);
@@ -154,6 +153,6 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
     }
     doneLineUpSide(con->line);
     nghttp2_session_del(con->session);
-    con->line->chains_state[self->chain_index] = NULL;
+    LSTATE_MUT(con->line) = NULL;
     free(con);
 }

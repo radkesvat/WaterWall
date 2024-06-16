@@ -8,12 +8,11 @@
 
 struct pipe_line_s
 {
-    atomic_bool closed;
-    atomic_int  refc;
-    bool        first_sent;
-    uint8_t     left_tid;
-    uint8_t     right_tid;
-
+    atomic_bool         closed;
+    atomic_int          refc;
+    bool                first_sent;
+    uint8_t             left_tid;
+    uint8_t             right_tid;
     uintptr_t           memptr;
     tunnel_t           *self;
     line_t             *left_line;
@@ -48,7 +47,7 @@ static void lock(pipe_line_t *pl)
 {
     // int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_release);
     int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_relaxed);
-    if (old_refc == 0)
+    if (0 >= old_refc)
     {
         // this should not happen, otherwise we must change memory order
         // but i think its ok because threads synchronize around the mutex in eventloop
