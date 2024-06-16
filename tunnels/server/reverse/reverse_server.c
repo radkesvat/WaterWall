@@ -1,5 +1,6 @@
 #include "reverse_server.h"
 #include "buffer_pool.h"
+#include "frand.h"
 #include "helpers.h"
 #include "hplatform.h"
 #include "loggers/network_logger.h"
@@ -68,6 +69,13 @@ static void upStream(tunnel_t *self, context_t *c)
                         {
 
                             reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
+
+                            size_t random_choosen = (fastRand() % this_tb->u_count);
+                            while (random_choosen--)
+                            {
+                                ucstate = ucstate->next;
+                            }
+
                             removeConnectionU(this_tb, ucstate);
                             ucstate->d      = c->line;
                             ucstate->paired = true;
@@ -199,7 +207,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-
                     self->dw->downStream(self->dw, switchLine(c, dcstate->d));
                 }
             }
@@ -251,7 +258,7 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 doneLineUpSide(ucstate->d);
                 doneLineUpSide(ucstate->u);
-                line_t *d_line                                   = ucstate->d;
+                line_t *d_line                                 = ucstate->d;
                 LSTATE_I_MUT(ucstate->d, state->chain_index_d) = NULL;
                 cleanup(ucstate);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
