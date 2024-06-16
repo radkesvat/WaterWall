@@ -96,11 +96,19 @@ static bool redirectPortUdp(unsigned int port, unsigned int to)
     return execCmd(b).exit_code == 0;
 }
 
-static bool resetIptables(void)
+static bool resetIptables(bool safe_mode)
 {
-    char msg[] = "SocketManager: clearing iptables nat rules";
-    ssize_t _ = write(STDOUT_FILENO, msg, sizeof(msg));
-    (void)_;
+    char msg[] = "SocketManager: clearing iptables nat rules\n";
+
+    if (safe_mode)
+    {
+        ssize_t _ = write(STDOUT_FILENO, msg, sizeof(msg));
+        (void) _;
+    }
+    else
+    {
+        LOGD(msg);
+    }
 
 #if SUPPORT_V6
     execCmd("ip6tables -t nat -F");
@@ -113,7 +121,7 @@ static void exitHook(void)
 {
     if (state->iptables_used)
     {
-        resetIptables();
+        resetIptables(true);
     }
 }
 static void signalHandler(int signum)
@@ -455,7 +463,7 @@ static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, c
     state->iptables_used = true;
     if (! state->iptable_cleaned)
     {
-        if (! resetIptables())
+        if (! resetIptables(false))
         {
             LOGF("SocketManager: could not clear iptables rules");
             exit(1);
