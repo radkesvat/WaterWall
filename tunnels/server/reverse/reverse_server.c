@@ -70,11 +70,11 @@ static void upStream(tunnel_t *self, context_t *c)
 
                             reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
 
-                            size_t random_choosen = (fastRand() % this_tb->u_count);
-                            while (random_choosen--)
-                            {
-                                ucstate = ucstate->next;
-                            }
+                            // size_t random_choosen = (fastRand() % this_tb->u_count);
+                            // while (random_choosen--)
+                            // {
+                            //     ucstate = ucstate->next;
+                            // }
 
                             removeConnectionU(this_tb, ucstate);
                             ucstate->d      = c->line;
