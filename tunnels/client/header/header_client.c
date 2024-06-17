@@ -64,8 +64,6 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    
-
     return t;
 }
 

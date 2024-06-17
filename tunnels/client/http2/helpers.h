@@ -134,8 +134,8 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
     stream->chunkbs   = newBufferStream(getLineBufferPool(con->line));
     stream->parent    = con->line;
     stream->line      = child_line;
-    stream->tunnel    = con->tunnel->dw;
-    LSTATE_I_MUT(stream->line, stream->tunnel->chain_index + 1) = stream;
+    stream->tunnel    = con->tunnel;
+    LSTATE_I_MUT(stream->line, stream->tunnel->chain_index) = stream;
     setupLineUpSide(stream->line, onStreamLinePaused, stream, onStreamLineResumed);
 
     addStraem(con, stream);
@@ -147,11 +147,9 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
 static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
 {
 
+    LSTATE_I_DROP(stream->line, stream->tunnel->chain_index);
     destroyBufferStream(stream->chunkbs);
-    LSTATE_I_DROP(stream->line, stream->tunnel->chain_index + 1);
     doneLineUpSide(stream->line);
-    resumeLineUpSide(stream->parent);
-
     free(stream);
 }
 
@@ -211,13 +209,12 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
         context_t                      *fin_ctx = newFinContext(stream_i->line);
         tunnel_t                       *dest    = stream_i->tunnel;
         deleteHttp2Stream(stream_i);
-        CSTATE_DROP(fin_ctx);
         dest->downStream(dest, fin_ctx);
         stream_i = next;
     }
     doneLineDownSide(con->line);
-    nghttp2_session_del(con->session);
     LSTATE_DROP(con->line);
+    nghttp2_session_del(con->session);
     destroyContextQueue(con->queue);
     destroyLine(con->line);
     htimer_del(con->ping_timer);

@@ -83,19 +83,19 @@ static void onH2LineResumed(void *arg)
     }
 }
 
-http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line,
-                                                  tunnel_t *target_tun, int32_t stream_id)
+http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *self,
+                                                   int32_t stream_id)
 {
     http2_server_child_con_state_t *stream;
     stream = malloc(sizeof(http2_server_child_con_state_t));
     memset(stream, 0, sizeof(http2_server_child_con_state_t));
 
-    stream->stream_id                                       = stream_id;
-    stream->chunkbs                                         = newBufferStream(getLineBufferPool(this_line));
-    stream->parent                                          = this_line;
-    stream->line                                            = newLine(this_line->tid);
-    LSTATE_I_MUT(stream->line, target_tun->chain_index - 1) = stream;
-    stream->tunnel                                          = target_tun;
+    stream->stream_id          = stream_id;
+    stream->chunkbs            = newBufferStream(getLineBufferPool(this_line));
+    stream->parent             = this_line;
+    stream->line               = newLine(this_line->tid);
+    LSTATE_MUT(stream->line) = stream;
+    stream->tunnel             = self;
     nghttp2_session_set_stream_user_data(con->session, stream_id, stream);
     setupLineDownSide(stream->line, onStreamLinePaused, stream, onStreamLineResumed);
 
@@ -103,10 +103,9 @@ http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con,
 }
 static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
 {
-    LSTATE_I_DROP(stream->line, stream->tunnel->chain_index - 1);
+    LSTATE_I_DROP(stream->line, stream->tunnel->chain_index);
     destroyBufferStream(stream->chunkbs);
     doneLineDownSide(stream->line);
-    resumeLineDownSide(stream->parent);
     destroyLine(stream->line);
     if (stream->request_path)
     {
@@ -147,7 +146,6 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
         tunnel_t                       *dest    = stream_i->tunnel;
         http2_server_child_con_state_t *next    = stream_i->next;
         deleteHttp2Stream(stream_i);
-        CSTATE_DROP(fin_ctx);
         dest->upStream(dest, fin_ctx);
         stream_i = next;
     }

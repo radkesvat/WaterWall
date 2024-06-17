@@ -235,7 +235,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
                 stream->bytes_needed      = 0;
                 context_t *stream_data    = newContext(stream->line);
                 stream_data->payload      = gdata_buf;
-                stream->tunnel->downStream(stream->tunnel, stream_data);
+                stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);
 
                 if (nghttp2_session_get_stream_user_data(session, stream_id))
                 {
@@ -252,7 +252,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
         writeRaw(buf, data, len);
         context_t *stream_data = newContext(stream->line);
         stream_data->payload   = buf;
-        stream->tunnel->downStream(stream->tunnel, stream_data);
+        stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);
     }
 
     return 0;
@@ -300,13 +300,13 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         {
             return 0;
         }
+        resumeLineUpSide(stream->parent);
         nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
         context_t *fc   = newFinContext(stream->line);
-        tunnel_t  *dest = stream->tunnel;
+        CSTATE_DROP(fc);
+        tunnel_t  *dest = stream->tunnel->dw;
         removeStream(con, stream);
         deleteHttp2Stream(stream);
-        CSTATE_DROP(fc);
-        
         dest->downStream(dest, fc);
 
         return 0;
@@ -322,7 +322,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
             {
                 con->handshake_completed = true;
                 flushWriteQueue(con);
-                stream->tunnel->downStream(stream->tunnel, newEstContext(stream->line));
+                stream->tunnel->dw->downStream(stream->tunnel->dw, newEstContext(stream->line));
             }
         }
     }

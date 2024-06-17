@@ -35,7 +35,6 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 
     context_t *context = newContext(line);
     context->payload   = payload;
-
     self->downStream(self, context);
 }
 
@@ -48,8 +47,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (hio_is_closed(cstate->io))
         {
-            cleanup(CSTATE(c));
             CSTATE_DROP(c);
+            cleanup(cstate);
             reuseContextBuffer(c);
             goto fail;
         }
@@ -82,8 +81,8 @@ static void upStream(tunnel_t *self, context_t *c)
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
-                cleanup(CSTATE(c));
                 CSTATE_DROP(c);
+                cleanup(cstate);
                 goto fail;
             }
 
@@ -173,8 +172,8 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         hio_t *io = cstate->io;
         hevent_set_userdata(io, NULL);
-        cleanup(cstate);
         CSTATE_DROP(c);
+        cleanup(cstate);
     }
     self->dw->downStream(self->dw, c);
 }

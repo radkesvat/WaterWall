@@ -112,14 +112,26 @@ static void onClose(hio_t *io)
         LOGD("TcpConnector: sent close for FD:%x ", hio_fd(io));
     }
 }
-static void onLinePaused(void *cstate)
+static void onLinePaused(void *userdata)
 {
-    hio_read_stop(((tcp_connector_con_state_t *) cstate)->io);
+    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (userdata);
+
+    if (! cstate->read_paused)
+    {
+        cstate->read_paused = true;
+        hio_read_stop(cstate->io);
+    }
 }
 
-static void onLineResumed(void *cstate)
+static void onLineResumed(void *userdata)
 {
-    hio_read(((tcp_connector_con_state_t *) cstate)->io);
+    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (userdata);
+
+    if (cstate->read_paused)
+    {
+        cstate->read_paused = false;
+        hio_read(cstate->io);
+    }
 }
 
 static void onOutBoundConnected(hio_t *upstream_io)
@@ -234,8 +246,8 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (! resolveContextSync(dest_ctx))
                 {
-                    cleanup(cstate, false);
                     CSTATE_DROP(c);
+                    cleanup(cstate, false);
                     goto fail;
                 }
             }
@@ -245,8 +257,8 @@ static void upStream(tunnel_t *self, context_t *c)
             if (sockfd < 0)
             {
                 LOGE("Connector: socket fd < 0");
-                cleanup(cstate, false);
                 CSTATE_DROP(c);
+                cleanup(cstate, false);
                 goto fail;
             }
             if (state->tcp_no_delay)
@@ -277,14 +289,14 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            cleanup(cstate, true);
             CSTATE_DROP(c);
+            cleanup(cstate, true);
             destroyContext(c);
         }
     }
     return;
 fail:;
-    self->dw->downStream(self->dw, newFinContext(c->line));
+    self->dw->downStream(self->dw, newFinContextFrom(c));
     destroyContext(c);
 }
 static void downStream(tunnel_t *self, context_t *c)
@@ -327,8 +339,8 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            cleanup(cstate, false);
             CSTATE_DROP(c);
+            cleanup(cstate, false);
             self->dw->downStream(self->dw, c);
         }
     }

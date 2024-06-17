@@ -38,15 +38,21 @@ enum
     kMaxChainLen = (16 * 2)
 };
 
+// get the state object of each tunnel
 #define STATE(x) ((void *) ((x)->state))
 
-#define LSTATE_I(x, y)     ((void *) ((((x)->chains_state)[(y)])))
+// get the line state at index I
+#define LSTATE_I(x, y) ((void *) ((((x)->chains_state)[(y)])))
+// mutate the line state at index I
 #define LSTATE_I_MUT(x, y) (x)->chains_state[(y)]
 
+// get the line state of current tunnel which always named as `self`
 #define LSTATE(x)     LSTATE_I(x, self->chain_index)
 #define LSTATE_MUT(x) LSTATE_I_MUT(x, self->chain_index)
 
-#define CSTATE(x)     LSTATE((x)->line)
+// get the state of the line of the context
+#define CSTATE(x) LSTATE((x)->line)
+// mutate the state of the line of the context
 #define CSTATE_MUT(x) LSTATE_MUT((x)->line)
 
 /*
@@ -65,7 +71,9 @@ enum
 #define LSTATE_I_DROP(x, y) (LSTATE_I_MUT((x), (y)) = NULL)
 #endif
 
+// mutate the state of line to NULL , this is done when the state is being freed and is necessary
 #define LSTATE_DROP(x) LSTATE_I_DROP((x), self->chain_index)
+// mutate the state of the line of context, this is done when the state is being freed and is necessary
 #define CSTATE_DROP(x) LSTATE_DROP((x)->line)
 
 typedef void (*LineFlowSignal)(void *state);

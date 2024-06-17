@@ -38,4 +38,5 @@ typedef struct tcp_connector_con_state_s
     context_queue_t *data_queue;
     bool             write_paused;
     bool             established;
+    bool             read_paused;
 } tcp_connector_con_state_t;

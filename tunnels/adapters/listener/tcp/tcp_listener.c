@@ -41,6 +41,7 @@ typedef struct tcp_listener_con_state_s
     bool             write_paused;
     bool             established;
     bool             first_packet_sent;
+    bool             read_paused;
 } tcp_listener_con_state_t;
 
 static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
@@ -116,14 +117,26 @@ static void onWriteComplete(hio_t *io)
     }
 }
 
-static void onLinePaused(void *cstate)
+static void onLinePaused(void *userdata)
 {
-    hio_read_stop(((tcp_listener_con_state_t *) cstate)->io);
+    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (userdata);
+
+    if (! cstate->read_paused)
+    {
+        cstate->read_paused = true;
+        hio_read_stop(cstate->io);
+    }
 }
 
-static void onLineResumed(void *cstate)
+static void onLineResumed(void *userdata)
 {
-    hio_read(((tcp_listener_con_state_t *) cstate)->io);
+    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (userdata);
+
+    if (cstate->read_paused)
+    {
+        cstate->read_paused = false;
+        hio_read(cstate->io);
+    }
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -149,9 +162,9 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
-
-            cleanup(CSTATE(c), false);
+            tcp_listener_con_state_t *cstate = CSTATE(c);
             CSTATE_DROP(c);
+            cleanup(cstate, false);
         }
     }
 
@@ -196,8 +209,8 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         if (c->fin)
         {
-            cleanup(cstate, true);
             CSTATE_DROP(c);
+            cleanup(cstate, true);
             destroyContext(c);
             return;
         }

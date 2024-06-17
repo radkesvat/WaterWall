@@ -109,7 +109,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
                     stream->first_sent = true;
                     stream_data->first = true;
                 }
-                stream->tunnel->upStream(stream->tunnel, stream_data);
+                stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
 
                 if (nghttp2_session_get_stream_user_data(session, stream_id))
                 {
@@ -132,7 +132,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
             stream->first_sent = true;
             stream_data->first = true;
         }
-        stream->tunnel->upStream(stream->tunnel, stream_data);
+        stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
     }
 
     return 0;
@@ -183,13 +183,13 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         {
             return 0;
         }
+        resumeLineDownSide(stream->parent);
         nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
         context_t *fc   = newFinContext(stream->line);
-        tunnel_t  *dest = stream->tunnel;
+        tunnel_t  *dest = stream->tunnel->up;
+        CSTATE_DROP(fc);
         removeStream(con, stream);
         deleteHttp2Stream(stream);
-        CSTATE_DROP(fc);
-
         dest->upStream(dest, fc);
         return 0;
     }
@@ -216,7 +216,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
 
     http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, self->up, frame->hd.stream_id);
     addStream(con, stream);
-    stream->tunnel->upStream(stream->tunnel, newInitContext(stream->line));
+    stream->tunnel->up->upStream(stream->tunnel->up, newInitContext(stream->line));
 
     return 0;
 }
