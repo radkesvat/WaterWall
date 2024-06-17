@@ -235,7 +235,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (! resolveContextSync(dest_ctx))
                 {
                     cleanup(cstate, false);
-                    CSTATE_MUT(c) = NULL;
+                    CSTATE_DROP(c);
                     goto fail;
                 }
             }
@@ -246,7 +246,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 LOGE("Connector: socket fd < 0");
                 cleanup(cstate, false);
-                CSTATE_MUT(c) = NULL;
+                CSTATE_DROP(c);
                 goto fail;
             }
             if (state->tcp_no_delay)
@@ -278,7 +278,7 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             cleanup(cstate, true);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             destroyContext(c);
         }
     }
@@ -328,7 +328,7 @@ static void downStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             cleanup(cstate, false);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             self->dw->downStream(self->dw, c);
         }
     }

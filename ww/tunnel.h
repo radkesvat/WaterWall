@@ -49,6 +49,25 @@ enum
 #define CSTATE(x)     LSTATE((x)->line)
 #define CSTATE_MUT(x) LSTATE_MUT((x)->line)
 
+/*
+    while it is necessary to drop each state when line is closing,
+    setting them to NULL can be removed on release build since the assert is also
+    removed
+*/
+#if defined(RELEASE) && false
+#define LSTATE_I_DROP(x, y)                                                                                            \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        (void) (x);                                                                                                    \
+        (void) (y);                                                                                                    \
+    } while (0)
+#else
+#define LSTATE_I_DROP(x, y) (LSTATE_I_MUT((x), (y)) = NULL)
+#endif
+
+#define LSTATE_DROP(x) LSTATE_I_DROP((x), self->chain_index)
+#define CSTATE_DROP(x) LSTATE_DROP((x)->line)
+
 typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
@@ -207,7 +226,7 @@ inline void internalUnRefLine(line_t *l)
 
     // there should not be any conn-state alive at this point
     for (size_t i = 0; i < kMaxChainLen; i++)
-    {   
+    {
         assert(LSTATE_I(l, i) == NULL);
     }
     assert(l->up_state == NULL);

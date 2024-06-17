@@ -62,7 +62,7 @@ static void cleanup(tunnel_t *self, context_t *c)
         destroyContextQueue(cstate->queue);
 
         free(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
 }
 
@@ -157,8 +157,8 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             CSTATE_MUT(c) = malloc(sizeof(oss_client_con_state_t));
-            memset(CSTATE(c), 0, sizeof(oss_client_con_state_t));
             oss_client_con_state_t *cstate = CSTATE(c);
+            memset(cstate, 0, sizeof(oss_client_con_state_t));
             cstate->rbio                   = BIO_new(BIO_s_mem());
             cstate->wbio                   = BIO_new(BIO_s_mem());
             cstate->ssl                    = SSL_new(state->ssl_context);

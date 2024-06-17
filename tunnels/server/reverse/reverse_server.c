@@ -152,7 +152,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 doneLineUpSide(dcstate->d);
                 doneLineUpSide(dcstate->u);
                 line_t *u_line                                 = dcstate->u;
-                LSTATE_I_MUT(dcstate->u, state->chain_index_u) = NULL;
+                LSTATE_I_DROP(dcstate->u, state->chain_index_u);
                 cleanup(dcstate);
                 self->up->upStream(self->up, switchLine(c, u_line));
             }

@@ -243,7 +243,7 @@ disconnect:;
     }
     cleanup(cstate, getContextBufferPool(c));
     free(cstate);
-    CSTATE_MUT(c) = NULL;
+    CSTATE_DROP(c);
     context_t *fc = newFinContextFrom(c);
     destroyContext(c);
     self->dw->downStream(self->dw, fc);
@@ -594,7 +594,7 @@ static void upStream(tunnel_t *self, context_t *c)
             bool init_sent = cstate->init_sent;
             cleanup(cstate, getContextBufferPool(c));
             free(cstate);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             if (init_sent)
             {
                 self->up->upStream(self->up, c);
@@ -609,7 +609,7 @@ static void upStream(tunnel_t *self, context_t *c)
 disconnect:;
     cleanup(cstate, getContextBufferPool(c));
     free(cstate);
-    CSTATE_MUT(c) = NULL;
+    CSTATE_DROP(c);
     context_t *fc = newFinContextFrom(c);
     destroyContext(c);
     self->dw->downStream(self->dw, fc);
@@ -654,7 +654,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         cleanup(cstate, getContextBufferPool(c));
         free(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
     if (c->est)
     {
@@ -694,7 +694,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 // connects to a ip4 or 6 right? anyways close if thats not the case
                 cleanup(cstate, getContextBufferPool(c));
                 free(cstate);
-                CSTATE_MUT(c) = NULL;
+                CSTATE_DROP(c);
                 reuseBuffer(getContextBufferPool(c), respbuf);
                 self->up->upStream(self->dw, newFinContext(c->line));
                 context_t *fc = newFinContextFrom(c);

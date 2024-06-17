@@ -119,7 +119,7 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             doneLineUpSide(cstate->main_line);
-            LSTATE_MUT(cstate->main_line) = NULL;
+            LSTATE_DROP(cstate->main_line);
             cstate->main_line             = NULL;
 
             line_t *upload_line   = cstate->upload_line;
@@ -129,7 +129,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             cstate->upload_line = NULL;
             doneLineDownSide(upload_line);
-            LSTATE_MUT(upload_line) = NULL;
+            LSTATE_DROP(upload_line);
             self->up->upStream(self->up, newFinContext(upload_line));
             destroyLine(upload_line);
 
@@ -143,7 +143,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             cstate->download_line = NULL;
             doneLineDownSide(download_line);
-            LSTATE_MUT(download_line) = NULL;
+            LSTATE_DROP(download_line);
             self->up->upStream(self->up, newFinContext(download_line));
             destroyLine(download_line);
 
@@ -172,13 +172,13 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             if (c->line == cstate->download_line)
             {
-                LSTATE_MUT(cstate->download_line) = NULL;
+                LSTATE_DROP(cstate->download_line);
                 doneLineDownSide(cstate->download_line);
                 destroyLine(cstate->download_line);
 
                 if (cstate->upload_line)
                 {
-                    LSTATE_MUT(cstate->upload_line) = NULL;
+                    LSTATE_DROP(cstate->upload_line);
                     doneLineDownSide(cstate->upload_line);
                     self->up->upStream(self->up, newFinContext(cstate->upload_line));
                     destroyLine(cstate->upload_line);
@@ -186,13 +186,13 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                LSTATE_MUT(cstate->upload_line) = NULL;
+                LSTATE_DROP(cstate->upload_line);
                 doneLineDownSide(cstate->upload_line);
                 destroyLine(cstate->upload_line);
 
                 if (cstate->download_line)
                 {
-                    LSTATE_MUT(cstate->download_line) = NULL;
+                    LSTATE_DROP(cstate->download_line);
                     doneLineDownSide(cstate->download_line);
                     self->up->upStream(self->up, newFinContext(cstate->download_line));
                     destroyLine(cstate->download_line);
@@ -200,7 +200,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             if (cstate->main_line)
             {
-                LSTATE_MUT(cstate->main_line) = NULL;
+                LSTATE_DROP(cstate->main_line);
                 doneLineUpSide(cstate->main_line);
                 self->dw->downStream(self->dw, newFinContext(cstate->main_line));
             }

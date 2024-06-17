@@ -75,7 +75,7 @@ static void cleanup(tunnel_t *self, context_t *c)
         EVP_PKEY_free(cstate->sign_key);
 
         free(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
 }
 

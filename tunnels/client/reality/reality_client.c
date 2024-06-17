@@ -86,7 +86,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     destroyContextQueue(cstate->queue);
 
     free(cstate);
-    CSTATE_MUT(c) = NULL;
+    CSTATE_DROP(c);
 }
 
 static void flushWriteQueue(tunnel_t *self, context_t *c)

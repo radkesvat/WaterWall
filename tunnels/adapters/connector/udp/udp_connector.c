@@ -49,7 +49,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (hio_is_closed(cstate->io))
         {
             cleanup(CSTATE(c));
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             reuseContextBuffer(c);
             goto fail;
         }
@@ -83,7 +83,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 LOGE("Connector: socket fd < 0");
                 cleanup(CSTATE(c));
-                CSTATE_MUT(c) = NULL;
+                CSTATE_DROP(c);
                 goto fail;
             }
 
@@ -141,7 +141,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (! resolveContextSync(dest_ctx))
                 {
                     cleanup(CSTATE(c));
-                    CSTATE_MUT(c) = NULL;
+                    CSTATE_DROP(c);
                     goto fail;
                 }
             }
@@ -154,7 +154,7 @@ static void upStream(tunnel_t *self, context_t *c)
             hio_t *io = cstate->io;
             hevent_set_userdata(io, NULL);
             cleanup(CSTATE(c));
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             destroyContext(c);
             hio_close(io);
         }
@@ -174,7 +174,7 @@ static void downStream(tunnel_t *self, context_t *c)
         hio_t *io = cstate->io;
         hevent_set_userdata(io, NULL);
         cleanup(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
     self->dw->downStream(self->dw, c);
 }

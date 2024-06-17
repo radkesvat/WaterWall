@@ -208,7 +208,7 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
                 hhybridmutex_unlock(&(state->download_line_map_mutex));
 
                 free(cstate);
-                CSTATE_MUT(c)         = NULL;
+                CSTATE_DROP(c);
                 context_t *finish_ctx = newFinContextFrom(c);
                 if (! pipeDownStream(pl, finish_ctx))
                 {
@@ -259,7 +259,7 @@ static void localDownStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
 
     if (WW_UNLIKELY(c->fin))
     {
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
         free(cstate);
         self->dw->downStream(self->dw, c);
     }
@@ -331,7 +331,7 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
         {
             hhybridmutex_unlock(&(state->download_line_map_mutex));
 
-            LSTATE_MUT(upload_line_cstate->upload_line) = NULL;
+            LSTATE_DROP(upload_line_cstate->upload_line);
             self->dw->downStream(self->dw, newFinContext(upload_line_cstate->upload_line));
             free(upload_line_cstate);
         }
@@ -486,7 +486,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         LOGW("HalfDuplexServer: duplicate upload connection closed");
                         reuseContextBuffer(c);
                         free(cstate);
-                        CSTATE_MUT(c) = NULL;
+                        CSTATE_DROP(c);
                         self->dw->downStream(self->dw, newFinContextFrom(c));
                         destroyContext(c);
                         return;
@@ -574,7 +574,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         {
                             LOGW("HalfDuplexServer: duplicate download connection closed");
                             free(cstate);
-                            CSTATE_MUT(c) = NULL;
+                            CSTATE_DROP(c);
                             self->dw->downStream(self->dw, newFinContextFrom(c));
                             destroyContext(c);
                             return;
@@ -604,7 +604,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         LOGW("HalfDuplexServer: duplicate download connection closed");
                         free(cstate);
-                        CSTATE_MUT(c) = NULL;
+                        CSTATE_DROP(c);
                         self->dw->downStream(self->dw, newFinContextFrom(c));
                         destroyContext(c);
                         return;
@@ -693,7 +693,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     reuseBuffer(getContextBufferPool(c), cstate->buffering);
                 }
                 free(cstate);
-                CSTATE_MUT(c) = NULL;
+                CSTATE_DROP(c);
                 destroyContext(c);
                 break;
 
@@ -713,7 +713,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 hhybridmutex_unlock(&(state->upload_line_map_mutex));
                 reuseBuffer(getContextBufferPool(c), cstate->buffering);
                 free(cstate);
-                CSTATE_MUT(c) = NULL;
+                CSTATE_DROP(c);
                 destroyContext(c);
             }
             break;
@@ -732,7 +732,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 hhybridmutex_unlock(&(state->download_line_map_mutex));
                 free(cstate);
-                CSTATE_MUT(c) = NULL;
+                CSTATE_DROP(c);
                 destroyContext(c);
             }
             break;
@@ -741,8 +741,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 doneLineUpSide(c->line);
 
                 halfduplex_server_con_state_t *cstate_download = cstate;
-                LSTATE_MUT(cstate_download->download_line)     = NULL;
-                cstate_download->download_line                 = NULL;
+                LSTATE_DROP(cstate_download->download_line);
+                cstate_download->download_line = NULL;
 
                 if (cstate_download->main_line)
                 {
@@ -757,10 +757,10 @@ static void upStream(tunnel_t *self, context_t *c)
                     doneLineUpSide(cstate_download->upload_line);
 
                     halfduplex_server_con_state_t *cstate_upload = LSTATE(cstate_download->upload_line);
-                    LSTATE_MUT(cstate_download->upload_line)     = NULL;
-                    cstate_upload->main_line                     = NULL;
-                    cstate_upload->download_line                 = NULL;
-                    cstate_upload->upload_line                   = NULL;
+                    LSTATE_DROP(cstate_download->upload_line);
+                    cstate_upload->main_line     = NULL;
+                    cstate_upload->download_line = NULL;
+                    cstate_upload->upload_line   = NULL;
 
                     if (cstate_upload->state == kCsUploadDirect)
                     {
@@ -793,8 +793,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 doneLineUpSide(c->line);
 
                 halfduplex_server_con_state_t *cstate_upload = cstate;
-                LSTATE_MUT(cstate_upload->upload_line)       = NULL;
-                cstate_upload->upload_line                   = NULL;
+                LSTATE_DROP(cstate_upload->upload_line);
+                cstate_upload->upload_line = NULL;
 
                 if (cstate_upload->main_line)
                 {
@@ -827,7 +827,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCsUploadPipedIndirect: {
                 halfduplex_server_con_state_t *upload_line_cstate = LSTATE(cstate->upload_line);
 
-                CSTATE_MUT(c) = NULL;
+                CSTATE_DROP(c);
                 doneLineUpSide(c->line);
                 if (! pipeUpStream(upload_line_cstate->pipe, c))
                 {

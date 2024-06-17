@@ -9,7 +9,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-
 static void upStream(tunnel_t *self, context_t *c)
 {
 
@@ -26,8 +25,8 @@ static void upStream(tunnel_t *self, context_t *c)
             const unsigned int          tid     = c->line->tid;
             reverse_client_con_state_t *dcstate = CSTATE_D(c);
             CSTATE_D_MUT(c)                     = NULL;
-            LSTATE_MUT(dcstate->u)              = NULL;
-            context_t *fc                       = switchLine(c, dcstate->u);
+            LSTATE_DROP(dcstate->u);
+            context_t *fc = switchLine(c, dcstate->u);
             cleanup(dcstate);
             state->reverse_cons -= 1;
             LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid,
@@ -93,8 +92,8 @@ static void downStream(tunnel_t *self, context_t *c)
         reverse_client_con_state_t *ucstate = CSTATE_U(c);
         if (c->fin)
         {
-            CSTATE_U_MUT(c)                                = NULL;
-            LSTATE_I_MUT(ucstate->d, state->chain_index_d) = NULL;
+            CSTATE_U_MUT(c) = NULL;
+            LSTATE_I_DROP(ucstate->d, state->chain_index_d);
 
             if (ucstate->pair_connected)
             {

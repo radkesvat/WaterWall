@@ -165,8 +165,8 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
     cstate->idle_handle = NULL;
     initiateConnect(self, cstate->u->tid, false);
 
-    LSTATE_MUT(cstate->u)                         = NULL;
-    LSTATE_I_MUT(cstate->d, state->chain_index_d) = NULL;
+    LSTATE_DROP(cstate->u);
+    LSTATE_I_DROP(cstate->d, state->chain_index_d);
 
     context_t *fc = newFinContext(cstate->u);
     cleanup(cstate);

@@ -106,7 +106,7 @@ static void upStream(tunnel_t *self, context_t *c)
             reuseBuffer(getContextBufferPool(c), cstate->buf);
         }
         free(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
         if (send_fin)
         {
             self->up->upStream(self->up, c);
@@ -130,7 +130,7 @@ static void downStream(tunnel_t *self, context_t *c)
         }
 
         free(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
 
     self->dw->downStream(self->dw, c);

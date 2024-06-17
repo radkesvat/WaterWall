@@ -88,7 +88,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             udp_listener_con_state_t *cstate = CSTATE(c);
             cleanup(cstate);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             destroyLine(c->line);
         }
     }
@@ -117,7 +117,7 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         if (c->fin)
         {
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             cleanup(cstate);
             destroyLine(c->line);
             destroyContext(c);

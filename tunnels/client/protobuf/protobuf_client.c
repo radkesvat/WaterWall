@@ -60,7 +60,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             protobuf_client_con_state_t *cstate = CSTATE(c);
             cleanup(cstate);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
         }
     }
     self->up->upStream(self->up, c);
@@ -137,14 +137,14 @@ static void downStream(tunnel_t *self, context_t *c)
         if (c->fin)
         {
             cleanup(cstate);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
         }
         self->dw->downStream(self->dw, c);
     }
     return;
 disconnect:;
     cleanup(cstate);
-    CSTATE_MUT(c) = NULL;
+    CSTATE_DROP(c);
     self->up->upStream(self->up, newFinContext(c->line));
     self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);

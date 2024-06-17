@@ -64,7 +64,7 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
             preconnect_client_con_state_t *dcon = CSTATE(c);
-            CSTATE_MUT(c)                       = NULL;
+            CSTATE_DROP(c);
             atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
 
             switch (dcon->mode)
@@ -76,7 +76,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             case kConnectedPair:;
                 line_t *u_line      = dcon->u;
-                LSTATE_MUT(dcon->u) = NULL;
+                LSTATE_DROP(dcon->u);
                 context_t *fctx     = switchLine(c, u_line); // created here to prevent destruction of line
                 destroyCstate(dcon);
                 self->up->upStream(self->up, fctx);
@@ -128,7 +128,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (c->fin)
         {
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
 
             switch (ucon->mode)
             {
@@ -143,7 +143,7 @@ static void downStream(tunnel_t *self, context_t *c)
             case kConnectedPair:;
                 atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
                 line_t *d_line      = ucon->d;
-                LSTATE_MUT(ucon->d) = NULL;
+                LSTATE_DROP(ucon->d);
                 destroyCstate(ucon);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
                 initiateConnect(self, false);

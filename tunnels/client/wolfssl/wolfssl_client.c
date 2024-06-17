@@ -62,7 +62,7 @@ static void cleanup(tunnel_t *self, context_t *c)
         destroyContextQueue(cstate->queue);
 
         free(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
 }
 
@@ -156,13 +156,13 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(wssl_client_con_state_t));
-            memset(CSTATE(c), 0, sizeof(wssl_client_con_state_t));
+            CSTATE_MUT(c)                   = malloc(sizeof(wssl_client_con_state_t));
             wssl_client_con_state_t *cstate = CSTATE(c);
-            cstate->rbio                    = BIO_new(BIO_s_mem());
-            cstate->wbio                    = BIO_new(BIO_s_mem());
-            cstate->ssl                     = SSL_new(state->ssl_context);
-            cstate->queue                   = newContextQueue(getContextBufferPool(c));
+            memset(cstate, 0, sizeof(wssl_client_con_state_t));
+            cstate->rbio  = BIO_new(BIO_s_mem());
+            cstate->wbio  = BIO_new(BIO_s_mem());
+            cstate->ssl   = SSL_new(state->ssl_context);
+            cstate->queue = newContextQueue(getContextBufferPool(c));
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
@@ -471,7 +471,7 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 

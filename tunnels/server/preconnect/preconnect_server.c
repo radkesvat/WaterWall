@@ -46,7 +46,7 @@ static void upStream(tunnel_t *self, context_t *c)
         preconnect_server_con_state_t *cstate   = CSTATE(c);
         bool                           send_fin = cstate->init_sent;
         free(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
         if (send_fin)
         {
             self->up->upStream(self->up, c);
@@ -66,7 +66,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->fin)
     {
         free(CSTATE(c));
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
 
     self->dw->downStream(self->dw, c);

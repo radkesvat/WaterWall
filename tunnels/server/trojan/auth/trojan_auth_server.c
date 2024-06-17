@@ -160,7 +160,7 @@ static void upStream(tunnel_t *self, context_t *c)
             bool init_sent = cstate->init_sent;
             bool auth      = cstate->authenticated;
             free(CSTATE(c));
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             if (init_sent)
             {
                 if (auth)
@@ -189,7 +189,7 @@ failed:;
     // disconnect:;
     reuseContextBuffer(c);
     free(CSTATE(c));
-    CSTATE_MUT(c)    = NULL;
+    CSTATE_DROP(c);
     context_t *reply = newFinContextFrom(c);
     destroyContext(c);
     self->dw->downStream(self->dw, reply);
@@ -222,7 +222,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->fin)
     {
         free(CSTATE(c));
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
     }
     self->dw->downStream(self->dw, c);
 }

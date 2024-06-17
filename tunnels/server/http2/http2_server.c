@@ -188,7 +188,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         tunnel_t  *dest = stream->tunnel;
         removeStream(con, stream);
         deleteHttp2Stream(stream);
-        CSTATE_MUT(fc) = NULL;
+        CSTATE_DROP(fc);
 
         dest->upStream(dest, fc);
         return 0;
@@ -412,7 +412,7 @@ static void downStream(tunnel_t *self, context_t *c)
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             removeStream(con, stream);
             deleteHttp2Stream(stream);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
 
             while (trySendResponse(self, con, 0, NULL))
             {

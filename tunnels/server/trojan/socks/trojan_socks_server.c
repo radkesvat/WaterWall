@@ -459,7 +459,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         }
 
                         cleanup(cstate);
-                        CSTATE_MUT(c)     = NULL;
+                        CSTATE_DROP(c);
                         context_t *fin_dw = newFinContextFrom(c);
                         destroyContext(c);
                         self->dw->downStream(self->dw, fin_dw);
@@ -481,7 +481,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 reuseContextBuffer(c);
 
                 cleanup(cstate);
-                CSTATE_MUT(c)    = NULL;
+                CSTATE_DROP(c);
                 context_t *reply = newFinContextFrom(c);
                 destroyContext(c);
                 self->dw->downStream(self->dw, reply);
@@ -509,7 +509,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         destroyBufferStream(cstate->udp_stream);
                     }
                     cleanup(cstate);
-                    CSTATE_MUT(c)     = NULL;
+                    CSTATE_DROP(c);
                     context_t *fin_dw = newFinContextFrom(c);
                     destroyContext(c);
                     self->dw->downStream(self->dw, fin_dw);
@@ -538,7 +538,7 @@ static void upStream(tunnel_t *self, context_t *c)
             trojan_socks_server_con_state_t *cstate    = CSTATE(c);
             bool                             init_sent = cstate->init_sent;
             cleanup(cstate);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             if (init_sent)
             {
                 self->up->upStream(self->up, c);
@@ -558,7 +558,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->fin)
     {
         cleanup(cstate);
-        CSTATE_MUT(c) = NULL;
+        CSTATE_DROP(c);
         self->dw->downStream(self->dw, c);
         return;
     }
@@ -579,7 +579,7 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 api_result_t apiTrojanSocksServer(tunnel_t *self, const char *msg)

@@ -151,7 +151,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
 
             cleanup(CSTATE(c), false);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
         }
     }
 
@@ -197,7 +197,7 @@ static void downStream(tunnel_t *self, context_t *c)
         if (c->fin)
         {
             cleanup(cstate, true);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
             destroyContext(c);
             return;
         }

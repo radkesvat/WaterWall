@@ -46,7 +46,6 @@ static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t
     if (len > 0)
     {
         shift_buffer_t *send_buf = popBuffer(getLineBufferPool(line));
-        shiftl(send_buf, lCap(send_buf) / 2); // use some unused space
         setLen(send_buf, len);
         writeRaw(send_buf, data, len);
 
@@ -216,7 +215,6 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     {
 
         shift_buffer_t *buf = popBuffer(getLineBufferPool(con->line));
-        shiftl(buf, lCap(buf) / 2); // use some unused space
         setLen(buf, len);
         writeRaw(buf, data, len);
         bufferStreamPush(stream->chunkbs, buf);
@@ -250,7 +248,6 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     else
     {
         shift_buffer_t *buf = popBuffer(getLineBufferPool(con->line));
-        shiftl(buf, lCap(buf) / 2); // use some unused space
         setLen(buf, len);
         writeRaw(buf, data, len);
         context_t *stream_data = newContext(stream->line);
@@ -308,8 +305,8 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         tunnel_t  *dest = stream->tunnel;
         removeStream(con, stream);
         deleteHttp2Stream(stream);
-        CSTATE_MUT(fc) = NULL;
-
+        CSTATE_DROP(fc);
+        
         dest->downStream(dest, fc);
 
         return 0;
@@ -410,7 +407,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 con_dest->upStream(con_dest, con_fc);
             }
             deleteHttp2Stream(stream);
-            CSTATE_MUT(c) = NULL;
+            CSTATE_DROP(c);
 
             destroyContext(c);
             return;

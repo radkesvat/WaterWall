@@ -148,7 +148,7 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
 {
 
     destroyBufferStream(stream->chunkbs);
-    LSTATE_I_MUT(stream->line, stream->tunnel->chain_index + 1) = NULL;
+    LSTATE_I_DROP(stream->line, stream->tunnel->chain_index + 1);
     doneLineUpSide(stream->line);
     resumeLineUpSide(stream->parent);
 
@@ -211,13 +211,13 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
         context_t                      *fin_ctx = newFinContext(stream_i->line);
         tunnel_t                       *dest    = stream_i->tunnel;
         deleteHttp2Stream(stream_i);
-        CSTATE_MUT(fin_ctx) = NULL;
+        CSTATE_DROP(fin_ctx);
         dest->downStream(dest, fin_ctx);
         stream_i = next;
     }
     doneLineDownSide(con->line);
     nghttp2_session_del(con->session);
-    LSTATE_MUT(con->line) = NULL;
+    LSTATE_DROP(con->line);
     destroyContextQueue(con->queue);
     destroyLine(con->line);
     htimer_del(con->ping_timer);
