@@ -2,11 +2,6 @@
 #include "tunnel.h"
 #include "types.h"
 
-#define CSTATE_D(x)     ((reverse_server_con_state_t *) (LSTATE_I((x)->line, state->chain_index_d)))
-#define CSTATE_U(x)     ((reverse_server_con_state_t *) (LSTATE_I((x)->line, state->chain_index_u)))
-#define CSTATE_D_MUT(x) LSTATE_I_MUT((x)->line, state->chain_index_d)
-#define CSTATE_U_MUT(x) LSTATE_I_MUT((x)->line, state->chain_index_u)
-
 static void addConnectionU(thread_box_t *box, reverse_server_con_state_t *con)
 {
     con->next             = box->u_cons_root.next;
@@ -48,52 +43,82 @@ static void removeConnectionD(thread_box_t *box, reverse_server_con_state_t *con
     }
     box->d_count -= 1;
 }
-static void onLinePausedU(void *cstate)
+static void onLinePausedU(void *userdata)
 {
-    pauseLineDownSide(((reverse_server_con_state_t *) cstate)->d);
+    reverse_server_con_state_t *cstate = (reverse_server_con_state_t *) userdata;
+    if (cstate->paired)
+    {
+        pauseLineDownSide(cstate->d);
+    }
 }
 
-static void onLineResumedU(void *cstate)
+static void onLineResumedU(void *userdata)
 {
-    resumeLineDownSide(((reverse_server_con_state_t *) cstate)->d);
+    reverse_server_con_state_t *cstate = (reverse_server_con_state_t *) userdata;
+    if (cstate->paired)
+    {
+        resumeLineDownSide(cstate->d);
+    }
 }
-static void onLinePausedD(void *cstate)
+static void onLinePausedD(void *userdata)
 {
-    pauseLineDownSide(((reverse_server_con_state_t *) cstate)->u);
+    reverse_server_con_state_t *cstate = (reverse_server_con_state_t *) userdata;
+    if (cstate->paired)
+    {
+        pauseLineDownSide(cstate->u);
+    }
 }
 
-static void onLineResumedD(void *cstate)
+static void onLineResumedD(void *userdata)
 {
-    resumeLineDownSide(((reverse_server_con_state_t *) cstate)->u);
+    reverse_server_con_state_t *cstate = (reverse_server_con_state_t *) userdata;
+    if (cstate->paired)
+    {
+        resumeLineDownSide(cstate->u);
+    }
 }
 
-static reverse_server_con_state_t *createCstate(bool isup, line_t *line)
+static reverse_server_con_state_t *createCstateU(line_t *line)
 {
     reverse_server_con_state_t *cstate = malloc(sizeof(reverse_server_con_state_t));
     memset(cstate, 0, sizeof(reverse_server_con_state_t));
-    if (isup)
-    {
-        cstate->u      = line;
-        cstate->uqueue = newContextQueue(getLineBufferPool(line));
-    }
-    else
-    {
-        cstate->wait_stream = newBufferStream(getLineBufferPool(line));
-        cstate->d           = line;
-    }
+    cstate->u      = line;
+    cstate->uqueue = newContextQueue(getLineBufferPool(line));
+    setupLineUpSide(line, onLinePausedU, cstate, onLineResumedU);
+    return cstate;
+}
+
+static reverse_server_con_state_t *createCstateD(line_t *line)
+{
+    reverse_server_con_state_t *cstate = malloc(sizeof(reverse_server_con_state_t));
+    memset(cstate, 0, sizeof(reverse_server_con_state_t));
+    cstate->wait_stream = newBufferStream(getLineBufferPool(line));
+    cstate->d           = line;
+    setupLineUpSide(line, onLinePausedD, cstate, onLineResumedD);
+
     return cstate;
 }
 
 static void cleanup(reverse_server_con_state_t *cstate)
 {
-
+    // since the connection could be in any state, and i did not want to use much memory to cover all cases
+    // so protect everything with if
     if (cstate->uqueue)
     {
         destroyContextQueue(cstate->uqueue);
     }
-    else
+    if (cstate->wait_stream)
     {
         destroyBufferStream(cstate->wait_stream);
     }
+    if (cstate->d)
+    {
+        doneLineUpSide(cstate->d);
+    }
+    if (cstate->u)
+    {
+        doneLineUpSide(cstate->u);
+    }
+
     free(cstate);
 }

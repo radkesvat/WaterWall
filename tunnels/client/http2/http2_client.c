@@ -392,11 +392,14 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             http2_client_child_con_state_t *stream = CSTATE(c);
             http2_client_con_state_t       *con    = LSTATE(stream->parent);
-            if (con->content_type == kApplicationGrpc)
+            CSTATE_DROP(c);
+
+            if (con->content_type == kApplicationGrpc && con->handshake_completed)
             {
                 sendGrpcFinalData(self, con->line, stream->stream_id);
             }
 
+            resumeLineUpSide(con->line);
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             removeStream(con, stream);
             if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(c->line))
@@ -406,9 +409,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 deleteHttp2Connection(con);
                 con_dest->upStream(con_dest, con_fc);
             }
+            
             deleteHttp2Stream(stream);
-            CSTATE_DROP(c);
-
             destroyContext(c);
             return;
         }

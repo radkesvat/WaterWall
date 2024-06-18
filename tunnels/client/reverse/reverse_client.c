@@ -12,20 +12,18 @@
 static void upStream(tunnel_t *self, context_t *c)
 {
 
-    reverse_client_state_t *state = STATE(self);
+    reverse_client_state_t     *state   = STATE(self);
+    reverse_client_con_state_t *dcstate = c->line->dw_state;
+
     if (c->payload != NULL)
     {
-        reverse_client_con_state_t *dcstate = CSTATE_D(c);
         self->up->upStream(self->up, switchLine(c, dcstate->u));
     }
     else
     {
         if (c->fin)
         {
-            const unsigned int          tid     = c->line->tid;
-            reverse_client_con_state_t *dcstate = CSTATE_D(c);
-            CSTATE_D_MUT(c)                     = NULL;
-            LSTATE_DROP(dcstate->u);
+            const unsigned int tid = c->line->tid;
             context_t *fc = switchLine(c, dcstate->u);
             cleanup(dcstate);
             state->reverse_cons -= 1;
@@ -51,7 +49,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        reverse_client_con_state_t *ucstate = CSTATE_U(c);
+        reverse_client_con_state_t *ucstate = c->line->dw_state;
 
         if (ucstate->pair_connected)
         {
@@ -89,11 +87,9 @@ static void downStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        reverse_client_con_state_t *ucstate = CSTATE_U(c);
+        reverse_client_con_state_t *ucstate = c->line->dw_state;
         if (c->fin)
         {
-            CSTATE_U_MUT(c) = NULL;
-            LSTATE_I_DROP(ucstate->d, state->chain_index_d);
 
             if (ucstate->pair_connected)
             {

@@ -207,7 +207,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     {
         http2_client_child_con_state_t *next    = stream_i->next;
         context_t                      *fin_ctx = newFinContext(stream_i->line);
-        tunnel_t                       *dest    = stream_i->tunnel;
+        tunnel_t                       *dest    = stream_i->tunnel->dw;
         deleteHttp2Stream(stream_i);
         dest->downStream(dest, fin_ctx);
         stream_i = next;

@@ -214,7 +214,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     nghttp2_submit_headers(con->session, flags, frame->hd.stream_id, NULL, &nvs[0], nvlen, NULL);
     con->state = kH2SendHeaders;
 
-    http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, self->up, frame->hd.stream_id);
+    http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, self, frame->hd.stream_id);
     addStream(con, stream);
     stream->tunnel->up->upStream(stream->tunnel->up, newInitContext(stream->line));
 
@@ -295,7 +295,6 @@ static bool trySendResponse(tunnel_t *self, http2_server_con_state_t *con, size_
         con->state = kH2SendDone;
     }
 
-    // LOGD("GetSendData %d\n", len);
     return false;
 }
 
@@ -398,6 +397,8 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
+            CSTATE_DROP(c);
+
             int flags = NGHTTP2_FLAG_END_STREAM | NGHTTP2_FLAG_END_HEADERS;
             if (con->content_type == kApplicationGrpc)
             {
@@ -409,10 +410,10 @@ static void downStream(tunnel_t *self, context_t *c)
                 nghttp2_submit_headers(con->session, flags, stream->stream_id, NULL, NULL, 0, NULL);
             }
 
+            resumeLineDownSide(con->line);
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             removeStream(con, stream);
             deleteHttp2Stream(stream);
-            CSTATE_DROP(c);
 
             while (trySendResponse(self, con, 0, NULL))
             {

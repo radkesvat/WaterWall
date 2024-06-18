@@ -5,10 +5,6 @@
 #include "types.h"
 #include <stdbool.h>
 
-#define CSTATE_D(x)     ((reverse_client_con_state_t *) (LSTATE_I((x)->line, state->chain_index_d)))
-#define CSTATE_U(x)     ((reverse_client_con_state_t *) CSTATE((x)))
-#define CSTATE_D_MUT(x) LSTATE_I_MUT((x)->line, state->chain_index_d)
-#define CSTATE_U_MUT(x) CSTATE_MUT((x))
 
 enum
 {
@@ -41,7 +37,7 @@ static reverse_client_con_state_t *createCstate(tunnel_t *self, uint8_t tid)
     reverse_client_con_state_t *cstate = malloc(sizeof(reverse_client_con_state_t));
     line_t                     *up     = newLine(tid);
     line_t                     *dw     = newLine(tid);
-    reserveChainStateIndex(dw); // we always take one from the down line
+    // reserveChainStateIndex(dw); // we always take one from the down line
     setupLineDownSide(up, onLinePausedU, cstate, onLineResumedU);
     setupLineDownSide(dw, onLinePausedD, cstate, onLineResumedD);
     *cstate = (reverse_client_con_state_t){.u = up, .d = dw, .idle_handle = NULL, .self = self};
@@ -65,11 +61,9 @@ static void cleanup(reverse_client_con_state_t *cstate)
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t                   *self   = cg->t;
-    reverse_client_state_t     *state  = STATE(self);
+    // reverse_client_state_t     *state  = STATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
     free(cg);
-    LSTATE_MUT(cstate->u)                         = cstate;
-    LSTATE_I_MUT(cstate->d, state->chain_index_d) = cstate;
     context_t *hello_data_ctx                     = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
 
@@ -164,9 +158,6 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
 
     cstate->idle_handle = NULL;
     initiateConnect(self, cstate->u->tid, false);
-
-    LSTATE_DROP(cstate->u);
-    LSTATE_I_DROP(cstate->d, state->chain_index_d);
 
     context_t *fc = newFinContext(cstate->u);
     cleanup(cstate);

@@ -118,9 +118,10 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            doneLineUpSide(cstate->main_line);
             LSTATE_DROP(cstate->main_line);
+            doneLineUpSide(cstate->main_line);
             cstate->main_line             = NULL;
+            destroyContext(c);
 
             line_t *upload_line   = cstate->upload_line;
             line_t *download_line = cstate->download_line;
@@ -136,7 +137,6 @@ static void upStream(tunnel_t *self, context_t *c)
             if (! isAlive(download_line))
             {
                 unLockLine(download_line);
-                destroyContext(c);
                 return;
             }
             unLockLine(download_line);
@@ -148,7 +148,6 @@ static void upStream(tunnel_t *self, context_t *c)
             destroyLine(download_line);
 
             free(cstate);
-            destroyContext(c);
         }
     }
 }
@@ -158,12 +157,6 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        if (WW_UNLIKELY(cstate->main_line == NULL))
-        {
-            reuseContextBuffer(c);
-            destroyContext(c);
-            return;
-        }
         self->dw->downStream(self->dw, switchLine(c, cstate->main_line));
     }
     else

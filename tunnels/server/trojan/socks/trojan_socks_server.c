@@ -53,14 +53,12 @@ static void encapsulateUdpPacket(context_t *c)
     shiftl(c->payload, kCrlfLen);
     writeRaw(c->payload, (unsigned char *) "\r\n", 2);
 
-    packet_len = (packet_len << 8) | (packet_len >> 8);
     shiftl(c->payload, 2); // LEN
-    writeUI16(c->payload, packet_len);
+    writeUI16(c->payload,  htons(packet_len));
 
     uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
-    port          = (port << 8) | (port >> 8);
     shiftl(c->payload, 2); // port
-    writeUI16(c->payload, port);
+    writeUI16(c->payload, htons(port));
 
     switch (c->line->dest_ctx.address_type)
     {

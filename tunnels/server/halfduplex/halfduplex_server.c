@@ -207,8 +207,8 @@ static void localUpStream(tunnel_t *self, context_t *c, pipe_line_t *pl)
             {
                 hhybridmutex_unlock(&(state->download_line_map_mutex));
 
-                free(cstate);
                 CSTATE_DROP(c);
+                free(cstate);
                 context_t *finish_ctx = newFinContextFrom(c);
                 if (! pipeDownStream(pl, finish_ctx))
                 {
@@ -484,9 +484,9 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (! push_succeed)
                     {
                         LOGW("HalfDuplexServer: duplicate upload connection closed");
+                        CSTATE_DROP(c);
                         reuseContextBuffer(c);
                         free(cstate);
-                        CSTATE_DROP(c);
                         self->dw->downStream(self->dw, newFinContextFrom(c));
                         destroyContext(c);
                         return;
@@ -573,8 +573,8 @@ static void upStream(tunnel_t *self, context_t *c)
                         if (! push_succeed)
                         {
                             LOGW("HalfDuplexServer: duplicate download connection closed");
-                            free(cstate);
                             CSTATE_DROP(c);
+                            free(cstate);
                             self->dw->downStream(self->dw, newFinContextFrom(c));
                             destroyContext(c);
                             return;
@@ -603,8 +603,8 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (! push_succeed)
                     {
                         LOGW("HalfDuplexServer: duplicate download connection closed");
-                        free(cstate);
                         CSTATE_DROP(c);
+                        free(cstate);
                         self->dw->downStream(self->dw, newFinContextFrom(c));
                         destroyContext(c);
                         return;
@@ -692,8 +692,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     reuseBuffer(getContextBufferPool(c), cstate->buffering);
                 }
-                free(cstate);
                 CSTATE_DROP(c);
+                free(cstate);
                 destroyContext(c);
                 break;
 
@@ -712,8 +712,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 hhybridmutex_unlock(&(state->upload_line_map_mutex));
                 reuseBuffer(getContextBufferPool(c), cstate->buffering);
-                free(cstate);
                 CSTATE_DROP(c);
+                free(cstate);
                 destroyContext(c);
             }
             break;
@@ -731,8 +731,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 hmap_cons_t_erase_at(&(state->download_line_map), f_iter);
 
                 hhybridmutex_unlock(&(state->download_line_map_mutex));
-                free(cstate);
                 CSTATE_DROP(c);
+                free(cstate);
                 destroyContext(c);
             }
             break;
