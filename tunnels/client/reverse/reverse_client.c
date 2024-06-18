@@ -24,15 +24,12 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->fin)
         {
             const unsigned int tid = c->line->tid;
-            context_t *fc = switchLine(c, dcstate->u);
+            context_t         *fc  = switchLine(c, dcstate->u);
             cleanup(dcstate);
             state->reverse_cons -= 1;
             LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid,
                  state->threadlocal_pool[tid].unused_cons_count, state->reverse_cons);
             self->up->upStream(self->up, fc);
-            
-            initiateConnect(self, tid, false);
-
         }
         else if (c->est)
         {
@@ -104,7 +101,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 self->dw->downStream(self->dw, fc);
 
                 initiateConnect(self, tid, false);
-
             }
             else
             {
@@ -175,7 +171,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     state->min_unused_cons = min(max((workers_count * (ssize_t) 8), state->min_unused_cons), 128);
 
     // we are always the first line creator so its easy to get the positon independent index here
-    line_t *l            = newLine(0);
+    line_t *l = newLine(0);
     destroyLine(l);
 
     state->starved_connections = newIdleTable(loops[0]);
