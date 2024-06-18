@@ -29,20 +29,19 @@ jobs:
       - name: install deps
         run: |
           sudo apt-get update && sudo apt-get install build-essential -y && sudo snap install cmake --classic && sudo wget https://apt.llvm.org/llvm.sh && sudo chmod u+x llvm.sh && sudo ./llvm.sh 19 all
-          mkdir build
-          cd build
+
       
 
       - name: Configure CMake
         run: >
-          scan-build-19 cmake
+          scan-build-19 cmake -B ${{ steps.strings.outputs.build-output-dir }}
           -DCMAKE_BUILD_TYPE=Release
           -G"Unix Makefiles"
           -S ${{ github.workspace }}
-          
-          
 
       - name: Build
         # Build your program with the given configuration. 
-        run: scan-build-19 make
+        run: |
+          cd ${{ steps.strings.outputs.build-output-dir }}
+          scan-build-19 make
 
