@@ -27,6 +27,7 @@ struct msg_event
     pipe_line_t *pl;
     void        *function;
     void        *arg;
+    uint8_t      target_tid;
 };
 
 typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
@@ -78,7 +79,7 @@ static void onMsgReceived(hevent_t *ev)
     struct msg_event *msg_ev = hevent_userdata(ev);
     pipe_line_t      *pl     = msg_ev->pl;
     (*(MsgTargetFunction *) (&(msg_ev->function)))(pl, msg_ev->arg);
-    reusePoolItem(pipeline_msg_pools[pl->right_tid], msg_ev);
+    reusePoolItem(pipeline_msg_pools[msg_ev->target_tid], msg_ev);
     unlock(pl);
 }
 
@@ -92,7 +93,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
     }
     lock(pl);
     struct msg_event *evdata = popPoolItem(pipeline_msg_pools[tid_from]);
-    *evdata                  = (struct msg_event){.pl = pl, .function = *(void **) (&fn), .arg = arg};
+    *evdata                  = (struct msg_event){.pl = pl, .function = *(void **) (&fn), .arg = arg,.target_tid=tid_to};
 
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
