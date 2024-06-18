@@ -157,7 +157,7 @@ HV_EXPORT void      hv_destroy_default_logger(void);
 
 
 // below for android
-#if defined(ANDROID) || defined(__ANDROID__) || 1
+#if defined(ANDROID) || defined(__ANDROID__)
 #include <android/log.h>
 #define LOG_TAG "JNI"
 static inline void hlogd(const char * fmt, ...){
