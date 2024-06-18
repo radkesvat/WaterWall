@@ -334,7 +334,7 @@ static void initRight(pipe_line_t *pl, void *arg)
 {
     (void) arg;
     pl->right_line = newLine(pl->right_tid);
-    setupLineDownSide(pl->right_line, pipeOnDownLinePaused, pl, pipeOnDownLineResumed);
+    setupLineDownSide(pl->right_line, pipeOnUpLinePaused, pl, pipeOnUpLineResumed);
     context_t *context = newInitContext(pl->right_line);
     pl->local_up_stream(pl->self, context, pl);
 
@@ -344,7 +344,7 @@ static void initRight(pipe_line_t *pl, void *arg)
 static void initLeft(pipe_line_t *pl, void *arg)
 {
     (void) arg;
-    setupLineUpSide(pl->left_line, pipeOnUpLinePaused, pl, pipeOnUpLineResumed);
+    setupLineUpSide(pl->left_line, pipeOnDownLinePaused, pl, pipeOnDownLineResumed);
 }
 
 void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t *left_line, uint8_t dest_tid,
