@@ -62,7 +62,7 @@ typedef struct generic_pool_s generic_pool_t;
 void poolReCharge(generic_pool_t *pool);
 void poolShrink(generic_pool_t *pool);
 
-inline pool_item_t *popPoolItem(generic_pool_t *pool)
+static inline pool_item_t *popPoolItem(generic_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_POOL)
     return pool->create_item_handle(pool);
@@ -80,7 +80,7 @@ inline pool_item_t *popPoolItem(generic_pool_t *pool)
     return pool->available[pool->len];
 }
 
-inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)
+static inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)
 {
 #if defined(DEBUG) && defined(BYPASS_POOL)
     pool->destroy_item_handle(pool, b);

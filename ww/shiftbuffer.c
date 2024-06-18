@@ -7,29 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern bool           isShallow(shift_buffer_t *self);
-extern unsigned int   lCap(shift_buffer_t *self);
-extern unsigned int   rCap(shift_buffer_t *self);
-extern void           constrainRight(shift_buffer_t *self);
-extern void           constrainLeft(shift_buffer_t *self);
-extern unsigned int   bufLen(shift_buffer_t *self);
-extern void           setLen(shift_buffer_t *self, unsigned int bytes);
-extern void           reserveBufSpace(shift_buffer_t *self, unsigned int bytes);
-extern void           consume(shift_buffer_t *self, unsigned int bytes);
-extern void           shiftl(shift_buffer_t *self, unsigned int bytes);
-extern void           shiftr(shift_buffer_t *self, unsigned int bytes);
-extern const void    *rawBuf(shift_buffer_t *self);
-extern unsigned char *rawBufMut(shift_buffer_t *self);
-extern void           writeRaw(shift_buffer_t *restrict self, const void *restrict buffer, unsigned int len);
-extern void           writeI32(shift_buffer_t *self, int32_t data);
-extern void           writeUI32(shift_buffer_t *self, uint32_t data);
-extern void           writeI16(shift_buffer_t *self, int16_t data);
-extern void           writeUI16(shift_buffer_t *self, uint16_t data);
-extern void           writeUI8(shift_buffer_t *self, uint8_t data);
-extern void           readUI8(shift_buffer_t *self, uint8_t *dest);
-extern void           readUI16(shift_buffer_t *self, uint16_t *dest);
-extern void           readUI64(shift_buffer_t *self, uint64_t *dest);
-
 #define PREPADDING ((ram_profile >= kRamProfileS2Memory ? (1U << 11) : (1U << 8)) + 512)
 
 void destroyShiftBuffer(shift_buffer_t *self)

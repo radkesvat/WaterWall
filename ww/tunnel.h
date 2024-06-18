@@ -135,7 +135,7 @@ void      defaultDownStream(tunnel_t *self, context_t *c);
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool);
 void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
-inline line_t *newLine(uint8_t tid)
+static inline line_t *newLine(uint8_t tid)
 {
     line_t *result = popPoolItem(line_pools[tid]);
 
@@ -154,36 +154,36 @@ inline line_t *newLine(uint8_t tid)
     return result;
 }
 
-inline bool isAlive(line_t *line)
+static inline bool isAlive(line_t *line)
 {
     return line->alive;
 }
 
-inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
+static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
     l->up_state     = state;
     l->up_pause_cb  = pause_cb;
     l->up_resume_cb = resume_cb;
 }
 
-inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
+static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
     l->dw_state     = state;
     l->dw_pause_cb  = pause_cb;
     l->dw_resume_cb = resume_cb;
 }
 
-inline void doneLineUpSide(line_t *l)
+static inline void doneLineUpSide(line_t *l)
 {
     l->up_state = NULL;
 }
 
-inline void doneLineDownSide(line_t *l)
+static inline void doneLineDownSide(line_t *l)
 {
     l->dw_state = NULL;
 }
 
-inline void pauseLineUpSide(line_t *l)
+static inline void pauseLineUpSide(line_t *l)
 {
     if (l->up_state)
     {
@@ -191,7 +191,7 @@ inline void pauseLineUpSide(line_t *l)
     }
 }
 
-inline void pauseLineDownSide(line_t *l)
+static inline void pauseLineDownSide(line_t *l)
 {
     if (l->dw_state)
     {
@@ -199,7 +199,7 @@ inline void pauseLineDownSide(line_t *l)
     }
 }
 
-inline void resumeLineUpSide(line_t *l)
+static inline void resumeLineUpSide(line_t *l)
 {
     if (l->up_state)
     {
@@ -207,7 +207,7 @@ inline void resumeLineUpSide(line_t *l)
     }
 }
 
-inline void resumeLineDownSide(line_t *l)
+static inline void resumeLineDownSide(line_t *l)
 {
     if (l->dw_state)
     {
@@ -216,7 +216,7 @@ inline void resumeLineDownSide(line_t *l)
 }
 
 
-inline void internalUnRefLine(line_t *l)
+static inline void internalUnRefLine(line_t *l)
 {
     if (--(l->refc) > 0)
     {
@@ -243,7 +243,7 @@ inline void internalUnRefLine(line_t *l)
     reusePoolItem(line_pools[l->tid], l);
 }
 
-inline void lockLine(line_t *line)
+static inline void lockLine(line_t *line)
 {
     // basic overflow protection
     assert(line->refc < (((0x1ULL << ((sizeof(line->refc) * 8ULL) - 1ULL)) - 1ULL) |
@@ -251,12 +251,12 @@ inline void lockLine(line_t *line)
     line->refc++;
 }
 
-inline void unLockLine(line_t *line)
+static inline void unLockLine(line_t *line)
 {
     internalUnRefLine(line);
 }
 
-inline void destroyLine(line_t *l)
+static inline void destroyLine(line_t *l)
 {
     l->alive = false;
     unLockLine(l);
@@ -265,7 +265,7 @@ inline void destroyLine(line_t *l)
 pool_item_t *allocContextPoolHandle(struct generic_pool_s *pool);
 void         destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
-inline void destroyContext(context_t *c)
+static inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
     const uint8_t tid = c->line->tid;
@@ -273,7 +273,7 @@ inline void destroyContext(context_t *c)
     reusePoolItem(context_pools[tid], c);
 }
 
-inline context_t *newContext(line_t *line)
+static inline context_t *newContext(line_t *line)
 {
     context_t *new_ctx = popPoolItem(context_pools[line->tid]);
     *new_ctx           = (context_t){.line = line};
@@ -281,7 +281,7 @@ inline context_t *newContext(line_t *line)
     return new_ctx;
 }
 
-inline context_t *newContextFrom(context_t *source)
+static inline context_t *newContextFrom(context_t *source)
 {
     lockLine(source->line);
     context_t *new_ctx = popPoolItem(context_pools[source->line->tid]);
@@ -289,35 +289,35 @@ inline context_t *newContextFrom(context_t *source)
     return new_ctx;
 }
 
-inline context_t *newEstContext(line_t *line)
+static inline context_t *newEstContext(line_t *line)
 {
     context_t *c = newContext(line);
     c->est       = true;
     return c;
 }
 
-inline context_t *newFinContext(line_t *l)
+static inline context_t *newFinContext(line_t *l)
 {
     context_t *c = newContext(l);
     c->fin       = true;
     return c;
 }
 
-inline context_t *newFinContextFrom(context_t *source)
+static inline context_t *newFinContextFrom(context_t *source)
 {
     context_t *c = newContextFrom(source);
     c->fin       = true;
     return c;
 }
 
-inline context_t *newInitContext(line_t *line)
+static inline context_t *newInitContext(line_t *line)
 {
     context_t *c = newContext(line);
     c->init      = true;
     return c;
 }
 
-inline context_t *switchLine(context_t *c, line_t *line)
+static inline context_t *switchLine(context_t *c, line_t *line)
 {
     lockLine(line);
     unLockLine(c->line);
@@ -325,32 +325,32 @@ inline context_t *switchLine(context_t *c, line_t *line)
     return c;
 }
 
-inline void markAuthenticated(line_t *line)
+static inline void markAuthenticated(line_t *line)
 {
     line->auth_cur += 1;
 }
 
-inline bool isAuthenticated(line_t *line)
+static inline bool isAuthenticated(line_t *line)
 {
     return line->auth_cur > 0;
 }
 
-inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
+static inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
 {
     return buffer_pools[tid];
 }
 
-inline buffer_pool_t *getLineBufferPool(line_t *l)
+static inline buffer_pool_t *getLineBufferPool(line_t *l)
 {
     return buffer_pools[l->tid];
 }
 
-inline buffer_pool_t *getContextBufferPool(context_t *c)
+static inline buffer_pool_t *getContextBufferPool(context_t *c)
 {
     return buffer_pools[c->line->tid];
 }
 
-inline void reuseContextBuffer(context_t *c)
+static inline void reuseContextBuffer(context_t *c)
 {
     assert(c->payload != NULL);
     reuseBuffer(getContextBufferPool(c), c->payload);

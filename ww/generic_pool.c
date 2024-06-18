@@ -6,9 +6,6 @@
 #endif
 #define GENERIC_POOL_DEFAULT_WIDTH ((unsigned long) ((ram_profile)))
 
-extern pool_item_t *popPoolItem(generic_pool_t *pool);
-extern void         reusePoolItem(generic_pool_t *pool, pool_item_t *b);
-
 void poolReCharge(generic_pool_t *pool)
 {
     const size_t increase = ((pool->cap - pool->len) < (pool->cap) / 2 ? (pool->cap - pool->len) : (pool->cap / 2));

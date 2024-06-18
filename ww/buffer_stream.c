@@ -8,9 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern size_t          bufferStreamLen(buffer_stream_t *self);
-extern shift_buffer_t *bufferStreamFullRead(buffer_stream_t *self);
-
 enum
 {
     kQCap = 32

@@ -35,12 +35,12 @@ shift_buffer_t  *bufferStreamIdealRead(buffer_stream_t *self);
 uint8_t          bufferStreamViewByteAt(buffer_stream_t *self, size_t at);
 void             bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len);
 
-inline size_t bufferStreamLen(buffer_stream_t *self)
+static inline size_t bufferStreamLen(buffer_stream_t *self)
 {
     return self->size;
 }
 
-inline shift_buffer_t* bufferStreamFullRead(buffer_stream_t *self)
+static inline shift_buffer_t* bufferStreamFullRead(buffer_stream_t *self)
 {
     return bufferStreamRead(self, bufferStreamLen(self));
 }
