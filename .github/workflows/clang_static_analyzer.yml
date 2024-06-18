@@ -35,7 +35,7 @@ jobs:
 
       - name: Configure CMake
         run: >
-          scan-build-19 cmake -DCMAKE_BUILD_TYPE=Release .. -G"Unix Makefiles"
+          scan-build-19 cmake -DCMAKE_BUILD_TYPE=Release -G"Unix Makefiles" ..
           
           
 
