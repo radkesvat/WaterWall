@@ -30,6 +30,9 @@ static void upStream(tunnel_t *self, context_t *c)
             LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid,
                  state->threadlocal_pool[tid].unused_cons_count, state->reverse_cons);
             self->up->upStream(self->up, fc);
+
+            initiateConnect(self, tid, false);
+
         }
         else if (c->est)
         {
@@ -133,9 +136,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
             initiateConnect(self, tid, false);
 
-            // ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
-            //                                    onStarvedConnectionExpire, c->line->tid,
-            //                                    kConnectionStarvationTimeOut);
+            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
+                                               onStarvedConnectionExpire, c->line->tid,
+                                               kConnectionStarvationTimeOut);
 
             destroyContext(c);
         }

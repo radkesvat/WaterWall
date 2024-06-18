@@ -10,7 +10,7 @@ enum
 {
     kPreconnectDelayShort        = 10,
     kPreconnectDelayLong         = 750,
-    kConnectionStarvationTimeOut = 30000
+    kConnectionStarvationTimeOut = 20000
 };
 
 static void onLinePausedU(void *cstate)
@@ -150,10 +150,9 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
     }
 
     assert(! cstate->pair_connected);
-    if (state->threadlocal_pool[cstate->u->tid].unused_cons_count > 0)
-    {
-        state->threadlocal_pool[cstate->u->tid].unused_cons_count -= 1;
-    }
+
+    
+    state->threadlocal_pool[cstate->u->tid].unused_cons_count -= 1;
     LOGW("ReverseClient: a idle connection detected and closed");
 
     cstate->idle_handle = NULL;
