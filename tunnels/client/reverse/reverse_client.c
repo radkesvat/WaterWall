@@ -30,6 +30,9 @@ static void upStream(tunnel_t *self, context_t *c)
             LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid,
                  state->threadlocal_pool[tid].unused_cons_count, state->reverse_cons);
             self->up->upStream(self->up, fc);
+            
+            initiateConnect(self, tid, false);
+
         }
         else if (c->est)
         {
@@ -99,6 +102,9 @@ static void downStream(tunnel_t *self, context_t *c)
                 context_t *fc = switchLine(c, ucstate->d);
                 cleanup(ucstate);
                 self->dw->downStream(self->dw, fc);
+
+                initiateConnect(self, tid, false);
+
             }
             else
             {
