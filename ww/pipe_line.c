@@ -211,16 +211,6 @@ void pipeOnUpLinePaused(void *state)
     {
         return;
     }
-    sendMessage(pl, pauseRightLine, NULL, pl->left_tid, pl->right_tid);
-}
-
-void pipeOnDownLinePaused(void *state)
-{
-    pipe_line_t *pl = state;
-    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
-    {
-        return;
-    }
     sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
 }
 
@@ -231,7 +221,17 @@ void pipeOnUpLineResumed(void *state)
     {
         return;
     }
-    sendMessage(pl, resumeRightLine, NULL, pl->left_tid, pl->right_tid);
+    sendMessage(pl, resumeLeftLine, NULL, pl->right_tid, pl->left_tid);
+}
+
+void pipeOnDownLinePaused(void *state)
+{
+    pipe_line_t *pl = state;
+    if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+    {
+        return;
+    }
+    sendMessage(pl, pauseRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
 void pipeOnDownLineResumed(void *state)
@@ -242,7 +242,7 @@ void pipeOnDownLineResumed(void *state)
     {
         return;
     }
-    sendMessage(pl, pauseLeftLine, NULL, pl->right_tid, pl->left_tid);
+    sendMessage(pl, resumeRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
 bool pipeUpStream(pipe_line_t *pl, context_t *c)
