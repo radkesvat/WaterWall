@@ -43,7 +43,7 @@ jobs:
           -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
           -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -G Xcode -DCMAKE_TOOLCHAIN_FILE=../cmake/ios.toolchain.cmake
+          -G Xcode -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake
           -DPLATFORM=OS64 -DARCHS="arm64"
           -DDEPLOYMENT_TARGET=9.0
           -S ${{ github.workspace }}
