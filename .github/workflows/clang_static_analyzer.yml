@@ -35,9 +35,9 @@ jobs:
 
       - name: Configure CMake
         run: >
-          scan-build-19 cmake 
-          -DCMAKE_BUILD_TYPE=Release
-          -S ${{ github.workspace }} ..
+          scan-build-19 cmake -DCMAKE_BUILD_TYPE=Release .. -G"Unix Makefiles"
+          
+          
 
       - name: Build
         # Build your program with the given configuration. 
