@@ -17,11 +17,6 @@ jobs:
 
   clang_static_analyzer:
     runs-on: ubuntu-22.04
-
-    run: |
-      sudo apt-get install clang
-
-
     steps:
       - uses: actions/checkout@v3     
 
