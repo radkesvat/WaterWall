@@ -137,10 +137,7 @@ static void upStream(tunnel_t *self, context_t *c)
         thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
         if (c->init)
         {
-            if (WW_UNLIKELY(state->chain_index_d == 0))
-            {
-                state->chain_index_d = reserveChainStateIndex(c->line);
-            }
+
             dcstate = createCstateD(c->line);
             self->dw->downStream(self->dw, newEstContext(c->line));
 
@@ -234,10 +231,7 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            if (WW_UNLIKELY(state->chain_index_u == 0))
-            {
-                state->chain_index_u = reserveChainStateIndex(c->line);
-            }
+
             self->up->upStream(self->up, newEstContext(c->line));
 
             destroyContext(c);
@@ -255,7 +249,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 doneLineUpSide(ucstate->d);
                 doneLineUpSide(ucstate->u);
                 line_t *d_line                                 = ucstate->d;
-                LSTATE_I_MUT(ucstate->d, state->chain_index_d) = NULL;
                 cleanup(ucstate);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
             }

@@ -26,9 +26,7 @@ typedef struct thread_box_s
 
 typedef struct reverse_server_state_s
 {
-
-    uint8_t      chain_index_u;
-    uint8_t      chain_index_d;
+    void * _;
     thread_box_t threadlocal_pool[];
 
 } reverse_server_state_t;

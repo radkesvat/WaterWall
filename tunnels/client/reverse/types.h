@@ -33,7 +33,6 @@ typedef struct reverse_client_state_s
     idle_table_t *starved_connections;
     atomic_uint   reverse_cons;
     atomic_uint   round_index;
-    uint8_t       chain_index_d;
     unsigned int  min_unused_cons;
 
     thread_box_t threadlocal_pool[];

@@ -170,8 +170,6 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     // we are always the first line creator so its easy to get the positon independent index here
     line_t *l            = newLine(0);
-    int     index        = reserveChainStateIndex(l);
-    state->chain_index_d = index;
     destroyLine(l);
 
     state->starved_connections = newIdleTable(loops[0]);

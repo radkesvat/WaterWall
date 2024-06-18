@@ -81,12 +81,11 @@ typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
 
-typedef struct line_s // 448
+typedef struct line_s 
 {
     void            *chains_state[kMaxChainLen];
     bool             alive;
     uint8_t          tid;
-    uint8_t          lcid;
     uint8_t          auth_cur;
     line_refc_t      refc;
     void            *up_state;
@@ -143,7 +142,6 @@ inline line_t *newLine(uint8_t tid)
     *result = (line_t){
         .tid          = tid,
         .refc         = 1,
-        .lcid         = kMaxChainLen - 1,
         .auth_cur     = 0,
         .loop         = loops[tid],
         .alive        = true,
@@ -217,12 +215,6 @@ inline void resumeLineDownSide(line_t *l)
     }
 }
 
-inline uint8_t reserveChainStateIndex(line_t *l)
-{
-    uint8_t result = l->lcid;
-    l->lcid -= 1;
-    return result;
-}
 
 inline void internalUnRefLine(line_t *l)
 {
