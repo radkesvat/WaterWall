@@ -17,9 +17,34 @@ jobs:
 
   clang_static_analyzer:
     runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
 
-      - name: Run
-        run: docker run --rm -v $PWD:$PWD ubuntu:22.04 sh -c "cd $PWD && apt update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo software-properties-common && DEBIAN_FRONTEND=noninteractive sh ./ci/travis/csa_common/before_install.sh && sh ./ci/travis/csa_common/install.sh && sh ./ci/travis/csa_common/script.sh"
+    run: |
+      sudo apt-get install clang
+
+
+    steps:
+      - uses: actions/checkout@v3     
+
+      - name: Set reusable strings
+        id: strings
+        shell: bash
+        run: |
+          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+          
+      - name: install deps
+        run: |
+          apt-get update && apt-get install build-essential -y && snap install cmake --classic && wget https://apt.llvm.org/llvm.sh && chmod u+x llvm.sh && sudo ./llvm.sh 19 all
+          mkdir build
+          cd build
+      
+
+      - name: Configure CMake
+        run: >
+          scan-build-19 cmake ..
+          -DCMAKE_BUILD_TYPE=Release
+          -S ${{ github.workspace }}
+
+      - name: Build
+        # Build your program with the given configuration. 
+        run: scan-build-19 make
+
