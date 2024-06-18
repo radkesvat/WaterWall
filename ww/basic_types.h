@@ -9,8 +9,9 @@
 
 #if defined(OS_UNIX)
 #include <sys/types.h>
-#elif ! defined(ssize_t)
-typedef long ssize_t;
+// #elif ! defined(ssize_t)
+// typedef long ssize_t;
+// windows has ssize_t in stddef.h
 #endif
 
 typedef uint64_t hash_t;
