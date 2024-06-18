@@ -1,0 +1,28 @@
+name: CLang Static Analyzer
+
+on:
+    push:
+        paths-ignore:
+            - 'doc/**'
+        branches-ignore:
+            - 'backport**'
+            - 'dependabot**'
+    pull_request:
+        paths-ignore:
+            - 'doc/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  clang_static_analyzer:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run
+        run: docker run --rm -v $PWD:$PWD ubuntu:22.04 sh -c "cd $PWD && apt update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo software-properties-common && DEBIAN_FRONTEND=noninteractive sh ./ci/travis/csa_common/before_install.sh && sh ./ci/travis/csa_common/install.sh && sh ./ci/travis/csa_common/script.sh"
