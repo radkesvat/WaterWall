@@ -1,6 +1,8 @@
 Waterwall!
 
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/radkesvat/WaterWall)
+[![CLang Static Analyzer](https://github.com/radkesvat/WaterWall/actions/workflows/clang_static_analyzer.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/clang_static_analyzer.yml)
+
 [![linux](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml)
 [![Windows Mingw64](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml)
 [![macos gcc + clang](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-macos.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-macos.yml)
