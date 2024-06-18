@@ -10,7 +10,7 @@
 #if defined(OS_UNIX)
 #include <sys/types.h>
 #elif ! defined(ssize_t)
-typedef int64_t ssize_t;
+typedef long ssize_t;
 #endif
 
 typedef uint64_t hash_t;

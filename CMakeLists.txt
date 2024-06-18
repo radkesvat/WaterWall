@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL  "CXX standard version" FORCE)
 set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32")      for 32 bit build, note that ssl libs need tweaks
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   cmake_policy(SET CMP0069 NEW) 
@@ -50,8 +52,8 @@ option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_CLIENT "link OpenSSLClient staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
-option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)  # temporarely disabled for compile speed
-option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  TRUE)  # temporarely disabled for compile speed
+option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  FALSE)  # temporarely disabled for compile speed
+option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  FALSE)  # temporarely disabled for compile speed
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix ?
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)

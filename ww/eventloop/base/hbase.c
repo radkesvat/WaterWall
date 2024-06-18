@@ -100,7 +100,9 @@ char* hv_strreverse(char* str) {
     if (str == NULL) return NULL;
     char* b = str;
     char* e = str;
-    while(*e) {++e;}
+    while (*e) {
+        ++e;
+    }
     --e;
     char tmp;
     while (e > b) {
@@ -128,7 +130,10 @@ char* hv_strncpy(char* dest, const char* src, size_t n) {
 char* hv_strncat(char* dest, const char* src, size_t n) {
     assert(dest != NULL && src != NULL);
     char* ret = dest;
-    while (*dest) {++dest;--n;}
+    while (*dest) {
+        ++dest;
+        --n;
+    }
     while (*src != '\0' && --n > 0) {
         *dest++ = *src++;
     }
@@ -149,8 +154,14 @@ bool hv_strendswith(const char* str, const char* end) {
     assert(str != NULL && end != NULL);
     int len1 = 0;
     int len2 = 0;
-    while (*str) {++str; ++len1;}
-    while (*end) {++end; ++len2;}
+    while (*str) {
+        ++str;
+        ++len1;
+    }
+    while (*end) {
+        ++end;
+        ++len2;
+    }
     if (len1 < len2) return false;
     while (len2-- > 0) {
         --str;
@@ -174,10 +185,12 @@ bool hv_wildcard_match(const char* str, const char* pattern) {
         if (*pattern == '*') {
             match = hv_strendswith(str, pattern + 1);
             break;
-        } else if (*str != *pattern) {
+        }
+        else if (*str != *pattern) {
             match = false;
             break;
-        } else {
+        }
+        else {
             ++str;
             ++pattern;
         }
@@ -211,12 +224,12 @@ char* hv_strrchr_dir(const char* filepath) {
 
 const char* hv_basename(const char* filepath) {
     const char* pos = hv_strrchr_dir(filepath);
-    return pos ? pos+1 : filepath;
+    return pos ? pos + 1 : filepath;
 }
 
 const char* hv_suffixname(const char* filename) {
     const char* pos = hv_strrchr_dot(filename);
-    return pos ? pos+1 : "";
+    return pos ? pos + 1 : "";
 }
 
 int hv_mkdir_p(const char* dir) {
@@ -402,19 +415,25 @@ bool hv_getboolean(const char* str) {
 }
 
 size_t hv_parse_size(const char* str) {
-    size_t size = 0, n = 0;
+    size_t size = 0;
+    uint64_t n = 0;
     const char* p = str;
     char c;
     while ((c = *p) != '\0') {
         if (c >= '0' && c <= '9') {
             n = n * 10 + c - '0';
-        } else {
+        }
+        else {
             switch (c) {
-            case 'K': case 'k': n <<= 10; break;
-            case 'M': case 'm': n <<= 20; break;
-            case 'G': case 'g': n <<= 30; break;
-            case 'T': case 't': n <<= 40; break;
-            default:                      break;
+            case 'K':
+            case 'k': n <<= 10; break;
+            case 'M':
+            case 'm': n <<= 20; break;
+            case 'G':
+            case 'g': n <<= 30; break;
+            case 'T':
+            case 't': n <<= 40; break;
+            default: break;
             }
             size += n;
             n = 0;
@@ -431,14 +450,15 @@ time_t hv_parse_time(const char* str) {
     while ((c = *p) != '\0') {
         if (c >= '0' && c <= '9') {
             n = n * 10 + c - '0';
-        } else {
+        }
+        else {
             switch (c) {
-            case 's':                           break;
-            case 'm': n *= 60;                  break;
-            case 'h': n *= 60 * 60;             break;
-            case 'd': n *= 24 * 60 * 60;        break;
-            case 'w': n *= 7 * 24 * 60 * 60;    break;
-            default:                            break;
+            case 's': break;
+            case 'm': n *= 60; break;
+            case 'h': n *= 60 * 60; break;
+            case 'd': n *= 24 * 60 * 60; break;
+            case 'w': n *= 7 * 24 * 60 * 60; break;
+            default: break;
             }
             time += n;
             n = 0;
@@ -475,7 +495,8 @@ int hv_parse_url(hurl_t* stURL, const char* strURL) {
         if (pswd) {
             stURL->fields[HV_URL_PASSWORD].off = pswd + 1 - begin;
             stURL->fields[HV_URL_PASSWORD].len = pos - pswd - 1;
-        } else {
+        }
+        else {
             pswd = pos;
         }
         stURL->fields[HV_URL_USERNAME].off = user - begin;
@@ -492,7 +513,8 @@ int hv_parse_url(hurl_t* stURL, const char* strURL) {
         for (unsigned short i = 1; i <= stURL->fields[HV_URL_PORT].len; ++i) {
             stURL->port = stURL->port * 10 + (port[i] - '0');
         }
-    } else {
+    }
+    else {
         port = ep;
         // set default port
         stURL->port = 80;

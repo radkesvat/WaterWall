@@ -68,7 +68,7 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 ucstate->idle_handle          = NULL;
                 reverse_client_state_t *state = STATE(ucstate->self);
-                removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t) (ucstate));
+                removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t)(size_t) (ucstate));
             }
 
             ucstate->pair_connected = true;
@@ -136,7 +136,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
             initiateConnect(self, tid, false);
 
-            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (ucstate), ucstate,
+            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (size_t)(ucstate), ucstate,
                                                onStarvedConnectionExpire, c->line->tid,
                                                kConnectionStarvationTimeOut);
 

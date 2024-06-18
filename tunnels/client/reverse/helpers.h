@@ -5,7 +5,6 @@
 #include "types.h"
 #include <stdbool.h>
 
-
 enum
 {
     kPreconnectDelayShort        = 10,
@@ -49,7 +48,7 @@ static void cleanup(reverse_client_con_state_t *cstate)
     if (cstate->idle_handle)
     {
         reverse_client_state_t *state = STATE(cstate->self);
-        removeIdleItemByHash(cstate->u->tid, state->starved_connections, (hash_t) (cstate));
+        removeIdleItemByHash(cstate->u->tid, state->starved_connections, (hash_t) (size_t) (cstate));
     }
     doneLineDownSide(cstate->u);
     doneLineDownSide(cstate->d);
@@ -60,11 +59,11 @@ static void cleanup(reverse_client_con_state_t *cstate)
 }
 static void doConnect(struct connect_arg *cg)
 {
-    tunnel_t                   *self   = cg->t;
+    tunnel_t *self = cg->t;
     // reverse_client_state_t     *state  = STATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
     free(cg);
-    context_t *hello_data_ctx                     = newContext(cstate->u);
+    context_t *hello_data_ctx = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
 
     if (! isAlive(cstate->u))
@@ -151,7 +150,6 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
 
     assert(! cstate->pair_connected);
 
-    
     state->threadlocal_pool[cstate->u->tid].unused_cons_count -= 1;
     LOGW("ReverseClient: a idle connection detected and closed");
 
