@@ -28,7 +28,7 @@ jobs:
           
       - name: install deps
         run: |
-          apt-get update && apt-get install build-essential -y && snap install cmake --classic && wget https://apt.llvm.org/llvm.sh && chmod u+x llvm.sh && sudo ./llvm.sh 19 all
+          sudo apt-get update && sudo apt-get install build-essential -y && sudo snap install cmake --classic && sudo wget https://apt.llvm.org/llvm.sh && sudo chmod u+x llvm.sh && sudo ./llvm.sh 19 all
           mkdir build
           cd build
       
