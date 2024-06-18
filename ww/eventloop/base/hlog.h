@@ -157,26 +157,41 @@ HV_EXPORT void      hv_destroy_default_logger(void);
 
 
 // below for android
-#if defined(ANDROID) || defined(__ANDROID__)
+#if defined(ANDROID) || defined(__ANDROID__) || 1
 #include <android/log.h>
 #define LOG_TAG "JNI"
 static inline void hlogd(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
     __android_log_vprint(ANDROID_LOG_DEBUG, LOG_TAG, fmt, myargs);
+    va_end(myargs);
 }
 
 static inline void hlogi(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
     __android_log_vprint(ANDROID_LOG_INFO, LOG_TAG, fmt, myargs);
+    va_end(myargs);
 }
 
 static inline void hlogw(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
     __android_log_vprint(ANDROID_LOG_WARN, LOG_TAG, fmt, myargs);
+    va_end(myargs);
 }
 
 static inline void hloge(const char * fmt, ...){
-    __android_log_vprint(ANDROID_LOG_ERROR, LOG_TAG, fmt, fmtmyargs);
+    va_list myargs;
+    va_start(myargs, fmt);
+    __android_log_vprint(ANDROID_LOG_ERROR, LOG_TAG, fmt, myargs);
+    va_end(myargs);
 }
 static inline void hlogf(const char * fmt, ...){
+    va_list myargs;
+    va_start(myargs, fmt);
     __android_log_vprint(ANDROID_LOG_FATAL, LOG_TAG, fmt, myargs);
+    va_end(myargs);
 }
 #else
 
