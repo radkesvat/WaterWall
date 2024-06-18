@@ -1,0 +1,51 @@
+name: Ios gcc + clang
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+  
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest]
+        build_type: [Release]
+        c_compiler: [gcc, clang]
+        include:
+          - os: macos-latest
+            c_compiler: gcc
+            cpp_compiler: g++
+          - os: macos-latest
+            c_compiler: clang
+            cpp_compiler: clang++
+    
+    - name: Set reusable strings
+      id: strings
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+    
+    
+    - name: Configure CMake
+
+      run: >
+        cmake -B ${{ steps.strings.outputs.build-output-dir }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -G Xcode -DCMAKE_TOOLCHAIN_FILE=../cmake/ios.toolchain.cmake
+        -DPLATFORM=OS64 -DARCHS="arm64
+        -DDEPLOYMENT_TARGET=9.0
+        -S ${{ github.workspace }}
+
+    - name: Build
+      # Build your program with the given configuration. 
+      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} 
