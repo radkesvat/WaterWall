@@ -26,26 +26,28 @@ jobs:
           - os: macos-latest
             c_compiler: clang
             cpp_compiler: clang++
-    
-    - name: Set reusable strings
-      id: strings
-      shell: bash
-      run: |
-        echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
-    
-    
-    - name: Configure CMake
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set reusable strings
+        id: strings
+        shell: bash
+        run: |
+          echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
+      
+      
+      - name: Configure CMake
 
-      run: >
-        cmake -B ${{ steps.strings.outputs.build-output-dir }}
-        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
-        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
-        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-        -G Xcode -DCMAKE_TOOLCHAIN_FILE=../cmake/ios.toolchain.cmake
-        -DPLATFORM=OS64 -DARCHS="arm64
-        -DDEPLOYMENT_TARGET=9.0
-        -S ${{ github.workspace }}
+        run: >
+          cmake -B ${{ steps.strings.outputs.build-output-dir }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -G Xcode -DCMAKE_TOOLCHAIN_FILE=../cmake/ios.toolchain.cmake
+          -DPLATFORM=OS64 -DARCHS="arm64
+          -DDEPLOYMENT_TARGET=9.0
+          -S ${{ github.workspace }}
 
-    - name: Build
-      # Build your program with the given configuration. 
-      run: cmake --build ${{ steps.strings.outputs.build-output-dir }} 
+      - name: Build
+        # Build your program with the given configuration. 
+        run: cmake --build ${{ steps.strings.outputs.build-output-dir }} 
