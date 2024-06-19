@@ -45,7 +45,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -G Xcode -DCMAKE_TOOLCHAIN_FILE=ww/eventloop/cmake/ios.toolchain.cmake
           -DPLATFORM=OS64 -DARCHS="arm64"
-          -DDEPLOYMENT_TARGET=9.0
+          -DDEPLOYMENT_TARGET=12.0
           -S ${{ github.workspace }}
 
       - name: Build
