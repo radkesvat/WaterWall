@@ -1,4 +1,4 @@
-name: Ios gcc + clang
+name: Ios build
 
 on:
   push:
@@ -12,20 +12,7 @@ concurrency:
   
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest]
-        build_type: [Release]
-        c_compiler: [gcc, clang]
-        include:
-          - os: macos-latest
-            c_compiler: gcc
-            cpp_compiler: g++
-          - os: macos-latest
-            c_compiler: clang
-            cpp_compiler: clang++
+    runs-on: macos-latest 
     steps:
       - uses: actions/checkout@v3
       
@@ -40,9 +27,7 @@ jobs:
 
         run: >
           cmake -B ${{ steps.strings.outputs.build-output-dir }}
-          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
-          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_BUILD_TYPE=Release
           -G Xcode -DCMAKE_TOOLCHAIN_FILE=ww/eventloop/cmake/ios.toolchain.cmake
           -DPLATFORM=OS64 -DARCHS="arm64"
           -DDEPLOYMENT_TARGET=12.0
