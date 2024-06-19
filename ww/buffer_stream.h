@@ -1,6 +1,7 @@
 #pragma once
 #include "buffer_pool.h"
 #include "shiftbuffer.h"
+#include "tunnel.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -8,9 +9,9 @@
 
     This implements a simple container that holds buffers, some opmizations are also applied.
 
-    you can for example check byte index 1 or 5 of the buffers without concating them, then 
+    you can for example check byte index 1 or 5 of the buffers without concating them, then
     you'll be able to read only when your protocol is satisfied, the size you want
-    
+
 
 */
 
@@ -40,7 +41,18 @@ static inline size_t bufferStreamLen(buffer_stream_t *self)
     return self->size;
 }
 
-static inline shift_buffer_t* bufferStreamFullRead(buffer_stream_t *self)
+static inline shift_buffer_t *bufferStreamFullRead(buffer_stream_t *self)
 {
     return bufferStreamRead(self, bufferStreamLen(self));
+}
+
+static inline void bufferStreamPushContextPayload(buffer_stream_t *self,context_t *c)
+{
+    assert(c->payload);
+    bufferStreamPush(self,c->payload);
+    //todo (disabled optimize) this can work but currently disabled, also looc at tunnel.h
+#if !defined(RELEASE) || 1
+    c->payload = NULL;
+#endif
+
 }
