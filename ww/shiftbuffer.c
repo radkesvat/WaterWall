@@ -29,7 +29,7 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
         pre_cap = (unsigned int) pow(2, ceil(log2((double) max(16, pre_cap))));
     }
 
-    unsigned int real_cap = pre_cap + (PREPADDING * 2);
+    unsigned int real_cap = pre_cap + (PREPADDING);
 
     shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
 
@@ -74,13 +74,14 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
         pre_cap = (unsigned int) pow(2, ceil(log2(((double) max(16, pre_cap)))));
     }
 
-    unsigned int real_cap = pre_cap + (PREPADDING * 2);
+    unsigned int real_cap = pre_cap + (PREPADDING);
 
     if (self->full_cap != real_cap)
     {
-        free(self->pbuf -= self->_offset);
+        free(self->pbuf - self->_offset);
         self->pbuf     = malloc(real_cap);
         self->full_cap = real_cap;
+        // memset(self->pbuf, 0, real_cap);
     }
     self->calc_len = 0;
     self->_offset  = 0;
