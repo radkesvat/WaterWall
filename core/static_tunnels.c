@@ -132,6 +132,13 @@
 #include "tunnels/client/halfduplex/halfduplex_client.h"
 #endif
 
+#ifdef INCLUDE_BGP4CLIENT_SERVER
+#include "tunnels/server/bgp4/bgp4_server.h"
+#endif
+
+#ifdef INCLUDE_BGP4SERVER_CLIENT
+#include "tunnels/client/bgp4/bgp4_client.h"
+#endif
 
 void loadStaticTunnelsIntoCore(void)
 {
@@ -250,6 +257,15 @@ void loadStaticTunnelsIntoCore(void)
 #ifdef INCLUDE_HALFDUPLEX_SERVER
     USING(HalfDuplexServer);
 #endif
+
+#ifdef INCLUDE_BGP4CLIENT_SERVER
+    USING(Bgp4Server);
+#endif
+
+#ifdef INCLUDE_BGP4SERVER_CLIENT
+    USING(Bgp4Client);
+#endif
+
 
 
 

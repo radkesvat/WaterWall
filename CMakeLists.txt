@@ -52,8 +52,8 @@ option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_CLIENT "link OpenSSLClient staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
-option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  FALSE)  # temporarely disabled for compile speed
-option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  FALSE)  # temporarely disabled for compile speed
+option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)  # temporarely disabled for compile speed
+option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  TRUE)  # temporarely disabled for compile speed
 option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix ?
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
@@ -70,6 +70,8 @@ option(INCLUDE_REALITY_SERVER "link RealityServer staticly to the core"  TRUE)
 option(INCLUDE_REALITY_CLIENT "link RealityClient staticly to the core"  TRUE)
 option(INCLUDE_HALFDUPLEX_SERVER "link HalfDuplexServer staticly to the core"  TRUE)
 option(INCLUDE_HALFDUPLEX_CLIENT "link HalfDuplexClient staticly to the core"  TRUE)
+option(INCLUDE_BGP4_SERVER "link Bgp4Server staticly to the core"  TRUE)
+option(INCLUDE_BGP4_CLIENT "link Bgp4Client staticly to the core"  TRUE)
 
 set(OPENSSL_CONFIGURE_VERBOSE ON)
 
@@ -343,6 +345,21 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/cli
 target_link_libraries(Waterwall HalfDuplexClient)
 endif()
 
+#bgp4server server
+if (INCLUDE_BGP4_SERVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_BGP4_SERVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/bgp4)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/bgp4)
+target_link_libraries(Waterwall Bgp4Server)
+endif()
+
+#bgp4client client
+if (INCLUDE_BGP4_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_BGP4_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
+target_link_libraries(Waterwall Bgp4Client)
+endif()
 
 
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
