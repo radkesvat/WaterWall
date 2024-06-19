@@ -13,7 +13,10 @@
 // #define PROFILE 1
 enum
 {
-    kDefaultKeepAliveTimeOutMs = 60 * 1000 // same as NGINX
+    kDefaultKeepAliveTimeOutMs = 60 * 1000, // same as NGINX
+
+    kEstablishedKeepAliveTimeOutMs = 360 * 1000 // since the connection is established,
+                                                // other end timetout is probably shorter
 };
 
 typedef struct tcp_listener_state_s
@@ -204,6 +207,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             assert(! cstate->established);
             cstate->established = true;
+            hio_set_keepalive_timeout(cstate->io, kEstablishedKeepAliveTimeOutMs);
             destroyContext(c);
             return;
         }
