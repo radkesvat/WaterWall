@@ -58,16 +58,15 @@ static void onH2LinePaused(void *arg)
 {
     http2_server_con_state_t *con = (http2_server_con_state_t *) arg;
 
-
     ++(con->pause_counter);
     if (con->pause_counter > 16)
     {
-    http2_server_child_con_state_t *stream_i;
-    for (stream_i = con->root.next; stream_i;)
-    {
-        pauseLineUpSide(stream_i->line);
-        stream_i = stream_i->next;
-    }
+        http2_server_child_con_state_t *stream_i;
+        for (stream_i = con->root.next; stream_i;)
+        {
+            pauseLineUpSide(stream_i->line);
+            stream_i = stream_i->next;
+        }
     }
 }
 
@@ -84,18 +83,18 @@ static void onH2LineResumed(void *arg)
 }
 
 http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *self,
-                                                   int32_t stream_id)
+                                                  int32_t stream_id)
 {
     http2_server_child_con_state_t *stream;
     stream = malloc(sizeof(http2_server_child_con_state_t));
     memset(stream, 0, sizeof(http2_server_child_con_state_t));
 
-    stream->stream_id          = stream_id;
-    stream->chunkbs            = newBufferStream(getLineBufferPool(this_line));
-    stream->parent             = this_line;
-    stream->line               = newLine(this_line->tid);
+    stream->stream_id        = stream_id;
+    stream->chunkbs          = newBufferStream(getLineBufferPool(this_line));
+    stream->parent           = this_line;
+    stream->line             = newLine(this_line->tid);
     LSTATE_MUT(stream->line) = stream;
-    stream->tunnel             = self;
+    stream->tunnel           = self;
     nghttp2_session_set_stream_user_data(con->session, stream_id, stream);
     setupLineDownSide(stream->line, onStreamLinePaused, stream, onStreamLineResumed);
 

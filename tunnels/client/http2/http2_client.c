@@ -300,11 +300,12 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         {
             return 0;
         }
+        // http2_client_state_t *state = STATE(self);
         resumeLineUpSide(stream->parent);
         nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
-        context_t *fc   = newFinContext(stream->line);
+        context_t *fc = newFinContext(stream->line);
         CSTATE_DROP(fc);
-        tunnel_t  *dest = stream->tunnel->dw;
+        tunnel_t *dest = stream->tunnel->dw;
         removeStream(con, stream);
         deleteHttp2Stream(stream);
         dest->downStream(dest, fc);
@@ -397,11 +398,18 @@ static void upStream(tunnel_t *self, context_t *c)
             if (con->content_type == kApplicationGrpc && con->handshake_completed)
             {
                 sendGrpcFinalData(self, con->line, stream->stream_id);
+                if (! isAlive(c->line))
+                {
+                    destroyContext(c);
+                    return;
+                }
             }
 
             resumeLineUpSide(con->line);
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             removeStream(con, stream);
+            deleteHttp2Stream(stream);
+
             if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(c->line))
             {
                 context_t *con_fc   = newFinContext(con->line);
@@ -409,8 +417,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 deleteHttp2Connection(con);
                 con_dest->upStream(con_dest, con_fc);
             }
-            
-            deleteHttp2Stream(stream);
+
             destroyContext(c);
             return;
         }
@@ -419,7 +426,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    http2_client_con_state_t *con = CSTATE(c);
+    http2_client_state_t     *state = STATE(self);
+    http2_client_con_state_t *con   = CSTATE(c);
     if (c->payload != NULL)
     {
         size_t len = 0;
@@ -469,6 +477,13 @@ static void downStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
+        }
+
+        if (con->root.next == NULL && con->childs_added >= state->concurrency)
+        {
+            context_t *con_fc = newFinContext(con->line);
+            deleteHttp2Connection(con);
+            self->up->upStream(self->up, con_fc);
         }
 
         reuseContextBuffer(c);

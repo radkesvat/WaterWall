@@ -189,7 +189,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         tunnel_t  *dest = stream->tunnel->up;
         CSTATE_DROP(fc);
         removeStream(con, stream);
-        deleteHttp2Stream(stream);
+        deleteHttp2Stream(stream); 
         dest->upStream(dest, fc);
         return 0;
     }
@@ -353,7 +353,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
-
+        
         reuseContextBuffer(c);
         destroyContext(c);
     }
@@ -422,6 +422,11 @@ static void downStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
+            }
+            if (! isAlive(c->line))
+            {
+                destroyContext(c);
+                return;
             }
 
             if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
