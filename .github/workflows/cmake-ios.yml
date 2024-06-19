@@ -31,6 +31,7 @@ jobs:
           -G Xcode -DCMAKE_TOOLCHAIN_FILE=ww/eventloop/cmake/ios.toolchain.cmake
           -DPLATFORM=OS64 -DARCHS="arm64"
           -DDEPLOYMENT_TARGET=12.0
+          -DOPENSSL_CONFIGURE_OPTIONS=ios64-xcrun
           -S ${{ github.workspace }}
 
       - name: Build
