@@ -8,7 +8,7 @@ enum
 {
     kMarker                  = 0xFF,
     kMarkerLength            = 16,
-    kBgpHeaderLen            = kMarkerLength + 2 + 1, // 16 byte marker + 2 byte length + 1 byte type
+    kBgpHeaderLen            = kMarkerLength + 2, // 16 byte marker + 2 byte length
     kBgpTypes                = 5,
     kBgpTypeOpen             = 1,
     kBgpTypUpdate            = 2,
@@ -52,8 +52,13 @@ static void upStream(tunnel_t *self, context_t *c)
             uint16_t required_length = 0;
             bufferStreamViewBytesAt(cstate->read_stream, kMarkerLength, (uint8_t *) &required_length,
                                     sizeof(required_length));
+            if (required_length <= 1)
+            {
+                LOGE("Bgp4Server: message too short");
+                goto disconnect;
+            }
 
-            if (bufferStreamLen(cstate->read_stream) > ((unsigned int) kBgpHeaderLen + required_length))
+            if (bufferStreamLen(cstate->read_stream) >= ((unsigned int) kBgpHeaderLen + required_length))
             {
                 shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kBgpHeaderLen + required_length);
 
@@ -65,10 +70,11 @@ static void upStream(tunnel_t *self, context_t *c)
                     reuseBuffer(getContextBufferPool(c), buf);
                     goto disconnect;
                 }
+                shiftr(buf, kBgpHeaderLen);
+
                 if (! cstate->open_received)
                 {
-                    shiftr(buf, kBgpHeaderLen - 1);
-                    if (bufLen(buf) < kBgpOpenPacketHeaderSize + 1)
+                    if (bufLen(buf) < kBgpOpenPacketHeaderSize + 1) // +1 for type
                     {
                         LOGE("Bgp4Server: open packet length is shorter than bgp header");
                         reuseBuffer(getContextBufferPool(c), buf);
@@ -87,7 +93,8 @@ static void upStream(tunnel_t *self, context_t *c)
                         reuseBuffer(getContextBufferPool(c), buf);
                         goto disconnect;
                     }
-                    shiftr(buf, kBgpOpenPacketHeaderSize);
+
+                    shiftr(buf, kBgpOpenPacketHeaderSize); // now at index addition
 
                     uint8_t bgp_additions;
                     readUI8(buf, &bgp_additions);
@@ -98,24 +105,18 @@ static void upStream(tunnel_t *self, context_t *c)
                         reuseBuffer(getContextBufferPool(c), buf);
                         goto disconnect;
                     }
-                    shiftr(buf, bgp_additions + 1);
-
-                    if (bufLen(buf) <= 0)
-                    {
-                        LOGE("Bgp4Server: open message had no payload");
-                        reuseBuffer(getContextBufferPool(c), buf);
-                        goto disconnect;
-                    }
+                    shiftr(buf, bgp_additions + 1); // pass addition count and items
                 }
                 else
                 {
-                    shiftr(buf, kBgpHeaderLen);
-                    if (bufLen(buf) <= 0)
-                    {
-                        LOGE("Bgp4Server: message had no payload");
-                        reuseBuffer(getContextBufferPool(c), buf);
-                        goto disconnect;
-                    }
+                    shiftr(buf, 1); // pass type
+                }
+
+                if (bufLen(buf) <= 0)
+                {
+                    LOGE("Bgp4Server: message had no payload");
+                    reuseBuffer(getContextBufferPool(c), buf);
+                    goto disconnect;
                 }
 
                 context_t *data_ctx = newContext(c->line);
@@ -126,6 +127,10 @@ static void upStream(tunnel_t *self, context_t *c)
                     c->first           = true;
                 }
                 self->up->upStream(self->up, data_ctx);
+            }
+            else
+            {
+                break;
             }
         }
         destroyContext(c);
@@ -174,6 +179,14 @@ static void downStream(tunnel_t *self, context_t *c)
         shiftl(c->payload, kMarkerLength);
         memset(rawBufMut(c->payload), kMarker, kMarkerLength);
     }
+    else if (c->fin)
+    {
+        bgp4_client_con_state_t *cstate = CSTATE(c);
+        destroyBufferStream(cstate->read_stream);
+        free(cstate);
+        CSTATE_DROP(c);
+    }
+
     self->dw->downStream(self->dw, c);
 }
 
@@ -184,10 +197,10 @@ tunnel_t *newBgp4Server(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(bgp4_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;
-    char       **buf      = NULL;
-    getStringFromJsonObjectOrDefault(buf, settings, "password", "passwd");
-    state->hpassword = CALC_HASH_BYTES(*buf, strlen(*buf));
-    free(*buf);
+    char        *buf      = NULL;
+    getStringFromJsonObjectOrDefault(&buf, settings, "password", "passwd");
+    state->hpassword = CALC_HASH_BYTES(buf, strlen(buf));
+    free(buf);
 
     // todo (random data) its better to fill these with real data
     state->as_number = (uint16_t) fastRand();

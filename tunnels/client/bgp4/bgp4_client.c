@@ -8,7 +8,8 @@ enum
 {
     kMarker                  = 0xFF,
     kMarkerLength            = 16,
-    kBgpHeaderLen            = kMarkerLength + 2 + 1, // 16 byte marker + 2 byte length + 1 byte type
+    kBgpHeaderLen            = kMarkerLength + 2, // 16 byte marker + 2 byte length
+    kBgpTypes                = 5,
     kBgpTypeOpen             = 1,
     kBgpTypUpdate            = 2,
     kBgpTypeNotification     = 3,
@@ -68,7 +69,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
         }
 
-        uint8_t bgp_type = c->first ? 1 : 2 + (fastRand() % kBgpTypeRouteRefresh - 1);
+        uint8_t bgp_type = c->first ? 1 : 2 + (fastRand() % kBgpTypes - 1);
 
         shiftl(c->payload, 1); // type
         writeUI8(c->payload, bgp_type);
@@ -115,7 +116,13 @@ static void downStream(tunnel_t *self, context_t *c)
             bufferStreamViewBytesAt(cstate->read_stream, kMarkerLength, (uint8_t *) &required_length,
                                     sizeof(required_length));
 
-            if (bufferStreamLen(cstate->read_stream) > ((unsigned int) kBgpHeaderLen + required_length))
+            if (required_length <= 1)
+            {
+                LOGE("Bgp4Client: message  too short");
+                goto disconnect;
+            }
+
+            if (bufferStreamLen(cstate->read_stream) >= ((unsigned int) kBgpHeaderLen + required_length))
             {
                 shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kBgpHeaderLen + required_length);
 
@@ -133,10 +140,21 @@ static void downStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
-                shiftr(buf, kBgpHeaderLen);
+                shiftr(buf, kBgpHeaderLen + 1); // 1 byte is type
+
+                if (bufLen(buf) <= 0)
+                {
+                    LOGE("Bgp4Client: message had no payload");
+                    reuseBuffer(getContextBufferPool(c), buf);
+                    goto disconnect;
+                }
                 context_t *data_ctx = newContext(c->line);
                 data_ctx->payload   = buf;
                 self->dw->downStream(self->dw, data_ctx);
+            }
+            else
+            {
+                break;
             }
         }
         destroyContext(c);
@@ -151,6 +169,15 @@ static void downStream(tunnel_t *self, context_t *c)
     }
 
     self->dw->downStream(self->dw, c);
+    return;
+
+disconnect:
+    destroyBufferStream(cstate->read_stream);
+    free(cstate);
+    CSTATE_DROP(c);
+    self->up->upStream(self->up, newFinContextFrom(c));
+    self->dw->downStream(self->dw, newFinContextFrom(c));
+    destroyContext(c);
 }
 
 tunnel_t *newBgp4Client(node_instance_context_t *instance_info)
@@ -160,10 +187,10 @@ tunnel_t *newBgp4Client(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(bgp4_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;
-    char       **buf      = NULL;
-    getStringFromJsonObjectOrDefault(buf, settings, "password", "passwd");
-    state->hpassword = CALC_HASH_BYTES(*buf, strlen(*buf));
-    free(*buf);
+    char        *buf      = NULL;
+    getStringFromJsonObjectOrDefault(&buf, settings, "password", "passwd");
+    state->hpassword = CALC_HASH_BYTES(buf, strlen(buf));
+    free(buf);
 
     // todo (random data) its better to fill these with real data
     state->as_number = (uint16_t) fastRand();
