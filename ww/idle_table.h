@@ -22,7 +22,7 @@
 
     -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly lost"
        but the pointer is saved in "memptr" field inside the object
-    
+
     note that libhv timer is also not a real timer, but is a heap like timer
     i didnt know this when i created the idle table but, this is still useful i believe and
     has its own usecases
@@ -32,20 +32,20 @@ struct idle_item_s;
 typedef void (*ExpireCallBack)(struct idle_item_s *);
 
 struct idle_item_s;
-typedef struct idle_item_s idle_item_t;
+typedef struct idle_item_s  idle_item_t;
+typedef struct idle_table_s idle_table_t;
 
 // idle item is threadlocal
 struct idle_item_s
 {
     void          *userdata;
+    idle_table_t  *table;
     hash_t         hash;
     ExpireCallBack cb;
     uint64_t       expire_at_ms;
     uint8_t        tid;
     bool           removed;
 };
-
-typedef struct idle_table_s idle_table_t;
 
 idle_table_t *newIdleTable(hloop_t *loop);
 void          destoryIdleTable(idle_table_t *self);

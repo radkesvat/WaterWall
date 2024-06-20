@@ -82,8 +82,12 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     idle_item_t *item = malloc(sizeof(idle_item_t));
     hhybridmutex_lock(&(self->mutex));
 
-    *item = (idle_item_t){
-        .expire_at_ms = hloop_now_ms(loops[tid]) + age_ms, .hash = key, .tid = tid, .userdata = userdata, .cb = cb};
+    *item = (idle_item_t){.expire_at_ms = hloop_now_ms(loops[tid]) + age_ms,
+                          .hash         = key,
+                          .tid          = tid,
+                          .userdata     = userdata,
+                          .cb           = cb,
+                          .table        = self};
 
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
     {
@@ -98,7 +102,8 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
 }
 void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
-    if(item->removed){
+    if (item->removed)
+    {
         return;
     }
     item->expire_at_ms = self->last_update_ms + age_ms;
@@ -144,10 +149,36 @@ static void beforeCloseCallBack(hevent_t *ev)
     idle_item_t *item = hevent_userdata(ev);
     if (! item->removed)
     {
-        item->cb(item);
-    }
+        if (item->expire_at_ms > hloop_now_ms(loops[item->tid]))
+        {
+            hhybridmutex_lock(&(item->table->mutex));
+            heapq_idles_t_push(&(item->table->hqueue), item);
+            hhybridmutex_unlock(&(item->table->mutex));
+            return;
+        }
 
-    free(item);
+        uint64_t old_expire_at_ms = item->expire_at_ms;
+
+        item->cb(item);
+
+        if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > hloop_now_ms(loops[item->tid]))
+        {
+            hhybridmutex_lock(&(item->table->mutex));
+            heapq_idles_t_push(&(item->table->hqueue), item);
+            hhybridmutex_unlock(&(item->table->mutex));
+        }
+        else
+        {
+            bool removal_result = removeIdleItemByHash(item->tid, item->table, item->hash);
+            assert(removal_result);
+            (void) removal_result;
+            free(item);
+        }
+    }
+    else
+    {
+        free(item);
+    }
 }
 
 void idleCallBack(htimer_t *timer)
@@ -192,5 +223,9 @@ void idleCallBack(htimer_t *timer)
 
 void destoryIdleTable(idle_table_t *self)
 {
+    htimer_del(self->idle_handle);
+    heapq_idles_t_drop(&self->hqueue);
+    hmap_idles_t_drop(&self->hmap);
+    hhybridmutex_destroy(&self->mutex);
     free((void *) (self->memptr)); // NOLINT
 }
