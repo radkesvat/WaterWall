@@ -166,7 +166,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             bufferStreamPush(cstate->fallback_buf, newShallowShiftBuffer(c->payload));
         }
-        if (cstate->fallback)
+        if (cstate->fallback_mode)
         {
             reuseContextBuffer(c);
 
@@ -242,7 +242,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     printSSLError();
                     if (state->fallback != NULL && ! cstate->fallback_disabled)
                     {
-                        cstate->fallback = true;
+                        cstate->fallback_mode = true;
                         fallbackWrite(self, c);
                         return;
                     }
@@ -384,7 +384,7 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (c->fin)
         {
 
-            if (cstate->fallback)
+            if (cstate->fallback_mode)
             {
                 if (cstate->fallback_init_sent)
                 {
@@ -439,7 +439,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            if (cstate->fallback)
+            if (cstate->fallback_mode)
             {
                 self->dw->downStream(self->dw, c);
                 return; // not gona encrypt fall back data
