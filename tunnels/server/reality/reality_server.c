@@ -161,8 +161,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             break;
         case kConAuthorized: {
-            bufferStreamPush(cstate->read_stream, c->payload);
-            c->payload = NULL;
+            bufferStreamPushContextPayload(cstate->read_stream,c);
         authorized:;
             uint8_t tls_header[1 + 2 + 2];
             while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)

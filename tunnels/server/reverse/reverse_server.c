@@ -49,14 +49,12 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             if (dcstate->handshaked)
             {
-                bufferStreamPush(dcstate->wait_stream, c->payload);
-                c->payload = NULL;
+                bufferStreamPushContextPayload(dcstate->wait_stream, c);
                 destroyContext(c);
             }
             else
             {
-                bufferStreamPush(dcstate->wait_stream, c->payload);
-                c->payload = NULL;
+                bufferStreamPushContextPayload(dcstate->wait_stream, c);
 
                 if (bufferStreamLen(dcstate->wait_stream) >= 96)
                 {
@@ -196,8 +194,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 if (bufferStreamLen(dcstate->wait_stream) > 0)
                 {
-                    bufferStreamPush(dcstate->wait_stream, c->payload);
-                    c->payload                  = NULL;
+                    bufferStreamPushContextPayload(dcstate->wait_stream,c);
+
                     context_t *data_waiting_ctx = newContext(c->line);
                     data_waiting_ctx->payload   = bufferStreamFullRead(dcstate->wait_stream);
                     self->up->upStream(self->up, data_waiting_ctx);

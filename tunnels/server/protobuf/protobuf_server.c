@@ -46,8 +46,7 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         buffer_stream_t *bstream = cstate->stream_buf;
-        bufferStreamPush(bstream, c->payload);
-        c->payload = NULL;
+        bufferStreamPushContextPayload(bstream, c);
 
         while (true)
         {

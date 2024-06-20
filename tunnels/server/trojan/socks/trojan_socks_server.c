@@ -444,8 +444,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 if (dest_context->address_protocol == kSapUdp)
                 {
-                    bufferStreamPush(cstate->udp_stream, c->payload);
-                    c->payload = NULL;
+                    bufferStreamPushContextPayload(cstate->udp_stream, c);
 
                     if (! processUdp(self, cstate, c->line))
                     {
@@ -491,8 +490,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (c->line->dest_ctx.address_protocol == kSapUdp)
             {
-                bufferStreamPush(cstate->udp_stream, c->payload);
-                c->payload = NULL;
+                bufferStreamPushContextPayload(cstate->udp_stream, c);
 
                 if (! processUdp(self, cstate, c->line))
                 {

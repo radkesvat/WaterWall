@@ -243,8 +243,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->read_stream, c->payload);
-            c->payload = NULL;
+            bufferStreamPushContextPayload(cstate->read_stream, c);
             uint8_t tls_header[1 + 2 + 2];
             while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {

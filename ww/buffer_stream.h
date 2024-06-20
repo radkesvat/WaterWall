@@ -50,7 +50,7 @@ static inline void bufferStreamPushContextPayload(buffer_stream_t *self,context_
 {
     assert(c->payload);
     bufferStreamPush(self,c->payload);
-    //todo (disabled optimize) this can work but currently disabled, also looc at tunnel.h
+    //todo (disabled optimize) this can work but currently disabled, also look at tunnel.h
 #if !defined(RELEASE) || 1
     c->payload = NULL;
 #endif
