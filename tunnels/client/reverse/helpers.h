@@ -9,7 +9,7 @@ enum
 {
     kPreconnectDelayShort        = 10,
     kPreconnectDelayLong         = 750,
-    kConnectionStarvationTimeOut = 20000
+    kConnectionStarvationTimeOut = 45000
 };
 
 static void onLinePausedU(void *cstate)
