@@ -33,18 +33,17 @@ typedef struct wssl_server_state_s
 typedef struct wssl_server_con_state_s
 {
 
-    bool handshake_completed;
-
-    bool             fallback;
+    bool             handshake_completed;
+    bool             fallback_mode;
     bool             fallback_init_sent;
     bool             fallback_first_sent;
+    bool             first_sent;
+    bool             init_sent;
+    bool             fallback_disabled;
     buffer_stream_t *fallback_buf;
     SSL             *ssl;
     BIO             *rbio;
     BIO             *wbio;
-    bool             first_sent;
-    bool             init_sent;
-    int              reply_sent_tit;
 
 } wssl_server_con_state_t;
 
@@ -151,7 +150,7 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
         cstate->fallback_first_sent = true;
     }
 
-    c->payload = bufferStreamRead(cstate->fallback_buf, record_len);
+    c->payload = bufferStreamIdealRead(cstate->fallback_buf);
     state->fallback->upStream(state->fallback, c);
 }
 
@@ -208,10 +207,14 @@ static void upStream(tunnel_t *self, context_t *c)
                         // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
                         if (n > 0)
                         {
+                            // since then, we should not go to fallback
+                            cstate->fallback_disabled = true;
+
                             setLen(buf, n);
                             context_t *answer = newContextFrom(c);
                             answer->payload   = buf;
                             self->dw->downStream(self->dw, answer);
+
                             if (! isAlive(c->line))
                             {
                                 reuseContextBuffer(c);
@@ -237,7 +240,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     reuseContextBuffer(c); // payload already buffered
                     printSSLError();
-                    if (state->fallback != NULL)
+                    if (state->fallback != NULL && ! cstate->fallback_disabled)
                     {
                         cstate->fallback = true;
                         fallbackWrite(self, c);
@@ -656,7 +659,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     }
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 
