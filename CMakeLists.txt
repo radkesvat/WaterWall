@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versio
 # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32")      for 32 bit build, note that ssl libs need tweaks
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
 
+# set(CMAKE_EXE_LINKER_FLAGS ""  CACHE INTERNAL "")
+  
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   cmake_policy(SET CMP0069 NEW) 
   set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
@@ -76,9 +78,11 @@ option(INCLUDE_BGP4_CLIENT "link Bgp4Client staticly to the core"  TRUE)
 set(OPENSSL_CONFIGURE_VERBOSE ON)
 
 # add executable
-add_executable(Waterwall core/main.c
+add_executable(Waterwall
+                  core/main.c
                   core/core_settings.c
                   core/static_tunnels.c
+                  # core/tests/bench_memcpy.c
 )
 
 

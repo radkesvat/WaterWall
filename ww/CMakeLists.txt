@@ -30,6 +30,8 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
+option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions"  OFF)
+
 
 CPMAddPackage(
   NAME komihash
@@ -135,16 +137,36 @@ endif()
 # endif()
 
 
-target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
+if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 
-target_compile_options(ww PUBLIC 
-  $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX> 
-  $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Werror>
-)
+  target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/asmlib)
+  if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
+      
+    # The override method sometimes fails to call the asmlib function because the compiler uses
+    # built-in inline codes for some common functions rather than calling a library. The built-in
+    # codes are not optimal on modern microprocessors. Use option -fno-builtin 
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin-function")  
+    set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
+  
+  else()
 
+    target_link_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/asmlib)
+    target_link_libraries(ww PUBLIC aelf64)
+
+  endif()
+
+
+
+endif()
+
+
+# target_compile_options(ww PUBLIC -Wall -Wextra -Werror -pedantic -pedantic-errors)
+
+# disabled warnings: only unused functions
 target_compile_options(ww PUBLIC -Wno-unused-function)
 
-target_compile_options(ww PUBLIC -pedantic -pedantic-errors)
+
+target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   target_compile_definitions(ww PUBLIC DEBUG=1)
