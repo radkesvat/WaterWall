@@ -90,7 +90,6 @@ _Noreturn void runMainThread(void);
 
 extern unsigned int             workers_count;
 extern hthread_t               *workers;
-extern unsigned int             frand_seed;
 extern unsigned int             ram_profile;
 extern struct hloop_s         **loops;
 extern struct buffer_pool_s   **buffer_pools;
