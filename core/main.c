@@ -16,8 +16,9 @@ int main(void)
     // int test[3] = {0};
     // printf("hello world %d", test[4]);
 
-    const char *core_file_name    = "core.json";
-    char       *core_file_content = readFile(core_file_name);
+    static const char *core_file_name    = "core.json";
+    char              *core_file_content = readFile(core_file_name);
+    
     if (core_file_content == NULL)
     {
         fprintf(stderr, "Waterwall version %s\nCould not read core settings file \"%s\" \n",

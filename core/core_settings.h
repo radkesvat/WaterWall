@@ -31,5 +31,5 @@ struct core_settings_s
     vec_config_path_t config_paths;
 };
 
-void                    parseCoreSettings(char *data_json);
+void                    parseCoreSettings(const char *data_json);
 struct core_settings_s *getCoreSettings(void);

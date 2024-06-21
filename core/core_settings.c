@@ -303,7 +303,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }
 }
-void parseCoreSettings(char *data_json)
+void parseCoreSettings(const char *data_json)
 {
     if (settings == NULL)
     {
