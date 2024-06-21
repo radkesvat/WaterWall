@@ -47,7 +47,7 @@ enum
 #define LSTATE_I_MUT(x, y) (x)->chains_state[(y)]
 
 // get the line state of current tunnel which is assumed to be named as `self`
-#define LSTATE(x)     LSTATE_I(x, self->chain_index)
+#define LSTATE(x) LSTATE_I(x, self->chain_index)
 // mutate the line state of current tunnel which is assumed to be named as `self`
 #define LSTATE_MUT(x) LSTATE_I_MUT(x, self->chain_index)
 
@@ -81,12 +81,13 @@ typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
 
-typedef struct line_s 
+typedef struct line_s
 {
     void            *chains_state[kMaxChainLen];
     bool             alive;
     uint8_t          tid;
     uint8_t          auth_cur;
+    bool             _pad;
     line_refc_t      refc;
     void            *up_state;
     void            *dw_state;
@@ -94,6 +95,8 @@ typedef struct line_s
     LineFlowSignal   up_resume_cb;
     LineFlowSignal   dw_pause_cb;
     LineFlowSignal   dw_resume_cb;
+    bool             up_piped;
+    bool             dw_piped;
     hloop_t         *loop;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
@@ -214,7 +217,6 @@ static inline void resumeLineDownSide(line_t *l)
         l->dw_resume_cb(l->dw_state);
     }
 }
-
 
 static inline void internalUnRefLine(line_t *l)
 {
@@ -356,3 +358,16 @@ static inline void reuseContextBuffer(context_t *c)
     reuseBuffer(getContextBufferPool(c), c->payload);
     c->payload = NULL;
 }
+
+static inline bool isUpPiped(line_t *l)
+{
+    return l->up_piped;
+}
+static inline bool isDownPiped(line_t *l)
+{
+    return l->dw_piped;
+}
+
+void pipeUpStream(context_t *c);
+void pipeDownStream(context_t *c);
+void pipeTo(tunnel_t *self, line_t *l, uint8_t tid);

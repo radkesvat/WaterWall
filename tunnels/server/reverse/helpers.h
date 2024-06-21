@@ -1,4 +1,5 @@
 #pragma once
+#include "hatomic.h"
 #include "tunnel.h"
 #include "types.h"
 
@@ -11,7 +12,7 @@ static void addConnectionU(thread_box_t *box, reverse_server_con_state_t *con)
     {
         con->next->prev = con;
     }
-    box->u_count += 1;
+    atomic_fetch_add_explicit(&(box->u_count), 1, memory_order_relaxed);
 }
 static void removeConnectionU(thread_box_t *box, reverse_server_con_state_t *con)
 {
@@ -20,7 +21,7 @@ static void removeConnectionU(thread_box_t *box, reverse_server_con_state_t *con
     {
         con->next->prev = con->prev;
     }
-    box->u_count -= 1;
+    atomic_fetch_add_explicit(&(box->u_count), -1, memory_order_relaxed);
 }
 
 static void addConnectionD(thread_box_t *box, reverse_server_con_state_t *con)

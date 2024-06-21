@@ -1,5 +1,5 @@
 #include "tunnel.h"
-#include "buffer_pool.h"
+#include "pipe_line.h"
 #include "string.h" // memset
 #include <assert.h>
 #include <stdint.h>
@@ -73,4 +73,57 @@ void defaultDownStream(tunnel_t *self, context_t *c)
     {
         self->dw->downStream(self->dw, c);
     }
+}
+
+void pipeUpStream(context_t *c)
+{
+    if (! pipeSendToUpStream((pipe_line_t *) c->line->up_state, c))
+    {
+        if (c->payload)
+        {
+            reuseContextBuffer(c);
+        }
+        destroyContext(c);
+    }
+}
+void pipeDownStream(context_t *c)
+{
+    if (! pipeSendToDownStream((pipe_line_t *) c->line->dw_state, c))
+    {
+        if (c->payload)
+        {
+            reuseContextBuffer(c);
+        }
+        destroyContext(c);
+    }
+}
+
+static void defaultPipeLocalUpStream(struct tunnel_s *self, struct context_s *c, struct pipe_line_s *pl)
+{
+    (void) pl;
+    if (isUpPiped(c->line))
+    {
+        pipeUpStream(c);
+    }
+    else
+    {
+        self->upStream(self, c);
+    }
+}
+static void defaultPipeLocalDownStream(struct tunnel_s *self, struct context_s *c, struct pipe_line_s *pl)
+{
+    (void) pl;
+    if (isDownPiped(c->line))
+    {
+        pipeDownStream(c);
+    }
+    else
+    {
+        self->dw->downStream(self->dw, c);
+    }
+}
+void pipeTo(tunnel_t *self, line_t *l, uint8_t tid)
+{
+    assert(l->up_state == NULL);
+    newPipeLine(self, l, tid, defaultPipeLocalUpStream, defaultPipeLocalDownStream);
 }

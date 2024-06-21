@@ -469,7 +469,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
             {
-                assert(false);
+                // assert(false);
                 context_t *fin_ctx = newFinContext(con->line);
                 deleteHttp2Connection(con);
                 self->up->upStream(self->up, fin_ctx);

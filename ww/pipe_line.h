@@ -52,8 +52,8 @@ void pipeOnUpLineResumed(void *state);
 void pipeOnDownLineResumed(void *state);
 void pipeOnDownLinePaused(void *state);
 
-bool pipeUpStream(pipe_line_t *pl, context_t *c);
-bool pipeDownStream(pipe_line_t *pl, context_t *c);
+bool pipeSendToUpStream(pipe_line_t *pl, context_t *c);
+bool pipeSendToDownStream(pipe_line_t *pl, context_t *c);
 
-void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t *left_line, uint8_t dest_tid,
+void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream);

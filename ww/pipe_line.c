@@ -8,15 +8,15 @@
 
 struct pipe_line_s
 {
+    void               *memptr;
+    tunnel_t           *self;
+    line_t             *left_line;
+    line_t             *right_line;
     atomic_bool         closed;
     atomic_int          refc;
     bool                first_sent;
     uint8_t             left_tid;
     uint8_t             right_tid;
-    uintptr_t           memptr;
-    tunnel_t           *self;
-    line_t             *left_line;
-    line_t             *right_line;
     PipeLineFlowRoutine local_up_stream;
     PipeLineFlowRoutine local_down_stream;
 
@@ -93,7 +93,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
     }
     lock(pl);
     struct msg_event *evdata = popPoolItem(pipeline_msg_pools[tid_from]);
-    *evdata                  = (struct msg_event){.pl = pl, .function = *(void **) (&fn), .arg = arg,.target_tid=tid_to};
+    *evdata = (struct msg_event){.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
 
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
@@ -246,8 +246,13 @@ void pipeOnDownLineResumed(void *state)
     sendMessage(pl, resumeRightLine, NULL, pl->left_tid, pl->right_tid);
 }
 
-bool pipeUpStream(pipe_line_t *pl, context_t *c)
+bool pipeSendToUpStream(pipe_line_t *pl, context_t *c)
 {
+    if (WW_UNLIKELY(c->est))
+    {
+        destroyContext(c);
+        return true;
+    }
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
     assert(pl->left_line);
@@ -284,15 +289,15 @@ bool pipeUpStream(pipe_line_t *pl, context_t *c)
     return true;
 }
 
-bool pipeDownStream(pipe_line_t *pl, context_t *c)
+bool pipeSendToDownStream(pipe_line_t *pl, context_t *c)
 {
     // est context is ignored, only fin or data makes sense
-    // if (WW_UNLIKELY(c->est))
-    // {
-    //     destroyContext(c);
-    //     return true;
-    // }
-    assert(! c->est);
+    if (WW_UNLIKELY(c->est))
+    {
+        destroyContext(c);
+        return true;
+    }
+    // assert(! c->est);
 
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
@@ -333,7 +338,8 @@ bool pipeDownStream(pipe_line_t *pl, context_t *c)
 static void initRight(pipe_line_t *pl, void *arg)
 {
     (void) arg;
-    pl->right_line = newLine(pl->right_tid);
+    pl->right_line           = newLine(pl->right_tid);
+    pl->right_line->dw_piped = true;
     setupLineDownSide(pl->right_line, pipeOnUpLinePaused, pl, pipeOnUpLineResumed);
     context_t *context = newInitContext(pl->right_line);
     pl->local_up_stream(pl->self, context, pl);
@@ -344,16 +350,18 @@ static void initRight(pipe_line_t *pl, void *arg)
 static void initLeft(pipe_line_t *pl, void *arg)
 {
     (void) arg;
+    pl->left_line->up_piped = true;
+
     setupLineUpSide(pl->left_line, pipeOnDownLinePaused, pl, pipeOnDownLineResumed);
 }
 
-void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t *left_line, uint8_t dest_tid,
+void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream)
 
 {
-    assert(*result == NULL);
-
+#if defined (RELEASE)
     assert(sizeof(struct pipe_line_s) <= kCpuLineCacheSize);
+
     int64_t memsize = (int64_t) sizeof(struct pipe_line_s);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
@@ -373,9 +381,12 @@ void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 
     pipe_line_t *pl = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
-    *pl             = (pipe_line_t){.memptr            = ptr,
+#else
+    pipe_line_t *pl = malloc(sizeof(pipe_line_t)); 
+#endif
+    *pl             = (pipe_line_t){.memptr            = (void *) pl,
                                     .self              = self,
-                                    .left_tid          = this_tid,
+                                    .left_tid          = left_line->tid,
                                     .right_tid         = dest_tid,
                                     .left_line         = left_line,
                                     .right_line        = NULL,
@@ -384,7 +395,6 @@ void newPipeLine(pipe_line_t **result, tunnel_t *self, uint8_t this_tid, line_t 
                                     .refc              = 1,
                                     .local_up_stream   = local_up_stream,
                                     .local_down_stream = local_down_stream};
-    *result         = pl;
 
     initLeft(pl, NULL);
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);
