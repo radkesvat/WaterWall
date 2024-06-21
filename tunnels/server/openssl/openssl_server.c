@@ -267,16 +267,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 LOGD("OpensslServer: Tls handshake complete");
                 cstate->handshake_completed = true;
                 empytBufferStream(cstate->fallback_buf);
-                self->up->upStream(self->up, newInitContext(c->line));
-                if (! isAlive(c->line))
-                {
-                    LOGW("OpensslServer: next node instantly closed the init with fin");
-                    reuseContextBuffer(c);
-                    destroyContext(c);
 
-                    return;
-                }
-                cstate->init_sent = true;
             }
 
             /* The encrypted data is now in the input bio so now we can perform actual
@@ -292,6 +283,20 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (n > 0)
                 {
+                    if (WW_UNLIKELY(! cstate->init_sent))
+                    {
+                        self->up->upStream(self->up, newInitContext(c->line));
+                        if (! isAlive(c->line))
+                        {
+                            LOGW("OpensslServer: next node instantly closed the init with fin");
+                            reuseContextBuffer(c);
+                            destroyContext(c);
+
+                            return;
+                        }
+                        cstate->init_sent = true;
+                    }
+
                     setLen(buf, n);
                     context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload   = buf;

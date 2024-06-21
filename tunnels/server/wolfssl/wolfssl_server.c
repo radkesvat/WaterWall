@@ -257,18 +257,8 @@ static void upStream(tunnel_t *self, context_t *c)
                     return;
                 }
 
-                LOGD("OpensslServer: Tls handshake complete");
+                LOGD("WolfsslServer: Tls handshake complete");
                 cstate->handshake_completed = true;
-                self->up->upStream(self->up, newInitContext(c->line));
-                if (! isAlive(c->line))
-                {
-                    LOGW("OpensslServer: next node instantly closed the init with fin");
-                    reuseContextBuffer(c);
-                    destroyContext(c);
-
-                    return;
-                }
-                cstate->init_sent = true;
             }
 
             /* The encrypted data is now in the input bio so now we can perform actual
@@ -284,6 +274,31 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (n > 0)
                 {
+                    if (WW_UNLIKELY(! cstate->init_sent))
+                    {
+                        self->up->upStream(self->up, newInitContext(c->line));
+                        if (! isAlive(c->line))
+                        {
+                            LOGW("WolfsslServer: next node instantly closed the init with fin");
+                            reuseContextBuffer(c);
+                            destroyContext(c);
+
+                            return;
+                        }
+                        cstate->init_sent = true;
+                    }
+
+                    self->up->upStream(self->up, newInitContext(c->line));
+                    if (! isAlive(c->line))
+                    {
+                        LOGW("WolfsslServer: next node instantly closed the init with fin");
+                        reuseContextBuffer(c);
+                        destroyContext(c);
+
+                        return;
+                    }
+                    cstate->init_sent = true;
+
                     setLen(buf, n);
                     context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload   = buf;
@@ -375,7 +390,7 @@ static void upStream(tunnel_t *self, context_t *c)
             // {
             //     if (1 != SSL_set_record_padding_callback(cstate->ssl, paddingDecisionCb))
             //     {
-            //         LOGW("OpensslServer: Could not set ssl padding");
+            //         LOGW("WolfsslServer: Could not set ssl padding");
             //     }
             //     SSL_set_record_padding_callback_arg(cstate->ssl, cstate);
             // }
@@ -588,7 +603,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
             {
                 if (! getStringFromJsonObject(&(state->alpns[i].name), alpn_item, "value"))
                 {
-                    LOGF("JSON Error: OpensslServer->settigs->alpns[%d]->value (object field) : The data was empty or "
+                    LOGF("JSON Error: WolfsslServer->settigs->alpns[%d]->value (object field) : The data was empty or "
                          "invalid",
                          i);
                     return NULL;
