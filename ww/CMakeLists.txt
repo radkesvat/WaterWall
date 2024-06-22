@@ -160,11 +160,10 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 endif()
 
 
-# target_compile_options(ww PUBLIC -Wall -Wextra -Werror -pedantic -pedantic-errors)
+target_compile_options(ww PUBLIC -Wall -Wextra -Werror -pedantic -pedantic-errors)
 
 # disabled warnings: only unused functions
 target_compile_options(ww PUBLIC -Wno-unused-function)
-
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
