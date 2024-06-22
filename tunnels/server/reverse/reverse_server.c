@@ -81,7 +81,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     if (dcstate->handshaked)
                     {
-
+                        // atomic access here is not for thread safety since it is our own thread,
+                        // but regular access would be SEQ_CST
                         if (atomic_load_explicit(&(this_tb->u_count), memory_order_relaxed) > 0)
                         {
                             reuseBuffer(getContextBufferPool(c), data);
@@ -305,10 +306,10 @@ static void downStream(tunnel_t *self, context_t *c)
 
             if (ucstate->paired)
             {
-                line_t* downline = ucstate->d;
+                line_t *downline = ucstate->d;
                 cleanup(ucstate);
                 c = switchLine(c, downline);
-                
+
                 if (isDownPiped(c->line))
                 {
                     pipeDownStream(c);
