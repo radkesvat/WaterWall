@@ -103,8 +103,8 @@ typedef struct line_s
 
 typedef struct context_s // 24
 {
-    line_t         *line;
     shift_buffer_t *payload;
+    line_t         *line;
     bool            init;
     bool            est;
     bool            first;
@@ -375,7 +375,7 @@ static inline bool isDownPiped(line_t *l)
 {
     return l->dw_piped;
 }
-static inline hloop_t* getLineLoop(line_t *l)
+static inline hloop_t *getLineLoop(line_t *l)
 {
     return loops[l->tid];
 }
