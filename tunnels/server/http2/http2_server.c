@@ -14,7 +14,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     (void) namelen;
     (void) valuelen;
     (void) flags;
-    if (userdata == NULL)
+    if (WW_UNLIKELY(userdata == NULL))
     {
         return 0;
     }
@@ -140,7 +140,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
 
 static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata)
 {
-    if (userdata == NULL)
+    if (WW_UNLIKELY(userdata == NULL))
     {
         return 0;
     }

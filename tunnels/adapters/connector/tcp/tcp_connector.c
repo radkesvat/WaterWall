@@ -61,7 +61,7 @@ static void onWriteComplete(hio_t *io)
 {
     // resume the read on other end of the connection
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
-    if (cstate == NULL)
+    if (WW_UNLIKELY(cstate == NULL))
     {
         return;
     }
@@ -82,7 +82,7 @@ static void onWriteComplete(hio_t *io)
 static void onRecv(hio_t *io, shift_buffer_t *buf)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
-    if (cstate == NULL)
+    if (WW_UNLIKELY(cstate == NULL))
     {
         reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
         return;
@@ -137,7 +137,7 @@ static void onLineResumed(void *userdata)
 static void onOutBoundConnected(hio_t *upstream_io)
 {
     tcp_connector_con_state_t *cstate = hevent_userdata(upstream_io);
-    if (cstate == NULL)
+    if (WW_UNLIKELY(cstate == NULL))
     {
         return;
     }

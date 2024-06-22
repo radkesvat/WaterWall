@@ -30,14 +30,6 @@ static void sendGrpcFinalData(tunnel_t *self, line_t *line, size_t stream_id)
 static bool trySendRequest(tunnel_t *self, http2_client_con_state_t *con, size_t stream_id, shift_buffer_t *buf)
 {
     line_t *line = con->line;
-    if (con == NULL)
-    {
-        if (buf)
-        {
-            reuseBuffer(getLineBufferPool(con->line), buf);
-        }
-        return false;
-    }
 
     char  *data = NULL;
     size_t len;
@@ -154,7 +146,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     (void) value;
     (void) valuelen;
     (void) flags;
-    if (userdata == NULL)
+    if (WW_UNLIKELY(userdata == NULL))
     {
         return 0;
     }
@@ -196,7 +188,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
                                    size_t len, void *userdata)
 {
     (void) flags;
-    if (userdata == NULL || len <= 0)
+    if (WW_UNLIKELY(userdata == NULL || len <= 0))
     {
         return 0;
     }
@@ -260,7 +252,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
 
 static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata)
 {
-    if (userdata == NULL)
+    if (WW_UNLIKELY(userdata == NULL))
     {
         return 0;
     }

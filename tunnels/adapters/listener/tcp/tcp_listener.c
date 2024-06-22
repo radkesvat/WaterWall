@@ -101,7 +101,7 @@ static void onWriteComplete(hio_t *io)
 {
     // resume the read on other end of the connection
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
-    if (cstate == NULL)
+    if (WW_UNLIKELY(cstate == NULL))
     {
         return;
     }
@@ -224,7 +224,7 @@ static void downStream(tunnel_t *self, context_t *c)
 static void onRecv(hio_t *io, shift_buffer_t *buf)
 {
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
-    if (cstate == NULL)
+    if (WW_UNLIKELY(cstate == NULL))
     {
         reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
         return;

@@ -12,7 +12,7 @@ static void cleanup(udp_connector_con_state_t *cstate)
 static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
     udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (hevent_userdata(io));
-    if (cstate == NULL)
+    if (WW_UNLIKELY(cstate == NULL))
     {
         reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
         return;
