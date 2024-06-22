@@ -123,7 +123,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         }
                         else
                         {
-                            for (int i = 0; i < workers_count; i++)
+                            for (unsigned int i = 0; i < workers_count; i++)
                             {
                                 if (atomic_load_explicit(&(state->threadlocal_pool[i].u_count), memory_order_relaxed) >
                                     0)
