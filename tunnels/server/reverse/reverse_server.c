@@ -99,6 +99,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             ucstate->paired      = true;
                             ucstate->wait_stream = dcstate->wait_stream;
                             dcstate->wait_stream = NULL;
+                            doneLineUpSide(c->line);
                             setupLineUpSide(c->line, onLinePausedD, ucstate, onLineResumedD);
 
                             free(dcstate);

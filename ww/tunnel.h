@@ -83,23 +83,22 @@ typedef uint32_t line_refc_t;
 
 typedef struct line_s
 {
-    void            *chains_state[kMaxChainLen];
+    line_refc_t      refc;
     bool             alive;
     uint8_t          tid;
-    uint8_t          auth_cur;
-    bool             _pad;
-    line_refc_t      refc;
+    bool             up_piped;
+    bool             dw_piped;
     void            *up_state;
     void            *dw_state;
     LineFlowSignal   up_pause_cb;
     LineFlowSignal   up_resume_cb;
     LineFlowSignal   dw_pause_cb;
     LineFlowSignal   dw_resume_cb;
-    bool             up_piped;
-    bool             dw_piped;
-    hloop_t         *loop;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
+    void            *chains_state[kMaxChainLen];
+    uint8_t          auth_cur;
+
 } line_t;
 
 typedef struct context_s // 24
@@ -134,6 +133,9 @@ void      chainDown(tunnel_t *from, tunnel_t *to);
 void      chainUp(tunnel_t *from, tunnel_t *to);
 void      defaultUpStream(tunnel_t *self, context_t *c);
 void      defaultDownStream(tunnel_t *self, context_t *c);
+void      pipeUpStream(context_t *c);
+void      pipeDownStream(context_t *c);
+void      pipeTo(tunnel_t *self, line_t *l, uint8_t tid);
 
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool);
 void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item);
@@ -146,7 +148,6 @@ static inline line_t *newLine(uint8_t tid)
         .tid          = tid,
         .refc         = 1,
         .auth_cur     = 0,
-        .loop         = loops[tid],
         .alive        = true,
         .chains_state = {0},
         // to set a port we need to know the AF family, default v4
@@ -164,6 +165,7 @@ static inline bool isAlive(line_t *line)
 
 static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
+    assert(l->up_state == NULL || l->up_pause_cb == NULL);
     l->up_state     = state;
     l->up_pause_cb  = pause_cb;
     l->up_resume_cb = resume_cb;
@@ -171,6 +173,7 @@ static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *sta
 
 static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
+    assert(l->dw_state == NULL || l->dw_pause_cb == NULL);
     l->dw_state     = state;
     l->dw_pause_cb  = pause_cb;
     l->dw_resume_cb = resume_cb;
@@ -178,11 +181,15 @@ static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *s
 
 static inline void doneLineUpSide(line_t *l)
 {
+    assert(l->up_state != NULL || l->up_pause_cb == NULL);
+
     l->up_state = NULL;
 }
 
 static inline void doneLineDownSide(line_t *l)
 {
+    assert(l->dw_state != NULL || l->dw_pause_cb == NULL);
+
     l->dw_state = NULL;
 }
 
@@ -247,6 +254,7 @@ static inline void internalUnRefLine(line_t *l)
 
 static inline void lockLine(line_t *line)
 {
+    assert(line->alive || line->refc > 0);
     // basic overflow protection
     assert(line->refc < (((0x1ULL << ((sizeof(line->refc) * 8ULL) - 1ULL)) - 1ULL) |
                          (0xFULL << ((sizeof(line->refc) * 8ULL) - 4ULL))));
@@ -367,7 +375,7 @@ static inline bool isDownPiped(line_t *l)
 {
     return l->dw_piped;
 }
-
-void pipeUpStream(context_t *c);
-void pipeDownStream(context_t *c);
-void pipeTo(tunnel_t *self, line_t *l, uint8_t tid);
+static inline hloop_t* getLineLoop(line_t *l)
+{
+    return loops[l->tid];
+}

@@ -212,7 +212,7 @@ fallback:;
     }
     else
     {
-        htimer_t *t = htimer_add(c->line->loop, onFallbackTimer, state->fallback_delay, 1);
+        htimer_t *t = htimer_add(getLineLoop(c->line), onFallbackTimer, state->fallback_delay, 1);
         hevent_set_userdata(t, newTimerData(self, c));
     }
 }

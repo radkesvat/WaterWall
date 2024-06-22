@@ -106,7 +106,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
 static void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
 {
     shift_buffer_t *buf = arg;
-    if (pl->right_line == NULL)
+    if (pl->left_line == NULL)
     {
         reuseBuffer(buffer_pools[pl->left_tid], buf);
         return;
@@ -359,7 +359,6 @@ void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
                  PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream)
 
 {
-#if defined (RELEASE)
     assert(sizeof(struct pipe_line_s) <= kCpuLineCacheSize);
 
     int64_t memsize = (int64_t) sizeof(struct pipe_line_s);
@@ -381,10 +380,8 @@ void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 
     pipe_line_t *pl = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
-#else
-    pipe_line_t *pl = malloc(sizeof(pipe_line_t)); 
-#endif
-    *pl             = (pipe_line_t){.memptr            = (void *) pl,
+
+    *pl             = (pipe_line_t){.memptr            = (void *) ptr,
                                     .self              = self,
                                     .left_tid          = left_line->tid,
                                     .right_tid         = dest_tid,
