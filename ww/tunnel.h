@@ -57,7 +57,7 @@ enum
 #define CSTATE_MUT(x) LSTATE_MUT((x)->line)
 
 /*
-    while it is necessary to drop each state when line is closing,
+    While it is necessary to drop each state when line is closing,
     setting them to NULL can be removed on release build since the assert is also
     removed
 */
@@ -81,6 +81,21 @@ typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
 
+/*
+    The line struct represnts a connection, it has to ends ( Down end < --------- > Up end)
+
+    if forexample a write on the Downend blocks, it pauses the up end and wice wersa
+
+    each context creation will increase refc on the line so, the line will never gets destroyed
+    before the contexts that refrense it
+
+    line holds all the info such as dest and src contexts, it also contains each tunnel per connection state
+    in chains_state[(tunnel_index)]
+
+    a line only belongs to 1 thread, but it can cross the threads (if actually needed) using pipe line, easily
+
+*/
+
 typedef struct line_s
 {
     line_refc_t      refc;
@@ -101,6 +116,15 @@ typedef struct line_s
 
 } line_t;
 
+/*
+    Context carries information, it belongs to the line it refrenses and prevent line destruction
+    untill it gets destroyed
+
+    and it can contain a payload buffer, or be just a flag context
+
+    the only flag that also has a payload is `first` , other flags have no payload
+
+*/
 typedef struct context_s // 24
 {
     shift_buffer_t *payload;
@@ -115,6 +139,11 @@ struct tunnel_s;
 
 typedef void (*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
 
+/*
+    Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
+    which later gets accessed by the chain_index which is fixed
+
+*/
 typedef struct tunnel_s // 48
 {
     void            *state;
@@ -137,6 +166,7 @@ void      pipeUpStream(context_t *c);
 void      pipeDownStream(context_t *c);
 void      pipeTo(tunnel_t *self, line_t *l, uint8_t tid);
 
+// pool handles, instead of malloc / free  for the generic pool
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool);
 void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
@@ -163,6 +193,10 @@ static inline bool isAlive(line_t *line)
     return line->alive;
 }
 
+/*
+    Once the up state is setup, it will receive pasue/resume events from down end of the line, with the `state` as
+   userdata
+*/
 static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
     assert(l->up_state == NULL || l->up_pause_cb == NULL);
@@ -171,6 +205,10 @@ static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *sta
     l->up_resume_cb = resume_cb;
 }
 
+/*
+    Once the down state is setup, it will receive pasue/resume events from up end of the line, with the `state` as
+   userdata
+*/
 static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
     assert(l->dw_state == NULL || l->dw_pause_cb == NULL);
@@ -182,14 +220,12 @@ static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *s
 static inline void doneLineUpSide(line_t *l)
 {
     assert(l->up_state != NULL || l->up_pause_cb == NULL);
-
     l->up_state = NULL;
 }
 
 static inline void doneLineDownSide(line_t *l)
 {
     assert(l->dw_state != NULL || l->dw_pause_cb == NULL);
-
     l->dw_state = NULL;
 }
 
@@ -225,6 +261,9 @@ static inline void resumeLineDownSide(line_t *l)
     }
 }
 
+/*
+    called from unlockline which mostly is because destroy context
+*/
 static inline void internalUnRefLine(line_t *l)
 {
     if (--(l->refc) > 0)
@@ -252,6 +291,9 @@ static inline void internalUnRefLine(line_t *l)
     reusePoolItem(line_pools[l->tid], l);
 }
 
+/*
+    called mostly because create context
+*/
 static inline void lockLine(line_t *line)
 {
     assert(line->alive || line->refc > 0);
@@ -266,12 +308,18 @@ static inline void unLockLine(line_t *line)
     internalUnRefLine(line);
 }
 
+/*
+    Only the line creator must call this when it wants to end the line, this dose net necessarily free the context
+   instantly, but it will be freed as soon as the refc becomes zero which means no context is alive for this line, and
+   the line can still be used regularly during the time that it has at least 1 ref
+
+*/
 static inline void destroyLine(line_t *l)
 {
     l->alive = false;
     unLockLine(l);
 }
-
+// pool handles, instead of malloc / free  for the generic pool
 pool_item_t *allocContextPoolHandle(struct generic_pool_s *pool);
 void         destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
@@ -371,10 +419,12 @@ static inline bool isUpPiped(line_t *l)
 {
     return l->up_piped;
 }
+
 static inline bool isDownPiped(line_t *l)
 {
     return l->dw_piped;
 }
+
 static inline hloop_t *getLineLoop(line_t *l)
 {
     return loops[l->tid];
