@@ -79,9 +79,7 @@ static inline bool atomic_flag_test_and_set(atomic_flag* p) {
 #define ATOMIC_FLAG_INIT        { 0 }
 #endif
 
-#ifndef ATOMIC_VAR_INIT
-#define ATOMIC_VAR_INIT(value)  (value)
-#endif
+
 
 #ifndef ATOMIC_FLAG_TEST_AND_SET
 #define ATOMIC_FLAG_TEST_AND_SET    atomic_flag_test_and_set
@@ -121,7 +119,6 @@ typedef atomic_flag                 hatomic_flag_t;
 #define hatomic_flag_clear          ATOMIC_FLAG_CLEAR
 
 typedef atomic_long                 hatomic_t;
-#define HATOMIC_VAR_INIT            ATOMIC_VAR_INIT
 #define hatomic_add                 ATOMIC_ADD
 #define hatomic_sub                 ATOMIC_SUB
 #define hatomic_inc                 ATOMIC_INC

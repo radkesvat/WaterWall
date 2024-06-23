@@ -10,8 +10,8 @@
 #define RAND_MAX 2147483647
 #endif
 
-static hatomic_t s_alloc_cnt = HATOMIC_VAR_INIT(0);
-static hatomic_t s_free_cnt = HATOMIC_VAR_INIT(0);
+static hatomic_t s_alloc_cnt = (0);
+static hatomic_t s_free_cnt = (0);
 
 long hv_alloc_cnt(void) {
     return s_alloc_cnt;

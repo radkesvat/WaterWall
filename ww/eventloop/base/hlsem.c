@@ -245,7 +245,7 @@ static bool _LSemaWaitPartialSpin(hlsem_t* s, uint64_t timeout_usecs) {
 }
 
 bool LSemaInit(hlsem_t* s, uint32_t initcount) {
-    s->count = ATOMIC_VAR_INIT(initcount);
+    s->count = (initcount);
     return SemaInit(&s->sema, initcount);
 }
 

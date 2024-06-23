@@ -36,7 +36,7 @@ typedef _Atomic(unsigned char) atomic_uint8_t;
 
 static size_t thread_id() {
     static _Thread_local size_t _thread_id = THREAD_ID_INVALID;
-    static atomic_size _thread_id_counter = ATOMIC_VAR_INIT(0);
+    static atomic_size _thread_id_counter = (0);
     size_t tid = _thread_id;
     if (tid == THREAD_ID_INVALID) {
         tid = atomic_fetch_add_explicit(&_thread_id_counter, 1);
@@ -66,7 +66,7 @@ static const char* tcolor() {
 // to understand what other messages were produced according to the CPU.
 ATTR_FORMAT(printf, 2, 3)
 static void _                                            // dlog_chan(const char* fname, const char* fmt, ...) {
-    static atomic_uint32_t seqnext = ATOMIC_VAR_INIT(1); // start at 1 to map to line nubmers
+    static atomic_uint32_t seqnext = (1); // start at 1 to map to line nubmers
 
 uint32_t seq = atomic_fetch_add_explicitx(&seqnext, 1, memory_order_acquire);
 
@@ -210,7 +210,7 @@ typedef struct hchan_s {
 } ATTR_ALIGNED_LINE_CACHE hchan_t;
 
 static void thr_init(Thr* t) {
-    static atomic_size_t _thread_id_counter = ATOMIC_VAR_INIT(0);
+    static atomic_size_t _thread_id_counter = (0);
 
     t->id = atomic_fetch_add_explicit(&_thread_id_counter, 1, memory_order_relaxed);
     t->init = true;
