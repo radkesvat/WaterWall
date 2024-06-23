@@ -390,7 +390,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (con->content_type == kApplicationGrpc && con->handshake_completed)
             {
                 sendGrpcFinalData(self, con->line, stream->stream_id);
-                if (! isAlive(c->line))
+                if (! isAlive(con->line))
                 {
                     destroyContext(c);
                     return;
@@ -402,7 +402,7 @@ static void upStream(tunnel_t *self, context_t *c)
             removeStream(con, stream);
             deleteHttp2Stream(stream);
 
-            if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(c->line))
+            if (con->root.next == NULL && con->childs_added >= state->concurrency && isAlive(con->line))
             {
                 context_t *con_fc   = newFinContext(con->line);
                 tunnel_t  *con_dest = con->tunnel->up;
