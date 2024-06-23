@@ -108,48 +108,48 @@ enum http_status {
 // http_mehtod
 // XX(num, name, string)
 #define HTTP_METHOD_MAP(XX)         \
-  XX(0,  Delete,      Delete )      \
-  XX(1,  Get,         Get)          \
-  XX(2,  Head,        Head)         \
-  XX(3,  Post,        Post)         \
-  XX(4,  Put,         Put)          \
+  XX(0,  Delete,      DELETE )      \
+  XX(1,  Get,         GET)          \
+  XX(2,  Head,        HEAD)         \
+  XX(3,  Post,        POST)         \
+  XX(4,  Put,         PUT)          \
   /* pathological */                \
-  XX(5,  Connect,     Connect)      \
-  XX(6,  Options,     Options)      \
-  XX(7,  Trace,       Trace)        \
+  XX(5,  Connect,     CONNECT)      \
+  XX(6,  Options,     OPTIONS)      \
+  XX(7,  Trace,       TRACE)        \
   /* WebDAV */                      \
-  XX(8,  Copy,        Copy)         \
-  XX(9,  Lock,        Lock)         \
-  XX(10, Mkcol,       Mkcol)        \
-  XX(11, Move,        Move)         \
-  XX(12, Propfind,    Propfind)     \
-  XX(13, Proppatch,   Proppatch)    \
-  XX(14, Search,      Search)       \
-  XX(15, Unlock,      Unlock)       \
-  XX(16, Bind,        Bind)         \
-  XX(17, Rebind,      Rebind)       \
-  XX(18, Unbind,      Unbind)       \
-  XX(19, Acl,         Acl)          \
+  XX(8,  Copy,        COPY)         \
+  XX(9,  Lock,        LOCK)         \
+  XX(10, Mkcol,       MKCOL)        \
+  XX(11, Move,        MOVE)         \
+  XX(12, Propfind,    PROPFIND)     \
+  XX(13, Proppatch,   PROPPATCH)    \
+  XX(14, Search,      SEARCH)       \
+  XX(15, Unlock,      UNLOCK)       \
+  XX(16, Bind,        BIND)         \
+  XX(17, Rebind,      REBIND)       \
+  XX(18, Unbind,      UNBIND)       \
+  XX(19, Acl,         ACL)          \
   /* subversion */                  \
-  XX(20, Report,      Report)       \
-  XX(21, Mkactivity,  Mkactivity)   \
-  XX(22, Checkout,    Checkout)     \
-  XX(23, Merge,       Merge)        \
+  XX(20, Report,      REPORT)       \
+  XX(21, Mkactivity,  MKACTIVITY)   \
+  XX(22, Checkout,    CHECKOUT)     \
+  XX(23, Merge,       MERGE)        \
   /* upnp */                        \
-  XX(24, Msearch,     M-Search)     \
-  XX(25, Notify,      Notify)       \
-  XX(26, Subscribe,   Subscribe)    \
-  XX(27, Unsubscribe, Unsubscribe)  \
+  XX(24, Msearch,     M-SEARCH)     \
+  XX(25, Notify,      NOTIFY)       \
+  XX(26, Subscribe,   SUBSCRIBE)    \
+  XX(27, Unsubscribe, UNSUBSCRIBE)  \
   /* RFC-5789 */                    \
-  XX(28, Patch,       Patch)        \
-  XX(29, Purge,       Purge)        \
+  XX(28, Patch,       PATCH)        \
+  XX(29, Purge,       PURGE)        \
   /* CalDAV */                      \
-  XX(30, Mkcalendar,  Mkcalendar)   \
+  XX(30, Mkcalendar,  MKCALENDAR)   \
   /* RFC-2068, section 19.6.1.2 */  \
-  XX(31, Link,        Link)         \
-  XX(32, Unlink,      Unlink)       \
+  XX(31, Link,        LINK)         \
+  XX(32, Unlink,      UNLINK)       \
   /* icecast */                     \
-  XX(33, Source,      Source)       \
+  XX(33, Source,      SOURCE)       \
 
 // HTTP_##name
 enum http_method {
