@@ -305,7 +305,7 @@ static void onInboundConnected(hevent_t *ev)
              SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
     }
 
-    free(data);
+    destroySocketAcceptResult(data);
 
     hio_setcb_read(io, onRecv);
     hio_setcb_close(io, onClose);

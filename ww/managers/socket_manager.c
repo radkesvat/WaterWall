@@ -68,13 +68,13 @@ typedef struct socket_manager_s
 
 static socket_manager_state_t *state = NULL;
 
-static pool_item_t *allocTcpPayloadPoolHandle(struct generic_pool_s *pool)
+static pool_item_t *allocTcpResultObjectPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
     return malloc(sizeof(socket_accept_result_t));
 }
 
-static void destroyTcpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+static void destroyTcpResultObjectPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
     free(item);
@@ -90,6 +90,31 @@ static void destroyUdpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t
 {
     (void) pool;
     free(item);
+}
+
+void destroySocketAcceptResult(socket_accept_result_t *sar)
+{
+    const uint8_t tid = sar->tid;
+    hhybridmutex_lock(&(state->tcp_pools[tid].mutex));
+    reusePoolItem(state->tcp_pools[tid].pool, sar);
+    hhybridmutex_unlock(&(state->tcp_pools[tid].mutex));
+}
+
+static udp_payload_t *newUpdPayload(uint8_t tid)
+{
+    hhybridmutex_lock(&(state->udp_pools[tid].mutex));
+    udp_payload_t *item = popPoolItem(state->udp_pools[tid].pool);
+    hhybridmutex_unlock(&(state->udp_pools[tid].mutex));
+    return item;
+}
+
+void destroyUdpPayload(udp_payload_t *upl)
+{
+    const uint8_t tid = upl->tid;
+
+    hhybridmutex_lock(&(state->udp_pools[tid].mutex));
+    reusePoolItem(state->udp_pools[tid].pool, upl);
+    hhybridmutex_unlock(&(state->udp_pools[tid].mutex));
 }
 
 static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
@@ -357,11 +382,15 @@ static inline void incrementDistributeTid(void)
 }
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
-    // todo (pool) not really, but its recommended
-    socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
-    result->real_localport         = local_port;
 
-    uint8_t  tid         = (uint8_t) getCurrentDistributeTid();
+    uint8_t tid = (uint8_t) getCurrentDistributeTid();
+
+    hhybridmutex_lock(&(state->tcp_pools[tid].mutex));
+    socket_accept_result_t *result = popPoolItem(state->tcp_pools[tid].pool);
+    hhybridmutex_unlock(&(state->tcp_pools[tid].mutex));
+
+    result->real_localport = local_port;
+
     hloop_t *worker_loop = loops[tid];
     hevent_t ev          = (hevent_t){.loop = worker_loop, .cb = filter->cb};
     result->tid          = tid;
@@ -644,17 +673,15 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
 // }
 // }
 
-static void noUdpSocketConsumerFound(udp_payload_t *pl)
+static void noUdpSocketConsumerFound(udp_payload_t *upl)
 {
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
     LOGE("SocketManager: could not find consumer for Udp socket  [%s] <= [%s]",
-         SOCKADDR_STR(hio_localaddr(pl->sock->io), localaddrstr),
-         SOCKADDR_STR(hio_peeraddr(pl->sock->io), peeraddrstr));
+         SOCKADDR_STR(hio_localaddr(upl->sock->io), localaddrstr),
+         SOCKADDR_STR(hio_peeraddr(upl->sock->io), peeraddrstr));
 
-    hhybridmutex_lock(&(state->udp_pools[pl->tid].mutex));
-    reusePoolItem(state->udp_pools[pl->tid].pool, pl);
-    hhybridmutex_unlock(&(state->udp_pools[pl->tid].mutex));
+    destroyUdpPayload(upl);
 }
 
 static void postPayload(udp_payload_t *pl, socket_filter_t *filter)
@@ -794,22 +821,18 @@ static void writeUdpThisLoop(hevent_t *ev)
     udp_payload_t *upl    = hevent_userdata(ev);
     size_t         nwrite = hio_write(upl->sock->io, upl->buf);
     (void) nwrite;
-    hhybridmutex_lock(&(state->udp_pools[upl->tid].mutex));
-    reusePoolItem(state->udp_pools[upl->tid].pool, upl);
-    hhybridmutex_unlock(&(state->udp_pools[upl->tid].mutex));
+    destroyUdpPayload(upl);
 }
-void postUdpWrite(udpsock_t *socket_io, shift_buffer_t *buf)
+void postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, shift_buffer_t *buf)
 {
-    const uint8_t tid = hloop_tid(hevent_loop(socket_io));
-    hhybridmutex_lock(&(state->udp_pools[tid].mutex));
-    udp_payload_t *item = popPoolItem(state->udp_pools[tid].pool);
-    hhybridmutex_unlock(&(state->udp_pools[tid].mutex));
 
-    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .tid = tid};
+    udp_payload_t *item = newUpdPayload(tid_from);
 
-    hevent_t ev = (hevent_t){.loop = hevent_loop(socket_io), .userdata = item, .cb = writeUdpThisLoop};
+    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .tid = tid_from};
 
-    hloop_post_event(hevent_loop(socket_io), &ev);
+    hevent_t ev = (hevent_t){.loop = hevent_loop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
+
+    hloop_post_event(hevent_loop(socket_io->io), &ev);
 }
 
 static HTHREAD_ROUTINE(accept_thread) // NOLINT
@@ -866,6 +889,12 @@ socket_manager_state_t *createSocketManager(void)
 
     hhybridmutex_init(&state->mutex);
 
+    state->udp_pools = malloc(sizeof(*state->udp_pools) * workers_count);
+    memset(state->udp_pools, 0, sizeof(*state->udp_pools) * workers_count);
+
+    state->tcp_pools = malloc(sizeof(*state->tcp_pools) * workers_count);
+    memset(state->tcp_pools, 0, sizeof(*state->tcp_pools) * workers_count);
+
     for (unsigned int i = 0; i < workers_count; ++i)
     {
         state->udp_pools[i].pool =
@@ -873,7 +902,7 @@ socket_manager_state_t *createSocketManager(void)
         hhybridmutex_init(&(state->udp_pools[i].mutex));
 
         state->tcp_pools[i].pool =
-            newGenericPoolWithSize((8) + ram_profile, allocTcpPayloadPoolHandle, destroyTcpPayloadPoolHandle);
+            newGenericPoolWithSize((8) + ram_profile, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
         hhybridmutex_init(&(state->tcp_pools[i].mutex));
     }
 

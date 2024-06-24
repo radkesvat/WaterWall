@@ -59,7 +59,6 @@ void setWW(struct ww_runtime_state_s *state)
     context_pools      = state->context_pools;
     line_pools         = state->line_pools;
     pipeline_msg_pools = state->pipeline_msg_pools;
-    udp_post_pools     = state->udp_post_pools;
     libhv_hio_pools    = state->libhv_hio_pools;
     socekt_manager     = state->socekt_manager;
     node_manager       = state->node_manager;
@@ -83,7 +82,6 @@ struct ww_runtime_state_s *getWW(void)
     state->context_pools      = context_pools;
     state->line_pools         = line_pools;
     state->pipeline_msg_pools = pipeline_msg_pools;
-    state->udp_post_pools     = udp_post_pools;
     state->libhv_hio_pools    = libhv_hio_pools;
     state->socekt_manager     = socekt_manager;
     state->node_manager       = node_manager;

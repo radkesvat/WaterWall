@@ -101,7 +101,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        postUdpWrite(cstate->uio, c->payload);
+        postUdpWrite(cstate->uio,c->line->tid, c->payload);
         CONTEXT_PAYLOAD_DROP(c);
         destroyContext(c);
     }
@@ -203,7 +203,7 @@ static void onFilteredRecv(hevent_t *ev)
         if (! idle)
         {
             reuseBuffer(getThreadBufferPool(data->tid), data->buf);
-            free(data);
+            destroyUdpPayload(data);
             return;
         }
         udp_listener_con_state_t *con = newConnection(data->tid, data->tunnel, data->sock, data->real_localport);
@@ -212,7 +212,7 @@ static void onFilteredRecv(hevent_t *ev)
         {
             removeIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
             reuseBuffer(getThreadBufferPool(data->tid), data->buf);
-            free(data);
+            destroyUdpPayload(data);
             return;
         }
         idle->userdata   = con;
@@ -229,7 +229,7 @@ static void onFilteredRecv(hevent_t *ev)
     context->payload                  = data->buf;
 
     self->upStream(self, context);
-    free(data);
+    destroyUdpPayload(data);
 }
 
 static void parsePortSection(udp_listener_state_t *state, const cJSON *settings)
