@@ -490,7 +490,7 @@ static void downStream(tunnel_t *self, context_t *c)
             // todo (test code)
             // testing how the filtering behaves if we force protocol client to recevie at least
             // 2 full chunks before sending anymore data
-            int consume = cstate->reply_sent_tit == 1 && len > 2 ? (len / 2) : len;
+            int consume = (cstate->reply_sent_tit == 1 && len > 2) ? (len / 2) : len;
 
             int n  = SSL_write(cstate->ssl, rawBuf(c->payload), consume);
             status = getSslstatus(cstate->ssl, n);
