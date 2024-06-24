@@ -416,19 +416,23 @@ static void downStream(tunnel_t *self, context_t *c)
             removeStream(con, stream);
             deleteHttp2Stream(stream);
 
+            lockLine(con->line);
             while (trySendResponse(self, con, 0, NULL))
             {
-                if (! isAlive(c->line))
+                if (! isAlive(con->line))
                 {
+                    unLockLine(con->line);
                     destroyContext(c);
                     return;
                 }
             }
-            if (! isAlive(c->line))
+            if (! isAlive(con->line))
             {
+                unLockLine(con->line);
                 destroyContext(c);
                 return;
             }
+            unLockLine(con->line);
 
             if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
             {

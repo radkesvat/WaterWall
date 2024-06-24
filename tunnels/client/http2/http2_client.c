@@ -389,12 +389,15 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (con->content_type == kApplicationGrpc && con->handshake_completed)
             {
+                lockLine(con->line);
                 sendGrpcFinalData(self, con->line, stream->stream_id);
                 if (! isAlive(con->line))
                 {
+                    unLockLine(con->line);
                     destroyContext(c);
                     return;
                 }
+                unLockLine(con->line);
             }
 
             resumeLineUpSide(con->line);
