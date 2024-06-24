@@ -180,6 +180,7 @@ void createWW(const ww_construction_data_t init_data)
         line_pools[i]    = newGenericPoolWithSize((8) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
         pipeline_msg_pools[i] =
             newGenericPoolWithSize((8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
+        // todo (half implemented)
         libhv_hio_pools[i] =
             newGenericPoolWithSize((32) + (2 * ram_profile), allocLinePoolHandle, destroyLinePoolHandle);
     }
