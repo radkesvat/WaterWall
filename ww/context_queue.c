@@ -33,7 +33,7 @@ void destroyContextQueue(context_queue_t *self)
         if ((*i.ref)->payload != NULL)
         {
             reuseBuffer(self->pool, (*i.ref)->payload);
-            (*i.ref)->payload = NULL;
+            CONTEXT_PAYLOAD_DROP((*i.ref));
         }
         destroyContext((*i.ref));
     }

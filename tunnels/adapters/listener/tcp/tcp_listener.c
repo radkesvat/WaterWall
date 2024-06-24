@@ -60,7 +60,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
             if (write_queue)
             {
                 hio_write(cstate->io, cw->payload);
-                cw->payload = NULL;
+                CONTEXT_PAYLOAD_DROP(cw);
             }
             else
             {
@@ -189,7 +189,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             int bytes  = (int) bufLen(c->payload);
             int nwrite = hio_write(cstate->io, c->payload);
-            c->payload = NULL;
+            CONTEXT_PAYLOAD_DROP(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {

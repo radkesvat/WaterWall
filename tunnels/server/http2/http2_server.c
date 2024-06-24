@@ -189,7 +189,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         tunnel_t  *dest = stream->tunnel->up;
         CSTATE_DROP(fc);
         removeStream(con, stream);
-        deleteHttp2Stream(stream); 
+        deleteHttp2Stream(stream);
         dest->upStream(dest, fc);
         return 0;
     }
@@ -353,7 +353,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
-        
+
         reuseContextBuffer(c);
         destroyContext(c);
     }
@@ -390,7 +390,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
-        c->payload = NULL;
+
+        CONTEXT_PAYLOAD_DROP(c);
         destroyContext(c);
     }
     else

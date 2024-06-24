@@ -32,13 +32,6 @@ struct idle_table_s
 
 void idleCallBack(htimer_t *timer);
 
-void destroyIdleTable(idle_table_t *self)
-{
-    htimer_del(self->idle_handle);
-    heapq_idles_t_drop(&(self->hqueue));
-    hmap_idles_t_drop(&(self->hmap));
-}
-
 idle_table_t *newIdleTable(hloop_t *loop)
 {
     // assert(sizeof(struct idle_table_s) <= kCpuLineCacheSize); promotion to 128 bytes
@@ -221,7 +214,7 @@ void idleCallBack(htimer_t *timer)
     hhybridmutex_unlock(&(self->mutex));
 }
 
-void destoryIdleTable(idle_table_t *self)
+void destroyIdleTable(idle_table_t *self)
 {
     htimer_del(self->idle_handle);
     heapq_idles_t_drop(&self->hqueue);

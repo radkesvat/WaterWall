@@ -48,7 +48,7 @@ struct idle_item_s
 };
 
 idle_table_t *newIdleTable(hloop_t *loop);
-void          destoryIdleTable(idle_table_t *self);
+void          destroyIdleTable(idle_table_t *self);
 
 idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
                          uint64_t age_ms);

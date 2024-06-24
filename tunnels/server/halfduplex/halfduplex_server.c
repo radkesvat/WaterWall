@@ -264,7 +264,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     if (tid_download_line == c->line->tid)
                     {
-
                         line_t *download_line =
                             ((halfduplex_server_con_state_t *) ((*f_iter.ref).second))->download_line;
                         cstate->download_line = download_line;
@@ -499,7 +498,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 cstate->buffering = c->payload;
             }
-            c->payload = NULL;
+            CONTEXT_PAYLOAD_DROP(c);
             if (bufLen(cstate->buffering) >= kMaxBuffering)
             {
                 reuseBuffer(getContextBufferPool(c), cstate->buffering);

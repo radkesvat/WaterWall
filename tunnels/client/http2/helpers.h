@@ -116,15 +116,17 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
         // flags = HTTP2_FLAG_NONE;
         nvs[nvlen++] = (makeNV("content-type", "application/grpc+proto"));
     }
-    // nvs[nvlen++] = makeNV("Accept",
-    // "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
-    // nvs[nvlen++] = makeNV("Accept-Language", "en,fa;q=0.9,zh-CN;q=0.8,zh;q=0.7");
-    // nvs[nvlen++] = makeNV("Cache-Control", "no-cache");
-    // nvs[nvlen++] = makeNV("Pragma", "no-cache");
-    // nvs[nvlen++] = makeNV("Sec-Ch-Ua", "Chromium\";v=\"122\", Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
+    // todo (match chrome) this is same as curl, but not same as chrome
+    nvs[nvlen++] = makeNV("Accept",    "*/*");
+    //chrome: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
+
+    nvs[nvlen++] = makeNV("Accept-Language", "en,fa;q=0.9,zh-CN;q=0.8,zh;q=0.7");
+    nvs[nvlen++] = makeNV("Cache-Control", "no-cache");
+    nvs[nvlen++] = makeNV("Pragma", "no-cache");
+    nvs[nvlen++] = makeNV("Sec-Ch-Ua", "Chromium\";v=\"122\", Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
     nvs[nvlen++] = makeNV("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like "
                                         "Gecko) Chrome/122.0.0.0 Safari/537.36");
-    // nvs[nvlen++] = makeNV("Sec-Ch-Ua-Platform", "\"Windows\"");
+    nvs[nvlen++] = makeNV("Sec-Ch-Ua-Platform", "\"Windows\"");
 
     con->state                             = kH2SendHeaders;
     http2_client_child_con_state_t *stream = malloc(sizeof(http2_client_child_con_state_t));
@@ -166,7 +168,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
         .host_port    = state->host_port,
         .scheme       = state->scheme,
         .state        = kH2SendMagic,
-        .method       = kHttpGet,
+        .method       = state->content_type == kApplicationGrpc? kHttpPost: kHttpGet,
         .line         = newLine(tid),
         .ping_timer   = htimer_add(loops[tid], onPingTimer, kPingInterval, INFINITE),
         .tunnel       = self,
@@ -183,10 +185,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
     };
     nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
 
-    if (state->content_type == kApplicationGrpc)
-    {
-        con->method = kHttpPost;
-    }
+
 
     return con;
 }

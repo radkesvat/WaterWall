@@ -125,13 +125,13 @@ static void flushWriteQueue(http2_client_con_state_t *con)
         {
             if (! isAlive(con->line))
             {
-                stream_context->payload = NULL;
+                CONTEXT_PAYLOAD_DROP(stream_context);
                 destroyContext(stream_context);
                 unLockLine(con->line);
                 return;
             }
         }
-        stream_context->payload = NULL;
+        CONTEXT_PAYLOAD_DROP(stream_context);
         destroyContext(stream_context);
     }
     unLockLine(con->line);
@@ -348,7 +348,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
-        c->payload = NULL;
+        CONTEXT_PAYLOAD_DROP(c);
         destroyContext(c);
     }
     else

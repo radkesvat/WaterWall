@@ -60,15 +60,14 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
+            bufferStreamPushContextPayload(dcstate->wait_stream, c);
+
             if (dcstate->handshaked)
             {
-                bufferStreamPushContextPayload(dcstate->wait_stream, c);
                 destroyContext(c);
             }
             else
             {
-                bufferStreamPushContextPayload(dcstate->wait_stream, c);
-
                 if (bufferStreamLen(dcstate->wait_stream) >= 96)
                 {
                     shift_buffer_t *data = bufferStreamRead(dcstate->wait_stream, 96);

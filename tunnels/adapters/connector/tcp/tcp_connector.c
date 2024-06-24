@@ -21,7 +21,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
             if (write_queue)
             {
                 hio_write(cstate->io, cw->payload);
-                cw->payload = NULL;
+                CONTEXT_PAYLOAD_DROP(cw);
             }
             else
             {
@@ -57,6 +57,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
 
     return true;
 }
+
 static void onWriteComplete(hio_t *io)
 {
     // resume the read on other end of the connection
@@ -79,6 +80,7 @@ static void onWriteComplete(hio_t *io)
         resumeLineDownSide(cstate->line);
     }
 }
+
 static void onRecv(hio_t *io, shift_buffer_t *buf)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
@@ -112,6 +114,7 @@ static void onClose(hio_t *io)
         LOGD("TcpConnector: sent close for FD:%x ", hio_fd(io));
     }
 }
+
 static void onLinePaused(void *userdata)
 {
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (userdata);
@@ -183,7 +186,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             int bytes  = (int) bufLen(c->payload);
             int nwrite = hio_write(cstate->io, c->payload);
-            c->payload = NULL;
+            CONTEXT_PAYLOAD_DROP(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {

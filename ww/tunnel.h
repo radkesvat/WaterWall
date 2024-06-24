@@ -74,19 +74,27 @@ enum
 
 // mutate the state of line to NULL , this is done when the state is being freed and is necessary
 #define LSTATE_DROP(x) LSTATE_I_DROP((x), self->chain_index)
-// mutate the state of the line of context, this is done when the state is being freed and is necessary
+// mutate the state of the line of context to NULL, this is done when the state is being freed and is necessary
 #define CSTATE_DROP(x) LSTATE_DROP((x)->line)
+
+// same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
+// build
+#if defined(RELEASE)
+#define CONTEXT_PAYLOAD_DROP(x) (void) (x);
+#else
+#define CONTEXT_PAYLOAD_DROP(x) ((x)->payload = NULL)
+#endif
 
 typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
 
 /*
-    The line struct represnts a connection, it has to ends ( Down end < --------- > Up end)
+    The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
 
-    if forexample a write on the Downend blocks, it pauses the up end and wice wersa
+    if forexample a write on the Down-end blocks, it pauses the Up-end and wice wersa
 
-    each context creation will increase refc on the line so, the line will never gets destroyed
+    each context creation will increase refc on the line, so the line will never gets destroyed
     before the contexts that refrense it
 
     line holds all the info such as dest and src contexts, it also contains each tunnel per connection state
@@ -100,7 +108,7 @@ typedef struct line_s
 {
     line_refc_t      refc;
     bool             alive;
-    uint8_t          tid;
+    const uint8_t    tid;
     bool             up_piped;
     bool             dw_piped;
     void            *up_state;
@@ -166,7 +174,7 @@ void      pipeUpStream(context_t *c);
 void      pipeDownStream(context_t *c);
 void      pipeTo(tunnel_t *self, line_t *l, uint8_t tid);
 
-// pool handles, instead of malloc / free  for the generic pool
+// pool handles, instead of malloc / free for the generic pool
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool);
 void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
@@ -174,7 +182,7 @@ static inline line_t *newLine(uint8_t tid)
 {
     line_t *result = popPoolItem(line_pools[tid]);
 
-    *result = (line_t){
+    line_t newline = (line_t){
         .tid          = tid,
         .refc         = 1,
         .auth_cur     = 0,
@@ -184,7 +192,10 @@ static inline line_t *newLine(uint8_t tid)
         .dest_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
         .src_ctx  = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
     };
-
+    // there were no way because we declared tid as const, but im sure compiler will know what to do here
+    // forexample gcc has builtins 
+    memcpy(result, &newline, sizeof(line_t));
+    
     return result;
 }
 
@@ -412,7 +423,7 @@ static inline void reuseContextBuffer(context_t *c)
 {
     assert(c->payload != NULL);
     reuseBuffer(getContextBufferPool(c), c->payload);
-    c->payload = NULL;
+    CONTEXT_PAYLOAD_DROP(c);
 }
 
 static inline bool isUpPiped(line_t *l)

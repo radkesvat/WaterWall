@@ -30,8 +30,7 @@ typedef struct udp_listener_con_state_s
 {
     hloop_t       *loop;
     tunnel_t      *tunnel;
-    hio_t         *io;
-    idle_table_t  *table;
+    udpsock_t     *uio;
     line_t        *line;
     idle_item_t   *idle_handle;
     buffer_pool_t *buffer_pool;
@@ -44,7 +43,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
 
     if (cstate->idle_handle != NULL)
     {
-        if (removeIdleItemByHash(cstate->idle_handle->tid, cstate->table, cstate->idle_handle->hash))
+        if (removeIdleItemByHash(cstate->idle_handle->tid, cstate->uio->table, cstate->idle_handle->hash))
         {
             free(cstate);
         }
@@ -102,8 +101,8 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        postUdpWrite(cstate->io, c->payload);
-        c->payload = NULL;
+        postUdpWrite(cstate->uio, c->payload);
+        CONTEXT_PAYLOAD_DROP(c);
         destroyContext(c);
     }
     else
@@ -135,7 +134,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
         free(cstate);
         return;
     }
-    LOGD("UdpListener: expired idle udp FD:%x ", hio_fd(cstate->io));
+    LOGD("UdpListener: expired idle udp FD:%x ", hio_fd(cstate->uio->io));
     cstate->idle_handle = NULL;
     tunnel_t  *self     = (cstate)->tunnel;
     line_t    *line     = (cstate)->line;
@@ -143,21 +142,19 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
     self->upStream(self, context);
 }
 
-static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_t *io, idle_table_t *table,
-                                               uint16_t real_localport)
+static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, udpsock_t *uio, uint16_t real_localport)
 {
     line_t                   *line   = newLine(tid);
     udp_listener_con_state_t *cstate = malloc(sizeof(udp_listener_con_state_t));
     LSTATE_MUT(line)                 = cstate;
     line->src_ctx.address_type       = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     line->src_ctx.address_protocol   = kSapUdp;
-    line->src_ctx.address            = *(sockaddr_u *) hio_peeraddr(io);
+    line->src_ctx.address            = *(sockaddr_u *) hio_peeraddr(uio->io);
 
     *cstate = (udp_listener_con_state_t){.loop              = loops[tid],
                                          .line              = line,
                                          .buffer_pool       = getThreadBufferPool(tid),
-                                         .io                = io,
-                                         .table             = table,
+                                         .uio               = uio,
                                          .tunnel            = self,
                                          .established       = false,
                                          .first_packet_sent = false};
@@ -167,14 +164,14 @@ static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, hio_
     if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
 
-        struct sockaddr log_localaddr = *hio_localaddr(cstate->io);
+        struct sockaddr log_localaddr = *hio_localaddr(cstate->uio->io);
         sockaddr_set_port((sockaddr_u *) &(log_localaddr), real_localport);
 
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", hio_fd(cstate->io),
-             SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", hio_fd(cstate->uio->io),
+             SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(uio->io), peeraddrstr));
     }
 
     // send the init packet
@@ -209,8 +206,7 @@ static void onFilteredRecv(hevent_t *ev)
             free(data);
             return;
         }
-        udp_listener_con_state_t *con =
-            newConnection(data->tid, data->tunnel, data->sock->io, data->sock->table, data->real_localport);
+        udp_listener_con_state_t *con = newConnection(data->tid, data->tunnel, data->sock, data->real_localport);
 
         if (! con)
         {
