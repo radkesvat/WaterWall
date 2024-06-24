@@ -103,12 +103,31 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
 {
     (void) ssl;
     (void) type;
-    (void) len;
     oss_server_con_state_t *cstate = arg;
 
-    if ((cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 25))
+    if (cstate->reply_sent_tit == 1 && len <= 4096)
     {
-        return (size_t) 16 * 192;
+        return (size_t) 4096 - len;
+    }
+
+    if (cstate->reply_sent_tit < 32)
+    {
+        if (len <= 4096)
+        {
+            return (size_t) 4096 - len;
+        }
+        if (len <= 8192)
+        {
+            return (size_t) 8192 - len;
+        }
+        if (len <= 16384)
+        {
+            return (size_t) 16384 - len;
+        }
+        if (len <= 32768)
+        {
+            return (size_t) 32768 - len;
+        }
     }
     return 0;
 }
@@ -267,7 +286,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 LOGD("OpensslServer: Tls handshake complete");
                 cstate->handshake_completed = true;
                 empytBufferStream(cstate->fallback_buf);
-
             }
 
             /* The encrypted data is now in the input bio so now we can perform actual
@@ -388,7 +406,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (1 != SSL_set_record_padding_callback(cstate->ssl, paddingDecisionCb))
                 {
-                    LOGW("OpensslServer: Could not set ssl padding");
+                    LOGW("OpensslServer: Could not set ssl padding hook");
                 }
                 SSL_set_record_padding_callback_arg(cstate->ssl, cstate);
             }
@@ -469,7 +487,12 @@ static void downStream(tunnel_t *self, context_t *c)
         int len = (int) bufLen(c->payload);
         while (len > 0 && isAlive(c->line))
         {
-            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), len);
+            // todo (test code)
+            // testing how the filtering behaves if we force protocol client to recevie at least
+            // 2 full chunks before sending anymore data
+            int consume = cstate->reply_sent_tit == 1 && len > 2 ? (len / 2) : len;
+
+            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), consume);
             status = getSslstatus(cstate->ssl, n);
 
             if (n > 0)
@@ -480,7 +503,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 /* take the output of the SSL object and queue it for socket write */
                 do
                 {
-
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
                     unsigned int    avail = rCap(buf);
                     n                     = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);

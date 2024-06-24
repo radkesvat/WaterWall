@@ -85,7 +85,6 @@ static void onMsgReceived(hevent_t *ev)
 
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
 {
-
     if (tid_from == tid_to)
     {
         fn(pl, arg);
@@ -237,7 +236,6 @@ void pipeOnDownLinePaused(void *state)
 
 void pipeOnDownLineResumed(void *state)
 {
-
     pipe_line_t *pl = state;
     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
     {
@@ -297,7 +295,6 @@ bool pipeSendToDownStream(pipe_line_t *pl, context_t *c)
         destroyContext(c);
         return true;
     }
-    // assert(! c->est);
 
     // other flags are not supposed to come to pipe line
     assert(c->fin || c->payload != NULL);
@@ -343,8 +340,6 @@ static void initRight(pipe_line_t *pl, void *arg)
     setupLineDownSide(pl->right_line, pipeOnUpLinePaused, pl, pipeOnUpLineResumed);
     context_t *context = newInitContext(pl->right_line);
     pl->local_up_stream(pl->self, context, pl);
-
-    // lockLine(pl->right_line);
 }
 
 static void initLeft(pipe_line_t *pl, void *arg)
@@ -376,9 +371,9 @@ void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
     // allocate memory, placing pipe_line_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t) malloc(memsize);
 
-    // align c to line cache boundary
     MUSTALIGN2(ptr, kCpuLineCacheSize);
-
+    
+    // align pointer to line cache boundary
     pipe_line_t *pl = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
     *pl             = (pipe_line_t){.memptr            = (void *) ptr,

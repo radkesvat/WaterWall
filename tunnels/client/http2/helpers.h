@@ -116,7 +116,7 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
         // flags = HTTP2_FLAG_NONE;
         nvs[nvlen++] = (makeNV("content-type", "application/grpc+proto"));
     }
-    // todo (match chrome) this is same as curl, but not same as chrome
+    // todo (match chrome) this one is same as curl, but not same as chrome
     nvs[nvlen++] = makeNV("Accept",    "*/*");
     //chrome: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
 
