@@ -92,7 +92,7 @@ static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
             // openssl forces pem for a chained cert!
             if (! SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
             {
-                LOGE("OpenSSL Error: ssl crt_file error");
+                LOGE("OpenSSL Error: ssl certificate file error");
                 goto error;
             }
         }
@@ -101,12 +101,12 @@ static ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
         {
             if (! SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
             {
-                LOGE("OpenSSL Error: ssl key_file error");
+                LOGE("OpenSSL Error: ssl private key file error");
                 goto error;
             }
             if (! SSL_CTX_check_private_key(ctx))
             {
-                LOGE("OpenSSL Error: ssl key_file check failed");
+                LOGE("OpenSSL Error: ssl private key file check failed");
                 goto error;
             }
         }
