@@ -24,6 +24,7 @@ struct buffer_pool_s   **buffer_pools       = NULL;
 struct generic_pool_s  **context_pools      = NULL;
 struct generic_pool_s  **line_pools         = NULL;
 struct generic_pool_s  **pipeline_msg_pools = NULL;
+struct generic_pool_s  **libhv_hio_pools    = NULL;
 struct socket_manager_s *socekt_manager     = NULL;
 struct node_manager_s   *node_manager       = NULL;
 logger_t                *core_logger        = NULL;
@@ -40,6 +41,7 @@ struct ww_runtime_state_s
     struct generic_pool_s  **context_pools;
     struct generic_pool_s  **line_pools;
     struct generic_pool_s  **pipeline_msg_pools;
+    struct generic_pool_s  **libhv_hio_pools;
     struct socket_manager_s *socekt_manager;
     struct node_manager_s   *node_manager;
     logger_t                *core_logger;
@@ -57,6 +59,8 @@ void setWW(struct ww_runtime_state_s *state)
     context_pools      = state->context_pools;
     line_pools         = state->line_pools;
     pipeline_msg_pools = state->pipeline_msg_pools;
+    udp_post_pools     = state->udp_post_pools;
+    libhv_hio_pools    = state->libhv_hio_pools;
     socekt_manager     = state->socekt_manager;
     node_manager       = state->node_manager;
     setCoreLogger(state->core_logger);
@@ -79,6 +83,8 @@ struct ww_runtime_state_s *getWW(void)
     state->context_pools      = context_pools;
     state->line_pools         = line_pools;
     state->pipeline_msg_pools = pipeline_msg_pools;
+    state->udp_post_pools     = udp_post_pools;
+    state->libhv_hio_pools    = libhv_hio_pools;
     state->socekt_manager     = socekt_manager;
     state->node_manager       = node_manager;
     state->core_logger        = core_logger;
@@ -159,13 +165,15 @@ void createWW(const ww_construction_data_t init_data)
         fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - 255]\n", workers_count);
     }
 
-    workers            = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
+    workers = (hthread_t *) malloc(sizeof(hthread_t) * workers_count);
     // frand_seed         = time(NULL);
-    ram_profile        = init_data.ram_profile;
-    buffer_pools       = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
+    ram_profile  = init_data.ram_profile;
+    buffer_pools = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) * workers_count);
+
     context_pools      = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
     line_pools         = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
     pipeline_msg_pools = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
+    libhv_hio_pools    = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) * workers_count);
 
     for (unsigned int i = 0; i < workers_count; ++i)
     {
@@ -174,15 +182,17 @@ void createWW(const ww_construction_data_t init_data)
         line_pools[i]    = newGenericPoolWithSize((8) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
         pipeline_msg_pools[i] =
             newGenericPoolWithSize((8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
+        libhv_hio_pools[i] =
+            newGenericPoolWithSize((32) + (2 * ram_profile), allocLinePoolHandle, destroyLinePoolHandle);
     }
 
     loops      = (hloop_t **) malloc(sizeof(hloop_t *) * workers_count);
-    loops[0]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[0]);
+    loops[0]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[0], 0);
     workers[0] = (hthread_t) NULL;
 
     for (unsigned int i = 1; i < workers_count; ++i)
     {
-        loops[i]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[i]);
+        loops[i]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[i], (uint8_t) i);
         workers[i] = hthread_create(worker_thread, loops[i]);
     }
 

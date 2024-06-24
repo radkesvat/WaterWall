@@ -1,6 +1,7 @@
 #include "socket_manager.h"
 #include "basic_types.h"
 #include "buffer_pool.h"
+#include "generic_pool.h"
 #include "hloop.h"
 #include "hmutex.h"
 #include "idle_table.h"
@@ -30,14 +31,30 @@ typedef struct socket_filter_s
 #define SUPPORT_V6 false
 enum
 {
-    kSoOriginalDest = 80,
-    kFilterLevels   = 4
+    kSoOriginalDest  = 80,
+    kFilterLevels    = 4,
+    kAcceptThreadTid = 1000
 };
 
 typedef struct socket_manager_s
 {
+    filters_t filters[kFilterLevels];
+
+    struct
+    {
+        generic_pool_t *pool; /* holds udp_payload_t*/
+        hhybridmutex_t  mutex;
+
+    } *udp_pools;
+
+    struct
+    {
+        generic_pool_t *pool; /* holds socket_accept_result_t*/
+        hhybridmutex_t  mutex;
+
+    } *tcp_pools;
+
     hthread_t      accept_thread;
-    filters_t      filters[kFilterLevels];
     hhybridmutex_t mutex;
 
     uint16_t last_round_tid;
@@ -50,6 +67,30 @@ typedef struct socket_manager_s
 } socket_manager_state_t;
 
 static socket_manager_state_t *state = NULL;
+
+static pool_item_t *allocTcpPayloadPoolHandle(struct generic_pool_s *pool)
+{
+    (void) pool;
+    return malloc(sizeof(socket_accept_result_t));
+}
+
+static void destroyTcpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+{
+    (void) pool;
+    free(item);
+}
+
+static pool_item_t *allocUdpPayloadPoolHandle(struct generic_pool_s *pool)
+{
+    (void) pool;
+    return malloc(sizeof(udp_payload_t));
+}
+
+static void destroyUdpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+{
+    (void) pool;
+    free(item);
+}
 
 static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
@@ -101,8 +142,8 @@ static bool resetIptables(bool safe_mode)
 
     if (safe_mode)
     {
-        char msg[] = "SocketManager: clearing iptables nat rules\n";
-        ssize_t _ = write(STDOUT_FILENO, msg, sizeof(msg));
+        char    msg[] = "SocketManager: clearing iptables nat rules\n";
+        ssize_t _     = write(STDOUT_FILENO, msg, sizeof(msg));
         (void) _;
     }
     else
@@ -316,6 +357,7 @@ static inline void incrementDistributeTid(void)
 }
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
+    // todo (pool) not really, but its recommended
     socket_accept_result_t *result = malloc(sizeof(socket_accept_result_t));
     result->real_localport         = local_port;
 
@@ -601,29 +643,35 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
 //         hloop_post_event(loops[table_item->tid], &ev);
 // }
 // }
-static void noUdpSocketConsumerFound(const udp_payload_t pl)
+
+static void noUdpSocketConsumerFound(udp_payload_t *pl)
 {
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
     LOGE("SocketManager: could not find consumer for Udp socket  [%s] <= [%s]",
-         SOCKADDR_STR(hio_localaddr(pl.sock->io), localaddrstr), SOCKADDR_STR(hio_peeraddr(pl.sock->io), peeraddrstr));
+         SOCKADDR_STR(hio_localaddr(pl->sock->io), localaddrstr),
+         SOCKADDR_STR(hio_peeraddr(pl->sock->io), peeraddrstr));
+
+    hhybridmutex_lock(&(state->udp_pools[pl->tid].mutex));
+    reusePoolItem(state->udp_pools[pl->tid].pool, pl);
+    hhybridmutex_unlock(&(state->udp_pools[pl->tid].mutex));
 }
-static void postPayload(const udp_payload_t pl, socket_filter_t *filter)
+
+static void postPayload(udp_payload_t *pl, socket_filter_t *filter)
 {
-    udp_payload_t *heap_pl = malloc(sizeof(udp_payload_t));
-    *heap_pl               = pl;
-    heap_pl->tunnel        = filter->tunnel;
-    hloop_t *worker_loop   = loops[pl.tid];
-    hevent_t ev            = (hevent_t){.loop = worker_loop, .cb = filter->cb};
-    ev.userdata            = heap_pl;
+
+    pl->tunnel           = filter->tunnel;
+    hloop_t *worker_loop = loops[pl->tid];
+    hevent_t ev          = (hevent_t){.loop = worker_loop, .cb = filter->cb};
+    ev.userdata          = (void *) pl;
 
     hloop_post_event(worker_loop, &ev);
 }
-static void distributeUdpPayload(const udp_payload_t pl)
+static void distributeUdpPayload(udp_payload_t *pl)
 {
     hhybridmutex_lock(&(state->mutex));
-    sockaddr_u *paddr      = (sockaddr_u *) hio_peeraddr(pl.sock->io);
-    uint16_t    local_port = pl.real_localport;
+    sockaddr_u *paddr      = (sockaddr_u *) hio_peeraddr(pl->sock->io);
+    uint16_t    local_port = pl->real_localport;
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
@@ -656,23 +704,21 @@ static void distributeUdpPayload(const udp_payload_t pl)
 }
 static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
-
-    // printf("on_recvfrom fd=%d readbytes=%d\n", hio_fd(io), (int) bufLen(buf));
-    // char localaddrstr[SOCKADDR_STRLEN] = {0};
-    // char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-    // printf("[%s] <=> [%s]\n", SOCKADDR_STR(hio_localaddr(io), localaddrstr),
-    //        SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
-    // hash_t       peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(io));
-
     udpsock_t *socket     = hevent_userdata(io);
     uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr(io));
     uint8_t    target_tid = local_port % workers_count;
 
-    distributeUdpPayload((udp_payload_t){.sock           = socket,
-                                         .buf            = buf,
-                                         .tid            = target_tid,
-                                         .peer_addr      = *(sockaddr_u *) hio_peeraddr(io),
-                                         .real_localport = local_port});
+    hhybridmutex_lock(&(state->udp_pools[target_tid].mutex));
+    udp_payload_t *item = popPoolItem(state->udp_pools[target_tid].pool);
+    hhybridmutex_unlock(&(state->udp_pools[target_tid].mutex));
+
+    *item = (udp_payload_t){.sock           = socket,
+                            .buf            = buf,
+                            .tid            = target_tid,
+                            .peer_addr      = *(sockaddr_u *) hio_peeraddr(io),
+                            .real_localport = local_port};
+
+    distributeUdpPayload(item);
 }
 
 static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
@@ -743,25 +789,25 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
     }
 }
 
-struct udp_sb
+static void writeUdpThisLoop(hevent_t *ev)
 {
-    hio_t          *socket_io;
-    shift_buffer_t *buf;
-};
-void writeUdpThisLoop(hevent_t *ev)
-{
-    struct udp_sb *ub     = hevent_userdata(ev);
-    size_t         nwrite = hio_write(ub->socket_io, ub->buf);
+    udp_payload_t *upl    = hevent_userdata(ev);
+    size_t         nwrite = hio_write(upl->sock->io, upl->buf);
     (void) nwrite;
-
-    free(ub);
+    hhybridmutex_lock(&(state->udp_pools[upl->tid].mutex));
+    reusePoolItem(state->udp_pools[upl->tid].pool, upl);
+    hhybridmutex_unlock(&(state->udp_pools[upl->tid].mutex));
 }
-void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf)
+void postUdpWrite(udpsock_t *socket_io, shift_buffer_t *buf)
 {
-    struct udp_sb *ub = malloc(sizeof(struct udp_sb));
-    *ub               = (struct udp_sb){.socket_io = socket_io, buf};
-    hevent_t ev       = (hevent_t){.loop = hevent_loop(socket_io), .cb = writeUdpThisLoop};
-    ev.userdata       = ub;
+    const uint8_t tid = hloop_tid(hevent_loop(socket_io));
+    hhybridmutex_lock(&(state->udp_pools[tid].mutex));
+    udp_payload_t *item = popPoolItem(state->udp_pools[tid].pool);
+    hhybridmutex_unlock(&(state->udp_pools[tid].mutex));
+
+    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .tid = tid};
+
+    hevent_t ev = (hevent_t){.loop = hevent_loop(socket_io), .userdata = item, .cb = writeUdpThisLoop};
 
     hloop_post_event(hevent_loop(socket_io), &ev);
 }
@@ -769,7 +815,8 @@ void postUdpWrite(hio_t *socket_io, shift_buffer_t *buf)
 static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
     (void) userdata;
-    hloop_t *loop = hloop_new(HLOOP_FLAG_AUTO_FREE, createSmallBufferPool());
+
+    hloop_t *loop = hloop_new(HLOOP_FLAG_AUTO_FREE, createSmallBufferPool(), kAcceptThreadTid);
 
     hhybridmutex_lock(&(state->mutex));
     // state->table = newIdleTable(loop, onUdpSocketExpire);
@@ -818,6 +865,17 @@ socket_manager_state_t *createSocketManager(void)
     }
 
     hhybridmutex_init(&state->mutex);
+
+    for (unsigned int i = 0; i < workers_count; ++i)
+    {
+        state->udp_pools[i].pool =
+            newGenericPoolWithSize((8) + ram_profile, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
+        hhybridmutex_init(&(state->udp_pools[i].mutex));
+
+        state->tcp_pools[i].pool =
+            newGenericPoolWithSize((8) + ram_profile, allocTcpPayloadPoolHandle, destroyTcpPayloadPoolHandle);
+        hhybridmutex_init(&(state->tcp_pools[i].mutex));
+    }
 
     state->iptables_installed = checkCommandAvailable("iptables");
     state->lsof_installed     = checkCommandAvailable("lsof");

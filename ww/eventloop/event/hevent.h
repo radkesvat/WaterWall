@@ -28,16 +28,16 @@ ARRAY_DECL(hio_t*, io_array)
 QUEUE_DECL(hevent_t, event_queue)
 
 struct hloop_s {
-    uint32_t    flags;
-    hloop_status_e status;
-    uint64_t    start_ms;       // ms
-    uint64_t    start_hrtime;   // us
-    uint64_t    end_hrtime;
-    uint64_t    cur_hrtime;
-    uint64_t    loop_cnt;
-    long        pid;
-    long        tid;
-    void*       userdata;
+    uint32_t                    flags;
+    hloop_status_e              status;
+    uint64_t                    start_ms;       // ms
+    uint64_t                    start_hrtime;   // us
+    uint64_t                    end_hrtime;
+    uint64_t                    cur_hrtime;
+    uint64_t                    loop_cnt;
+    long                        pid;
+    long                        tid;
+    void*                       userdata;
 //private:
     // events
     uint32_t                    intern_nevents;

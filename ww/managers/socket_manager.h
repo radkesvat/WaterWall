@@ -44,7 +44,7 @@ typedef struct socket_filter_option_s
 // user data of accept event
 typedef struct socket_accept_result_s
 {
-    hio_t                       *io; // it also has the owner loop
+    hio_t                       *io;
     tunnel_t                    *tunnel;
     enum socket_address_protocol protocol;
     uint8_t                      tid;
@@ -72,9 +72,12 @@ typedef struct udp_payload_s
 
 } udp_payload_t;
 
+udp_payload_t *newUdpPayload(uint8_t tid);
+void           destroyUdpPayload(udp_payload_t *);
+
 struct socket_manager_s *getSocketManager(void);
 struct socket_manager_s *createSocketManager(void);
 void                     setSocketManager(struct socket_manager_s *state);
 void                     startSocketManager(void);
 void                     registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
-void                     postUdpWrite(hio_t *socket_io, shift_buffer_t *buf);
+void                     postUdpWrite(udpsock_t *socket_io, shift_buffer_t *buf);

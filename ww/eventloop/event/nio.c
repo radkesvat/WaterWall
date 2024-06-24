@@ -480,13 +480,15 @@ disconnect:
     return nwrite < 0 ? nwrite : -1;
 }
 
+// This must only be called from the same thread that created the loop
 int hio_close(hio_t* io) {
     if (io->closed) return 0;
-    if (io->destroy == 0 && hv_gettid() != io->loop->tid) {
-        return hio_close_async(io);
-    }
 
-    //
+    // if (io->destroy == 0 && hv_gettid() != io->loop->tid) {
+    //     return hio_close_async(io); /*  tid lost its meaning, its now ww tid */
+    // }
+
+    
     if (io->closed) {
 
         return 0;

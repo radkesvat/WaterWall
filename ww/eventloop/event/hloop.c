@@ -183,9 +183,8 @@ process_timers:
         }
     }
     int ncbs = hloop_process_pendings(loop);
-    printd("blocktime=%d nios=%d/%u ntimers=%d/%u nidles=%d/%u nactives=%d npendings=%d ncbs=%d\n",
-            blocktime, nios, loop->nios, ntimers, loop->ntimers, nidles, loop->nidles,
-            loop->nactives, npendings, ncbs);
+    printd("blocktime=%d nios=%d/%u ntimers=%d/%u nidles=%d/%u nactives=%d npendings=%d ncbs=%d\n", blocktime, nios, loop->nios, ntimers, loop->ntimers, nidles,
+           loop->nidles, loop->nactives, npendings, ncbs);
     (void)nios;
     return ncbs;
 }
@@ -207,7 +206,7 @@ static void eventfd_read_cb(hio_t* io, shift_buffer_t* buf) {
     assert(bufLen(buf) == sizeof(count));
     readUI64(buf, &count);
 #endif
-    (void) count;
+    (void)count;
     for (uint64_t i = 0; i < count; ++i) {
         hhybridmutex_lock(&loop->custom_events_mutex);
         if (event_queue_empty(&loop->custom_events)) {
@@ -321,7 +320,7 @@ static void hloop_init(hloop_t* loop) {
 
     loop->status = HLOOP_STATUS_STOP;
     loop->pid = hv_getpid();
-    loop->tid = hv_gettid();
+    // loop->tid = hv_gettid();  tid is taken at hloop_create
 
     // idles
     list_init(&loop->idles);
@@ -402,12 +401,13 @@ static void hloop_cleanup(hloop_t* loop) {
     hhybridmutex_destroy(&loop->custom_events_mutex);
 }
 
-hloop_t* hloop_new(int flags, buffer_pool_t* swimmingpool) {
+hloop_t* hloop_new(int flags, buffer_pool_t* swimmingpool, long tid) {
     hloop_t* loop;
     HV_ALLOC_SIZEOF(loop);
     hloop_init(loop);
     loop->flags |= flags;
     loop->bufpool = swimmingpool;
+    loop->tid = tid;
     // hlogd("hloop_new tid=%ld", loop->tid);
     return loop;
 }
@@ -417,7 +417,7 @@ void hloop_free(hloop_t** pp) {
     hloop_t* loop = *pp;
     if (loop->status == HLOOP_STATUS_DESTROY) return;
     loop->status = HLOOP_STATUS_DESTROY;
-    hlogd("hloop_free tid=%ld", hv_gettid());
+    hlogd("hloop_free tid=%ld", loop->tid);
     hloop_cleanup(loop);
     HV_FREE(loop);
     *pp = NULL;
@@ -434,7 +434,7 @@ int hloop_run(hloop_t* loop) {
 
     loop->status = HLOOP_STATUS_RUNNING;
     loop->pid = hv_getpid();
-    loop->tid = hv_gettid();
+    // loop->tid = hv_gettid();  tid is taken at hloop_create
     // hlogd("hloop_run tid=%ld", loop->tid);
 
     if (loop->intern_nevents == 0) {
