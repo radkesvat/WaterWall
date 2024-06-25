@@ -268,10 +268,10 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 tcp_nodelay(sockfd, 1);
             }
-            if (state->reuse_addr)
-            {
-                so_reuseport(sockfd, 1);
-            }
+            // if (state->reuse_addr)
+            // {
+            //     so_reuseport(sockfd, 1);
+            // }
 
             if (state->tcp_fast_open)
             {

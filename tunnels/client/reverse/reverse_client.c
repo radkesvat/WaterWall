@@ -172,11 +172,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     getIntFromJsonObject((int *) &(state->min_unused_cons), settings, "minimum-unused");
 
     state->min_unused_cons = min(max((workers_count * (ssize_t) 8), state->min_unused_cons), 128);
-
-    // we are always the first line creator so its easy to get the positon independent index here
-    line_t *l = newLine(0);
-    destroyLine(l);
-
+    
     state->starved_connections = newIdleTable(loops[0]);
 
     tunnel_t *t           = newTunnel();
