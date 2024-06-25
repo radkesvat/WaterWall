@@ -212,9 +212,9 @@ int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr
 int checkIPRange6(const struct in6_addr test_addr, const struct in6_addr base_addr, const struct in6_addr subnet_mask)
 {
 
-    uint64_t *test_addr_p   = (uint64_t *) &(test_addr.s6_addr);
-    uint64_t *base_addr_p   = (uint64_t *) &(base_addr.s6_addr);
-    uint64_t *subnet_mask_p = (uint64_t *) &(subnet_mask.s6_addr);
+    uint64_t *test_addr_p   = (uint64_t *) &(test_addr.s6_addr[0]);
+    uint64_t *base_addr_p   = (uint64_t *) &(base_addr.s6_addr[0]);
+    uint64_t *subnet_mask_p = (uint64_t *) &(subnet_mask.s6_addr[0]);
 
     if ((base_addr_p[0] & subnet_mask_p[0]) != test_addr_p[0] || (base_addr_p[1] & subnet_mask_p[1]) != test_addr_p[1])
     {
@@ -422,9 +422,8 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
         for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
 
-            if (checkIPRange4(addr->sin.sin_addr,
-                              (struct in_addr){.s_addr = option.white_list_parsed[i].ip_bytes_buf.s6_addr32[0]},
-                              (struct in_addr){.s_addr = option.white_list_parsed[i].mask_bytes_buf.s6_addr32[0]}))
+            if (checkIPRange4(addr->sin.sin_addr, *(struct in_addr *) &(option.white_list_parsed[i].ip_bytes_buf),
+                              *(struct in_addr *) &(option.white_list_parsed[i].mask_bytes_buf)))
             {
                 return true;
             }
