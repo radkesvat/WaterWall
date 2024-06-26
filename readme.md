@@ -6,7 +6,7 @@ Waterwall!
 [![linux](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml)
 [![Windows Mingw64](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml)
 [![macos gcc + clang](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-macos.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-macos.yml)
-[![Androind gcc + clang](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-android.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-android.yml)
+[![Android gcc + clang](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-android.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-android.yml)
 <!-- [![Ios build](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-ios-build.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-ios-build.yml) -->
 
 A simple core for tunneling and even direct user-server connections. based on high-performance, fully customizeable nodes for creating any kind of protocol without writing code for it.
