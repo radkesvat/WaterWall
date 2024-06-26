@@ -29,8 +29,8 @@
 struct buffer_pool_s;
 typedef struct buffer_pool_s buffer_pool_t;
 
-buffer_pool_t  *createSmallBufferPool(void);
-buffer_pool_t  *createBufferPool(void);
+buffer_pool_t  *createSmallBufferPool(uint8_t tid);
+buffer_pool_t  *createBufferPool(uint8_t tid);
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2);

@@ -49,7 +49,6 @@ enum
 
 #define ALIGN2(n, w) (((n) + ((w) - 1)) & ~((w) - 1))
 
-
 struct ww_runtime_state_s;
 
 WWEXPORT void setWW(struct ww_runtime_state_s *state);
@@ -65,13 +64,13 @@ typedef struct
 
 enum ram_profiles
 {
-    kRamProfileInvalid  = 0,      // 0 is invalid memory multiplier
-    kRamProfileS1Memory = 1,      
-    kRamProfileS2Memory = 8,      
-    kRamProfileM1Memory = 8 * 16 * 1, 
-    kRamProfileM2Memory = 8 * 16 * 2, 
-    kRamProfileL1Memory = 8 * 16 * 3, 
-    kRamProfileL2Memory = 8 * 16 * 4  
+    kRamProfileInvalid  = 0, // 0 is invalid memory multiplier
+    kRamProfileS1Memory = 1,
+    kRamProfileS2Memory = 8,
+    kRamProfileM1Memory = 8 * 16 * 1,
+    kRamProfileM2Memory = 8 * 16 * 2,
+    kRamProfileL1Memory = 8 * 16 * 3,
+    kRamProfileL2Memory = 8 * 16 * 4
 };
 
 typedef struct
@@ -93,6 +92,7 @@ extern hthread_t               *workers;
 extern unsigned int             ram_profile;
 extern struct hloop_s         **loops;
 extern struct buffer_pool_s   **buffer_pools;
+extern struct generic_pool_s  **shift_buffer_pools;
 extern struct generic_pool_s  **context_pools;
 extern struct generic_pool_s  **line_pools;
 extern struct generic_pool_s  **pipeline_msg_pools;

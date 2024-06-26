@@ -11,7 +11,8 @@
 
 enum
 {
-    kHandShakeByte = 0xFF
+    kHandShakeByte   = 0xFF,
+    kHandShakeLength = 96
 };
 
 #define VAL_1X  kHandShakeByte
@@ -68,13 +69,13 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                if (bufferStreamLen(dcstate->wait_stream) >= 96)
+                if (bufferStreamLen(dcstate->wait_stream) >= kHandShakeLength)
                 {
-                    shift_buffer_t *data = bufferStreamRead(dcstate->wait_stream, 96);
+                    shift_buffer_t *data = bufferStreamRead(dcstate->wait_stream, kHandShakeLength);
 
-                    static const uint8_t kHandshakeExpecetd[96] = {VAL_64X, VAL_32X};
+                    static const uint8_t kHandshakeExpecetd[kHandShakeLength] = {VAL_64X, VAL_32X};
 
-                    dcstate->handshaked = 0 == memcmp(kHandshakeExpecetd, rawBuf(data), 96);
+                    dcstate->handshaked = 0 == memcmp(kHandshakeExpecetd, rawBuf(data), kHandShakeLength);
 
                     thread_box_t *this_tb = &(state->threadlocal_pool[c->line->tid]);
 

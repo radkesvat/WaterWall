@@ -7,6 +7,8 @@
 
 enum
 {
+    kHandShakeByte               = 0xFF,
+    kHandShakeLength             = 96,
     kPreconnectDelayShort        = 10,
     kPreconnectDelayLong         = 750,
     kConnectionStarvationTimeOut = 45000
@@ -73,8 +75,8 @@ static void doConnect(struct connect_arg *cg)
     }
     hello_data_ctx->first   = true;
     hello_data_ctx->payload = popBuffer(getContextBufferPool(hello_data_ctx));
-    setLen(hello_data_ctx->payload, 96);
-    memset(rawBufMut(hello_data_ctx->payload), 0xFF, 96);
+    setLen(hello_data_ctx->payload, kHandShakeLength);
+    memset(rawBufMut(hello_data_ctx->payload), kHandShakeByte, kHandShakeLength);
     self->up->upStream(self->up, hello_data_ctx);
 }
 

@@ -162,7 +162,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->rbio                   = BIO_new(BIO_s_mem());
             cstate->wbio                   = BIO_new(BIO_s_mem());
             cstate->ssl                    = SSL_new(state->ssl_context);
-            cstate->queue                  = newContextQueue(getContextBufferPool(c));
+            cstate->queue                  = newContextQueue();
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);

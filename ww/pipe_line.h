@@ -33,7 +33,7 @@
 
     i hope you don't use it, currently only used for halfduplex server since there were no other way...
 
-    -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly lost"
+    -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly/definitely lost"
        but the pointer is saved in "memptr" field inside the object
 
 */

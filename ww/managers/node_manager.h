@@ -24,7 +24,7 @@
 
 struct node_manager_s;
 
-void                   runNode(node_t *n1, size_t chain_index);
+void                   runNode(node_t *n1, uint8_t chain_index);
 node_t                *getNode(hash_t hash_node_name);
 node_t                *newNode(void);
 void                   registerNode(node_t *new_node, cJSON *node_settings);

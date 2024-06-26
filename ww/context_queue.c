@@ -16,14 +16,12 @@ enum
 struct context_queue_s
 {
     queue          q;
-    buffer_pool_t *pool;
 };
 
-context_queue_t *newContextQueue(buffer_pool_t *pool)
+context_queue_t *newContextQueue(void)
 {
     context_queue_t *cb = malloc(sizeof(context_queue_t));
     cb->q               = queue_with_capacity(kQCap);
-    cb->pool            = pool;
     return cb;
 }
 void destroyContextQueue(context_queue_t *self)
@@ -32,7 +30,7 @@ void destroyContextQueue(context_queue_t *self)
     {
         if ((*i.ref)->payload != NULL)
         {
-            reuseBuffer(self->pool, (*i.ref)->payload);
+            reuseBuffer(getContextBufferPool((*i.ref)), (*i.ref)->payload);
             CONTEXT_PAYLOAD_DROP((*i.ref));
         }
         destroyContext((*i.ref));

@@ -26,8 +26,9 @@
 // #define BYPASS_POOL
 
 struct generic_pool_s;
-
+// struct pool_item_s; // void
 typedef void pool_item_t;
+
 typedef pool_item_t *(*PoolItemCreateHandle)(struct generic_pool_s *pool);
 typedef void (*PoolItemDestroyHandle)(struct generic_pool_s *pool, pool_item_t *item);
 
@@ -36,6 +37,7 @@ typedef void (*PoolItemDestroyHandle)(struct generic_pool_s *pool, pool_item_t *
     unsigned int          len;                                                                                         \
     unsigned int          cap;                                                                                         \
     unsigned int          free_threshould;                                                                             \
+    const unsigned int    item_size;                                                                                   \
     atomic_size_t         in_use;                                                                                      \
     PoolItemCreateHandle  create_item_handle;                                                                          \
     PoolItemDestroyHandle destroy_item_handle;                                                                         \
@@ -46,6 +48,7 @@ typedef void (*PoolItemDestroyHandle)(struct generic_pool_s *pool, pool_item_t *
     unsigned int          len;                                                                                         \
     unsigned int          cap;                                                                                         \
     unsigned int          free_threshould;                                                                             \
+    const unsigned int    item_size;                                                                                   \
     PoolItemCreateHandle  create_item_handle;                                                                          \
     PoolItemDestroyHandle destroy_item_handle;                                                                         \
     pool_item_t          *available[];
@@ -99,8 +102,11 @@ static inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)
 }
 
 generic_pool_t *newGenericPool(PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h);
-generic_pool_t *newGenericPoolWithSize(unsigned long pool_width, PoolItemCreateHandle create_h,
-                                       PoolItemDestroyHandle destroy_h);
+generic_pool_t *newGenericPoolWithCap(unsigned int pool_width, PoolItemCreateHandle create_h,
+                                      PoolItemDestroyHandle destroy_h);
+
+generic_pool_t *newGenericPoolDefaultAllocator(unsigned int item_size);
+generic_pool_t *newGenericPoolDefaultAllocatorWithCap(unsigned int item_size, unsigned int pool_width);
 
 #undef BYPASS_POOL
 #undef POOL_DEBUG

@@ -47,8 +47,8 @@ static void poolFirstCharge(generic_pool_t *pool)
     }
 }
 
-static generic_pool_t *allocateGenericPool(unsigned long pool_width, PoolItemCreateHandle create_h,
-                                           PoolItemDestroyHandle destroy_h)
+static generic_pool_t *allocateGenericPool(unsigned int item_size, unsigned int pool_width,
+                                           PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
 {
 
     pool_width = (unsigned long) pow(2, floor(log2((double) (max(16, (ssize_t) pool_width)))));
@@ -56,25 +56,48 @@ static generic_pool_t *allocateGenericPool(unsigned long pool_width, PoolItemCre
     pool_width = 2 * pool_width;
 
     const unsigned long container_len = pool_width * sizeof(pool_item_t *);
-    generic_pool_t     *pool          = malloc(sizeof(generic_pool_t) + container_len);
+    generic_pool_t     *pool_ptr      = malloc(sizeof(generic_pool_t) + container_len);
 #ifdef DEBUG
-    memset(pool, 0xEE, sizeof(generic_pool_t) + container_len);
+    memset(pool_ptr, 0xEB, sizeof(generic_pool_t) + container_len);
 #endif
-    memset(pool, 0, sizeof(generic_pool_t));
-    pool->cap                 = pool_width;
-    pool->free_threshould     = max(pool->cap / 2, (pool->cap * 2) / 3);
-    pool->create_item_handle  = create_h;
-    pool->destroy_item_handle = destroy_h;
-    poolFirstCharge(pool);
-    return pool;
+    generic_pool_t pool = {.cap                 = pool_width,
+                           .free_threshould     = max(pool_width / 2, (pool_width * 2) / 3),
+                           .item_size           = item_size,
+                           .create_item_handle  = create_h,
+                           .destroy_item_handle = destroy_h};
+
+    memcpy(pool_ptr, &pool, sizeof(generic_pool_t));
+    poolFirstCharge(pool_ptr);
+    return pool_ptr;
+}
+
+static pool_item_t *poolDefaultAllocator(struct generic_pool_s *pool)
+{
+    return malloc(pool->item_size);
+}
+
+static void poolDefaultDeallocator(struct generic_pool_s *pool, pool_item_t *item)
+{
+    (void) pool;
+    free(item);
 }
 
 generic_pool_t *newGenericPool(PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
 {
-    return allocateGenericPool(GENERIC_POOL_DEFAULT_WIDTH, create_h, destroy_h);
+    return allocateGenericPool(0, GENERIC_POOL_DEFAULT_WIDTH, create_h, destroy_h);
 }
-generic_pool_t *newGenericPoolWithSize(unsigned long pool_width, PoolItemCreateHandle create_h,
-                                       PoolItemDestroyHandle destroy_h)
+generic_pool_t *newGenericPoolWithCap(unsigned int pool_width, PoolItemCreateHandle create_h,
+                                      PoolItemDestroyHandle destroy_h)
 {
-    return allocateGenericPool(pool_width, create_h, destroy_h);
+    return allocateGenericPool(0, pool_width, create_h, destroy_h);
+}
+
+generic_pool_t *newGenericPoolDefaultAllocator(unsigned int item_size)
+{
+    return allocateGenericPool(item_size, GENERIC_POOL_DEFAULT_WIDTH, poolDefaultAllocator, poolDefaultDeallocator);
+}
+
+generic_pool_t *newGenericPoolDefaultAllocatorWithCap(unsigned int item_size, unsigned int pool_width)
+{
+    return allocateGenericPool(item_size, pool_width, poolDefaultAllocator, poolDefaultDeallocator);
 }

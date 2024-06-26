@@ -10,7 +10,6 @@
 #include "tunnel.h"
 #include "utils/procutils.h"
 #include "ww.h"
-#include <stdlib.h>
 
 typedef struct socket_filter_s
 {
@@ -31,9 +30,9 @@ typedef struct socket_filter_s
 #define SUPPORT_V6 false
 enum
 {
-    kSoOriginalDest  = 80,
-    kFilterLevels    = 4,
-    kAcceptThreadTid = 1000
+    kSoOriginalDest       = 80,
+    kFilterLevels         = 4,
+    kAcceptThreadIdOffset = 0
 };
 
 typedef struct socket_manager_s
@@ -95,6 +94,7 @@ static void destroyUdpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t
 void destroySocketAcceptResult(socket_accept_result_t *sar)
 {
     const uint8_t tid = sar->tid;
+
     hhybridmutex_lock(&(state->tcp_pools[tid].mutex));
     reusePoolItem(state->tcp_pools[tid].pool, sar);
     hhybridmutex_unlock(&(state->tcp_pools[tid].mutex));
@@ -201,7 +201,8 @@ static void signalHandler(int signum)
     raise(signum);
 }
 
-int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr, const struct in_addr subnet_mask)
+static inline int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr,
+                                const struct in_addr subnet_mask)
 {
     if ((test_addr.s_addr & subnet_mask.s_addr) == (base_addr.s_addr & subnet_mask.s_addr))
     {
@@ -209,7 +210,8 @@ int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr
     }
     return 0;
 }
-int checkIPRange6(const struct in6_addr test_addr, const struct in6_addr base_addr, const struct in6_addr subnet_mask)
+static inline int checkIPRange6(const struct in6_addr test_addr, const struct in6_addr base_addr,
+                                const struct in6_addr subnet_mask)
 {
 
     uint64_t *test_addr_p   = (uint64_t *) &(test_addr.s6_addr[0]);
@@ -352,15 +354,13 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     if (option.white_list_raddr != NULL)
     {
         pirority++;
+        parseWhiteListOption(&option);
     }
     if (option.black_list_raddr != NULL)
     {
         pirority++;
     }
-    if (option.white_list_raddr != NULL)
-    {
-        parseWhiteListOption(&option);
-    }
+
     *filter = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
     hhybridmutex_lock(&(state->mutex));
@@ -413,12 +413,9 @@ static void noTcpSocketConsumerFound(hio_t *io)
 
 static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t option)
 {
-    struct in6_addr test_addr = {0};
-    const bool      is_v4     = addr->sa.sa_family == AF_INET;
+    const bool is_v4 = addr->sa.sa_family == AF_INET;
     if (is_v4)
     {
-        memcpy(&test_addr, &addr->sin.sin_addr, 4);
-
         for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
 
@@ -496,7 +493,7 @@ static void onAcceptTcpMultiPort(hio_t *io)
 #ifdef OS_UNIX
 
     unsigned char pbuf[28] = {0};
-    socklen_t     size     = 16; // todo ipv6 value is 28
+    socklen_t     size     = 16; // todo (ipv6) value is 28 but requires dual stack
     if (getsockopt(hio_fd(io), IPPROTO_IP, kSoOriginalDest, &(pbuf[0]), &size) < 0)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
@@ -654,23 +651,6 @@ static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
         }
     }
 }
-
-// void onUdpSocketExpire(struct idle_item_s *table_item)
-// {
-//     assert(table_item->userdata != NULL);
-//     udpsock_t *udpsock = table_item->userdata;
-
-//     // call close callback
-//     if (udpsock->closecb)
-//     {
-//         hevent_t ev;
-//         memset(&ev, 0, sizeof(ev));
-//         ev.loop = loops[table_item->tid];
-//         ev.cb   = udpsock->closecb;
-//         hevent_set_userdata(&ev, udpsock);
-//         hloop_post_event(loops[table_item->tid], &ev);
-// }
-// }
 
 static void noUdpSocketConsumerFound(udp_payload_t *upl)
 {
@@ -838,7 +818,14 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
     (void) userdata;
 
-    hloop_t *loop = hloop_new(HLOOP_FLAG_AUTO_FREE, createSmallBufferPool(), kAcceptThreadTid);
+    const uint8_t tid = workers_count + kAcceptThreadIdOffset;
+    assert(tid >= 1);
+
+    shift_buffer_pools[tid] =
+        newGenericPoolWithCap((64) + ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    buffer_pools[tid] = createBufferPool(tid);
+    hloop_t *loop     = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[tid], tid);
+    loops[tid]        = loop;
 
     hhybridmutex_lock(&(state->mutex));
     // state->table = newIdleTable(loop, onUdpSocketExpire);
@@ -873,7 +860,10 @@ void startSocketManager(void)
 {
     assert(state != NULL);
     // accept_thread(accept_thread_loop);
+    const uint8_t tid = workers_count + kAcceptThreadIdOffset;
+
     state->accept_thread = hthread_create(accept_thread, NULL);
+    workers[tid]         = state->accept_thread;
 }
 
 socket_manager_state_t *createSocketManager(void)
@@ -897,11 +887,11 @@ socket_manager_state_t *createSocketManager(void)
     for (unsigned int i = 0; i < workers_count; ++i)
     {
         state->udp_pools[i].pool =
-            newGenericPoolWithSize((8) + ram_profile, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
+            newGenericPoolWithCap((8) + ram_profile, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
         hhybridmutex_init(&(state->udp_pools[i].mutex));
 
         state->tcp_pools[i].pool =
-            newGenericPoolWithSize((8) + ram_profile, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
+            newGenericPoolWithCap((8) + ram_profile, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
         hhybridmutex_init(&(state->tcp_pools[i].mutex));
     }
 
@@ -919,11 +909,6 @@ socket_manager_state_t *createSocketManager(void)
     if (signal(SIGINT, signalHandler) == SIG_ERR)
     {
         perror("Error setting SIGINT signal handler");
-        exit(1);
-    }
-    if (atexit(exitHook) != 0)
-    {
-        perror("Error setting ATEXIT hook");
         exit(1);
     }
 

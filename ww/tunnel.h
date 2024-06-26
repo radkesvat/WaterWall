@@ -117,9 +117,9 @@ typedef struct line_s
     LineFlowSignal   up_resume_cb;
     LineFlowSignal   dw_pause_cb;
     LineFlowSignal   dw_resume_cb;
+    void            *chains_state[kMaxChainLen];
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
-    void            *chains_state[kMaxChainLen];
     uint8_t          auth_cur;
 
 } line_t;
@@ -160,7 +160,7 @@ typedef struct tunnel_s // 48
     TunnelFlowRoutine upStream;
     TunnelFlowRoutine downStream;
 
-    uint8_t chain_index;
+    const uint8_t chain_index;
 } tunnel_t;
 
 tunnel_t *newTunnel(void);
@@ -193,9 +193,9 @@ static inline line_t *newLine(uint8_t tid)
         .src_ctx  = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
     };
     // there were no way because we declared tid as const, but im sure compiler will know what to do here
-    // forexample gcc has builtins 
+    // forexample gcc has builtins
     memcpy(result, &newline, sizeof(line_t));
-    
+
     return result;
 }
 
@@ -210,7 +210,7 @@ static inline bool isAlive(line_t *line)
 */
 static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
-    assert(l->up_state == NULL || l->up_pause_cb == NULL);
+    assert(l->up_state == NULL);
     l->up_state     = state;
     l->up_pause_cb  = pause_cb;
     l->up_resume_cb = resume_cb;
@@ -222,7 +222,7 @@ static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *sta
 */
 static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
 {
-    assert(l->dw_state == NULL || l->dw_pause_cb == NULL);
+    assert(l->dw_state == NULL);
     l->dw_state     = state;
     l->dw_pause_cb  = pause_cb;
     l->dw_resume_cb = resume_cb;
@@ -396,6 +396,9 @@ static inline context_t *switchLine(context_t *c, line_t *line)
 
 static inline void markAuthenticated(line_t *line)
 {
+    // basic overflow protection
+    assert(line->auth_cur < (((0x1ULL << ((sizeof(line->auth_cur) * 8ULL) - 1ULL)) - 1ULL) |
+                             (0xFULL << ((sizeof(line->auth_cur) * 8ULL) - 4ULL))));
     line->auth_cur += 1;
 }
 

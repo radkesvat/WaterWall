@@ -95,7 +95,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             uint8_t tls_header[1 + 2 + 2];
 
-            bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(buf));
+            bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(c->line->tid,buf));
             while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
@@ -280,7 +280,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 while (bufLen(buf) > 0 && isAlive(c->line))
                 {
                     const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
-                    shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);
+                    shift_buffer_t *chunk  = shallowSliceBuffer(c->line->tid,buf, remain);
                     chunk                  = genericEncrypt(chunk, cstate->encryption_context, state->context_password,
                                                             getContextBufferPool(c));
                     signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);

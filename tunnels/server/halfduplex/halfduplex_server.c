@@ -23,9 +23,7 @@ enum connection_status
 {
     kCsUnkown,
     kCsUploadInTable,
-    // kCsUploadPipedIndirect,
     kCsUploadDirect,
-    // kCsUploadPipedDirect,
     kCsDownloadInTable,
     kCsDownloadDirect
 };
@@ -158,11 +156,6 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
             LSTATE_DROP(upload_line_cstate->upload_line);
 
             pipeTo(self, upload_line_cstate->upload_line, tid_download_line);
-
-            // upload_line_cstate->state = kCsUploadPipedIndirect;
-
-            // newPipeLine(&upload_line_cstate->pipe, self, tid_upload_line, upload_line_cstate->upload_line,
-            //             tid_download_line, localUpStream, localDownStream);
 
             if (upload_line_cstate->buffering)
             {
@@ -323,18 +316,6 @@ static void upStream(tunnel_t *self, context_t *c)
                         pipeUpStream(c);
                         return; // piped to another worker which has waiting connections
 
-                        // cstate->state = kCsUploadPipedIndirect;
-                        // setupLineUpSide(c->line, onUploadInDirectLinePaused, cstate, onUploadInDirectLineResumed);
-
-                        // newPipeLine(&cstate->pipe, self, c->line->tid, c->line, tid_download_line, localUpStream,
-                        //             localDownStream);
-
-                        // if (! pipeUpStream(cstate->pipe, c))
-                        // {
-                        //     reuseContextBuffer(c);
-                        //     destroyContext(c);
-                        // }
-                        // return;
                     }
                 }
                 else
@@ -696,7 +677,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-
     switchLine(c, ((halfduplex_server_con_state_t *) (c->line->dw_state))->download_line);
     halfduplex_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)

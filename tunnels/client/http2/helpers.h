@@ -161,7 +161,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
     http2_client_con_state_t *con   = malloc(sizeof(http2_client_con_state_t));
 
     *con = (http2_client_con_state_t){
-        .queue        = newContextQueue(getThreadBufferPool(tid)),
+        .queue        = newContextQueue(),
         .content_type = state->content_type,
         .path         = state->path,
         .host         = state->host,

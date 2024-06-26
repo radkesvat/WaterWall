@@ -29,7 +29,7 @@ typedef struct node_manager_s
 
 static node_manager_t *state;
 
-void runNode(node_t *n1, size_t chain_index)
+void runNode(node_t *n1, uint8_t chain_index)
 {
     if (n1 == NULL)
     {
@@ -55,7 +55,8 @@ void runNode(node_t *n1, size_t chain_index)
             exit(1);
         }
 
-        n1->instance->chain_index = chain_index;
+        memcpy((uint8_t*)&(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+
         chain(n1->instance, n2->instance);
     }
     else
@@ -69,7 +70,7 @@ void runNode(node_t *n1, size_t chain_index)
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
             exit(1);
         }
-        n1->instance->chain_index = chain_index;
+        memcpy((uint8_t*)&(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
     }
 }
 

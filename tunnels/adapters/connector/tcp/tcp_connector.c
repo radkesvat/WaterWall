@@ -208,7 +208,7 @@ static void upStream(tunnel_t *self, context_t *c)
             *cstate = (tcp_connector_con_state_t){.buffer_pool  = getContextBufferPool(c),
                                                   .tunnel       = self,
                                                   .line         = c->line,
-                                                  .data_queue   = newContextQueue(getContextBufferPool(c)),
+                                                  .data_queue   = newContextQueue(),
                                                   .write_paused = true};
 
 #ifdef PROFILE

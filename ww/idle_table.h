@@ -20,7 +20,7 @@
     and other threads must not change , remove or do anything to it
     because of that, tid parameter is required in order to find the item
 
-    -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly lost"
+    -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly/definitely lost"
        but the pointer is saved in "memptr" field inside the object
 
     note that libhv timer is also not a real timer, but is a heap like timer

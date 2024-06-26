@@ -23,17 +23,22 @@ void chain(tunnel_t *from, tunnel_t *to)
 {
     chainUp(from, to);
     chainDown(from, to);
-    to->chain_index = from->chain_index + 1;
+
+    const uint8_t new_to_chain_index = from->chain_index + 1;
+    memcpy((uint8_t*)&(to->chain_index), &new_to_chain_index, sizeof(uint8_t));
 }
 
 tunnel_t *newTunnel(void)
 {
-    tunnel_t *t = malloc(sizeof(tunnel_t));
-    *t          = (tunnel_t){
-                 .upStream   = &defaultUpStream,
-                 .downStream = &defaultDownStream,
+    tunnel_t *ptr = malloc(sizeof(tunnel_t));
+
+    tunnel_t tunnel = (tunnel_t){
+        .upStream   = &defaultUpStream,
+        .downStream = &defaultDownStream,
     };
-    return t;
+    memcpy(ptr, &tunnel, sizeof(tunnel_t));
+
+    return ptr;
 }
 
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool)

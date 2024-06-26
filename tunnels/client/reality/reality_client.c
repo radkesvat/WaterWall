@@ -135,7 +135,7 @@ static void upStream(tunnel_t *self, context_t *c)
             while (bufLen(buf) > 0 && isAlive(c->line))
             {
                 const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
-                shift_buffer_t *chunk  = shallowSliceBuffer(buf, remain);
+                shift_buffer_t *chunk  = shallowSliceBuffer(c->line->tid,buf, remain);
                 chunk =
                     genericEncrypt(chunk, cstate->encryption_context, state->context_password, getContextBufferPool(c));
                 signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
@@ -159,7 +159,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->rbio               = BIO_new(BIO_s_mem());
             cstate->wbio               = BIO_new(BIO_s_mem());
             cstate->ssl                = SSL_new(state->ssl_context);
-            cstate->queue              = newContextQueue(getContextBufferPool(c));
+            cstate->queue              = newContextQueue();
             cstate->encryption_context = EVP_CIPHER_CTX_new();
             cstate->decryption_context = EVP_CIPHER_CTX_new();
             cstate->sign_context       = EVP_MD_CTX_create();

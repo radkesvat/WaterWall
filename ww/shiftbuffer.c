@@ -1,4 +1,5 @@
 #include "shiftbuffer.h"
+#include "generic_pool.h"
 #include "utils/mathutils.h"
 #include "ww.h"
 #include <assert.h> // for assert
@@ -9,20 +10,44 @@
 
 #define PREPADDING ((ram_profile >= kRamProfileS2Memory ? (1U << 11) : (1U << 8)) + 512)
 
-void destroyShiftBuffer(shift_buffer_t *self)
+pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
 {
+    (void) pool;
+    shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
+
+    *self = (shift_buffer_t){
+        .refc = malloc(sizeof(self->refc[0])),
+    };
+    return self;
+}
+void destroyShiftBufferPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+{
+    (void) pool;
+    shift_buffer_t *self = item;
+
+    free(self->refc);
+    free(self);
+}
+
+void destroyShiftBuffer(uint8_t tid, shift_buffer_t *self)
+{
+    assert(*(self->refc) > 0);
     // if its a shallow then the underlying buffer survives
     *(self->refc) -= 1;
 
     if (*(self->refc) <= 0)
     {
         free(self->pbuf - self->_offset);
-        free(self->refc);
+        reusePoolItem(shift_buffer_pools[tid], self);
     }
-    free(self);
+    else
+    {
+        self->refc = malloc(sizeof(self->refc[0]));
+        reusePoolItem(shift_buffer_pools[tid], self);
+    }
 }
 
-shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
+shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
 {
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
@@ -31,15 +56,15 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
 
     unsigned int real_cap = pre_cap + (PREPADDING);
 
-    shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
+    // shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
+    shift_buffer_t *self = (shift_buffer_t *) popPoolItem(shift_buffer_pools[tid]);
 
-    // todo (optimize) i think refc and pbuf could be in 1 malloc
-    *self         = (shift_buffer_t){.calc_len = 0,
-                                     ._offset  = 0,
-                                     .curpos   = PREPADDING,
-                                     .full_cap = real_cap,
-                                     .refc     = malloc(sizeof(self->refc[0])),
-                                     .pbuf     = malloc(real_cap)};
+    self->calc_len = 0;
+    self->_offset  = 0;
+    self->curpos   = PREPADDING;
+    self->full_cap = real_cap;
+    self->pbuf     = malloc(real_cap);
+    // self->refc     = malloc(sizeof(self->refc[0])),
     *(self->refc) = 1;
 
     if (real_cap > 0) // map the virtual memory page to physical memory
@@ -55,11 +80,12 @@ shift_buffer_t *newShiftBuffer(unsigned int pre_cap)
     return self;
 }
 
-shift_buffer_t *newShallowShiftBuffer(shift_buffer_t *owner)
+shift_buffer_t *newShallowShiftBuffer(uint8_t tid, shift_buffer_t *owner)
 {
     *(owner->refc) += 1;
-    shift_buffer_t *shallow = malloc(sizeof(shift_buffer_t));
-    *shallow                = *owner;
+    shift_buffer_t *shallow = (shift_buffer_t *) popPoolItem(shift_buffer_pools[tid]);
+    free(shallow->refc);
+    *shallow = *owner;
 
     return shallow;
 }
@@ -90,12 +116,8 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
 
 void unShallow(shift_buffer_t *self)
 {
-    if (*(self->refc) <= 1)
-    {
-        // not a shallow
-        assert(false);
-        return;
-    }
+    // not a shallow
+    assert(*(self->refc) > 1);
 
     *(self->refc) -= 1;
     self->refc    = malloc(sizeof(unsigned int));
@@ -171,11 +193,11 @@ void sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict sourc
     setLen(dest, bytes);
 }
 
-shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes)
+shift_buffer_t *sliceBuffer(uint8_t tid, shift_buffer_t *self, unsigned int bytes)
 {
     assert(bytes <= bufLen(self));
 
-    shift_buffer_t *newbuf = newShiftBuffer(self->full_cap / 2);
+    shift_buffer_t *newbuf = newShiftBuffer(tid, self->full_cap / 2);
 
     if (bytes <= bufLen(self) / 2)
     {
@@ -205,7 +227,7 @@ shift_buffer_t *sliceBuffer(shift_buffer_t *self, unsigned int bytes)
     return newbuf;
 }
 
-shift_buffer_t *shallowSliceBuffer(shift_buffer_t *self, unsigned int bytes)
+shift_buffer_t *shallowSliceBuffer(uint8_t tid, shift_buffer_t *self, unsigned int bytes)
 {
     assert(bytes <= bufLen(self));
 
@@ -217,7 +239,7 @@ shift_buffer_t *shallowSliceBuffer(shift_buffer_t *self, unsigned int bytes)
         self->_offset = 0;
     }
 
-    shift_buffer_t *shallow = newShallowShiftBuffer(self);
+    shift_buffer_t *shallow = newShallowShiftBuffer(tid, self);
     setLen(shallow, bytes);
     constrainRight(shallow);
 
