@@ -105,7 +105,6 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
     (void) type;
     oss_server_con_state_t *cstate = arg;
 
-
     if (cstate->reply_sent_tit < 32)
     {
         if (len <= 4096)
@@ -188,7 +187,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (state->fallback != NULL && ! cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, newShallowShiftBuffer(c->line->tid,c->payload));
+            bufferStreamPush(cstate->fallback_buf, newShallowShiftBuffer(c->line->tid, c->payload));
         }
         if (cstate->fallback_mode)
         {
@@ -487,10 +486,10 @@ static void downStream(tunnel_t *self, context_t *c)
             // testing how the filtering behaves if we force protocol client to recevie at least
             // 2 full chunks before sending anymore data
             int consume = len;
-            if ((cstate->reply_sent_tit == 1 && len > 64))
+            if ((cstate->reply_sent_tit == 1 && len > 2))
             {
                 cstate->reply_sent_tit++;
-                consume = len - 64;
+                consume = len / 2;
             }
 
             int n  = SSL_write(cstate->ssl, rawBuf(c->payload), consume);
