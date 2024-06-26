@@ -18,6 +18,8 @@ typedef enum
     kMultiportBackendSockets
 } multiport_backend_t;
 
+struct balance_group_s;
+
 typedef struct socket_filter_option_s
 {
     char                        *host;
@@ -29,6 +31,8 @@ typedef struct socket_filter_option_s
     char                       **black_list_raddr;
     bool                         fast_open;
     bool                         no_delay;
+    char                        *balance_group_name;
+    uint16_t                     balance_group_interval;
 
     // private
     unsigned int white_list_parsed_length;
@@ -36,8 +40,9 @@ typedef struct socket_filter_option_s
     {
         struct in6_addr ip_bytes_buf;
         struct in6_addr mask_bytes_buf;
-
     } *white_list_parsed;
+
+    idle_table_t *shared_balance_table;
 
 } socket_filter_option_t;
 
@@ -81,4 +86,4 @@ struct socket_manager_s *createSocketManager(void);
 void                     setSocketManager(struct socket_manager_s *state);
 void                     startSocketManager(void);
 void                     registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
-void                     postUdpWrite(udpsock_t *socket_io,uint8_t tid_from, shift_buffer_t *buf);
+void                     postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, shift_buffer_t *buf);

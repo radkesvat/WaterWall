@@ -19,6 +19,11 @@ add_library(ww STATIC
                   utils/utils.c
                   managers/socket_manager.c
                   managers/node_manager.c
+                  managers/data/iprange_mci.c
+                  managers/data/iprange_irancell.c
+                  managers/data/iprange_mokhaberat.c
+                  managers/data/iprange_rightel.c
+                  managers/data/iprange_iran.c
                   loggers/core_logger.c
                   loggers/network_logger.c
                   loggers/dns_logger.c
