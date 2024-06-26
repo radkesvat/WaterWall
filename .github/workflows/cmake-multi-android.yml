@@ -1,4 +1,4 @@
-name: Androind gcc + clang
+name: Android gcc + clang
 
 on:
   push:
