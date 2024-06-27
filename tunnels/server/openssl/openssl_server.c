@@ -34,13 +34,14 @@ typedef struct oss_server_state_s
 typedef struct oss_server_con_state_s
 {
 
-    bool             handshake_completed;
-    bool             fallback_mode;
-    bool             fallback_init_sent;
-    bool             fallback_first_sent;
-    bool             first_sent;
-    bool             init_sent;
-    bool             fallback_disabled;
+    bool handshake_completed;
+    bool fallback_mode;
+    bool fallback_init_sent;
+    bool fallback_first_sent;
+    bool first_sent;
+    bool init_sent;
+    bool fallback_disabled;
+    /* 8-bit pad*/
     buffer_stream_t *fallback_buf;
     SSL             *ssl;
     BIO             *rbio;
@@ -104,8 +105,8 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
     (void) ssl;
     (void) type;
     oss_server_con_state_t *cstate = arg;
-
-    if (cstate->reply_sent_tit < 32)
+    // todo (private note)
+    if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 32)
     {
         if (len <= 4096)
         {
@@ -482,18 +483,26 @@ static void downStream(tunnel_t *self, context_t *c)
         int len = (int) bufLen(c->payload);
         while (len > 0 && isAlive(c->line))
         {
-            // todo (test code)
-            // testing how the filtering behaves if we force protocol client to recevie at least
-            // 2 full chunks before sending anymore data
+
+            /*
+                todo (test code)
+                testing how the filtering behaves if we force protocol client to recevie at least
+                2 full chunks before sending anymore data
+
+                sometimes udp or http channel is the underlying protol so we should not do weird
+                kind of stuff to that data otherwise speedtest app may sometimes give up the test :(
+                forexample speedtest first packet is sometimes 65 bytes total !
+            */
             int consume = len;
-            if ((cstate->reply_sent_tit == 1 && len > 2))
+            if ((cstate->reply_sent_tit == 1 && len > 256))
             {
                 cstate->reply_sent_tit++;
-                consume = len / 2;
+                consume = 128;
             }
 
             int n  = SSL_write(cstate->ssl, rawBuf(c->payload), consume);
             status = getSslstatus(cstate->ssl, n);
+            assert(n == consume);
 
             if (n > 0)
             {
