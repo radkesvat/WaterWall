@@ -54,7 +54,6 @@ int main(void)
     loadStaticTunnelsIntoCore();
 
     //  [Parse ConfigFiles]
-    //  TODO (config file) this currently runs only 1 config file
     {
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {
@@ -70,7 +69,6 @@ int main(void)
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
-            break;
         }
     }
     LOGD("Core: starting workers ...");

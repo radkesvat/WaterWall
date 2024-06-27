@@ -23,11 +23,13 @@
 // * Nodes inside each file are isaloted.
 
 struct node_manager_s;
+struct node_manager_config_s;
+typedef struct node_manager_config_s node_manager_config_t;
 
-void                   runNode(node_t *n1, uint8_t chain_index);
-node_t                *getNode(hash_t hash_node_name);
+void                   runNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index);
+node_t                *getNode(node_manager_config_t *cfg, hash_t hash_node_name);
 node_t                *newNode(void);
-void                   registerNode(node_t *new_node, cJSON *node_settings);
+void                   registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *node_settings);
 void                   runConfigFile(config_file_t *config_file);
 struct node_manager_s *getNodeManager(void);
 void                   setNodeManager(struct node_manager_s *state);

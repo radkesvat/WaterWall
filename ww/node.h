@@ -6,11 +6,11 @@
 
 typedef struct node_instance_context_s
 {
-    struct cJSON         *node_json;
-    struct cJSON         *node_settings_json; // node_json -> settings
-    struct config_file_s *node_file_handle;
-    struct node_s        *node;
-    size_t                chain_index;
+    struct cJSON                 *node_json;
+    struct cJSON                 *node_settings_json; // node_json -> settings
+    struct node_manager_config_s *node_manager_config;
+    struct node_s                *node;
+    size_t                        chain_index;
 } node_instance_context_t;
 
 enum node_flags
@@ -34,14 +34,14 @@ typedef struct node_s
     hash_t   hash_type;
     hash_t   hash_next;
     uint32_t version;
-    
-    // evaluated:
-    uint32_t refrenced;
-    bool     route_starter;
 
-    tunnel_metadata_t       metadata;
+    // evaluated:
+  
+ 
     struct tunnel_lib_s    *lib;
     node_instance_context_t instance_context;
     struct tunnel_s        *instance;
-
+   tunnel_metadata_t       metadata; 
+    uint32_t                refrenced;
+    bool                    route_starter;
 } node_t;

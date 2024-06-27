@@ -12,7 +12,7 @@ typedef struct connector_state_s
 
 typedef struct connector_con_state_s
 {
-    void*_;
+    void *_;
 } connector_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -33,7 +33,7 @@ static void upStream(tunnel_t *self, context_t *c)
 }
 static void downStream(tunnel_t *self, context_t *c)
 {
-    self->dw->downStream(self->dw,c);
+    self->dw->downStream(self->dw, c);
 }
 
 tunnel_t *newConnector(node_instance_context_t *instance_info)
@@ -47,18 +47,18 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
         LOGF("JSON Error: Connector->settings (object field) : The object was empty or invalid");
         return NULL;
     }
-    node_t *tcp_outbound_node = newNode();
-    node_t *udp_outbound_node = newNode();
+    node_t *tcp_outbound_node  = newNode();
+    node_t *udp_outbound_node  = newNode();
     tcp_outbound_node->name    = concat(instance_info->node->name, "_tcp_outbound");
     tcp_outbound_node->type    = "TcpConnector";
     tcp_outbound_node->version = instance_info->node->version;
     udp_outbound_node->name    = concat(instance_info->node->name, "_udp_outbound");
     udp_outbound_node->type    = "UdpConnector";
     udp_outbound_node->version = instance_info->node->version;
-    registerNode(tcp_outbound_node, settings);
-    registerNode(udp_outbound_node, settings);
-    runNode(tcp_outbound_node, instance_info->chain_index);
-    runNode(udp_outbound_node, instance_info->chain_index);
+    registerNode(instance_info->node_manager_config, tcp_outbound_node, settings);
+    registerNode(instance_info->node_manager_config, udp_outbound_node, settings);
+    runNode(instance_info->node_manager_config, tcp_outbound_node, instance_info->chain_index);
+    runNode(instance_info->node_manager_config, udp_outbound_node, instance_info->chain_index);
     state->tcp_connector = tcp_outbound_node->instance;
     state->udp_connector = udp_outbound_node->instance;
 
@@ -70,7 +70,6 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     chainDown(t, state->tcp_connector);
     chainDown(t, state->udp_connector);
 
-    
     return t;
 }
 api_result_t apiConnector(tunnel_t *self, const char *msg)

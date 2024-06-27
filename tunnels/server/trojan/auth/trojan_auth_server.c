@@ -227,7 +227,7 @@ static void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
+static void parse(tunnel_t *t, cJSON *settings,node_instance_context_t *instance_info)
 {
     trojan_auth_server_state_t *state = t->state;
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
@@ -296,7 +296,7 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
         }
 
         hash_t  hash_next     = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
-        node_t *fallback_node = getNode(hash_next);
+        node_t *fallback_node = getNode(instance_info->node_manager_config,hash_next);
         if (fallback_node == NULL)
         {
             LOGF("TrojanAuthServer: fallback node not found");
@@ -304,7 +304,7 @@ static void parse(tunnel_t *t, cJSON *settings, size_t chain_index)
         }
         if (fallback_node->instance == NULL)
         {
-            runNode(fallback_node, chain_index + 1);
+            runNode(instance_info->node_manager_config,fallback_node, instance_info->chain_index + 1);
         }
         state->fallback = fallback_node->instance;
 
@@ -333,7 +333,7 @@ tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    parse(t, settings, instance_info->chain_index);
+    parse(t, settings, instance_info);
 
     return t;
 }

@@ -95,7 +95,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             uint8_t tls_header[1 + 2 + 2];
 
-            bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(c->line->tid,buf));
+            bufferStreamPush(cstate->read_stream, newShallowShiftBuffer(c->line->tid, buf));
             while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
                 bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
@@ -121,12 +121,12 @@ static void upStream(tunnel_t *self, context_t *c)
                             return;
                         }
 
-                        buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
-                                             getContextBufferPool(c));
+                        buf                = genericDecrypt(buf, cstate->decryption_context, state->context_password,
+                                                            getContextBufferPool(c));
                         cstate->first_sent = true;
                         context_t *plain_data_ctx = newContextFrom(c);
                         plain_data_ctx->payload   = buf;
-                        plain_data_ctx->first = true;
+                        plain_data_ctx->first     = true;
                         self->up->upStream(self->up, plain_data_ctx);
 
                         if (! isAlive(c->line))
@@ -161,7 +161,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             break;
         case kConAuthorized: {
-            bufferStreamPushContextPayload(cstate->read_stream,c);
+            bufferStreamPushContextPayload(cstate->read_stream, c);
         authorized:;
             uint8_t tls_header[1 + 2 + 2];
             while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
@@ -194,7 +194,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (WW_UNLIKELY(! cstate->first_sent))
                     {
                         plain_data_ctx->first = true;
-                        cstate->first_sent     = true;
+                        cstate->first_sent    = true;
                     }
                     self->up->upStream(self->up, plain_data_ctx);
                 }
@@ -280,7 +280,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 while (bufLen(buf) > 0 && isAlive(c->line))
                 {
                     const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
-                    shift_buffer_t *chunk  = shallowSliceBuffer(c->line->tid,buf, remain);
+                    shift_buffer_t *chunk  = shallowSliceBuffer(c->line->tid, buf, remain);
                     chunk                  = genericEncrypt(chunk, cstate->encryption_context, state->context_password,
                                                             getContextBufferPool(c));
                     signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
@@ -365,7 +365,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     }
 
     hash_t  hash_next = CALC_HASH_BYTES(dest_node_name, strlen(dest_node_name));
-    node_t *next_node = getNode(hash_next);
+    node_t *next_node = getNode(instance_info->node_manager_config,hash_next);
     if (next_node == NULL)
     {
         LOGF("RealityServer: destination node not found");
@@ -374,7 +374,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 
     if (next_node->instance == NULL)
     {
-        runNode(next_node, instance_info->chain_index + 1);
+        runNode(instance_info->node_manager_config, next_node, instance_info->chain_index + 1);
     }
 
     state->dest = next_node->instance;

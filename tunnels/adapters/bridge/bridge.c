@@ -13,7 +13,7 @@ typedef struct bridge_state_s
 
 typedef struct bridge_con_state_s
 {
-    void*_;
+    void *_;
 } bridge_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -81,7 +81,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(bridge_state_t));
 
     hash_t  hash_pairname = CALC_HASH_BYTES(pair_node_name, strlen(pair_node_name));
-    node_t *pair_node     = getNode(hash_pairname);
+    node_t *pair_node     = getNode(instance_info->node_manager_config, hash_pairname);
     if (pair_node == NULL)
     {
         LOGF("Bridge: pair node \"%s\" not found", pair_node_name);

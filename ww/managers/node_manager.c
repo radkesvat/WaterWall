@@ -14,22 +14,36 @@
 #include <stdlib.h>
 #include <string.h>
 
+enum
+{
+    kVecCap     = 8,
+    kNodeMapCap = 36
+};
+
 #define i_type map_node_t // NOLINT
 #define i_key  hash_t     // NOLINT
 #define i_val  node_t *   // NOLINT
-
 #include "stc/hmap.h"
 
-typedef struct node_manager_s
+typedef struct node_manager_config_s
 {
     config_file_t *config_file;
     map_node_t     node_map;
 
+} node_manager_config_t;
+
+#define i_type vec_configs_t         // NOLINT
+#define i_key  node_manager_config_t // NOLINT
+#include "stc/vec.h"
+
+typedef struct node_manager_s
+{
+    vec_configs_t configs;
 } node_manager_t;
 
 static node_manager_t *state;
 
-void runNode(node_t *n1, uint8_t chain_index)
+void runNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index)
 {
     if (n1 == NULL)
     {
@@ -38,11 +52,11 @@ void runNode(node_t *n1, uint8_t chain_index)
     }
     if (n1->hash_next != 0)
     {
-        node_t *n2 = getNode(n1->hash_next);
+        node_t *n2 = getNode(cfg, n1->hash_next);
 
         if (n2->instance == NULL)
         {
-            runNode(n2, chain_index + 1);
+            runNode(cfg, n2, chain_index + 1);
         }
 
         LOGD("NodeManager: starting node \"%s\"", n1->name);
@@ -55,7 +69,7 @@ void runNode(node_t *n1, uint8_t chain_index)
             exit(1);
         }
 
-        memcpy((uint8_t*)&(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+        memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
 
         chain(n1->instance, n2->instance);
     }
@@ -70,28 +84,28 @@ void runNode(node_t *n1, uint8_t chain_index)
             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
             exit(1);
         }
-        memcpy((uint8_t*)&(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+        memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
     }
 }
 
-static void runNodes(void)
+static void runNodes(node_manager_config_t *cfg)
 {
 begin:;
-    c_foreach(p1, map_node_t, state->node_map)
+    c_foreach(p1, map_node_t, cfg->node_map)
     {
         node_t *n1 = p1.ref->second;
         if (n1 != NULL && n1->instance == NULL && n1->route_starter == true)
         {
-            runNode(n1, 0);
+            runNode(cfg, n1, 0);
             goto begin;
         }
     }
 }
 
-static void pathWalk(void)
+static void pathWalk(node_manager_config_t *cfg)
 {
 
-    c_foreach(p1, map_node_t, state->node_map)
+    c_foreach(p1, map_node_t, cfg->node_map)
     {
         node_t *n1 = p1.ref->second;
 
@@ -103,7 +117,7 @@ static void pathWalk(void)
                 break;
             }
             c++;
-            node_t *n2 = getNode(n1->hash_next);
+            node_t *n2 = getNode(cfg, n1->hash_next);
             n1         = n2;
             if (c > 200)
             {
@@ -114,9 +128,9 @@ static void pathWalk(void)
     }
 }
 
-static void cycleProcess(void)
+static void cycleProcess(node_manager_config_t *cfg)
 {
-    c_foreach(n1, map_node_t, state->node_map)
+    c_foreach(n1, map_node_t, cfg->node_map)
     {
 
         hash_t next_hash = n1.ref->second->hash_next;
@@ -126,7 +140,7 @@ static void cycleProcess(void)
         }
 
         bool found = false;
-        c_foreach(n2, map_node_t, state->node_map)
+        c_foreach(n2, map_node_t, cfg->node_map)
         {
             if (next_hash == n2.ref->second->hash_name)
             {
@@ -150,7 +164,7 @@ static void cycleProcess(void)
     }
     {
         bool found = false;
-        c_foreach(n1, map_node_t, state->node_map)
+        c_foreach(n1, map_node_t, cfg->node_map)
         {
             if (n1.ref->second->route_starter)
             {
@@ -165,7 +179,7 @@ static void cycleProcess(void)
     }
 }
 
-void registerNode(node_t *new_node, cJSON *node_settings)
+void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *node_settings)
 {
     new_node->hash_name = CALC_HASH_BYTES(new_node->name, strlen(new_node->name));
     new_node->hash_type = CALC_HASH_BYTES(new_node->type, strlen(new_node->type));
@@ -197,14 +211,14 @@ void registerNode(node_t *new_node, cJSON *node_settings)
 
     node_instance_context_t new_node_ctx = {0};
 
-    new_node_ctx.node_json          = NULL;
-    new_node_ctx.node_settings_json = node_settings;
-    new_node_ctx.node               = new_node;
-    new_node_ctx.node_file_handle   = state->config_file;
+    new_node_ctx.node_json           = NULL;
+    new_node_ctx.node_settings_json  = node_settings;
+    new_node_ctx.node                = new_node;
+    new_node_ctx.node_manager_config = cfg;
 
     new_node->instance_context = new_node_ctx;
 
-    map_node_t *map = &(state->node_map);
+    map_node_t *map = &(cfg->node_map);
 
     if (map_node_t_contains(map, new_node->hash_name))
     {
@@ -214,10 +228,10 @@ void registerNode(node_t *new_node, cJSON *node_settings)
     map_node_t_insert(map, new_node->hash_name, new_node);
 }
 
-node_t *getNode(hash_t hash_node_name)
+node_t *getNode(node_manager_config_t *cfg, hash_t hash_node_name)
 {
-    map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
-    if (iter.ref == map_node_t_end(&(state->node_map)).ref)
+    map_node_t_iter iter = map_node_t_find(&(cfg->node_map), hash_node_name);
+    if (iter.ref == map_node_t_end(&(cfg->node_map)).ref)
     {
         return NULL;
     }
@@ -231,9 +245,9 @@ node_t *newNode(void)
     return new_node;
 }
 
-static void startParsingFiles(void)
+static void startParsingFile(node_manager_config_t *cfg)
 {
-    cJSON *nodes_json = state->config_file->nodes;
+    cJSON *nodes_json = cfg->config_file->nodes;
     cJSON *node_json  = NULL;
     cJSON_ArrayForEach(node_json, nodes_json)
     {
@@ -241,34 +255,24 @@ static void startParsingFiles(void)
         if (! getStringFromJsonObject(&(new_node->name), node_json, "name"))
         {
             LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
-                 state->config_file->file_path);
+                 cfg->config_file->file_path);
             exit(1);
         }
 
         if (! getStringFromJsonObject(&(new_node->type), node_json, "type"))
         {
             LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
-                 state->config_file->file_path);
+                 cfg->config_file->file_path);
             exit(1);
         }
         getStringFromJsonObject(&(new_node->next), node_json, "next");
         getIntFromJsonObjectOrDefault((int *) &(new_node->version), node_json, "version", 0);
-        registerNode(new_node, cJSON_GetObjectItemCaseSensitive(node_json, "settings"));
+        registerNode(cfg, new_node, cJSON_GetObjectItemCaseSensitive(node_json, "settings"));
     }
-    cycleProcess();
-    pathWalk();
-    runNodes();
+    cycleProcess(cfg);
+    pathWalk(cfg);
+    runNodes(cfg);
 }
-
-// static tunnel_t *getTunnel(hash_t hash_node_name)
-// {
-//     map_node_t_iter iter = map_node_t_find(&(state->node_map), hash_node_name);
-//     if (iter.ref == map_node_t_end(&(state->node_map)).ref)
-//     {
-//         return NULL;
-//     }
-//     return (iter.ref->second)->instance;
-// }
 
 struct node_manager_s *getNodeManager(void)
 {
@@ -282,8 +286,10 @@ void setNodeManager(struct node_manager_s *new_state)
 
 void runConfigFile(config_file_t *config_file)
 {
-    state->config_file = config_file;
-    startParsingFiles();
+
+    node_manager_config_t cfg = {.config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap)};
+    startParsingFile(&cfg);
+    vec_configs_t_push(&(state->configs), cfg);
 }
 
 node_manager_t *createNodeManager(void)
@@ -292,6 +298,8 @@ node_manager_t *createNodeManager(void)
 
     state = malloc(sizeof(node_manager_t));
     memset(state, 0, sizeof(node_manager_t));
-    state->node_map = map_node_t_with_capacity(50);
+
+    state->configs = vec_configs_t_with_capacity(kVecCap);
+
     return state;
 }
