@@ -43,7 +43,6 @@ enum
     kSoOriginalDest          = 80,
     kFilterLevels            = 4,
     kMaxBalanceSelections    = 64,
-    kAcceptThreadIdOffset    = 0,
     kDefalultBalanceInterval = 60 * 1000
 };
 
@@ -69,6 +68,7 @@ typedef struct socket_manager_s
     balancegroup_registry_t balance_groups;
     hthread_t               accept_thread;
     hloop_t                *loop;
+    uint8_t                 tid;
 
     uint16_t last_round_tid;
     bool     iptables_installed;
@@ -355,29 +355,6 @@ void parseWhiteListOption(socket_filter_option_t *option)
             exit(1);
         }
     }
-
-    if (option->balance_group_name)
-    {
-        hash_t        name_hash = CALC_HASH_BYTES(option->balance_group_name, strlen(option->balance_group_name));
-        idle_table_t *b_table   = NULL;
-        hhybridmutex_lock(&(state->mutex));
-
-        balancegroup_registry_t_iter find_result = balancegroup_registry_t_find(&(state->balance_groups), name_hash);
-
-        if (find_result.ref == balancegroup_registry_t_end(&(state->balance_groups)).ref)
-        {
-            b_table = newIdleTable(state->loop);
-            balancegroup_registry_t_insert(&(state->balance_groups), name_hash, b_table);
-        }
-        else
-        {
-            b_table = (find_result.ref->second);
-        }
-
-        hhybridmutex_unlock(&(state->mutex));
-
-        option->shared_balance_table = b_table;
-    }
 }
 
 void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
@@ -398,9 +375,33 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
         pirority++;
         parseWhiteListOption(&option);
     }
+
     if (option.black_list_raddr != NULL)
     {
         pirority++;
+    }
+
+    if (option.balance_group_name)
+    {
+        hash_t        name_hash = CALC_HASH_BYTES(option.balance_group_name, strlen(option.balance_group_name));
+        idle_table_t *b_table   = NULL;
+        hhybridmutex_lock(&(state->mutex));
+
+        balancegroup_registry_t_iter find_result = balancegroup_registry_t_find(&(state->balance_groups), name_hash);
+
+        if (find_result.ref == balancegroup_registry_t_end(&(state->balance_groups)).ref)
+        {
+            b_table = newIdleTable(state->loop);
+            balancegroup_registry_t_insert(&(state->balance_groups), name_hash, b_table);
+        }
+        else
+        {
+            b_table = (find_result.ref->second);
+        }
+
+        hhybridmutex_unlock(&(state->mutex));
+
+        option.shared_balance_table = b_table;
     }
 
     *filter = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
@@ -495,7 +496,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     idle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
-    const uint8_t           this_tid   = workers_count + kAcceptThreadIdOffset;
+    const uint8_t           this_tid   = state->tid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -510,10 +511,12 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
             {
                 continue;
             }
+
             if (option.protocol != kSapTcp || port_min > local_port || port_max < local_port)
             {
                 continue;
             }
+
             if (option.white_list_raddr != NULL)
             {
                 if (! checkIpIsWhiteList(paddr, option))
@@ -526,7 +529,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(io));
+                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr(io));
                 }
                 idle_item_t *idle_item = getIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
 
@@ -549,6 +552,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
                 {
                     // probably never but the limit can be simply increased
                     LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
+                    continue;
                 }
                 balance_selection_filters[balance_selection_filters_length++] = filter;
                 selected_balance_table                                        = option.shared_balance_table;
@@ -571,6 +575,11 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
         newIdleItem(filter->option.shared_balance_table, src_hash, filter, NULL, this_tid,
                     filter->option.balance_group_interval == 0 ? kDefalultBalanceInterval
                                                                : filter->option.balance_group_interval);
+
+        if (filter->option.no_delay)
+        {
+            tcp_nodelay(hio_fd(io), 1);
+        }
         distributeSocket(io, filter, local_port);
     }
     else
@@ -786,7 +795,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     idle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
-    const uint8_t           this_tid   = workers_count + kAcceptThreadIdOffset;
+    const uint8_t           this_tid   = state->tid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -818,7 +827,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(pl.sock->io));
+                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr(pl.sock->io));
                 }
                 idle_item_t *idle_item = getIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
 
@@ -836,6 +845,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
                 {
                     // probably never but the limit can be simply increased
                     LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
+                    continue;
                 }
                 balance_selection_filters[balance_selection_filters_length++] = filter;
                 selected_balance_table                                        = option.shared_balance_table;
@@ -968,14 +978,8 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
     (void) userdata;
 
-    const uint8_t tid = workers_count + kAcceptThreadIdOffset;
-    assert(tid >= 1);
-
-    shift_buffer_pools[tid] =
-        newGenericPoolWithCap((64) + ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pools[tid] = createBufferPool(tid);
-    state->loop       = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[tid], tid);
-    loops[tid]        = state->loop;
+    assert(state->tid >= 1);
+    assert(state && state->loop);
 
     hhybridmutex_lock(&(state->mutex));
 
@@ -1010,17 +1014,19 @@ void startSocketManager(void)
 {
     assert(state != NULL);
     // accept_thread(accept_thread_loop);
-    const uint8_t tid = workers_count + kAcceptThreadIdOffset;
 
     state->accept_thread = hthread_create(accept_thread, NULL);
-    workers[tid]         = state->accept_thread;
+    workers[state->tid]  = state->accept_thread;
 }
 
-socket_manager_state_t *createSocketManager(void)
+socket_manager_state_t *createSocketManager(hloop_t *event_loop, uint8_t tid)
 {
     assert(state == NULL);
     state = malloc(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
+
+    state->tid  = tid;
+    state->loop = event_loop;
     for (size_t i = 0; i < kFilterLevels; i++)
     {
         state->filters[i] = filters_t_init();

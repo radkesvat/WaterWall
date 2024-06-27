@@ -71,7 +71,6 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
                          uint64_t age_ms)
 {
     assert(self);
-    assert(cb);
     idle_item_t *item = malloc(sizeof(idle_item_t));
     hhybridmutex_lock(&(self->mutex));
 
@@ -152,8 +151,11 @@ static void beforeCloseCallBack(hevent_t *ev)
 
         uint64_t old_expire_at_ms = item->expire_at_ms;
 
-        item->cb(item);
-
+        if (item->cb)
+        {
+            item->cb(item);
+        }
+        
         if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > hloop_now_ms(loops[item->tid]))
         {
             hhybridmutex_lock(&(item->table->mutex));

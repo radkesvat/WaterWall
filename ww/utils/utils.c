@@ -329,19 +329,46 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
     scontext->domain_len      = len;
     assert(scontext->domain[len] == 0x0);
 }
-
-hash_t sockAddrCalcHash(const sockaddr_u *saddr)
+hash_t sockAddrCalcHashNoPort(const sockaddr_u *saddr)
 {
-    // paddings are 0
+    hash_t result;
     if (saddr->sa.sa_family == AF_INET)
     {
-        return CALC_HASH_BYTES(&(saddr->sin.sin_port), sizeof(struct sockaddr_in) + sizeof(uint16_t));
+        result = CALC_HASH_BYTES(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in));
     }
-    if (saddr->sa.sa_family == AF_INET6)
+    else if (saddr->sa.sa_family == AF_INET6)
     {
-        return CALC_HASH_BYTES(&(saddr->sin6.sin6_port), sizeof(struct sockaddr_in6) + sizeof(uint16_t));
+        result = CALC_HASH_BYTES(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6));
     }
-    return CALC_HASH_BYTES(&(saddr->sa), (sockaddr_len((sockaddr_u *) saddr)));
+    else
+    {
+        assert(false);
+        perror("sockAddrCalcHashNoPort");
+        exit(1);
+    }
+    return result;
+}
+
+hash_t sockAddrCalcHashWithPort(const sockaddr_u *saddr)
+{
+    hash_t result;
+    if (saddr->sa.sa_family == AF_INET)
+    {
+        result = CALC_HASH_PRIMITIVE(saddr->sin.sin_port);
+        result = CALC_HASH_BYTES_WITH_SEED(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in), result);
+    }
+    else if (saddr->sa.sa_family == AF_INET6)
+    {
+        result = CALC_HASH_PRIMITIVE(saddr->sin6.sin6_port);
+        result = CALC_HASH_BYTES_WITH_SEED(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6), result);
+    }
+    else
+    {
+        assert(false);
+        perror("sockAddrCalcHashWithPort");
+        exit(1);
+    }
+    return result;
 }
 
 enum socket_address_type getHostAddrType(char *host)
@@ -535,7 +562,7 @@ cmdresult_t execCmd(const char *str)
 #if defined(OS_UNIX)
     fp = popen(str, "r");
 #else
-    fp               = _popen(str, "r");
+    fp = _popen(str, "r");
 #endif
 
     if (fp == NULL)

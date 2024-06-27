@@ -21,6 +21,9 @@
     so, these additions will only reserve their own space on the workers array
 
     the only purpose of this is to reduce memory usage
+
+    // additional therad 1 : socket manager
+
 */
 enum
 {
@@ -217,12 +220,34 @@ void createWW(const ww_construction_data_t init_data)
     loops[0]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[0], 0);
     workers[0] = (hthread_t) NULL;
 
-    for (unsigned int i = 1; i < workers_count; ++i)
+    // [Section] setup socketmanager thread , note that we use smaller buffer pool here
     {
-        loops[i]   = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[i], (uint8_t) i);
-        workers[i] = hthread_create(worker_thread, loops[i]);
+        const uint8_t socketmanager_tid = workers_count; // notice that 0 indexed array
+        shift_buffer_pools[socketmanager_tid] =
+            newGenericPoolWithCap((64) + ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+        buffer_pools[socketmanager_tid] = createBufferPool(socketmanager_tid);
+        loops[socketmanager_tid] = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[socketmanager_tid], socketmanager_tid);
+
+        socekt_manager = createSocketManager(loops[socketmanager_tid], socketmanager_tid);
     }
 
-    socekt_manager = createSocketManager();
-    node_manager   = createNodeManager();
+    // [Section] setup workers
+    {
+        // all loops must be created here
+        for (unsigned int i = 1; i < workers_count; ++i)
+        {
+            loops[i] = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[i], (uint8_t) i);
+        }
+
+        // additional workers start when they want
+        for (unsigned int i = 1; i < workers_count; ++i)
+        {
+            workers[i] = hthread_create(worker_thread, loops[i]);
+        }
+    }
+
+    // [Section] setup modules
+    {
+        node_manager = createNodeManager();
+    }
 }

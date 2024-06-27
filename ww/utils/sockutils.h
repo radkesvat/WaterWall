@@ -7,7 +7,8 @@ void   sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source
 bool   sockAddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
 bool   sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
 bool   sockAddrCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2);
-hash_t sockAddrCalcHash(const sockaddr_u *saddr);
+hash_t sockAddrCalcHashNoPort(const sockaddr_u *saddr);
+hash_t sockAddrCalcHashWithPort(const sockaddr_u *saddr);
 
 void socketContextAddrCopy(socket_context_t *dest, const socket_context_t *source);
 void socketContextPortCopy(socket_context_t *dest, socket_context_t *source);

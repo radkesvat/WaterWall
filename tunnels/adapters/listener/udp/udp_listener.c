@@ -193,7 +193,7 @@ static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, udps
 static void onFilteredRecv(hevent_t *ev)
 {
     udp_payload_t *data          = (udp_payload_t *) hevent_userdata(ev);
-    hash_t         peeraddr_hash = sockAddrCalcHash((sockaddr_u *) hio_peeraddr(data->sock->io));
+    hash_t         peeraddr_hash = sockAddrCalcHashWithPort((sockaddr_u *) hio_peeraddr(data->sock->io));
 
     idle_item_t *idle = getIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
     if (idle == NULL)
@@ -293,6 +293,9 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
         return NULL;
     }
     socket_filter_option_t filter_opt = {0};
+
+    getStringFromJsonObject(&(filter_opt.balance_group_name),settings, "balance-group");
+    getIntFromJsonObject((int *) &(filter_opt.balance_group_interval), settings, "balance-interval");
 
     filter_opt.multiport_backend = kMultiportBackendNothing;
     parsePortSection(state, settings);

@@ -20,6 +20,14 @@ typedef enum
 
 struct balance_group_s;
 
+/*
+    socket_filter_option_t provides information about which forxample protocol (tcp ? udp?)
+    which ports (single? range?)
+    which balance option?
+
+    the acceptor wants, they fill the information and register it by calling registerSocketAcceptor
+
+*/
 typedef struct socket_filter_option_s
 {
     char                        *host;
@@ -32,7 +40,7 @@ typedef struct socket_filter_option_s
     bool                         fast_open;
     bool                         no_delay;
     char                        *balance_group_name;
-    uint16_t                     balance_group_interval;
+    unsigned int                 balance_group_interval;
 
     // private
     unsigned int white_list_parsed_length;
@@ -46,7 +54,7 @@ typedef struct socket_filter_option_s
 
 } socket_filter_option_t;
 
-// user data of accept event
+// if you asked for tcp, youll get such struct when somone connects and passed all filters
 typedef struct socket_accept_result_s
 {
     hio_t                       *io;
@@ -61,6 +69,7 @@ typedef void (*onAccept)(hevent_t *ev);
 
 void destroySocketAcceptResult(socket_accept_result_t *);
 
+// if you asked for udp, youll get such struct when a udp packet received and passed all filters
 typedef struct udpsock_s
 {
     hio_t        *io;
@@ -82,7 +91,7 @@ typedef struct udp_payload_s
 void destroyUdpPayload(udp_payload_t *);
 
 struct socket_manager_s *getSocketManager(void);
-struct socket_manager_s *createSocketManager(void);
+struct socket_manager_s *createSocketManager(hloop_t *event_loop, uint8_t tid);
 void                     setSocketManager(struct socket_manager_s *state);
 void                     startSocketManager(void);
 void                     registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);

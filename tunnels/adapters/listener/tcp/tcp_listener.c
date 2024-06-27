@@ -389,6 +389,9 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     }
     socket_filter_option_t filter_opt = {.no_delay = state->no_delay};
 
+    getStringFromJsonObject(&(filter_opt.balance_group_name), settings, "balance-group");
+    getIntFromJsonObject((int *) &(filter_opt.balance_group_interval), settings, "balance-interval");
+
     filter_opt.multiport_backend = kMultiportBackendNothing;
     parsePortSection(state, settings);
     if (state->port_max != 0)

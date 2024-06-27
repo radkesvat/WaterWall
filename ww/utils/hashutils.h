@@ -28,11 +28,14 @@ static inline uint64_t hashFnv1a64(const uint8_t *buf, size_t len)
 // Komi-Hash
 
 #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpedantic" //int128 is not iso c (already macro guarded, no worries)
-#include "komihash.h" 
+#pragma GCC diagnostic ignored "-Wpedantic" // int128 is not iso c (already macro guarded, no worries)
+#include "komihash.h"
 #pragma GCC diagnostic pop
 
 // zero as seed provides more performance
 #define KOMIHASH_SEED           0
 #define CALC_HASH_PRIMITIVE(x)  komihash((const uint8_t *) &(x), sizeof((x)), KOMIHASH_SEED)
 #define CALC_HASH_BYTES(x, len) komihash((x), len, KOMIHASH_SEED)
+
+#define CALC_HASH_PRIMITIVE_WITH_SEED(x, s)  komihash((const uint8_t *) &(x), sizeof((x)), (s))
+#define CALC_HASH_BYTES_WITH_SEED(x, len, s) komihash((x), len, (s))
