@@ -8,7 +8,7 @@ WaterWall is a simple core for tunneling and even direct user-server connections
 - [شروع](Begin)
 - [فایل core.json](file-core.json)
 - [فایل config.json](file-config.json)
-- [پورت به پورت مستقیم](Direct-Port-To-Port)
+- [Port to Port Tunnel](Direct-Port-To-Port)
 - [Tls Tunnel](Tls-Tunnel)
 - [PreConnect Node](PreConnect)
 - [Http2 Mux Grpc Nodes](Http2-Mux-Grpc)
