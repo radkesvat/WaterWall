@@ -67,7 +67,7 @@ typedef enum
 
 typedef struct socks5_server_state_s
 {
-    void*_;
+    void *_;
 } socks5_server_state_t;
 
 typedef struct socks5_server_con_state_s
@@ -91,10 +91,9 @@ static void cleanup(socks5_server_con_state_t *cstate, buffer_pool_t *reusepool)
         reuseBuffer(reusepool, cstate->waitbuf);
     }
 }
-static void encapsulateUdpPacket(context_t* c)
+static void encapsulateUdpPacket(context_t *c)
 {
-    shift_buffer_t* packet = c->payload;
-
+    shift_buffer_t *packet = c->payload;
 
     uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
     port          = (port << 8) | (port >> 8);
@@ -127,7 +126,7 @@ static void encapsulateUdpPacket(context_t* c)
 #define ATLEAST(x)                                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \
-        if ((int)bufLen(c->payload) < (x))                                                                                  \
+        if ((int) bufLen(c->payload) < (x))                                                                            \
         {                                                                                                              \
             reuseContextBuffer(c);                                                                                     \
             goto disconnect;                                                                                           \
@@ -288,7 +287,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (bufLen(c->payload) < cstate->need)
         {
             cstate->waitbuf = c->payload;
-            c->payload      = NULL;
+            CONTEXT_PAYLOAD_DROP(c);
             destroyContext(c);
             return;
         }
@@ -299,7 +298,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
         case kSBegin:
             cstate->state = kSAuthMethodsCount;
-            //fallthrough
+            // fallthrough
         case kSAuthMethodsCount: {
             assert(cstate->need == 2);
             uint8_t version = 0;
@@ -521,9 +520,9 @@ static void upStream(tunnel_t *self, context_t *c)
             else
             {
                 reuseContextBuffer(c);
-                //todo (ip filter) socks5 standard says this should whitelist the caller ip
-                // socks5 outbound accepted, udp relay will connect
-                shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
+                // todo (ip filter) socks5 standard says this should whitelist the caller ip
+                //  socks5 outbound accepted, udp relay will connect
+                shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
                 setLen(respbuf, 32);
                 uint8_t *resp = rawBufMut(respbuf);
                 memset(resp, 0, 32);
@@ -631,7 +630,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             cstate->init_sent = false;
             // socks5 outbound failed
-            shift_buffer_t            *respbuf = popBuffer(getContextBufferPool(c));
+            shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
             setLen(respbuf, 32);
             uint8_t *resp = rawBufMut(respbuf);
             memset(resp, 0, 32);
@@ -728,7 +727,7 @@ tunnel_t *newSocks5Server(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
+
     return t;
 }
 api_result_t apiSocks5Server(tunnel_t *self, const char *msg)

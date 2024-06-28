@@ -47,7 +47,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
         context_t *cw     = contextQueuePop(data_queue);
         int        bytes  = (int) bufLen(cw->payload);
         int        nwrite = hio_write(io, cw->payload);
-        cw->payload       = NULL;
+        CONTEXT_PAYLOAD_DROP(cw);
         destroyContext(cw);
         if (nwrite >= 0 && nwrite < bytes)
         {

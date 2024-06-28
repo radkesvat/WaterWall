@@ -135,7 +135,7 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 {
     unsigned int b1_length = bufLen(b1);
     unsigned int b2_length = bufLen(b2);
-    if (b1_length >= b2_length)
+    if (b1_length >= b2_length || lCap(b2) < b1_length)
     {
         concatBuffer(b1, b2);
         reuseBuffer(pool, b2);

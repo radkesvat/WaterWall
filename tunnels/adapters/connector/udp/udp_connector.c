@@ -54,7 +54,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
 
         size_t nwrite = hio_write(cstate->io, c->payload);
-        c->payload    = NULL;
+        CONTEXT_PAYLOAD_DROP(c);
         (void) nwrite;
         // assert(nwrite <= 0  || nwrite ==  bytes);
         destroyContext(c);
@@ -230,7 +230,6 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    
     return t;
 }
 api_result_t apiUdpConnector(tunnel_t *self, const char *msg)

@@ -209,13 +209,8 @@ static void upStream(tunnel_t *self, context_t *c)
     halfduplex_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {
-        // todo (remove) its hard to say but i think it can be romeved and not required anymore
-        if (WW_UNLIKELY(cstate == NULL))
-        {
-            reuseContextBuffer(c);
-            destroyContext(c);
-            return;
-        }
+        assert(cstate != NULL);
+
         shift_buffer_t *buf = c->payload;
 
         switch (cstate->state)
@@ -529,12 +524,8 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->fin)
         {
-            // todo (remove) its hard to say but i think it can be romeved and not required anymore
-            if (WW_UNLIKELY(cstate == NULL))
-            {
-                destroyContext(c);
-                return;
-            }
+            assert(cstate != NULL);
+
             switch (cstate->state)
             {
 

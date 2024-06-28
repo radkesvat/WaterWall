@@ -41,7 +41,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (bufLen(c->payload) < 2)
             {
                 cstate->buf = c->payload;
-                c->payload  = NULL;
+                CONTEXT_PAYLOAD_DROP(c);
                 destroyContext(c);
                 return;
             }
@@ -147,7 +147,6 @@ tunnel_t *newHeaderServer(node_instance_context_t *instance_info)
     t->state              = state;
     t->upStream           = &upStream;
     t->downStream         = &downStream;
-    
 
     return t;
 }

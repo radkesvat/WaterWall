@@ -46,8 +46,8 @@ void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item
 
 static void lock(pipe_line_t *pl)
 {
-    // int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_release);
     int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_relaxed);
+#ifndef RELEASE
     if (0 >= old_refc)
     {
         // this should not happen, otherwise we must change memory order
@@ -55,14 +55,15 @@ static void lock(pipe_line_t *pl)
         LOGF("PipeLine: thread-safety done incorrectly lock()");
         exit(1);
     }
+#endif
 }
 
 static void unlock(pipe_line_t *pl)
 {
-    // int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_acquire);
     int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_relaxed);
     if (old_refc == 1)
     {
+#ifndef RELEASE
         if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
         {
             // this should not happen, otherwise we must change memory order
@@ -70,6 +71,7 @@ static void unlock(pipe_line_t *pl)
             LOGF("PipeLine: thread-safety done incorrectly unlock()");
             exit(1);
         }
+#endif
         free((void *) pl->memptr); // NOLINT
     }
 }
@@ -143,7 +145,6 @@ static void finishLeftSide(pipe_line_t *pl, void *arg)
     }
     context_t *fctx = newFinContext(pl->left_line);
     doneLineUpSide(pl->left_line);
-    // destroyLine(pl->left_line);
     pl->left_line = NULL;
     pl->local_down_stream(pl->self, fctx, pl);
     unlock(pl);
@@ -258,7 +259,6 @@ bool pipeSendToUpStream(pipe_line_t *pl, context_t *c)
     if (c->fin)
     {
         doneLineUpSide(pl->left_line);
-        // destroyLine(pl->left_line);
         pl->left_line = NULL;
 
         bool expected = false;
@@ -350,8 +350,8 @@ static void initLeft(pipe_line_t *pl, void *arg)
     setupLineUpSide(pl->left_line, pipeOnDownLinePaused, pl, pipeOnDownLineResumed);
 }
 
-void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
-                 PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream)
+void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid, PipeLineFlowRoutine local_up_stream,
+                 PipeLineFlowRoutine local_down_stream)
 
 {
     assert(sizeof(struct pipe_line_s) <= kCpuLineCacheSize);
@@ -372,21 +372,21 @@ void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
     uintptr_t ptr = (uintptr_t) malloc(memsize);
 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
-    
+
     // align pointer to line cache boundary
     pipe_line_t *pl = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    *pl             = (pipe_line_t){.memptr            = (void *) ptr,
-                                    .self              = self,
-                                    .left_tid          = left_line->tid,
-                                    .right_tid         = dest_tid,
-                                    .left_line         = left_line,
-                                    .right_line        = NULL,
-                                    .closed            = false,
-                                    .first_sent        = false,
-                                    .refc              = 1,
-                                    .local_up_stream   = local_up_stream,
-                                    .local_down_stream = local_down_stream};
+    *pl = (pipe_line_t){.memptr            = (void *) ptr,
+                        .self              = self,
+                        .left_tid          = left_line->tid,
+                        .right_tid         = dest_tid,
+                        .left_line         = left_line,
+                        .right_line        = NULL,
+                        .closed            = false,
+                        .first_sent        = false,
+                        .refc              = 1,
+                        .local_up_stream   = local_up_stream,
+                        .local_down_stream = local_down_stream};
 
     initLeft(pl, NULL);
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);
