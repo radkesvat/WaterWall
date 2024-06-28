@@ -22,15 +22,14 @@ enum
 typedef struct tcp_listener_state_s
 {
     // settings
-    char    *address;
+    char  *address;
+    char **white_list_raddr;
+    char **black_list_raddr;
     int      multiport_backend;
     uint16_t port_min;
     uint16_t port_max;
-    char   **white_list_raddr;
-    char   **black_list_raddr;
     bool     fast_open;
     bool     no_delay;
-
 } tcp_listener_state_t;
 
 typedef struct tcp_listener_con_state_s
