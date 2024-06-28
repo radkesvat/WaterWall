@@ -1,6 +1,6 @@
-<div dir="rtl">
+# HalfDuplex
 
-# مقدمه
+<div dir="rtl">
 
 قابلیت halfduplex به این معنی است که ما هر کانکشن  تبدیل کنیم به ۲ کانکشن 
 
@@ -380,6 +380,6 @@ password: passwd
 
 
 
-
-
 </div>
+
+[Homepage](.) | [Prev Page](Direct-Trojan) | [Next Page](Load-Balancing)

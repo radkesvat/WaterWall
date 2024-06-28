@@ -1,4 +1,4 @@
-# Reality Tunnel
+# Reality Tunnel Direct
 
 <div dir="rtl">
 
@@ -171,7 +171,4 @@
 <div dir="rtl">
 
 
-
-
-
-
+[Homepage](.) | [Prev Page](Reverse-Tunnel) | [Next Page](Reality-Reverse-Tunnel)

@@ -1,6 +1,6 @@
-<div dir="rtl">
+# LoadBalancing 
 
-# مقدمه
+<div dir="rtl">
 
 اینجا چند روش کاربردی لود بالانسینگ رو توضیح میدم روی کانفیگ های مستقیم و ریورس
 
@@ -233,3 +233,7 @@
 
 
 ادامه این داکیومنت نوشته خواهد شد
+
+</div>
+
+[Homepage](.) | [Prev Page](HalfDuplex-Tunnel-or-Direct) | [Next Page](CDN-Tunnel)

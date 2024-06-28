@@ -1,7 +1,6 @@
+# Reality Tunnel Reverse
 
 <div dir="rtl">
-
-
 
 
 ریورس ریلیتی میشه همون تونل rtt ولی خوب روی واتروال دیگه نباید اختلال های جزیی داشته باشه و همچنین اینجا میتونیم از تمام هسته های cpu سرور استفاده کنیم درصورتی که RTT فقط یک ترد ساپورت میکرد
@@ -377,18 +376,4 @@
 ```
 
 
-<div dir="rtl">
-
-
-
-
-
-
-
-
-
-
-
-
-</div>
-
+[Homepage](.) | [Prev Page](Reality-Direct-Tunnel) | [Next Page](Bgp4-Tunnel-or-Direct)

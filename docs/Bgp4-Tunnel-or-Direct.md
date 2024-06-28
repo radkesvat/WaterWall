@@ -1,3 +1,5 @@
+# Bgp4 Tunnel or Direct
+
 <div dir="rtl">
 
 پروتکل bgp4 که بر اساس استانداردش روی tcp سوار شده ؛ روش ارتباط روتر ها با هم هستش
@@ -115,13 +117,4 @@
 
 </div>
 
-
-
-
-
-
-
-
-
-
-
+[Homepage](.) | [Prev Page](Reality-Reverse-Tunnel) | [Next Page](Direct-Trojan)

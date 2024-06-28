@@ -1,6 +1,7 @@
+# PreConnect Node 
+
 <div dir="rtl">
 
-# preConnect 
 یک node هست که کارش به این صورته که قبل از کاربر کاکشن رو هند شیک میکنه و به اصطلاح میزاره داخل آب نمک
 
 استفاده از این نود باعث میشه هند شیک تایم روی تونل کم بشه حتی نصف حالتی که این node در کانفیگ نیست
@@ -131,3 +132,5 @@ preConnectClient هم مثل بغیه node ها جفت preConnectServer هست
 
 
 </div>
+
+[Homepage](.) | [Prev Page](Tls-Tunnel) | [Next Page](Http2-Mux-Grpc)

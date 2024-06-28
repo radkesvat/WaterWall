@@ -1,3 +1,5 @@
+# Reverse Tunnel
+
 <div dir="rtl">
 
 روش ریورس رو همه میشناسن ؛ توی روش اول که پورت به پورت مستقیم تونل میکردیم
@@ -367,10 +369,5 @@
 }
 ```
 
-<div dir="rtl">
-
-
-</div>
-
-
+[Homepage](.) | [Prev Page](Http2-Mux-Grpc) | [Next Page](Reality-Direct-Tunnel)
 

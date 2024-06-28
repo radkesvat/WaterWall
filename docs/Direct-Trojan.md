@@ -1,3 +1,5 @@
+# Trojan Protocol
+
 <div dir="rtl">
 
 این روش برای مستقیم هست و نیاز به سرور ایران نداره ؛ باهاش میتونید کانفیگ تروجان بسازید ولی خوب این با تروجانی که روی هسته های دیگه میسازید فرق خواهد کرد
@@ -130,3 +132,4 @@
 
 </div>
 
+[Homepage](.) | [Prev Page](Bgp4-Tunnel-or-Direct) | [Next Page](HalfDuplex-Tunnel-or-Direc)

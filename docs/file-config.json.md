@@ -1,5 +1,6 @@
 <div dir="rtl">
 
+# فایل config.json
 
 در این فایل ما روش تونلی که میخواهیم استفاده کنیم رو توصیف میکنم 
 
@@ -29,6 +30,4 @@
 
 </div>
 
-
-
-
+[Homepage](.) | [Prev Page](file-core.json) | [Next Page](Direct-Port-To-Port)
