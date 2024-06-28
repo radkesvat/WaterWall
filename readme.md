@@ -11,7 +11,7 @@ Waterwall!
 
 A simple core for tunneling and even direct user-server connections. based on high-performance, fully customizeable nodes for creating any kind of protocol without writing code for it.
 
-To start please read the [docs](https://radkesvat.github.io/WaterWall/). (The documents are currently only in Persian language.)
+To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (The documents are currently only in Persian language.)
 
 # Donation
 
