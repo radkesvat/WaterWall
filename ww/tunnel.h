@@ -61,7 +61,7 @@ enum
     setting them to NULL can be removed on release build since the assert is also
     removed
 */
-#if defined(RELEASE) && false
+#if defined(RELEASE)
 #define LSTATE_I_DROP(x, y)                                                                                            \
     do                                                                                                                 \
     {                                                                                                                  \
