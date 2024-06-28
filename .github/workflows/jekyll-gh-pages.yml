@@ -5,7 +5,8 @@ on:
   # Runs on pushes targeting the default branch
   push:
     branches: ["main"]
-
+    paths:
+      - "docs/**"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -25,6 +26,9 @@ jobs:
   # Build job
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,19 +38,21 @@ jobs:
           ruby-version: '3.3' # Not needed with a .ruby-version file
           bundler-cache: true # runs 'bundle install' and caches installed gems automatically
           cache-version: 0 # Increment this number if you need to re-download cached gems
+          working-directory: '${{ github.workspace }}/docs'
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Build with Jekyll
-        uses: actions/jekyll-build-pages@v1
         # Outputs to the './_site' directory by default
-        run: bundle exec jekyll build ./docs/ --baseurl "${{ steps.pages.outputs.base_path }}"
+        run: |
+          bundle exec jekyll build --baseurl "${{ steps.pages.outputs.base_path }}"
         env:
           JEKYLL_ENV: production
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "docs/_site/"
+          path: "docs/_site/"  
+
   # Deployment job
   deploy:
     environment:
