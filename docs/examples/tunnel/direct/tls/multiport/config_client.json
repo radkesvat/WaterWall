@@ -1,0 +1,50 @@
+{
+    "name": "config_tls_tunnel_client_multiport",
+    "nodes": [
+        {
+            "name": "inbound",
+            "type": "TcpListener",
+            "settings": {
+                "address": "0.0.0.0",
+                "port": [80, 65535],
+                "nodelay": true
+            },
+            "next": "header"
+        },
+        {
+            "name": "header",
+            "type": "HeaderClient",
+            "settings": {
+                "data": "src_context->port"
+            },
+            "next": "pre_client"
+        },
+        {
+            "name": "pre_client",
+            "type": "PreConnectClient",
+            "settings": {
+                "minimum-unused": 8
+            },
+            "next": "ssl_client"
+        },
+        {
+            "name": "ssl_client",
+            "type": "OpenSSLClient",
+            "settings": {
+                "sni": "mydomain.com",
+                "verify": true,
+                "alpn": "http/1.1"
+            },
+            "next": "tcp_outbound"
+        },
+        {
+            "name": "tcp_outbound",
+            "type": "TcpConnector",
+            "settings": {
+                "nodelay": true,
+                "address": "mydomain.com",
+                "port": 443
+            }
+        }
+    ]
+}

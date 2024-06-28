@@ -5,7 +5,7 @@ WaterWall is a simple core for tunneling and even direct user-server connections
 
 ## Contents
 
-<!-- - [شروع](Begin)
+- [شروع](Begin)
 - [فایل core.json](file-core.json)
 - [فایل config.json](file-config.json)
 - [پورت به پورت مستقیم](Direct-Port-To-Port)
@@ -19,4 +19,4 @@ WaterWall is a simple core for tunneling and even direct user-server connections
 - [Direct Trojan Protocol with Anti tls in tls](Direct-Trojan)
 - [HalfDuplex Tunnel or Direct](HalfDuplex-Tunnel-or-Direct)
 - [Load balancing](Load-Balancing)
-- [CDN Tunnel Direct or Reverse](CDN-Tunnel) -->
+- [CDN Tunnel Direct or Reverse](CDN-Tunnel)
