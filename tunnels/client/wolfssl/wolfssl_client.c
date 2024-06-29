@@ -37,6 +37,7 @@ enum sslstatus
     kSslstatusWantIo,
     kSslstatusFail
 };
+
 static enum sslstatus getSslStatus(SSL *ssl, int n)
 {
     switch (SSL_get_error(ssl, n))
@@ -56,14 +57,10 @@ static enum sslstatus getSslStatus(SSL *ssl, int n)
 static void cleanup(tunnel_t *self, context_t *c)
 {
     wssl_client_con_state_t *cstate = CSTATE(c);
-    if (cstate != NULL)
-    {
-        SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
-        destroyContextQueue(cstate->queue);
-
-        free(cstate);
-        CSTATE_DROP(c);
-    }
+    SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
+    destroyContextQueue(cstate->queue);
+    free(cstate);
+    CSTATE_DROP(c);
 }
 
 static void flushWriteQueue(tunnel_t *self, context_t *c)

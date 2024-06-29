@@ -53,6 +53,7 @@ enum sslstatus
     kSslstatusWantIo,
     kSslstatusFail
 };
+
 static enum sslstatus getSslStatus(SSL *ssl, int n)
 {
     switch (SSL_get_error(ssl, n))

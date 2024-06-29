@@ -131,7 +131,6 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
 static void cleanup(tunnel_t *self, context_t *c)
 {
     oss_server_con_state_t *cstate = CSTATE(c);
-    assert(cstate != NULL);
     destroyBufferStream(cstate->fallback_buf);
     SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
     free(cstate);

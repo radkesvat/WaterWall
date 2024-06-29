@@ -65,18 +65,16 @@ typedef struct reality_server_con_state_s
 static void cleanup(tunnel_t *self, context_t *c)
 {
     reality_server_con_state_t *cstate = CSTATE(c);
-    if (cstate != NULL)
-    {
-        destroyBufferStream(cstate->read_stream);
-        EVP_CIPHER_CTX_free(cstate->encryption_context);
-        EVP_CIPHER_CTX_free(cstate->decryption_context);
-        EVP_MD_CTX_free(cstate->sign_context);
-        EVP_MD_free(cstate->msg_digest);
-        EVP_PKEY_free(cstate->sign_key);
 
-        free(cstate);
-        CSTATE_DROP(c);
-    }
+    destroyBufferStream(cstate->read_stream);
+    EVP_CIPHER_CTX_free(cstate->encryption_context);
+    EVP_CIPHER_CTX_free(cstate->decryption_context);
+    EVP_MD_CTX_free(cstate->sign_context);
+    EVP_MD_free(cstate->msg_digest);
+    EVP_PKEY_free(cstate->sign_key);
+
+    free(cstate);
+    CSTATE_DROP(c);
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -365,7 +363,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     }
 
     hash_t  hash_next = CALC_HASH_BYTES(dest_node_name, strlen(dest_node_name));
-    node_t *next_node = getNode(instance_info->node_manager_config,hash_next);
+    node_t *next_node = getNode(instance_info->node_manager_config, hash_next);
     if (next_node == NULL)
     {
         LOGF("RealityServer: destination node not found");

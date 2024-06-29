@@ -302,6 +302,7 @@ fail:;
     self->dw->downStream(self->dw, newFinContextFrom(c));
     destroyContext(c);
 }
+
 static void downStream(tunnel_t *self, context_t *c)
 {
     tcp_connector_con_state_t *cstate = CSTATE(c);

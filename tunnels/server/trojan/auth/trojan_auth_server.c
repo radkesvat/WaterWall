@@ -37,6 +37,7 @@ struct timer_eventdata
     tunnel_t  *self;
     context_t *c;
 };
+
 static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
 {
     struct timer_eventdata *result = malloc(sizeof(struct timer_eventdata));

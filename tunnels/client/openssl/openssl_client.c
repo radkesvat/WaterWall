@@ -37,6 +37,7 @@ enum sslstatus
     kSslstatusWantIo,
     kSslstatusFail
 };
+
 static enum sslstatus getSslStatus(SSL *ssl, int n)
 {
     switch (SSL_get_error(ssl, n))
@@ -56,14 +57,10 @@ static enum sslstatus getSslStatus(SSL *ssl, int n)
 static void cleanup(tunnel_t *self, context_t *c)
 {
     oss_client_con_state_t *cstate = CSTATE(c);
-    if (cstate != NULL)
-    {
-        SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
-        destroyContextQueue(cstate->queue);
-
-        free(cstate);
-        CSTATE_DROP(c);
-    }
+    SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
+    destroyContextQueue(cstate->queue);
+    free(cstate);
+    CSTATE_DROP(c);
 }
 
 static void flushWriteQueue(tunnel_t *self, context_t *c)
@@ -156,13 +153,13 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(oss_client_con_state_t));
+            CSTATE_MUT(c)                  = malloc(sizeof(oss_client_con_state_t));
             oss_client_con_state_t *cstate = CSTATE(c);
             memset(cstate, 0, sizeof(oss_client_con_state_t));
-            cstate->rbio                   = BIO_new(BIO_s_mem());
-            cstate->wbio                   = BIO_new(BIO_s_mem());
-            cstate->ssl                    = SSL_new(state->ssl_context);
-            cstate->queue                  = newContextQueue();
+            cstate->rbio  = BIO_new(BIO_s_mem());
+            cstate->wbio  = BIO_new(BIO_s_mem());
+            cstate->ssl   = SSL_new(state->ssl_context);
+            cstate->queue = newContextQueue();
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
