@@ -1,11 +1,13 @@
 #include "tcp_connector.h"
 #include "basic_types.h"
+#include "frand.h"
 #include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "sync_dns.h"
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
+#include "utils/mathutils.h"
 #include "utils/sockutils.h"
 
 static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
@@ -242,18 +244,61 @@ static void upStream(tunnel_t *self, context_t *c)
                 break;
             }
 
-            // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
-            // LOGD("TcpConnector: initiating connection");
-
-            if (dest_ctx->address_type == kSatDomainName && ! dest_ctx->domain_resolved)
+            switch (dest_ctx->address_type)
             {
-                if (! resolveContextSync(dest_ctx))
+            case kSatDomainName:
+                if (! dest_ctx->domain_resolved)
                 {
-                    CSTATE_DROP(c);
-                    cleanup(cstate, false);
-                    goto fail;
+                    if (! resolveContextSync(dest_ctx))
+                    {
+                        CSTATE_DROP(c);
+                        cleanup(cstate, false);
+                        goto fail;
+                    }
                 }
+                break;
+
+            case kSatIPV4:
+                if (state->outbound_ip_range > 0)
+                {
+                    unsigned int seed = fastRand();
+                    // no probelm if overflows
+#ifdef OS_UNIX
+                    const uint32_t large_random = 1 + (((uint32_t) rand_r(&seed)) % state->outbound_ip_range);
+#else
+                    const uint32_t large_random = 1 + (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
+#endif
+                    uint32_t calc = htonl(ntohl((uint32_t) dest_ctx->address.sin.sin_addr.s_addr) + large_random);
+                    memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
+                }
+                break;
+            case kSatIPV6:
+
+                if (state->outbound_ip_range > 0)
+                {
+                    unsigned int seed = fastRand();
+                    // no probelm if overflows
+#ifdef OS_UNIX
+                    const uint64_t large_random = 1 + (((uint64_t) rand_r(&seed)) % state->outbound_ip_range);
+#else
+                    const uint64_t large_random = 1 + (((uint64_t) rand_s(&seed)) % state->outbound_ip_range);
+#endif
+                    uint64_t *addr_ptr = (uint64_t *) &dest_ctx->address.sin6.sin6_addr;
+                    addr_ptr += 64 / (sizeof(uint64_t));
+                    uint64_t calc = htonll(ntohll(*addr_ptr) + large_random);
+                    memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
+                }
+
+                break;
+
+            default:
+                LOGE("TcpConnector: invalid destination address type");
+                CSTATE_DROP(c);
+                cleanup(cstate, false);
+                goto fail;
             }
+
+            // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
             hloop_t *loop   = loops[c->line->tid];
             int      sockfd = socket(dest_ctx->address.sa.sa_family, SOCK_STREAM, 0);
@@ -269,7 +314,6 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 tcp_nodelay(sockfd, 1);
             }
-
 
             if (state->tcp_fast_open)
             {
@@ -375,7 +419,90 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
     }
     if (state->dest_addr_selected.status == kDvsConstant)
     {
-        state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
+        char *slash = strchr(state->dest_addr_selected.value_ptr, '/');
+        if (slash != NULL)
+        {
+            *slash                                 = '\0';
+            int prefix_length                      = atoi(slash + 1);
+            state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
+
+            if (0 > prefix_length || prefix_length > 64) // 64-bits are the maximum
+            {
+                LOGF("TcpConnector: outbound ip/subnet range is invalid");
+                exit(1);
+            }
+
+            if (state->constant_dest_addr.address_type != kSatIPV6)
+            {
+                if (prefix_length > 32)
+                {
+                    LOGF("TcpConnector: outbound ip/subnet range is invalid");
+                    exit(1);
+                }
+
+                if (prefix_length > 0)
+                {
+                    state->outbound_ip_range = htonl(0xFFFFFFFF & (0x1 << (32 - prefix_length)));
+                    state->outbound_ip_range -= 1;
+                }
+                else
+                {
+                    state->outbound_ip_range = 0;
+                }
+                state->outbound_ip_range = 0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length));
+
+                uint32_t mask;
+                if (prefix_length > 0)
+                {
+                    mask = htonl(0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length)));
+                }
+                else
+                {
+                    mask = 0;
+                }
+                uint32_t calc = ((uint32_t) state->constant_dest_addr.address.sin.sin_addr.s_addr) & mask;
+                memcpy(&(state->constant_dest_addr.address.sin.sin_addr), &calc, sizeof(struct in_addr));
+            }
+            else
+            {
+                if (64 > prefix_length) // limit to 64
+                {
+                    LOGF("TcpConnector: outbound ip/subnet range is invalid");
+                    exit(1);
+                }
+
+                if (prefix_length > 0)
+                {
+                    if (prefix_length == 64)
+                    {
+                        state->outbound_ip_range = 0xFFFFFFFFFFFFFFFFULL;
+                    }
+                    else
+                    {
+                        state->outbound_ip_range = htonl(0xFFFFFFFFFFFFFFFFULL & (0x1ULL << (128 - prefix_length)));
+                        state->outbound_ip_range -= 1;
+                    }
+                }
+                else
+                {
+                    state->outbound_ip_range = 0;
+                }
+
+                uint8_t *addr_ptr = (uint8_t *) &(state->constant_dest_addr.address.sin6.sin6_addr);
+
+                for (int i = 0; i < 16; i++)
+                {
+                    int bits    = prefix_length >= 8 ? 8 : prefix_length;
+                    addr_ptr[i] = bits == 0 ? 0 : addr_ptr[i] & (0xFF << (8 - bits));
+                    prefix_length -= bits;
+                }
+            }
+        }
+        else
+        {
+            state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
+        }
+
         if (state->constant_dest_addr.address_type == kSatDomainName)
         {
             socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
@@ -383,6 +510,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
         }
         else
         {
+
             sockaddr_set_ip(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
         }
     }

@@ -22,3 +22,11 @@ static inline ssize_t max(ssize_t x, ssize_t y)
 #define SMAXOF(t) (((0x1ULL << ((sizeof(t) * 8ULL) - 1ULL)) - 1ULL) | (0x7ULL << ((sizeof(t) * 8ULL) - 4ULL)))
 
 #define MAXOF(t) ((unsigned long long) (ISSIGNED(t) ? SMAXOF(t) : UMAXOF(t)))
+
+#if __BIG_ENDIAN__
+#define htonll(x) (x)
+#define ntohll(x) (x)
+#else
+#define htonll(x) (((uint64_t) htonl((x) & 0xFFFFFFFF) << 32) | htonl((x) >> 32)) // NOLINT
+#define ntohll(x) (((uint64_t) ntohl((x) & 0xFFFFFFFF) << 32) | ntohl((x) >> 32)) // NOLINT
+#endif

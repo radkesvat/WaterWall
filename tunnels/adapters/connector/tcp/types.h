@@ -17,11 +17,12 @@ typedef struct tcp_connector_state_s
     // settings
     bool             tcp_no_delay;
     bool             tcp_fast_open;
-    bool             reuse_addr;
+    bool             reuse_addr; /* 8-bit pad*/
     int              domain_strategy;
     dynamic_value_t  dest_addr_selected;
     dynamic_value_t  dest_port_selected;
     socket_context_t constant_dest_addr;
+    uint64_t         outbound_ip_range;
 
 } tcp_connector_state_t;
 
