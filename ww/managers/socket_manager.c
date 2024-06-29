@@ -37,7 +37,8 @@ typedef struct socket_filter_s
 #define i_use_cmp                   // NOLINT
 #include "stc/vec.h"
 
-#define SUPPORT_V6 false
+#define SUPPORT_V6 true
+
 enum
 {
     kSoOriginalDest          = 80,
@@ -140,7 +141,7 @@ static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned 
     result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    result = result && execCmd(b);
+    result = result && execCmd(b).exit_code == 0;
 #endif
     return result;
 }
@@ -153,7 +154,7 @@ static bool redirectPortRangeUdp(unsigned int pmin, unsigned int pmax, unsigned 
     result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    result = result && execCmd(b);
+    result = result && execCmd(b).exit_code == 0;
 #endif
     return result;
 }
@@ -166,7 +167,7 @@ static bool redirectPortTcp(unsigned int port, unsigned int to)
     result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u -j REDIRECT --to-port %u", port, to);
-    result = result && execCmd(b);
+    result = result && execCmd(b).exit_code == 0;
 #endif
     return result;
 }
@@ -179,7 +180,7 @@ static bool redirectPortUdp(unsigned int port, unsigned int to)
     result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u -j REDIRECT --to-port %u", port, to);
-    result = result && execCmd(b);
+    result = result && execCmd(b).exit_code == 0;
 #endif
     return result;
 }
@@ -205,8 +206,8 @@ static bool resetIptables(bool safe_mode)
     result = result && execCmd("iptables -t nat -F").exit_code == 0;
     result = result && execCmd("iptables -t nat -X").exit_code == 0;
 #if SUPPORT_V6
-    result = result && execCmd("ip6tables -t nat -F");
-    result = result && execCmd("ip6tables -t nat -X");
+    result = result && execCmd("ip6tables -t nat -F").exit_code == 0;
+    result = result && execCmd("ip6tables -t nat -X").exit_code == 0;
 #endif
 
     return result;
@@ -247,7 +248,10 @@ static inline bool needsV4SocketStrategy(sockaddr_u *peer_addr)
         {
             use_v4_strategy = true;
         }
-        use_v4_strategy = false;
+        else
+        {
+            use_v4_strategy = false;
+        }
     }
     return use_v4_strategy;
 }
@@ -486,13 +490,13 @@ static void noTcpSocketConsumerFound(hio_t *io)
 
 static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t option)
 {
-    const bool is_v4 = addr->sa.sa_family == AF_INET;
+    const bool     is_v4 = addr->sa.sa_family == AF_INET;
     struct in_addr ipv4_addr;
 
     if (is_v4)
     {
         ipv4_addr = addr->sin.sin_addr;
-v4checks:
+    v4checks:
         for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
 
