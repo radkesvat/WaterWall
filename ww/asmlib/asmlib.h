@@ -12,6 +12,20 @@
 *
 * (c) Copyright 2003 - 2013 by Agner Fog. 
 * GNU General Public License http://www.gnu.org/licenses/gpl.html
+
+                   Special Exception Notice
+
+The ASMLib library by Agner Fog, originally licensed under the GNU General Public License (GPL) v3,
+can be used under the terms of the GNU Lesser General Public License (LGPL) v3 for the Waterwall project.
+
+This special permission was explicitly granted by Agner Fog via email correspondence on 19 April 2024.
+
+This means that the Waterwall project, available on GitHub at https://github.com/radkesvat/WaterWall,
+may use, modify, and distribute ASMLib under the terms of the LGPL v3,
+while the rest of the project remains under its respective licenses.
+
+For any further inquiries, please submit an issue on GitHub at https://github.com/radkesvat/WaterWall
+
 *****************************************************************************/
 
 
