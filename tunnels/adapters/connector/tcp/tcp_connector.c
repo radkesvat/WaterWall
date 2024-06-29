@@ -247,10 +247,8 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCdvsFromDest:
                 break;
             }
-
-            switch (dest_ctx->address_type)
+            if (dest_ctx->address_type == kSatDomainName)
             {
-            case kSatDomainName:
                 if (! dest_ctx->domain_resolved)
                 {
                     if (! resolveContextSync(dest_ctx))
@@ -260,46 +258,53 @@ static void upStream(tunnel_t *self, context_t *c)
                         goto fail;
                     }
                 }
-                break;
+            }
+            if (state->outbound_ip_range > 0)
+            {
+                unsigned int seed = fastRand();
 
-            case kSatIPV4:
-                if (state->outbound_ip_range > 0)
+                switch (dest_ctx->address.sa.sa_family)
                 {
-                    unsigned int seed = fastRand();
+                case AF_INET:
                     // no probelm if overflows
+                    {
 #ifdef OS_UNIX
-                    const uint32_t large_random = (((uint32_t) rand_r(&seed)) % state->outbound_ip_range);
+                        const uint32_t large_random = (((uint32_t) rand_r(&seed)) % state->outbound_ip_range);
 #else
-                    const uint32_t large_random = (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
+                        const uint32_t large_random = (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
 #endif
-                    uint32_t calc = htonl(ntohl((uint32_t) dest_ctx->address.sin.sin_addr.s_addr) + large_random);
-                    memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
-                }
-                break;
-            case kSatIPV6:
+                        uint32_t calc = ntohl((uint32_t) dest_ctx->address.sin.sin_addr.s_addr);
+                        calc          = calc & ~(state->outbound_ip_range - 1);
+                        calc          = htonl(calc + large_random);
 
-                if (state->outbound_ip_range > 0)
-                {
-                    unsigned int seed = fastRand();
+                        memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
+                    }
+                    break;
+                case AF_INET6:
                     // no probelm if overflows
+                    {
 #ifdef OS_UNIX
-                    const uint64_t large_random = (((uint64_t) rand_r(&seed)) % state->outbound_ip_range);
+                        const uint64_t large_random = (((uint64_t) rand_r(&seed)) % state->outbound_ip_range);
 #else
-                    const uint64_t large_random = (((uint64_t) rand_s(&seed)) % state->outbound_ip_range);
+                        const uint64_t large_random = (((uint64_t) rand_s(&seed)) % state->outbound_ip_range);
 #endif
-                    uint64_t *addr_ptr = (uint64_t *) &dest_ctx->address.sin6.sin6_addr;
-                    addr_ptr += 64 / (sizeof(uint64_t));
-                    uint64_t calc = htonll(ntohll(*addr_ptr) + large_random);
-                    memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
+                        uint64_t *addr_ptr = (uint64_t *) &dest_ctx->address.sin6.sin6_addr;
+                        addr_ptr += 1;
+
+                        uint64_t calc = ntohll(*addr_ptr);
+                        calc          = calc & ~(state->outbound_ip_range - 1);
+                        calc          = htonll(calc + large_random);
+                        
+                        memcpy(8+((char*)&(dest_ctx->address.sin6.sin6_addr)), &calc, sizeof(calc));
+                    }
+                    break;
+
+                default:
+                    LOGE("TcpConnector: invalid destination address family");
+                    CSTATE_DROP(c);
+                    cleanup(cstate, false);
+                    goto fail;
                 }
-
-                break;
-
-            default:
-                LOGE("TcpConnector: invalid destination address type");
-                CSTATE_DROP(c);
-                cleanup(cstate, false);
-                goto fail;
             }
 
             // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
@@ -430,7 +435,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
             int prefix_length                      = atoi(slash + 1);
             state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
 
-            if (0 > prefix_length || prefix_length > 64) // 64-bits are the maximum
+            if (prefix_length < 0)
             {
                 LOGF("TcpConnector: outbound ip/subnet range is invalid");
                 exit(1);
@@ -443,29 +448,27 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
                     LOGF("TcpConnector: outbound ip/subnet range is invalid");
                     exit(1);
                 }
+                else if (prefix_length == 32)
+                {
 
-                if (prefix_length > 0)
-                {
-                    state->outbound_ip_range = htonl(0xFFFFFFFF & (0x1 << (32 - prefix_length)));
-                    state->outbound_ip_range -= 1;
-                }
-                else
-                {
                     state->outbound_ip_range = 0;
                 }
-                state->outbound_ip_range = 0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length));
-
-                uint32_t mask;
-                if (prefix_length > 0)
-                {
-                    mask = htonl(0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length)));
-                }
                 else
                 {
-                    mask = 0;
+                    state->outbound_ip_range = (0xFFFFFFFF & (0x1 << (32 - prefix_length)));
                 }
-                uint32_t calc = ((uint32_t) state->constant_dest_addr.address.sin.sin_addr.s_addr) & mask;
-                memcpy(&(state->constant_dest_addr.address.sin.sin_addr), &calc, sizeof(struct in_addr));
+
+                // uint32_t mask;
+                // if (prefix_length > 0)
+                // {
+                //     mask = htonl(0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length)));
+                // }
+                // else
+                // {
+                //     mask = 0;
+                // }
+                // uint32_t calc = ((uint32_t) state->constant_dest_addr.address.sin.sin_addr.s_addr) & mask;
+                // memcpy(&(state->constant_dest_addr.address.sin.sin_addr), &calc, sizeof(struct in_addr));
             }
             else
             {
@@ -474,32 +477,23 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
                     LOGF("TcpConnector: outbound ip/subnet range is invalid");
                     exit(1);
                 }
-
-                if (prefix_length > 0)
+                else if (prefix_length == 64)
                 {
-                    if (prefix_length == 64)
-                    {
-                        state->outbound_ip_range = 0xFFFFFFFFFFFFFFFFULL;
-                    }
-                    else
-                    {
-                        state->outbound_ip_range = htonl(0xFFFFFFFFFFFFFFFFULL & (0x1ULL << (128 - prefix_length)));
-                        state->outbound_ip_range -= 1;
-                    }
+                    state->outbound_ip_range = 0xFFFFFFFFFFFFFFFFULL;
                 }
                 else
                 {
-                    state->outbound_ip_range = 0;
+                    state->outbound_ip_range = (0xFFFFFFFFFFFFFFFFULL & (0x1ULL << (128 - prefix_length)));
                 }
 
-                uint8_t *addr_ptr = (uint8_t *) &(state->constant_dest_addr.address.sin6.sin6_addr);
+                // uint8_t *addr_ptr = (uint8_t *) &(state->constant_dest_addr.address.sin6.sin6_addr);
 
-                for (int i = 0; i < 16; i++)
-                {
-                    int bits    = prefix_length >= 8 ? 8 : prefix_length;
-                    addr_ptr[i] = bits == 0 ? 0 : addr_ptr[i] & (0xFF << (8 - bits));
-                    prefix_length -= bits;
-                }
+                // for (int i = 0; i < 16; i++)
+                // {
+                //     int bits    = prefix_length >= 8 ? 8 : prefix_length;
+                //     addr_ptr[i] = bits == 0 ? 0 : addr_ptr[i] & (0xFF << (8 - bits));
+                //     prefix_length -= bits;
+                // }
             }
         }
         else
