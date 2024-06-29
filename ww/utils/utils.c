@@ -433,7 +433,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error:whitelist %d : \"%s\" is not a valid ip address",
+            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: \"%s\" is not a valid ip address",
                          ipc);
         }
         return false;
