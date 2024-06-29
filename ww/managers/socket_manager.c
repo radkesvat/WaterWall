@@ -1,6 +1,5 @@
 #include "socket_manager.h"
 #include "basic_types.h"
-#include "buffer_pool.h"
 #include "frand.h"
 #include "generic_pool.h"
 #include "hloop.h"
@@ -29,6 +28,7 @@ typedef struct socket_filter_s
     socket_filter_option_t option;
     tunnel_t              *tunnel;
     onAccept               cb;
+    bool                   v6_dualstack;
 
 } socket_filter_t;
 
@@ -134,47 +134,54 @@ void destroyUdpPayload(udp_payload_t *upl)
 
 static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
-    char b[300];
+    char b[256];
+    bool result = true;
+    sprintf(b, "iptables -t nat -A PREROUTING -p TCP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
+    result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    execCmd(b);
+    result = result && execCmd(b);
 #endif
-
-    sprintf(b, "iptables -t nat -A PREROUTING -p TCP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    return execCmd(b).exit_code == 0;
+    return result;
 }
 
 static bool redirectPortRangeUdp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
-    char b[300];
+    char b[256];
+    bool result = true;
+    sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
+    result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    execCmd(b);
+    result = result && execCmd(b);
 #endif
-    sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    return execCmd(b).exit_code == 0;
+    return result;
 }
 
 static bool redirectPortTcp(unsigned int port, unsigned int to)
 {
-    char b[300];
+    char b[256];
+    bool result = true;
+    sprintf(b, "iptables -t nat -A PREROUTING -p TCP --dport %u -j REDIRECT --to-port %u", port, to);
+    result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u -j REDIRECT --to-port %u", port, to);
-    execCmd(b);
+    result = result && execCmd(b);
 #endif
-    sprintf(b, "iptables -t nat -A PREROUTING -p TCP --dport %u -j REDIRECT --to-port %u", port, to);
-    return execCmd(b).exit_code == 0;
+    return result;
 }
 
 static bool redirectPortUdp(unsigned int port, unsigned int to)
 {
-    char b[300];
+    char b[256];
+    bool result = true;
+    sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u -j REDIRECT --to-port %u", port, to);
+    result = result && execCmd(b).exit_code == 0;
 #if SUPPORT_V6
     sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u -j REDIRECT --to-port %u", port, to);
-    execCmd(b);
+    result = result && execCmd(b);
 #endif
-    sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u -j REDIRECT --to-port %u", port, to);
-    return execCmd(b).exit_code == 0;
+    return result;
 }
 
 static bool resetIptables(bool safe_mode)
@@ -191,13 +198,18 @@ static bool resetIptables(bool safe_mode)
         char msg[] = "SocketManager: clearing iptables nat rules";
         LOGD(msg);
     }
+    bool result = true;
 
-#if SUPPORT_V6
-    execCmd("ip6tables -t nat -F");
-    execCmd("ip6tables -t nat -X");
-#endif
     // todo (async unsafe) this works but should be replaced with a asyncsafe execcmd function
-    return execCmd("iptables -t nat -F").exit_code == 0 && execCmd("iptables -t nat -X").exit_code == 0;
+    // probably do it with fork?
+    result = result && execCmd("iptables -t nat -F").exit_code == 0;
+    result = result && execCmd("iptables -t nat -X").exit_code == 0;
+#if SUPPORT_V6
+    result = result && execCmd("ip6tables -t nat -F");
+    result = result && execCmd("ip6tables -t nat -X");
+#endif
+
+    return result;
 }
 static void exitHook(void)
 {
@@ -214,6 +226,30 @@ static void signalHandler(int signum)
         exitHook();
     }
     raise(signum);
+}
+
+#ifndef IN6_IS_ADDR_V4MAPPED
+#define IN6_IS_ADDR_V4MAPPED(a)                                                                                        \
+    ((((a)->s6_words[0]) == 0) && (((a)->s6_words[1]) == 0) && (((a)->s6_words[2]) == 0) &&                            \
+     (((a)->s6_words[3]) == 0) && (((a)->s6_words[4]) == 0) && (((a)->s6_words[5]) == 0xFFFF))
+#endif
+
+static inline bool needsV4SocketStrategy(sockaddr_u *peer_addr)
+{
+    bool use_v4_strategy;
+    if (peer_addr->sa.sa_family == AF_INET)
+    {
+        use_v4_strategy = true;
+    }
+    else
+    {
+        if (IN6_IS_ADDR_V4MAPPED(&(peer_addr->sin6.sin6_addr)))
+        {
+            use_v4_strategy = true;
+        }
+        use_v4_strategy = false;
+    }
+    return use_v4_strategy;
 }
 
 static inline int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr,
@@ -301,7 +337,7 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
             fprintf(stderr, "Invalid subnet mask length.\n");
             return -1;
         }
-        
+
         for (int i = 0; i < 16; i++)
         {
             int bits                     = prefix_length >= 8 ? 8 : prefix_length;
@@ -451,12 +487,16 @@ static void noTcpSocketConsumerFound(hio_t *io)
 static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t option)
 {
     const bool is_v4 = addr->sa.sa_family == AF_INET;
+    struct in_addr ipv4_addr;
+
     if (is_v4)
     {
+        ipv4_addr = addr->sin.sin_addr;
+v4checks:
         for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
 
-            if (checkIPRange4(addr->sin.sin_addr, *(struct in_addr *) &(option.white_list_parsed[i].ip_bytes_buf),
+            if (checkIPRange4(ipv4_addr, *(struct in_addr *) &(option.white_list_parsed[i].ip_bytes_buf),
                               *(struct in_addr *) &(option.white_list_parsed[i].mask_bytes_buf)))
             {
                 return true;
@@ -465,6 +505,12 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
     }
     else
     {
+        if (needsV4SocketStrategy(addr))
+        {
+            memcpy(&ipv4_addr, &(addr->sin6.sin6_addr.s6_addr[12]), sizeof(ipv4_addr));
+            goto v4checks;
+        }
+
         for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
 
@@ -589,9 +635,12 @@ static void onAcceptTcpMultiPort(hio_t *io)
 {
 #ifdef OS_UNIX
 
-    unsigned char pbuf[28] = {0};
-    socklen_t     size     = 16; // todo (ipv6) value is 28 but requires dual stack
-    if (getsockopt(hio_fd(io), IPPROTO_IP, kSoOriginalDest, &(pbuf[0]), &size) < 0)
+    bool          use_v4_strategy = needsV4SocketStrategy((sockaddr_u *) hio_peeraddr(io));
+    unsigned char pbuf[28]        = {0};
+    socklen_t     size            = use_v4_strategy ? 16 : 24;
+
+    int level = use_v4_strategy ? IPPROTO_IP : IPPROTO_IPV6;
+    if (getsockopt(hio_fd(io), level, kSoOriginalDest, &(pbuf[0]), &size) < 0)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
@@ -646,6 +695,7 @@ static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, c
                 ports_overlapped[main_port] = 1;
                 if (filter->listen_io != NULL)
                 {
+                    filter->v6_dualstack = hio_localaddr(filter->listen_io)->sa_family == AF_INET6;
                     break;
                 }
 
@@ -686,6 +736,8 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p, "TCP");
             continue;
         }
+        filter->v6_dualstack = hio_localaddr(filter->listen_io)->sa_family == AF_INET6;
+
         i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
     }
@@ -707,6 +759,7 @@ static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
         LOGF("SocketManager: stopping due to null socket handle");
         exit(1);
     }
+    filter->v6_dualstack = hio_localaddr(filter->listen_io)->sa_family == AF_INET6;
 }
 static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
 {
@@ -1043,10 +1096,14 @@ socket_manager_state_t *createSocketManager(hloop_t *event_loop, uint8_t tid)
         hhybridmutex_init(&(state->tcp_pools[i].mutex));
     }
 
+#ifdef OS_UNIX
+
     state->iptables_installed = checkCommandAvailable("iptables");
     state->lsof_installed     = checkCommandAvailable("lsof");
 #if SUPPORT_V6
     state->ip6tables_installed = checkCommandAvailable("ip6tables");
+#endif
+
 #endif
 
     if (signal(SIGTERM, signalHandler) == SIG_ERR)
