@@ -26,14 +26,14 @@ jobs:
       #
       # To add more build types (Release, Debug, RelWithDebInfo, etc.) customize the build_type list.
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-20.04]
         build_type: [Release]
         c_compiler: [gcc, clang]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             c_compiler: gcc
             cpp_compiler: g++
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             c_compiler: clang
             cpp_compiler: clang++
     
@@ -63,5 +63,11 @@ jobs:
     - name: Build
       # Build your program with the given configuration. 
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} 
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Waterwall-linux-64
+        path: ${{ steps.strings.outputs.build-output-dir }}/bin
 
 
