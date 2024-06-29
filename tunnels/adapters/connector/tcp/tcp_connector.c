@@ -274,7 +274,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         const uint32_t large_random = (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
 #endif
                         uint32_t calc = ntohl((uint32_t) dest_ctx->address.sin.sin_addr.s_addr);
-                        calc          = calc & ~(state->outbound_ip_range - 1);
+                        calc          = calc & ~(state->outbound_ip_range - 1ULL);
                         calc          = htonl(calc + large_random);
 
                         memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
@@ -292,7 +292,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         addr_ptr += 1;
 
                         uint64_t calc = ntohll(*addr_ptr);
-                        calc          = calc & ~(state->outbound_ip_range - 1);
+                        calc          = calc & ~(state->outbound_ip_range - 1ULL);
                         calc          = htonll(calc + large_random);
                         
                         memcpy(8+((char*)&(dest_ctx->address.sin6.sin6_addr)), &calc, sizeof(calc));
@@ -441,7 +441,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
                 exit(1);
             }
 
-            if (state->constant_dest_addr.address_type != kSatIPV6)
+            if (state->constant_dest_addr.address_type == kSatIPV4)
             {
                 if (prefix_length > 32)
                 {
