@@ -1,3 +1,7 @@
+// Remember to define _CRT_RAND_S before you include
+// stdlib.h.
+#define _CRT_RAND_S
+
 #include "tcp_connector.h"
 #include "basic_types.h"
 #include "frand.h"
@@ -264,9 +268,9 @@ static void upStream(tunnel_t *self, context_t *c)
                     unsigned int seed = fastRand();
                     // no probelm if overflows
 #ifdef OS_UNIX
-                    const uint32_t large_random = 1 + (((uint32_t) rand_r(&seed)) % state->outbound_ip_range);
+                    const uint32_t large_random = (((uint32_t) rand_r(&seed)) % state->outbound_ip_range);
 #else
-                    const uint32_t large_random = 1 + (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
+                    const uint32_t large_random = (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
 #endif
                     uint32_t calc = htonl(ntohl((uint32_t) dest_ctx->address.sin.sin_addr.s_addr) + large_random);
                     memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
@@ -279,9 +283,9 @@ static void upStream(tunnel_t *self, context_t *c)
                     unsigned int seed = fastRand();
                     // no probelm if overflows
 #ifdef OS_UNIX
-                    const uint64_t large_random = 1 + (((uint64_t) rand_r(&seed)) % state->outbound_ip_range);
+                    const uint64_t large_random = (((uint64_t) rand_r(&seed)) % state->outbound_ip_range);
 #else
-                    const uint64_t large_random = 1 + (((uint64_t) rand_s(&seed)) % state->outbound_ip_range);
+                    const uint64_t large_random = (((uint64_t) rand_s(&seed)) % state->outbound_ip_range);
 #endif
                     uint64_t *addr_ptr = (uint64_t *) &dest_ctx->address.sin6.sin6_addr;
                     addr_ptr += 64 / (sizeof(uint64_t));
