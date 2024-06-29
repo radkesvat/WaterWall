@@ -147,7 +147,8 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
             uint8_t tid_download_line = (*f_iter.ref).second->download_line->tid;
             hhybridmutex_unlock(&(state->download_line_map_mutex));
 
-            if (this_tid == tid_download_line || upload_line_cstate->state != kCsUploadInTable)
+            // a very rare case is when this_tid == tid_download_line 
+            if (upload_line_cstate->state != kCsUploadInTable)
             {
                 LOGF("HalfDuplexServer: Logic is incorrect.  [%s:%d]", __FILENAME__, __LINE__);
                 exit(1);

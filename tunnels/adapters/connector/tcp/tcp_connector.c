@@ -259,19 +259,17 @@ static void upStream(tunnel_t *self, context_t *c)
             int      sockfd = socket(dest_ctx->address.sa.sa_family, SOCK_STREAM, 0);
             if (sockfd < 0)
             {
-                LOGE("Connector: socket fd < 0");
+                LOGE("TcpConnector: socket fd < 0");
                 CSTATE_DROP(c);
                 cleanup(cstate, false);
                 goto fail;
             }
+
             if (state->tcp_no_delay)
             {
                 tcp_nodelay(sockfd, 1);
             }
-            // if (state->reuse_addr)
-            // {
-            //     so_reuseport(sockfd, 1);
-            // }
+
 
             if (state->tcp_fast_open)
             {
@@ -409,17 +407,20 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
     return t;
 }
+
 api_result_t apiTcpConnector(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
     return (api_result_t){0};
 }
+
 tunnel_t *destroyTcpConnector(tunnel_t *self)
 {
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataTcpConnector(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};

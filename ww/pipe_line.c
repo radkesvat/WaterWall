@@ -87,7 +87,8 @@ static void onMsgReceived(hevent_t *ev)
 
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
 {
-    if (tid_from == tid_to)
+    
+    if (WW_UNLIKELY(tid_from == tid_to))
     {
         fn(pl, arg);
         return;
