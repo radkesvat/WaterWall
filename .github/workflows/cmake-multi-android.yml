@@ -58,7 +58,7 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Waterwall_${{ runner.os }}_${{ runner.arch }}_${{ matrix.c_compiler }}
+        name: Waterwall_android_24_arm64_v8a_${{ runner.arch }}_${{ matrix.c_compiler }}
         path: ${{ steps.strings.outputs.build-output-dir }}/bin
 
     
