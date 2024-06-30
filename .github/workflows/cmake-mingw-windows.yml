@@ -58,8 +58,8 @@ jobs:
       - name: Show ccache statistics
         run: ccache -sv
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Waterwall_${{ runner.os }}_${{ runner.arch }}_${{ matrix.c_compiler }}
-        path: ${{ steps.strings.outputs.build-output-dir }}/bin
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ runner.arch }}_${{ matrix.c_compiler }}
+          path: ${{ steps.strings.outputs.build-output-dir }}/bin
