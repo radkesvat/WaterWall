@@ -67,7 +67,6 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Waterwall_linux_x64_${{ matrix.c_compiler }}
+        name: Waterwall_${{ runner.os }}_${{ runner.arch }}_${{ matrix.c_compiler }}
         path: ${{ steps.strings.outputs.build-output-dir }}/bin
-
 
