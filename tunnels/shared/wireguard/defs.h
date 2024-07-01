@@ -9,13 +9,7 @@
     their license files are placed next to this file
 */
 
-#include <stdbool.h>
-#include <stdint.h>
-
-struct ip4_addr {
-  uint32_t addr;
-};
-typedef struct ip4_addr ip4_addr_t;
+#include "lwip_types.h"
 
 enum wg_general_limits
 {
@@ -54,10 +48,10 @@ enum wg_timing_consts
 enum wg_message_consts
 {
     kWgMsgInvalid        = 0,
-    kWgMsgInitHandshake  = 0,
-    kWgMsgReplyHandshake = 0,
-    kWgMsgReplyCookie    = 0,
-    kWgMsgTransportData  = 0
+    kWgMsgInitHandshake  = 1,
+    kWgMsgReplyHandshake = 2,
+    kWgMsgReplyCookie    = 3,
+    kWgMsgTransportData  = 4
 };
 
 typedef struct wireguard_keypair_s
@@ -92,13 +86,15 @@ typedef struct wireguard_handshake_s
 
 } wireguard_handshake_t;
 
-typedef struct wireguard_allowed_ip_s {
-	bool valid;
-	ip_addr_t ip;
-	ip_addr_t mask;
+typedef struct wireguard_allowed_ip_s
+{
+    bool      valid;
+    ip_addr_t ip;
+    ip_addr_t mask;
+    
 } wireguard_allowed_ip_t;
 
-struct wireguard_peer
+struct wireguard_peer_s
 {
     bool valid;  // Is this peer initialised?
     bool active; // Should we be actively trying to connect?
@@ -112,7 +108,7 @@ struct wireguard_peer
     // keep-alive interval in seconds, 0 is disable
     uint16_t keepalive_interval;
 
-    struct wireguard_allowed_ip allowed_source_ips[kWgMaxSrcIPs];
+    struct wireguard_allowed_ip_s allowed_source_ips[kWgMaxSrcIPs];
 
     uint8_t public_key[kWgPublicKeyLen];
     uint8_t preshared_key[kWgSessionKeyLen];
@@ -121,15 +117,15 @@ struct wireguard_peer
     uint8_t public_key_dh[kWgPublicKeyLen];
 
     // Session keypairs
-    struct wireguard_keypair curr_keypair;
-    struct wireguard_keypair prev_keypair;
-    struct wireguard_keypair next_keypair;
+    struct wireguard_keypair_s curr_keypair;
+    struct wireguard_keypair_s prev_keypair;
+    struct wireguard_keypair_s next_keypair;
 
     // 5.1 Silence is a Virtue: The responder keeps track of the greatest timestamp received per peer
     uint8_t greatest_timestamp[kWgTai64Len];
 
     // The active handshake that is happening
-    struct wireguard_handshake handshake;
+    struct wireguard_handshake_s handshake;
 
     // Decrypted cookie from the responder
     uint32_t cookie_millis;
@@ -173,16 +169,19 @@ struct wireguard_device
     uint8_t label_mac1_key[kWgSessionKeyLen];
 
     // List of peers associated with this device
-    struct wireguard_peer peers[kWgMaxPeers];
+    struct wireguard_peer_s peers[kWgMaxPeers];
 
     bool valid;
 };
 
-#define MESSAGE_INVALID              0
-#define MESSAGE_HANDSHAKE_INITIATION 1
-#define MESSAGE_HANDSHAKE_RESPONSE   2
-#define MESSAGE_COOKIE_REPLY         3
-#define MESSAGE_TRANSPORT_DATA       4
+enum wireguard_message_constants
+{
+    kMessageInvalid             = 0,
+    kMessageHandshakeInitiation = 1,
+    kMessageHandshakeResponse   = 2,
+    kMessageCookieReply         = 3,
+    kMessageTransportData       = 4
+};
 
 // 5.4.2 First Message: Initiator to Responder
 struct message_handshake_initiation
@@ -223,6 +222,7 @@ struct message_cookie_reply
 // 5.4.6 Subsequent Messages: Transport Data Messages
 struct message_transport_data
 {
+    
     uint8_t  type;
     uint8_t  reserved[3];
     uint32_t receiver;
