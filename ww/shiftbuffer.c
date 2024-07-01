@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PREPADDING ((ram_profile >= kRamProfileS2Memory ? (1U << 11) : (1U << 8)) + 512)
+#define PREPADDING (ram_profile >= kRamProfileS2Memory ? (1U << 13) : ((1U << 8) + 512))
 
 pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
 {
@@ -161,7 +161,7 @@ void expand(shift_buffer_t *self, unsigned int increase)
     }
 }
 
-void concatBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf)
+void concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t *restrict const buf)
 {
     unsigned int root_length   = bufLen(root);
     unsigned int append_length = bufLen(buf);
@@ -169,14 +169,14 @@ void concatBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf)
     memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
 }
 
-void sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, unsigned int bytes)
+void sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, const unsigned int bytes)
 {
     assert(bytes <= bufLen(source));
     assert(bufLen(dest) == 0);
-    const unsigned int total     = bufLen(source);
-    const unsigned int threshold = 96;
+    const unsigned int        total      = bufLen(source);
+    static const unsigned int kThreshold = 128;
 
-    if (bytes <= (total / 2) + threshold)
+    if (bytes <= (total / 2) + kThreshold)
     {
         setLen(dest, bytes);
         memcpy(rawBufMut(dest), rawBuf(source), bytes);
@@ -193,7 +193,7 @@ void sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict sourc
     setLen(dest, bytes);
 }
 
-shift_buffer_t *sliceBuffer(uint8_t tid, shift_buffer_t *self, unsigned int bytes)
+shift_buffer_t *sliceBuffer(const uint8_t tid, shift_buffer_t *const self, const unsigned int bytes)
 {
     assert(bytes <= bufLen(self));
 
@@ -227,7 +227,7 @@ shift_buffer_t *sliceBuffer(uint8_t tid, shift_buffer_t *self, unsigned int byte
     return newbuf;
 }
 
-shift_buffer_t *shallowSliceBuffer(uint8_t tid, shift_buffer_t *self, unsigned int bytes)
+shift_buffer_t *shallowSliceBuffer(const uint8_t tid, shift_buffer_t *self, const unsigned int bytes)
 {
     assert(bytes <= bufLen(self));
 

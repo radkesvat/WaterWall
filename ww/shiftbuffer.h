@@ -50,7 +50,7 @@ void            destroyShiftBuffer(uint8_t tid, shift_buffer_t *self);
 void            reset(shift_buffer_t *self, unsigned int cap);
 void            unShallow(shift_buffer_t *self);
 void            expand(shift_buffer_t *self, unsigned int increase);
-void            concatBuffer(shift_buffer_t *restrict root, shift_buffer_t *restrict buf);
+void            concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t *restrict buf);
 void            sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, unsigned int bytes);
 shift_buffer_t *sliceBuffer(uint8_t tid, shift_buffer_t *self, unsigned int bytes);
 shift_buffer_t *shallowSliceBuffer(uint8_t tid, shift_buffer_t *self, unsigned int bytes);
@@ -61,22 +61,22 @@ static inline bool isShallow(shift_buffer_t *self)
 }
 
 // caps mean how much memory we own to be able to shift left/right
-static inline unsigned int lCap(shift_buffer_t *self)
+static inline unsigned int lCap(shift_buffer_t *const self)
 {
     return self->curpos;
 }
 
-static inline unsigned int rCap(shift_buffer_t *self)
+static inline unsigned int rCap(shift_buffer_t *const self)
 {
     return (self->full_cap - self->curpos);
 }
 
-static inline void constrainRight(shift_buffer_t *self)
+static inline void constrainRight(shift_buffer_t *const self)
 {
     self->full_cap = self->curpos + self->calc_len;
 }
 
-static inline void constrainLeft(shift_buffer_t *self)
+static inline void constrainLeft(shift_buffer_t *const self)
 {
     self->_offset += self->curpos;
     self->pbuf += self->curpos;
@@ -84,7 +84,7 @@ static inline void constrainLeft(shift_buffer_t *self)
     self->curpos = 0;
 }
 
-static inline void shiftl(shift_buffer_t *self, unsigned int bytes)
+static inline void shiftl(shift_buffer_t *const self, const unsigned int bytes)
 {
 begin:;
     if (lCap(self) < bytes)
@@ -97,7 +97,6 @@ begin:;
             self->_offset = 0;
             // shiftl(self, bytes);
             goto begin;
-            return;
         }
         expand(self, (bytes - lCap(self)));
     }
@@ -106,7 +105,7 @@ begin:;
     self->calc_len += bytes;
 }
 
-static inline void shiftr(shift_buffer_t *self, unsigned int bytes)
+static inline void shiftr(shift_buffer_t *self, const unsigned int bytes)
 {
     // caller knows if there is space or not, checking here makes no sense
     self->curpos += bytes;
@@ -114,7 +113,7 @@ static inline void shiftr(shift_buffer_t *self, unsigned int bytes)
 }
 
 // developer should call this function or reserve function before writing
-static inline void setLen(shift_buffer_t *self, unsigned int bytes)
+static inline void setLen(shift_buffer_t *self, const unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {
@@ -124,13 +123,13 @@ static inline void setLen(shift_buffer_t *self, unsigned int bytes)
     self->calc_len = bytes;
 }
 
-static inline unsigned int bufLen(shift_buffer_t *self)
+static inline unsigned int bufLen(const shift_buffer_t *const self)
 {
     // return self->lenpos - self->curpos;
     return self->calc_len;
 }
 
-static inline void reserveBufSpace(shift_buffer_t *self, unsigned int bytes)
+static inline void reserveBufSpace(shift_buffer_t *self, const unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {
@@ -138,29 +137,29 @@ static inline void reserveBufSpace(shift_buffer_t *self, unsigned int bytes)
     }
 }
 
-static inline void consume(shift_buffer_t *self, unsigned int bytes)
+static inline void consume(shift_buffer_t *self, const unsigned int bytes)
 {
     setLen(self, bufLen(self) - bytes);
 }
 
-static inline const void *rawBuf(shift_buffer_t *self)
+static inline const void *rawBuf(const shift_buffer_t *const self)
 {
     return (void *) &(self->pbuf[self->curpos]);
 }
 
-static inline void readUI8(shift_buffer_t *self, uint8_t *dest)
+static inline void readUI8(const shift_buffer_t *const self, uint8_t *const dest)
 {
     // *dest = *(uint8_t *) rawBuf(self); address could be misaligned
     memcpy(dest, rawBuf(self), sizeof(*dest));
 }
 
-static inline void readUI16(shift_buffer_t *self, uint16_t *dest)
+static inline void readUI16(const shift_buffer_t *const self, uint16_t *const dest)
 {
     // *dest = *(uint16_t *) rawBuf(self); address could be misaligned
     memcpy(dest, rawBuf(self), sizeof(*dest));
 }
 
-static inline void readUI64(shift_buffer_t *self, uint64_t *dest)
+static inline void readUI64(const shift_buffer_t *const self, uint64_t *const dest)
 {
 
     // *dest = *(uint64_t *) rawBuf(self); address could be misaligned
@@ -171,41 +170,42 @@ static inline void readUI64(shift_buffer_t *self, uint64_t *dest)
     Call setLen/bufLen to know how much memory you own before any kind of writing
 */
 
-static inline unsigned char *rawBufMut(shift_buffer_t *self)
+static inline unsigned char *rawBufMut(const shift_buffer_t *const self)
 {
     return (void *) &(self->pbuf[self->curpos]);
 }
 
-static inline void writeRaw(shift_buffer_t *restrict self, const void *restrict buffer, unsigned int len)
+static inline void writeRaw(shift_buffer_t *restrict const self, const void *restrict const buffer,
+                            const unsigned int len)
 {
     memcpy(rawBufMut(self), buffer, len);
 }
 
-static inline void writeI32(shift_buffer_t *self, int32_t data)
+static inline void writeI32(shift_buffer_t *const self, const int32_t data)
 {
     // *(int32_t *) rawBufMut(self) = data; address could be misaligned
     memcpy(rawBufMut(self), &data, sizeof(data));
 }
 
-static inline void writeUI32(shift_buffer_t *self, uint32_t data)
+static inline void writeUI32(shift_buffer_t *const self, const uint32_t data)
 {
     // *(uint32_t *) rawBufMut(self) = data; address could be misaligned
     memcpy(rawBufMut(self), &data, sizeof(data));
 }
 
-static inline void writeI16(shift_buffer_t *self, int16_t data)
+static inline void writeI16(shift_buffer_t *const self, const int16_t data)
 {
     // *(int16_t *) rawBufMut(self) = data; address could be misaligned
     memcpy(rawBufMut(self), &data, sizeof(data));
 }
 
-static inline void writeUI16(shift_buffer_t *self, uint16_t data)
+static inline void writeUI16(shift_buffer_t *const self, const uint16_t data)
 {
     // *(uint16_t *) rawBufMut(self) = data; address could be misaligned
     memcpy(rawBufMut(self), &data, sizeof(data));
 }
 
-static inline void writeUI8(shift_buffer_t *self, uint8_t data)
+static inline void writeUI8(shift_buffer_t *const self, const uint8_t data)
 {
     // *(uint8_t *) rawBufMut(self) = data; address could be misaligned
     memcpy(rawBufMut(self), &data, sizeof(data));
