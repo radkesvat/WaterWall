@@ -168,8 +168,6 @@ static void upStream(tunnel_t *self, context_t *c)
             int sk_size                = EVP_MD_size(cstate->msg_digest);
             cstate->sign_key           = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
 
-            EVP_DigestInit_ex(cstate->sign_context, cstate->msg_digest, NULL);
-
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
