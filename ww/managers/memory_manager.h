@@ -32,6 +32,9 @@ SOFTWARE.
 */
 
 #pragma once
+
+// #define ALLOCATOR_BYPASS         // switch to stdlib allocators
+
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -117,6 +120,20 @@ void* wwmDedicatedAlloc(  ww_dedictaed_mem_t* o, void* current_ptr,             
 void* wwmDedicatedNalloc( ww_dedictaed_mem_t* o, void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size );
 
 /// malloc, free and realloc (thread-safe).
+
+#ifdef ALLOCATOR_BYPASS
+#include <stdlib.h>
+
+static inline void* wwmGlobalMalloc(             size_t size ) { return malloc(size); }
+static inline void* wwmGlobalRealloc( void* ptr, size_t size ) { return realloc( ptr,  size ); }
+static inline void  wwmGlobalFree(    void* ptr              ) {        free( ptr); }
+
+static inline void* wwmDedicatedMalloc(  ww_dedictaed_mem_t* o,            size_t size ) {(void)o; return malloc(size); }
+static inline void* wwmDedicatedRealloc( ww_dedictaed_mem_t* o, void* ptr, size_t size ) {(void)o; return realloc( ptr,  size ); }
+static inline void  wwmDedicatedFree(    ww_dedictaed_mem_t* o, void* ptr              ) {(void)o;        free( ptr); }
+
+#else
+
 static inline void* wwmGlobalMalloc(             size_t size ) { return wwmGlobalAlloc( NULL, size, NULL ); }
 static inline void* wwmGlobalRealloc( void* ptr, size_t size ) { return wwmGlobalAlloc( ptr,  size, NULL ); }
 static inline void  wwmGlobalFree(    void* ptr              ) {        wwmGlobalAlloc( ptr,  0,    NULL ); }
@@ -124,6 +141,12 @@ static inline void  wwmGlobalFree(    void* ptr              ) {        wwmGloba
 static inline void* wwmDedicatedMalloc(  ww_dedictaed_mem_t* o,            size_t size ) { return wwmDedicatedAlloc( o, NULL, size, NULL ); }
 static inline void* wwmDedicatedRealloc( ww_dedictaed_mem_t* o, void* ptr, size_t size ) { return wwmDedicatedAlloc( o, ptr,  size, NULL ); }
 static inline void  wwmDedicatedFree(    ww_dedictaed_mem_t* o, void* ptr              ) {        wwmDedicatedAlloc( o, ptr,  0,    NULL ); }
+
+
+#endif
+
+
+
 
 /// realloc, specifying current size (thread-safe).
 static inline void* wwmGlobalNRealloc( void* current_ptr, size_t current_size, size_t new_size )

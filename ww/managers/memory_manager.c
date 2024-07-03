@@ -20,6 +20,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+/*
+
+    This started from tbman library at https://github.com/johsteffens/tbman/tree/master
+
+    changed many prats and names of this file, and it is now WW memory manager
+
+*/
+
+
 #include "memory_manager.h"
 #include "utils/btree.h"
 #include "hmutex.h"
