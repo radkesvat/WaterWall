@@ -37,8 +37,7 @@ typedef struct reality_server_con_state_s
     EVP_MD                    *msg_digest;
     EVP_PKEY                  *sign_key;
     EVP_MD_CTX                *sign_context;
-    EVP_CIPHER_CTX            *encryption_context;
-    EVP_CIPHER_CTX            *decryption_context;
+    EVP_CIPHER_CTX            *cipher_context;
     buffer_stream_t           *read_stream;
     uint8_t                    giveup_counter;
     enum connection_auth_state auth_state;
@@ -67,8 +66,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     reality_server_con_state_t *cstate = CSTATE(c);
 
     destroyBufferStream(cstate->read_stream);
-    EVP_CIPHER_CTX_free(cstate->encryption_context);
-    EVP_CIPHER_CTX_free(cstate->decryption_context);
+    EVP_CIPHER_CTX_free(cstate->cipher_context);
     EVP_MD_CTX_free(cstate->sign_context);
     EVP_MD_free(cstate->msg_digest);
     EVP_PKEY_free(cstate->sign_key);
@@ -119,9 +117,9 @@ static void upStream(tunnel_t *self, context_t *c)
                             return;
                         }
 
-                        buf                = genericDecrypt(buf, cstate->decryption_context, state->context_password,
-                                                            getContextBufferPool(c));
-                        cstate->first_sent = true;
+                        buf                       = genericDecrypt(buf, cstate->cipher_context, state->context_password,
+                                                                   getContextBufferPool(c));
+                        cstate->first_sent        = true;
                         context_t *plain_data_ctx = newContextFrom(c);
                         plain_data_ctx->payload   = buf;
                         plain_data_ctx->first     = true;
@@ -183,8 +181,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         goto failed;
                     }
 
-                    buf = genericDecrypt(buf, cstate->decryption_context, state->context_password,
-                                         getContextBufferPool(c));
+                    buf = genericDecrypt(buf, cstate->cipher_context, state->context_password, getContextBufferPool(c));
 
                     context_t *plain_data_ctx = newContextFrom(c);
                     plain_data_ctx->payload   = buf;
@@ -214,15 +211,14 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             cstate = CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(reality_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(reality_server_con_state_t));
-            cstate->auth_state         = kConAuthPending;
-            cstate->giveup_counter     = state->counter_threshould;
-            cstate->encryption_context = EVP_CIPHER_CTX_new();
-            cstate->decryption_context = EVP_CIPHER_CTX_new();
-            cstate->read_stream        = newBufferStream(getContextBufferPool(c));
-            cstate->sign_context       = EVP_MD_CTX_create();
-            cstate->msg_digest         = (EVP_MD *) EVP_get_digestbyname(MSG_DIGEST_ALG);
-            int sk_size                = EVP_MD_size(cstate->msg_digest);
-            cstate->sign_key           = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
+            cstate->auth_state     = kConAuthPending;
+            cstate->giveup_counter = state->counter_threshould;
+            cstate->cipher_context = EVP_CIPHER_CTX_new();
+            cstate->read_stream    = newBufferStream(getContextBufferPool(c));
+            cstate->sign_context   = EVP_MD_CTX_create();
+            cstate->msg_digest     = (EVP_MD *) EVP_get_digestbyname(MSG_DIGEST_ALG);
+            int sk_size            = EVP_MD_size(cstate->msg_digest);
+            cstate->sign_key       = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
 
             state->dest->upStream(state->dest, c);
         }
@@ -266,7 +262,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
             if (bufLen(buf) < chunk_size)
             {
-                buf = genericEncrypt(buf, cstate->encryption_context, state->context_password, getContextBufferPool(c));
+                buf = genericEncrypt(buf, cstate->cipher_context, state->context_password, getContextBufferPool(c));
                 signMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
                 appendTlsHeader(buf);
                 assert(bufLen(buf) % 16 == 5);
@@ -279,8 +275,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
                     shift_buffer_t *chunk  = shallowSliceBuffer(c->line->tid, buf, remain);
-                    chunk                  = genericEncrypt(chunk, cstate->encryption_context, state->context_password,
-                                                            getContextBufferPool(c));
+                    chunk =
+                        genericEncrypt(chunk, cstate->cipher_context, state->context_password, getContextBufferPool(c));
                     signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
                     appendTlsHeader(chunk);
                     context_t *cout = newContextFrom(c);
