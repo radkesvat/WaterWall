@@ -22,6 +22,7 @@ SOFTWARE.
 
 #include "tbman.h"
 #include "btree.h"
+#include "hmutex.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -573,7 +574,7 @@ typedef struct tbman_s
     size_t* block_size_array;       // copy of block size values (for fast access)
     btree_vd_s* internal_btree;
     btree_ps_s* external_btree;
-    pthread_mutex_t mutex;
+    hhybridmutex_t mutex;
 } tbman_s;
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -581,7 +582,7 @@ typedef struct tbman_s
 void tbman_s_init( tbman_s* o, size_t pool_size, size_t min_block_size, size_t max_block_size, size_t stepping_method, bool full_align )
 {
     memset( o, 0, sizeof( *o ) );
-    pthread_mutex_init( &o->mutex, NULL );
+    hhybridmutex_init(&o->mutex);
 
     o->internal_btree = btree_vd_s_create( stdlib_alloc );
     o->external_btree = btree_ps_s_create( stdlib_alloc );
@@ -656,7 +657,7 @@ void tbman_s_down( tbman_s* o )
         );
     }
 
-    pthread_mutex_lock( &o->mutex );
+    hhybridmutex_lock( &o->mutex );
     if( o->data )
     {
         for( size_t i = 0; i < o->size; i++ ) block_manager_s_discard( o->data[ i ] );
@@ -668,8 +669,8 @@ void tbman_s_down( tbman_s* o )
 
     if( o->block_size_array ) free( o->block_size_array );
 
-    pthread_mutex_unlock( &o->mutex );
-    pthread_mutex_destroy( &o->mutex );
+    hhybridmutex_unlock( &o->mutex );
+    hhybridmutex_destroy( &o->mutex );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -869,7 +870,7 @@ static void* tbman_s_mem_realloc( tbman_s* o, void* current_ptr, const size_t* c
 
 void* tbman_s_alloc( tbman_s* o, void* current_ptr, size_t requested_size, size_t* granted_size )
 {
-    pthread_mutex_lock( &o->mutex );
+    hhybridmutex_lock( &o->mutex );
     void* ret = NULL;
     if( requested_size == 0 )
     {
@@ -890,7 +891,7 @@ void* tbman_s_alloc( tbman_s* o, void* current_ptr, size_t requested_size, size_
             ret = tbman_s_mem_alloc( o, requested_size, granted_size );
         }
     }
-    pthread_mutex_unlock( &o->mutex );
+    hhybridmutex_unlock( &o->mutex );
     return ret;
 }
 
@@ -898,7 +899,7 @@ void* tbman_s_alloc( tbman_s* o, void* current_ptr, size_t requested_size, size_
 
 void* tbman_s_nalloc( tbman_s* o, void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size )
 {
-    pthread_mutex_lock( &o->mutex );
+    hhybridmutex_lock( &o->mutex );
     void* ret = NULL;
     if( requested_size == 0 )
     {
@@ -919,7 +920,7 @@ void* tbman_s_nalloc( tbman_s* o, void* current_ptr, size_t current_size, size_t
             ret = tbman_s_mem_alloc( o, requested_size, granted_size );
         }
     }
-    pthread_mutex_unlock( &o->mutex );
+    hhybridmutex_unlock( &o->mutex );
     return ret;
 }
 
@@ -1115,9 +1116,9 @@ size_t tbman_granted_space( const void* current_ptr )
 
 size_t tbman_s_total_granted_space( tbman_s* o )
 {
-    pthread_mutex_lock( &o->mutex );
+    hhybridmutex_lock( &o->mutex );
     size_t space = tbman_s_total_alloc( o );
-    pthread_mutex_unlock( &o->mutex );
+    hhybridmutex_unlock( &o->mutex );
     return space;
 }
 
@@ -1141,11 +1142,11 @@ size_t tbman_total_instances( void )
 
 size_t tbman_s_total_instances( tbman_s* o )
 {
-    pthread_mutex_lock( &o->mutex );
+    hhybridmutex_lock( &o->mutex );
     size_t count = 0;
     count += tbman_s_external_total_instances( o );
     count += tbman_s_internal_total_instances( o );
-    pthread_mutex_unlock( &o->mutex );
+    hhybridmutex_unlock( &o->mutex );
     return count;
 }
 
@@ -1174,10 +1175,10 @@ void tbman_s_for_each_instance( tbman_s* o, void (*cb)( void* arg, void* ptr, si
     arr.space = size;
     arr.size  = 0;
 
-    pthread_mutex_lock( &o->mutex );
+    hhybridmutex_lock( &o->mutex );
     tbman_s_external_for_each_instance( o, for_each_instance_collect_callback, &arr );
     tbman_s_internal_for_each_instance( o, for_each_instance_collect_callback, &arr );
-    pthread_mutex_unlock( &o->mutex );
+    hhybridmutex_unlock( &o->mutex );
 
     assert( arr.size == arr.space );
 
