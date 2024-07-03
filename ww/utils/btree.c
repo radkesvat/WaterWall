@@ -229,20 +229,20 @@ void btree_node_ps_s_check_consistency( btree_node_ps_s* o )
         if( o != o->child1->parent ) ERR( "child1 incorrect parent" );
         btree_node_ps_s_check_consistency( o->child0 );
         btree_node_ps_s_check_consistency( o->child1 );
-        if(                      o->kv1.key <= o->child0->kv1.key ) ERR( "(%lu <= %lu)", o->kv1.key, o->child0->kv1.key );
-        if( o->child0->child2 && o->kv1.key <= o->child0->kv2.key ) ERR( "(%lu <= %lu)", o->kv1.key, o->child0->kv2.key );
-        if(                      o->kv1.key >= o->child1->kv1.key ) ERR( "(%lu >= %lu)", o->kv1.key, o->child1->kv1.key );
-        if( o->child1->child2 && o->kv1.key >= o->child1->kv2.key ) ERR( "(%lu >= %lu)", o->kv1.key, o->child1->kv2.key );
+        if(                      o->kv1.key <= o->child0->kv1.key ) ERR( "(%zu <= %zu)", o->kv1.key, o->child0->kv1.key );
+        if( o->child0->child2 && o->kv1.key <= o->child0->kv2.key ) ERR( "(%zu <= %zu)", o->kv1.key, o->child0->kv2.key );
+        if(                      o->kv1.key >= o->child1->kv1.key ) ERR( "(%zu >= %zu)", o->kv1.key, o->child1->kv1.key );
+        if( o->child1->child2 && o->kv1.key >= o->child1->kv2.key ) ERR( "(%zu >= %zu)", o->kv1.key, o->child1->kv2.key );
     }
     if( o->child2 && o->child2 != BNUL_PS )
     {
-        if( o->kv1.key >= o->kv2.key ) ERR( "(%lu >= %lu)", o->kv1.key, o->kv2.key );
+        if( o->kv1.key >= o->kv2.key ) ERR( "(%zu >= %zu)", o->kv1.key, o->kv2.key );
         if( o != o->child2->parent ) ERR( "child2 incorrect parent" );
         btree_node_ps_s_check_consistency( o->child2 );
-        if(                      o->kv2.key <= o->child1->kv1.key ) ERR( "(%lu <= %lu)", o->kv2.key, o->child1->kv1.key );
-        if( o->child1->child2 && o->kv2.key <= o->child1->kv2.key ) ERR( "(%lu <= %lu)", o->kv2.key, o->child1->kv2.key );
-        if(                      o->kv2.key >= o->child2->kv1.key ) ERR( "(%lu >= %lu)", o->kv2.key, o->child2->kv1.key );
-        if( o->child2->child2 && o->kv2.key >= o->child2->kv2.key ) ERR( "(%lu >= %lu)", o->kv2.key, o->child2->kv2.key );
+        if(                      o->kv2.key <= o->child1->kv1.key ) ERR( "(%zu <= %zu)", o->kv2.key, o->child1->kv1.key );
+        if( o->child1->child2 && o->kv2.key <= o->child1->kv2.key ) ERR( "(%zu <= %zu)", o->kv2.key, o->child1->kv2.key );
+        if(                      o->kv2.key >= o->child2->kv1.key ) ERR( "(%zu >= %zu)", o->kv2.key, o->child2->kv1.key );
+        if( o->child2->child2 && o->kv2.key >= o->child2->kv2.key ) ERR( "(%zu >= %zu)", o->kv2.key, o->child2->kv2.key );
     }
 }
 
@@ -749,13 +749,13 @@ void print_btree_ps_s_status( btree_ps_s* o )
     }
 
     size_t used_nodes = nodes - deleted_nodes;
-    printf( "keys ........... %lu\n", btree_node_ps_s_keys( o->root ) );
-    printf( "nodes .......... %lu\n", used_nodes );
+    printf( "keys ........... %zu\n", btree_node_ps_s_keys( o->root ) );
+    printf( "nodes .......... %zu\n", used_nodes );
     printf( "keys/nodes ..... %5.4f\n", used_nodes > 0 ? ( double )( btree_node_ps_s_keys( o->root ) ) / used_nodes : 0 );
-    printf( "depth .......... %lu\n", btree_node_ps_s_depth( o->root ) );
-    printf( "block size ..... %lu\n", o->block_size );
-    printf( "blocks ......... %lu\n", blocks );
-    printf( "deleted nodes .. %lu\n", deleted_nodes );
+    printf( "depth .......... %zu\n", btree_node_ps_s_depth( o->root ) );
+    printf( "block size ..... %zu\n", o->block_size );
+    printf( "blocks ......... %zu\n", blocks );
+    printf( "deleted nodes .. %zu\n", deleted_nodes );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -945,20 +945,20 @@ void btree_node_vd_s_check_consistency( btree_node_vd_s* o )
         if( o != o->child1->parent ) ERR( "child1 incorrect parent" );
         btree_node_vd_s_check_consistency( o->child0 );
         btree_node_vd_s_check_consistency( o->child1 );
-        if(                      o->kv1.key <= o->child0->kv1.key ) ERR( "(%lu <= %lu)", o->kv1.key, o->child0->kv1.key );
-        if( o->child0->child2 && o->kv1.key <= o->child0->kv2.key ) ERR( "(%lu <= %lu)", o->kv1.key, o->child0->kv2.key );
-        if(                      o->kv1.key >= o->child1->kv1.key ) ERR( "(%lu >= %lu)", o->kv1.key, o->child1->kv1.key );
-        if( o->child1->child2 && o->kv1.key >= o->child1->kv2.key ) ERR( "(%lu >= %lu)", o->kv1.key, o->child1->kv2.key );
+        if(                      o->kv1.key <= o->child0->kv1.key ) ERR( "(%zu <= %zu)", o->kv1.key, o->child0->kv1.key );
+        if( o->child0->child2 && o->kv1.key <= o->child0->kv2.key ) ERR( "(%zu <= %zu)", o->kv1.key, o->child0->kv2.key );
+        if(                      o->kv1.key >= o->child1->kv1.key ) ERR( "(%zu >= %zu)", o->kv1.key, o->child1->kv1.key );
+        if( o->child1->child2 && o->kv1.key >= o->child1->kv2.key ) ERR( "(%zu >= %zu)", o->kv1.key, o->child1->kv2.key );
     }
     if( o->child2 && o->child2 != BNUL_VP )
     {
-        if( o->kv1.key >= o->kv2.key ) ERR( "(%lu >= %lu)", o->kv1.key, o->kv2.key );
+        if( o->kv1.key >= o->kv2.key ) ERR( "(%zu >= %zu)", o->kv1.key, o->kv2.key );
         if( o != o->child2->parent ) ERR( "child2 incorrect parent" );
         btree_node_vd_s_check_consistency( o->child2 );
-        if(                      o->kv2.key <= o->child1->kv1.key ) ERR( "(%lu <= %lu)", o->kv2.key, o->child1->kv1.key );
-        if( o->child1->child2 && o->kv2.key <= o->child1->kv2.key ) ERR( "(%lu <= %lu)", o->kv2.key, o->child1->kv2.key );
-        if(                      o->kv2.key >= o->child2->kv1.key ) ERR( "(%lu >= %lu)", o->kv2.key, o->child2->kv1.key );
-        if( o->child2->child2 && o->kv2.key >= o->child2->kv2.key ) ERR( "(%lu >= %lu)", o->kv2.key, o->child2->kv2.key );
+        if(                      o->kv2.key <= o->child1->kv1.key ) ERR( "(%zu <= %zu)", o->kv2.key, o->child1->kv1.key );
+        if( o->child1->child2 && o->kv2.key <= o->child1->kv2.key ) ERR( "(%zu <= %zu)", o->kv2.key, o->child1->kv2.key );
+        if(                      o->kv2.key >= o->child2->kv1.key ) ERR( "(%zu >= %zu)", o->kv2.key, o->child2->kv1.key );
+        if( o->child2->child2 && o->kv2.key >= o->child2->kv2.key ) ERR( "(%zu >= %zu)", o->kv2.key, o->child2->kv2.key );
     }
 }
 
@@ -1463,13 +1463,13 @@ void print_btree_vd_s_status( btree_vd_s* o )
     }
 
     size_t used_nodes = nodes - deleted_nodes;
-    printf( "keys ........... %lu\n", btree_node_vd_s_keys( o->root ) );
-    printf( "nodes .......... %lu\n", used_nodes );
+    printf( "keys ........... %zu\n", btree_node_vd_s_keys( o->root ) );
+    printf( "nodes .......... %zu\n", used_nodes );
     printf( "keys/nodes ..... %5.4f\n", used_nodes > 0 ? ( double )( btree_node_vd_s_keys( o->root ) ) / used_nodes : 0 );
-    printf( "depth .......... %lu\n", btree_node_vd_s_depth( o->root ) );
-    printf( "block size ..... %lu\n", o->block_size );
-    printf( "blocks ......... %lu\n", blocks );
-    printf( "deleted nodes .. %lu\n", deleted_nodes );
+    printf( "depth .......... %zu\n", btree_node_vd_s_depth( o->root ) );
+    printf( "block size ..... %zu\n", o->block_size );
+    printf( "blocks ......... %zu\n", blocks );
+    printf( "deleted nodes .. %zu\n", deleted_nodes );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
