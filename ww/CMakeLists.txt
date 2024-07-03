@@ -17,8 +17,10 @@ add_library(ww STATIC
                   frand.c
                   pipe_line.c
                   utils/utils.c
+                  utils/btree.c
                   managers/socket_manager.c
                   managers/node_manager.c
+                  managers/memory_manager.c
                   managers/data/iprange_mci.c
                   managers/data/iprange_irancell.c
                   managers/data/iprange_mokhaberat.c

@@ -296,7 +296,7 @@ static inline void internalUnRefLine(line_t *l)
 
     if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_constant)
     {
-        free(l->dest_ctx.domain);
+        wwmGlobalFree(l->dest_ctx.domain);
     }
 
     reusePoolItem(line_pools[l->tid], l);

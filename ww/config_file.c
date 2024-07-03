@@ -1,5 +1,6 @@
 #include "config_file.h"
 #include "cJSON.h"
+#include "ww.h"
 #include "loggers/core_logger.h" //NOLINT
 #include "utils/fileutils.h"
 #include "utils/jsonutils.h"
@@ -14,19 +15,19 @@ void destroyConfigFile(config_file_t *state)
 
     if (state->file_path != NULL)
     {
-        free(state->file_path);
+        wwmGlobalFree(state->file_path);
     }
     if (state->name != NULL)
     {
-        free(state->name);
+        wwmGlobalFree(state->name);
     }
     if (state->author != NULL)
     {
-        free(state->author);
+        wwmGlobalFree(state->author);
     }
     hmutex_destroy(&(state->guard));
 
-    free(state);
+    wwmGlobalFree(state);
 }
 
 void acquireUpdateLock(config_file_t *state)
@@ -77,11 +78,11 @@ void commitChangesSoft(config_file_t *state)
 
 config_file_t *parseConfigFile(const char *const file_path)
 {
-    config_file_t *state = malloc(sizeof(config_file_t));
+    config_file_t *state = wwmGlobalMalloc(sizeof(config_file_t));
     memset(state, 0, sizeof(config_file_t));
     hmutex_init(&(state->guard));
 
-    state->file_path = malloc(strlen(file_path) + 1);
+    state->file_path = wwmGlobalMalloc(strlen(file_path) + 1);
     strcpy(state->file_path, file_path);
 
     char *data_json = readFile(file_path);
@@ -106,7 +107,7 @@ config_file_t *parseConfigFile(const char *const file_path)
         }
         exit(1);
     }
-    free(data_json);
+    wwmGlobalFree(data_json);
 
     if (! getStringFromJsonObject((&state->name), json, "name"))
     {

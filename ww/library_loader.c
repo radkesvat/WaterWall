@@ -1,4 +1,5 @@
 #include "library_loader.h"
+#include "ww.h"
 #include "basic_types.h"
 #include "loggers/core_logger.h" //NOLINT
 #include "stc/common.h"
@@ -50,7 +51,7 @@ void registerStaticLib(tunnel_lib_t lib)
 {
     if (state == NULL)
     {
-        state = malloc(sizeof(*state));
+        state = wwmGlobalMalloc(sizeof(*state));
         memset(state, 0, sizeof(*state));
         state->slibs = vec_static_libs_init();
     }

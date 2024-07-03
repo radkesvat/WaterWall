@@ -86,25 +86,25 @@ static socket_manager_state_t *state = NULL;
 static pool_item_t *allocTcpResultObjectPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return malloc(sizeof(socket_accept_result_t));
+    return wwmGlobalMalloc(sizeof(socket_accept_result_t));
 }
 
 static void destroyTcpResultObjectPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    free(item);
+    wwmGlobalFree(item);
 }
 
 static pool_item_t *allocUdpPayloadPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return malloc(sizeof(udp_payload_t));
+    return wwmGlobalMalloc(sizeof(udp_payload_t));
 }
 
 static void destroyUdpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    free(item);
+    wwmGlobalFree(item);
 }
 
 void destroySocketAcceptResult(socket_accept_result_t *sar)
@@ -374,7 +374,7 @@ void parseWhiteListOption(socket_filter_option_t *option)
     }
 
     option->white_list_parsed_length = len;
-    option->white_list_parsed        = malloc(sizeof(option->white_list_parsed[0]) * len);
+    option->white_list_parsed        = wwmGlobalMalloc(sizeof(option->white_list_parsed[0]) * len);
     for (int i = 0; i < len; i++)
     {
         cur              = option->white_list_raddr[i];
@@ -396,7 +396,7 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
         LOGF("SocketManager: cannot register after accept thread starts");
         exit(1);
     }
-    socket_filter_t *filter   = malloc(sizeof(socket_filter_t));
+    socket_filter_t *filter   = wwmGlobalMalloc(sizeof(socket_filter_t));
     unsigned int     pirority = 0;
     if (option.multiport_backend == kMultiportBackendNothing)
     {
@@ -721,7 +721,7 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
                                       uint8_t *ports_overlapped, uint16_t port_max)
 {
     const int length           = (port_max - port_min);
-    filter->listen_ios         = (hio_t **) malloc(sizeof(hio_t *) * (length + 1));
+    filter->listen_ios         = (hio_t **) wwmGlobalMalloc(sizeof(hio_t *) * (length + 1));
     filter->listen_ios[length] = 0x0;
     int i                      = 0;
     for (uint16_t p = port_min; p < port_max; p++)
@@ -951,7 +951,7 @@ static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
         LOGF("SocketManager: stopping due to null socket handle");
         exit(1);
     }
-    udpsock_t *socket = malloc(sizeof(udpsock_t));
+    udpsock_t *socket = wwmGlobalMalloc(sizeof(udpsock_t));
     *socket           = (udpsock_t){.io = filter->listen_io, .table = newIdleTable(loop)};
     hevent_set_userdata(filter->listen_io, socket);
     hio_setcb_read(filter->listen_io, onRecvFrom);
@@ -1028,7 +1028,7 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
     (void) userdata;
 
     assert(state->tid >= 1);
-    assert(state && state->loop);
+    assert(state && state->loop && ! state->started);
 
     hhybridmutex_lock(&(state->mutex));
 
@@ -1071,7 +1071,7 @@ void startSocketManager(void)
 socket_manager_state_t *createSocketManager(hloop_t *event_loop, uint8_t tid)
 {
     assert(state == NULL);
-    state = malloc(sizeof(socket_manager_state_t));
+    state = wwmGlobalMalloc(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
 
     state->tid  = tid;
@@ -1083,10 +1083,10 @@ socket_manager_state_t *createSocketManager(hloop_t *event_loop, uint8_t tid)
 
     hhybridmutex_init(&state->mutex);
 
-    state->udp_pools = malloc(sizeof(*state->udp_pools) * workers_count);
+    state->udp_pools = wwmGlobalMalloc(sizeof(*state->udp_pools) * workers_count);
     memset(state->udp_pools, 0, sizeof(*state->udp_pools) * workers_count);
 
-    state->tcp_pools = malloc(sizeof(*state->tcp_pools) * workers_count);
+    state->tcp_pools = wwmGlobalMalloc(sizeof(*state->tcp_pools) * workers_count);
     memset(state->tcp_pools, 0, sizeof(*state->tcp_pools) * workers_count);
 
     for (unsigned int i = 0; i < workers_count; ++i)

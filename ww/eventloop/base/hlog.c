@@ -1,4 +1,5 @@
 #include "hlog.h"
+#include "ww.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,7 +42,7 @@ struct logger_s {
 static void logger_init(logger_t* logger) {
     logger->handler = NULL;
     logger->bufsize = DEFAULT_LOG_MAX_BUFSIZE;
-    logger->buf = (char*)malloc(logger->bufsize);
+    logger->buf = (char*)wwmGlobalMalloc(logger->bufsize);
 
     logger->level = DEFAULT_LOG_LEVEL;
     logger->enable_color = 0;
@@ -85,7 +86,7 @@ logger_t* logger_create(void) {
     int gmt_hour = gmt_tm->tm_hour;
     s_gmtoff = (local_hour - gmt_hour) * SECONDS_PER_HOUR;
 
-    logger_t* logger = (logger_t*)malloc(sizeof(logger_t));
+    logger_t* logger = (logger_t*)wwmGlobalMalloc(sizeof(logger_t));
     logger_init(logger);
     return logger;
 }
@@ -93,7 +94,7 @@ logger_t* logger_create(void) {
 void logger_destroy(logger_t* logger) {
     if (logger) {
         if (logger->buf) {
-            free(logger->buf);
+            wwmGlobalFree(logger->buf);
             logger->buf = NULL;
         }
         if (logger->fp_) {
@@ -101,7 +102,7 @@ void logger_destroy(logger_t* logger) {
             logger->fp_ = NULL;
         }
         hhybridmutex_destroy(&logger->mutex_);
-        free(logger);
+        wwmGlobalFree(logger);
     }
 }
 

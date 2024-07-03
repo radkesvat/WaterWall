@@ -156,7 +156,7 @@ static buffer_pool_t *allocBufferPool(uint8_t tid,unsigned long bufcount, unsign
     bufcount = 2 * bufcount;
 
     const unsigned long container_len = bufcount * sizeof(shift_buffer_t *);
-    buffer_pool_t      *pool          = malloc(sizeof(buffer_pool_t) + container_len);
+    buffer_pool_t      *pool          = wwmGlobalMalloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
 #endif

@@ -430,7 +430,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
         shiftr(buf, nwrite);
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w != 0){
-        //             remain.base = 0X0; // skips free()
+        //             remain.base = 0X0; // skips wwmGlobalFree()
 
         //         }else
         //         {

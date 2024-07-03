@@ -48,7 +48,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
     }
 
     // allocate memory, placing idle_table_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) malloc(memsize);
+    uintptr_t ptr = (uintptr_t) wwmGlobalMalloc(memsize);
 
     // align c to line cache boundary
     MUSTALIGN2(ptr, kCpuLineCacheSize);
@@ -71,7 +71,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
                          uint64_t age_ms)
 {
     assert(self);
-    idle_item_t *item = malloc(sizeof(idle_item_t));
+    idle_item_t *item = wwmGlobalMalloc(sizeof(idle_item_t));
     hhybridmutex_lock(&(self->mutex));
 
     *item = (idle_item_t){.expire_at_ms = hloop_now_ms(loops[tid]) + age_ms,
@@ -85,7 +85,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     {
         // hash is already in the table !
         hhybridmutex_unlock(&(self->mutex));
-        free(item);
+        wwmGlobalFree(item);
         return NULL;
     }
     heapq_idles_t_push(&(self->hqueue), item);
@@ -167,12 +167,12 @@ static void beforeCloseCallBack(hevent_t *ev)
             bool removal_result = removeIdleItemByHash(item->tid, item->table, item->hash);
             assert(removal_result);
             (void) removal_result;
-            free(item);
+            wwmGlobalFree(item);
         }
     }
     else
     {
-        free(item);
+        wwmGlobalFree(item);
     }
 }
 
@@ -194,7 +194,7 @@ void idleCallBack(htimer_t *timer)
             if (item->removed)
             {
                 // already removed
-                free(item);
+                wwmGlobalFree(item);
             }
             else
             {
@@ -222,5 +222,5 @@ void destroyIdleTable(idle_table_t *self)
     heapq_idles_t_drop(&self->hqueue);
     hmap_idles_t_drop(&self->hmap);
     hhybridmutex_destroy(&self->mutex);
-    free((void *) (self->memptr)); // NOLINT
+    wwmGlobalFree((void *) (self->memptr)); // NOLINT
 }

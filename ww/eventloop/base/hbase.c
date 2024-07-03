@@ -5,6 +5,7 @@
 #endif
 
 #include "hatomic.h"
+#include "ww.h"
 
 #ifndef RAND_MAX
 #define RAND_MAX 2147483647
@@ -23,7 +24,7 @@ long hv_free_cnt(void) {
 
 void* hv_malloc(size_t size) {
     hatomic_inc(&s_alloc_cnt);
-    void* ptr = malloc(size);
+    void* ptr = wwmGlobalMalloc(size);
     if (!ptr) {
         fprintf(stderr, "malloc failed!\n");
         exit(-1);
@@ -34,7 +35,7 @@ void* hv_malloc(size_t size) {
 void* hv_realloc(void* oldptr, size_t newsize, size_t oldsize) {
     hatomic_inc(&s_alloc_cnt);
     if (oldptr) hatomic_inc(&s_free_cnt);
-    void* ptr = realloc(oldptr, newsize);
+    void* ptr = wwmGlobalRealloc(oldptr, newsize);
     if (!ptr) {
         fprintf(stderr, "realloc failed!\n");
         exit(-1);
@@ -47,17 +48,19 @@ void* hv_realloc(void* oldptr, size_t newsize, size_t oldsize) {
 
 void* hv_calloc(size_t nmemb, size_t size) {
     hatomic_inc(&s_alloc_cnt);
-    void* ptr = calloc(nmemb, size);
+    void* ptr = wwmGlobalMalloc(nmemb* size);
     if (!ptr) {
         fprintf(stderr, "calloc failed!\n");
         exit(-1);
     }
+    memset(ptr, 0,nmemb* size);
+
     return ptr;
 }
 
 void* hv_zalloc(size_t size) {
     hatomic_inc(&s_alloc_cnt);
-    void* ptr = malloc(size);
+    void* ptr = wwmGlobalMalloc(size);
     if (!ptr) {
         fprintf(stderr, "malloc failed!\n");
         exit(-1);
@@ -68,7 +71,7 @@ void* hv_zalloc(size_t size) {
 
 void hv_free(void* ptr) {
     if (ptr) {
-        free(ptr);
+        wwmGlobalFree(ptr);
         ptr = NULL;
         hatomic_inc(&s_free_cnt);
     }

@@ -35,13 +35,13 @@ typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
 pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return malloc(sizeof(struct msg_event));
+    return wwmGlobalMalloc(sizeof(struct msg_event));
 }
 
 void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    free(item);
+    wwmGlobalFree(item);
 }
 
 static void lock(pipe_line_t *pl)
@@ -72,7 +72,7 @@ static void unlock(pipe_line_t *pl)
             exit(1);
         }
 #endif
-        free((void *) pl->memptr); // NOLINT
+        wwmGlobalFree((void *) pl->memptr); // NOLINT
     }
 }
 
@@ -370,7 +370,7 @@ void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid, PipeLineFl
     }
 
     // allocate memory, placing pipe_line_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) malloc(memsize);
+    uintptr_t ptr = (uintptr_t) wwmGlobalMalloc(memsize);
 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 

@@ -15,7 +15,7 @@ enum
 
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 {
-    buffer_stream_t *bs = malloc(sizeof(buffer_stream_t));
+    buffer_stream_t *bs = wwmGlobalMalloc(sizeof(buffer_stream_t));
     bs->q               = queue_with_capacity(kQCap);
     bs->pool            = pool;
     bs->size            = 0;
@@ -39,7 +39,7 @@ void destroyBufferStream(buffer_stream_t *self)
         reuseBuffer(self->pool, *i.ref);
     }
     queue_drop(&self->q);
-    free(self);
+    wwmGlobalFree(self);
 }
 
 void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)

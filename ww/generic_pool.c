@@ -56,7 +56,7 @@ static generic_pool_t *allocateGenericPool(unsigned int item_size, unsigned int 
     pool_width = 2 * pool_width;
 
     const unsigned long container_len = pool_width * sizeof(pool_item_t *);
-    generic_pool_t     *pool_ptr      = malloc(sizeof(generic_pool_t) + container_len);
+    generic_pool_t     *pool_ptr      = wwmGlobalMalloc(sizeof(generic_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool_ptr, 0xEB, sizeof(generic_pool_t) + container_len);
 #endif
@@ -73,13 +73,13 @@ static generic_pool_t *allocateGenericPool(unsigned int item_size, unsigned int 
 
 static pool_item_t *poolDefaultAllocator(struct generic_pool_s *pool)
 {
-    return malloc(pool->item_size);
+    return wwmGlobalMalloc(pool->item_size);
 }
 
 static void poolDefaultDeallocator(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    free(item);
+    wwmGlobalFree(item);
 }
 
 generic_pool_t *newGenericPool(PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)

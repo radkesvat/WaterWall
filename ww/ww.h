@@ -1,4 +1,5 @@
 #pragma once
+#include "managers/memory_manager.h"
 #include "generic_pool.h"
 #include "hthread.h"
 #include <stddef.h>
@@ -87,18 +88,19 @@ void createWW(ww_construction_data_t data);
 
 _Noreturn void runMainThread(void);
 
-extern unsigned int             workers_count;
-extern hthread_t               *workers;
-extern unsigned int             ram_profile;
-extern struct hloop_s         **loops;
-extern struct buffer_pool_s   **buffer_pools;
-extern struct generic_pool_s  **shift_buffer_pools;
-extern struct generic_pool_s  **context_pools;
-extern struct generic_pool_s  **line_pools;
-extern struct generic_pool_s  **pipeline_msg_pools;
-extern struct generic_pool_s  **libhv_hio_pools;
-extern struct socket_manager_s *socket_disp_state;
-extern struct node_manager_s   *node_disp_state;
-extern struct logger_s         *core_logger;
-extern struct logger_s         *network_logger;
-extern struct logger_s         *dns_logger;
+extern unsigned int               workers_count;
+extern hthread_t                 *workers;
+extern unsigned int               ram_profile;
+extern struct hloop_s           **loops;
+extern struct buffer_pool_s     **buffer_pools;
+extern struct generic_pool_s    **shift_buffer_pools;
+extern struct generic_pool_s    **context_pools;
+extern struct generic_pool_s    **line_pools;
+extern struct generic_pool_s    **pipeline_msg_pools;
+extern struct generic_pool_s    **libhv_hio_pools;
+extern struct ww_dedictaed_mem_s *memory_manager;
+extern struct socket_manager_s   *socekt_manager;
+extern struct node_manager_s     *node_manager;
+extern struct logger_s           *core_logger;
+extern struct logger_s           *network_logger;
+extern struct logger_s           *dns_logger;

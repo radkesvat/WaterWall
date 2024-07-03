@@ -60,7 +60,7 @@ static void ext_err( const char* func, const char* file, int line, const char* f
 
 
 #define ASSERT_GLOBAL_INITIALIZED() \
- if( wwmDedicatedg == NULL ) ERR( "Manager was not initialized. Call wwmGlobalOpen() at the beginning of your program." )
+ if( wwmGlobalState == NULL ) ERR( "Manager was not initialized. Call createWWMemoryManager() at the beginning of your program." )
 
 /**********************************************************************************************************************/
 
@@ -1025,13 +1025,13 @@ static size_t wwmDedicatedtotal_space( const ww_dedictaed_mem_t* o )
 /**********************************************************************************************************************/
 // Interface
 
-static ww_dedictaed_mem_t* wwmDedicatedg = NULL;
+static ww_dedictaed_mem_t* wwmGlobalState = NULL;
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static void create_tbman(void)
+static void createWWGlobalMemory(void)
 {
-    wwmDedicatedg = wwmDedicatedcreate
+    wwmGlobalState = wwmDedicatedcreate
     (
         default_pool_size,
         default_min_block_size,
@@ -1045,17 +1045,30 @@ static void create_tbman(void)
 
 static void discard_tbman(void)
 {
-    wwmDedicatedDiscard( wwmDedicatedg );
-    wwmDedicatedg = NULL;
+    wwmDedicatedDiscard( wwmGlobalState );
+    wwmGlobalState = NULL;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void wwmGlobalOpen( void )
+ww_dedictaed_mem_t* createWWMemoryManager( void )
 {
+    assert(wwmGlobalState == NULL);
     static honce_t flag = HONCE_INIT;
-    int ern = honce( &flag, create_tbman );
+    int ern = honce( &flag, createWWGlobalMemory );
     if( ern ) ERR( "function returned error %i", ern );
+    return wwmGlobalState;
+}
+
+ww_dedictaed_mem_t *getWWMemoryManager(void)
+{
+    return wwmGlobalState;
+}
+
+void setWWMemoryManager(ww_dedictaed_mem_t *new_state)
+{
+    assert(wwmGlobalState == NULL);
+    wwmGlobalState = new_state;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1070,7 +1083,7 @@ void wwmGlobalClose( void )
 void* wwmGlobalAlloc( void* current_ptr, size_t requested_size, size_t* granted_size )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return wwmDedicatedAlloc( wwmDedicatedg, current_ptr, requested_size, granted_size );
+    return wwmDedicatedAlloc( wwmGlobalState, current_ptr, requested_size, granted_size );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1078,12 +1091,12 @@ void* wwmGlobalAlloc( void* current_ptr, size_t requested_size, size_t* granted_
 void* wwmGlobalNalloc( void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return wwmDedicatedNalloc( wwmDedicatedg, current_ptr, current_size, requested_size, granted_size );
+    return wwmDedicatedNalloc( wwmGlobalState, current_ptr, current_size, requested_size, granted_size );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t wwmDedicatedGrantedSpace( ww_dedictaed_mem_t* o, const void* current_ptr )
+size_t wwmGlobalStaterantedSpace( ww_dedictaed_mem_t* o, const void* current_ptr )
 {
     token_manager_s* token_manager = NULL;
     {
@@ -1108,7 +1121,7 @@ size_t wwmDedicatedGrantedSpace( ww_dedictaed_mem_t* o, const void* current_ptr 
 size_t wwmGlobalGrantedSpace( const void* current_ptr )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return wwmDedicatedGrantedSpace( wwmDedicatedg, current_ptr );
+    return wwmGlobalStaterantedSpace( wwmGlobalState, current_ptr );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1126,7 +1139,7 @@ size_t wwmDedicatedtotalGrantedSpace( ww_dedictaed_mem_t* o )
 size_t wwmGlobaltotalGrantedSpace( void )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return wwmDedicatedtotalGrantedSpace( wwmDedicatedg );
+    return wwmDedicatedtotalGrantedSpace( wwmGlobalState );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1134,7 +1147,7 @@ size_t wwmGlobaltotalGrantedSpace( void )
 size_t wwmGlobaltotalInstances( void )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return wwmDedicatedtotalInstances( wwmDedicatedg );
+    return wwmDedicatedtotalInstances( wwmGlobalState );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1191,7 +1204,7 @@ void wwmDedicatedForEachInstance( ww_dedictaed_mem_t* o, void (*cb)( void* arg, 
 void wwmGlobalForEachInstance( void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    wwmDedicatedForEachInstance( wwmDedicatedg, cb, arg );
+    wwmDedicatedForEachInstance( wwmGlobalState, cb, arg );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1226,7 +1239,7 @@ void printWWMDedicatedstatus( ww_dedictaed_mem_t* o, int detail_level )
 
 void printWWMGlobalstatus( int detail_level )
 {
-    printWWMDedicatedstatus( wwmDedicatedg, detail_level );
+    printWWMDedicatedstatus( wwmGlobalState, detail_level );
 }
 
 /**********************************************************************************************************************/

@@ -13,10 +13,10 @@
 pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
+    shift_buffer_t *self = wwmGlobalMalloc(sizeof(shift_buffer_t));
 
     *self = (shift_buffer_t){
-        .refc = malloc(sizeof(self->refc[0])),
+        .refc = wwmGlobalMalloc(sizeof(self->refc[0])),
     };
     return self;
 }
@@ -25,8 +25,8 @@ void destroyShiftBufferPoolHandle(struct generic_pool_s *pool, pool_item_t *item
     (void) pool;
     shift_buffer_t *self = item;
 
-    free(self->refc);
-    free(self);
+    wwmGlobalFree(self->refc);
+    wwmGlobalFree(self);
 }
 
 void destroyShiftBuffer(uint8_t tid, shift_buffer_t *self)
@@ -37,12 +37,12 @@ void destroyShiftBuffer(uint8_t tid, shift_buffer_t *self)
 
     if (*(self->refc) <= 0)
     {
-        free(self->pbuf - self->_offset);
+        wwmGlobalFree(self->pbuf - self->_offset);
         reusePoolItem(shift_buffer_pools[tid], self);
     }
     else
     {
-        self->refc = malloc(sizeof(self->refc[0]));
+        self->refc = wwmGlobalMalloc(sizeof(self->refc[0]));
         reusePoolItem(shift_buffer_pools[tid], self);
     }
 }
@@ -56,15 +56,15 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
 
     unsigned int real_cap = pre_cap + (PREPADDING);
 
-    // shift_buffer_t *self = malloc(sizeof(shift_buffer_t));
+    // shift_buffer_t *self = wwmGlobalMalloc(sizeof(shift_buffer_t));
     shift_buffer_t *self = (shift_buffer_t *) popPoolItem(shift_buffer_pools[tid]);
 
     self->calc_len = 0;
     self->_offset  = 0;
     self->curpos   = PREPADDING;
     self->full_cap = real_cap;
-    self->pbuf     = malloc(real_cap);
-    // self->refc     = malloc(sizeof(self->refc[0])),
+    self->pbuf     = wwmGlobalMalloc(real_cap);
+    // self->refc     = wwmGlobalMalloc(sizeof(self->refc[0])),
     *(self->refc) = 1;
 
     if (real_cap > 0) // map the virtual memory page to physical memory
@@ -84,7 +84,7 @@ shift_buffer_t *newShallowShiftBuffer(uint8_t tid, shift_buffer_t *owner)
 {
     *(owner->refc) += 1;
     shift_buffer_t *shallow = (shift_buffer_t *) popPoolItem(shift_buffer_pools[tid]);
-    free(shallow->refc);
+    wwmGlobalFree(shallow->refc);
     *shallow = *owner;
 
     return shallow;
@@ -104,8 +104,8 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
 
     if (self->full_cap != real_cap)
     {
-        free(self->pbuf - self->_offset);
-        self->pbuf     = malloc(real_cap);
+        wwmGlobalFree(self->pbuf - self->_offset);
+        self->pbuf     = wwmGlobalMalloc(real_cap);
         self->full_cap = real_cap;
         // memset(self->pbuf, 0, real_cap);
     }
@@ -120,10 +120,10 @@ void unShallow(shift_buffer_t *self)
     assert(*(self->refc) > 1);
 
     *(self->refc) -= 1;
-    self->refc    = malloc(sizeof(unsigned int));
+    self->refc    = wwmGlobalMalloc(sizeof(unsigned int));
     *(self->refc) = 1;
     char *old_buf = self->pbuf;
-    self->pbuf    = malloc(self->full_cap);
+    self->pbuf    = wwmGlobalMalloc(self->full_cap);
     self->_offset = 0;
     memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->curpos]), (self->calc_len));
 }
@@ -136,10 +136,10 @@ void expand(shift_buffer_t *self, unsigned int increase)
         unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap) + (increase * 2))));
         // unShallow
         *(self->refc) -= 1;
-        self->refc       = malloc(sizeof(unsigned int));
+        self->refc       = wwmGlobalMalloc(sizeof(unsigned int));
         *(self->refc)    = 1;
         char *old_buf    = self->pbuf;
-        self->pbuf       = malloc(new_realcap);
+        self->pbuf       = wwmGlobalMalloc(new_realcap);
         self->_offset    = 0;
         unsigned int dif = (new_realcap - self->full_cap) / 2;
         memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
@@ -151,12 +151,12 @@ void expand(shift_buffer_t *self, unsigned int increase)
         const unsigned int old_realcap = self->full_cap;
         unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap) + (increase * 2))));
         char              *old_buf     = self->pbuf;
-        self->pbuf                     = malloc(new_realcap);
+        self->pbuf                     = wwmGlobalMalloc(new_realcap);
         unsigned int dif               = (new_realcap - self->full_cap) / 2;
         memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
         self->full_cap = new_realcap;
-        free(old_buf - self->_offset);
+        wwmGlobalFree(old_buf - self->_offset);
         self->_offset = 0;
     }
 }

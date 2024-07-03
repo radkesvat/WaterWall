@@ -20,7 +20,7 @@ struct context_queue_s
 
 context_queue_t *newContextQueue(void)
 {
-    context_queue_t *cb = malloc(sizeof(context_queue_t));
+    context_queue_t *cb = wwmGlobalMalloc(sizeof(context_queue_t));
     cb->q               = queue_with_capacity(kQCap);
     return cb;
 }
@@ -37,7 +37,7 @@ void destroyContextQueue(context_queue_t *self)
     }
 
     queue_drop(&self->q);
-    free(self);
+    wwmGlobalFree(self);
 }
 
 void contextQueuePush(context_queue_t *self, context_t *context)

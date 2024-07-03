@@ -52,7 +52,13 @@ ww_dedictaed_mem_t* wwmDedicatedcreate
 void wwmDedicatedDiscard( ww_dedictaed_mem_t* o );
 
 /// opens global memory manager (call this once before first usage of global ww_mem functions below)
-void wwmGlobalOpen( void );
+ww_dedictaed_mem_t* createWWMemoryManager( void );
+
+/// get the memory manager global state
+ww_dedictaed_mem_t *getWWMemoryManager(void);
+
+/// set the memory manager global state
+void setWWMemoryManager(ww_dedictaed_mem_t *new_state);
 
 /// closes global memory manager (call this once at the end of your program)
 void wwmGlobalClose( void );
