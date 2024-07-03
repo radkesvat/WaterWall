@@ -29,7 +29,6 @@ SOFTWARE.
 #include <stdarg.h>
 #include <assert.h>
 #include <string.h>
-#include <pthread.h>
 
 /**********************************************************************************************************************/
 // default parameters
@@ -1054,8 +1053,8 @@ static void discard_tbman(void)
 
 void tbman_open( void )
 {
-    static pthread_once_t flag = PTHREAD_ONCE_INIT;
-    int ern = pthread_once( &flag, create_tbman );
+    static honce_t flag = HONCE_INIT;
+    int ern = honce( &flag, create_tbman );
     if( ern ) ERR( "function returned error %i", ern );
 }
 
