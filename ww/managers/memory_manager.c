@@ -38,6 +38,9 @@ SOFTWARE.
 #include <stdarg.h>
 #include <assert.h>
 #include <string.h>
+#ifdef OS_WIN
+#include <malloc.h>
+#endif
 
 /**********************************************************************************************************************/
 // default parameters
@@ -157,12 +160,20 @@ static token_manager_s* token_manager_s_create( size_t pool_size, size_t block_s
     token_manager_s* o;
     if( align )
     {
+#ifdef OS_WIN
+        o = _aligned_malloc( pool_size, pool_size );
+#else
         o = aligned_alloc( pool_size, pool_size );
+#endif
         if( !o ) ERR( "Failed aligned allocating %zu bytes", pool_size );
     }
     else
     {
+#ifdef OS_WIN
+        o = _aligned_malloc( wwmGlobalALIGN, pool_size );
+#else
         o = aligned_alloc( wwmGlobalALIGN, pool_size );
+#endif
         if( !o ) ERR( "Failed allocating %zu bytes", pool_size );
     }
 
