@@ -2,6 +2,7 @@
 #include "loggers/network_logger.h"
 
 #include "cacert.h"
+#include "ww.h"
 #include <assert.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -14,7 +15,29 @@ enum ssl_endpoint
     kSslClient = 1,
 };
 
-static int openssl_lib_initialized = false;
+static int                        openssl_lib_initialized = false;
+static struct ww_dedictaed_mem_s *openssl_dedicated_memory_manager;
+
+static void *opennsl_dedicated_malloc(size_t num, const char *file, int line)
+{
+    (void) file;
+    (void) line;
+    return wwmDedicatedMalloc(openssl_dedicated_memory_manager, num);
+}
+
+static void *opennsl_dedicated_realloc(void *addr, size_t num, const char *file, int line)
+{
+    (void) file;
+    (void) line;
+    return wwmDedicatedRealloc(openssl_dedicated_memory_manager, addr, num);
+}
+
+static void opennsl_dedicated_free(void *addr, const char *file, int line)
+{
+    (void) file;
+    (void) line;
+    wwmDedicatedFree(openssl_dedicated_memory_manager, addr);
+}
 
 static void opensslGlobalInit(void)
 {
@@ -26,6 +49,14 @@ static void opensslGlobalInit(void)
         // #else
         //         OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
         // #endif
+        openssl_dedicated_memory_manager = wwmDedicatedCreateDefault();
+        if (0 == CRYPTO_set_mem_functions(opennsl_dedicated_malloc, opennsl_dedicated_realloc, opennsl_dedicated_free))
+        {
+            LOGF("OpenSSl Global: could not swap openssl allocators (almost always because allocations have already "
+                 "happened)");
+            exit(1);
+        }
+
         SSL_library_init();
         OpenSSL_add_all_algorithms();
         SSL_load_error_strings();

@@ -86,9 +86,9 @@ void setWW(struct ww_runtime_state_s *state)
     network_logger            = state->network_logger;
     dns_logger                = state->dns_logger;
     setWWMemoryManager(memory_manager);
-    setCoreLogger(state->core_logger);
-    setNetworkLogger(state->network_logger);
-    setDnsLogger(state->dns_logger);
+    setCoreLogger(core_logger);
+    setNetworkLogger(network_logger);
+    setDnsLogger(dns_logger);
     setSocketManager(socekt_manager);
     setNodeManager(node_manager);
     wwmGlobalFree(state);
@@ -189,6 +189,7 @@ void createWW(const ww_construction_data_t init_data)
         loops   = (hloop_t **) malloc(sizeof(hloop_t *) * (workers_count + kAdditionalReservedWorkers));
 
         ram_profile  = init_data.ram_profile;
+
         buffer_pools = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) *
                                                         (workers_count + kAdditionalReservedWorkers));
 
