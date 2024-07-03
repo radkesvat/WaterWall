@@ -38,9 +38,6 @@ SOFTWARE.
 #include <stdarg.h>
 #include <assert.h>
 #include <string.h>
-#ifdef OS_WIN
-#include <malloc.h>
-#endif
 
 /**********************************************************************************************************************/
 // default parameters
@@ -96,6 +93,15 @@ static inline void* stdlib_alloc( void* current_ptr, size_t requested_size )
         if( !current_ptr ) ERR( "Failed allocating %zu bytes", requested_size );
     }
     return current_ptr;
+}
+
+static inline void* posix_aligned_malloc(size_t alignment, size_t size) {
+    void* aligned_memory = NULL;
+    int result = posix_memalign(&aligned_memory, alignment, size);
+    if (result != 0) {
+        return NULL;
+    }
+    return aligned_memory;
 }
 
 /**********************************************************************************************************************/
@@ -161,9 +167,11 @@ static token_manager_s* token_manager_s_create( size_t pool_size, size_t block_s
     if( align )
     {
 #ifdef OS_WIN
-        o = _aligned_malloc( pool_size, pool_size );
-#else
+        o = posix_aligned_malloc( pool_size, pool_size );
+#elif defined (OS_LINUX)
         o = aligned_alloc( pool_size, pool_size );
+#else
+        o = posix_aligned_malloc( pool_size, pool_size );
 #endif
         if( !o ) ERR( "Failed aligned allocating %zu bytes", pool_size );
     }
@@ -171,8 +179,10 @@ static token_manager_s* token_manager_s_create( size_t pool_size, size_t block_s
     {
 #ifdef OS_WIN
         o = _aligned_malloc( wwmGlobalALIGN, pool_size );
-#else
+#elif defined (OS_LINUX)
         o = aligned_alloc( wwmGlobalALIGN, pool_size );
+#else
+        o = posix_aligned_malloc( wwmGlobalALIGN, pool_size );
 #endif
         if( !o ) ERR( "Failed allocating %zu bytes", pool_size );
     }
@@ -762,7 +772,13 @@ static void* wwmDedicatedmem_alloc( ww_dedictaed_mem_t* o, size_t requested_size
     }
     else
     {
+#ifdef OS_WIN
+        reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
+#elif defined (OS_LINUX)
         reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
+#else
+        reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
+#endif
         if( !reserved_ptr ) ERR( "Failed allocating %zu bytes.", requested_size );
         if( granted_size ) *granted_size = requested_size;
         if( btree_ps_s_set( o->external_btree, reserved_ptr, requested_size ) != 1 ) ERR( "Registering new address failed" );
@@ -869,8 +885,13 @@ static void* wwmDedicatedmem_realloc( ww_dedictaed_mem_t* o, void* current_ptr, 
                 if( granted_size ) *granted_size = current_ext_bytes;
                 return current_ptr;
             }
-
+#ifdef OS_WIN
+            void* reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
+#elif defined (OS_LINUX)
             void* reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
+#else
+            void* reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
+#endif
             if( !reserved_ptr ) ERR( "Failed allocating %zu bytes.", requested_size );
             if( granted_size ) *granted_size = requested_size;
             if( btree_ps_s_set( o->external_btree, reserved_ptr, requested_size ) != 1 ) ERR( "Registering new address failed" );
