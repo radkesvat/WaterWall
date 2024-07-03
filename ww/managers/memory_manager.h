@@ -1,4 +1,5 @@
 /**
+
 Author & Copyright (C) 2017 Johannes Bernhard Steffens.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -18,25 +19,27 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+This started from tbman library at https://github.com/johsteffens/tbman/tree/master
+
+changed many prats and names of this file, and it is now WW memory manager
+
 */
 
-#ifndef TBMAN_H
-#define TBMAN_H
-
-#ifdef __cplusplus
-   extern "C" {
-#endif // __cplusplus
-
+#pragma once
 #include <stddef.h>
 #include <stdbool.h>
 
-typedef struct tbman_s tbman_s;
+struct ww_dedictaed_mem_s;
+
+typedef struct ww_dedictaed_mem_s ww_dedictaed_mem_t;
 
 /// Creates a dedicated manager with default parameters
-tbman_s* tbman_s_create_default( void );
+ww_dedictaed_mem_t* wwmDedicatedCreateDefault( void );
 
-/// Creates a dedicated manager with specified parameters (consider using tbman_s_create_default)
-tbman_s* tbman_s_create
+/// Creates a dedicated manager with specified parameters (consider using wwmDedicatedCreateDefault)
+ww_dedictaed_mem_t* wwmDedicatedcreate
          (
             size_t pool_size,        // size of a memory pool in a token manager
             size_t min_block_size,   // minimal block size
@@ -46,19 +49,19 @@ tbman_s* tbman_s_create
          );
 
 /// Discards a dedicated manager
-void tbman_s_discard( tbman_s* o );
+void wwmDedicatedDiscard( ww_dedictaed_mem_t* o );
 
-/// opens global memory manager (call this once before first usage of global tbman functions below)
-void tbman_open( void );
+/// opens global memory manager (call this once before first usage of global ww_mem functions below)
+void wwmGlobalOpen( void );
 
 /// closes global memory manager (call this once at the end of your program)
-void tbman_close( void );
+void wwmGlobalClose( void );
 
-/// creates a dedicated memory manager instance ( close with tbman_s_close )
-static inline tbman_s* tbman_s_open( void ) { return tbman_s_create_default(); }
+/// creates a dedicated memory manager instance ( close with wwmDedicatedClose )
+static inline ww_dedictaed_mem_t* wwmDedicatedOpen( void ) { return wwmDedicatedCreateDefault(); }
 
 /// closes dedicated  memory manager instance
-static inline void tbman_s_close( tbman_s* o ) { tbman_s_discard( o ); }
+static inline void wwmDedicatedClose( ww_dedictaed_mem_t* o ) { wwmDedicatedDiscard( o ); }
 
 /**********************************************************************************************************************/
 /** Advanced memory management using the internal manager (thread-safe).
@@ -92,79 +95,73 @@ static inline void tbman_s_close( tbman_s* o ) { tbman_s_discard( o ); }
  *
  *  Alignment: (default behavior)
  *    A request of size of n*m bytes, where n,m are positive integers and m is (largest possible)
- *    integer power of 2, returns an address aligned to the lesser of m and TBMAN_ALIGN
- *    (TBMAN_ALIGN is defined in tbman.c).
+ *    integer power of 2, returns an address aligned to the lesser of m and wwmGlobalALIGN
+ *    (wwmGlobalALIGN is defined in memory_manager.c).
  *    This provides correct alignment of standard data types but also for composite types
  *    (e.g. int32x4_t) for use with a SIMD extension of the CPU (e.g. Intel's SSE or ARM's Neon).
  *
  */
-void* tbman_alloc(                void* current_ptr,                      size_t requested_size, size_t* granted_size );
-void* tbman_nalloc(               void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size );
-void* tbman_s_alloc(  tbman_s* o, void* current_ptr,                      size_t requested_size, size_t* granted_size );
-void* tbman_s_nalloc( tbman_s* o, void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size );
+void* wwmGlobalAlloc(                void* current_ptr,                      size_t requested_size, size_t* granted_size );
+void* wwmGlobalNalloc(               void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size );
+void* wwmDedicatedAlloc(  ww_dedictaed_mem_t* o, void* current_ptr,                      size_t requested_size, size_t* granted_size );
+void* wwmDedicatedNalloc( ww_dedictaed_mem_t* o, void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size );
 
 /// malloc, free and realloc (thread-safe).
-static inline void* tbman_malloc(             size_t size ) { return tbman_alloc( NULL, size, NULL ); }
-static inline void* tbman_realloc( void* ptr, size_t size ) { return tbman_alloc( ptr,  size, NULL ); }
-static inline void  tbman_free(    void* ptr              ) {        tbman_alloc( ptr,  0,    NULL ); }
+static inline void* wwmGlobalMalloc(             size_t size ) { return wwmGlobalAlloc( NULL, size, NULL ); }
+static inline void* wwmGlobalRealloc( void* ptr, size_t size ) { return wwmGlobalAlloc( ptr,  size, NULL ); }
+static inline void  wwmGlobalFree(    void* ptr              ) {        wwmGlobalAlloc( ptr,  0,    NULL ); }
 
-static inline void* tbman_s_malloc(  tbman_s* o,            size_t size ) { return tbman_s_alloc( o, NULL, size, NULL ); }
-static inline void* tbman_s_realloc( tbman_s* o, void* ptr, size_t size ) { return tbman_s_alloc( o, ptr,  size, NULL ); }
-static inline void  tbman_s_free(    tbman_s* o, void* ptr              ) {        tbman_s_alloc( o, ptr,  0,    NULL ); }
+static inline void* wwmDedicatedMalloc(  ww_dedictaed_mem_t* o,            size_t size ) { return wwmDedicatedAlloc( o, NULL, size, NULL ); }
+static inline void* wwmDedicatedRealloc( ww_dedictaed_mem_t* o, void* ptr, size_t size ) { return wwmDedicatedAlloc( o, ptr,  size, NULL ); }
+static inline void  wwmDedicatedFree(    ww_dedictaed_mem_t* o, void* ptr              ) {        wwmDedicatedAlloc( o, ptr,  0,    NULL ); }
 
 /// realloc, specifying current size (thread-safe).
-static inline void* tbman_nrealloc( void* current_ptr, size_t current_size, size_t new_size )
+static inline void* wwmGlobalNRealloc( void* current_ptr, size_t current_size, size_t new_size )
 {
-    return tbman_nalloc( current_ptr, current_size, new_size, NULL );
+    return wwmGlobalNalloc( current_ptr, current_size, new_size, NULL );
 }
 
-static inline void* tbman_s_nrealloc( tbman_s* o, void* current_ptr, size_t current_size, size_t new_size )
+static inline void* wwmDedicatedNRealloc( ww_dedictaed_mem_t* o, void* current_ptr, size_t current_size, size_t new_size )
 {
-    return tbman_s_nalloc( o, current_ptr, current_size, new_size, NULL );
+    return wwmDedicatedNalloc( o, current_ptr, current_size, new_size, NULL );
 }
 
 /// free, specifying current size (thread-safe).
-static inline void tbman_nfree( void* current_ptr, size_t current_size )
+static inline void wwmGlobalNFree( void* current_ptr, size_t current_size )
 {
-    tbman_nalloc( current_ptr, current_size, 0, NULL );
+    wwmGlobalNalloc( current_ptr, current_size, 0, NULL );
 }
 
-static inline void tbman_s_nfree( tbman_s* o, void* current_ptr, size_t current_size )
+static inline void wwmDedicatedNFree( ww_dedictaed_mem_t* o, void* current_ptr, size_t current_size )
 {
-    tbman_s_nalloc( o, current_ptr, current_size, 0, NULL );
+    wwmDedicatedNalloc( o, current_ptr, current_size, 0, NULL );
 }
 
 /**********************************************************************************************************************/
 /// Diagnostics
 
 /// Returns currently granted space for a specified memory instance (thread-safe)
-size_t tbman_granted_space(               const void* current_ptr );
-size_t tbman_s_granted_space( tbman_s* o, const void* current_ptr );
+size_t wwmGlobalGrantedSpace(               const void* current_ptr );
+size_t wwmDedicatedGrantedSpace( ww_dedictaed_mem_t* o, const void* current_ptr );
 
 /// Returns total of currently granted space (thread-safe)
-size_t tbman_total_granted_space( void );
-size_t tbman_s_total_granted_space( tbman_s* o );
+size_t wwmGlobaltotalGrantedSpace( void );
+size_t wwmDedicatedtotalGrantedSpace( ww_dedictaed_mem_t* o );
 
 /// Returns number of open allocation instances (thread-safe)
-size_t tbman_total_instances( void );
-size_t tbman_s_total_instances( tbman_s* o );
+size_t wwmGlobaltotalInstances( void );
+size_t wwmDedicatedtotalInstances( ww_dedictaed_mem_t* o );
 
 /** Iterates through all open instances and calls 'callback' per instance (thread-safe)
  *  The callback function may change the manager's state.
- *  Only instances which where open at the moment of entering 'bcore_tbman_s_for_each_instance' are iterated.
- *  While 'bcore_tbman_s_for_each_instance' executes, any instance closed or newly opened will not change the iteration.
+ *  Only instances which where open at the moment of entering 'bcore_wwmDedicatedForEachInstance' are iterated.
+ *  While 'bcore_wwmDedicatedForEachInstance' executes, any instance closed or newly opened will not change the iteration.
  */
-void tbman_for_each_instance(               void (*cb)( void* arg, void* ptr, size_t space ), void* arg );
-void tbman_s_for_each_instance( tbman_s* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg );
+void wwmGlobalForEachInstance(               void (*cb)( void* arg, void* ptr, size_t space ), void* arg );
+void wwmDedicatedForEachInstance( ww_dedictaed_mem_t* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg );
 
 /// prints internal status to stdout (use only for debugging/testing - not thread-safe)
-void print_tbman_status(               int detail_level );
-void print_tbman_s_status( tbman_s* o, int detail_level );
+void printWWMGlobalstatus(               int detail_level );
+void printWWMDedicatedstatus( ww_dedictaed_mem_t* o, int detail_level );
 
 /**********************************************************************************************************************/
-
-#ifdef __cplusplus
-   }
-#endif // __cplusplus
-
-#endif // TBMAN_H

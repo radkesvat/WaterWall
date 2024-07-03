@@ -20,8 +20,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include "tbman.h"
-#include "btree.h"
+#include "memory_manager.h"
+#include "utils/btree.h"
 #include "hmutex.h"
 
 #include <stdlib.h>
@@ -40,7 +40,7 @@ static const size_t default_stepping_method = 1;
 static const bool   default_full_align = true;
 
 /// Minimum alignment of memory blocks
-#define TBMAN_ALIGN 0x100
+#define wwmGlobalALIGN 0x100
 
 /**********************************************************************************************************************/
 /// error messages
@@ -60,7 +60,7 @@ static void ext_err( const char* func, const char* file, int line, const char* f
 
 
 #define ASSERT_GLOBAL_INITIALIZED() \
- if( tbman_s_g == NULL ) ERR( "Manager was not initialized. Call tbman_open() at the beginning of your program." )
+ if( wwmDedicatedg == NULL ) ERR( "Manager was not initialized. Call wwmGlobalOpen() at the beginning of your program." )
 
 /**********************************************************************************************************************/
 
@@ -153,7 +153,7 @@ static token_manager_s* token_manager_s_create( size_t pool_size, size_t block_s
     }
     else
     {
-        o = aligned_alloc( TBMAN_ALIGN, pool_size );
+        o = aligned_alloc( wwmGlobalALIGN, pool_size );
         if( !o ) ERR( "Failed allocating %zu bytes", pool_size );
     }
 
@@ -315,7 +315,7 @@ typedef struct block_manager_s
     size_t free_index;       // entries equal or above free_index have space for allocation
     double sweep_hysteresis; // if ( empty token-managers ) / ( used token-managers ) < sweep_hysteresis, empty token-managers are discarded
     bool aligned;          // all token managers are aligned to pool_size
-    struct tbman_s* parent;
+    struct ww_dedictaed_mem_s* parent;
     btree_vd_s* internal_btree;
 } block_manager_s;
 
@@ -365,7 +365,7 @@ static void block_manager_s_discard( block_manager_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static void tbman_s_lost_alignment( struct tbman_s* o, const block_manager_s* child );
+static void wwmDedicatedlost_alignment( struct ww_dedictaed_mem_s* o, const block_manager_s* child );
 
 static void* block_manager_s_alloc( block_manager_s* o )
 {
@@ -392,7 +392,7 @@ static void* block_manager_s_alloc( block_manager_s* o )
         if( o->aligned && !o->data[ o->size ]->aligned )
         {
             o->aligned = false;
-            tbman_s_lost_alignment( o->parent, o );
+            wwmDedicatedlost_alignment( o->parent, o );
         }
         if( btree_vd_s_set( o->internal_btree, o->data[ o->size ] ) != 1 ) ERR( "Failed registering block address." );
         o->size++;
@@ -562,7 +562,7 @@ static void print_block_manager_s_status( const block_manager_s* o, int detail_l
  *       (O(log(n)) - where 'n' is the current amount of token managers.)
  *
  */
-typedef struct tbman_s
+typedef struct ww_dedictaed_mem_s
 {
     block_manager_s** data; // block managers are sorted by increasing block size
     size_t size;
@@ -574,11 +574,11 @@ typedef struct tbman_s
     btree_vd_s* internal_btree;
     btree_ps_s* external_btree;
     hhybridmutex_t mutex;
-} tbman_s;
+} ww_dedictaed_mem_t;
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void tbman_s_init( tbman_s* o, size_t pool_size, size_t min_block_size, size_t max_block_size, size_t stepping_method, bool full_align )
+void wwmDedicatedinit( ww_dedictaed_mem_t* o, size_t pool_size, size_t min_block_size, size_t max_block_size, size_t stepping_method, bool full_align )
 {
     memset( o, 0, sizeof( *o ) );
     hhybridmutex_init(&o->mutex);
@@ -640,13 +640,13 @@ void tbman_s_init( tbman_s* o, size_t pool_size, size_t min_block_size, size_t m
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void tbman_s_down( tbman_s* o )
+void wwmDedicateddown( ww_dedictaed_mem_t* o )
 {
-    size_t leaking_bytes = tbman_s_total_granted_space( o );
+    size_t leaking_bytes = wwmDedicatedtotalGrantedSpace( o );
 
     if( leaking_bytes > 0 )
     {
-        size_t leaking_instances = tbman_s_total_instances( o );
+        size_t leaking_instances = wwmDedicatedtotalInstances( o );
         fprintf
         (
             stderr,
@@ -674,7 +674,7 @@ void tbman_s_down( tbman_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-tbman_s* tbman_s_create
+ww_dedictaed_mem_t* wwmDedicatedcreate
          (
             size_t pool_size,
             size_t min_block_size,
@@ -683,17 +683,17 @@ tbman_s* tbman_s_create
             bool full_align
          )
 {
-    tbman_s* o = malloc( sizeof( tbman_s ) );
-    if( !o ) ERR( "Failed allocating %zu bytes", sizeof( tbman_s ) );
-    tbman_s_init( o, pool_size, min_block_size, max_block_size, stepping_method, full_align );
+    ww_dedictaed_mem_t* o = malloc( sizeof( ww_dedictaed_mem_t ) );
+    if( !o ) ERR( "Failed allocating %zu bytes", sizeof( ww_dedictaed_mem_t ) );
+    wwmDedicatedinit( o, pool_size, min_block_size, max_block_size, stepping_method, full_align );
     return o;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-tbman_s* tbman_s_create_default( void )
+ww_dedictaed_mem_t* wwmDedicatedcreate_default( void )
 {
-    return tbman_s_create
+    return wwmDedicatedcreate
     (
         default_pool_size,
         default_min_block_size,
@@ -705,16 +705,16 @@ tbman_s* tbman_s_create_default( void )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void tbman_s_discard( tbman_s* o )
+void wwmDedicatedDiscard( ww_dedictaed_mem_t* o )
 {
     if( !o ) return;
-    tbman_s_down( o );
+    wwmDedicateddown( o );
     free( o );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static void tbman_s_lost_alignment( struct tbman_s* o, const block_manager_s* child )
+static void wwmDedicatedlost_alignment( struct ww_dedictaed_mem_s* o, const block_manager_s* child )
 {
     (void) child;
     o->aligned = false;
@@ -722,7 +722,7 @@ static void tbman_s_lost_alignment( struct tbman_s* o, const block_manager_s* ch
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static void* tbman_s_mem_alloc( tbman_s* o, size_t requested_size, size_t* granted_size )
+static void* wwmDedicatedmem_alloc( ww_dedictaed_mem_t* o, size_t requested_size, size_t* granted_size )
 {
     block_manager_s* block_manager = NULL;
     for( size_t i = 0; i < o->size; i++ )
@@ -742,7 +742,7 @@ static void* tbman_s_mem_alloc( tbman_s* o, size_t requested_size, size_t* grant
     }
     else
     {
-        reserved_ptr = aligned_alloc( TBMAN_ALIGN, requested_size );
+        reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
         if( !reserved_ptr ) ERR( "Failed allocating %zu bytes.", requested_size );
         if( granted_size ) *granted_size = requested_size;
         if( btree_ps_s_set( o->external_btree, reserved_ptr, requested_size ) != 1 ) ERR( "Registering new address failed" );
@@ -753,7 +753,7 @@ static void* tbman_s_mem_alloc( tbman_s* o, size_t requested_size, size_t* grant
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static void tbman_s_mem_free( tbman_s* o, void* current_ptr, const size_t* current_size )
+static void wwmDedicatedmem_free( ww_dedictaed_mem_t* o, void* current_ptr, const size_t* current_size )
 {
     if( current_size && *current_size <= o->max_block_size && o->aligned )
     {
@@ -777,7 +777,7 @@ static void tbman_s_mem_free( tbman_s* o, void* current_ptr, const size_t* curre
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static void* tbman_s_mem_realloc( tbman_s* o, void* current_ptr, const size_t* current_size, size_t requested_size, size_t* granted_size )
+static void* wwmDedicatedmem_realloc( ww_dedictaed_mem_t* o, void* current_ptr, const size_t* current_size, size_t requested_size, size_t* granted_size )
 {
     token_manager_s* token_manager = NULL;
     if( current_size && *current_size <= o->max_block_size && o->aligned )
@@ -794,7 +794,7 @@ static void* tbman_s_mem_realloc( tbman_s* o, void* current_ptr, const size_t* c
     {
         if( requested_size > token_manager->block_size )
         {
-            void* reserved_ptr = tbman_s_mem_alloc( o, requested_size, granted_size );
+            void* reserved_ptr = wwmDedicatedmem_alloc( o, requested_size, granted_size );
             memcpy( reserved_ptr, current_ptr, token_manager->block_size );
             token_manager_s_free( token_manager, current_ptr );
             return reserved_ptr;
@@ -831,7 +831,7 @@ static void* tbman_s_mem_realloc( tbman_s* o, void* current_ptr, const size_t* c
     {
         if( requested_size <= o->max_block_size ) // new size fits into manager, old size was outside manager
         {
-            void* reserved_ptr = tbman_s_mem_alloc( o, requested_size, granted_size );
+            void* reserved_ptr = wwmDedicatedmem_alloc( o, requested_size, granted_size );
             memcpy( reserved_ptr, current_ptr, requested_size );
             if( btree_ps_s_remove( o->external_btree, current_ptr ) != 1 ) ERR( "Attempt to free invalid memory" );
             free( current_ptr );
@@ -850,7 +850,7 @@ static void* tbman_s_mem_realloc( tbman_s* o, void* current_ptr, const size_t* c
                 return current_ptr;
             }
 
-            void* reserved_ptr = aligned_alloc( TBMAN_ALIGN, requested_size );
+            void* reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
             if( !reserved_ptr ) ERR( "Failed allocating %zu bytes.", requested_size );
             if( granted_size ) *granted_size = requested_size;
             if( btree_ps_s_set( o->external_btree, reserved_ptr, requested_size ) != 1 ) ERR( "Registering new address failed" );
@@ -867,7 +867,7 @@ static void* tbman_s_mem_realloc( tbman_s* o, void* current_ptr, const size_t* c
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void* tbman_s_alloc( tbman_s* o, void* current_ptr, size_t requested_size, size_t* granted_size )
+void* wwmDedicatedAlloc( ww_dedictaed_mem_t* o, void* current_ptr, size_t requested_size, size_t* granted_size )
 {
     hhybridmutex_lock( &o->mutex );
     void* ret = NULL;
@@ -875,7 +875,7 @@ void* tbman_s_alloc( tbman_s* o, void* current_ptr, size_t requested_size, size_
     {
         if( current_ptr )
         {
-            tbman_s_mem_free( o, current_ptr, NULL );
+            wwmDedicatedmem_free( o, current_ptr, NULL );
         }
         if( granted_size ) *granted_size = 0;
     }
@@ -883,11 +883,11 @@ void* tbman_s_alloc( tbman_s* o, void* current_ptr, size_t requested_size, size_
     {
         if( current_ptr )
         {
-            ret = tbman_s_mem_realloc( o, current_ptr, NULL, requested_size, granted_size );
+            ret = wwmDedicatedmem_realloc( o, current_ptr, NULL, requested_size, granted_size );
         }
         else
         {
-            ret = tbman_s_mem_alloc( o, requested_size, granted_size );
+            ret = wwmDedicatedmem_alloc( o, requested_size, granted_size );
         }
     }
     hhybridmutex_unlock( &o->mutex );
@@ -896,7 +896,7 @@ void* tbman_s_alloc( tbman_s* o, void* current_ptr, size_t requested_size, size_
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void* tbman_s_nalloc( tbman_s* o, void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size )
+void* wwmDedicatedNalloc( ww_dedictaed_mem_t* o, void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size )
 {
     hhybridmutex_lock( &o->mutex );
     void* ret = NULL;
@@ -904,7 +904,7 @@ void* tbman_s_nalloc( tbman_s* o, void* current_ptr, size_t current_size, size_t
     {
         if( current_size ) // 0 means current_ptr may not be used for free or realloc
         {
-            tbman_s_mem_free( o, current_ptr, &current_size );
+            wwmDedicatedmem_free( o, current_ptr, &current_size );
         }
         if( granted_size ) *granted_size = 0;
     }
@@ -912,11 +912,11 @@ void* tbman_s_nalloc( tbman_s* o, void* current_ptr, size_t current_size, size_t
     {
         if( current_size ) // 0 means current_ptr may not be used for free or realloc
         {
-            ret = tbman_s_mem_realloc( o, current_ptr, &current_size, requested_size, granted_size );
+            ret = wwmDedicatedmem_realloc( o, current_ptr, &current_size, requested_size, granted_size );
         }
         else
         {
-            ret = tbman_s_mem_alloc( o, requested_size, granted_size );
+            ret = wwmDedicatedmem_alloc( o, requested_size, granted_size );
         }
     }
     hhybridmutex_unlock( &o->mutex );
@@ -925,7 +925,7 @@ void* tbman_s_nalloc( tbman_s* o, void* current_ptr, size_t current_size, size_t
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static size_t tbman_s_external_total_alloc( const tbman_s* o )
+static size_t wwmDedicatedexternal_total_alloc( const ww_dedictaed_mem_t* o )
 {
     return btree_ps_s_sum( o->external_btree, NULL, NULL );
 }
@@ -939,7 +939,7 @@ static void ext_count( void* arg, btree_ps_key_t key, btree_ps_val_t val ) {
     
 }
 
-static size_t tbman_s_external_total_instances( const tbman_s* o )
+static size_t wwmDedicatedexternal_total_instances( const ww_dedictaed_mem_t* o )
 {
     size_t size = 0;
     btree_ps_s_run( o->external_btree, ext_count, &size );
@@ -960,7 +960,7 @@ static void ext_for_instance( void* arg, btree_ps_key_t key, btree_ps_val_t val 
     iarg->cb( iarg->arg, key, val );
 }
 
-static void tbman_s_external_for_each_instance( tbman_s* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
+static void wwmDedicatedexternal_for_each_instance( ww_dedictaed_mem_t* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
 {
     ext_for_instance_arg iarg = { .cb = cb, .arg = arg };
     btree_ps_s_run( o->external_btree, ext_for_instance, &iarg );
@@ -968,7 +968,7 @@ static void tbman_s_external_for_each_instance( tbman_s* o, void (*cb)( void* ar
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static size_t tbman_s_internal_total_alloc( const tbman_s* o )
+static size_t wwmDedicatedinternal_total_alloc( const ww_dedictaed_mem_t* o )
 {
     size_t sum = 0;
     for( size_t i = 0; i < o->size; i++ )
@@ -980,7 +980,7 @@ static size_t tbman_s_internal_total_alloc( const tbman_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static size_t tbman_s_internal_total_instances( const tbman_s* o )
+static size_t wwmDedicatedinternal_total_instances( const ww_dedictaed_mem_t* o )
 {
     size_t sum = 0;
     for( size_t i = 0; i < o->size; i++ )
@@ -992,7 +992,7 @@ static size_t tbman_s_internal_total_instances( const tbman_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static void tbman_s_internal_for_each_instance( tbman_s* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
+static void wwmDedicatedinternal_for_each_instance( ww_dedictaed_mem_t* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
 {
     for( size_t i = 0; i < o->size; i++ )
     {
@@ -1002,15 +1002,15 @@ static void tbman_s_internal_for_each_instance( tbman_s* o, void (*cb)( void* ar
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static size_t tbman_s_total_alloc( const tbman_s* o )
+static size_t wwmDedicatedtotal_alloc( const ww_dedictaed_mem_t* o )
 {
-    return tbman_s_external_total_alloc( o )
-         + tbman_s_internal_total_alloc( o );
+    return wwmDedicatedexternal_total_alloc( o )
+         + wwmDedicatedinternal_total_alloc( o );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-static size_t tbman_s_total_space( const tbman_s* o )
+static size_t wwmDedicatedtotal_space( const ww_dedictaed_mem_t* o )
 {
     size_t sum = 0;
     for( size_t i = 0; i < o->size; i++ )
@@ -1025,13 +1025,13 @@ static size_t tbman_s_total_space( const tbman_s* o )
 /**********************************************************************************************************************/
 // Interface
 
-static tbman_s* tbman_s_g = NULL;
+static ww_dedictaed_mem_t* wwmDedicatedg = NULL;
 
 // ---------------------------------------------------------------------------------------------------------------------
 
 static void create_tbman(void)
 {
-    tbman_s_g = tbman_s_create
+    wwmDedicatedg = wwmDedicatedcreate
     (
         default_pool_size,
         default_min_block_size,
@@ -1045,13 +1045,13 @@ static void create_tbman(void)
 
 static void discard_tbman(void)
 {
-    tbman_s_discard( tbman_s_g );
-    tbman_s_g = NULL;
+    wwmDedicatedDiscard( wwmDedicatedg );
+    wwmDedicatedg = NULL;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void tbman_open( void )
+void wwmGlobalOpen( void )
 {
     static honce_t flag = HONCE_INIT;
     int ern = honce( &flag, create_tbman );
@@ -1060,30 +1060,30 @@ void tbman_open( void )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void tbman_close( void )
+void wwmGlobalClose( void )
 {
     discard_tbman();
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void* tbman_alloc( void* current_ptr, size_t requested_size, size_t* granted_size )
+void* wwmGlobalAlloc( void* current_ptr, size_t requested_size, size_t* granted_size )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return tbman_s_alloc( tbman_s_g, current_ptr, requested_size, granted_size );
+    return wwmDedicatedAlloc( wwmDedicatedg, current_ptr, requested_size, granted_size );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void* tbman_nalloc( void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size )
+void* wwmGlobalNalloc( void* current_ptr, size_t current_size, size_t requested_size, size_t* granted_size )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return tbman_s_nalloc( tbman_s_g, current_ptr, current_size, requested_size, granted_size );
+    return wwmDedicatedNalloc( wwmDedicatedg, current_ptr, current_size, requested_size, granted_size );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t tbman_s_granted_space( tbman_s* o, const void* current_ptr )
+size_t wwmDedicatedGrantedSpace( ww_dedictaed_mem_t* o, const void* current_ptr )
 {
     token_manager_s* token_manager = NULL;
     {
@@ -1105,78 +1105,78 @@ size_t tbman_s_granted_space( tbman_s* o, const void* current_ptr )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t tbman_granted_space( const void* current_ptr )
+size_t wwmGlobalGrantedSpace( const void* current_ptr )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return tbman_s_granted_space( tbman_s_g, current_ptr );
+    return wwmDedicatedGrantedSpace( wwmDedicatedg, current_ptr );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t tbman_s_total_granted_space( tbman_s* o )
+size_t wwmDedicatedtotalGrantedSpace( ww_dedictaed_mem_t* o )
 {
     hhybridmutex_lock( &o->mutex );
-    size_t space = tbman_s_total_alloc( o );
+    size_t space = wwmDedicatedtotal_alloc( o );
     hhybridmutex_unlock( &o->mutex );
     return space;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t tbman_total_granted_space( void )
+size_t wwmGlobaltotalGrantedSpace( void )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return tbman_s_total_granted_space( tbman_s_g );
+    return wwmDedicatedtotalGrantedSpace( wwmDedicatedg );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t tbman_total_instances( void )
+size_t wwmGlobaltotalInstances( void )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    return tbman_s_total_instances( tbman_s_g );
+    return wwmDedicatedtotalInstances( wwmDedicatedg );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t tbman_s_total_instances( tbman_s* o )
+size_t wwmDedicatedtotalInstances( ww_dedictaed_mem_t* o )
 {
     hhybridmutex_lock( &o->mutex );
     size_t count = 0;
-    count += tbman_s_external_total_instances( o );
-    count += tbman_s_internal_total_instances( o );
+    count += wwmDedicatedexternal_total_instances( o );
+    count += wwmDedicatedinternal_total_instances( o );
     hhybridmutex_unlock( &o->mutex );
     return count;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-typedef struct tbman_mnode { void* p; size_t s; } tbman_mnode;
-typedef struct tbman_mnode_arr { tbman_mnode* data; size_t size; size_t space; } tbman_mnode_arr;
+typedef struct wwmGlobalmnode { void* p; size_t s; } wwmGlobalmnode;
+typedef struct wwmGlobalmnode_arr { wwmGlobalmnode* data; size_t size; size_t space; } wwmGlobalmnode_arr;
 
 static void for_each_instance_collect_callback( void* arg, void* ptr, size_t space )
 {
     assert( arg );
-    tbman_mnode_arr* arr = arg;
+    wwmGlobalmnode_arr* arr = arg;
     assert( arr->size < arr->space );
-    arr->data[ arr->size ] = ( tbman_mnode ){ .p = ptr, .s = space };
+    arr->data[ arr->size ] = ( wwmGlobalmnode ){ .p = ptr, .s = space };
     arr->size++;
 }
 
-void tbman_s_for_each_instance( tbman_s* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
+void wwmDedicatedForEachInstance( ww_dedictaed_mem_t* o, void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
 {
     if( !cb ) return;
-    size_t size = tbman_s_total_instances( o );
+    size_t size = wwmDedicatedtotalInstances( o );
     if( !size ) return;
 
-    tbman_mnode_arr arr;
-    arr.data  = malloc( sizeof( tbman_mnode ) * size );
+    wwmGlobalmnode_arr arr;
+    arr.data  = malloc( sizeof( wwmGlobalmnode ) * size );
     arr.space = size;
     arr.size  = 0;
 
     hhybridmutex_lock( &o->mutex );
-    tbman_s_external_for_each_instance( o, for_each_instance_collect_callback, &arr );
-    tbman_s_internal_for_each_instance( o, for_each_instance_collect_callback, &arr );
+    wwmDedicatedexternal_for_each_instance( o, for_each_instance_collect_callback, &arr );
+    wwmDedicatedinternal_for_each_instance( o, for_each_instance_collect_callback, &arr );
     hhybridmutex_unlock( &o->mutex );
 
     assert( arr.size == arr.space );
@@ -1188,16 +1188,16 @@ void tbman_s_for_each_instance( tbman_s* o, void (*cb)( void* arg, void* ptr, si
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void tbman_for_each_instance( void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
+void wwmGlobalForEachInstance( void (*cb)( void* arg, void* ptr, size_t space ), void* arg )
 {
     ASSERT_GLOBAL_INITIALIZED();
-    tbman_s_for_each_instance( tbman_s_g, cb, arg );
+    wwmDedicatedForEachInstance( wwmDedicatedg, cb, arg );
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
 // not thread-safe
-void print_tbman_s_status( tbman_s* o, int detail_level )
+void printWWMDedicatedstatus( ww_dedictaed_mem_t* o, int detail_level )
 {
     if( detail_level <= 0 ) return;
     printf( "pool_size:              %zu\n", o->pool_size );
@@ -1209,9 +1209,9 @@ void print_tbman_s_status( tbman_s* o, int detail_level )
     printf( "min_block_size:         %zu\n", o->size > 0 ? o->data[ 0 ]->block_size : 0 );
     printf( "max_block_size:         %zu\n", o->size > 0 ? o->data[ o->size - 1 ]->block_size : 0 );
     printf( "aligned:                %s\n",  o->aligned ? "true" : "false" );
-    printf( "total external granted: %zu\n", tbman_s_external_total_alloc( o ) );
-    printf( "total internal granted: %zu\n", tbman_s_internal_total_alloc( o ) );
-    printf( "total internal used:    %zu\n", tbman_s_total_space( o ) );
+    printf( "total external granted: %zu\n", wwmDedicatedexternal_total_alloc( o ) );
+    printf( "total internal granted: %zu\n", wwmDedicatedinternal_total_alloc( o ) );
+    printf( "total internal used:    %zu\n", wwmDedicatedtotal_space( o ) );
     if( detail_level > 1 )
     {
         for( size_t i = 0; i < o->size; i++ )
@@ -1224,9 +1224,9 @@ void print_tbman_s_status( tbman_s* o, int detail_level )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void print_tbman_status( int detail_level )
+void printWWMGlobalstatus( int detail_level )
 {
-    print_tbman_s_status( tbman_s_g, detail_level );
+    printWWMDedicatedstatus( wwmDedicatedg, detail_level );
 }
 
 /**********************************************************************************************************************/
