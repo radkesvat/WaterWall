@@ -165,7 +165,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     const size_t start_delay_ms = 150;
 
-    reverse_client_state_t *state = malloc(sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * workers_count));
+    reverse_client_state_t *state = wwmGlobalMalloc(sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * workers_count));
     memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * workers_count));
     const cJSON *settings = instance_info->node_settings_json;
 

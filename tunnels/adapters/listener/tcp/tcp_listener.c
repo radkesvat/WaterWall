@@ -73,7 +73,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
     resumeLineUpSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
     destroyLine(cstate->line);
-    free(cstate);
+    wwmGlobalFree(cstate);
 }
 
 static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
@@ -271,7 +271,7 @@ static void onInboundConnected(hevent_t *ev)
 
     tunnel_t                 *self   = data->tunnel;
     line_t                   *line   = newLine(tid);
-    tcp_listener_con_state_t *cstate = malloc(sizeof(tcp_listener_con_state_t));
+    tcp_listener_con_state_t *cstate = wwmGlobalMalloc(sizeof(tcp_listener_con_state_t));
 
     LSTATE_MUT(line)               = cstate;
     line->src_ctx.address_protocol = kSapTcp;
@@ -370,7 +370,7 @@ static void parsePortSection(tcp_listener_state_t *state, const cJSON *settings)
 }
 tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 {
-    tcp_listener_state_t *state = malloc(sizeof(tcp_listener_state_t));
+    tcp_listener_state_t *state = wwmGlobalMalloc(sizeof(tcp_listener_state_t));
     memset(state, 0, sizeof(tcp_listener_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -415,7 +415,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         size_t len = cJSON_GetArraySize(wlist);
         if (len > 0)
         {
-            char **list = (char **) malloc(sizeof(char *) * (len + 1));
+            char **list = (char **) wwmGlobalMalloc(sizeof(char *) * (len + 1));
             memset((void *) list, 0, sizeof(char *) * (len + 1));
             list[len]              = 0x0;
             int          i         = 0;

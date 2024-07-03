@@ -16,6 +16,8 @@ int main(void)
     // int test[3] = {0};
     // printf("hello world %d", test[4]);
 
+    initHeap();
+
     static const char *core_file_name    = "core.json";
     char              *core_file_content = readFile(core_file_name);
     
@@ -26,7 +28,7 @@ int main(void)
         exit(1);
     }
     parseCoreSettings(core_file_content);
-    free(core_file_content);
+    wwmGlobalFree(core_file_content);
 
     //  [Runtime setup]
     hv_mkdir_p(getCoreSettings()->log_path);

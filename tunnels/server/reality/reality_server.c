@@ -73,7 +73,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     EVP_MD_free(cstate->msg_digest);
     EVP_PKEY_free(cstate->sign_key);
 
-    free(cstate);
+    wwmGlobalFree(cstate);
     CSTATE_DROP(c);
 }
 
@@ -212,7 +212,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            cstate = CSTATE_MUT(c) = malloc(sizeof(reality_server_con_state_t));
+            cstate = CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(reality_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(reality_server_con_state_t));
             cstate->auth_state         = kConAuthPending;
             cstate->giveup_counter     = state->counter_threshould;
@@ -317,7 +317,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 {
-    reality_server_state_t *state = malloc(sizeof(reality_server_state_t));
+    reality_server_state_t *state = wwmGlobalMalloc(sizeof(reality_server_state_t));
     memset(state, 0, sizeof(reality_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -376,7 +376,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     }
 
     state->dest = next_node->instance;
-    free(dest_node_name);
+    wwmGlobalFree(dest_node_name);
 
     tunnel_t *t = newTunnel();
     chainDown(t, state->dest);

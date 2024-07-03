@@ -53,7 +53,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 {
 
-    header_client_state_t *state = malloc(sizeof(header_client_state_t));
+    header_client_state_t *state = wwmGlobalMalloc(sizeof(header_client_state_t));
     memset(state, 0, sizeof(header_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;

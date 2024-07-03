@@ -674,7 +674,7 @@ void wwmDedicateddown( ww_dedictaed_mem_t* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-ww_dedictaed_mem_t* wwmDedicatedcreate
+ww_dedictaed_mem_t* wwmDedicatedCreate
          (
             size_t pool_size,
             size_t min_block_size,
@@ -691,9 +691,9 @@ ww_dedictaed_mem_t* wwmDedicatedcreate
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-ww_dedictaed_mem_t* wwmDedicatedcreate_default( void )
+ww_dedictaed_mem_t* wwmDedicatedCreateDefault( void )
 {
-    return wwmDedicatedcreate
+    return wwmDedicatedCreate
     (
         default_pool_size,
         default_min_block_size,
@@ -1031,7 +1031,7 @@ static ww_dedictaed_mem_t* wwmGlobalState = NULL;
 
 static void createWWGlobalMemory(void)
 {
-    wwmGlobalState = wwmDedicatedcreate
+    wwmGlobalState = wwmDedicatedCreate
     (
         default_pool_size,
         default_min_block_size,

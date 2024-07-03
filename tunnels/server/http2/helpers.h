@@ -86,7 +86,7 @@ http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con,
                                                   int32_t stream_id)
 {
     http2_server_child_con_state_t *stream;
-    stream = malloc(sizeof(http2_server_child_con_state_t));
+    stream = wwmGlobalMalloc(sizeof(http2_server_child_con_state_t));
     memset(stream, 0, sizeof(http2_server_child_con_state_t));
 
     stream->stream_id        = stream_id;
@@ -108,15 +108,15 @@ static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
     destroyLine(stream->line);
     if (stream->request_path)
     {
-        free(stream->request_path);
+        wwmGlobalFree(stream->request_path);
     }
-    free(stream);
+    wwmGlobalFree(stream);
 }
 
 static http2_server_con_state_t *createHttp2Connection(tunnel_t *self, line_t *line)
 {
     http2_server_state_t     *state = STATE(self);
-    http2_server_con_state_t *con   = malloc(sizeof(http2_server_con_state_t));
+    http2_server_con_state_t *con   = wwmGlobalMalloc(sizeof(http2_server_con_state_t));
     memset(con, 0, sizeof(http2_server_con_state_t));
     nghttp2_session_server_new2(&con->session, state->cbs, con, state->ngoptions);
     con->state  = kH2WantRecv;
@@ -151,5 +151,5 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
     doneLineUpSide(con->line);
     nghttp2_session_del(con->session);
     LSTATE_DROP(con->line);
-    free(con);
+    wwmGlobalFree(con);
 }

@@ -159,7 +159,7 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
                 bctx->payload   = upload_line_cstate->buffering;
                 pipeUpStream(bctx);
             }
-            free(upload_line_cstate);
+            wwmGlobalFree(upload_line_cstate);
         }
         else
         {
@@ -174,7 +174,7 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
             {
                 self->dw->downStream(self->dw, newFinContext(upload_line_cstate->upload_line));
             }
-            free(upload_line_cstate);
+            wwmGlobalFree(upload_line_cstate);
         }
     }
     else
@@ -189,7 +189,7 @@ static void callNotifyDownloadLineIsReadyForBind(hevent_t *ev)
 {
     struct notify_argument_s *args = hevent_userdata(ev);
     notifyDownloadLineIsReadyForBind(args->hash, args->self, args->tid);
-    free(args);
+    wwmGlobalFree(args);
 }
 
 // todo (rename+format) names are not meaningful at all!
@@ -301,7 +301,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         hhybridmutex_unlock(&(state->download_line_map_mutex));
 
                         CSTATE_DROP(c);
-                        free(cstate);
+                        wwmGlobalFree(cstate);
 
                         pipeTo(self, c->line, tid_download_line);
                         pipeUpStream(c);
@@ -323,7 +323,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         LOGW("HalfDuplexServer: duplicate upload connection closed");
                         CSTATE_DROP(c);
                         reuseContextBuffer(c);
-                        free(cstate);
+                        wwmGlobalFree(cstate);
                         if (isDownPiped(c->line))
                         {
                             pipeDownStream(newFinContextFrom(c));
@@ -418,14 +418,14 @@ static void upStream(tunnel_t *self, context_t *c)
                         {
                             LOGW("HalfDuplexServer: duplicate download connection closed");
                             CSTATE_DROP(c);
-                            free(cstate);
+                            wwmGlobalFree(cstate);
                             self->dw->downStream(self->dw, newFinContextFrom(c));
                             destroyContext(c);
                             return;
                         }
 
                         // tell upload line to re-check
-                        struct notify_argument_s *evdata = malloc(sizeof(struct notify_argument_s));
+                        struct notify_argument_s *evdata = wwmGlobalMalloc(sizeof(struct notify_argument_s));
                         *evdata = (struct notify_argument_s){.self = self, .hash = hash, .tid = tid_upload_line};
 
                         hevent_t ev;
@@ -448,7 +448,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         LOGW("HalfDuplexServer: duplicate download connection closed");
                         CSTATE_DROP(c);
-                        free(cstate);
+                        wwmGlobalFree(cstate);
                         self->dw->downStream(self->dw, newFinContextFrom(c));
                         destroyContext(c);
                         return;
@@ -499,7 +499,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            cstate  = malloc(sizeof(halfduplex_server_con_state_t));
+            cstate  = wwmGlobalMalloc(sizeof(halfduplex_server_con_state_t));
             *cstate = (halfduplex_server_con_state_t){.state         = kCsUnkown,
                                                       .buffering     = NULL,
                                                       .pipe          = NULL,
@@ -531,7 +531,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     reuseBuffer(getContextBufferPool(c), cstate->buffering);
                 }
                 CSTATE_DROP(c);
-                free(cstate);
+                wwmGlobalFree(cstate);
                 destroyContext(c);
                 break;
 
@@ -551,7 +551,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 hhybridmutex_unlock(&(state->upload_line_map_mutex));
                 reuseBuffer(getContextBufferPool(c), cstate->buffering);
                 CSTATE_DROP(c);
-                free(cstate);
+                wwmGlobalFree(cstate);
                 destroyContext(c);
             }
             break;
@@ -570,7 +570,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 hhybridmutex_unlock(&(state->download_line_map_mutex));
                 CSTATE_DROP(c);
-                free(cstate);
+                wwmGlobalFree(cstate);
                 destroyContext(c);
             }
             break;
@@ -610,10 +610,10 @@ static void upStream(tunnel_t *self, context_t *c)
                         self->dw->downStream(self->dw, newFinContext(cstate_download->upload_line));
                     }
                     cstate_download->upload_line = NULL;
-                    free(cstate_upload);
+                    wwmGlobalFree(cstate_upload);
                 }
 
-                free(cstate_download);
+                wwmGlobalFree(cstate_download);
                 destroyContext(c);
             }
             break;
@@ -645,10 +645,10 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     self->dw->downStream(self->dw, newFinContext(cstate_upload->download_line));
                     cstate_upload->download_line = NULL;
-                    free(cstate_download);
+                    wwmGlobalFree(cstate_download);
                 }
 
-                free(cstate_upload);
+                wwmGlobalFree(cstate_upload);
                 destroyContext(c);
             }
             break;
@@ -726,10 +726,10 @@ static void downStream(tunnel_t *self, context_t *c)
                     {
                         self->dw->downStream(self->dw, newFinContext(upload_line));
                     }
-                    free(upload_line_cstate);
+                    wwmGlobalFree(upload_line_cstate);
                 }
 
-                free(cstate);
+                wwmGlobalFree(cstate);
                 destroyContext(c);
 
                 break;
@@ -755,7 +755,7 @@ tunnel_t *newHalfDuplexServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
 
-    halfduplex_server_state_t *state = malloc(sizeof(halfduplex_server_state_t));
+    halfduplex_server_state_t *state = wwmGlobalMalloc(sizeof(halfduplex_server_state_t));
     memset(state, 0, sizeof(halfduplex_server_state_t));
 
     hhybridmutex_init(&state->upload_line_map_mutex);

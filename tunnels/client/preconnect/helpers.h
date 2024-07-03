@@ -33,7 +33,7 @@ static void removeConnection(thread_box_t *box, preconnect_client_con_state_t *c
 
 static preconnect_client_con_state_t *createCstate(uint8_t tid)
 {
-    preconnect_client_con_state_t *cstate = malloc(sizeof(preconnect_client_con_state_t));
+    preconnect_client_con_state_t *cstate = wwmGlobalMalloc(sizeof(preconnect_client_con_state_t));
     memset(cstate, 0, sizeof(preconnect_client_con_state_t));
     cstate->u = newLine(tid);
     return cstate;
@@ -42,13 +42,13 @@ static preconnect_client_con_state_t *createCstate(uint8_t tid)
 static void destroyCstate(preconnect_client_con_state_t *cstate)
 {
     destroyLine(cstate->u);
-    free(cstate);
+    wwmGlobalFree(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t                      *self   = cg->t;
     preconnect_client_con_state_t *cstate = createCstate(cg->tid);
-    free(cg);
+    wwmGlobalFree(cg);
     LSTATE_MUT(cstate->u) = cstate;
     self->up->upStream(self->up, newInitContext(cstate->u));
 }
@@ -96,7 +96,7 @@ static void initiateConnect(tunnel_t *self, bool delay)
     hloop_t *worker_loop = loops[tid];
 
     hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
-    struct connect_arg *cg = malloc(sizeof(struct connect_arg));
+    struct connect_arg *cg = wwmGlobalMalloc(sizeof(struct connect_arg));
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;

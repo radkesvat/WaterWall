@@ -210,7 +210,7 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
     const size_t start_delay_ms = 150;
 
     preconnect_client_state_t *state =
-        malloc(sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
+        wwmGlobalMalloc(sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
     memset(state, 0, sizeof(preconnect_client_state_t) + (workers_count * sizeof(thread_box_t)));
     const cJSON *settings = instance_info->node_settings_json;
 

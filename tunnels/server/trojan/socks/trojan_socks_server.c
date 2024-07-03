@@ -43,7 +43,7 @@ static void cleanup(trojan_socks_server_con_state_t *cstate)
     {
         destroyBufferStream(cstate->udp_stream);
     }
-    free(cstate);
+    wwmGlobalFree(cstate);
 }
 static void encapsulateUdpPacket(context_t *c)
 {
@@ -525,7 +525,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = malloc(sizeof(trojan_socks_server_con_state_t));
+            CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(trojan_socks_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             destroyContext(c);
         }
@@ -568,7 +568,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    trojan_socks_server_state_t *state = malloc(sizeof(trojan_socks_server_state_t));
+    trojan_socks_server_state_t *state = wwmGlobalMalloc(sizeof(trojan_socks_server_state_t));
     memset(state, 0, sizeof(trojan_socks_server_state_t));
 
     tunnel_t *t   = newTunnel();

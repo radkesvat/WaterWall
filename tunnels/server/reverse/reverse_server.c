@@ -103,7 +103,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             doneLineUpSide(c->line);
                             setupLineUpSide(c->line, onLinePausedD, ucstate, onLineResumedD);
 
-                            free(dcstate);
+                            wwmGlobalFree(dcstate);
                             flushWriteQueue(self, ucstate);
 
                             if (! isAlive(c->line))
@@ -334,7 +334,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    reverse_server_state_t *state = malloc(sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
+    reverse_server_state_t *state = wwmGlobalMalloc(sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
     memset(state, 0, sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
 
     tunnel_t *t   = newTunnel();

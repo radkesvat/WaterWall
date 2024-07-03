@@ -59,7 +59,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     wssl_client_con_state_t *cstate = CSTATE(c);
     SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
     destroyContextQueue(cstate->queue);
-    free(cstate);
+    wwmGlobalFree(cstate);
     CSTATE_DROP(c);
 }
 
@@ -153,7 +153,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            CSTATE_MUT(c)                   = malloc(sizeof(wssl_client_con_state_t));
+            CSTATE_MUT(c)                   = wwmGlobalMalloc(sizeof(wssl_client_con_state_t));
             wssl_client_con_state_t *cstate = CSTATE(c);
             memset(cstate, 0, sizeof(wssl_client_con_state_t));
             cstate->rbio  = BIO_new(BIO_s_mem());
@@ -412,10 +412,10 @@ failed:;
 
 tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
 {
-    wssl_client_state_t *state = malloc(sizeof(wssl_client_state_t));
+    wssl_client_state_t *state = wwmGlobalMalloc(sizeof(wssl_client_state_t));
     memset(state, 0, sizeof(wssl_client_state_t));
 
-    ssl_ctx_opt_t *ssl_param = malloc(sizeof(ssl_ctx_opt_t));
+    ssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -444,7 +444,7 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
     ssl_param->endpoint    = kSslClient;
     // ssl_param->ca_path = "cacert.pem";
     state->ssl_context = sslCtxNew(ssl_param);
-    free(ssl_param);
+    wwmGlobalFree(ssl_param);
     // SSL_CTX_load_verify_store(state->ssl_context,cacert_bytes);
 
     if (state->ssl_context == NULL)
@@ -458,11 +458,11 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
     {
         uint8_t len;
         char    alpn_data[];
-    } *ossl_alpn   = malloc(1 + alpn_len);
+    } *ossl_alpn   = wwmGlobalMalloc(1 + alpn_len);
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
     SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *) ossl_alpn, 1 + alpn_len);
-    free(ossl_alpn);
+    wwmGlobalFree(ossl_alpn);
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

@@ -241,7 +241,7 @@ disconnect:;
         self->up->upStream(self->up, newFinContext(c->line));
     }
     cleanup(cstate, getContextBufferPool(c));
-    free(cstate);
+    wwmGlobalFree(cstate);
     CSTATE_DROP(c);
     context_t *fc = newFinContextFrom(c);
     destroyContext(c);
@@ -582,7 +582,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            cstate = malloc(sizeof(socks5_server_con_state_t));
+            cstate = wwmGlobalMalloc(sizeof(socks5_server_con_state_t));
             memset(cstate, 0, sizeof(socks5_server_con_state_t));
             cstate->need  = 2;
             CSTATE_MUT(c) = cstate;
@@ -592,7 +592,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             bool init_sent = cstate->init_sent;
             cleanup(cstate, getContextBufferPool(c));
-            free(cstate);
+            wwmGlobalFree(cstate);
             CSTATE_DROP(c);
             if (init_sent)
             {
@@ -607,7 +607,7 @@ static void upStream(tunnel_t *self, context_t *c)
     return;
 disconnect:;
     cleanup(cstate, getContextBufferPool(c));
-    free(cstate);
+    wwmGlobalFree(cstate);
     CSTATE_DROP(c);
     context_t *fc = newFinContextFrom(c);
     destroyContext(c);
@@ -652,7 +652,7 @@ static void downStream(tunnel_t *self, context_t *c)
         }
 
         cleanup(cstate, getContextBufferPool(c));
-        free(cstate);
+        wwmGlobalFree(cstate);
         CSTATE_DROP(c);
     }
     if (c->est)
@@ -692,7 +692,7 @@ static void downStream(tunnel_t *self, context_t *c)
             default:
                 // connects to a ip4 or 6 right? anyways close if thats not the case
                 cleanup(cstate, getContextBufferPool(c));
-                free(cstate);
+                wwmGlobalFree(cstate);
                 CSTATE_DROP(c);
                 reuseBuffer(getContextBufferPool(c), respbuf);
                 self->up->upStream(self->dw, newFinContext(c->line));
@@ -720,7 +720,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newSocks5Server(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    socks5_server_state_t *state = malloc(sizeof(socks5_server_state_t));
+    socks5_server_state_t *state = wwmGlobalMalloc(sizeof(socks5_server_state_t));
     memset(state, 0, sizeof(socks5_server_state_t));
 
     tunnel_t *t   = newTunnel();

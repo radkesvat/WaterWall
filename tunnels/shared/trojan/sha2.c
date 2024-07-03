@@ -1124,7 +1124,7 @@ int main(void)
     uint32 message3_len = 1000000;
     uint8  digest[SHA512_DIGEST_SIZE];
 
-    message3 = malloc(message3_len);
+    message3 = wwmGlobalMalloc(message3_len);
     if (message3 == NULL)
     {
         fprintf(stderr, "Can't allocate memory\n");

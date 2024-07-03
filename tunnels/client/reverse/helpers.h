@@ -35,7 +35,7 @@ static void onLineResumedD(void *cstate)
 
 static reverse_client_con_state_t *createCstate(tunnel_t *self, uint8_t tid)
 {
-    reverse_client_con_state_t *cstate = malloc(sizeof(reverse_client_con_state_t));
+    reverse_client_con_state_t *cstate = wwmGlobalMalloc(sizeof(reverse_client_con_state_t));
     line_t                     *up     = newLine(tid);
     line_t                     *dw     = newLine(tid);
     // reserveChainStateIndex(dw); // we always take one from the down line
@@ -57,14 +57,14 @@ static void cleanup(reverse_client_con_state_t *cstate)
     destroyLine(cstate->u);
     destroyLine(cstate->d);
 
-    free(cstate);
+    wwmGlobalFree(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t *self = cg->t;
     // reverse_client_state_t     *state  = STATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
-    free(cg);
+    wwmGlobalFree(cg);
     context_t *hello_data_ctx = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
 
@@ -127,7 +127,7 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
     hloop_t *worker_loop = loops[tid];
 
     hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
-    struct connect_arg *cg = malloc(sizeof(struct connect_arg));
+    struct connect_arg *cg = wwmGlobalMalloc(sizeof(struct connect_arg));
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;

@@ -129,7 +129,7 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
     nvs[nvlen++] = makeNV("Sec-Ch-Ua-Platform", "\"Windows\"");
 
     con->state                             = kH2SendHeaders;
-    http2_client_child_con_state_t *stream = malloc(sizeof(http2_client_child_con_state_t));
+    http2_client_child_con_state_t *stream = wwmGlobalMalloc(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
     stream->stream_id = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
@@ -152,13 +152,13 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
     LSTATE_I_DROP(stream->line, stream->tunnel->chain_index);
     destroyBufferStream(stream->chunkbs);
     doneLineUpSide(stream->line);
-    free(stream);
+    wwmGlobalFree(stream);
 }
 
 static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 {
     http2_client_state_t     *state = STATE(self);
-    http2_client_con_state_t *con   = malloc(sizeof(http2_client_con_state_t));
+    http2_client_con_state_t *con   = wwmGlobalMalloc(sizeof(http2_client_con_state_t));
 
     *con = (http2_client_con_state_t){
         .queue        = newContextQueue(),
@@ -217,7 +217,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     destroyContextQueue(con->queue);
     destroyLine(con->line);
     htimer_del(con->ping_timer);
-    free(con);
+    wwmGlobalFree(con);
 }
 
 static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid)

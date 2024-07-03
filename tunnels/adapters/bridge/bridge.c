@@ -77,7 +77,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
         exit(1);
     }
 
-    bridge_state_t *state = malloc(sizeof(bridge_state_t));
+    bridge_state_t *state = wwmGlobalMalloc(sizeof(bridge_state_t));
     memset(state, 0, sizeof(bridge_state_t));
 
     hash_t  hash_pairname = CALC_HASH_BYTES(pair_node_name, strlen(pair_node_name));
@@ -87,7 +87,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
         LOGF("Bridge: pair node \"%s\" not found", pair_node_name);
         exit(1);
     }
-    free(pair_node_name);
+    wwmGlobalFree(pair_node_name);
 
     state->pair_node   = pair_node;
     state->mode_upside = instance_info->node->next == NULL;

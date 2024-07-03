@@ -20,10 +20,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+-------------------------------------------------------------------------------
+*/
 
-This started from tbman library at https://github.com/johsteffens/tbman/tree/master
+/*
 
-changed many prats and names of this file, and it is now WW memory manager
+    This started from tbman library at https://github.com/johsteffens/tbman/tree/master
+
+    changed many prats and names of this file, and it is now WW memory manager
 
 */
 
@@ -39,7 +43,7 @@ typedef struct ww_dedictaed_mem_s ww_dedictaed_mem_t;
 ww_dedictaed_mem_t* wwmDedicatedCreateDefault( void );
 
 /// Creates a dedicated manager with specified parameters (consider using wwmDedicatedCreateDefault)
-ww_dedictaed_mem_t* wwmDedicatedcreate
+ww_dedictaed_mem_t* wwmDedicatedCreate
          (
             size_t pool_size,        // size of a memory pool in a token manager
             size_t min_block_size,   // minimal block size

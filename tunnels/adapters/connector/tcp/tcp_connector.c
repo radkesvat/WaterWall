@@ -41,7 +41,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
     doneLineUpSide(cstate->line);
     resumeLineDownSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
-    free(cstate);
+    wwmGlobalFree(cstate);
 }
 
 static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
@@ -208,7 +208,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             tcp_connector_state_t *state      = STATE(self);
-            CSTATE_MUT(c)                     = malloc(sizeof(tcp_connector_con_state_t));
+            CSTATE_MUT(c)                     = wwmGlobalMalloc(sizeof(tcp_connector_con_state_t));
             tcp_connector_con_state_t *cstate = CSTATE(c);
 
             *cstate = (tcp_connector_con_state_t){.buffer_pool  = getContextBufferPool(c),
@@ -403,7 +403,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 {
-    tcp_connector_state_t *state = malloc(sizeof(tcp_connector_state_t));
+    tcp_connector_state_t *state = wwmGlobalMalloc(sizeof(tcp_connector_state_t));
     memset(state, 0, sizeof(tcp_connector_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 

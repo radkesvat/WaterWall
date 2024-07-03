@@ -2,7 +2,6 @@
 #include "buffer_pool.h"
 #include "generic_pool.h"
 #include "hloop.h"
-#include "hplatform.h"
 #include "hthread.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
@@ -13,9 +12,6 @@
 #include "pipe_line.h"
 #include "tunnel.h"
 #include "utils/stringutils.h"
-#ifdef OS_LINUX
-#include <malloc.h>
-#endif
 
 /*
     additional threads that dose not require instances of every pools and they will create what they need
@@ -31,57 +27,65 @@ enum
     kAdditionalReservedWorkers = 1
 };
 
-unsigned int               workers_count      = 0;
-hthread_t                 *workers            = NULL;
-unsigned int               ram_profile        = 0;
-struct hloop_s           **loops              = NULL;
-struct buffer_pool_s     **buffer_pools       = NULL;
-struct generic_pool_s    **shift_buffer_pools = NULL;
-struct generic_pool_s    **context_pools      = NULL;
-struct generic_pool_s    **line_pools         = NULL;
-struct generic_pool_s    **pipeline_msg_pools = NULL;
-struct generic_pool_s    **libhv_hio_pools    = NULL;
-struct ww_dedictaed_mem_s *memory_manager     = NULL;
-struct socket_manager_s   *socekt_manager     = NULL;
-struct node_manager_s     *node_manager       = NULL;
-logger_t                  *core_logger        = NULL;
-logger_t                  *network_logger     = NULL;
-logger_t                  *dns_logger         = NULL;
+unsigned int                workers_count             = 0;
+hthread_t                  *workers                   = NULL;
+unsigned int                ram_profile               = 0;
+struct hloop_s            **loops                     = NULL;
+struct buffer_pool_s      **buffer_pools              = NULL;
+struct generic_pool_s     **shift_buffer_pools        = NULL;
+struct generic_pool_s     **context_pools             = NULL;
+struct generic_pool_s     **line_pools                = NULL;
+struct generic_pool_s     **pipeline_msg_pools        = NULL;
+struct generic_pool_s     **libhv_hio_pools           = NULL;
+struct ww_dedictaed_mem_s **dedicated_memory_managers = NULL;
+struct ww_dedictaed_mem_s  *memory_manager            = NULL;
+struct socket_manager_s    *socekt_manager            = NULL;
+struct node_manager_s      *node_manager              = NULL;
+logger_t                   *core_logger               = NULL;
+logger_t                   *network_logger            = NULL;
+logger_t                   *dns_logger                = NULL;
 
 struct ww_runtime_state_s
 {
-    unsigned int               workers_count;
-    hthread_t                 *workers;
-    unsigned int               ram_profile;
-    struct hloop_s           **loops;
-    struct buffer_pool_s     **buffer_pools;
-    struct generic_pool_s    **shift_buffer_pools;
-    struct generic_pool_s    **context_pools;
-    struct generic_pool_s    **line_pools;
-    struct generic_pool_s    **pipeline_msg_pools;
-    struct generic_pool_s    **libhv_hio_pools;
-    struct ww_dedictaed_mem_s *memory_manager;
-    struct socket_manager_s   *socekt_manager;
-    struct node_manager_s     *node_manager;
-    logger_t                  *core_logger;
-    logger_t                  *network_logger;
-    logger_t                  *dns_logger;
+    unsigned int                workers_count;
+    hthread_t                  *workers;
+    unsigned int                ram_profile;
+    struct hloop_s            **loops;
+    struct buffer_pool_s      **buffer_pools;
+    struct generic_pool_s     **shift_buffer_pools;
+    struct generic_pool_s     **context_pools;
+    struct generic_pool_s     **line_pools;
+    struct generic_pool_s     **pipeline_msg_pools;
+    struct generic_pool_s     **libhv_hio_pools;
+    struct ww_dedictaed_mem_s **dedicated_memory_managers;
+    struct ww_dedictaed_mem_s  *memory_manager;
+    struct socket_manager_s    *socekt_manager;
+    struct node_manager_s      *node_manager;
+    logger_t                   *core_logger;
+    logger_t                   *network_logger;
+    logger_t                   *dns_logger;
 };
 
 void setWW(struct ww_runtime_state_s *state)
 {
-    workers_count      = state->workers_count;
-    workers            = state->workers;
-    ram_profile        = state->ram_profile;
-    loops              = state->loops;
-    buffer_pools       = state->buffer_pools;
-    shift_buffer_pools = state->shift_buffer_pools;
-    context_pools      = state->context_pools;
-    line_pools         = state->line_pools;
-    pipeline_msg_pools = state->pipeline_msg_pools;
-    libhv_hio_pools    = state->libhv_hio_pools;
-    socekt_manager     = state->socekt_manager;
-    node_manager       = state->node_manager;
+    workers_count             = state->workers_count;
+    workers                   = state->workers;
+    ram_profile               = state->ram_profile;
+    loops                     = state->loops;
+    buffer_pools              = state->buffer_pools;
+    shift_buffer_pools        = state->shift_buffer_pools;
+    context_pools             = state->context_pools;
+    line_pools                = state->line_pools;
+    pipeline_msg_pools        = state->pipeline_msg_pools;
+    libhv_hio_pools           = state->libhv_hio_pools;
+    dedicated_memory_managers = state->dedicated_memory_managers;
+    memory_manager            = state->memory_manager;
+    socekt_manager            = state->socekt_manager;
+    node_manager              = state->node_manager;
+    core_logger               = state->core_logger;
+    network_logger            = state->network_logger;
+    dns_logger                = state->dns_logger;
+    setWWMemoryManager(memory_manager);
     setCoreLogger(state->core_logger);
     setNetworkLogger(state->network_logger);
     setDnsLogger(state->dns_logger);
@@ -94,27 +98,25 @@ struct ww_runtime_state_s *getWW(void)
 {
     struct ww_runtime_state_s *state = malloc(sizeof(struct ww_runtime_state_s));
     memset(state, 0, sizeof(struct ww_runtime_state_s));
-    state->workers_count      = workers_count;
-    state->workers            = workers;
-    state->ram_profile        = ram_profile;
-    state->loops              = loops;
-    state->buffer_pools       = buffer_pools;
-    state->shift_buffer_pools = shift_buffer_pools;
-    state->context_pools      = context_pools;
-    state->line_pools         = line_pools;
-    state->pipeline_msg_pools = pipeline_msg_pools;
-    state->libhv_hio_pools    = libhv_hio_pools;
-    state->memory_manager     = memory_manager;
-    state->socekt_manager     = socekt_manager;
-    state->node_manager       = node_manager;
-    state->core_logger        = core_logger;
-    state->network_logger     = network_logger;
-    state->dns_logger         = dns_logger;
+    state->workers_count             = workers_count;
+    state->workers                   = workers;
+    state->ram_profile               = ram_profile;
+    state->loops                     = loops;
+    state->buffer_pools              = buffer_pools;
+    state->shift_buffer_pools        = shift_buffer_pools;
+    state->context_pools             = context_pools;
+    state->line_pools                = line_pools;
+    state->pipeline_msg_pools        = pipeline_msg_pools;
+    state->libhv_hio_pools           = libhv_hio_pools;
+    state->dedicated_memory_managers = dedicated_memory_managers;
+    state->memory_manager            = memory_manager;
+    state->socekt_manager            = socekt_manager;
+    state->node_manager              = node_manager;
+    state->core_logger               = core_logger;
+    state->network_logger            = network_logger;
+    state->dns_logger                = dns_logger;
     return state;
 }
-
-
-
 
 _Noreturn void runMainThread(void)
 {
@@ -137,10 +139,14 @@ static HTHREAD_ROUTINE(worker_thread) // NOLINT
     return 0;
 }
 
-void createWW(const ww_construction_data_t init_data)
+void initHeap(void)
 {
     // [Section] custom malloc/free setup (global heap)
     memory_manager = createWWMemoryManager();
+}
+
+void createWW(const ww_construction_data_t init_data)
+{
 
     // [Section] loggers
     {
@@ -196,7 +202,9 @@ void createWW(const ww_construction_data_t init_data)
                                                                (workers_count + kAdditionalReservedWorkers));
         libhv_hio_pools    = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) *
                                                                (workers_count + kAdditionalReservedWorkers));
-        
+        dedicated_memory_managers =
+            (struct ww_dedictaed_mem_s **) malloc(sizeof(struct ww_dedictaed_mem_s *) * (workers_count));
+
         for (unsigned int i = 0; i < workers_count; ++i)
         {
             shift_buffer_pools[i] =
@@ -206,9 +214,14 @@ void createWW(const ww_construction_data_t init_data)
 
             context_pools[i] =
                 newGenericPoolWithCap((16) + ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
+
             line_pools[i] = newGenericPoolWithCap((8) + ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
+
             pipeline_msg_pools[i] =
                 newGenericPoolWithCap((8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
+
+            dedicated_memory_managers[i] = wwmDedicatedCreateDefault();
+
             // todo (half implemented)
             // libhv_hio_pools[i] =
             //     newGenericPoolWithCap((32) + (2 * ram_profile), allocLinePoolHandle, destroyLinePoolHandle);

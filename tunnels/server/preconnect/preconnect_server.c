@@ -35,7 +35,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else if (c->init)
     {
-        preconnect_server_con_state_t *cstate = malloc(sizeof(preconnect_server_con_state_t));
+        preconnect_server_con_state_t *cstate = wwmGlobalMalloc(sizeof(preconnect_server_con_state_t));
         cstate->init_sent                     = false;
         CSTATE_MUT(c)                         = cstate;
         destroyContext(c);
@@ -45,7 +45,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         preconnect_server_con_state_t *cstate   = CSTATE(c);
         bool                           send_fin = cstate->init_sent;
-        free(cstate);
+        wwmGlobalFree(cstate);
         CSTATE_DROP(c);
         if (send_fin)
         {
@@ -65,7 +65,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->fin)
     {
-        free(CSTATE(c));
+        wwmGlobalFree(CSTATE(c));
         CSTATE_DROP(c);
     }
 
@@ -75,7 +75,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newPreConnectServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    preconnect_server_state_t *state = malloc(sizeof(preconnect_server_state_t));
+    preconnect_server_state_t *state = wwmGlobalMalloc(sizeof(preconnect_server_state_t));
     memset(state, 0, sizeof(preconnect_server_state_t));
 
     tunnel_t *t   = newTunnel();

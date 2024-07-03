@@ -93,7 +93,7 @@
 //     if (CSTATE(c) != NULL)
 //     {
 //         SSL_free(CSTATE(c)->ssl); /* free the SSL object and its BIO's */
-//         free(CSTATE(c));
+//         wwmGlobalFree(CSTATE(c));
 //         CSTATE_MUT(c) = NULL;
 //     }
 // }
@@ -288,7 +288,7 @@
 
 //         if (c->init)
 //         {
-//             CSTATE_MUT(c) = malloc(sizeof(oss_server_con_state_t));
+//             CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(oss_server_con_state_t));
 //             memset(CSTATE(c), 0, sizeof(oss_server_con_state_t));
 //             oss_server_con_state_t *cstate = CSTATE(c);
 //             cstate->fd = hio_fd(c->src_io);
@@ -478,10 +478,10 @@
 //         return NULL;
 //     }
 
-//     oss_server_state_t *state = malloc(sizeof(oss_server_state_t));
+//     oss_server_state_t *state = wwmGlobalMalloc(sizeof(oss_server_state_t));
 //     memset(state, 0, sizeof(oss_server_state_t));
 
-//     hssl_ctx_opt_t *ssl_param = malloc(sizeof(hssl_ctx_opt_t));
+//     hssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(hssl_ctx_opt_t));
 //     memset(ssl_param, 0, sizeof(hssl_ctx_opt_t));
 //     const cJSON *settings = instance_info->node_settings_json;
 
@@ -519,9 +519,9 @@
 //     state->ssl_context = hssl_ctx_new(ssl_param);
 
 //     // dont do that with APPLE TLS -_-
-//     free((char *)ssl_param->crt_file);
-//     free((char *)ssl_param->key_file);
-//     free(ssl_param);
+//     wwmGlobalFree((char *)ssl_param->crt_file);
+//     wwmGlobalFree((char *)ssl_param->key_file);
+//     wwmGlobalFree(ssl_param);
 
 //     if (state->ssl_context == NULL)
 //     {

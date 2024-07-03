@@ -68,7 +68,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
     if (cstate == NULL)
     {
-        cstate = malloc(sizeof(zero_rtt_con_t));
+        cstate = wwmGlobalMalloc(sizeof(zero_rtt_con_t));
         cstate->queue = newContextQueue();
         cstate->dw = c->line;
         shiftl(c->payload, sizeof(STATE(self)->uuid.epoch_sec));
@@ -97,7 +97,7 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->fin)
     {
         destroyContextQueue(cstate->queue);
-        free(cstate);
+        wwmGlobalFree(cstate);
         CSTATE_MUT(c) = NULL;
         self->up->upStream(self->up, c);
         return;
@@ -183,7 +183,7 @@ tunnel_t *newZeroRttClientTunnel()
 {
 
     tunnel_t *t = newTunnel();
-    t->state = malloc(sizeof(zero_rtt_state_t));
+    t->state = wwmGlobalMalloc(sizeof(zero_rtt_state_t));
     memset(t->state, 0, sizeof(zero_rtt_state_t));
 
     STATE(t)->uuid = newUUID();
