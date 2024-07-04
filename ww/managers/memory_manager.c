@@ -908,7 +908,7 @@ static void* wwmDedicatedmem_realloc( ww_dedictaed_mem_t* o, void* current_ptr, 
                 return current_ptr;
             }
 #ifdef OS_WIN
-            void* reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
+            void* reserved_ptr = _aligned_malloc( wwmGlobalALIGN, requested_size );
 #elif defined (OS_ANDROID)
             void* reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
 #else
