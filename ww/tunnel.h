@@ -72,9 +72,10 @@ enum
 #define LSTATE_I_DROP(x, y) (LSTATE_I_MUT((x), (y)) = NULL)
 #endif
 
-// mutate the state of line to NULL , this is done when the state is being freed and is necessary
+// mutate the state of line (at the index of current tunnel which is assumed to be named as `self`) to NULL
+// this is done when the state is being freed and is necessary
 #define LSTATE_DROP(x) LSTATE_I_DROP((x), self->chain_index)
-// mutate the state of the line of context to NULL, this is done when the state is being freed and is necessary
+// mutate the state of the line of context to NULL
 #define CSTATE_DROP(x) LSTATE_DROP((x)->line)
 
 typedef void (*LineFlowSignal)(void *state);
