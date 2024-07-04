@@ -292,7 +292,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (n <= 0)
             {
                 /* if BIO write fails, assume unrecoverable */
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto failed;
             }
 
@@ -324,7 +324,7 @@ static void downStream(tunnel_t *self, context_t *c)
                             self->up->upStream(self->up, req_cont);
                             if (! isAlive(c->line))
                             {
-                                reuseContextBuffer(c);
+                                reuseContextPayload(c);
                                 destroyContext(c);
                                 return;
                             }
@@ -332,7 +332,7 @@ static void downStream(tunnel_t *self, context_t *c)
                         else if (! BIO_should_retry(cstate->rbio))
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
-                            reuseContextBuffer(c);
+                            reuseContextPayload(c);
                             reuseBuffer(getContextBufferPool(c), buf);
                             goto failed;
                         }
@@ -346,7 +346,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     SSL_get_verify_result(cstate->ssl);
                     printSSLError();
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     goto failed;
                 }
 
@@ -362,7 +362,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     self->up->upStream(self->up, data_ctx);
                     if (! isAlive(c->line))
                     {
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         destroyContext(c);
                         return;
                     }
@@ -388,7 +388,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
         }
         // done with socket data
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         destroyContext(c);
     }
     else

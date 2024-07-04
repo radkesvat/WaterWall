@@ -348,7 +348,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         break;
 
     default:
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         destroyContext(c);
         return false;
         break;
@@ -374,7 +374,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         if (! isAlive(c->line))
         {
             LOGW("TrojanSocksServer: next node instantly closed the init with fin");
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             destroyContext(c);
             return true;
         }
@@ -414,7 +414,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (! isAlive(c->line))
                     {
                         LOGW("TrojanSocksServer: next node instantly closed the init with fin");
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         destroyContext(c);
                         return;
                     }
@@ -428,7 +428,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (bufLen(c->payload) <= 0)
                 {
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }
@@ -475,7 +475,7 @@ static void upStream(tunnel_t *self, context_t *c)
             else
             {
                 trojan_socks_server_con_state_t *cstate = CSTATE(c);
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
 
                 cleanup(cstate);
                 CSTATE_DROP(c);

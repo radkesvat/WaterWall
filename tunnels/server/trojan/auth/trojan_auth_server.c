@@ -60,7 +60,7 @@ static void onFallbackTimer(htimer_t *timer)
     {
         if (c->payload != NULL)
         {
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
         }
         destroyContext(c);
         return;
@@ -131,7 +131,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, newInitContext(c->line));
                 if (! isAlive(c->line))
                 {
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }
@@ -188,7 +188,7 @@ failed:;
     }
 
     // disconnect:;
-    reuseContextBuffer(c);
+    reuseContextPayload(c);
     wwmGlobalFree(CSTATE(c));
     CSTATE_DROP(c);
     context_t *reply = newFinContextFrom(c);
@@ -202,7 +202,7 @@ fallback:;
         state->fallback->upStream(state->fallback, newInitContext(c->line));
         if (! isAlive(c->line))
         {
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             destroyContext(c);
             return;
         }

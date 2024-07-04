@@ -77,14 +77,6 @@ enum
 // mutate the state of the line of context to NULL, this is done when the state is being freed and is necessary
 #define CSTATE_DROP(x) LSTATE_DROP((x)->line)
 
-// same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
-// build
-#if defined(RELEASE)
-#define CONTEXT_PAYLOAD_DROP(x) (void) (x);
-#else
-#define CONTEXT_PAYLOAD_DROP(x) ((x)->payload = NULL)
-#endif
-
 typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
@@ -422,11 +414,24 @@ static inline buffer_pool_t *getContextBufferPool(context_t *c)
     return buffer_pools[c->line->tid];
 }
 
-static inline void reuseContextBuffer(context_t *c)
+// same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
+// build
+
+static inline void dropContexPayload(context_t *c)
+{
+#if defined(RELEASE)
+    (void) (c);
+#else
+    assert(c->payload != NULL);
+    c->payload = NULL;
+#endif
+}
+
+static inline void reuseContextPayload(context_t *c)
 {
     assert(c->payload != NULL);
     reuseBuffer(getContextBufferPool(c), c->payload);
-    CONTEXT_PAYLOAD_DROP(c);
+    dropContexPayload(c);
 }
 
 static inline bool isUpPiped(line_t *l)

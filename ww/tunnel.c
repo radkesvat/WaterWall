@@ -86,7 +86,7 @@ void pipeUpStream(context_t *c)
     {
         if (c->payload)
         {
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
         }
         destroyContext(c);
     }
@@ -97,7 +97,7 @@ void pipeDownStream(context_t *c)
     {
         if (c->payload)
         {
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
         }
         destroyContext(c);
     }

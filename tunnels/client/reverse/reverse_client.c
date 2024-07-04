@@ -77,7 +77,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (! isAlive(ucstate->d))
             {
                 unLockLine(ucstate->d);
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }

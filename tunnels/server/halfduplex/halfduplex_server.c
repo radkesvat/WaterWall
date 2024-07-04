@@ -277,7 +277,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         if (! isAlive(main_line))
                         {
                             unLockLine(main_line);
-                            reuseContextBuffer(c);
+                            reuseContextPayload(c);
                             destroyContext(c);
                             return;
                         }
@@ -294,7 +294,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             self->up->upStream(self->up, switchLine(c, main_line));
                             return;
                         }
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                     }
                     else
                     {
@@ -322,7 +322,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         LOGW("HalfDuplexServer: duplicate upload connection closed");
                         CSTATE_DROP(c);
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         wwmGlobalFree(cstate);
                         if (isDownPiped(c->line))
                         {
@@ -343,7 +343,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 cstate->download_line = c->line;
 
                 hhybridmutex_lock(&(state->upload_line_map_mutex));
@@ -470,7 +470,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 cstate->buffering = c->payload;
             }
-            CONTEXT_PAYLOAD_DROP(c);
+            dropContexPayload(c);
             if (bufLen(cstate->buffering) >= kMaxBuffering)
             {
                 reuseBuffer(getContextBufferPool(c), cstate->buffering);
@@ -490,7 +490,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         case kCsDownloadDirect:
         case kCsDownloadInTable:
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             destroyContext(c);
             break;
         }

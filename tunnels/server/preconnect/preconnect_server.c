@@ -26,7 +26,7 @@ static void upStream(tunnel_t *self, context_t *c)
             self->up->upStream(self->up, newInitContext(c->line));
             if (! isAlive(c->line))
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }

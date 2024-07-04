@@ -41,7 +41,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (bufLen(c->payload) < 2)
             {
                 cstate->buf = c->payload;
-                CONTEXT_PAYLOAD_DROP(c);
+                dropContexPayload(c);
                 destroyContext(c);
                 return;
             }
@@ -56,7 +56,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 shiftr(c->payload, sizeof(uint16_t));
                 if (port < 10)
                 {
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     self->dw->downStream(self->dw, newFinContext(c->line));
                     destroyContext(c);
                     return;
@@ -72,14 +72,14 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (! isAlive(c->line))
                 {
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }
             }
             else
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }

@@ -27,11 +27,11 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
             if (write_queue)
             {
                 hio_write(cstate->io, cw->payload);
-                CONTEXT_PAYLOAD_DROP(cw);
+                dropContexPayload(cw);
             }
             else
             {
-                reuseContextBuffer(cw);
+                reuseContextPayload(cw);
             }
             destroyContext(cw);
         }
@@ -53,7 +53,7 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
         context_t *cw     = contextQueuePop(data_queue);
         int        bytes  = (int) bufLen(cw->payload);
         int        nwrite = hio_write(io, cw->payload);
-        CONTEXT_PAYLOAD_DROP(cw);
+        dropContexPayload(cw);
         destroyContext(cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
@@ -192,7 +192,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             int bytes  = (int) bufLen(c->payload);
             int nwrite = hio_write(cstate->io, c->payload);
-            CONTEXT_PAYLOAD_DROP(c);
+            dropContexPayload(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {

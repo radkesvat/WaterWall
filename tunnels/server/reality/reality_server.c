@@ -107,7 +107,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     if (verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
                     {
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         cstate->auth_state = kConAuthorized;
 
                         state->dest->upStream(state->dest, newFinContextFrom(c));

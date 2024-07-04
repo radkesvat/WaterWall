@@ -128,7 +128,7 @@ static void encapsulateUdpPacket(context_t *c)
     {                                                                                                                  \
         if ((int) bufLen(c->payload) < (x))                                                                            \
         {                                                                                                              \
-            reuseContextBuffer(c);                                                                                     \
+            reuseContextPayload(c);                                                                                     \
             goto disconnect;                                                                                           \
         }                                                                                                              \
     } while (0);
@@ -142,7 +142,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
     // minimum 10 is important
     if (bufLen(c->payload) > 8192 || bufLen(c->payload) < 10)
     {
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         goto disconnect;
     }
 
@@ -151,7 +151,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         // drop fargmented pcakets
         if (((uint8_t *) rawBuf(bytes))[2] != 0)
         {
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             return;
         }
         const uint8_t satyp = ((uint8_t *) rawBuf(bytes))[3];
@@ -172,7 +172,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
             atleast = 16;
             break;
         default:
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             goto disconnect;
         }
         ATLEAST(atleast);
@@ -184,7 +184,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         if (((uint8_t *) rawBuf(bytes))[0] != 0 || ((uint8_t *) rawBuf(bytes))[1] != 0 ||
             ((uint8_t *) rawBuf(bytes))[2] != 0)
         {
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             goto disconnect;
         }
         const uint8_t satyp = ((uint8_t *) rawBuf(bytes))[3];
@@ -216,7 +216,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
             shiftr(c->payload, 16);
             break;
         default:
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             goto disconnect;
         }
         ATLEAST(2); // port
@@ -226,7 +226,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         if (! isAlive(c->line))
         {
             LOGW("Socks5Server: udp next node instantly closed the init with fin");
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             goto disconnect;
         }
         cstate->init_sent = true;
@@ -262,7 +262,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             if (c->line->dest_ctx.address_protocol == kSapUdp)
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 LOGE("Socks5Server: client is not supposed to send data anymore");
             }
@@ -287,7 +287,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (bufLen(c->payload) < cstate->need)
         {
             cstate->waitbuf = c->payload;
-            CONTEXT_PAYLOAD_DROP(c);
+            dropContexPayload(c);
             destroyContext(c);
             return;
         }
@@ -310,7 +310,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (version != SOCKS5_VERSION || methodscount == 0)
             {
                 LOGE("Socks5Server: Unsupprted socks version: %d", (int) version);
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto disconnect;
             }
             cstate->state = kSAuthMethods;
@@ -333,7 +333,7 @@ static void upStream(tunnel_t *self, context_t *c)
             self->dw->downStream(self->dw, reply);
             if (! isAlive(c->line))
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }
@@ -346,7 +346,7 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSAuthUsername:
         case kSAuthPasswordLen:
         case kSAuthPassword:
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             goto disconnect;
             break;
         case kSRequest: {
@@ -363,7 +363,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (version != SOCKS5_VERSION || (cmd != kConnectCommand && cmd != kAssociateCommand))
             {
                 LOGE("Socks5Server: Unsupprted command: %d", (int) cmd);
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto disconnect;
             }
             switch (cmd)
@@ -375,7 +375,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 c->line->dest_ctx.address_protocol = kSapUdp;
                 break;
             default:
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto disconnect;
             }
             shiftr(bytes, 1); // socks5 reserved 0x0
@@ -411,7 +411,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 goto parsebegin;
                 break;
             default:
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto disconnect;
             }
         }
@@ -425,7 +425,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (addr_len == 0)
             {
                 LOGE("Socks5Server: incorrect domain length");
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto disconnect;
                 return;
             }
@@ -457,7 +457,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 shiftr(bytes, 16);
                 break;
             default:
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto disconnect;
                 break;
             }
@@ -500,7 +500,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, newInitContext(c->line));
                 if (! isAlive(c->line))
                 {
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }
@@ -514,12 +514,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                 }
             }
             else
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 // todo (ip filter) socks5 standard says this should whitelist the caller ip
                 //  socks5 outbound accepted, udp relay will connect
                 shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
@@ -573,7 +573,7 @@ static void upStream(tunnel_t *self, context_t *c)
         break;
 
         default:
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             goto disconnect;
             break;
         }

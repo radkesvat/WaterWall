@@ -49,12 +49,12 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_DROP(c);
             cleanup(cstate);
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             goto fail;
         }
 
         size_t nwrite = hio_write(cstate->io, c->payload);
-        CONTEXT_PAYLOAD_DROP(c);
+        dropContexPayload(c);
         (void) nwrite;
         // assert(nwrite <= 0  || nwrite ==  bytes);
         destroyContext(c);

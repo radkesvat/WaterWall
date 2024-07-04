@@ -234,7 +234,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 // LSTATE_I_MUT(dcstate->d, state->chain_index_d) = dcstate;
                 if (! isAlive(c->line))
                 {
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }

@@ -64,7 +64,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (! isAlive(c->line))
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }

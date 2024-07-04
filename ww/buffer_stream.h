@@ -50,5 +50,5 @@ static inline void bufferStreamPushContextPayload(buffer_stream_t *self,context_
 {
     assert(c->payload);
     bufferStreamPush(self,c->payload);
-    CONTEXT_PAYLOAD_DROP(c);
+    dropContexPayload(c);
 }

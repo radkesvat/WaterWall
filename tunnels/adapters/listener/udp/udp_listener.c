@@ -102,7 +102,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         postUdpWrite(cstate->uio,c->line->tid, c->payload);
-        CONTEXT_PAYLOAD_DROP(c);
+        dropContexPayload(c);
         destroyContext(c);
     }
     else

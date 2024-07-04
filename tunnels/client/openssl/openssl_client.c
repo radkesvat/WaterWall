@@ -114,7 +114,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         self->up->upStream(self->up, send_context);
                         if (! isAlive(c->line))
                         {
-                            reuseContextBuffer(c);
+                            reuseContextPayload(c);
                             destroyContext(c);
                             return;
                         }
@@ -123,7 +123,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
                         reuseBuffer(getContextBufferPool(c), buf);
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         goto failed;
                     }
                     else
@@ -135,7 +135,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (status == kSslstatusFail)
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto failed;
             }
 
@@ -145,7 +145,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
         }
         assert(bufLen(c->payload) == 0);
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         destroyContext(c);
     }
     else
@@ -241,7 +241,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (n <= 0)
             {
                 /* if BIO write fails, assume unrecoverable */
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto failed;
             }
             shiftr(c->payload, n);
@@ -271,7 +271,7 @@ static void downStream(tunnel_t *self, context_t *c)
                             self->up->upStream(self->up, req_cont);
                             if (! isAlive(c->line))
                             {
-                                reuseContextBuffer(c);
+                                reuseContextPayload(c);
                                 destroyContext(c);
                                 return;
                             }
@@ -279,7 +279,7 @@ static void downStream(tunnel_t *self, context_t *c)
                         else if (! BIO_should_retry(cstate->rbio))
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
-                            reuseContextBuffer(c);
+                            reuseContextPayload(c);
                             reuseBuffer(getContextBufferPool(c), buf);
                             goto failed;
                         }
@@ -293,7 +293,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     SSL_get_verify_result(cstate->ssl);
                     printSSLError();
-                    reuseContextBuffer(c);
+                    reuseContextPayload(c);
                     goto failed;
                 }
 
@@ -309,7 +309,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     self->up->upStream(self->up, data_ctx);
                     if (! isAlive(c->line))
                     {
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         destroyContext(c);
                         return;
                     }
@@ -330,12 +330,12 @@ static void downStream(tunnel_t *self, context_t *c)
                     self->dw->downStream(self->dw, dw_est_ctx);
 
                     // queue is flushed and we are done
-                    // reuseContextBuffer(c);
+                    // reuseContextPayload(c);
                     // destroyContext(c);
                     // return;
                 }
 
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }
@@ -359,7 +359,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     self->dw->downStream(self->dw, data_ctx);
                     if (! isAlive(c->line))
                     {
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         destroyContext(c);
                         return;
                     }
@@ -375,12 +375,12 @@ static void downStream(tunnel_t *self, context_t *c)
 
             if (status == kSslstatusFail)
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 goto failed;
             }
         }
         // done with socket data
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         destroyContext(c);
     }
     else

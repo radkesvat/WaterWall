@@ -167,7 +167,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         // is from a destroyed previous mux line
         LOGW("A destroyedLine's dw_cons is talking to MuxUpStream");
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         c->fin = true;
         self->dw->downStream(self->dw, c);
         return;
@@ -267,7 +267,7 @@ static void downStream(tunnel_t *self, context_t *c)
 process:;
     if (bufLen(c->payload) <= 0)
     {
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         destroyContext(c);
         return;
     }

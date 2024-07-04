@@ -281,7 +281,7 @@ bool pipeSendToUpStream(pipe_line_t *pl, context_t *c)
     }
     assert(c->payload != NULL);
     sendMessage(pl, writeBufferToRightSide, c->payload, pl->left_tid, pl->right_tid);
-    CONTEXT_PAYLOAD_DROP(c);
+    dropContexPayload(c);
     destroyContext(c);
 
     return true;
@@ -326,7 +326,7 @@ bool pipeSendToDownStream(pipe_line_t *pl, context_t *c)
     }
     assert(c->payload != NULL);
     sendMessage(pl, writeBufferToLeftSide, c->payload, pl->right_tid, pl->left_tid);
-    CONTEXT_PAYLOAD_DROP(c);
+    dropContexPayload(c);
     destroyContext(c);
 
     return true;

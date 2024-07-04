@@ -33,7 +33,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 context_t *reply = newContextFrom(c);
                 reply->payload   = popBuffer(getContextBufferPool(c));
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 sprintf((char *) rawBuf(reply->payload), "%s", "salam");
                 setLen(reply->payload, strlen("salam"));
@@ -96,7 +96,7 @@ static void downStream(tunnel_t *self, context_t *c)
             //     self->up->upStream(self->up, reply);
             // }
 
-            reuseContextBuffer(c);
+            reuseContextPayload(c);
             destroyContext(c);
         }
     }

@@ -314,7 +314,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (! isAlive(c->line))
             {
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }
@@ -324,7 +324,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 assert(false);
                 deleteHttp2Connection(con);
                 self->dw->downStream(self->dw, newFinContext(c->line));
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }
@@ -336,7 +336,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     if (! isAlive(c->line))
                     {
-                        reuseContextBuffer(c);
+                        reuseContextPayload(c);
                         destroyContext(c);
                         return;
                     }
@@ -348,13 +348,13 @@ static void upStream(tunnel_t *self, context_t *c)
                 context_t *fin_ctx = newFinContext(con->line);
                 deleteHttp2Connection(con);
                 self->dw->downStream(self->dw, fin_ctx);
-                reuseContextBuffer(c);
+                reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }
         }
 
-        reuseContextBuffer(c);
+        reuseContextPayload(c);
         destroyContext(c);
     }
     else
@@ -391,7 +391,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
         }
 
-        CONTEXT_PAYLOAD_DROP(c);
+        dropContexPayload(c);
         destroyContext(c);
     }
     else
