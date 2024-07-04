@@ -33,7 +33,7 @@ SOFTWARE.
 
 #pragma once
 
-// #define ALLOCATOR_BYPASS         // switch to stdlib allocators
+#define ALLOCATOR_BYPASS         // switch to stdlib allocators
 
 #include <stddef.h>
 #include <stdbool.h>

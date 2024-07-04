@@ -38,7 +38,9 @@ SOFTWARE.
 #include <stdarg.h>
 #include <assert.h>
 #include <string.h>
-
+#ifdef OS_WIN
+#include <malloc.h>
+#endif
 /**********************************************************************************************************************/
 // default parameters
 
@@ -167,11 +169,11 @@ static token_manager_s* token_manager_s_create( size_t pool_size, size_t block_s
     if( align )
     {
 #ifdef OS_WIN
+        o = _aligned_malloc( pool_size, pool_size );
+#elif defined (OS_ANDROID)
         o = posix_aligned_malloc( pool_size, pool_size );
-#elif defined (OS_LINUX)
-        o = aligned_alloc( pool_size, pool_size );
 #else
-        o = posix_aligned_malloc( pool_size, pool_size );
+        o = aligned_alloc( pool_size, pool_size );
 #endif
         if( !o ) ERR( "Failed aligned allocating %zu bytes", pool_size );
     }
@@ -179,10 +181,10 @@ static token_manager_s* token_manager_s_create( size_t pool_size, size_t block_s
     {
 #ifdef OS_WIN
         o = _aligned_malloc( wwmGlobalALIGN, pool_size );
-#elif defined (OS_LINUX)
-        o = aligned_alloc( wwmGlobalALIGN, pool_size );
-#else
+#elif defined (OS_ANDROID)
         o = posix_aligned_malloc( wwmGlobalALIGN, pool_size );
+#else
+        o = aligned_alloc( wwmGlobalALIGN, pool_size );
 #endif
         if( !o ) ERR( "Failed allocating %zu bytes", pool_size );
     }
@@ -203,7 +205,11 @@ static void token_manager_s_discard( token_manager_s* o )
 {
     if( !o ) return;
     token_manager_s_down( o );
+#ifdef OS_WIN
+    _aligned_free( o );
+#else
     free( o );
+#endif
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -723,6 +729,9 @@ ww_dedictaed_mem_t* wwmDedicatedCreate
 
 ww_dedictaed_mem_t* wwmDedicatedCreateDefault( void )
 {
+#ifdef ALLOCATOR_BYPASS
+    return NULL;
+#endif
     return wwmDedicatedCreate
     (
         default_pool_size,
@@ -773,11 +782,11 @@ static void* wwmDedicatedmem_alloc( ww_dedictaed_mem_t* o, size_t requested_size
     else
     {
 #ifdef OS_WIN
+        reserved_ptr = _aligned_malloc( wwmGlobalALIGN, requested_size );
+#elif defined (OS_ANDROID)
         reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
-#elif defined (OS_LINUX)
-        reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
 #else
-        reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
+        reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
 #endif
         if( !reserved_ptr ) ERR( "Failed allocating %zu bytes.", requested_size );
         if( granted_size ) *granted_size = requested_size;
@@ -806,7 +815,12 @@ static void wwmDedicatedmem_free( ww_dedictaed_mem_t* o, void* current_ptr, cons
         else
         {
             if( btree_ps_s_remove( o->external_btree, current_ptr ) != 1 ) ERR( "Attempt to free invalid memory" );
-            free( current_ptr );
+            #ifdef OS_WIN
+                _aligned_free( current_ptr );
+            #else
+                free( current_ptr );
+            #endif
+            
         }
     }
 }
@@ -870,7 +884,11 @@ static void* wwmDedicatedmem_realloc( ww_dedictaed_mem_t* o, void* current_ptr, 
             void* reserved_ptr = wwmDedicatedmem_alloc( o, requested_size, granted_size );
             memcpy( reserved_ptr, current_ptr, requested_size );
             if( btree_ps_s_remove( o->external_btree, current_ptr ) != 1 ) ERR( "Attempt to free invalid memory" );
-            free( current_ptr );
+            #ifdef OS_WIN
+                _aligned_free( current_ptr );
+            #else
+                free( current_ptr );
+            #endif
             return reserved_ptr;
         }
         else // neither old nor new size handled by this manager
@@ -887,10 +905,10 @@ static void* wwmDedicatedmem_realloc( ww_dedictaed_mem_t* o, void* current_ptr, 
             }
 #ifdef OS_WIN
             void* reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
-#elif defined (OS_LINUX)
-            void* reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
-#else
+#elif defined (OS_ANDROID)
             void* reserved_ptr = posix_aligned_malloc( wwmGlobalALIGN, requested_size );
+#else
+            void* reserved_ptr = aligned_alloc( wwmGlobalALIGN, requested_size );
 #endif
             if( !reserved_ptr ) ERR( "Failed allocating %zu bytes.", requested_size );
             if( granted_size ) *granted_size = requested_size;
@@ -900,7 +918,11 @@ static void* wwmDedicatedmem_realloc( ww_dedictaed_mem_t* o, void* current_ptr, 
             memcpy( reserved_ptr, current_ptr, copy_bytes );
 
             if( btree_ps_s_remove( o->external_btree, current_ptr ) != 1 ) ERR( "Attempt to free invalid memory" );
-            free( current_ptr );
+            #ifdef OS_WIN
+                _aligned_free( current_ptr );
+            #else
+                free( current_ptr );
+            #endif
             return reserved_ptr;
         }
     }
@@ -1094,10 +1116,12 @@ static void discard_tbman(void)
 
 ww_dedictaed_mem_t* createWWMemoryManager( void )
 {
+#ifdef ALLOCATOR_BYPASS
+    return NULL;
+#endif
     assert(wwmGlobalState == NULL);
     static honce_t flag = HONCE_INIT;
-    int ern = honce( &flag, createWWGlobalMemory );
-    if( ern ) ERR( "function returned error %i", ern );
+    honce( &flag, createWWGlobalMemory );
     return wwmGlobalState;
 }
 
