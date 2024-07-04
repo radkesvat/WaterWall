@@ -1,6 +1,6 @@
 #include "basic_types.h"
 #include "cJSON.h"
-#include "ww.h"
+#include "managers/memory_manager.h"
 #include "fileutils.h"
 #include "hashutils.h"
 #include "hlog.h"

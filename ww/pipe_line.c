@@ -4,7 +4,6 @@
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
-#include "ww.h"
 
 struct pipe_line_s
 {

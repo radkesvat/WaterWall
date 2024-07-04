@@ -11,7 +11,6 @@
 #include "utils/hashutils.h"
 #include "utils/procutils.h"
 #include "utils/sockutils.h"
-#include "ww.h"
 
 #define i_type balancegroup_registry_t // NOLINT
 #define i_key  hash_t                  // NOLINT

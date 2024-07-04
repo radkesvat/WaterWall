@@ -1,8 +1,6 @@
 #include "reverse_server.h"
 #include "buffer_pool.h"
-#include "frand.h"
 #include "helpers.h"
-#include "hplatform.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"

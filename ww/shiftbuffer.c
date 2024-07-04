@@ -5,7 +5,6 @@
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define PREPADDING (ram_profile >= kRamProfileS2Memory ? (1U << 13) : ((1U << 8) + 512))
