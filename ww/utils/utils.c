@@ -554,10 +554,10 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
 }
 
 // blocking io
-cmdresult_t execCmd(const char *str)
+cmd_result_t execCmd(const char *str)
 {
     FILE       *fp;
-    cmdresult_t result = (cmdresult_t){{0}, -1};
+    cmd_result_t result = (cmd_result_t){{0}, -1};
     char       *buf    = &(result.output[0]);
     /* Open the command for reading. */
 #if defined(OS_UNIX)
@@ -569,7 +569,7 @@ cmdresult_t execCmd(const char *str)
     if (fp == NULL)
     {
         printf("Failed to run command \"%s\"\n", str);
-        return (cmdresult_t){{0}, -1};
+        return (cmd_result_t){{0}, -1};
     }
 
     int read = fscanf(fp, "%2047s", buf);
@@ -584,10 +584,11 @@ cmdresult_t execCmd(const char *str)
     /* close */
     // return 0 == pclose(fp);
 }
+
 bool checkCommandAvailable(const char *app)
 {
     char b[300];
     sprintf(b, "command -v %s", app);
-    cmdresult_t result = execCmd(b);
+    cmd_result_t result = execCmd(b);
     return (result.exit_code == 0 && strlen(result.output) > 0);
 }
