@@ -24,7 +24,7 @@ SOFTWARE.
 
     This started from tbman library at https://github.com/johsteffens/tbman/tree/master
 
-    changed many prats and names of this file, and it is now WW memory manager
+    Changed many prats and names of this file, and it is now WW memory manager
 
 */
 

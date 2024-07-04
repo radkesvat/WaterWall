@@ -27,7 +27,26 @@ SOFTWARE.
 
     This started from tbman library at https://github.com/johsteffens/tbman/tree/master
 
-    changed many prats and names of this file, and it is now WW memory manager
+    Changed many prats and names of this file, and it is now WW memory manager
+
+    Memory Manager Evaluation: (tested on my machine)
+
+    malloc, free, realloc (stdlib) ...
+    speed test alloc-free (general):    457ns per call
+    speed test realloc (general)   :   1482ns per call
+    speed test alloc-free (local)  :     44ns per call
+
+    tbman_malloc, tbman_free, tbman_realloc ...
+    speed test alloc-free (general):    143ns per call
+    speed test realloc (general)   :    540ns per call
+    speed test alloc-free (local)  :     40ns per call
+
+    tbman_malloc, tbman_nfree, tbman_nrealloc ...
+    speed test alloc-free (general):    126ns per call
+    speed test realloc (general)   :    418ns per call
+    speed test alloc-free (local)  :     32ns per call
+
+
 
 */
 
