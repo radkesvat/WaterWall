@@ -97,6 +97,8 @@ static inline void* stdlib_alloc( void* current_ptr, size_t requested_size )
     return current_ptr;
 }
 
+#ifdef OS_UNIX
+
 static inline void* posix_aligned_malloc(size_t alignment, size_t size) {
     void* aligned_memory = NULL;
     int result = posix_memalign(&aligned_memory, alignment, size);
@@ -105,6 +107,8 @@ static inline void* posix_aligned_malloc(size_t alignment, size_t size) {
     }
     return aligned_memory;
 }
+
+#endif
 
 /**********************************************************************************************************************/
 /**********************************************************************************************************************/
