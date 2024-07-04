@@ -7,6 +7,7 @@
     their license files are placed next to this file
 */
 
+
 #include "wireguard.h"
 
 #include <stdbool.h>
@@ -14,7 +15,7 @@
 #include <string.h>
 #include <limits.h>
 
-#include "crypto.h"
+// #include "crypto.h"
 
 // For HMAC calculation
 #define WIREGUARD_BLAKE2S_BLOCK_SIZE (64)
@@ -28,11 +29,11 @@ static const uint8_t LABEL_COOKIE[8] = "cookie--"; // Label-Cookie The UTF-8 str
 
 static const char *base64_lookup = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static const uint8_t zero_key[WIREGUARD_PUBLIC_KEY_LEN] = { 0 };
+static const uint8_t zero_key[kWgPublicKeyLen] = { 0 };
 
 // Calculated in wireguard_init
-static uint8_t construction_hash[WIREGUARD_HASH_LEN];
-static uint8_t identifier_hash[WIREGUARD_HASH_LEN];
+static uint8_t construction_hash[kWgHashLen];
+static uint8_t identifier_hash[kWgHashLen];
 
 
 void wireguard_init() {

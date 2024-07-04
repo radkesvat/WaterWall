@@ -229,16 +229,7 @@ void createWW(const ww_construction_data_t init_data)
         }
     }
 
-    // [Section] setup SocketMangager thread, note that we use smaller buffer pool here
-    {
-        const uint8_t socketmanager_tid = workers_count; // notice that 0 indexed array
-        shift_buffer_pools[socketmanager_tid] =
-            newGenericPoolWithCap((64) + ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-        buffer_pools[socketmanager_tid] = createBufferPool(socketmanager_tid);
-        loops[socketmanager_tid] = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[socketmanager_tid], socketmanager_tid);
 
-        socekt_manager = createSocketManager(loops[socketmanager_tid], socketmanager_tid);
-    }
 
     // [Section] initate workers and eventloops
     {
@@ -257,6 +248,17 @@ void createWW(const ww_construction_data_t init_data)
         }
     }
 
+    // [Section] setup SocketMangager thread, note that we use smaller buffer pool here
+    {
+        const uint8_t socketmanager_tid = workers_count; // notice that 0 indexed array
+        shift_buffer_pools[socketmanager_tid] =
+            newGenericPoolWithCap((64) + ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+        buffer_pools[socketmanager_tid] = createBufferPool(socketmanager_tid);
+        loops[socketmanager_tid] = hloop_new(HLOOP_FLAG_AUTO_FREE, buffer_pools[socketmanager_tid], socketmanager_tid);
+
+        socekt_manager = createSocketManager(loops[socketmanager_tid], socketmanager_tid);
+    }
+    
     // [Section] setup NodeManager
     {
         node_manager = createNodeManager();

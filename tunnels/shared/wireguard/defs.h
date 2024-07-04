@@ -8,7 +8,7 @@
 
     their license files are placed next to this file
 */
-
+#include <stddef.h>
 #include "lwip_types.h"
 
 enum wg_general_limits
@@ -91,7 +91,7 @@ typedef struct wireguard_allowed_ip_s
     bool      valid;
     ip_addr_t ip;
     ip_addr_t mask;
-    
+
 } wireguard_allowed_ip_t;
 
 struct wireguard_peer_s
