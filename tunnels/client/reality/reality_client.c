@@ -18,7 +18,7 @@
 typedef struct reality_client_state_s
 {
 
-    ssl_ctx_t        ssl_context;
+    ssl_ctx_t       *threadlocal_ssl_context;
     EVP_MD_CTX     **threadlocal_sign_context;
     EVP_CIPHER_CTX **threadlocal_cipher_context;
 
@@ -159,10 +159,10 @@ static void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c)          = cstate;
             cstate->rbio           = BIO_new(BIO_s_mem());
             cstate->wbio           = BIO_new(BIO_s_mem());
-            cstate->ssl            = SSL_new(state->ssl_context);
-            cstate->queue          = newContextQueue();
+            cstate->ssl            = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
             cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
             cstate->sign_context   = state->threadlocal_sign_context[c->line->tid];
+            cstate->queue          = newContextQueue();
             cstate->msg_digest     = (EVP_MD *) EVP_get_digestbynid(MSG_DIGEST_ALG);
             int sk_size            = EVP_MD_size(cstate->msg_digest);
             cstate->sign_key       = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
@@ -421,14 +421,9 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     reality_client_state_t *state = wwmGlobalMalloc(sizeof(reality_client_state_t));
     memset(state, 0, sizeof(reality_client_state_t));
 
+    state->threadlocal_ssl_context    = wwmGlobalMalloc(sizeof(ssl_ctx_t) * workers_count);
     state->threadlocal_cipher_context = wwmGlobalMalloc(sizeof(EVP_CIPHER_CTX *) * workers_count);
     state->threadlocal_sign_context   = wwmGlobalMalloc(sizeof(EVP_MD_CTX *) * workers_count);
-
-    for (unsigned int i = 0; i < workers_count; i++)
-    {
-        state->threadlocal_cipher_context[i] = EVP_CIPHER_CTX_new();
-        state->threadlocal_sign_context[i]   = EVP_MD_CTX_create();
-    }
 
     ssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
@@ -460,6 +455,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
         LOGF("JSON Error: RealityClient->settings->password (string field) : The data was empty or invalid");
         return NULL;
     }
+
     state->password_length = (int) strlen(state->password);
     if (state->password_length < 3)
     {
@@ -484,27 +480,35 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;
-    // ssl_param->ca_path = "cacert.pem";
-    state->ssl_context = sslCtxNew(ssl_param);
-    wwmGlobalFree(ssl_param);
-    // SSL_CTX_load_verify_store(state->ssl_context,cacert_bytes);
-
-    if (state->ssl_context == NULL)
-    {
-        LOGF("RealityClient: Could not create ssl context");
-        return NULL;
-    }
-
+    
     size_t alpn_len = strlen(state->alpn);
+
     struct
     {
         uint8_t len;
         char    alpn_data[];
-    } *ossl_alpn = wwmGlobalMalloc(1 + alpn_len);
+    } *ossl_alpn   = wwmGlobalMalloc(1 + alpn_len);
 
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *) ossl_alpn, 1 + alpn_len);
+
+    for (unsigned int i = 0; i < workers_count; i++)
+    {
+        state->threadlocal_ssl_context[i] = sslCtxNew(ssl_param);
+
+        if (state->threadlocal_ssl_context[i] == NULL)
+        {
+            LOGF("RealityClient: Could not create ssl context");
+            return NULL;
+        }
+
+        SSL_CTX_set_alpn_protos(state->threadlocal_ssl_context[i], (const unsigned char *) ossl_alpn, 1 + alpn_len);
+
+        state->threadlocal_cipher_context[i] = EVP_CIPHER_CTX_new();
+        state->threadlocal_sign_context[i]   = EVP_MD_CTX_create();
+    }
+
+    wwmGlobalFree(ssl_param);
     wwmGlobalFree(ossl_alpn);
 
     tunnel_t *t   = newTunnel();

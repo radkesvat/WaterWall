@@ -1,16 +1,11 @@
 
 add_library(OpenSSLClient STATIC
       openssl_client.c
-      ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl/openssl_globals.c
-      
 )
-
 
 #ww api
 target_include_directories(OpenSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
-target_link_libraries(OpenSSLClient ww)
-
-target_include_directories(OpenSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
+target_link_libraries(OpenSSLClient ww OpenSSLGlobals)
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
@@ -30,5 +25,7 @@ target_link_libraries(OpenSSLClient
     OpenSSL::Crypto
     OpenSSL::applink
 )
+
+set(BUILD_OPENSSL_GLOBALS TRUE PARENT_SCOPE)
 
 target_compile_definitions(OpenSSLClient PRIVATE OpenSSLClient_VERSION=0.1)

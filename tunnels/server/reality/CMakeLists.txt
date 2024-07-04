@@ -1,15 +1,13 @@
 
 add_library(RealityServer STATIC
         reality_server.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl/openssl_globals.c
       
 )
 
 #ww api
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
-target_link_libraries(RealityServer ww)
+target_link_libraries(RealityServer ww OpenSSLGlobals)
 
-target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/reality)
 
 # add dependencies
@@ -29,5 +27,7 @@ target_link_libraries(RealityServer
     OpenSSL::Crypto
     OpenSSL::applink
 )
+
+set(BUILD_OPENSSL_GLOBALS TRUE PARENT_SCOPE)
 
 target_compile_definitions(RealityServer PRIVATE RealityServer_VERSION=0.1)

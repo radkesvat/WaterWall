@@ -56,7 +56,6 @@ option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
 option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)  # temporarely disabled for compile speed
 option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  TRUE)  # temporarely disabled for compile speed
-option(INCLUDE_BORINGSSL_SERVER "link BoringSSLServer staticly to the core"  FALSE) #conflicts with openssl/noprefix ?
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
@@ -99,7 +98,6 @@ include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/core)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
-
 
 
 #ww api
@@ -226,14 +224,6 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_WOLFSSL_CLIENT=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/wolfssl)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/wolfssl)
 target_link_libraries(Waterwall WolfSSLClient)
-endif()
-
-#boring ssl server
-if (INCLUDE_BORINGSSL_SERVER)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_BORINGSSL_SERVER=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/boringssl)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/boringssl)
-target_link_libraries(Waterwall BoringSSLServer)
 endif()
 
 #logger tunnel
@@ -363,6 +353,13 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_BGP4_CLIENT=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
 target_link_libraries(Waterwall Bgp4Client)
+endif()
+
+
+#------------------------------------------------------------------------------------------
+if (BUILD_OPENSSL_GLOBALS)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
 endif()
 
 

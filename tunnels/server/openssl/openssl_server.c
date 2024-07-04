@@ -21,7 +21,7 @@ typedef struct
 
 typedef struct oss_server_state_s
 {
-    ssl_ctx_t    ssl_context;
+    ssl_ctx_t   *threadlocal_ssl_context;
     alpn_item_t *alpns;
     unsigned int alpns_length;
 
@@ -33,7 +33,6 @@ typedef struct oss_server_state_s
 
 typedef struct oss_server_con_state_s
 {
-
     bool handshake_completed;
     bool fallback_mode;
     bool fallback_init_sent;
@@ -393,7 +392,7 @@ static void upStream(tunnel_t *self, context_t *c)
             oss_server_con_state_t *cstate = CSTATE(c);
             cstate->rbio                   = BIO_new(BIO_s_mem());
             cstate->wbio                   = BIO_new(BIO_s_mem());
-            cstate->ssl                    = SSL_new(state->ssl_context);
+            cstate->ssl                    = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
             cstate->fallback_buf           = newBufferStream(getContextBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
@@ -588,6 +587,8 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     oss_server_state_t *state = wwmGlobalMalloc(sizeof(oss_server_state_t));
     memset(state, 0, sizeof(oss_server_state_t));
 
+    state->threadlocal_ssl_context = wwmGlobalMalloc(sizeof(ssl_ctx_t) * workers_count);
+
     ssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
@@ -657,7 +658,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     else
     {
         hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
-        node_t *next_node = getNode(instance_info->node_manager_config,hash_next);
+        node_t *next_node = getNode(instance_info->node_manager_config, hash_next);
         if (next_node == NULL)
         {
             LOGF("OpensslServer: fallback node not found");
@@ -666,7 +667,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
         if (next_node->instance == NULL)
         {
-            runNode(instance_info->node_manager_config,next_node, instance_info->chain_index + 1);
+            runNode(instance_info->node_manager_config, next_node, instance_info->chain_index + 1);
         }
 
         state->fallback = next_node->instance;
@@ -676,7 +677,18 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
     ssl_param->verify_peer = 0; // no mtls
     ssl_param->endpoint    = kSslServer;
-    state->ssl_context     = sslCtxNew(ssl_param);
+
+    for (unsigned int i = 0; i < workers_count; i++)
+    {
+        state->threadlocal_ssl_context[i] = sslCtxNew(ssl_param);
+        if (state->threadlocal_ssl_context[i] == NULL)
+        {
+            LOGF("OpensslServer: Could not create ssl context");
+            return NULL;
+        }
+
+        SSL_CTX_set_alpn_select_cb(state->threadlocal_ssl_context[i], onAlpnSelect, state);
+    }
     // int brotli_alg = TLSEXT_comp_cert_brotli;
     // SSL_set1_cert_comp_preference(state->ssl_context,&brotli_alg,1);
     // SSL_compress_certs(state->ssl_context,TLSEXT_comp_cert_brotli);
@@ -684,14 +696,6 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     wwmGlobalFree((char *) ssl_param->crt_file);
     wwmGlobalFree((char *) ssl_param->key_file);
     wwmGlobalFree(ssl_param);
-
-    if (state->ssl_context == NULL)
-    {
-        LOGF("OpensslServer: Could not create ssl context");
-        return NULL;
-    }
-
-    SSL_CTX_set_alpn_select_cb(state->ssl_context, onAlpnSelect, state);
 
     tunnel_t *t = newTunnel();
     t->state    = state;

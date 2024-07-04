@@ -1,11 +1,13 @@
 
-add_library(OpenSSLServer STATIC
-      openssl_server.c
+add_library(OpenSSLGlobals STATIC
+    openssl_globals.c
 )
 
 #ww api
-target_include_directories(OpenSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
-target_link_libraries(OpenSSLServer ww OpenSSLGlobals)
+target_include_directories(OpenSSLGlobals PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
+target_link_libraries(OpenSSLGlobals ww)
+
+target_include_directories(OpenSSLGlobals PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)    
@@ -19,12 +21,10 @@ CPMAddPackage(
     "BUILD_SHARED_LIBS OFF"
 )
 
-target_link_libraries(OpenSSLServer 
+target_link_libraries(OpenSSLGlobals 
     OpenSSL::SSL
     OpenSSL::Crypto
     OpenSSL::applink
 )
 
-set(BUILD_OPENSSL_GLOBALS TRUE PARENT_SCOPE)
-
-target_compile_definitions(OpenSSLServer PRIVATE OpenSSLServer_VERSION=0.1)
+target_compile_definitions(OpenSSLGlobals PRIVATE OpenSSLGlobals_VERSION=0.1)

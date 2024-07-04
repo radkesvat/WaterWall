@@ -13,7 +13,7 @@
 typedef struct oss_client_state_s
 {
 
-    ssl_ctx_t ssl_context;
+    ssl_ctx_t *threadlocal_ssl_context;
     // settings
     char *alpn;
     char *sni;
@@ -158,7 +158,7 @@ static void upStream(tunnel_t *self, context_t *c)
             memset(cstate, 0, sizeof(oss_client_con_state_t));
             cstate->rbio  = BIO_new(BIO_s_mem());
             cstate->wbio  = BIO_new(BIO_s_mem());
-            cstate->ssl   = SSL_new(state->ssl_context);
+            cstate->ssl   = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
             cstate->queue = newContextQueue();
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
@@ -413,6 +413,8 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     oss_client_state_t *state = wwmGlobalMalloc(sizeof(oss_client_state_t));
     memset(state, 0, sizeof(oss_client_state_t));
 
+    state->threadlocal_ssl_context = wwmGlobalMalloc(sizeof(ssl_ctx_t) * workers_count);
+
     ssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
@@ -440,26 +442,32 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;
-    // ssl_param->ca_path = "cacert.pem";
-    state->ssl_context = sslCtxNew(ssl_param);
-    wwmGlobalFree(ssl_param);
-    // SSL_CTX_load_verify_store(state->ssl_context,cacert_bytes);
-
-    if (state->ssl_context == NULL)
-    {
-        LOGF("OpenSSLClient: Could not create ssl context");
-        return NULL;
-    }
 
     size_t alpn_len = strlen(state->alpn);
+
     struct
     {
         uint8_t len;
         char    alpn_data[];
-    } *ossl_alpn   = wwmGlobalMalloc(1 + alpn_len);
+    } *ossl_alpn = wwmGlobalMalloc(1 + alpn_len);
+
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
-    SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *) ossl_alpn, 1 + alpn_len);
+
+    for (unsigned int i = 0; i < workers_count; i++)
+    {
+        state->threadlocal_ssl_context[i] = sslCtxNew(ssl_param);
+
+        if (state->threadlocal_ssl_context[i] == NULL)
+        {
+            LOGF("RealityClient: Could not create ssl context");
+            return NULL;
+        }
+
+        SSL_CTX_set_alpn_protos(state->threadlocal_ssl_context[i], (const unsigned char *) ossl_alpn, 1 + alpn_len);
+    }
+
+    wwmGlobalFree(ssl_param);
     wwmGlobalFree(ossl_alpn);
 
     tunnel_t *t   = newTunnel();
