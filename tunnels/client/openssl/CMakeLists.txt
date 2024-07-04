@@ -1,6 +1,7 @@
 
 add_library(OpenSSLClient STATIC
       openssl_client.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl/openssl_globals.c
       
 )
 

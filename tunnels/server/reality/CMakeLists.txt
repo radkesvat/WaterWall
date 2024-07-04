@@ -1,6 +1,7 @@
 
 add_library(RealityServer STATIC
         reality_server.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl/openssl_globals.c
       
 )
 

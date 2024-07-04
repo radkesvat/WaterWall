@@ -1,6 +1,7 @@
 
 add_library(RealityClient STATIC
     reality_client.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl/openssl_globals.c
       
 )
 

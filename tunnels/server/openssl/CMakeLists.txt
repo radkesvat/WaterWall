@@ -1,19 +1,17 @@
 
 add_library(OpenSSLServer STATIC
       openssl_server.c
-      
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl/openssl_globals.c
 )
 
 #ww api
 target_include_directories(OpenSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(OpenSSLServer ww)
 
-
 target_include_directories(OpenSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/openssl)
 
-
 # add dependencies
-include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
+include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)    
 
 # add openssl (default version is latest 3.3.0 +)
 CPMAddPackage(

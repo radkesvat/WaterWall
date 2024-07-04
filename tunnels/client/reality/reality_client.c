@@ -19,6 +19,7 @@ typedef struct reality_client_state_s
 {
 
     ssl_ctx_t ssl_context;
+    
     // settings
     uint8_t hashes[EVP_MAX_MD_SIZE];
     char    context_password[kSignPasswordLen];
