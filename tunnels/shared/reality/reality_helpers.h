@@ -8,7 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MSG_DIGEST_ALG "SHA256"
+#define MSG_DIGEST_ALG NID_sha256           //"SHA256"
 
 enum reality_consts
 {

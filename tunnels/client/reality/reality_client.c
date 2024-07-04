@@ -18,8 +18,10 @@
 typedef struct reality_client_state_s
 {
 
-    ssl_ctx_t ssl_context;
-    
+    ssl_ctx_t        ssl_context;
+    EVP_MD_CTX     **threadlocal_sign_context;
+    EVP_CIPHER_CTX **threadlocal_cipher_context;
+
     // settings
     uint8_t hashes[EVP_MAX_MD_SIZE];
     char    context_password[kSignPasswordLen];
@@ -77,8 +79,8 @@ static void cleanup(tunnel_t *self, context_t *c)
     {
         destroyBufferStream(cstate->read_stream);
     }
-    EVP_CIPHER_CTX_free(cstate->cipher_context);
-    EVP_MD_CTX_free(cstate->sign_context);
+    // EVP_CIPHER_CTX_free(cstate->cipher_context);
+    // EVP_MD_CTX_free(cstate->sign_context);
     EVP_MD_free(cstate->msg_digest);
     EVP_PKEY_free(cstate->sign_key);
 
@@ -159,9 +161,9 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->wbio           = BIO_new(BIO_s_mem());
             cstate->ssl            = SSL_new(state->ssl_context);
             cstate->queue          = newContextQueue();
-            cstate->cipher_context = EVP_CIPHER_CTX_new();
-            cstate->sign_context   = EVP_MD_CTX_create();
-            cstate->msg_digest     = (EVP_MD *) EVP_get_digestbyname(MSG_DIGEST_ALG);
+            cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
+            cstate->sign_context   = state->threadlocal_sign_context[c->line->tid];
+            cstate->msg_digest     = (EVP_MD *) EVP_get_digestbynid(MSG_DIGEST_ALG);
             int sk_size            = EVP_MD_size(cstate->msg_digest);
             cstate->sign_key       = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
 
@@ -418,6 +420,15 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 {
     reality_client_state_t *state = wwmGlobalMalloc(sizeof(reality_client_state_t));
     memset(state, 0, sizeof(reality_client_state_t));
+
+    state->threadlocal_cipher_context = wwmGlobalMalloc(sizeof(EVP_CIPHER_CTX *) * workers_count);
+    state->threadlocal_sign_context   = wwmGlobalMalloc(sizeof(EVP_MD_CTX *) * workers_count);
+
+    for (unsigned int i = 0; i < workers_count; i++)
+    {
+        state->threadlocal_cipher_context[i] = EVP_CIPHER_CTX_new();
+        state->threadlocal_sign_context[i]   = EVP_MD_CTX_create();
+    }
 
     ssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
