@@ -116,7 +116,7 @@ static void upStream(tunnel_t *self, context_t *c);
 
 static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_t this_tid)
 {
-    halfduplex_server_state_t *state = STATE(self);
+    halfduplex_server_state_t *state = TSTATE(self);
 
     hhybridmutex_lock(&(state->upload_line_map_mutex));
 
@@ -201,7 +201,7 @@ static void upStream(tunnel_t *self, context_t *c)
         return;
     }
 
-    halfduplex_server_state_t     *state  = STATE(self);
+    halfduplex_server_state_t     *state  = TSTATE(self);
     halfduplex_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {

@@ -50,7 +50,7 @@ static void onFallbackTimer(htimer_t *timer)
 {
     struct timer_eventdata     *data  = hevent_userdata(timer);
     tunnel_t                   *self  = data->self;
-    trojan_auth_server_state_t *state = STATE(self);
+    trojan_auth_server_state_t *state = TSTATE(self);
     context_t                  *c     = data->c;
 
     wwmGlobalFree(data);
@@ -70,7 +70,7 @@ static void onFallbackTimer(htimer_t *timer)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    trojan_auth_server_state_t     *state  = STATE(self);
+    trojan_auth_server_state_t     *state  = TSTATE(self);
     trojan_auth_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)

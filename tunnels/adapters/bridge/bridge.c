@@ -18,7 +18,7 @@ typedef struct bridge_con_state_s
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    bridge_state_t *state = STATE(self);
+    bridge_state_t *state = TSTATE(self);
     assert(state->mode_upside);
 
     // swap upstream <-> downstream
@@ -44,7 +44,7 @@ static void upStream(tunnel_t *self, context_t *c)
 static void downStream(tunnel_t *self, context_t *c)
 {
 
-    bridge_state_t *state = STATE(self);
+    bridge_state_t *state = TSTATE(self);
     assert(! state->mode_upside);
 
     // swap upstream <-> downstream
@@ -96,7 +96,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
     if (pair_node->instance)
     {
         state->pair                = pair_node->instance;
-        bridge_state_t *pair_state = STATE(pair_node->instance);
+        bridge_state_t *pair_state = TSTATE(pair_node->instance);
         pair_state->pair           = t;
     }
 

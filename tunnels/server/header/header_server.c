@@ -27,7 +27,7 @@ typedef struct header_server_con_state_s
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    header_server_state_t     *state  = STATE(self);
+    header_server_state_t     *state  = TSTATE(self);
     header_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {

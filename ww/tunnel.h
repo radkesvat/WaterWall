@@ -39,7 +39,7 @@ enum
 };
 
 // get the state object of each tunnel
-#define STATE(x) ((void *) ((x)->state))
+#define TSTATE(x) ((void *) ((x)->state))
 
 // get the line state at index I
 #define LSTATE_I(x, y) ((void *) ((((x)->chains_state)[(y)])))

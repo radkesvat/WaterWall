@@ -8,7 +8,7 @@
 static void upStream(tunnel_t *self, context_t *c)
 {
 
-    preconnect_client_state_t *state = STATE(self);
+    preconnect_client_state_t *state = TSTATE(self);
     if (c->payload != NULL)
     {
         preconnect_client_con_state_t *cstate = CSTATE(c);
@@ -94,7 +94,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    preconnect_client_state_t *state = STATE(self);
+    preconnect_client_state_t *state = TSTATE(self);
     if (c->payload != NULL)
     {
 
@@ -192,7 +192,7 @@ static void downStream(tunnel_t *self, context_t *c)
 static void startPreconnect(htimer_t *timer)
 {
     tunnel_t                  *self  = hevent_userdata(timer);
-    preconnect_client_state_t *state = STATE(self);
+    preconnect_client_state_t *state = TSTATE(self);
 
     for (unsigned int i = 0; i < workers_count; i++)
     {

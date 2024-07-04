@@ -157,7 +157,7 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
 
 static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 {
-    http2_client_state_t     *state = STATE(self);
+    http2_client_state_t     *state = TSTATE(self);
     http2_client_con_state_t *con   = wwmGlobalMalloc(sizeof(http2_client_con_state_t));
 
     *con = (http2_client_con_state_t){
@@ -192,7 +192,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 static void deleteHttp2Connection(http2_client_con_state_t *con)
 {
     tunnel_t             *self  = con->tunnel;
-    http2_client_state_t *state = STATE(self);
+    http2_client_state_t *state = TSTATE(self);
 
     vec_cons     *vector = &(state->thread_cpool[con->line->tid].cons);
     vec_cons_iter it     = vec_cons_find(vector, con);
@@ -223,7 +223,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
 static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid)
 {
 
-    http2_client_state_t *state = STATE(self);
+    http2_client_state_t *state = TSTATE(self);
     // return createHttp2Connection(self, tid, io);
     vec_cons *vector = &(state->thread_cpool[tid].cons);
 

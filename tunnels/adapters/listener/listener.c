@@ -25,7 +25,7 @@ static void upStream(tunnel_t *self, context_t *c);
 static void firstUpStream(tunnel_t *self, context_t *c)
 {
 
-    listener_state_t *state = STATE(self);
+    listener_state_t *state = TSTATE(self);
     state->tcp_listener     = state->tcp_inbound_node->instance;
     state->udp_listener     = state->udp_inbound_node->instance;
     self->upStream          = upStream;
@@ -37,7 +37,7 @@ static void upStream(tunnel_t *self, context_t *c)
 }
 static void downStream(tunnel_t *self, context_t *c)
 {
-    listener_state_t *state = STATE(self);
+    listener_state_t *state = TSTATE(self);
 
     switch ((c->line->src_ctx.address_protocol))
     {

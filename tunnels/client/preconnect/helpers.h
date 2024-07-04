@@ -74,7 +74,7 @@ static void beforeConnect(hevent_t *ev)
 
 static void initiateConnect(tunnel_t *self, bool delay)
 {
-    preconnect_client_state_t *state = STATE(self);
+    preconnect_client_state_t *state = TSTATE(self);
 
     if (state->unused_cons >= state->min_unused_cons)
     {

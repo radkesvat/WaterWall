@@ -29,7 +29,7 @@ typedef struct zero_rtt_state_s
     zero_rtt_uuid_t uuid;
 } zero_rtt_state_t;
 
-#define STATE(x) ((zero_rtt_state_t *)(x->state))
+#define TSTATE(x) ((zero_rtt_state_t *)(x->state))
 
 #define CSTATE(x) ((zero_rtt_con_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
@@ -71,10 +71,10 @@ static void upStream(tunnel_t *self, context_t *c)
         cstate = wwmGlobalMalloc(sizeof(zero_rtt_con_t));
         cstate->queue = newContextQueue();
         cstate->dw = c->line;
-        shiftl(c->payload, sizeof(STATE(self)->uuid.epoch_sec));
-        writeUI32(c->payload, STATE(self)->uuid.epoch_sec);
-        shiftl(c->payload, sizeof(STATE(self)->uuid.epoch_nsec));
-        writeUI32(c->payload, STATE(self)->uuid.epoch_nsec);
+        shiftl(c->payload, sizeof(TSTATE(self)->uuid.epoch_sec));
+        writeUI32(c->payload, TSTATE(self)->uuid.epoch_sec);
+        shiftl(c->payload, sizeof(TSTATE(self)->uuid.epoch_nsec));
+        writeUI32(c->payload, TSTATE(self)->uuid.epoch_nsec);
 
         // initiation
 
@@ -186,7 +186,7 @@ tunnel_t *newZeroRttClientTunnel()
     t->state = wwmGlobalMalloc(sizeof(zero_rtt_state_t));
     memset(t->state, 0, sizeof(zero_rtt_state_t));
 
-    STATE(t)->uuid = newUUID();
+    TSTATE(t)->uuid = newUUID();
 
     t->upStream = &zrttUpStream;
     t->packetUpStream = &zrttPacketUpStream;

@@ -48,7 +48,7 @@ static void upStream(tunnel_t *self, context_t *c)
         return;
     }
 
-    reverse_server_state_t     *state   = STATE(self);
+    reverse_server_state_t     *state   = TSTATE(self);
     reverse_server_con_state_t *dcstate = c->line->up_state;
 
     if (c->payload != NULL)
@@ -212,7 +212,7 @@ static void upStream(tunnel_t *self, context_t *c)
 static void downStream(tunnel_t *self, context_t *c)
 {
 
-    reverse_server_state_t     *state   = STATE(self);
+    reverse_server_state_t     *state   = TSTATE(self);
     reverse_server_con_state_t *ucstate = c->line->up_state;
 
     if (c->payload != NULL)

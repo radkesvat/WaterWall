@@ -292,7 +292,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         {
             return 0;
         }
-        // http2_client_state_t *state = STATE(self);
+        // http2_client_state_t *state = TSTATE(self);
         resumeLineUpSide(stream->parent);
         nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
         context_t *fc = newFinContext(stream->line);
@@ -325,7 +325,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    http2_client_state_t *state = STATE(self);
+    http2_client_state_t *state = TSTATE(self);
 
     if (c->payload != NULL)
     {
@@ -421,7 +421,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    http2_client_state_t     *state = STATE(self);
+    http2_client_state_t     *state = TSTATE(self);
     http2_client_con_state_t *con   = CSTATE(c);
     if (c->payload != NULL)
     {

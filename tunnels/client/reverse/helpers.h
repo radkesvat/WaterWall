@@ -49,7 +49,7 @@ static void cleanup(reverse_client_con_state_t *cstate)
 {
     if (cstate->idle_handle)
     {
-        reverse_client_state_t *state = STATE(cstate->self);
+        reverse_client_state_t *state = TSTATE(cstate->self);
         removeIdleItemByHash(cstate->u->tid, state->starved_connections, (hash_t) (size_t) (cstate));
     }
     doneLineDownSide(cstate->u);
@@ -62,7 +62,7 @@ static void cleanup(reverse_client_con_state_t *cstate)
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t *self = cg->t;
-    // reverse_client_state_t     *state  = STATE(self);
+    // reverse_client_state_t     *state  = TSTATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
     wwmGlobalFree(cg);
     context_t *hello_data_ctx = newContext(cstate->u);
@@ -101,7 +101,7 @@ static void beforeConnect(hevent_t *ev)
 
 static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
 {
-    reverse_client_state_t *state = STATE(self);
+    reverse_client_state_t *state = TSTATE(self);
 
     if (state->threadlocal_pool[tid].unused_cons_count + state->threadlocal_pool[tid].connecting_cons_count >=
         state->min_unused_cons)
@@ -140,7 +140,7 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
 {
     reverse_client_con_state_t *cstate = idle_con->userdata;
     tunnel_t                   *self   = cstate->self;
-    reverse_client_state_t     *state  = STATE(self);
+    reverse_client_state_t     *state  = TSTATE(self);
     if (cstate->idle_handle == NULL)
     {
         // this can happen if we are unlucky and 2 events are passed to eventloop in

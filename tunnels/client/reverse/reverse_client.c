@@ -12,7 +12,7 @@
 static void upStream(tunnel_t *self, context_t *c)
 {
 
-    reverse_client_state_t     *state   = STATE(self);
+    reverse_client_state_t     *state   = TSTATE(self);
     reverse_client_con_state_t *dcstate = c->line->dw_state;
 
     if (c->payload != NULL)
@@ -47,7 +47,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    reverse_client_state_t *state = STATE(self);
+    reverse_client_state_t *state = TSTATE(self);
     uint8_t                 tid   = c->line->tid;
 
     if (c->payload != NULL)
@@ -67,7 +67,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (ucstate->idle_handle)
             {
                 ucstate->idle_handle          = NULL;
-                reverse_client_state_t *state = STATE(ucstate->self);
+                reverse_client_state_t *state = TSTATE(ucstate->self);
                 removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t)(size_t) (ucstate));
             }
 

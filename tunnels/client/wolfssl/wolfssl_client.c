@@ -75,7 +75,7 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    wssl_client_state_t *state = STATE(self);
+    wssl_client_state_t *state = TSTATE(self);
 
     if (c->payload != NULL)
     {

@@ -4,7 +4,7 @@
 #include "hloop.h"
 #include <time.h>
 
-#define STATE(x) ((mux_state_t *)((x)->state))
+#define TSTATE(x) ((mux_state_t *)((x)->state))
 
 #define CSTATE(x) ((line_t *)((((x)->line->chains_state)[self->chain_index])))
 #define CSTATE_MUT(x) ((x)->line->chains_state)[self->chain_index]
@@ -62,7 +62,7 @@ static inline uint16_t newid(mux_state_t *ms)
 
 static void closeChildern(tunnel_t *self, int up_id)
 {
-    mux_state_t *state = STATE(self);
+    mux_state_t *state = TSTATE(self);
 
 #ifdef DEBUG
     assert(up_id != 0);
@@ -93,7 +93,7 @@ static void closeChildern(tunnel_t *self, int up_id)
 
 static void checkUpCon(tunnel_t *self, size_t up_id)
 {
-    mux_state_t *state = STATE(self);
+    mux_state_t *state = TSTATE(self);
     up_con_t *upcon = &state->up_cons[up_id];
     struct timespec ts;
 
@@ -128,7 +128,7 @@ static void checkUpCon(tunnel_t *self, size_t up_id)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    mux_state_t *state = STATE(self);
+    mux_state_t *state = TSTATE(self);
     // find proper up id
 
     // child id
@@ -219,7 +219,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    mux_state_t *state = STATE(self);
+    mux_state_t *state = TSTATE(self);
 
 #ifdef DEBUG
     assert(c->line->id != 0);
@@ -393,7 +393,7 @@ tunnel_t *newMuxClientTunnel(size_t parallel_lines)
     tunnel_t *t = newTunnel();
     t->state = wwmGlobalMalloc(sizeof(mux_state_t));
     memset(t->state, 0, sizeof(mux_state_t));
-    STATE(t)->parallel_lines = parallel_lines;
+    TSTATE(t)->parallel_lines = parallel_lines;
 
     t->upStream = &muxUpStream;
     t->packetUpStream = &muxPacketUpStream;
@@ -401,13 +401,13 @@ tunnel_t *newMuxClientTunnel(size_t parallel_lines)
     t->packetDownStream = &muxPacketDownStream;
 
     assert(parallel_lines > 0);
-    STATE(t)->up_cons = wwmGlobalMalloc(STATE(t)->parallel_lines * sizeof(up_con_t));
+    TSTATE(t)->up_cons = wwmGlobalMalloc(TSTATE(t)->parallel_lines * sizeof(up_con_t));
 
-    STATE(t)->dw_cons = hmap_iio_with_capacity(CHILDREN_VEC_INIT_CAP);
-    STATE(t)->waiters = hmap_iio_with_capacity(CHILDREN_VEC_INIT_CAP);
+    TSTATE(t)->dw_cons = hmap_iio_with_capacity(CHILDREN_VEC_INIT_CAP);
+    TSTATE(t)->waiters = hmap_iio_with_capacity(CHILDREN_VEC_INIT_CAP);
 
-    // for (size_t i = 0; i < STATE(t)->parallel_lines; i++)
+    // for (size_t i = 0; i < TSTATE(t)->parallel_lines; i++)
     // {
-    //     STATE(t)->up_cons[i] = allocateUpCon(i, t->chain_index);
+    //     TSTATE(t)->up_cons[i] = allocateUpCon(i, t->chain_index);
     // }
 }

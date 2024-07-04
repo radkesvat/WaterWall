@@ -207,7 +207,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            tcp_connector_state_t *state      = STATE(self);
+            tcp_connector_state_t *state      = TSTATE(self);
             CSTATE_MUT(c)                     = wwmGlobalMalloc(sizeof(tcp_connector_con_state_t));
             tcp_connector_con_state_t *cstate = CSTATE(c);
 

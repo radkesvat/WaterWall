@@ -45,7 +45,7 @@ typedef struct bgp4_client_con_state_s
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    bgp4_client_state_t *state = STATE(self);
+    bgp4_client_state_t *state = TSTATE(self);
 
     if (c->payload != NULL)
     {

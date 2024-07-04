@@ -24,7 +24,7 @@ typedef struct header_client_con_state_s
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    header_client_state_t *state = STATE(self);
+    header_client_state_t *state = TSTATE(self);
 
     if (c->first && c->payload != NULL)
     {

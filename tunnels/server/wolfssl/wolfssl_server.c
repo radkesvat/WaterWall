@@ -123,7 +123,7 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
         return;
     }
     assert(c->payload == NULL); // payload must be consumed
-    wssl_server_state_t     *state  = STATE(self);
+    wssl_server_state_t     *state  = TSTATE(self);
     wssl_server_con_state_t *cstate = CSTATE(c);
 
     if (! cstate->fallback_init_sent)
@@ -155,7 +155,7 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    wssl_server_state_t     *state  = STATE(self);
+    wssl_server_state_t     *state  = TSTATE(self);
     wssl_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)

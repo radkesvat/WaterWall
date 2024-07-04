@@ -17,7 +17,7 @@ typedef struct connector_con_state_s
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    connector_state_t *state = STATE(self);
+    connector_state_t *state = TSTATE(self);
 
     switch ((c->line->dest_ctx.address_protocol))
     {

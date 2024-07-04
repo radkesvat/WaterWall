@@ -80,7 +80,7 @@ static void cleanup(tunnel_t *self, context_t *c)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    reality_server_state_t     *state  = STATE(self);
+    reality_server_state_t     *state  = TSTATE(self);
     reality_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
@@ -246,7 +246,7 @@ failed:;
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    reality_server_state_t     *state  = STATE(self);
+    reality_server_state_t     *state  = TSTATE(self);
     reality_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
