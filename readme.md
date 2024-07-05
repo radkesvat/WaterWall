@@ -11,6 +11,13 @@ Waterwall!
 
 A simple core for tunneling and even direct user-server connections. based on high-performance, fully customizeable nodes for creating any kind of protocol without writing code for it.
 
+## Install
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/Ptechgithub/Waterwall/main/install.sh)
+```
+![31](https://raw.githubusercontent.com/Ptechgithub/configs/main/media/31.jpg)
+
+
 To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (The documents are currently only in Persian language.)
 
 # Donation
