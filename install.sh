@@ -2948,6 +2948,7 @@ custom() {
 # Uninstall Waterwall
 uninstall_waterwall() {
 	if [ -f ~/Waterwall/config.json ] || [ -f /etc/systemd/system/Waterwall.service ]; then
+	    echo -e "${cyan}==============================================${rest}"
 		echo -en "${green}Press Enter to continue, or Ctrl+C to cancel.${rest}"
 		read -r
 		if [ -d ~/Waterwall/cert ] || [ -f ~/.acme/acme.sh ]; then
