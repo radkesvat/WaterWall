@@ -3115,7 +3115,7 @@ main() {
 	echo -e "${yellow}*${green}  [${purple}0${green}] ${purple}Exit${yellow}                       *${rest}"
 	echo -e "${yellow}***********************************${rest}"
 
-	echo -en "${cyan}Enter your choice (1-10): ${rest}"
+	echo -en "${cyan}Enter your choice (1-11): ${rest}"
 	read -r choice
 
 	case $choice in
