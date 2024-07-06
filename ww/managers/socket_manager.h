@@ -31,15 +31,15 @@ struct balance_group_s;
 typedef struct socket_filter_option_s
 {
     char                        *host;
+    char                       **white_list_raddr;
+    char                       **black_list_raddr;
+    char                        *balance_group_name;
     enum socket_address_protocol protocol;
     multiport_backend_t          multiport_backend;
     uint16_t                     port_min;
     uint16_t                     port_max;
-    char                       **white_list_raddr;
-    char                       **black_list_raddr;
     bool                         fast_open;
     bool                         no_delay;
-    char                        *balance_group_name;
     unsigned int                 balance_group_interval;
 
     // private
@@ -69,7 +69,6 @@ typedef void (*onAccept)(hevent_t *ev);
 
 void destroySocketAcceptResult(socket_accept_result_t *);
 
-// if you asked for udp, youll get such struct when a udp packet received and passed all filters
 typedef struct udpsock_s
 {
     hio_t        *io;
@@ -77,6 +76,7 @@ typedef struct udpsock_s
 
 } udpsock_t;
 
+// if you asked for udp, youll get such struct when a udp packet received and passed all filters
 typedef struct udp_payload_s
 {
     udpsock_t      *sock;

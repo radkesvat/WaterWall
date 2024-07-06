@@ -330,10 +330,10 @@ void parseCoreSettings(const char *data_json)
         fprintf(stderr, "CoreSettings: the workers count is invalid");
         exit(1);
     }
-    if (settings->workers_count > 255)
+    if (settings->workers_count > 254)
     {
-        fprintf(stderr, "CoreSettings: workers count is shrinked to maximum supported value -> 255");
-        settings->workers_count = 255;
+        fprintf(stderr, "CoreSettings: workers count is shrinked to maximum supported value -> 254");
+        settings->workers_count = 254;
     }
 
     cJSON_Delete(json);
