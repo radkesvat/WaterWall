@@ -50,10 +50,10 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     node_t *tcp_outbound_node  = newNode();
     node_t *udp_outbound_node  = newNode();
     tcp_outbound_node->name    = concat(instance_info->node->name, "_tcp_outbound");
-    tcp_outbound_node->type    = "TcpConnector";
+    tcp_outbound_node->type    = strdup("TcpConnector");
     tcp_outbound_node->version = instance_info->node->version;
     udp_outbound_node->name    = concat(instance_info->node->name, "_udp_outbound");
-    udp_outbound_node->type    = "UdpConnector";
+    udp_outbound_node->type    = strdup("UdpConnector");
     udp_outbound_node->version = instance_info->node->version;
     registerNode(instance_info->node_manager_config, tcp_outbound_node, settings);
     registerNode(instance_info->node_manager_config, udp_outbound_node, settings);

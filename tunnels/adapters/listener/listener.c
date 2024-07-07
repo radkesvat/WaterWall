@@ -66,12 +66,12 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
     node_t *tcp_inbound_node  = newNode();
     node_t *udp_inbound_node  = newNode();
     tcp_inbound_node->name    = concat(instance_info->node->name, "_tcp_inbound");
-    tcp_inbound_node->type    = "TcpListener";
+    tcp_inbound_node->type    = strdup("TcpListener");
     tcp_inbound_node->version = instance_info->node->version;
     tcp_inbound_node->next    = instance_info->node->name;
 
     udp_inbound_node->name    = concat(instance_info->node->name, "_udp_inbound");
-    udp_inbound_node->type    = "UdpListener";
+    udp_inbound_node->type    = strdup("UdpListener");
     udp_inbound_node->version = instance_info->node->version;
     udp_inbound_node->next    = instance_info->node->name;
 

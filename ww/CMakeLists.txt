@@ -179,8 +179,10 @@ target_compile_options(ww PUBLIC
                                   -Wlogical-not-parentheses
                                   -Wshadow
                                   -Wmissing-prototypes
-
-
+                                  -Wnested-externs
+                                  -Wuninitialized
+                                  -Wcast-align
+                                  -Wwrite-strings
 )
 
 # disabled warnings: only unused functions
