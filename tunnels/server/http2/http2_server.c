@@ -201,12 +201,12 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
 
     nghttp2_nv nvs[10];
     int        nvlen = 0;
-    nvs[nvlen++]     = makeNv(":status", "200");
+    nvs[nvlen++]     = makeNV(":status", "200");
     if (con->content_type == kApplicationGrpc)
     {
         // correct content_type: application/grpc
-        nvs[nvlen++] = makeNv("content-type", httpContentTypeStr(kApplicationGrpc));
-        nvs[nvlen++] = makeNv("accept-encoding", "identity");
+        nvs[nvlen++] = makeNV("content-type", httpContentTypeStr(kApplicationGrpc));
+        nvs[nvlen++] = makeNV("accept-encoding", "identity");
     }
 
     int flags = NGHTTP2_FLAG_END_HEADERS;
@@ -403,7 +403,7 @@ static void downStream(tunnel_t *self, context_t *c)
             int flags = NGHTTP2_FLAG_END_STREAM | NGHTTP2_FLAG_END_HEADERS;
             if (con->content_type == kApplicationGrpc)
             {
-                nghttp2_nv nv = makeNv("grpc-status", "0");
+                nghttp2_nv nv = makeNV("grpc-status", "0");
                 nghttp2_submit_headers(con->session, flags, stream->stream_id, NULL, &nv, 1, NULL);
             }
             else

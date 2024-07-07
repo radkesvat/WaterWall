@@ -5,7 +5,7 @@
 
 #define kMaxConcurrentStreams 0xffffffffU // NOLINT
 
-static nghttp2_nv makeNv(const char *name, const char *value)
+static nghttp2_nv makeNV(const char *name, const char *value)
 {
     nghttp2_nv nv;
     nv.name     = (uint8_t *) name;

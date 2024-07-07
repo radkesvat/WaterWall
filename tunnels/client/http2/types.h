@@ -24,16 +24,26 @@ typedef enum
     kH2RecvData,
 } http2_session_state;
 
+enum{
+
+    kMaxRecvBeforeAck = (1 << 16),
+    kMaxSendBeforeAck = (1 << 20)
+};
+
 typedef struct http2_client_child_con_state_s
 {
     struct http2_client_child_con_state_s *prev, *next;
     int32_t                                stream_id;
     nghttp2_stream                        *ng_stream;
     buffer_stream_t                       *chunkbs; // used for grpc
-    size_t                                 bytes_needed;
     tunnel_t                              *tunnel;
     line_t                                *parent;
     line_t                                *line;
+    size_t                                 bytes_needed;
+    size_t                                 bytes_sent_nack;
+    size_t                                 bytes_received_nack;
+
+
 
 } http2_client_child_con_state_t;
 
