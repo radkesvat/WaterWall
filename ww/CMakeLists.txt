@@ -93,6 +93,12 @@ set(BUILD_EXAMPLES OFF CACHE BOOL "ibhv dont build examples")
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/eventloop)
 
 
+# add lwip
+
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lwip)
+
+
+
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   message( FATAL_ERROR
    "MSVC compiler is not supported, because WW relies on <stdatomic.h>"

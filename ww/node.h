@@ -36,12 +36,11 @@ typedef struct node_s
     uint32_t version;
 
     // evaluated:
-  
- 
+
     struct tunnel_lib_s    *lib;
     node_instance_context_t instance_context;
     struct tunnel_s        *instance;
-   tunnel_metadata_t       metadata; 
+    tunnel_metadata_t       metadata;
     uint32_t                refrenced;
     bool                    route_starter;
 } node_t;
