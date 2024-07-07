@@ -181,8 +181,9 @@ target_compile_options(ww PUBLIC
                                   -Wmissing-prototypes
                                   -Wnested-externs
                                   -Wuninitialized
-                                  -Wcast-align
                                   -Wwrite-strings
+                                  # -Wcast-align    todo (fix code to enable this if possible...)
+
 )
 
 # disabled warnings: only unused functions

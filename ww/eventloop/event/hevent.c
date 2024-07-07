@@ -208,6 +208,14 @@ int hio_revents(hio_t* io) {
     return io->revents;
 }
 
+struct sockaddr_u* hio_localaddr_u(hio_t* io) {
+    return io->localaddr_u;
+}
+
+struct sockaddr_u* hio_peeraddr_u(hio_t* io) {
+    return io->peeraddr_u;
+}
+
 struct sockaddr* hio_localaddr(hio_t* io) {
     return io->localaddr;
 }

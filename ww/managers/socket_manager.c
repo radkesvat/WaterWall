@@ -483,7 +483,7 @@ static void noTcpSocketConsumerFound(hio_t *io)
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
     LOGE("SocketManager: could not find consumer for Tcp socket FD:%x [%s] <= [%s]", hio_fd(io),
-         SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+         SOCKADDR_STR(hio_localaddr_u(io), localaddrstr), SOCKADDR_STR(hio_peeraddr_u(io), peeraddrstr));
     hio_close(io);
 }
 
@@ -530,7 +530,7 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
 
 static void distributeTcpSocket(hio_t *io, uint16_t local_port)
 {
-    sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr(io);
+    sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr_u(io);
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
@@ -570,7 +570,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr(io));
+                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr_u(io));
                 }
                 idle_item_t *idle_item = getIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
 
@@ -631,14 +631,14 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
 
 static void onAcceptTcpSinglePort(hio_t *io)
 {
-    distributeTcpSocket(io, sockaddr_port((sockaddr_u *) hio_localaddr(io)));
+    distributeTcpSocket(io, sockaddr_port((sockaddr_u *) hio_localaddr_u(io)));
 }
 
 static void onAcceptTcpMultiPort(hio_t *io)
 {
 #ifdef OS_UNIX
 
-    bool          use_v4_strategy = needsV4SocketStrategy((sockaddr_u *) hio_peeraddr(io));
+    bool          use_v4_strategy = needsV4SocketStrategy((sockaddr_u *) hio_peeraddr_u(io));
     unsigned char pbuf[28]        = {0};
     socklen_t     size            = use_v4_strategy ? 16 : 24;
 
@@ -649,7 +649,7 @@ static void onAcceptTcpMultiPort(hio_t *io)
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
         LOGE("SocketManger: multiport failure getting origin port FD:%x [%s] <= [%s]", hio_fd(io),
-             SOCKADDR_STR(hio_localaddr(io), localaddrstr), SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+             SOCKADDR_STR(hio_localaddr_u(io), localaddrstr), SOCKADDR_STR(hio_peeraddr_u(io), peeraddrstr));
         hio_close(io);
         return;
     }
@@ -812,8 +812,8 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
     LOGE("SocketManager: could not find consumer for Udp socket  [%s] <= [%s]",
-         SOCKADDR_STR(hio_localaddr(upl.sock->io), localaddrstr),
-         SOCKADDR_STR(hio_peeraddr(upl.sock->io), peeraddrstr));
+         SOCKADDR_STR(hio_localaddr_u(upl.sock->io), localaddrstr),
+         SOCKADDR_STR(hio_peeraddr_u(upl.sock->io), peeraddrstr));
 }
 
 static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
@@ -835,7 +835,7 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
 static void distributeUdpPayload(const udp_payload_t pl)
 {
     // hhybridmutex_lock(&(state->mutex)); new socket manager will not lock here
-    sockaddr_u *paddr      = (sockaddr_u *) hio_peeraddr(pl.sock->io);
+    sockaddr_u *paddr      = (sockaddr_u *) hio_peeraddr_u(pl.sock->io);
     uint16_t    local_port = pl.real_localport;
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
@@ -875,7 +875,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr(pl.sock->io));
+                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr_u(pl.sock->io));
                 }
                 idle_item_t *idle_item = getIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
 
@@ -921,14 +921,14 @@ static void distributeUdpPayload(const udp_payload_t pl)
 static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
     udpsock_t *socket     = hevent_userdata(io);
-    uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr(io));
+    uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr_u(io));
     // TODO (check)
     uint8_t target_tid = local_port % workers_count;
 
     udp_payload_t item = (udp_payload_t){.sock           = socket,
                                          .buf            = buf,
                                          .tid            = target_tid,
-                                         .peer_addr      = *(sockaddr_u *) hio_peeraddr(io),
+                                         .peer_addr      = *(sockaddr_u *) hio_peeraddr_u(io),
                                          .real_localport = local_port};
 
     distributeUdpPayload(item);

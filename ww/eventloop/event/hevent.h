@@ -125,8 +125,16 @@ struct hio_s {
     int         error;
     int         events;
     int         revents;
-    struct sockaddr*    localaddr;
-    struct sockaddr*    peeraddr;
+
+    union{
+        struct sockaddr*   localaddr;
+        struct sockaddr_u* localaddr_u;
+    };
+    union{
+        struct sockaddr*   peeraddr;
+        struct sockaddr_u* peeraddr_u;
+    };
+    
     uint64_t            last_read_hrtime;
     uint64_t            last_write_hrtime;
     // read

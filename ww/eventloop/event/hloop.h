@@ -266,6 +266,8 @@ HV_EXPORT int hio_error(hio_t* io);
 HV_EXPORT int hio_events(hio_t* io);
 HV_EXPORT int hio_revents(hio_t* io);
 HV_EXPORT hio_type_e hio_type(hio_t* io);
+HV_EXPORT struct sockaddr_u* hio_localaddr_u(hio_t* io);
+HV_EXPORT struct sockaddr_u* hio_peeraddr_u(hio_t* io);
 HV_EXPORT struct sockaddr* hio_localaddr(hio_t* io);
 HV_EXPORT struct sockaddr* hio_peeraddr(hio_t* io);
 HV_EXPORT void hio_set_context(hio_t* io, void* ctx);
