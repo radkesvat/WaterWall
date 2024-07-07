@@ -65,24 +65,26 @@ set(LWIP_COMPILER_FLAGS_GNU_CLANG
     -Wlogical-not-parentheses
 )
 
-if (NOT LWIP_HAVE_MBEDTLS)
-    list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
-        -Wredundant-decls
-        $<$<COMPILE_LANGUAGE:C>:-Wc++-compat>
-    )
-endif()
+# THIS CASUSES WINDOWS BUILD TO FAIL, NO NEED
+# if (NOT LWIP_HAVE_MBEDTLS)
+#     list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
+#         -Wredundant-decls
+#         $<$<COMPILE_LANGUAGE:C>:-Wc++-compat>
+#     )
+# endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
         -Wlogical-op
         -Wtrampolines
     )
-
-    if (NOT LWIP_HAVE_MBEDTLS)
-        list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
-            $<$<COMPILE_LANGUAGE:C>:-Wc90-c99-compat>
-        )
-    endif()
+    
+    # THIS CASUSES WINDOWS BUILD TO FAIL, NO NEED
+    # if (NOT LWIP_HAVE_MBEDTLS)
+    #     list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
+    #         $<$<COMPILE_LANGUAGE:C>:-Wc90-c99-compat>
+    #     )
+    # endif()
 
     if(NOT CMAKE_C_COMPILER_VERSION VERSION_LESS 4.9)
         if(LWIP_USE_SANITIZERS)
@@ -101,10 +103,10 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
 endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    # list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
-    #     -Wdocumentation
-    #     -Wno-documentation-deprecated-sync
-    # )
+    list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
+        -Wdocumentation
+        -Wno-documentation-deprecated-sync
+    )
 
     if(LWIP_USE_SANITIZERS)
         list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
