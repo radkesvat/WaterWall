@@ -188,19 +188,24 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     //         // req->headers["Host"] = value;
     //     }
     // }
-    http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
-    if (stream)
+
+    if (strcmp((const char *) name, "grpc-ack") == 0)
     {
-        if (strcmp((const char *) name, "grpc-ack") == 0)
+        http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
+        if (stream)
         {
             const int consumed = atoi((const char *) value);
-            if (stream->bytes_sent_nack > kMaxSendBeforeAck)
+            if (stream->bytes_sent_nack >= kMaxSendBeforeAck)
             {
                 stream->bytes_sent_nack -= consumed;
-                if (stream->bytes_sent_nack < kMaxSendBeforeAck / 2)
+                if (stream->bytes_sent_nack < kMaxSendBeforeAck)
                 {
                     resumeLineDownSide(stream->line);
                 }
+            }
+            else
+            {
+                stream->bytes_sent_nack -= consumed;
             }
         }
     }
@@ -253,14 +258,14 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
                 stream_data->payload      = gdata_buf;
 
                 stream->bytes_received_nack += bufLen(gdata_buf);
-                if (stream->bytes_sent_nack >= kMaxRecvBeforeAck)
+                if (stream->bytes_received_nack >= kMaxRecvBeforeAck)
                 {
                     nghttp2_nv nvs[1];
                     char       stri[32];
-                    sprintf(stri, "%d", (int) stream->bytes_sent_nack);
+                    sprintf(stri, "%d", (int) stream->bytes_received_nack);
                     nvs[0] = makeNV("grpc-ack", stri);
                     nghttp2_submit_headers(con->session, NGHTTP2_FLAG_END_HEADERS, stream_id, NULL, &nvs[0], 1, NULL);
-                    stream->bytes_sent_nack = 0;
+                    stream->bytes_received_nack = 0;
                 }
 
                 stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);
@@ -282,14 +287,14 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
         stream_data->payload   = buf;
 
         stream->bytes_received_nack += bufLen(buf);
-        if (stream->bytes_sent_nack >= kMaxRecvBeforeAck)
+        if (stream->bytes_received_nack >= kMaxRecvBeforeAck)
         {
             nghttp2_nv nvs[1];
             char       stri[32];
-            sprintf(stri, "%d", (int) stream->bytes_sent_nack);
+            sprintf(stri, "%d", (int) stream->bytes_received_nack);
             nvs[0] = makeNV("grpc-ack", stri);
             nghttp2_submit_headers(con->session, NGHTTP2_FLAG_END_HEADERS, stream_id, NULL, &nvs[0], 1, NULL);
-            stream->bytes_sent_nack = 0;
+            stream->bytes_received_nack = 0;
         }
 
         stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);

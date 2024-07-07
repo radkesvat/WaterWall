@@ -58,22 +58,22 @@ static void onH2LinePaused(void *arg)
 {
     http2_server_con_state_t *con = (http2_server_con_state_t *) arg;
 
-    ++(con->pause_counter);
-    if (con->pause_counter > 4)
-    {
+    // ++(con->pause_counter);
+    // if (con->pause_counter > 4)
+    // {
         http2_server_child_con_state_t *stream_i;
         for (stream_i = con->root.next; stream_i;)
         {
             pauseLineUpSide(stream_i->line);
             stream_i = stream_i->next;
         }
-    }
+    // }
 }
 
 static void onH2LineResumed(void *arg)
 {
     http2_server_con_state_t *con = (http2_server_con_state_t *) arg;
-    con->pause_counter            = con->pause_counter > 0 ? (con->pause_counter - 1) : con->pause_counter;
+    // con->pause_counter            = con->pause_counter > 0 ? (con->pause_counter - 1) : con->pause_counter;
     http2_server_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {

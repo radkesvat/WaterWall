@@ -24,6 +24,13 @@ typedef enum
     kH2RecvData,
 } http2_session_state;
 
+enum
+{
+
+    kMaxRecvBeforeAck = (1 << 16),
+    kMaxSendBeforeAck = (1 << 20)
+};
+
 typedef struct http2_server_child_con_state_s
 {
     struct http2_server_child_con_state_s *prev, *next;
@@ -35,6 +42,8 @@ typedef struct http2_server_child_con_state_s
     line_t                                *parent;
     line_t                                *line;
     tunnel_t                              *tunnel;
+    size_t                                 bytes_sent_nack;
+    size_t                                 bytes_received_nack;
 } http2_server_child_con_state_t;
 
 typedef struct http2_server_con_state_s
