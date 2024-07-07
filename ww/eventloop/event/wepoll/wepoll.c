@@ -180,7 +180,7 @@ typedef struct _UNICODE_STRING {
 } UNICODE_STRING, *PUNICODE_STRING;
 
 #define RTL_CONSTANT_STRING(s) \
-  { sizeof(s) - sizeof((s)[0]), sizeof(s), s }
+  { sizeof(s) - sizeof((s)[0]), sizeof(s), (PWSTR) s }
 
 typedef struct _OBJECT_ATTRIBUTES {
   ULONG Length;
