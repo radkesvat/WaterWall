@@ -94,7 +94,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/eventloop)
 
 
 # add lwip
-
+set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip/WpdPack)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 
 

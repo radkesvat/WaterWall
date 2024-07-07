@@ -241,7 +241,7 @@ set(lwipnoapps_SRCS
 
 # LWIPAPPFILES: All LWIP APPs
 set(lwipallapps_SRCS
-    ${lwipsnmp_SRCS}
+    # ${lwipsnmp_SRCS} -- disabled because it causes windows build to fail, or we can also turn off warnings, but we dont need this at all
     ${lwiphttp_SRCS}
     ${lwipiperf_SRCS}
     ${lwipsmtp_SRCS}
