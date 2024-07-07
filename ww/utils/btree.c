@@ -54,7 +54,7 @@ typedef struct
     btree_ps_val_t val;
 } btree_ps_kv_s;
 
-void btree_ps_kv_s_init( btree_ps_kv_s* o )
+static void btree_ps_kv_s_init( btree_ps_kv_s* o )
 {
     o->key = 0;
     o->val = 0;
@@ -86,7 +86,7 @@ btree_node_ps_s btree_node_ps_s_null_g = { { 0, 0 }, { 0, 0 }, NULL, NULL, NULL,
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_ps_s_init( btree_node_ps_s* o )
+static void btree_node_ps_s_init( btree_node_ps_s* o )
 {
     btree_ps_kv_s_init( &o->kv1 );
     btree_ps_kv_s_init( &o->kv2 );
@@ -95,7 +95,7 @@ void btree_node_ps_s_init( btree_node_ps_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-btree_node_ps_s* btree_node_ps_s_find( btree_node_ps_s* root, btree_ps_key_t key )
+static btree_node_ps_s* btree_node_ps_s_find( btree_node_ps_s* root, btree_ps_key_t key )
 {
     if( !root ) return NULL;
     btree_node_ps_s* node = NULL;
@@ -112,7 +112,7 @@ btree_node_ps_s* btree_node_ps_s_find( btree_node_ps_s* root, btree_ps_key_t key
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_ps_s_run( const btree_node_ps_s* root, void(*func)( void* arg, btree_ps_key_t key, btree_ps_val_t val ), void* arg )
+static void btree_node_ps_s_run( const btree_node_ps_s* root, void(*func)( void* arg, btree_ps_key_t key, btree_ps_val_t val ), void* arg )
 {
     if( !root ) return;
     if( !func ) return;
@@ -134,7 +134,7 @@ void btree_node_ps_s_run( const btree_node_ps_s* root, void(*func)( void* arg, b
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t btree_node_ps_s_count( const btree_node_ps_s* root, bool (*func)( void* arg, btree_ps_key_t key, btree_ps_val_t val ), void* arg )
+static size_t btree_node_ps_s_count( const btree_node_ps_s* root, bool (*func)( void* arg, btree_ps_key_t key, btree_ps_val_t val ), void* arg )
 {
     size_t count = 0;
     if( !root ) return count;
@@ -157,7 +157,7 @@ size_t btree_node_ps_s_count( const btree_node_ps_s* root, bool (*func)( void* a
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t btree_node_ps_s_sum( const btree_node_ps_s* root, bool (*func)( void* arg, btree_ps_key_t key, btree_ps_val_t val ), void* arg )
+static size_t btree_node_ps_s_sum( const btree_node_ps_s* root, bool (*func)( void* arg, btree_ps_key_t key, btree_ps_val_t val ), void* arg )
 {
     size_t sum = 0;
     if( !root ) return sum;
@@ -180,7 +180,7 @@ size_t btree_node_ps_s_sum( const btree_node_ps_s* root, bool (*func)( void* arg
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t btree_node_ps_s_keys( btree_node_ps_s* root )
+static size_t btree_node_ps_s_keys( btree_node_ps_s* root )
 {
     if( !root || root == BNUL_PS ) return 0;
     size_t keys = root->child2 ? 2 : 1;
@@ -192,7 +192,7 @@ size_t btree_node_ps_s_keys( btree_node_ps_s* root )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t btree_node_ps_s_depth( btree_node_ps_s* root )
+static size_t btree_node_ps_s_depth( btree_node_ps_s* root )
 {
     if( !root || root == BNUL_PS ) return 0;
     return 1 + btree_node_ps_s_depth( root->child0 );
@@ -200,16 +200,16 @@ size_t btree_node_ps_s_depth( btree_node_ps_s* root )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_ps_s_set_parent_child0( btree_node_ps_s* o ) { if( o->child0 && o->child0 != BNUL_PS ) o->child0->parent = o; }
-void btree_node_ps_s_set_parent_child1( btree_node_ps_s* o ) { if( o->child1 && o->child1 != BNUL_PS ) o->child1->parent = o; }
-void btree_node_ps_s_set_parent_child2( btree_node_ps_s* o ) { if( o->child2 && o->child2 != BNUL_PS ) o->child2->parent = o; }
-int  btree_node_ps_s_is_leaf(  btree_node_ps_s* o )          { return o->child0 == BNUL_PS; }
-int  btree_node_ps_s_is_full(  btree_node_ps_s* o )          { return o->child2 != NULL; }
-int  btree_node_ps_s_is_empty( btree_node_ps_s* o )          { return o->child1 == NULL; }
+static void btree_node_ps_s_set_parent_child0( btree_node_ps_s* o ) { if( o->child0 && o->child0 != BNUL_PS ) o->child0->parent = o; }
+static void btree_node_ps_s_set_parent_child1( btree_node_ps_s* o ) { if( o->child1 && o->child1 != BNUL_PS ) o->child1->parent = o; }
+static void btree_node_ps_s_set_parent_child2( btree_node_ps_s* o ) { if( o->child2 && o->child2 != BNUL_PS ) o->child2->parent = o; }
+static int  btree_node_ps_s_is_leaf(  btree_node_ps_s* o )          { return o->child0 == BNUL_PS; }
+static int  btree_node_ps_s_is_full(  btree_node_ps_s* o )          { return o->child2 != NULL; }
+static int  btree_node_ps_s_is_empty( btree_node_ps_s* o )          { return o->child1 == NULL; }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_ps_s_check_consistency( btree_node_ps_s* o )
+static void btree_node_ps_s_check_consistency( btree_node_ps_s* o )
 {
     if( btree_node_ps_s_null_g.kv1.key != 0    ) ERR( "btree_node_ps_s_null was modified" );
     if( btree_node_ps_s_null_g.kv1.val != 0    ) ERR( "btree_node_ps_s_null was modified" );
@@ -306,7 +306,7 @@ void btree_ps_s_discard( btree_ps_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-btree_node_ps_s* btree_ps_s_new_node( btree_ps_s* o )
+static btree_node_ps_s* btree_ps_s_new_node( btree_ps_s* o )
 {
     if( o->del_chain )
     {
@@ -343,7 +343,7 @@ btree_node_ps_s* btree_ps_s_new_node( btree_ps_s* o )
 
 // Deleted nodes are marked by setting all children NULL
 // and chained together using pointer btree_node_ps_s.parent.
-void btree_ps_s_delete_node( btree_ps_s* o, btree_node_ps_s* node )
+static void btree_ps_s_delete_node( btree_ps_s* o, btree_node_ps_s* node )
 {
     node->child0 = NULL;
     node->child1 = NULL;
@@ -355,7 +355,7 @@ void btree_ps_s_delete_node( btree_ps_s* o, btree_node_ps_s* node )
 // ---------------------------------------------------------------------------------------------------------------------
 
 // recursively pushes an element into the tree
-void btree_ps_s_push( btree_ps_s* o, btree_node_ps_s* node, btree_ps_kv_s* kv, btree_node_ps_s* child0, btree_node_ps_s* child1 )
+static void btree_ps_s_push( btree_ps_s* o, btree_node_ps_s* node, btree_ps_kv_s* kv, btree_node_ps_s* child0, btree_node_ps_s* child1 )
 {
     if( btree_node_ps_s_is_full( node ) )
     {
@@ -437,7 +437,7 @@ void btree_ps_s_push( btree_ps_s* o, btree_node_ps_s* node, btree_ps_kv_s* kv, b
 // ---------------------------------------------------------------------------------------------------------------------
 
 // Recursively pulls an element from a non-leaf into an empty child node
-void btree_ps_s_pull( btree_ps_s* o, btree_node_ps_s* node )
+static void btree_ps_s_pull( btree_ps_s* o, btree_node_ps_s* node )
 {
     if( btree_node_ps_s_is_empty( node->child0 ) )
     {
@@ -723,7 +723,7 @@ size_t btree_ps_s_depth( const btree_ps_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void print_btree_ps_s_status( btree_ps_s* o )
+static void print_btree_ps_s_status( btree_ps_s* o )
 {
     size_t blocks = 0;
     size_t nodes = 0;
@@ -772,7 +772,7 @@ typedef struct
     btree_vd_key_t key;
 } btree_vd_kv_s;
 
-void btree_vd_kv_s_init( btree_vd_kv_s* o )
+static void btree_vd_kv_s_init( btree_vd_kv_s* o )
 {
     o->key = 0;
 }
@@ -801,7 +801,7 @@ btree_node_vd_s btree_node_vd_s_null_g = { { NULL }, { NULL }, NULL, NULL, NULL,
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_vd_s_init( btree_node_vd_s* o )
+static void btree_node_vd_s_init( btree_node_vd_s* o )
 {
     btree_vd_kv_s_init( &o->kv1 );
     btree_vd_kv_s_init( &o->kv2 );
@@ -810,7 +810,7 @@ void btree_node_vd_s_init( btree_node_vd_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-btree_node_vd_s* btree_node_vd_s_find( btree_node_vd_s* root, btree_vd_key_t key )
+static btree_node_vd_s* btree_node_vd_s_find( btree_node_vd_s* root, btree_vd_key_t key )
 {
     if( !root ) return NULL;
     btree_node_vd_s* node = NULL;
@@ -827,7 +827,7 @@ btree_node_vd_s* btree_node_vd_s_find( btree_node_vd_s* root, btree_vd_key_t key
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-btree_vd_key_t btree_node_vd_s_largest_below_equal( btree_node_vd_s* root, btree_vd_key_t key )
+static btree_vd_key_t btree_node_vd_s_largest_below_equal( btree_node_vd_s* root, btree_vd_key_t key )
 {
     if( !root ) return 0;
     if( root->child0 == BNUL_VP )
@@ -853,7 +853,7 @@ btree_vd_key_t btree_node_vd_s_largest_below_equal( btree_node_vd_s* root, btree
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_vd_s_run( const btree_node_vd_s* root, void(*func)( void* arg, btree_vd_key_t key ), void* arg )
+static void btree_node_vd_s_run( const btree_node_vd_s* root, void(*func)( void* arg, btree_vd_key_t key ), void* arg )
 {
     if( !root ) return;
     if( !func ) return;
@@ -875,7 +875,7 @@ void btree_node_vd_s_run( const btree_node_vd_s* root, void(*func)( void* arg, b
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t btree_node_vd_s_count( const btree_node_vd_s* root, bool (*func)( void* arg, btree_vd_key_t key ), void* arg )
+static size_t btree_node_vd_s_count( const btree_node_vd_s* root, bool (*func)( void* arg, btree_vd_key_t key ), void* arg )
 {
     size_t count = 0;
     if( !root ) return count;
@@ -898,7 +898,7 @@ size_t btree_node_vd_s_count( const btree_node_vd_s* root, bool (*func)( void* a
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t btree_node_vd_s_keys( btree_node_vd_s* root )
+static size_t btree_node_vd_s_keys( btree_node_vd_s* root )
 {
     if( !root || root == BNUL_VP ) return 0;
     size_t keys = root->child2 ? 2 : 1;
@@ -910,7 +910,7 @@ size_t btree_node_vd_s_keys( btree_node_vd_s* root )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t btree_node_vd_s_depth( btree_node_vd_s* root )
+static size_t btree_node_vd_s_depth( btree_node_vd_s* root )
 {
     if( !root || root == BNUL_VP ) return 0;
     return 1 + btree_node_vd_s_depth( root->child0 );
@@ -918,16 +918,16 @@ size_t btree_node_vd_s_depth( btree_node_vd_s* root )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_vd_s_set_parent_child0( btree_node_vd_s* o ) { if( o->child0 && o->child0 != BNUL_VP ) o->child0->parent = o; }
-void btree_node_vd_s_set_parent_child1( btree_node_vd_s* o ) { if( o->child1 && o->child1 != BNUL_VP ) o->child1->parent = o; }
-void btree_node_vd_s_set_parent_child2( btree_node_vd_s* o ) { if( o->child2 && o->child2 != BNUL_VP ) o->child2->parent = o; }
-int  btree_node_vd_s_is_leaf(  btree_node_vd_s* o )          { return o->child0 == BNUL_VP; }
-int  btree_node_vd_s_is_full(  btree_node_vd_s* o )          { return o->child2 != NULL; }
-int  btree_node_vd_s_is_empty( btree_node_vd_s* o )          { return o->child1 == NULL; }
+static void btree_node_vd_s_set_parent_child0( btree_node_vd_s* o ) { if( o->child0 && o->child0 != BNUL_VP ) o->child0->parent = o; }
+static void btree_node_vd_s_set_parent_child1( btree_node_vd_s* o ) { if( o->child1 && o->child1 != BNUL_VP ) o->child1->parent = o; }
+static void btree_node_vd_s_set_parent_child2( btree_node_vd_s* o ) { if( o->child2 && o->child2 != BNUL_VP ) o->child2->parent = o; }
+static int  btree_node_vd_s_is_leaf(  btree_node_vd_s* o )          { return o->child0 == BNUL_VP; }
+static int  btree_node_vd_s_is_full(  btree_node_vd_s* o )          { return o->child2 != NULL; }
+static int  btree_node_vd_s_is_empty( btree_node_vd_s* o )          { return o->child1 == NULL; }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void btree_node_vd_s_check_consistency( btree_node_vd_s* o )
+static void btree_node_vd_s_check_consistency( btree_node_vd_s* o )
 {
     if( btree_node_vd_s_null_g.kv1.key != 0    ) ERR( "btree_node_vd_s_null was modified" );
     if( btree_node_vd_s_null_g.kv2.key != 0    ) ERR( "btree_node_vd_s_null was modified" );
@@ -984,16 +984,10 @@ struct btree_vd_s
 btree_vd_s* btree_vd_s_create( void* (*alloc)( void*, size_t size ) )
 {
     btree_vd_s* o = NULL;
-    if( alloc )
-    {
-        o = alloc( NULL, sizeof( btree_vd_s ) );
-        o->alloc = alloc;
-    }
-    else
-    {
-        o = alloc( NULL, sizeof( btree_vd_s ) );
-        o->alloc = alloc;
-    }
+
+    o = alloc( NULL, sizeof( btree_vd_s ) );
+    o->alloc = alloc;
+    
     o->root      = NULL;
     o->chain_beg = NULL;
     o->chain_end = NULL;
@@ -1022,7 +1016,7 @@ void btree_vd_s_discard( btree_vd_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-btree_node_vd_s* btree_vd_s_new_node( btree_vd_s* o )
+static btree_node_vd_s* btree_vd_s_new_node( btree_vd_s* o )
 {
     if( o->del_chain )
     {
@@ -1059,7 +1053,7 @@ btree_node_vd_s* btree_vd_s_new_node( btree_vd_s* o )
 
 // Deleted nodes are marked by setting all children NULL
 // and chained together using pointer btree_node_vd_s.parent.
-void btree_vd_s_delete_node( btree_vd_s* o, btree_node_vd_s* node )
+static void btree_vd_s_delete_node( btree_vd_s* o, btree_node_vd_s* node )
 {
     node->child0 = NULL;
     node->child1 = NULL;
@@ -1071,7 +1065,7 @@ void btree_vd_s_delete_node( btree_vd_s* o, btree_node_vd_s* node )
 // ---------------------------------------------------------------------------------------------------------------------
 
 // recursively pushes an element into the tree
-void btree_vd_s_push( btree_vd_s* o, btree_node_vd_s* node, btree_vd_kv_s* kv, btree_node_vd_s* child0, btree_node_vd_s* child1 )
+static void btree_vd_s_push( btree_vd_s* o, btree_node_vd_s* node, btree_vd_kv_s* kv, btree_node_vd_s* child0, btree_node_vd_s* child1 )
 {
     if( btree_node_vd_s_is_full( node ) )
     {
@@ -1153,7 +1147,7 @@ void btree_vd_s_push( btree_vd_s* o, btree_node_vd_s* node, btree_vd_kv_s* kv, b
 // ---------------------------------------------------------------------------------------------------------------------
 
 // Recursively pulls an element from a non-leaf into an empty child node
-void btree_vd_s_pull( btree_vd_s* o, btree_node_vd_s* node )
+static void btree_vd_s_pull( btree_vd_s* o, btree_node_vd_s* node )
 {
     if( btree_node_vd_s_is_empty( node->child0 ) )
     {
@@ -1437,7 +1431,7 @@ size_t btree_vd_s_depth( const btree_vd_s* o )
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void print_btree_vd_s_status( btree_vd_s* o )
+static void print_btree_vd_s_status( btree_vd_s* o )
 {
     size_t blocks = 0;
     size_t nodes = 0;

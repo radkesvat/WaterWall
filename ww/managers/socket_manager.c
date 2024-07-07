@@ -290,7 +290,7 @@ static inline int checkIPRange6(const struct in6_addr test_addr, const struct in
     // return 0;
 }
 
-int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask)
+static int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask)
 {
     char *slash;
     char *ip_part;
@@ -360,7 +360,7 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
     return 0;
 }
 
-void parseWhiteListOption(socket_filter_option_t *option)
+static void parseWhiteListOption(socket_filter_option_t *option)
 {
     assert(option->white_list_raddr != NULL);
 

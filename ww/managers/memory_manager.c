@@ -618,7 +618,7 @@ typedef struct ww_dedictaed_mem_s
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void wwmDedicatedinit( ww_dedictaed_mem_t* o, size_t pool_size, size_t min_block_size, size_t max_block_size, size_t stepping_method, bool full_align )
+static void wwmDedicatedinit( ww_dedictaed_mem_t* o, size_t pool_size, size_t min_block_size, size_t max_block_size, size_t stepping_method, bool full_align )
 {
     memset( o, 0, sizeof( *o ) );
     hhybridmutex_init(&o->mutex);
@@ -680,7 +680,7 @@ void wwmDedicatedinit( ww_dedictaed_mem_t* o, size_t pool_size, size_t min_block
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-void wwmDedicateddown( ww_dedictaed_mem_t* o )
+static void wwmDedicateddown( ww_dedictaed_mem_t* o )
 {
     size_t leaking_bytes = wwmDedicatedtotalGrantedSpace( o );
 
@@ -1165,7 +1165,7 @@ void* wwmGlobalNalloc( void* current_ptr, size_t current_size, size_t requested_
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-size_t wwmGlobalStaterantedSpace( ww_dedictaed_mem_t* o, const void* current_ptr )
+static size_t wwmGlobalStaterantedSpace( ww_dedictaed_mem_t* o, const void* current_ptr )
 {
     token_manager_s* token_manager = NULL;
     {
