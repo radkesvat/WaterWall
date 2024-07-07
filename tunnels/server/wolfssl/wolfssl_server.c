@@ -163,7 +163,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, newShallowShiftBuffer(c->line->tid,c->payload));
+            bufferStreamPush(cstate->fallback_buf, newShallowShiftBuffer(c->line->tid, c->payload));
         }
         if (cstate->fallback_mode)
         {
@@ -378,11 +378,11 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(wssl_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(wssl_server_con_state_t));
-            wssl_server_con_state_t *cstate = CSTATE(c);
-            cstate->rbio                    = BIO_new(BIO_s_mem());
-            cstate->wbio                    = BIO_new(BIO_s_mem());
-            cstate->ssl                     = SSL_new(state->ssl_context);
-            cstate->fallback_buf            = newBufferStream(getContextBufferPool(c));
+            cstate               = CSTATE(c);
+            cstate->rbio         = BIO_new(BIO_s_mem());
+            cstate->wbio         = BIO_new(BIO_s_mem());
+            cstate->ssl          = SSL_new(state->ssl_context);
+            cstate->fallback_buf = newBufferStream(getContextBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             // if (state->anti_tit)
@@ -624,7 +624,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     {
 
         hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
-        node_t *next_node = getNode(instance_info->node_manager_config,hash_next);
+        node_t *next_node = getNode(instance_info->node_manager_config, hash_next);
         if (next_node == NULL)
         {
             LOGF("WolfsslServer: fallback node not found");
@@ -633,7 +633,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
         if (next_node->instance == NULL)
         {
-            runNode(instance_info->node_manager_config,next_node, instance_info->chain_index + 1);
+            runNode(instance_info->node_manager_config, next_node, instance_info->chain_index + 1);
         }
 
         state->fallback = next_node->instance;
@@ -681,7 +681,7 @@ api_result_t apiWolfSSLServer(tunnel_t *self, const char *msg)
 {
     (void) self;
     (void) msg;
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyWolfSSLServer(tunnel_t *self)
@@ -692,5 +692,5 @@ tunnel_t *destroyWolfSSLServer(tunnel_t *self)
 
 tunnel_metadata_t getMetadataWolfSSLServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

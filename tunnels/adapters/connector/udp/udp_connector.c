@@ -67,7 +67,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(udp_connector_con_state_t));
             memset(CSTATE(c), 0, sizeof(udp_connector_con_state_t));
-            udp_connector_con_state_t *cstate = CSTATE(c);
+            cstate = CSTATE(c);
 
             cstate->buffer_pool = getContextBufferPool(c);
             cstate->tunnel      = self;

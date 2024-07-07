@@ -38,7 +38,6 @@ static void onUDLineResumed(void *cstate)
     resumeLineDownSide(((halfduplex_con_state_t *) cstate)->main_line);
     resumeLineUpSide(((halfduplex_con_state_t *) cstate)->download_line);
     resumeLineUpSide(((halfduplex_con_state_t *) cstate)->upload_line);
-
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -69,8 +68,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
 
-            cid_bytes[0]      = cid_bytes[0] & 0x7f; // kHLFDCmdUpload
-            shiftl(c->payload,8);
+            cid_bytes[0] = cid_bytes[0] & 0x7f; // kHLFDCmdUpload
+            shiftl(c->payload, 8);
             writeRaw(c->payload, cid_bytes, sizeof(cids));
         }
         self->up->upStream(self->up, switchLine(c, cstate->upload_line));
@@ -80,9 +79,9 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            halfduplex_con_state_t *cstate = wwmGlobalMalloc(sizeof(halfduplex_con_state_t));
+            cstate = wwmGlobalMalloc(sizeof(halfduplex_con_state_t));
 
-            *cstate = (halfduplex_con_state_t){.download_line = NULL, .upload_line = NULL, .main_line = c->line};
+            *cstate = (halfduplex_con_state_t) {.download_line = NULL, .upload_line = NULL, .main_line = c->line};
 
             LSTATE_MUT(cstate->main_line) = cstate;
 
@@ -120,7 +119,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             LSTATE_DROP(cstate->main_line);
             doneLineUpSide(cstate->main_line);
-            cstate->main_line             = NULL;
+            cstate->main_line = NULL;
             destroyContext(c);
 
             line_t *upload_line   = cstate->upload_line;
@@ -233,7 +232,7 @@ api_result_t apiHalfDuplexClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyHalfDuplexClient(tunnel_t *self)
@@ -243,5 +242,5 @@ tunnel_t *destroyHalfDuplexClient(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataHalfDuplexClient(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

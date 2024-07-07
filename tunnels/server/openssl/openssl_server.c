@@ -389,11 +389,11 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(oss_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(oss_server_con_state_t));
-            oss_server_con_state_t *cstate = CSTATE(c);
-            cstate->rbio                   = BIO_new(BIO_s_mem());
-            cstate->wbio                   = BIO_new(BIO_s_mem());
-            cstate->ssl                    = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
-            cstate->fallback_buf           = newBufferStream(getContextBufferPool(c));
+            cstate               = CSTATE(c);
+            cstate->rbio         = BIO_new(BIO_s_mem());
+            cstate->wbio         = BIO_new(BIO_s_mem());
+            cstate->ssl          = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
+            cstate->fallback_buf = newBufferStream(getContextBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             if (state->anti_tit)
@@ -713,7 +713,7 @@ api_result_t apiOpenSSLServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyOpenSSLServer(tunnel_t *self)
@@ -724,5 +724,5 @@ tunnel_t *destroyOpenSSLServer(tunnel_t *self)
 
 tunnel_metadata_t getMetadataOpenSSLServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

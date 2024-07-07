@@ -282,8 +282,8 @@ static void parse(tunnel_t *t, cJSON *settings,node_instance_context_t *instance
     }
     LOGI("TrojanAuthServer: %zu users parsed (out of total %zu) and can connect", total_parsed, total_users);
 
-    char *fallback_node = NULL;
-    if (! getStringFromJsonObject(&fallback_node, settings, "fallback"))
+    char *fallback_node_name = NULL;
+    if (! getStringFromJsonObject(&fallback_node_name, settings, "fallback"))
     {
         LOGW("TrojanAuthServer: no fallback provided in json, standard trojan requires fallback");
     }
@@ -296,7 +296,7 @@ static void parse(tunnel_t *t, cJSON *settings,node_instance_context_t *instance
             state->fallback_delay = 0;
         }
 
-        hash_t  hash_next     = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
+        hash_t  hash_next     = CALC_HASH_BYTES(fallback_node_name, strlen(fallback_node_name));
         node_t *fallback_node = getNode(instance_info->node_manager_config,hash_next);
         if (fallback_node == NULL)
         {
@@ -314,7 +314,7 @@ static void parse(tunnel_t *t, cJSON *settings,node_instance_context_t *instance
             state->fallback->dw = t;
         }
     }
-    wwmGlobalFree(fallback_node);
+    wwmGlobalFree(fallback_node_name);
 }
 
 tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)

@@ -67,7 +67,6 @@ static void downStream(tunnel_t *self, context_t *c)
             if (ucstate->idle_handle)
             {
                 ucstate->idle_handle          = NULL;
-                reverse_client_state_t *state = TSTATE(ucstate->self);
                 removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t)(size_t) (ucstate));
             }
 

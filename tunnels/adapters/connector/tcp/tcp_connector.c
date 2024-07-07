@@ -209,7 +209,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             tcp_connector_state_t *state      = TSTATE(self);
             CSTATE_MUT(c)                     = wwmGlobalMalloc(sizeof(tcp_connector_con_state_t));
-            tcp_connector_con_state_t *cstate = CSTATE(c);
+            cstate = CSTATE(c);
 
             *cstate = (tcp_connector_con_state_t){.buffer_pool  = getContextBufferPool(c),
                                                   .tunnel       = self,

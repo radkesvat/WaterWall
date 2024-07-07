@@ -24,15 +24,14 @@ void chain(tunnel_t *from, tunnel_t *to)
     chainUp(from, to);
     chainDown(from, to);
 
-    const uint8_t new_to_chain_index = from->chain_index + 1;
-    memcpy((uint8_t*)&(to->chain_index), &new_to_chain_index, sizeof(uint8_t));
+    to->chain_index = from->chain_index + 1;
 }
 
 tunnel_t *newTunnel(void)
 {
     tunnel_t *ptr = wwmGlobalMalloc(sizeof(tunnel_t));
 
-    tunnel_t tunnel = (tunnel_t){
+    tunnel_t tunnel = (tunnel_t) {
         .upStream   = &defaultUpStream,
         .downStream = &defaultDownStream,
     };

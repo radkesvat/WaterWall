@@ -1,5 +1,6 @@
 #include "library_loader.h"
 #include "loggers/core_logger.h"
+#include "static_tunnels.h"
 #include "ww.h"
 
 #define USING(x)                                                                                                       \

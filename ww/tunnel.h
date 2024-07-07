@@ -101,7 +101,7 @@ typedef struct line_s
 {
     line_refc_t      refc;
     bool             alive;
-    const uint8_t    tid;
+    uint8_t          tid;
     bool             up_piped;
     bool             dw_piped;
     void            *up_state;
@@ -153,7 +153,7 @@ typedef struct tunnel_s // 48
     TunnelFlowRoutine upStream;
     TunnelFlowRoutine downStream;
 
-    const uint8_t chain_index;
+    uint8_t chain_index;
 } tunnel_t;
 
 tunnel_t *newTunnel(void);
@@ -175,19 +175,16 @@ static inline line_t *newLine(uint8_t tid)
 {
     line_t *result = popPoolItem(line_pools[tid]);
 
-    line_t newline = (line_t){
+    *result = (line_t) {
         .tid          = tid,
         .refc         = 1,
         .auth_cur     = 0,
         .alive        = true,
         .chains_state = {0},
         // to set a port we need to know the AF family, default v4
-        .dest_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
-        .src_ctx  = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+        .dest_ctx = (socket_context_t) {.address.sa = (struct sockaddr) {.sa_family = AF_INET, .sa_data = {0}}},
+        .src_ctx  = (socket_context_t) {.address.sa = (struct sockaddr) {.sa_family = AF_INET, .sa_data = {0}}}
     };
-    // there were no way because we declared tid as const, but im sure compiler will know what to do here
-    // forexample gcc has builtins
-    memcpy(result, &newline, sizeof(line_t));
 
     return result;
 }
@@ -338,7 +335,7 @@ static inline void destroyContext(context_t *c)
 static inline context_t *newContext(line_t *line)
 {
     context_t *new_ctx = popPoolItem(context_pools[line->tid]);
-    *new_ctx           = (context_t){.line = line};
+    *new_ctx           = (context_t) {.line = line};
     lockLine(line);
     return new_ctx;
 }
@@ -347,7 +344,7 @@ static inline context_t *newContextFrom(context_t *source)
 {
     lockLine(source->line);
     context_t *new_ctx = popPoolItem(context_pools[source->line->tid]);
-    *new_ctx           = (context_t){.line = source->line};
+    *new_ctx           = (context_t) {.line = source->line};
     return new_ctx;
 }
 

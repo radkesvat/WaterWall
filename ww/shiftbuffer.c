@@ -188,7 +188,7 @@ void sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict sourc
     *dest              = tmp;
 
     setLen(source, total - bytes);
-    memcpy(rawBufMut(source), &(((char *) rawBuf(dest))[bytes]), total - bytes);
+    memcpy(rawBufMut(source), &(((const char *) rawBufMut(dest))[bytes]), total - bytes);
     setLen(dest, bytes);
 }
 
@@ -220,7 +220,7 @@ shift_buffer_t *sliceBuffer(const uint8_t tid, shift_buffer_t *const self, const
                                             .refc     = tmp_refc,
                                             ._offset  = tmp_offset};
 
-    memcpy(rawBufMut(self), &(((char *) rawBuf(newbuf))[bytes]), bufLen(newbuf) - bytes);
+    memcpy(rawBufMut(self), &(((const char *) rawBuf(newbuf))[bytes]), bufLen(newbuf) - bytes);
     shiftr(self, bytes);
     setLen(newbuf, bytes);
     return newbuf;

@@ -102,10 +102,10 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
-                    shiftr(buf, kTLSHeaderlen);
+                    shift_buffer_t *record_buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    shiftr(record_buf, kTLSHeaderlen);
 
-                    if (verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
+                    if (verifyMessage(record_buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
                     {
                         reuseContextPayload(c);
                         cstate->auth_state = kConAuthorized;
@@ -114,17 +114,17 @@ static void upStream(tunnel_t *self, context_t *c)
                         self->up->upStream(self->up, newInitContext(c->line));
                         if (! isAlive(c->line))
                         {
-                            reuseBuffer(getContextBufferPool(c), buf);
+                            reuseBuffer(getContextBufferPool(c), record_buf);
                             destroyContext(c);
 
                             return;
                         }
 
-                        buf                       = genericDecrypt(buf, cstate->cipher_context, state->context_password,
+                        record_buf                       = genericDecrypt(record_buf, cstate->cipher_context, state->context_password,
                                                                    getContextBufferPool(c));
                         cstate->first_sent        = true;
                         context_t *plain_data_ctx = newContextFrom(c);
-                        plain_data_ctx->payload   = buf;
+                        plain_data_ctx->payload   = record_buf;
                         plain_data_ctx->first     = true;
                         self->up->upStream(self->up, plain_data_ctx);
 
@@ -137,7 +137,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                     else
                     {
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        reuseBuffer(getContextBufferPool(c), record_buf);
                     }
                 }
                 else
