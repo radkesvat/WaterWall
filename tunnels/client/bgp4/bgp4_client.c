@@ -34,7 +34,6 @@ typedef struct bgp4_client_state_s
     uint16_t as_number;
     uint32_t sim_ip;
     hash_t   hpassword;
-    void    *_;
 } bgp4_client_state_t;
 
 typedef struct bgp4_client_con_state_s
@@ -167,7 +166,7 @@ static void downStream(tunnel_t *self, context_t *c)
         wwmGlobalFree(cstate);
         CSTATE_DROP(c);
     }
-
+    
     self->dw->downStream(self->dw, c);
     return;
 
