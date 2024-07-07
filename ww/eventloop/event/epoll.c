@@ -42,7 +42,7 @@ int iowatcher_cleanup(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_add_event(hloop_t* loop, int fd, int events) {
+int iowatcher_add_event(hloop_t* loop, int fd, int selected_events) {
     if (loop->iowatcher == NULL) {
         iowatcher_init(loop);
     }
@@ -60,10 +60,10 @@ int iowatcher_add_event(hloop_t* loop, int fd, int events) {
         ee.events |= EPOLLOUT;
     }
     // now events
-    if (events & HV_READ) {
+    if (selected_events & HV_READ) {
         ee.events |= EPOLLIN;
     }
-    if (events & HV_WRITE) {
+    if (selected_events & HV_WRITE) {
         ee.events |= EPOLLOUT;
     }
     int op = io->events == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
@@ -77,7 +77,7 @@ int iowatcher_add_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcher_del_event(hloop_t* loop, int fd, int events) {
+int iowatcher_del_event(hloop_t* loop, int fd, int selected_events) {
     epoll_ctx_t* epoll_ctx = (epoll_ctx_t*)loop->iowatcher;
     if (epoll_ctx == NULL) return 0;
     hio_t* io = loop->ios.ptr[fd];
@@ -93,10 +93,10 @@ int iowatcher_del_event(hloop_t* loop, int fd, int events) {
         ee.events |= EPOLLOUT;
     }
     // now events
-    if (events & HV_READ) {
+    if (selected_events & HV_READ) {
         ee.events &= ~EPOLLIN;
     }
-    if (events & HV_WRITE) {
+    if (selected_events & HV_WRITE) {
         ee.events &= ~EPOLLOUT;
     }
     int op = ee.events == 0 ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;

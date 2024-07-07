@@ -178,6 +178,8 @@ target_compile_options(ww PUBLIC
                                   -Wpointer-arith
                                   -Wlogical-not-parentheses
                                   -Wshadow
+                                  -Wmissing-prototypes
+
 
 )
 

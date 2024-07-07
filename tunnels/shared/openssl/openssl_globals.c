@@ -1,6 +1,6 @@
-#include "loggers/network_logger.h"
-
+#include "openssl_globals.h"
 #include "cacert.h"
+#include "loggers/network_logger.h"
 #include "ww.h"
 #include <assert.h>
 #include <openssl/bio.h>
@@ -8,11 +8,7 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 
-enum ssl_endpoint
-{
-    kSslServer = 0,
-    kSslClient = 1,
-};
+
 
 static int                        openssl_lib_initialized = false;
 static struct ww_dedictaed_mem_s *openssl_dedicated_memory_manager;
@@ -68,15 +64,6 @@ void opensslGlobalInit(void)
     }
 }
 
-typedef struct
-{
-    const char       *crt_file;
-    const char       *key_file;
-    const char       *ca_file;
-    const char       *ca_path;
-    short             verify_peer;
-    enum ssl_endpoint endpoint;
-} ssl_ctx_opt_t;
 
 typedef void *ssl_ctx_t; ///> SSL_CTX
 

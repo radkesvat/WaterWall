@@ -82,7 +82,7 @@ static void onH2LineResumed(void *arg)
     }
 }
 
-http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *self,
+static http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *self,
                                                   int32_t stream_id)
 {
     http2_server_child_con_state_t *stream;

@@ -1,4 +1,5 @@
 #include "hplatform.h"
+#include "udp_connector.h"
 #include "loggers/network_logger.h"
 #include "sync_dns.h"
 #include "types.h"
