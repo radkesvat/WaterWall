@@ -123,7 +123,7 @@ static shift_buffer_t *genericEncrypt(shift_buffer_t *in, EVP_CIPHER_CTX *encryp
 
     uint32_t iv[kIVlen/ sizeof(uint32_t)];  // uint32_t because we need 32 mem alignment
 
-    for (int i = 0; i < (int) (kIVlen / sizeof(uint16_t)); i++)
+    for (int i = 0; i < (int) (kIVlen / sizeof(uint32_t)); i++)
     {
         ((uint32_t *) iv)[i] = fastRand32();
     }
