@@ -54,7 +54,7 @@ SOFTWARE.
 
 // memory manager is not well tested on windows yet...
 
-#define ALLOCATOR_BYPASS         // switch to stdlib allocators
+// #define ALLOCATOR_BYPASS         // switch to stdlib allocators
 
 #include <stddef.h>
 #include <stdbool.h>
