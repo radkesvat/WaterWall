@@ -20,6 +20,7 @@ add_library(ww STATIC
                   utils/btree.c
                   managers/socket_manager.c
                   managers/node_manager.c
+                  managers/alloc-engine/wof_allocator.c
                   managers/memory_manager.c
                   managers/data/iprange_mci.c
                   managers/data/iprange_irancell.c

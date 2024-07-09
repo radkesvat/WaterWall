@@ -11,7 +11,7 @@
 
 
 static int                        openssl_lib_initialized = false;
-static struct ww_dedictaed_mem_s *openssl_dedicated_memory_manager;
+static struct dedicated_memory_s *openssl_dedicated_memory_manager;
 
 static void *opennsl_dedicated_malloc(size_t num, const char *file, int line)
 {
@@ -44,7 +44,7 @@ void opensslGlobalInit(void)
         // #else
         //         OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
         // #endif
-        openssl_dedicated_memory_manager = wwmDedicatedCreateDefault();
+        openssl_dedicated_memory_manager = createWWDedicatedMemory();
         if (0 == CRYPTO_set_mem_functions(opennsl_dedicated_malloc, opennsl_dedicated_realloc, opennsl_dedicated_free))
         {
             LOGF("OpenSSl Global: could not swap openssl allocators (almost always because allocations have already "

@@ -37,8 +37,8 @@ struct generic_pool_s     **context_pools             = NULL;
 struct generic_pool_s     **line_pools                = NULL;
 struct generic_pool_s     **pipeline_msg_pools        = NULL;
 struct generic_pool_s     **libhv_hio_pools           = NULL;
-struct ww_dedictaed_mem_s **dedicated_memory_managers = NULL;
-struct ww_dedictaed_mem_s  *memory_manager            = NULL;
+struct dedicated_memory_s **dedicated_memory_managers = NULL;
+struct dedicated_memory_s    *memory_manager            = NULL;
 struct socket_manager_s    *socekt_manager            = NULL;
 struct node_manager_s      *node_manager              = NULL;
 logger_t                   *core_logger               = NULL;
@@ -57,8 +57,8 @@ struct ww_runtime_state_s
     struct generic_pool_s     **line_pools;
     struct generic_pool_s     **pipeline_msg_pools;
     struct generic_pool_s     **libhv_hio_pools;
-    struct ww_dedictaed_mem_s **dedicated_memory_managers;
-    struct ww_dedictaed_mem_s  *memory_manager;
+    struct dedicated_memory_s **dedicated_memory_managers;
+    struct dedicated_memory_s    *memory_manager;
     struct socket_manager_s    *socekt_manager;
     struct node_manager_s      *node_manager;
     logger_t                   *core_logger;
@@ -188,7 +188,7 @@ void createWW(const ww_construction_data_t init_data)
         workers = (hthread_t *) malloc(sizeof(hthread_t) * (workers_count + kAdditionalReservedWorkers));
         loops   = (hloop_t **) malloc(sizeof(hloop_t *) * (workers_count + kAdditionalReservedWorkers));
 
-        ram_profile  = init_data.ram_profile;
+        ram_profile = init_data.ram_profile;
 
         buffer_pools = (struct buffer_pool_s **) malloc(sizeof(struct buffer_pool_s *) *
                                                         (workers_count + kAdditionalReservedWorkers));
@@ -204,7 +204,7 @@ void createWW(const ww_construction_data_t init_data)
         libhv_hio_pools    = (struct generic_pool_s **) malloc(sizeof(struct generic_pool_s *) *
                                                                (workers_count + kAdditionalReservedWorkers));
         dedicated_memory_managers =
-            (struct ww_dedictaed_mem_s **) malloc(sizeof(struct ww_dedictaed_mem_s *) * (workers_count));
+            (struct dedicated_memory_s **) malloc(sizeof(struct dedicated_memory_s *) * (workers_count));
 
         for (unsigned int i = 0; i < workers_count; ++i)
         {
@@ -221,15 +221,13 @@ void createWW(const ww_construction_data_t init_data)
             pipeline_msg_pools[i] =
                 newGenericPoolWithCap((8) + ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
 
-            dedicated_memory_managers[i] = wwmDedicatedCreateDefault();
+            dedicated_memory_managers[i] = createWWDedicatedMemory();
 
             // todo (half implemented)
             // libhv_hio_pools[i] =
             //     newGenericPoolWithCap((32) + (2 * ram_profile), allocLinePoolHandle, destroyLinePoolHandle);
         }
     }
-
-
 
     // [Section] initate workers and eventloops
     {
@@ -258,7 +256,7 @@ void createWW(const ww_construction_data_t init_data)
 
         socekt_manager = createSocketManager(loops[socketmanager_tid], socketmanager_tid);
     }
-    
+
     // [Section] setup NodeManager
     {
         node_manager = createNodeManager();
