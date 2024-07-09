@@ -14,7 +14,7 @@ struct dedicated_memory_s
     wof_allocator_t *wof_state;
 };
 
-dedicated_memory_t *state;
+static dedicated_memory_t *state;
 
 #ifdef ALLOCATOR_BYPASS
 
