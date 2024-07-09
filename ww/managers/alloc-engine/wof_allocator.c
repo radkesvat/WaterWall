@@ -1,8 +1,7 @@
 /* Wheel-of-Fortune Memory Allocator
  * Copyright 2013, Evan Huus <eapache@gmail.com>
  */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Woverflow" 
+
 
 #include <stdlib.h>
 #include <string.h>
@@ -46,9 +45,9 @@ typedef struct _wof_chunk_hdr_t {
     int prev;
 
     /* flags */
-    int last:1;
-    int used:1;
-    int jumbo:1;
+    unsigned int last:1;
+    unsigned int used:1;
+    unsigned int jumbo:1;
 
     int len:29;
 } wof_chunk_hdr_t;
@@ -906,4 +905,3 @@ wof_allocator_new(void)
  * vi: set shiftwidth=4 tabstop=8 expandtab:
  * :indentSize=4:tabSize=8:noTabs=true:
  */
-#pragma GCC diagnostic pop
