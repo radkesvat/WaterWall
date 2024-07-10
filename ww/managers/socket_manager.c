@@ -922,7 +922,6 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
     udpsock_t *socket     = hevent_userdata(io);
     uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr_u(io));
-    // TODO (check)
     uint8_t target_tid = local_port % workers_count;
 
     udp_payload_t item = (udp_payload_t){.sock           = socket,

@@ -158,6 +158,7 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
 
 static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 {
+
     http2_client_state_t     *state = TSTATE(self);
     http2_client_con_state_t *con   = wwmGlobalMalloc(sizeof(http2_client_con_state_t));
     *con                            = (http2_client_con_state_t) {.queue        = newContextQueue(),
@@ -170,7 +171,8 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
                                                                   .method       = state->content_type == kApplicationGrpc ? kHttpPost : kHttpGet,
                                                                   .line         = newLine(tid),
                                                                   .ping_timer   = htimer_add(loops[tid], onPingTimer, kPingInterval, INFINITE),
-                                                                  .tunnel       = self};
+                                                                  .tunnel       = self,
+                                                                  .actions      = action_queue_t_with_capacity(16)};
     LSTATE_MUT(con->line)           = con;
     setupLineDownSide(con->line, onH2LinePaused, con, onH2LineResumed);
 
@@ -207,6 +209,16 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
         dest->downStream(dest, fin_ctx);
         stream_i = next;
     }
+
+    c_foreach(k, action_queue_t, con->actions)
+    {
+        if (k.ref->buf)
+        {
+            reuseBuffer(getThreadBufferPool(con->line->tid), k.ref->buf);
+        }
+    }
+    
+    action_queue_t_drop(&con->actions);
     doneLineDownSide(con->line);
     LSTATE_DROP(con->line);
     nghttp2_session_del(con->session);

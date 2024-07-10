@@ -157,7 +157,6 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
 
     c_foreach(k, action_queue_t, con->actions)
     {
-
         if (k.ref->buf)
         {
             reuseBuffer(getThreadBufferPool(con->line->tid), k.ref->buf);
