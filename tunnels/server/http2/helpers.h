@@ -81,11 +81,12 @@ static http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_
 {
     http2_server_child_con_state_t *stream = wwmGlobalMalloc(sizeof(http2_server_child_con_state_t));
 
-    *stream = (http2_server_child_con_state_t) {.stream_id          = stream_id,
-                                                .grpc_buffer_stream = NULL,
-                                                .parent             = this_line,
-                                                .line               = newLine(this_line->tid),
-                                                .tunnel             = self};
+    *stream = (http2_server_child_con_state_t) {.stream_id             = stream_id,
+                                                .grpc_buffer_stream    = NULL,
+                                                .flowctl_buffer_stream = newBufferStream(getLineBufferPool(this_line)),
+                                                .parent                = this_line,
+                                                .line                  = newLine(this_line->tid),
+                                                .tunnel                = self};
 
     if (con->content_type == kApplicationGrpc)
     {
@@ -106,7 +107,7 @@ static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
     {
         destroyBufferStream(stream->grpc_buffer_stream);
     }
-
+    destroyBufferStream(stream->flowctl_buffer_stream);
 
     doneLineDownSide(stream->line);
     destroyLine(stream->line);
@@ -123,9 +124,10 @@ static http2_server_con_state_t *createHttp2Connection(tunnel_t *self, line_t *l
     http2_server_con_state_t *con   = wwmGlobalMalloc(sizeof(http2_server_con_state_t));
     memset(con, 0, sizeof(http2_server_con_state_t));
     nghttp2_session_server_new2(&con->session, state->cbs, con, state->ngoptions);
-    con->state  = kH2WantRecv;
-    con->tunnel = self;
-    con->line   = line;
+    con->state   = kH2WantRecv;
+    con->tunnel  = self;
+    con->line    = line;
+    con->actions = action_queue_t_with_capacity(16);
     setupLineUpSide(line, onH2LinePaused, con, onH2LineResumed);
 
     nghttp2_settings_entry settings[] = {
@@ -152,6 +154,17 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
         dest->upStream(dest, fin_ctx);
         stream_i = next;
     }
+
+    c_foreach(k, action_queue_t, con->actions)
+    {
+
+        if (k.ref->buf)
+        {
+            reuseBuffer(getThreadBufferPool(con->line->tid), k.ref->buf);
+        }
+    }
+    action_queue_t_drop(&con->actions);
+
     doneLineUpSide(con->line);
     nghttp2_session_del(con->session);
     LSTATE_DROP(con->line);
