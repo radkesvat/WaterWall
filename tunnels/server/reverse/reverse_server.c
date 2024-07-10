@@ -230,8 +230,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 dcstate->u      = c->line;
                 dcstate->paired = true;
                 setupLineUpSide(dcstate->u, onLinePausedU, dcstate, onLineResumedU);
-                // CSTATE_U_MUT(c)                                = dcstate;
-                // LSTATE_I_MUT(dcstate->d, state->chain_index_d) = dcstate;
+                
                 if (! isAlive(c->line))
                 {
                     reuseContextPayload(c);

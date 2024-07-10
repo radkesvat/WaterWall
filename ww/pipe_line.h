@@ -31,7 +31,8 @@
     sending a fin context to pipe will make it quiet, it will not send anything back even the queued items
     will be destroyed on the destination thread
 
-    i hope you don't use it, currently only used for halfduplex server since there were no other way...
+    i hope you don't use it, currently only used for halfduplex,reverse server since there were no other way...
+
 
     -- valgrind unfriendly, since we required 64byte alignment, so it says "possibly/definitely lost"
        but the pointer is saved in "memptr" field inside the object

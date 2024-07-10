@@ -43,7 +43,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
 
     if (*name == ':')
     {
-        // todo (http2headers) these should be saved somewhere
+        // todo (http2headers) these should be saved somewhere, idk if they will be useful or not
         // if (strcmp(name, ":method") == 0)
         // {
         //     // req->method = http_method_enum(value);
@@ -68,26 +68,6 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
         {
             con->content_type = httpContentTypeEnum(value);
         }
-        // else if (strcmp(name, "custom-ack") == 0)
-        // {
-        //     http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session,
-        //     frame->hd.stream_id); if (stream)
-        //     {
-        //         const int consumed = atoi(value);
-        //         if (stream->bytes_sent_nack >= kMaxSendBeforeAck)
-        //         {
-        //             stream->bytes_sent_nack -= consumed;
-        //             if (stream->bytes_sent_nack < kMaxSendBeforeAck)
-        //             {
-        //                 resumeLineUpSide(stream->line);
-        //             }
-        //         }
-        //         else
-        //         {
-        //             stream->bytes_sent_nack -= consumed;
-        //         }
-        //     }
-        // }
     }
 
     return 0;
@@ -96,7 +76,6 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
 static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data,
                                    size_t len, void *userdata)
 {
-    (void) flags;
     if (userdata == NULL || len <= 0)
     {
         return 0;
@@ -141,8 +120,6 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     writeRaw(buf, data, len);
     action_queue_t_push(&con->actions,
                         (http2_action_t) {.action_id = kActionStreamData, .stream_id = stream_id, .buf = buf});
-    return 0;
-
     return 0;
 }
 
@@ -287,10 +264,6 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
     switch (action.action_id)
     {
     default:
-    case kActionInvalid:
-        LOGF("incorrect http2 action id");
-        exit(1);
-        break;
 
     case kActionStreamInit: {
         http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, con->tunnel, action.stream_id);
@@ -389,8 +362,12 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
         deleteHttp2Connection(con);
         con->tunnel->dw->downStream(con->tunnel->dw, fin_ctx);
     }
-
     break;
+
+    case kActionInvalid:
+        LOGF("incorrect http2 action id");
+        exit(1);
+        break;
     }
 }
 
@@ -496,8 +473,6 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
-            CSTATE_DROP(c);
-
             int flags = NGHTTP2_FLAG_END_STREAM | NGHTTP2_FLAG_END_HEADERS;
             if (con->content_type == kApplicationGrpc)
             {
@@ -518,16 +493,11 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 if (! isAlive(c->line))
                 {
+                    unLockLine(con->line);
                     reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }
-            }
-            if (! isAlive(con->line))
-            {
-                unLockLine(con->line);
-                destroyContext(c);
-                return;
             }
             unLockLine(con->line);
 

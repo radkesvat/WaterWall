@@ -24,10 +24,10 @@ typedef enum
 
 enum
 {
-
     kMaxRecvBeforeAck = (1 << 16),
-    kMaxSendBeforeAck = (1 << 22)
+    kMaxSendBeforeAck = (1 << 19)
 };
+
 enum http2_actions
 {
     kActionInvalid,

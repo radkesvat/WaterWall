@@ -1,5 +1,4 @@
 #pragma once
-#include "hatomic.h"
 #include "tunnel.h"
 #include "types.h"
 
