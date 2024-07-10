@@ -38,8 +38,11 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
 
         hio_close(cstate->io);
     }
+    if (cstate->write_paused)
+    {
+        resumeLineDownSide(cstate->line);
+    }
     doneLineUpSide(cstate->line);
-    resumeLineDownSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
     wwmGlobalFree(cstate);
 }
@@ -207,15 +210,15 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            tcp_connector_state_t *state      = TSTATE(self);
-            CSTATE_MUT(c)                     = wwmGlobalMalloc(sizeof(tcp_connector_con_state_t));
-            cstate = CSTATE(c);
+            tcp_connector_state_t *state = TSTATE(self);
+            CSTATE_MUT(c)                = wwmGlobalMalloc(sizeof(tcp_connector_con_state_t));
+            cstate                       = CSTATE(c);
 
-            *cstate = (tcp_connector_con_state_t){.buffer_pool  = getContextBufferPool(c),
-                                                  .tunnel       = self,
-                                                  .line         = c->line,
-                                                  .data_queue   = newContextQueue(),
-                                                  .write_paused = true};
+            *cstate = (tcp_connector_con_state_t) {.buffer_pool  = getContextBufferPool(c),
+                                                   .tunnel       = self,
+                                                   .line         = c->line,
+                                                   .data_queue   = newContextQueue(),
+                                                   .write_paused = true};
 
 #ifdef PROFILE
             gettimeofday(&(cstate->__profile_conenct), NULL);
@@ -294,8 +297,8 @@ static void upStream(tunnel_t *self, context_t *c)
                         uint64_t calc = ntohll(*addr_ptr);
                         calc          = calc & ~(state->outbound_ip_range - 1ULL);
                         calc          = htonll(calc + large_random);
-                        
-                        memcpy(8+((char*)&(dest_ctx->address.sin6.sin6_addr)), &calc, sizeof(calc));
+
+                        memcpy(8 + ((char *) &(dest_ctx->address.sin6.sin6_addr)), &calc, sizeof(calc));
                     }
                     break;
 
@@ -538,7 +541,7 @@ api_result_t apiTcpConnector(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyTcpConnector(tunnel_t *self)
@@ -549,5 +552,5 @@ tunnel_t *destroyTcpConnector(tunnel_t *self)
 
 tunnel_metadata_t getMetadataTcpConnector(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

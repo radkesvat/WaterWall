@@ -49,20 +49,6 @@ typedef struct reality_server_con_state_s
 
 } reality_server_con_state_t;
 
-// static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
-// {
-//     (void) ssl;
-//     (void) type;
-//     (void) len;
-//     reality_server_con_state_t *cstate = arg;
-
-//     if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 6)
-//     {
-//         return (16 * (160 + (0x7F & (size_t) fastRand())));
-//     }
-
-//     return 0;
-// }
 
 static void cleanup(tunnel_t *self, context_t *c)
 {

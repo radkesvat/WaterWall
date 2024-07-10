@@ -310,7 +310,7 @@ static inline void unLockLine(line_t *line)
 }
 
 /*
-    Only the line creator must call this when it wants to end the line, this dose net necessarily free the context
+    Only the line creator must call this when it wants to end the line, this dose not necessarily free the line
    instantly, but it will be freed as soon as the refc becomes zero which means no context is alive for this line, and
    the line can still be used regularly during the time that it has at least 1 ref
 

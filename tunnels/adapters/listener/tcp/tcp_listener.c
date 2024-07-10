@@ -22,9 +22,9 @@ enum
 typedef struct tcp_listener_state_s
 {
     // settings
-    char  *address;
-    char **white_list_raddr;
-    char **black_list_raddr;
+    char    *address;
+    char   **white_list_raddr;
+    char   **black_list_raddr;
     int      multiport_backend;
     uint16_t port_min;
     uint16_t port_max;
@@ -69,8 +69,11 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
         }
         hio_close(cstate->io);
     }
+    if (cstate->write_paused)
+    {
+        resumeLineUpSide(cstate->line);
+    }
     doneLineDownSide(cstate->line);
-    resumeLineUpSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
     destroyLine(cstate->line);
     wwmGlobalFree(cstate);
@@ -277,14 +280,14 @@ static void onInboundConnected(hevent_t *ev)
     line->src_ctx.address_protocol = kSapTcp;
     line->src_ctx.address          = *(sockaddr_u *) hio_peeraddr(io);
 
-    *cstate = (tcp_listener_con_state_t){.line              = line,
-                                         .buffer_pool       = getThreadBufferPool(tid),
-                                         .data_queue        = newContextQueue(),
-                                         .io                = io,
-                                         .tunnel            = self,
-                                         .write_paused      = false,
-                                         .established       = false,
-                                         .first_packet_sent = false};
+    *cstate = (tcp_listener_con_state_t) {.line              = line,
+                                          .buffer_pool       = getThreadBufferPool(tid),
+                                          .data_queue        = newContextQueue(),
+                                          .io                = io,
+                                          .tunnel            = self,
+                                          .write_paused      = false,
+                                          .established       = false,
+                                          .first_packet_sent = false};
 
     setupLineDownSide(line, onLinePaused, cstate, onLineResumed);
 
@@ -456,7 +459,7 @@ api_result_t apiTcpListener(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyTcpListener(tunnel_t *self)
@@ -466,5 +469,5 @@ tunnel_t *destroyTcpListener(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataTcpListener(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
+    return (tunnel_metadata_t) {.version = 0001, .flags = kNodeFlagChainHead};
 }
