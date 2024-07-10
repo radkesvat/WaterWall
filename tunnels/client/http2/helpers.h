@@ -47,12 +47,12 @@ static void onH2LinePaused(void *arg)
     // ++(con->pause_counter);
     // if (con->pause_counter > 8)
     // {
-        http2_client_child_con_state_t *stream_i;
-        for (stream_i = con->root.next; stream_i;)
-        {
-            pauseLineDownSide(stream_i->line);
-            stream_i = stream_i->next;
-        }
+    http2_client_child_con_state_t *stream_i;
+    for (stream_i = con->root.next; stream_i;)
+    {
+        pauseLineDownSide(stream_i->line);
+        stream_i = stream_i->next;
+    }
     // }
 }
 
@@ -117,8 +117,9 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
         nvs[nvlen++] = (makeNV("content-type", "application/grpc+proto"));
     }
     // todo (match chrome) this one is same as curl, but not same as chrome
-    nvs[nvlen++] = makeNV("Accept",    "*/*");
-    //chrome: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
+    nvs[nvlen++] = makeNV("Accept", "*/*");
+    // chrome:
+    // "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
 
     nvs[nvlen++] = makeNV("Accept-Language", "en,fa;q=0.9,zh-CN;q=0.8,zh;q=0.7");
     nvs[nvlen++] = makeNV("Cache-Control", "no-cache");
@@ -132,11 +133,11 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
     http2_client_child_con_state_t *stream = wwmGlobalMalloc(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
-    stream->stream_id = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
-    stream->chunkbs   = newBufferStream(getLineBufferPool(con->line));
-    stream->parent    = con->line;
-    stream->line      = child_line;
-    stream->tunnel    = con->tunnel;
+    stream->stream_id          = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
+    stream->grpc_buffer_stream = newBufferStream(getLineBufferPool(con->line));
+    stream->parent             = con->line;
+    stream->line               = child_line;
+    stream->tunnel             = con->tunnel;
     LSTATE_I_MUT(stream->line, stream->tunnel->chain_index) = stream;
     setupLineUpSide(stream->line, onStreamLinePaused, stream, onStreamLineResumed);
 
@@ -150,7 +151,7 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
 {
 
     LSTATE_I_DROP(stream->line, stream->tunnel->chain_index);
-    destroyBufferStream(stream->chunkbs);
+    destroyBufferStream(stream->grpc_buffer_stream);
     doneLineUpSide(stream->line);
     wwmGlobalFree(stream);
 }
@@ -159,21 +160,18 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 {
     http2_client_state_t     *state = TSTATE(self);
     http2_client_con_state_t *con   = wwmGlobalMalloc(sizeof(http2_client_con_state_t));
-
-    *con = (http2_client_con_state_t){
-        .queue        = newContextQueue(),
-        .content_type = state->content_type,
-        .path         = state->path,
-        .host         = state->host,
-        .host_port    = state->host_port,
-        .scheme       = state->scheme,
-        .state        = kH2SendMagic,
-        .method       = state->content_type == kApplicationGrpc? kHttpPost: kHttpGet,
-        .line         = newLine(tid),
-        .ping_timer   = htimer_add(loops[tid], onPingTimer, kPingInterval, INFINITE),
-        .tunnel       = self,
-    };
-    LSTATE_MUT(con->line) = con;
+    *con                            = (http2_client_con_state_t) {.queue        = newContextQueue(),
+                                                                  .content_type = state->content_type,
+                                                                  .path         = state->path,
+                                                                  .host         = state->host,
+                                                                  .host_port    = state->host_port,
+                                                                  .scheme       = state->scheme,
+                                                                  .state        = kH2SendMagic,
+                                                                  .method       = state->content_type == kApplicationGrpc ? kHttpPost : kHttpGet,
+                                                                  .line         = newLine(tid),
+                                                                  .ping_timer   = htimer_add(loops[tid], onPingTimer, kPingInterval, INFINITE),
+                                                                  .tunnel       = self};
+    LSTATE_MUT(con->line)           = con;
     setupLineDownSide(con->line, onH2LinePaused, con, onH2LineResumed);
 
     hevent_set_userdata(con->ping_timer, con);
@@ -184,8 +182,6 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 
     };
     nghttp2_submit_settings(con->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
-
-
 
     return con;
 }

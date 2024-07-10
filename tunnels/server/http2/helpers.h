@@ -56,24 +56,18 @@ static void onStreamLineResumed(void *arg)
 
 static void onH2LinePaused(void *arg)
 {
-    http2_server_con_state_t *con = (http2_server_con_state_t *) arg;
-
-    // ++(con->pause_counter);
-    // if (con->pause_counter > 4)
-    // {
-        http2_server_child_con_state_t *stream_i;
-        for (stream_i = con->root.next; stream_i;)
-        {
-            pauseLineUpSide(stream_i->line);
-            stream_i = stream_i->next;
-        }
-    // }
+    http2_server_con_state_t       *con = (http2_server_con_state_t *) arg;
+    http2_server_child_con_state_t *stream_i;
+    for (stream_i = con->root.next; stream_i;)
+    {
+        pauseLineUpSide(stream_i->line);
+        stream_i = stream_i->next;
+    }
 }
 
 static void onH2LineResumed(void *arg)
 {
-    http2_server_con_state_t *con = (http2_server_con_state_t *) arg;
-    // con->pause_counter            = con->pause_counter > 0 ? (con->pause_counter - 1) : con->pause_counter;
+    http2_server_con_state_t       *con = (http2_server_con_state_t *) arg;
     http2_server_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
@@ -82,19 +76,23 @@ static void onH2LineResumed(void *arg)
     }
 }
 
-static http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line, tunnel_t *self,
-                                                  int32_t stream_id)
+static http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line,
+                                                         tunnel_t *self, int32_t stream_id)
 {
-    http2_server_child_con_state_t *stream;
-    stream = wwmGlobalMalloc(sizeof(http2_server_child_con_state_t));
-    memset(stream, 0, sizeof(http2_server_child_con_state_t));
+    http2_server_child_con_state_t *stream = wwmGlobalMalloc(sizeof(http2_server_child_con_state_t));
 
-    stream->stream_id        = stream_id;
-    stream->chunkbs          = newBufferStream(getLineBufferPool(this_line));
-    stream->parent           = this_line;
-    stream->line             = newLine(this_line->tid);
+    *stream = (http2_server_child_con_state_t) {.stream_id          = stream_id,
+                                                .grpc_buffer_stream = NULL,
+                                                .parent             = this_line,
+                                                .line               = newLine(this_line->tid),
+                                                .tunnel             = self};
+
+    if (con->content_type == kApplicationGrpc)
+    {
+        stream->grpc_buffer_stream = newBufferStream(getLineBufferPool(this_line));
+    }
+
     LSTATE_MUT(stream->line) = stream;
-    stream->tunnel           = self;
     nghttp2_session_set_stream_user_data(con->session, stream_id, stream);
     setupLineDownSide(stream->line, onStreamLinePaused, stream, onStreamLineResumed);
 
@@ -103,7 +101,13 @@ static http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_
 static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
 {
     LSTATE_I_DROP(stream->line, stream->tunnel->chain_index);
-    destroyBufferStream(stream->chunkbs);
+
+    if (stream->grpc_buffer_stream)
+    {
+        destroyBufferStream(stream->grpc_buffer_stream);
+    }
+
+
     doneLineDownSide(stream->line);
     destroyLine(stream->line);
     if (stream->request_path)

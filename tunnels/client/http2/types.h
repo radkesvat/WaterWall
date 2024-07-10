@@ -24,53 +24,51 @@ typedef enum
     kH2RecvData,
 } http2_session_state;
 
-enum{
+enum
+{
 
     kMaxRecvBeforeAck = (1 << 16),
-    kMaxSendBeforeAck = (1 << 20)
+    kMaxSendBeforeAck = (1 << 19)
 };
 
 typedef struct http2_client_child_con_state_s
 {
     struct http2_client_child_con_state_s *prev, *next;
-    int32_t                                stream_id;
     nghttp2_stream                        *ng_stream;
-    buffer_stream_t                       *chunkbs; // used for grpc
+    buffer_stream_t                       *grpc_buffer_stream;
     tunnel_t                              *tunnel;
     line_t                                *parent;
     line_t                                *line;
-    size_t                                 bytes_needed;
+    size_t                                 grpc_bytes_needed;
     size_t                                 bytes_sent_nack;
     size_t                                 bytes_received_nack;
-
-
+    int32_t                                stream_id;
 
 } http2_client_child_con_state_t;
 
 typedef struct http2_client_con_state_s
 {
-
-    nghttp2_session               *session;
     http2_session_state            state;
+    http2_client_child_con_state_t root;
+    nghttp2_session               *session;
     context_queue_t               *queue;
+    htimer_t                      *ping_timer;
+    tunnel_t                      *tunnel;
+    line_t                        *line;
+    const char                    *path;
+    const char                    *host; // authority
+    const char                    *scheme;
+    enum http_method               method;
+    enum http_content_type         content_type;
     size_t                         childs_added;
     uint32_t                       pause_counter;
     int                            error;
     int                            frame_type_when_stream_closed;
-    bool                           handshake_completed;
-    enum http_method               method;
-    enum http_content_type         content_type;
-    const char                    *path;
-    const char                    *host; // authority
     int                            host_port;
-    const char                    *scheme;
+    bool                           handshake_completed;
     bool                           init_sent;
     bool                           first_sent;
     bool                           no_ping_ack;
-    htimer_t                      *ping_timer;
-    tunnel_t                      *tunnel;
-    line_t                        *line;
-    http2_client_child_con_state_t root;
 
 } http2_client_con_state_t;
 
@@ -81,20 +79,20 @@ typedef struct http2_client_con_state_s
 
 typedef struct thread_connection_pool_s
 {
-    size_t   round_index;
     vec_cons cons;
+    size_t   round_index;
 } thread_connection_pool_t;
 
 typedef struct http2_client_state_s
 {
     nghttp2_session_callbacks *cbs;
-    enum http_content_type     content_type;
-    size_t                     concurrency;
+    nghttp2_option            *ngoptions;
+    char                      *scheme;
     char                      *path;
     char                      *host; // authority
+    enum http_content_type     content_type;
+    size_t                     concurrency;
     int                        host_port;
-    char                      *scheme;
     int                        last_iid;
-    nghttp2_option            *ngoptions;
     thread_connection_pool_t   thread_cpool[];
 } http2_client_state_t;
