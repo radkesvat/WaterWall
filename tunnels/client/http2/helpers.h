@@ -142,8 +142,6 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
 
     addStraem(con, stream);
 
-    // nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);
-
     return stream;
 }
 static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
