@@ -129,7 +129,6 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
                                         "Gecko) Chrome/122.0.0.0 Safari/537.36");
     nvs[nvlen++] = makeNV("Sec-Ch-Ua-Platform", "\"Windows\"");
 
-    con->state                             = kH2SendHeaders;
     http2_client_child_con_state_t *stream = wwmGlobalMalloc(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
@@ -167,7 +166,6 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
                                                                   .host         = state->host,
                                                                   .host_port    = state->host_port,
                                                                   .scheme       = state->scheme,
-                                                                  .state        = kH2SendMagic,
                                                                   .method       = state->content_type == kApplicationGrpc ? kHttpPost : kHttpGet,
                                                                   .line         = newLine(tid),
                                                                   .ping_timer   = htimer_add(loops[tid], onPingTimer, kPingInterval, INFINITE),
@@ -216,6 +214,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
         {
             reuseBuffer(getThreadBufferPool(con->line->tid), k.ref->buf);
         }
+        unLockLine(k.ref->stream_line);
     }
     
     action_queue_t_drop(&con->actions);
@@ -256,7 +255,7 @@ static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid)
             }
             return con;
         }
-        // assert(false);
+
         con = createHttp2Connection(self, tid);
         vec_cons_push(vector, con);
         return con;
@@ -301,6 +300,7 @@ static void onPingTimer(htimer_t *timer)
             con->tunnel->up->upStream(con->tunnel->up, req);
             if (! isAlive(h2line))
             {
+                
                 unLockLine(h2line);
                 return;
             }

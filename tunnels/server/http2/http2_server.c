@@ -13,16 +13,21 @@ static int onStreamClosedCallback(nghttp2_session *session, int32_t stream_id, u
     (void) stream_id;
     (void) error_code;
 
-    http2_server_con_state_t *con = (http2_server_con_state_t *) userdata;
-
+    http2_server_con_state_t       *con    = (http2_server_con_state_t *) userdata;
+    http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
+    if (WW_UNLIKELY(! stream))
+    {
+        return 0;
+    }
+    lockLine(stream->line);
     action_queue_t_push(&con->actions,
-                        (http2_action_t) {.action_id = kActionStreamFinish, .stream_id = stream_id, .buf = NULL});
+                        (http2_action_t) {.action_id = kActionStreamFinish, .stream_line = stream->line, .buf = NULL});
 
     return 0;
 }
 
-static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *_name, size_t namelen,
-                            const uint8_t *_value, size_t valuelen, uint8_t flags, void *userdata)
+static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen,
+                            const uint8_t *value, size_t valuelen, uint8_t flags, void *userdata)
 {
     (void) session;
     (void) namelen;
@@ -35,8 +40,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
 
     // LOGD("onHeaderCallback\n");
     printFrameHd(&frame->hd);
-    const char *name  = (const char *) _name;
-    const char *value = (const char *) _value;
+
     // LOGD("%s: %s\n", name, value);
 
     http2_server_con_state_t *con = (http2_server_con_state_t *) userdata;
@@ -64,9 +68,9 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     else
     {
         // hp->parsed->headers[name] = value;
-        if (strcmp(name, "content-type") == 0)
+        if (strcmp((const char *) name, "content-type") == 0)
         {
-            con->content_type = httpContentTypeEnum(value);
+            con->content_type = httpContentTypeEnum((const char *) value);
         }
     }
 
@@ -76,6 +80,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
 static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data,
                                    size_t len, void *userdata)
 {
+    (void) flags;
     if (userdata == NULL || len <= 0)
     {
         return 0;
@@ -87,39 +92,14 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     {
         return 0;
     }
-    if (flags == 0x40) // todo (enum)
-    {
-        shift_buffer_t *buf = popBuffer(getLineBufferPool(con->line));
-        setLen(buf, len);
-        writeRaw(buf, data, len);
-        bufferStreamPush(stream->flowctl_buffer_stream, buf);
-
-        while (bufferStreamLen(stream->flowctl_buffer_stream) >= 4)
-        {
-            shift_buffer_t *chunk    = bufferStreamRead(stream->flowctl_buffer_stream, 4);
-            const int       consumed = atoi(rawBuf(chunk));
-            if (stream->bytes_sent_nack >= kMaxSendBeforeAck)
-            {
-                stream->bytes_sent_nack -= consumed;
-                if (stream->bytes_sent_nack < kMaxSendBeforeAck)
-                {
-                    resumeLineUpSide(stream->line);
-                }
-            }
-            else
-            {
-                stream->bytes_sent_nack -= consumed;
-            }
-        }
-
-        return 0;
-    }
 
     shift_buffer_t *buf = popBuffer(getLineBufferPool(con->line));
     setLen(buf, len);
     writeRaw(buf, data, len);
+
+    lockLine(stream->line);
     action_queue_t_push(&con->actions,
-                        (http2_action_t) {.action_id = kActionStreamData, .stream_id = stream_id, .buf = buf});
+                        (http2_action_t) {.action_id = kActionStreamData, .stream_line = stream->line, .buf = buf});
     return 0;
 }
 
@@ -136,13 +116,49 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
 
     switch (frame->hd.type)
     {
-    case kHttP2Data:
+    case NGHTTP2_DATA:
         break;
-    case kHttP2Headers:
+    case NGHTTP2_HEADERS:
         break;
-    case kHttP2Settings:
+    case NGHTTP2_SETTINGS:
         break;
-    case kHttP2Ping:
+    case NGHTTP2_PING:
+
+        if (frame->ping.hd.flags == NGHTTP2_FLAG_ACK)
+        {
+            static const uint8_t kZerobuf[8] = {0};
+
+            if (0 != memcmp(frame->ping.opaque_data, kZerobuf, sizeof(kZerobuf)))
+            {
+                int32_t stream_id;
+                int     consumed;
+                memcpy(&stream_id, &frame->ping.opaque_data[0], sizeof(stream_id));
+                memcpy(&consumed, &frame->ping.opaque_data[4], sizeof(consumed));
+
+                stream_id = (int) ntohl(stream_id);
+                consumed  = (int) ntohl(consumed);
+                http2_server_child_con_state_t *stream =
+                    nghttp2_session_get_stream_user_data(con->session, stream_id);
+                if (stream)
+                {
+                    if (stream->bytes_sent_nack >= kMaxSendBeforeAck)
+                    {
+                        stream->bytes_sent_nack -= consumed;
+                        LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
+
+                        if (stream->bytes_sent_nack < kMaxSendBeforeAck)
+                        {
+                            resumeLineUpSide(stream->line);
+                        }
+                    }
+                    else
+                    {
+                        stream->bytes_sent_nack -= consumed;
+                        LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
+                    }
+                }
+            }
+        }
         break;
     case NGHTTP2_RST_STREAM:
     case NGHTTP2_WINDOW_UPDATE:
@@ -151,6 +167,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     default:
         break;
     }
+
 
     if (frame->hd.type != NGHTTP2_HEADERS || frame->headers.cat != NGHTTP2_HCAT_REQUEST)
     {
@@ -171,32 +188,29 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
 
     nghttp2_submit_headers(con->session, flags, frame->hd.stream_id, NULL, &nvs[0], nvlen, NULL);
 
-    action_queue_t_push(
-        &con->actions,
-        (http2_action_t) {.action_id = kActionStreamInit, .stream_id = frame->hd.stream_id, .buf = NULL});
+    http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, con->tunnel, frame->hd.stream_id);
+    addStream(con, stream);
+
+    lockLine(stream->line);
+    action_queue_t_push(&con->actions,
+                        (http2_action_t) {.action_id = kActionStreamInit, .stream_line = stream->line, .buf = NULL});
 
     return 0;
 }
 
 static void sendFlowControlData(http2_server_con_state_t *con, int32_t stream_id, int consumed)
 {
-    http2_flag flags = 0x40; // a custom flag , will test this and must be enumed (todo)
 
-    shift_buffer_t *flow_ctl_msg_buf = popBuffer(getLineBufferPool(con->line));
-    setLen(flow_ctl_msg_buf, 32);
-    int string_length = sprintf((char *) rawBufMut(flow_ctl_msg_buf), "%d", consumed);
-    setLen(flow_ctl_msg_buf, string_length);
+    LOGD("flow...");
+    uint8_t buf[8] = {0};
 
-    http2_frame_hd framehd;
-    framehd.length    = bufLen(flow_ctl_msg_buf);
-    framehd.type      = kHttP2Data;
-    framehd.flags     = flags;
-    framehd.stream_id = stream_id;
-    shiftl(flow_ctl_msg_buf, HTTP2_FRAME_HDLEN);
-    http2FrameHdPack(&framehd, rawBufMut(flow_ctl_msg_buf));
-    context_t *response_data = newContext(con->line);
-    response_data->payload   = flow_ctl_msg_buf;
-    con->tunnel->dw->downStream(con->tunnel->dw, response_data);
+    stream_id = (int) htonl(stream_id);
+    consumed  = (int) htonl(consumed);
+
+    memcpy(buf, &stream_id, sizeof(stream_id));
+    memcpy(buf + 4, &consumed, sizeof(consumed));
+
+    nghttp2_submit_ping(con->session, NGHTTP2_FLAG_ACK, buf);
 }
 
 static void sendStreamResposnseData(http2_server_con_state_t *con, int32_t stream_id, shift_buffer_t *buf)
@@ -260,21 +274,26 @@ static bool sendNgHttp2Data(tunnel_t *self, http2_server_con_state_t *con)
 
 static void doHttp2Action(const http2_action_t action, http2_server_con_state_t *con)
 {
-    line_t *main_line = con->line;
+    line_t   *main_line = con->line;
+    tunnel_t *self      = con->tunnel;
+    if (! isAlive(action.stream_line))
+    {
+        unLockLine(action.stream_line);
+        return;
+    }
+    http2_server_child_con_state_t *stream = LSTATE(action.stream_line);
+
     switch (action.action_id)
     {
-    default:
 
     case kActionStreamInit: {
-        http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, con->tunnel, action.stream_id);
-        addStream(con, stream);
+
         stream->tunnel->up->upStream(stream->tunnel->up, newInitContext(stream->line));
     }
 
     break;
 
     case kActionStreamData: {
-        http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, con->tunnel, action.stream_id);
         if (con->content_type == kApplicationGrpc)
         {
             bufferStreamPush(stream->grpc_buffer_stream, action.buf);
@@ -302,17 +321,14 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
                         stream->first_sent = true;
                         stream_data->first = true;
                     }
-                    stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
                     stream->bytes_received_nack += bufLen(gdata_buf);
 
+                    stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
+
                     // check http2 connection is alive
-                    if (! isAlive(main_line))
+                    if (! isAlive(action.stream_line) || ! isAlive(main_line))
                     {
-                        return;
-                    }
-                    // check stream is alive
-                    if (! nghttp2_session_get_stream_user_data(con->session, action.stream_id))
-                    {
+                        unLockLine(action.stream_line);
                         return;
                     }
                     continue;
@@ -335,40 +351,37 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
             stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
         }
 
-        if (isAlive(main_line) && nghttp2_session_get_stream_user_data(con->session, action.stream_id) == stream &&
-            stream->bytes_received_nack >= kMaxRecvBeforeAck)
+        if (! isAlive(action.stream_line) || ! isAlive(main_line))
         {
-            sendFlowControlData(con, action.stream_id, (int) stream->bytes_received_nack);
+            unLockLine(action.stream_line);
+            return;
+        }
+
+        if (stream->bytes_received_nack >= kMaxRecvBeforeAck)
+        {
+            sendFlowControlData(con, stream->stream_id, (int) stream->bytes_received_nack);
             stream->bytes_received_nack = 0;
         }
     }
     break;
 
     case kActionStreamFinish: {
-        http2_server_child_con_state_t *stream = createHttp2Stream(con, con->line, con->tunnel, action.stream_id);
-        context_t                      *fc     = newFinContext(stream->line);
-        tunnel_t                       *dest   = stream->tunnel->up;
+        context_t *fc   = newFinContext(stream->line);
+        tunnel_t  *dest = stream->tunnel->up;
         removeStream(con, stream);
         deleteHttp2Stream(stream);
         dest->upStream(dest, fc);
     }
     break;
-    case kActionConData: {
-        sendStreamResposnseData(con, action.stream_id, action.buf);
-    }
-    break;
-    case kActionConFinish: {
-        context_t *fin_ctx = newFinContext(con->line);
-        deleteHttp2Connection(con);
-        con->tunnel->dw->downStream(con->tunnel->dw, fin_ctx);
-    }
-    break;
 
+    default:
     case kActionInvalid:
         LOGF("incorrect http2 action id");
         exit(1);
         break;
     }
+
+    unLockLine(action.stream_line);
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -408,6 +421,16 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 const http2_action_t action = action_queue_t_pull_front(&con->actions);
                 doHttp2Action(action, con);
+                if (! isAlive(c->line))
+                {
+                    reuseContextPayload(c);
+                    destroyContext(c);
+                    return;
+                }
+            }
+
+            while (sendNgHttp2Data(self, con))
+            {
                 if (! isAlive(c->line))
                 {
                     reuseContextPayload(c);
@@ -494,7 +517,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (! isAlive(c->line))
                 {
                     unLockLine(con->line);
-                    reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }
