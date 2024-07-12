@@ -16,7 +16,9 @@
 */
 enum
 {
-    kMaxPacketSize = (65536 * 1)
+    kMaxPacketSize    = (65536 * 1),
+    kMaxRecvBeforeAck = (1 << 16),
+    kMaxSendBeforeAck = (1 << 19)
 };
 
 typedef struct protobuf_client_state_s
@@ -27,6 +29,8 @@ typedef struct protobuf_client_state_s
 typedef struct protobuf_client_con_state_s
 {
     buffer_stream_t *stream_buf;
+    size_t           bytes_sent_nack;
+    size_t           bytes_received_nack;
 
 } protobuf_client_con_state_t;
 
@@ -38,6 +42,8 @@ static void cleanup(protobuf_client_con_state_t *cstate)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
+    protobuf_client_con_state_t *cstate = CSTATE(c);
+
     if (c->payload != NULL)
     {
         size_t blen             = bufLen(c->payload);
@@ -45,18 +51,22 @@ static void upStream(tunnel_t *self, context_t *c)
         shiftl(c->payload, calculated_bytes + 1);
         writeUleb128(rawBufMut(c->payload) + 1, blen);
         writeUI8(c->payload, '\n');
+        cstate->bytes_sent_nack += blen;
+        if (cstate->bytes_sent_nack > kMaxSendBeforeAck)
+        {
+            pauseLineDownSide(c->line);
+        }
     }
     else
     {
         if (c->init)
         {
-            protobuf_client_con_state_t *cstate = wwmGlobalMalloc(sizeof(protobuf_client_con_state_t));
+            cstate        = wwmGlobalMalloc(sizeof(protobuf_client_con_state_t));
             *cstate       = (protobuf_client_con_state_t) {.stream_buf = newBufferStream(getContextBufferPool(c))};
             CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)
         {
-            protobuf_client_con_state_t *cstate = CSTATE(c);
             CSTATE_DROP(c);
             cleanup(cstate);
         }
@@ -80,11 +90,15 @@ static void downStream(tunnel_t *self, context_t *c)
                 destroyContext(c);
                 return;
             }
-            shift_buffer_t *full_data    = bufferStreamFullRead(bstream);
-            const uint8_t  *uleb_data    = &(((uint8_t *) rawBuf(full_data))[1]); // first byte is \n (protobuf)
-            uint64_t        data_len     = 0;
-            size_t          bytes_passed = readUleb128ToUint64(uleb_data, uleb_data + bufLen(full_data) - 1, &data_len);
-            if (data_len == 0 || (bufLen(full_data) - (bytes_passed + 1)) < data_len)
+            shift_buffer_t *full_data = bufferStreamFullRead(bstream);
+            uint8_t         flags;
+            readUI8(full_data, &flags);
+            shiftr(full_data, 1); // first byte is  (protobuf flag)
+
+            const uint8_t *uleb_data    = rawBuf(full_data);
+            uint64_t       data_len     = 0;
+            size_t         bytes_passed = readUleb128ToUint64(uleb_data, uleb_data + bufLen(full_data), &data_len);
+            if (data_len == 0 || (bufLen(full_data) - (bytes_passed)) < data_len)
             {
                 bufferStreamPush(bstream, full_data);
                 destroyContext(c);
@@ -97,24 +111,85 @@ static void downStream(tunnel_t *self, context_t *c)
                 goto disconnect;
             }
 
-            shiftr(full_data, 1 + bytes_passed);
+            shiftr(full_data, bytes_passed);
 
-            context_t *downstream_ctx = newContextFrom(c);
-            downstream_ctx->payload   = popBuffer(getContextBufferPool(c));
-
-            sliceBufferTo(downstream_ctx->payload, full_data, data_len);
-            // upstream_ctx->payload   = shallowSliceBuffer();
-
-            if (bufLen(full_data) > 0)
+            if (flags == 0x1 && data_len == sizeof(uint32_t))
             {
-                bufferStreamPush(bstream, full_data);
+                uint32_t consumed;
+                memcpy(&consumed, rawBuf(full_data), sizeof(uint32_t));
+                consumed = ntohl(consumed);
+                shiftr(full_data, sizeof(uint32_t));
+
+                if (cstate->bytes_sent_nack >= kMaxSendBeforeAck)
+                {
+                    cstate->bytes_sent_nack -= consumed;
+                    // LOGD("consumed: %d left: %d", consumed, (int) cstate->bytes_sent_nack);
+
+                    if (cstate->bytes_sent_nack < kMaxSendBeforeAck)
+                    {
+                        resumeLineDownSide(c->line);
+                    }
+                }
+                else
+                {
+                    cstate->bytes_sent_nack -= consumed;
+                    // LOGD("consumed: %d left: %d", consumed, (int) cstate->bytes_sent_nack);
+                }
+
+                if (bufLen(full_data) > 0)
+                {
+                    bufferStreamPush(bstream, full_data);
+                }
+                else
+                {
+                    reuseBuffer(getContextBufferPool(c), full_data);
+                }
+            }
+            else if (flags == '\n')
+            {
+
+                cstate->bytes_received_nack += (size_t) data_len;
+                if (cstate->bytes_received_nack >= kMaxRecvBeforeAck)
+                {
+
+                    shift_buffer_t *flowctl_buf = popBuffer(getContextBufferPool(c));
+                    setLen(flowctl_buf, sizeof(uint32_t));
+                    writeUI32(flowctl_buf, htonl(cstate->bytes_received_nack));
+                    cstate->bytes_received_nack = 0;
+
+                    size_t blen             = bufLen(flowctl_buf);
+                    size_t calculated_bytes = sizeUleb128(blen);
+                    shiftl(flowctl_buf, calculated_bytes + 1);
+                    writeUleb128(rawBufMut(flowctl_buf) + 1, blen);
+                    writeUI8(flowctl_buf, 0x1);
+
+                    context_t *send_flow_ctx = newContextFrom(c);
+                    send_flow_ctx->payload   = flowctl_buf;
+                    self->up->upStream(self->up, send_flow_ctx);
+                }
+
+                context_t *downstream_ctx = newContextFrom(c);
+                downstream_ctx->payload   = popBuffer(getContextBufferPool(c));
+
+                sliceBufferTo(downstream_ctx->payload, full_data, data_len);
+                // upstream_ctx->payload   = shallowSliceBuffer();
+
+                if (bufLen(full_data) > 0)
+                {
+                    bufferStreamPush(bstream, full_data);
+                }
+                else
+                {
+                    reuseBuffer(getContextBufferPool(c), full_data);
+                }
+
+                self->dw->downStream(self->dw, downstream_ctx);
             }
             else
             {
-                reuseBuffer(getContextBufferPool(c), full_data);
+                LOGE("ProtoBufServer: rejected, invalid flag");
+                goto disconnect;
             }
-
-            self->dw->downStream(self->dw, downstream_ctx);
 
             if (! isAlive(c->line))
             {

@@ -6,11 +6,6 @@
 #include "nghttp2/nghttp2.h"
 
 
-enum
-{
-    kMaxRecvBeforeAck = (1 << 16),
-    kMaxSendBeforeAck = (1 << 19)
-};
 
 enum http2_actions
 {
@@ -41,8 +36,6 @@ typedef struct http2_server_child_con_state_s
     line_t                                *parent;
     line_t                                *line;
     tunnel_t                              *tunnel;
-    size_t                                 bytes_sent_nack;
-    size_t                                 bytes_received_nack;
     size_t                                 grpc_bytes_needed;
     int32_t                                stream_id;
 

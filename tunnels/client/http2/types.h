@@ -7,12 +7,6 @@
 #include "loggers/network_logger.h"
 #include "nghttp2/nghttp2.h"
 
-enum
-{
-
-    kMaxRecvBeforeAck = (1 << 16),
-    kMaxSendBeforeAck = (1 << 19)
-};
 
 enum http2_actions
 {
@@ -43,8 +37,6 @@ typedef struct http2_client_child_con_state_s
     line_t                                *parent;
     line_t                                *line;
     size_t                                 grpc_bytes_needed;
-    size_t                                 bytes_sent_nack;
-    size_t                                 bytes_received_nack;
     int32_t                                stream_id;
 
 } http2_client_child_con_state_t;

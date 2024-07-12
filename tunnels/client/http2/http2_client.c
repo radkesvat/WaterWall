@@ -139,41 +139,6 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         break;
     case NGHTTP2_PING:
         con->no_ping_ack = false;
-
-        if (frame->ping.hd.flags == NGHTTP2_FLAG_ACK)
-        {
-            static const uint8_t kZerobuf[8] = {0};
-
-            if (0 != memcmp(frame->ping.opaque_data, kZerobuf, sizeof(kZerobuf)))
-            {
-                int32_t stream_id;
-                int     consumed;
-                memcpy(&stream_id, &frame->ping.opaque_data[0], sizeof(stream_id));
-                memcpy(&consumed, &frame->ping.opaque_data[4], sizeof(consumed));
-
-                stream_id                              = (int) ntohl(stream_id);
-                consumed                               = (int) ntohl(consumed);
-                http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(con->session, stream_id);
-                if (stream)
-                {
-                    if (stream->bytes_sent_nack >= kMaxSendBeforeAck)
-                    {
-                        stream->bytes_sent_nack -= consumed;
-                        // LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
-
-                        if (stream->bytes_sent_nack < kMaxSendBeforeAck)
-                        {
-                            resumeLineDownSide(stream->line);
-                        }
-                    }
-                    else
-                    {
-                        stream->bytes_sent_nack -= consumed;
-                        // LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
-                    }
-                }
-            }
-        }
         break;
     case NGHTTP2_RST_STREAM:
     case NGHTTP2_WINDOW_UPDATE:
@@ -220,20 +185,6 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     return 0;
 }
 
-static void sendFlowControlData(http2_client_con_state_t *con, int32_t stream_id, int consumed)
-{
-    (void) con;
-
-    uint8_t buf[8] = {0};
-
-    stream_id = (int) htonl(stream_id);
-    consumed  = (int) htonl(consumed);
-
-    memcpy(buf, &stream_id, sizeof(stream_id));
-    memcpy(buf + 4, &consumed, sizeof(consumed));
-
-    nghttp2_submit_ping(con->session, NGHTTP2_FLAG_ACK, buf);
-}
 
 static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con_state_t *stream, shift_buffer_t *buf)
 {
@@ -242,12 +193,6 @@ static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con
     {
         reuseBuffer(getLineBufferPool(con->line), buf);
         return;
-    }
-    stream->bytes_sent_nack += bufLen(buf);
-
-    if (stream->bytes_sent_nack > kMaxSendBeforeAck)
-    {
-        pauseLineDownSide(stream->line);
     }
 
     if (con->content_type == kApplicationGrpc)
@@ -346,7 +291,6 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
 
                     context_t *stream_data = newContext(stream->line);
                     stream_data->payload   = gdata_buf;
-                    stream->bytes_received_nack += bufLen(gdata_buf);
 
                     stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);
 
@@ -366,21 +310,13 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
         {
             shift_buffer_t *buf         = action.buf;
             context_t      *stream_data = newContext(stream->line);
-
             stream_data->payload = buf;
-            stream->bytes_received_nack += bufLen(buf);
             stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);
         }
         if (! isAlive(action.stream_line) || ! isAlive(main_line))
         {
             unLockLine(action.stream_line);
             return;
-        }
-
-        if (stream->bytes_received_nack >= kMaxRecvBeforeAck)
-        {
-            sendFlowControlData(con, stream->stream_id, (int) stream->bytes_received_nack);
-            stream->bytes_received_nack = 0;
         }
     }
     break;
