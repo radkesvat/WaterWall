@@ -105,7 +105,7 @@ void wwmDedicatedFree(dedicated_memory_t *dm, void *ptr)
     wof_free(dm->wof_state, ptr);
     if (state->free_counter++ > kFreeThreShouldCounter)
     {
-        wof_gc(state->wof_state);
+        wof_gc(dm->wof_state);
         state->free_counter = 0;
     }
     hhybridmutex_unlock(&dm->mut);
