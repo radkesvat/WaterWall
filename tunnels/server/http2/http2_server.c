@@ -227,7 +227,7 @@ static void sendFlowControlData(http2_server_con_state_t *con, int32_t stream_id
     memcpy(buf, &stream_id, sizeof(stream_id));
     memcpy(buf + 4, &consumed, sizeof(consumed));
 
-    // nghttp2_submit_ping(con->session, NGHTTP2_FLAG_ACK, buf);
+    nghttp2_submit_ping(con->session, NGHTTP2_FLAG_ACK, buf);
 }
 
 static void sendStreamResposnseData(http2_server_con_state_t *con, http2_server_child_con_state_t *stream,
@@ -243,7 +243,7 @@ static void sendStreamResposnseData(http2_server_con_state_t *con, http2_server_
 
     if (stream->bytes_sent_nack > kMaxSendBeforeAck)
     {
-        // pauseLineUpSide(stream->line);
+        pauseLineUpSide(stream->line);
     }
 
     if (con->content_type == kApplicationGrpc)
