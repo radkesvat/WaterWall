@@ -20,7 +20,6 @@ add_library(ww STATIC
                   utils/btree.c
                   managers/socket_manager.c
                   managers/node_manager.c
-                  managers/alloc-engine/wof_allocator.c
                   managers/memory_manager.c
                   managers/data/iprange_mci.c
                   managers/data/iprange_irancell.c
@@ -80,6 +79,17 @@ if(cjson_ADDED)
   target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 
 endif()
+
+
+
+CPMAddPackage(
+  NAME mimalloc
+  VERSION 2.1.7
+  GITHUB_REPOSITORY microsoft/mimalloc
+  OPTIONS "BUILD_SHARED_LIBS OFF"
+
+)
+target_link_libraries(ww PUBLIC mimalloc)
 
 
 # add libhv
