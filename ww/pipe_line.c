@@ -11,11 +11,10 @@ struct pipe_line_s
     tunnel_t           *self;
     line_t             *left_line;
     line_t             *right_line;
-    atomic_bool         closed;
     atomic_int          refc;
-    bool                first_sent;
+    atomic_bool         closed;
     uint8_t             left_tid;
-    uint8_t             right_tid;
+    uint8_t             right_tid; /* 8-bit pad */
     PipeLineFlowRoutine local_up_stream;
     PipeLineFlowRoutine local_down_stream;
 
@@ -86,7 +85,7 @@ static void onMsgReceived(hevent_t *ev)
 
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
 {
-    
+
     if (WW_UNLIKELY(tid_from == tid_to))
     {
         fn(pl, arg);
@@ -94,7 +93,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
     }
     lock(pl);
     struct msg_event *evdata = popPoolItem(pipeline_msg_pools[tid_from]);
-    *evdata = (struct msg_event){.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
+    *evdata = (struct msg_event) {.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
 
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
@@ -127,11 +126,6 @@ static void writeBufferToRightSide(pipe_line_t *pl, void *arg)
     }
     context_t *ctx = newContext(pl->right_line);
     ctx->payload   = buf;
-    if (WW_UNLIKELY(! pl->first_sent))
-    {
-        pl->first_sent = true;
-        ctx->first     = true;
-    }
     pl->local_up_stream(pl->self, ctx, pl);
 }
 
@@ -376,17 +370,16 @@ void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid, PipeLineFl
     // align pointer to line cache boundary
     pipe_line_t *pl = (pipe_line_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    *pl = (pipe_line_t){.memptr            = (void *) ptr,
-                        .self              = self,
-                        .left_tid          = left_line->tid,
-                        .right_tid         = dest_tid,
-                        .left_line         = left_line,
-                        .right_line        = NULL,
-                        .closed            = false,
-                        .first_sent        = false,
-                        .refc              = 1,
-                        .local_up_stream   = local_up_stream,
-                        .local_down_stream = local_down_stream};
+    *pl = (pipe_line_t) {.memptr            = (void *) ptr,
+                         .self              = self,
+                         .left_tid          = left_line->tid,
+                         .right_tid         = dest_tid,
+                         .left_line         = left_line,
+                         .right_line        = NULL,
+                         .closed            = false,
+                         .refc              = 1,
+                         .local_up_stream   = local_up_stream,
+                         .local_down_stream = local_down_stream};
 
     initLeft(pl, NULL);
     sendMessage(pl, initRight, NULL, pl->left_tid, pl->right_tid);

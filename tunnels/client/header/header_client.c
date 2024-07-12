@@ -19,15 +19,27 @@ typedef struct header_client_state_s
 
 typedef struct header_client_con_state_s
 {
-    void *_;
+    bool first_packet_received;
 } header_client_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    header_client_state_t *state = TSTATE(self);
-
-    if (c->first && c->payload != NULL)
+    header_client_state_t     *state  = TSTATE(self);
+    header_client_con_state_t *cstate = CSTATE(c);
+    if (c->init)
     {
+        cstate        = wwmGlobalMalloc(sizeof(header_client_con_state_t));
+        *cstate       = (header_client_con_state_t) {0};
+        CSTATE_MUT(c) = cstate;
+    }
+    else if (c->fin)
+    {
+        wwmGlobalFree(cstate);
+        CSTATE_DROP(c);
+    }
+    else if (! cstate->first_packet_received && c->payload != NULL)
+    {
+        cstate->first_packet_received = true;
 
         switch ((enum header_dynamic_value_status) state->data.status)
         {
@@ -46,6 +58,12 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
+
+    if (c->fin)
+    {
+        wwmGlobalFree( CSTATE(c));
+        CSTATE_DROP(c);
+    }
 
     self->dw->downStream(self->dw, c);
 }
@@ -71,7 +89,7 @@ api_result_t apiHeaderClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyHeaderClient(tunnel_t *self)
@@ -81,5 +99,5 @@ tunnel_t *destroyHeaderClient(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataHeaderClient(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

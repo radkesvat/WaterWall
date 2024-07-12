@@ -13,7 +13,7 @@ static int onStreamClosedCallback(nghttp2_session *session, int32_t stream_id, u
 
     http2_server_con_state_t       *con    = (http2_server_con_state_t *) userdata;
     http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
-    LOGD("callback end stream for: %d", stream_id);
+    // LOGD("callback end stream for: %d", stream_id);
 
     if (! stream)
     {
@@ -98,8 +98,9 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     writeRaw(buf, data, len);
 
     lockLine(stream->line);
-    action_queue_t_push(&con->actions,
-                        (http2_action_t) {.action_id = kActionStreamDataReceived, .stream_line = stream->line, .buf = buf});
+    action_queue_t_push(
+        &con->actions,
+        (http2_action_t) {.action_id = kActionStreamDataReceived, .stream_line = stream->line, .buf = buf});
     return 0;
 }
 
@@ -143,7 +144,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
                     if (stream->bytes_sent_nack >= kMaxSendBeforeAck)
                     {
                         stream->bytes_sent_nack -= consumed;
-                        LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
+                        // LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
 
                         if (stream->bytes_sent_nack < kMaxSendBeforeAck)
                         {
@@ -153,7 +154,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
                     else
                     {
                         stream->bytes_sent_nack -= consumed;
-                        LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
+                        // LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
                     }
                 }
             }
@@ -171,7 +172,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     {
         if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM)
         {
-            LOGD("end stream for: %d", frame->hd.stream_id);
+            // LOGD("end stream for: %d", frame->hd.stream_id);
 
             http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
             if (WW_UNLIKELY(! stream))
@@ -339,13 +340,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
 
                     context_t *stream_data = newContext(stream->line);
                     stream_data->payload   = gdata_buf;
-                    if (! stream->first_sent)
-                    {
-                        stream->first_sent = true;
-                        stream_data->first = true;
-                    }
                     stream->bytes_received_nack += bufLen(gdata_buf);
-
                     stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
 
                     // check http2 connection is alive
@@ -365,11 +360,6 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
             context_t      *stream_data = newContext(stream->line);
 
             stream_data->payload = buf;
-            if (! stream->first_sent)
-            {
-                stream->first_sent = true;
-                stream_data->first = true;
-            }
             stream->bytes_received_nack += bufLen(buf);
             stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
         }
@@ -531,7 +521,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 nghttp2_submit_trailer(con->session, stream->stream_id, NULL, 0);
             }
 
-            LOGE("destroy %d", stream->stream_id);
+            // LOGE("closing -> %d", stream->stream_id);
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             removeStream(con, stream);
             deleteHttp2Stream(stream);

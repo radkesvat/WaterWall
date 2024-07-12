@@ -73,7 +73,6 @@ static void doConnect(struct connect_arg *cg)
         destroyContext(hello_data_ctx);
         return;
     }
-    hello_data_ctx->first   = true;
     hello_data_ctx->payload = popBuffer(getContextBufferPool(hello_data_ctx));
     setLen(hello_data_ctx->payload, kHandShakeLength);
     memset(rawBufMut(hello_data_ctx->payload), kHandShakeByte, kHandShakeLength);

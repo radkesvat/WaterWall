@@ -40,17 +40,15 @@ typedef struct halfduplex_server_state_s
 
 typedef struct halfduplex_server_con_state_s
 {
+
+    shift_buffer_t        *buffering;
+    line_t                *upload_line;
+    line_t                *download_line;
+    line_t                *main_line;
+    pipe_line_t           *pipe;
     enum connection_status state;
 
     hash_t hash;
-
-    shift_buffer_t *buffering;
-    line_t         *upload_line;
-    line_t         *download_line;
-    line_t         *main_line;
-    pipe_line_t    *pipe;
-    bool            first_sent;
-
 } halfduplex_server_con_state_t;
 
 struct notify_argument_s
@@ -147,7 +145,7 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
             uint8_t tid_download_line = (*f_iter.ref).second->download_line->tid;
             hhybridmutex_unlock(&(state->download_line_map_mutex));
 
-            // a very rare case is when this_tid == tid_download_line 
+            // a very rare case is when this_tid == tid_download_line
 
             LSTATE_DROP(upload_line_cstate->upload_line);
 
@@ -286,11 +284,6 @@ static void upStream(tunnel_t *self, context_t *c)
                         shiftr(c->payload, sizeof(uint64_t));
                         if (bufLen(buf) > 0)
                         {
-                            if (! cstate->first_sent)
-                            {
-                                cstate->first_sent = true;
-                                c->first           = true;
-                            }
                             self->up->upStream(self->up, switchLine(c, main_line));
                             return;
                         }
@@ -306,7 +299,6 @@ static void upStream(tunnel_t *self, context_t *c)
                         pipeTo(self, c->line, tid_download_line);
                         pipeUpStream(c);
                         return; // piped to another worker which has waiting connections
-
                     }
                 }
                 else
@@ -391,11 +383,9 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         if (bufLen(upload_line_cstate->buffering) > 0)
                         {
-                            context_t *buf_ctx             = newContext(main_line);
-                            buf_ctx->payload               = upload_line_cstate->buffering;
-                            buf_ctx->first                 = true;
-                            upload_line_cstate->buffering  = NULL;
-                            upload_line_cstate->first_sent = true;
+                            context_t *buf_ctx            = newContext(main_line);
+                            buf_ctx->payload              = upload_line_cstate->buffering;
+                            upload_line_cstate->buffering = NULL;
                             shiftr(buf_ctx->payload, sizeof(uint64_t));
                             self->up->upStream(self->up, buf_ctx);
                         }
@@ -426,7 +416,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         // tell upload line to re-check
                         struct notify_argument_s *evdata = wwmGlobalMalloc(sizeof(struct notify_argument_s));
-                        *evdata = (struct notify_argument_s){.self = self, .hash = hash, .tid = tid_upload_line};
+                        *evdata = (struct notify_argument_s) {.self = self, .hash = hash, .tid = tid_upload_line};
 
                         hevent_t ev;
                         memset(&ev, 0, sizeof(ev));
@@ -480,11 +470,6 @@ static void upStream(tunnel_t *self, context_t *c)
             break;
 
         case kCsUploadDirect:
-            if (! cstate->first_sent)
-            {
-                cstate->first_sent = true;
-                c->first           = true;
-            }
             self->up->upStream(self->up, switchLine(c, cstate->main_line));
             break;
 
@@ -500,12 +485,8 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             cstate  = wwmGlobalMalloc(sizeof(halfduplex_server_con_state_t));
-            *cstate = (halfduplex_server_con_state_t){.state         = kCsUnkown,
-                                                      .buffering     = NULL,
-                                                      .pipe          = NULL,
-                                                      .upload_line   = NULL,
-                                                      .download_line = NULL,
-                                                      .first_sent    = false};
+            *cstate = (halfduplex_server_con_state_t) {
+                .state = kCsUnkown, .buffering = NULL, .pipe = NULL, .upload_line = NULL, .download_line = NULL};
 
             CSTATE_MUT(c) = cstate;
             if (isDownPiped(c->line))
@@ -775,7 +756,7 @@ api_result_t apiHalfDuplexServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyHalfDuplexServer(tunnel_t *self)
@@ -785,5 +766,5 @@ tunnel_t *destroyHalfDuplexServer(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataHalfDuplexServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

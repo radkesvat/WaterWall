@@ -45,7 +45,6 @@ typedef struct http2_server_child_con_state_s
     size_t                                 bytes_received_nack;
     size_t                                 grpc_bytes_needed;
     int32_t                                stream_id;
-    bool                                   first_sent;
 
 } http2_server_child_con_state_t;
 

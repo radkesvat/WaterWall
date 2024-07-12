@@ -11,18 +11,20 @@ typedef struct preconnect_server_state_s
 typedef struct preconnect_server_con_state_s
 {
     bool init_sent;
+    bool first_packet_sent;
 
 } preconnect_server_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
 {
+    preconnect_server_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        preconnect_server_con_state_t *cstate = CSTATE(c);
-        if (c->first)
+        if (! cstate->first_packet_sent)
         {
-            cstate->init_sent = true;
+            cstate->first_packet_sent = true;
+            cstate->init_sent         = true;
             self->up->upStream(self->up, newInitContext(c->line));
             if (! isAlive(c->line))
             {
@@ -35,16 +37,15 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else if (c->init)
     {
-        preconnect_server_con_state_t *cstate = wwmGlobalMalloc(sizeof(preconnect_server_con_state_t));
-        cstate->init_sent                     = false;
-        CSTATE_MUT(c)                         = cstate;
+        cstate        = wwmGlobalMalloc(sizeof(preconnect_server_con_state_t));
+        *cstate       = (preconnect_server_con_state_t) {.init_sent = false, .first_packet_sent = false};
+        CSTATE_MUT(c) = cstate;
         destroyContext(c);
         return;
     }
     else if (c->fin)
     {
-        preconnect_server_con_state_t *cstate   = CSTATE(c);
-        bool                           send_fin = cstate->init_sent;
+        bool send_fin = cstate->init_sent;
         wwmGlobalFree(cstate);
         CSTATE_DROP(c);
         if (send_fin)
@@ -82,7 +83,6 @@ tunnel_t *newPreConnectServer(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    
 
     return t;
 }
@@ -91,7 +91,7 @@ api_result_t apiPreConnectServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyPreConnectServer(tunnel_t *self)
@@ -101,5 +101,5 @@ tunnel_t *destroyPreConnectServer(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataPreConnectServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

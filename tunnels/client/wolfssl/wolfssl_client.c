@@ -185,7 +185,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     setLen(buf, n);
                     client_hello_ctx->payload = buf;
-                    client_hello_ctx->first   = true;
                     self->up->upStream(self->up, client_hello_ctx);
                 }
                 else if (! BIO_should_retry(cstate->rbio))

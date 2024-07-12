@@ -27,7 +27,6 @@ typedef struct protobuf_client_state_s
 typedef struct protobuf_client_con_state_s
 {
     buffer_stream_t *stream_buf;
-    bool             first_sent;
 
 } protobuf_client_con_state_t;
 
@@ -52,9 +51,8 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             protobuf_client_con_state_t *cstate = wwmGlobalMalloc(sizeof(protobuf_client_con_state_t));
-            *cstate                             = (protobuf_client_con_state_t){.first_sent = false,
-                                                                                .stream_buf = newBufferStream(getContextBufferPool(c))};
-            CSTATE_MUT(c)                       = cstate;
+            *cstate       = (protobuf_client_con_state_t) {.stream_buf = newBufferStream(getContextBufferPool(c))};
+            CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)
         {
@@ -116,12 +114,6 @@ static void downStream(tunnel_t *self, context_t *c)
                 reuseBuffer(getContextBufferPool(c), full_data);
             }
 
-            if (! cstate->first_sent)
-            {
-                downstream_ctx->first = true;
-                cstate->first_sent    = true;
-            }
-
             self->dw->downStream(self->dw, downstream_ctx);
 
             if (! isAlive(c->line))
@@ -163,7 +155,7 @@ api_result_t apiProtoBufClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyProtoBufClient(tunnel_t *self)
@@ -173,5 +165,5 @@ tunnel_t *destroyProtoBufClient(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataProtoBufClient(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

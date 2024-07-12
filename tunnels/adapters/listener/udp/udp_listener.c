@@ -52,7 +52,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
             // sounds impossible...
             LOGE("Checkpoint udp listener");
             // this prevent double free
-            *cstate = (udp_listener_con_state_t){0};
+            *cstate = (udp_listener_con_state_t) {0};
         }
     }
     else
@@ -66,8 +66,11 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 #ifdef PROFILE
-        if (c->first)
+        udp_listener_con_state_t *cstate = CSTATE(c);
+        bool *first_packet_sent = &((cstate)->first_packet_sent);
+        if (! (*first_packet_sent))
         {
+            *first_packet_sent = true;
             struct timeval tv1, tv2;
             gettimeofday(&tv1, NULL);
             {
@@ -101,7 +104,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        postUdpWrite(cstate->uio,c->line->tid, c->payload);
+        postUdpWrite(cstate->uio, c->line->tid, c->payload);
         dropContexPayload(c);
         destroyContext(c);
     }
@@ -151,13 +154,13 @@ static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, udps
     line->src_ctx.address_protocol   = kSapUdp;
     line->src_ctx.address            = *(sockaddr_u *) hio_peeraddr(uio->io);
 
-    *cstate = (udp_listener_con_state_t){.loop              = loops[tid],
-                                         .line              = line,
-                                         .buffer_pool       = getThreadBufferPool(tid),
-                                         .uio               = uio,
-                                         .tunnel            = self,
-                                         .established       = false,
-                                         .first_packet_sent = false};
+    *cstate = (udp_listener_con_state_t) {.loop              = loops[tid],
+                                          .line              = line,
+                                          .buffer_pool       = getThreadBufferPool(tid),
+                                          .uio               = uio,
+                                          .tunnel            = self,
+                                          .established       = false,
+                                          .first_packet_sent = false};
 
     sockaddr_set_port(&(line->src_ctx.address), real_localport);
 
@@ -294,7 +297,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
     }
     socket_filter_option_t filter_opt = {0};
 
-    getStringFromJsonObject(&(filter_opt.balance_group_name),settings, "balance-group");
+    getStringFromJsonObject(&(filter_opt.balance_group_name), settings, "balance-group");
     getIntFromJsonObject((int *) &(filter_opt.balance_group_interval), settings, "balance-interval");
 
     filter_opt.multiport_backend = kMultiportBackendNothing;
@@ -362,7 +365,7 @@ api_result_t apiUdpListener(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyUdpListener(tunnel_t *self)
@@ -372,5 +375,5 @@ tunnel_t *destroyUdpListener(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataUdpListener(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
+    return (tunnel_metadata_t) {.version = 0001, .flags = kNodeFlagChainHead};
 }

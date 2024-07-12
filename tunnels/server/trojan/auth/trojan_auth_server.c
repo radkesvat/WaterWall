@@ -29,6 +29,7 @@ typedef struct trojan_auth_server_con_state_s
 {
     bool authenticated;
     bool init_sent;
+    bool first_packet_received;
 
 } trojan_auth_server_con_state_t;
 
@@ -78,11 +79,10 @@ static void upStream(tunnel_t *self, context_t *c)
         if (cstate->authenticated)
         {
             self->up->upStream(self->up, c);
-            return;
         }
-
-        if (c->first)
+        else if (! cstate->first_packet_received)
         {
+            cstate->first_packet_received = true;
             // struct timeval tv1, tv2;
             // gettimeofday(&tv1, NULL);
             {
@@ -142,17 +142,18 @@ static void upStream(tunnel_t *self, context_t *c)
             // gettimeofday(&tv2, NULL);
             // double time_spent = (double)(tv2.tv_usec - tv1.tv_usec) / 1000000 + (double)(tv2.tv_sec -
             // tv1.tv_sec); LOGD("Auth: took %lf sec", time_spent);
-            return;
         }
-
-        goto failed;
+        else
+        {
+            goto failed;
+        }
     }
     else
     {
         if (c->init)
         {
-            cstate = wwmGlobalMalloc(sizeof(trojan_auth_server_con_state_t));
-            memset(cstate, 0, sizeof(trojan_auth_server_con_state_t));
+            cstate        = wwmGlobalMalloc(sizeof(trojan_auth_server_con_state_t));
+            *cstate       = (trojan_auth_server_con_state_t) {0};
             CSTATE_MUT(c) = cstate;
             destroyContext(c);
         }
@@ -181,13 +182,13 @@ static void upStream(tunnel_t *self, context_t *c)
     }
 
     return;
-failed:;
+failed:
     if (state->fallback != NULL)
     {
         goto fallback;
     }
 
-    // disconnect:;
+    // disconnect:
     reuseContextPayload(c);
     wwmGlobalFree(CSTATE(c));
     CSTATE_DROP(c);
@@ -195,7 +196,7 @@ failed:;
     destroyContext(c);
     self->dw->downStream(self->dw, reply);
     return;
-fallback:;
+fallback:
     if (! cstate->init_sent)
     {
         cstate->init_sent = true;
@@ -228,7 +229,7 @@ static void downStream(tunnel_t *self, context_t *c)
     self->dw->downStream(self->dw, c);
 }
 
-static void parse(tunnel_t *t, cJSON *settings,node_instance_context_t *instance_info)
+static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instance_info)
 {
     trojan_auth_server_state_t *state = t->state;
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
@@ -297,7 +298,7 @@ static void parse(tunnel_t *t, cJSON *settings,node_instance_context_t *instance
         }
 
         hash_t  hash_next     = CALC_HASH_BYTES(fallback_node_name, strlen(fallback_node_name));
-        node_t *fallback_node = getNode(instance_info->node_manager_config,hash_next);
+        node_t *fallback_node = getNode(instance_info->node_manager_config, hash_next);
         if (fallback_node == NULL)
         {
             LOGF("TrojanAuthServer: fallback node not found");
@@ -305,7 +306,7 @@ static void parse(tunnel_t *t, cJSON *settings,node_instance_context_t *instance
         }
         if (fallback_node->instance == NULL)
         {
-            runNode(instance_info->node_manager_config,fallback_node, instance_info->chain_index + 1);
+            runNode(instance_info->node_manager_config, fallback_node, instance_info->chain_index + 1);
         }
         state->fallback = fallback_node->instance;
 
@@ -344,7 +345,7 @@ api_result_t apiTrojanAuthServer(tunnel_t *self, const char *msg)
 
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyTrojanAuthServer(tunnel_t *self)
@@ -355,5 +356,5 @@ tunnel_t *destroyTrojanAuthServer(tunnel_t *self)
 
 tunnel_metadata_t getMetadataTrojanAuthServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

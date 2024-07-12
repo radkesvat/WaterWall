@@ -13,7 +13,6 @@ typedef struct reverse_client_con_state_s
 {
     bool         pair_connected;
     bool         established;
-    bool         first_sent_d;
     idle_item_t *idle_handle;
     line_t      *u;
     line_t      *d;

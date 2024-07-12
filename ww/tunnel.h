@@ -126,13 +126,12 @@ typedef struct line_s
     the only flag that also has a payload is `first` , other flags have no payload
 
 */
-typedef struct context_s // 24
+typedef struct context_s
 {
     shift_buffer_t *payload;
     line_t         *line;
     bool            init;
     bool            est;
-    bool            first;
     bool            fin;
 } context_t;
 

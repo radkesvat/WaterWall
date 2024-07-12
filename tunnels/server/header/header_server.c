@@ -20,7 +20,6 @@ typedef struct header_server_state_s
 typedef struct header_server_con_state_s
 {
     bool            init_sent;
-    bool            first_sent;
     shift_buffer_t *buf;
 
 } header_server_con_state_t;
@@ -38,18 +37,21 @@ static void upStream(tunnel_t *self, context_t *c)
                 c->payload  = appendBufferMerge(getContextBufferPool(c), cstate->buf, c->payload);
                 cstate->buf = NULL;
             }
-            if (bufLen(c->payload) < 2)
-            {
-                cstate->buf = c->payload;
-                dropContexPayload(c);
-                destroyContext(c);
-                return;
-            }
-            shift_buffer_t *buf  = c->payload;
-            uint16_t        port = 0;
+
+            shift_buffer_t *buf = c->payload;
+
             switch ((enum header_dynamic_value_status) state->data.status)
             {
-            case kHdvsDestPort:
+            case kHdvsDestPort:;
+
+                uint16_t port = 0;
+                if (bufLen(c->payload) < 2)
+                {
+                    cstate->buf = c->payload;
+                    dropContexPayload(c);
+                    destroyContext(c);
+                    return;
+                }
 
                 readUI16(buf, &port);
                 sockaddr_set_port(&(c->line->dest_ctx.address), port);
@@ -84,17 +86,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
-        if (! cstate->first_sent)
-        {
-            c->first           = true;
-            cstate->first_sent = true;
-        }
         self->up->upStream(self->up, c);
     }
     else if (c->init)
     {
         cstate        = wwmGlobalMalloc(sizeof(header_server_con_state_t));
-        *cstate       = (header_server_con_state_t){0};
+        *cstate       = (header_server_con_state_t) {0};
         CSTATE_MUT(c) = cstate;
         destroyContext(c);
     }
@@ -155,7 +152,7 @@ api_result_t apiHeaderServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyHeaderServer(tunnel_t *self)
@@ -165,5 +162,5 @@ tunnel_t *destroyHeaderServer(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataHeaderServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

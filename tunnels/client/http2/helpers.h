@@ -290,15 +290,9 @@ static void onPingTimer(htimer_t *timer)
             writeRaw(send_buf, data, len);
             context_t *req = newContext(h2line);
             req->payload   = send_buf;
-            if (! con->first_sent)
-            {
-                con->first_sent = true;
-                req->first      = true;
-            }
             con->tunnel->up->upStream(con->tunnel->up, req);
             if (! isAlive(h2line))
             {
-                
                 unLockLine(h2line);
                 return;
             }

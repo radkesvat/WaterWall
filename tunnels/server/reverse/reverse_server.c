@@ -217,9 +217,10 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        if (c->first)
+        // reverse server will not create and consider the connection, before it sends at least 1 data packet
+        // so the context is null if nothing is received so far...
+        if (ucstate == NULL)
         {
-            c->first              = false;
             const uint8_t tid     = c->line->tid;
             thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
 
@@ -230,7 +231,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 dcstate->u      = c->line;
                 dcstate->paired = true;
                 setupLineUpSide(dcstate->u, onLinePausedU, dcstate, onLineResumedU);
-                
+
                 if (! isAlive(c->line))
                 {
                     reuseContextPayload(c);
@@ -288,6 +289,7 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
+            assert(c->line->up_state == NULL);
 
             self->up->upStream(self->up, newEstContext(c->line));
 
@@ -331,7 +333,8 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    reverse_server_state_t *state = wwmGlobalMalloc(sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
+    reverse_server_state_t *state =
+        wwmGlobalMalloc(sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
     memset(state, 0, sizeof(reverse_server_state_t) + (workers_count * sizeof(thread_box_t)));
 
     tunnel_t *t   = newTunnel();
@@ -346,7 +349,7 @@ api_result_t apiReverseServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyReverseServer(tunnel_t *self)
@@ -356,5 +359,5 @@ tunnel_t *destroyReverseServer(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataReverseServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
+    return (tunnel_metadata_t) {.version = 0001, .flags = kNodeFlagChainHead};
 }

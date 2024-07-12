@@ -81,10 +81,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 return;
             }
             unLockLine(ucstate->d);
-            ucstate->first_sent_d = true;
-            context_t *turned     = switchLine(c, ucstate->d);
-            turned->first         = true;
-            self->dw->downStream(self->dw, turned);
+            self->dw->downStream(self->dw, switchLine(c, ucstate->d));
         }
     }
     else

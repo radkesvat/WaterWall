@@ -70,7 +70,6 @@ typedef struct http2_client_con_state_s
     int                            host_port;
     bool                           handshake_completed;
     bool                           init_sent;
-    bool                           first_sent;
     bool                           no_ping_ack;
 
 } http2_client_con_state_t;

@@ -33,20 +33,18 @@ typedef struct oss_server_state_s
 
 typedef struct oss_server_con_state_s
 {
-    bool handshake_completed;
-    bool fallback_mode;
-    bool fallback_init_sent;
-    bool fallback_first_sent;
-    bool first_sent;
-    bool init_sent;
-    bool fallback_disabled;
-    /* 8-bit pad*/
+
     buffer_stream_t *fallback_buf;
     SSL             *ssl;
     BIO             *rbio;
     BIO             *wbio;
+    bool             handshake_completed;
+    bool             fallback_mode;
+    bool             fallback_init_sent;
+    bool             init_sent;
+    int              reply_sent_tit;
 
-    int reply_sent_tit;
+    bool fallback_disabled;
 
 } oss_server_con_state_t;
 
@@ -166,12 +164,6 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
         destroyContext(c);
         return;
     }
-    if (! cstate->fallback_first_sent)
-    {
-        c->first                    = true;
-        cstate->fallback_first_sent = true;
-    }
-
     c->payload = bufferStreamIdealRead(cstate->fallback_buf);
     state->fallback->upStream(state->fallback, c);
 }
@@ -312,11 +304,6 @@ static void upStream(tunnel_t *self, context_t *c)
                     setLen(buf, n);
                     context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload   = buf;
-                    if (! (cstate->first_sent))
-                    {
-                        data_ctx->first    = true;
-                        cstate->first_sent = true;
-                    }
                     self->up->upStream(self->up, data_ctx);
                     if (! isAlive(c->line))
                     {

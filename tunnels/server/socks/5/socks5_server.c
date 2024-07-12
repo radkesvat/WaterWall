@@ -75,7 +75,6 @@ typedef struct socks5_server_con_state_s
     bool            authenticated;
     bool            established;
     bool            init_sent;
-    bool            first_sent;
     socks5_state_e  state;
     shift_buffer_t *waitbuf;
     unsigned int    udp_data_offset;
@@ -268,10 +267,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else if (c->line->dest_ctx.address_protocol == kSapTcp)
             {
-                if (! cstate->first_sent)
-                {
-                    c->first = cstate->first_sent = true;
-                }
+
                 self->up->upStream(self->up, c);
             }
 
@@ -508,8 +504,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     context_t *updata  = newContextFrom(c);
                     updata->payload    = bytes;
-                    updata->first      = true;
-                    cstate->first_sent = true;
                     self->up->upStream(self->up, updata);
                 }
                 else

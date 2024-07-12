@@ -35,7 +35,6 @@ typedef struct bgp4_client_con_state_s
 {
     buffer_stream_t *read_stream;
     bool             open_received;
-    bool             first_sent;
 
 } bgp4_client_con_state_t;
 
@@ -120,11 +119,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 context_t *data_ctx = newContext(c->line);
                 data_ctx->payload   = buf;
-                if (! cstate->first_sent)
-                {
-                    cstate->first_sent = true;
-                    c->first           = true;
-                }
                 self->up->upStream(self->up, data_ctx);
             }
             else

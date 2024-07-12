@@ -31,10 +31,11 @@ typedef struct trojan_socks_server_state_s
 
 typedef struct trojan_socks_server_con_state_s
 {
-    bool init_sent;
-    bool first_sent;
 
     buffer_stream_t *udp_stream;
+    bool             init_sent;
+    bool             first_packet_received;
+    bool             udp_logged;
 
 } trojan_socks_server_con_state_t;
 static void cleanup(trojan_socks_server_con_state_t *cstate)
@@ -54,7 +55,7 @@ static void encapsulateUdpPacket(context_t *c)
     writeRaw(c->payload, (unsigned char *) "\r\n", 2);
 
     shiftl(c->payload, 2); // LEN
-    writeUI16(c->payload,  htons(packet_len));
+    writeUI16(c->payload, htons(packet_len));
 
     uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
     shiftl(c->payload, 2); // port
@@ -317,8 +318,9 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         dest_context->address_type         = kSatIPV4;
         memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 4);
         shiftr(c->payload, 4);
-        if (! cstate->first_sent)
+        if (! cstate->udp_logged)
         {
+            cstate->udp_logged = true;
             LOGD("TrojanSocksServer: udp ipv4");
         }
 
@@ -327,8 +329,9 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         dest_context->address_type = kSatDomainName;
         // size_t addr_len = (unsigned char)(rawBuf(c->payload)[0]);
         shiftr(c->payload, 1);
-        if (! cstate->first_sent) // print once per connection
+        if (! cstate->udp_logged)
         {
+            cstate->udp_logged = true;
             LOGD("TrojanSocksServer: udp domain %.*s", domain_len, rawBuf(c->payload));
         }
 
@@ -341,8 +344,9 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         dest_context->address.sa.sa_family = AF_INET6;
         memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 16);
         shiftr(c->payload, 16);
-        if (! cstate->first_sent)
+        if (! cstate->udp_logged)
         {
+            cstate->udp_logged = true;
             LOGD("TrojanSocksServer: udp ipv6");
         }
         break;
@@ -380,11 +384,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         }
         cstate->init_sent = true;
     }
-    if (! cstate->first_sent)
-    {
-        c->first           = true;
-        cstate->first_sent = true;
-    }
+
     self->up->upStream(self->up, c);
 
     if (! isAlive(line))
@@ -398,13 +398,14 @@ static void upStream(tunnel_t *self, context_t *c)
 {
     if (c->payload != NULL)
     {
+        trojan_socks_server_con_state_t *cstate = CSTATE(c);
 
-        if (c->first)
+        if (! cstate->first_packet_received)
         {
+            cstate->first_packet_received = true;
             if (parseAddress(c))
             {
-                trojan_socks_server_con_state_t *cstate       = CSTATE(c);
-                socket_context_t                *dest_context = &(c->line->dest_ctx);
+                socket_context_t *dest_context = &(c->line->dest_ctx);
 
                 if (dest_context->address_protocol == kSapTcp)
                 {
@@ -434,11 +435,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 if (dest_context->address_protocol == kSapTcp)
                 {
-                    if (! cstate->first_sent)
-                    {
-                        c->first           = true;
-                        cstate->first_sent = true;
-                    }
                     self->up->upStream(self->up, c);
                     return;
                 }
@@ -474,9 +470,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                trojan_socks_server_con_state_t *cstate = CSTATE(c);
                 reuseContextPayload(c);
-
                 cleanup(cstate);
                 CSTATE_DROP(c);
                 context_t *reply = newFinContextFrom(c);
@@ -486,7 +480,6 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            trojan_socks_server_con_state_t *cstate = CSTATE(c);
 
             if (c->line->dest_ctx.address_protocol == kSapUdp)
             {
@@ -549,10 +542,11 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    trojan_socks_server_con_state_t *cstate = CSTATE(c);
 
     if (c->fin)
     {
+        trojan_socks_server_con_state_t *cstate = CSTATE(c);
+
         cleanup(cstate);
         CSTATE_DROP(c);
         self->dw->downStream(self->dw, c);
@@ -582,7 +576,7 @@ api_result_t apiTrojanSocksServer(tunnel_t *self, const char *msg)
 {
     (void) self;
     (void) msg;
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyTrojanSocksServer(tunnel_t *self)
@@ -593,5 +587,5 @@ tunnel_t *destroyTrojanSocksServer(tunnel_t *self)
 
 tunnel_metadata_t getMetadataTrojanSocksServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

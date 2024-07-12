@@ -39,17 +39,23 @@ typedef struct bgp4_client_state_s
 typedef struct bgp4_client_con_state_s
 {
     buffer_stream_t *read_stream;
+    bool             first_packet_sent;
 
 } bgp4_client_con_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    bgp4_client_state_t *state = TSTATE(self);
+    bgp4_client_state_t     *state  = TSTATE(self);
+    bgp4_client_con_state_t *cstate = CSTATE(c);
 
     if (c->payload != NULL)
     {
-        if (c->first)
+        uint8_t bgp_type = 2 + (fastRand() % kBgpTypes - 1);
+
+        if (! cstate->first_packet_sent)
         {
+            cstate->first_packet_sent = true;
+
             uint32_t additions = 3 + fastRand() % 8;
 
             shiftl(c->payload, kBgpOpenPacketHeaderSize + additions);
@@ -66,9 +72,9 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 header[1 + 2 + 2 + 4 + 1 + i] = fastRand() % 200;
             }
-        }
 
-        uint8_t bgp_type = c->first ? 1 : 2 + (fastRand() % kBgpTypes - 1);
+            bgp_type = 1; // BGP Open
+        }
 
         shiftl(c->payload, 1); // type
         writeUI8(c->payload, bgp_type);
@@ -84,12 +90,11 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        bgp4_client_con_state_t *cstate = CSTATE(c);
 
         if (c->init)
         {
             cstate        = wwmGlobalMalloc(sizeof(bgp4_client_con_state_t));
-            *cstate       = (bgp4_client_con_state_t){.read_stream = newBufferStream(getContextBufferPool(c))};
+            *cstate       = (bgp4_client_con_state_t) {.read_stream = newBufferStream(getContextBufferPool(c))};
             CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)
@@ -166,7 +171,7 @@ static void downStream(tunnel_t *self, context_t *c)
         wwmGlobalFree(cstate);
         CSTATE_DROP(c);
     }
-    
+
     self->dw->downStream(self->dw, c);
     return;
 
@@ -207,7 +212,7 @@ api_result_t apiBgp4Client(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyBgp4Client(tunnel_t *self)
@@ -217,5 +222,5 @@ tunnel_t *destroyBgp4Client(tunnel_t *self)
 }
 tunnel_metadata_t getMetadataBgp4Client(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

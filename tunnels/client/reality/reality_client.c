@@ -45,7 +45,6 @@ typedef struct reality_client_con_state_s
     buffer_stream_t *read_stream;
     context_queue_t *queue;
     bool             handshake_completed;
-    bool             first_sent;
 
 } reality_client_con_state_t;
 
@@ -111,7 +110,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            c->first = false;
             contextQueuePush(cstate->queue, c);
             return;
         }
@@ -193,7 +191,6 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     setLen(buf, n);
                     client_hello_ctx->payload = buf;
-                    client_hello_ctx->first   = true;
                     self->up->upStream(self->up, client_hello_ctx);
                 }
                 else if (! BIO_should_retry(cstate->rbio))

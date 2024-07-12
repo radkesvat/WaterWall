@@ -18,7 +18,7 @@ static int onStreamClosedCallback(nghttp2_session *session, int32_t stream_id, u
 
     http2_client_con_state_t       *con    = (http2_client_con_state_t *) userdata;
     http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
-    LOGD("callback end stream for: %d", stream_id);
+    // LOGD("callback end stream for: %d", stream_id);
     if (! stream)
     {
         return 0;
@@ -159,7 +159,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
                     if (stream->bytes_sent_nack >= kMaxSendBeforeAck)
                     {
                         stream->bytes_sent_nack -= consumed;
-                        LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
+                        // LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
 
                         if (stream->bytes_sent_nack < kMaxSendBeforeAck)
                         {
@@ -169,7 +169,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
                     else
                     {
                         stream->bytes_sent_nack -= consumed;
-                        LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
+                        // LOGD("consumed: %d left: %d", consumed, (int) stream->bytes_sent_nack);
                     }
                 }
             }
@@ -187,7 +187,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     {
         if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM)
         {
-            LOGD("end stream for: %d", frame->hd.stream_id);
+            // LOGD("end stream for: %d", frame->hd.stream_id);
 
             http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
             if (WW_UNLIKELY(! stream))
@@ -478,7 +478,6 @@ static void upStream(tunnel_t *self, context_t *c)
             http2_client_con_state_t       *con    = LSTATE(stream->parent);
             CSTATE_DROP(c);
 
-            // LOGE("closed %d",stream->stream_id);
             int flags = NGHTTP2_FLAG_END_STREAM | NGHTTP2_FLAG_END_HEADERS;
             if (con->content_type == kApplicationGrpc)
             {
@@ -489,7 +488,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 nghttp2_submit_headers(con->session, flags, stream->stream_id, NULL, NULL, 0, NULL);
             }
-            LOGD("destroy %d", (int) stream->stream_id);
+            // LOGD("closing -> %d", (int) stream->stream_id);
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
             removeStream(con, stream);
             deleteHttp2Stream(stream);

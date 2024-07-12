@@ -146,11 +146,16 @@ static void onLineResumed(void *userdata)
 
 static void upStream(tunnel_t *self, context_t *c)
 {
+#ifdef PROFILE
     if (c->payload != NULL)
     {
-#ifdef PROFILE
-        if (c->first)
+        tcp_listener_con_state_t *cstate = CSTATE(c);
+
+        bool *first_packet_sent = &((cstate)->first_packet_sent);
+
+        if (! (*first_packet_sent))
         {
+            *first_packet_sent = true;
             struct timeval tv1, tv2;
             gettimeofday(&tv1, NULL);
             {
@@ -161,16 +166,13 @@ static void upStream(tunnel_t *self, context_t *c)
             LOGD("TcpListener: upstream took %d ms", (int) (time_spent * 1000));
             return;
         }
-#endif
     }
-    else
+#endif
+    if (c->fin)
     {
-        if (c->fin)
-        {
-            tcp_listener_con_state_t *cstate = CSTATE(c);
-            CSTATE_DROP(c);
-            cleanup(cstate, false);
-        }
+        tcp_listener_con_state_t *cstate = CSTATE(c);
+        CSTATE_DROP(c);
+        cleanup(cstate, false);
     }
 
     self->up->upStream(self->up, c);
@@ -231,18 +233,12 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
         reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
         return;
     }
-    shift_buffer_t *payload           = buf;
-    tunnel_t       *self              = (cstate)->tunnel;
-    line_t         *line              = (cstate)->line;
-    bool           *first_packet_sent = &((cstate)->first_packet_sent);
+    shift_buffer_t *payload = buf;
+    tunnel_t       *self    = (cstate)->tunnel;
+    line_t         *line    = (cstate)->line;
 
     context_t *context = newContext(line);
     context->payload   = payload;
-    if (! (*first_packet_sent))
-    {
-        *first_packet_sent = true;
-        context->first     = true;
-    }
 
     self->upStream(self, context);
 }

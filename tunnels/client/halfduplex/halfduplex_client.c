@@ -14,7 +14,7 @@ typedef struct halfduplex_con_state_s
     line_t *main_line;
     line_t *upload_line;
     line_t *download_line;
-
+    bool    first_packet_sent;
 } halfduplex_con_state_t;
 
 static void onMainLinePaused(void *cstate)
@@ -43,16 +43,17 @@ static void onUDLineResumed(void *cstate)
 static void upStream(tunnel_t *self, context_t *c)
 {
     halfduplex_con_state_t *cstate = CSTATE(c);
+
     if (c->payload != NULL)
     {
-        if (c->first)
+        if (!cstate->first_packet_sent)
         {
+            cstate->first_packet_sent = true;
             // 63 bits of random is enough and is better than hashing sender addr on halfduplex server, i believe so...
             uint32_t cids[2]   = {fastRand(), fastRand()};
             uint8_t *cid_bytes = (uint8_t *) &(cids[0]);
 
             context_t *intro_context = newContext(cstate->download_line);
-            intro_context->first     = true;
             intro_context->payload   = popBuffer(getContextBufferPool(c));
 
             cid_bytes[0] = cid_bytes[0] | (1 << 7); // kHLFDCmdDownload
