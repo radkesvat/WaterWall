@@ -80,20 +80,7 @@ if(cjson_ADDED)
 
 endif()
 
-
-
-CPMAddPackage(
-  NAME mimalloc
-  VERSION 2.1.7
-  GITHUB_REPOSITORY microsoft/mimalloc
-  OPTIONS
-  "MI_OVERRIDE OFF"
-  "MI_BUILD_TESTS OFF"
-  "MI_BUILD_SHARED OFF"
-  "MI_SKIP_COLLECT_ON_EXIT ON"
-)
-
-
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/managers/mimalloc)
 target_link_libraries(ww PUBLIC mimalloc-static)
 
 
