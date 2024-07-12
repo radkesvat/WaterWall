@@ -388,6 +388,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
     case kActionStreamFinish: {
         context_t *fc   = newFinContext(stream->line);
         tunnel_t  *dest = stream->tunnel->dw;
+        nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
         removeStream(con, stream);
         deleteHttp2Stream(stream);
         dest->downStream(dest, fc);
