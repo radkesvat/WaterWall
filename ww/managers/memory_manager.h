@@ -1,6 +1,6 @@
 #pragma once
 
-#define ALLOCATOR_BYPASS // switch to stdlib allocators
+// #define ALLOCATOR_BYPASS // switch to stdlib allocators
 
 #include <stdbool.h>
 #include <stddef.h>
