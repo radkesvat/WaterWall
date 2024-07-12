@@ -14,9 +14,6 @@ struct dedicated_memory_s
     wof_allocator_t *wof_state;
     unsigned int     free_counter;
 };
-
-static dedicated_memory_t *state;
-
 enum
 {
     kFreeThreShouldCounter = 64
@@ -24,7 +21,7 @@ enum
 
 #ifdef ALLOCATOR_BYPASS
 
-dedicated_memory_t *createWWMemoryManager()
+dedicated_memory_t *createWWMemoryManager(void)
 {
     return NULL;
 }
@@ -39,12 +36,14 @@ void setWWMemoryManager(dedicated_memory_t *new_state)
     (void) new_state;
 }
 
-dedicated_memory_t *createWWDedicatedMemory()
+dedicated_memory_t *createWWDedicatedMemory(void)
 {
     return NULL;
 }
 
 #else
+
+static dedicated_memory_t *state;
 
 dedicated_memory_t *createWWMemoryManager(void)
 {
@@ -103,10 +102,10 @@ void wwmDedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
     hhybridmutex_lock(&dm->mut);
     wof_free(dm->wof_state, ptr);
-    if (state->free_counter++ > kFreeThreShouldCounter)
+    if (dm->free_counter++ > kFreeThreShouldCounter)
     {
         wof_gc(dm->wof_state);
-        state->free_counter = 0;
+        dm->free_counter = 0;
     }
     hhybridmutex_unlock(&dm->mut);
 }
