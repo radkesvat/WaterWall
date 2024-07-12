@@ -86,11 +86,14 @@ CPMAddPackage(
   NAME mimalloc
   VERSION 2.1.7
   GITHUB_REPOSITORY microsoft/mimalloc
-  OPTIONS 
+  OPTIONS
   "MI_OVERRIDE OFF"
   "MI_BUILD_SHARED OFF"
+  "MI_BUILD_SHARED ON"
   "MI_SKIP_COLLECT_ON_EXIT ON"
 )
+
+
 target_link_libraries(ww PUBLIC mimalloc)
 
 
