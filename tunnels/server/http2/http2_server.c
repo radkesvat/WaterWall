@@ -99,7 +99,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
 
     lockLine(stream->line);
     action_queue_t_push(&con->actions,
-                        (http2_action_t) {.action_id = kActionStreamData, .stream_line = stream->line, .buf = buf});
+                        (http2_action_t) {.action_id = kActionStreamDataReceived, .stream_line = stream->line, .buf = buf});
     return 0;
 }
 
@@ -316,7 +316,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
 
     break;
 
-    case kActionStreamData: {
+    case kActionStreamDataReceived: {
         if (con->content_type == kApplicationGrpc)
         {
             bufferStreamPush(stream->grpc_buffer_stream, action.buf);

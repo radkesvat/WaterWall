@@ -14,6 +14,7 @@ enum
 static int onStreamClosedCallback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *userdata)
 {
     (void) error_code;
+    (void) userdata;
 
     http2_client_con_state_t       *con    = (http2_client_con_state_t *) userdata;
     http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
@@ -40,7 +41,7 @@ static void flushWriteQueue(http2_client_con_state_t *con)
             http2_client_child_con_state_t *stream = CSTATE(stream_context);
 
             lockLine(stream->line);
-            action_queue_t_push(&con->actions, (http2_action_t) {.action_id   = kActionStreamData,
+            action_queue_t_push(&con->actions, (http2_action_t) {.action_id   = kActionConData,
                                                                  .stream_line = stream->line,
                                                                  .buf         = stream_context->payload});
         }
@@ -110,7 +111,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     lockLine(stream->line);
 
     action_queue_t_push(&con->actions,
-                        (http2_action_t) {.action_id = kActionStreamData, .stream_line = stream->line, .buf = buf});
+                        (http2_action_t) {.action_id = kActionStreamDataReceived, .stream_line = stream->line, .buf = buf});
 
     return 0;
 }
@@ -322,7 +323,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
 
     break;
 
-    case kActionStreamData: {
+    case kActionStreamDataReceived: {
         if (con->content_type == kApplicationGrpc)
         {
             bufferStreamPush(stream->grpc_buffer_stream, action.buf);
@@ -392,7 +393,10 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
         dest->downStream(dest, fc);
     }
     break;
-
+    case kActionConData: {
+        sendStreamData(con,stream,action.buf);
+    }
+    break;
     case kActionInvalid:
         LOGF("incorrect http2 action id");
         exit(1);

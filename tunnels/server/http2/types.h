@@ -17,9 +17,9 @@ enum http2_actions
     kActionInvalid,
     kActionStreamInit,
     kActionStreamFinish,
-    kActionStreamData,
-    kActionConData,
-    kActionConFinish
+    kActionStreamDataReceived,
+    kActionConData
+    // kActionConFinish
 };
 
 typedef struct http2_action_s
