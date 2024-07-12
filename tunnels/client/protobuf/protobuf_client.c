@@ -100,6 +100,8 @@ static void downStream(tunnel_t *self, context_t *c)
             size_t         bytes_passed = readUleb128ToUint64(uleb_data, uleb_data + bufLen(full_data), &data_len);
             if (data_len == 0 || (bufLen(full_data) - (bytes_passed)) < data_len)
             {
+                shiftl(full_data, 1); // bring the data back to its original form
+
                 bufferStreamPush(bstream, full_data);
                 destroyContext(c);
                 return;
@@ -167,6 +169,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     context_t *send_flow_ctx = newContextFrom(c);
                     send_flow_ctx->payload   = flowctl_buf;
                     self->up->upStream(self->up, send_flow_ctx);
+                    
                     if (! isAlive(c->line))
                     {
                         reuseBuffer(getContextBufferPool(c), full_data);

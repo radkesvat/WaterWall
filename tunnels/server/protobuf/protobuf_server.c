@@ -63,11 +63,14 @@ static void upStream(tunnel_t *self, context_t *c)
             readUI8(full_data, &flags);
             shiftr(full_data, 1); // first byte is  (protobuf flag)
 
-            const uint8_t *uleb_data    = rawBuf(full_data); // first byte is \n (protobuf)
+            const uint8_t *uleb_data    = rawBuf(full_data);
             uint64_t       data_len     = 0;
             size_t         bytes_passed = readUleb128ToUint64(uleb_data, uleb_data + bufLen(full_data), &data_len);
+         
             if (data_len == 0 || (bufLen(full_data) - (bytes_passed)) < data_len)
             {
+                shiftl(full_data, 1); // bring the data back to its original form
+
                 bufferStreamPush(bstream, full_data);
                 destroyContext(c);
                 return;
