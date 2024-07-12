@@ -76,6 +76,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (data_len > kMaxPacketSize)
             {
                 LOGE("ProtoBufServer: rejected, size too large");
+                reuseBuffer(getContextBufferPool(c), full_data);
                 goto disconnect;
             }
 
@@ -115,7 +116,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else if (flags == '\n')
             {
-                
+
                 cstate->bytes_received_nack += (size_t) data_len;
                 if (cstate->bytes_received_nack >= kMaxRecvBeforeAck)
                 {
@@ -134,8 +135,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     context_t *send_flow_ctx = newContextFrom(c);
                     send_flow_ctx->payload   = flowctl_buf;
                     self->dw->downStream(self->dw, send_flow_ctx);
+                     if (! isAlive(c->line))
+                    {
+                        reuseBuffer(getContextBufferPool(c), full_data);
+                        destroyContext(c);
+                        return;
+                    }
                 }
-
 
                 context_t *upstream_ctx = newContextFrom(c);
                 upstream_ctx->payload   = popBuffer(getContextBufferPool(c));
@@ -151,17 +157,19 @@ static void upStream(tunnel_t *self, context_t *c)
                     reuseBuffer(getContextBufferPool(c), full_data);
                 }
                 self->up->upStream(self->up, upstream_ctx);
+
+                if (! isAlive(c->line))
+                {
+                    destroyContext(c);
+                    return;
+                }
             }
             else
             {
                 LOGE("ProtoBufServer: rejected, invalid flag");
-                goto disconnect;
-            }
+                reuseBuffer(getContextBufferPool(c), full_data);
 
-            if (! isAlive(c->line))
-            {
-                destroyContext(c);
-                return;
+                goto disconnect;
             }
         }
     }
