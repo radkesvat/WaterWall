@@ -10,13 +10,13 @@
     Tunnels basicly encapsulate / decapsulate the packets and pass it to the next tunnel.
     something like this:
 
-    ----------------------------- a chain -------------------------------
+    ------------------------------ chain --------------------------------
 
-    ---------------            ---------------            ---------------
-    |             | ---------> |             | ---------> |             |
-    |  Tunnel 1   |            |  Tunnel 2   |            |  Tunnel 3   |
-    |             | <--------- |             | <--------- |             |
-    ---------------            ---------------            ---------------
+      --------------            --------------            --------------
+      |            | ---------> |            | ---------> |            |
+      |  Tunnel 1  |            |  Tunnel 2  |            |  Tunnel 3  |
+      |            | <--------- |            | <--------- |            |
+      --------------            --------------            --------------
 
     ----------------------------------------------------------------------
 
@@ -81,6 +81,8 @@ enum
 typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
+typedef uint8_t  tid_t;
+typedef uint8_t  chain_index_t;
 
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
@@ -100,8 +102,8 @@ typedef uint32_t line_refc_t;
 typedef struct line_s
 {
     line_refc_t      refc;
+    tid_t            tid;
     bool             alive;
-    uint8_t          tid;
     bool             up_piped;
     bool             dw_piped;
     void            *up_state;
@@ -110,9 +112,9 @@ typedef struct line_s
     LineFlowSignal   up_resume_cb;
     LineFlowSignal   dw_pause_cb;
     LineFlowSignal   dw_resume_cb;
-    void            *chains_state[kMaxChainLen];
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
+    void            *chains_state[kMaxChainLen];
     uint8_t          auth_cur;
 
 } line_t;
@@ -152,7 +154,7 @@ typedef struct tunnel_s // 48
     TunnelFlowRoutine upStream;
     TunnelFlowRoutine downStream;
 
-    uint8_t chain_index;
+    chain_index_t chain_index;
 } tunnel_t;
 
 tunnel_t *newTunnel(void);
@@ -182,13 +184,12 @@ static inline line_t *newLine(uint8_t tid)
         .chains_state = {0},
         // to set a port we need to know the AF family, default v4
         .dest_ctx = (socket_context_t) {.address.sa = (struct sockaddr) {.sa_family = AF_INET, .sa_data = {0}}},
-        .src_ctx  = (socket_context_t) {.address.sa = (struct sockaddr) {.sa_family = AF_INET, .sa_data = {0}}}
-    };
+        .src_ctx  = (socket_context_t) {.address.sa = (struct sockaddr) {.sa_family = AF_INET, .sa_data = {0}}}};
 
     return result;
 }
 
-static inline bool isAlive(line_t *line)
+static inline bool isAlive(const line_t *const line)
 {
     return line->alive;
 }
@@ -197,7 +198,8 @@ static inline bool isAlive(line_t *line)
     Once the up state is setup, it will receive pasue/resume events from down end of the line, with the `state` as
    userdata
 */
-static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
+static inline void setupLineUpSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
+                                   LineFlowSignal resume_cb)
 {
     assert(l->up_state == NULL);
     l->up_state     = state;
@@ -209,7 +211,8 @@ static inline void setupLineUpSide(line_t *l, LineFlowSignal pause_cb, void *sta
     Once the down state is setup, it will receive pasue/resume events from up end of the line, with the `state` as
    userdata
 */
-static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *state, LineFlowSignal resume_cb)
+static inline void setupLineDownSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
+                                     LineFlowSignal resume_cb)
 {
     assert(l->dw_state == NULL);
     l->dw_state     = state;
@@ -217,19 +220,19 @@ static inline void setupLineDownSide(line_t *l, LineFlowSignal pause_cb, void *s
     l->dw_resume_cb = resume_cb;
 }
 
-static inline void doneLineUpSide(line_t *l)
+static inline void doneLineUpSide(line_t *const l)
 {
     assert(l->up_state != NULL || l->up_pause_cb == NULL);
     l->up_state = NULL;
 }
 
-static inline void doneLineDownSide(line_t *l)
+static inline void doneLineDownSide(line_t *const l)
 {
     assert(l->dw_state != NULL || l->dw_pause_cb == NULL);
     l->dw_state = NULL;
 }
 
-static inline void pauseLineUpSide(line_t *l)
+static inline void pauseLineUpSide(line_t *const l)
 {
     if (l->up_state)
     {
@@ -237,7 +240,7 @@ static inline void pauseLineUpSide(line_t *l)
     }
 }
 
-static inline void pauseLineDownSide(line_t *l)
+static inline void pauseLineDownSide(line_t *const l)
 {
     if (l->dw_state)
     {
@@ -245,7 +248,7 @@ static inline void pauseLineDownSide(line_t *l)
     }
 }
 
-static inline void resumeLineUpSide(line_t *l)
+static inline void resumeLineUpSide(line_t *const l)
 {
     if (l->up_state)
     {
@@ -253,7 +256,7 @@ static inline void resumeLineUpSide(line_t *l)
     }
 }
 
-static inline void resumeLineDownSide(line_t *l)
+static inline void resumeLineDownSide(line_t *const l)
 {
     if (l->dw_state)
     {
@@ -264,7 +267,7 @@ static inline void resumeLineDownSide(line_t *l)
 /*
     called from unlockline which mostly is because destroy context
 */
-static inline void internalUnRefLine(line_t *l)
+static inline void internalUnRefLine(line_t *const l)
 {
     if (--(l->refc) > 0)
     {
@@ -294,7 +297,7 @@ static inline void internalUnRefLine(line_t *l)
 /*
     called mostly because create context
 */
-static inline void lockLine(line_t *line)
+static inline void lockLine(line_t *const line)
 {
     assert(line->alive || line->refc > 0);
     // basic overflow protection
@@ -303,7 +306,7 @@ static inline void lockLine(line_t *line)
     line->refc++;
 }
 
-static inline void unLockLine(line_t *line)
+static inline void unLockLine(line_t *const line)
 {
     internalUnRefLine(line);
 }
@@ -314,7 +317,7 @@ static inline void unLockLine(line_t *line)
    the line can still be used regularly during the time that it has at least 1 ref
 
 */
-static inline void destroyLine(line_t *l)
+static inline void destroyLine(line_t *const l)
 {
     l->alive = false;
     unLockLine(l);
@@ -331,7 +334,7 @@ static inline void destroyContext(context_t *c)
     reusePoolItem(context_pools[tid], c);
 }
 
-static inline context_t *newContext(line_t *line)
+static inline context_t *newContext(line_t *const line)
 {
     context_t *new_ctx = popPoolItem(context_pools[line->tid]);
     *new_ctx           = (context_t) {.line = line};
@@ -339,7 +342,7 @@ static inline context_t *newContext(line_t *line)
     return new_ctx;
 }
 
-static inline context_t *newContextFrom(context_t *source)
+static inline context_t *newContextFrom(const context_t *const source)
 {
     lockLine(source->line);
     context_t *new_ctx = popPoolItem(context_pools[source->line->tid]);
@@ -347,35 +350,35 @@ static inline context_t *newContextFrom(context_t *source)
     return new_ctx;
 }
 
-static inline context_t *newEstContext(line_t *line)
+static inline context_t *newEstContext(line_t *const line)
 {
     context_t *c = newContext(line);
     c->est       = true;
     return c;
 }
 
-static inline context_t *newFinContext(line_t *l)
+static inline context_t *newFinContext(line_t *const l)
 {
     context_t *c = newContext(l);
     c->fin       = true;
     return c;
 }
 
-static inline context_t *newFinContextFrom(context_t *source)
+static inline context_t *newFinContextFrom(context_t *const source)
 {
     context_t *c = newContextFrom(source);
     c->fin       = true;
     return c;
 }
 
-static inline context_t *newInitContext(line_t *line)
+static inline context_t *newInitContext(line_t *const line)
 {
     context_t *c = newContext(line);
     c->init      = true;
     return c;
 }
 
-static inline context_t *switchLine(context_t *c, line_t *line)
+static inline context_t *switchLine(context_t *const c, line_t *const line)
 {
     lockLine(line);
     unLockLine(c->line);
@@ -383,7 +386,7 @@ static inline context_t *switchLine(context_t *c, line_t *line)
     return c;
 }
 
-static inline void markAuthenticated(line_t *line)
+static inline void markAuthenticated(line_t *const line)
 {
     // basic overflow protection
     assert(line->auth_cur < (((0x1ULL << ((sizeof(line->auth_cur) * 8ULL) - 1ULL)) - 1ULL) |
@@ -391,7 +394,7 @@ static inline void markAuthenticated(line_t *line)
     line->auth_cur += 1;
 }
 
-static inline bool isAuthenticated(line_t *line)
+static inline bool isAuthenticated(line_t *const line)
 {
     return line->auth_cur > 0;
 }
@@ -401,12 +404,12 @@ static inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
     return buffer_pools[tid];
 }
 
-static inline buffer_pool_t *getLineBufferPool(line_t *l)
+static inline buffer_pool_t *getLineBufferPool(const line_t *const l)
 {
     return buffer_pools[l->tid];
 }
 
-static inline buffer_pool_t *getContextBufferPool(context_t *c)
+static inline buffer_pool_t *getContextBufferPool(const context_t *const c)
 {
     return buffer_pools[c->line->tid];
 }
@@ -414,7 +417,7 @@ static inline buffer_pool_t *getContextBufferPool(context_t *c)
 // same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
 // build
 
-static inline void dropContexPayload(context_t *c)
+static inline void dropContexPayload(context_t *const c)
 {
 #if defined(RELEASE)
     (void) (c);
@@ -424,24 +427,24 @@ static inline void dropContexPayload(context_t *c)
 #endif
 }
 
-static inline void reuseContextPayload(context_t *c)
+static inline void reuseContextPayload(context_t *const c)
 {
     assert(c->payload != NULL);
     reuseBuffer(getContextBufferPool(c), c->payload);
     dropContexPayload(c);
 }
 
-static inline bool isUpPiped(line_t *l)
+static inline bool isUpPiped(const line_t *const l)
 {
     return l->up_piped;
 }
 
-static inline bool isDownPiped(line_t *l)
+static inline bool isDownPiped(const line_t *const l)
 {
     return l->dw_piped;
 }
 
-static inline hloop_t *getLineLoop(line_t *l)
+static inline hloop_t *getLineLoop(const line_t *const l)
 {
     return loops[l->tid];
 }

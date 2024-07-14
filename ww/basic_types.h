@@ -116,12 +116,13 @@ enum socket_address_protocol
 // all data we need to connect to somewhere
 typedef struct socket_context_s
 {
+    char                        *domain;
+    sockaddr_u                   address;
     enum socket_address_protocol address_protocol;
     enum socket_address_type     address_type;
-    sockaddr_u                   address;
-    char                        *domain;
-    unsigned int                 domain_len;
-    bool                         domain_constant;
     enum domain_strategy         domain_strategy;
+    unsigned int                 domain_len;
     bool                         domain_resolved;
+    bool                         domain_constant;
+
 } socket_context_t;

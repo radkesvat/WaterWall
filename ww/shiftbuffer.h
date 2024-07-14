@@ -34,7 +34,7 @@ struct shift_buffer_s
     unsigned int  calc_len;
     unsigned int  curpos;
     unsigned int  full_cap;
-    unsigned int  _offset;
+    unsigned int  offset;
 };
 
 typedef struct shift_buffer_s shift_buffer_t;
@@ -78,7 +78,7 @@ static inline void constrainRight(shift_buffer_t *const self)
 
 static inline void constrainLeft(shift_buffer_t *const self)
 {
-    self->_offset += self->curpos;
+    self->offset += self->curpos;
     self->pbuf += self->curpos;
     self->full_cap -= self->curpos;
     self->curpos = 0;
@@ -89,12 +89,12 @@ static inline void shiftl(shift_buffer_t *const self, const unsigned int bytes)
 begin:;
     if (lCap(self) < bytes)
     {
-        if (! isShallow(self) && self->_offset != 0)
+        if (! isShallow(self) && self->offset != 0)
         {
-            self->curpos += self->_offset;
-            self->pbuf -= self->_offset;
-            self->full_cap += self->_offset;
-            self->_offset = 0;
+            self->curpos += self->offset;
+            self->pbuf -= self->offset;
+            self->full_cap += self->offset;
+            self->offset = 0;
             // shiftl(self, bytes);
             goto begin;
         }
@@ -105,7 +105,7 @@ begin:;
     self->calc_len += bytes;
 }
 
-static inline void shiftr(shift_buffer_t *self, const unsigned int bytes)
+static inline void shiftr(shift_buffer_t * const self, const unsigned int bytes)
 {
     // caller knows if there is space or not, checking here makes no sense
     self->curpos += bytes;
@@ -113,7 +113,7 @@ static inline void shiftr(shift_buffer_t *self, const unsigned int bytes)
 }
 
 // developer should call this function or reserve function before writing
-static inline void setLen(shift_buffer_t *self, const unsigned int bytes)
+static inline void setLen(shift_buffer_t * const self, const unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {
@@ -129,7 +129,7 @@ static inline unsigned int bufLen(const shift_buffer_t *const self)
     return self->calc_len;
 }
 
-static inline void reserveBufSpace(shift_buffer_t *self, const unsigned int bytes)
+static inline void reserveBufSpace(shift_buffer_t * const self, const unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {
@@ -137,7 +137,7 @@ static inline void reserveBufSpace(shift_buffer_t *self, const unsigned int byte
     }
 }
 
-static inline void consume(shift_buffer_t *self, const unsigned int bytes)
+static inline void consume(shift_buffer_t *const self, const unsigned int bytes)
 {
     setLen(self, bufLen(self) - bytes);
 }

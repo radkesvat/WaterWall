@@ -36,7 +36,7 @@ void destroyShiftBuffer(uint8_t tid, shift_buffer_t *self)
 
     if (*(self->refc) <= 0)
     {
-        wwmGlobalFree(self->pbuf - self->_offset);
+        wwmGlobalFree(self->pbuf - self->offset);
         reusePoolItem(shift_buffer_pools[tid], self);
     }
     else
@@ -59,7 +59,7 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
     shift_buffer_t *self = (shift_buffer_t *) popPoolItem(shift_buffer_pools[tid]);
 
     self->calc_len = 0;
-    self->_offset  = 0;
+    self->offset  = 0;
     self->curpos   = PREPADDING;
     self->full_cap = real_cap;
     self->pbuf     = wwmGlobalMalloc(real_cap);
@@ -103,13 +103,13 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
 
     if (self->full_cap != real_cap)
     {
-        wwmGlobalFree(self->pbuf - self->_offset);
+        wwmGlobalFree(self->pbuf - self->offset);
         self->pbuf     = wwmGlobalMalloc(real_cap);
         self->full_cap = real_cap;
         // memset(self->pbuf, 0, real_cap);
     }
     self->calc_len = 0;
-    self->_offset  = 0;
+    self->offset  = 0;
     self->curpos   = PREPADDING;
 }
 
@@ -123,7 +123,7 @@ void unShallow(shift_buffer_t *self)
     *(self->refc) = 1;
     char *old_buf = self->pbuf;
     self->pbuf    = wwmGlobalMalloc(self->full_cap);
-    self->_offset = 0;
+    self->offset = 0;
     memcpy(&(self->pbuf[self->curpos]), &(old_buf[self->curpos]), (self->calc_len));
 }
 
@@ -139,7 +139,7 @@ void expand(shift_buffer_t *self, unsigned int increase)
         *(self->refc)    = 1;
         char *old_buf    = self->pbuf;
         self->pbuf       = wwmGlobalMalloc(new_realcap);
-        self->_offset    = 0;
+        self->offset    = 0;
         unsigned int dif = (new_realcap - self->full_cap) / 2;
         memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
@@ -155,8 +155,8 @@ void expand(shift_buffer_t *self, unsigned int increase)
         memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
         self->full_cap = new_realcap;
-        wwmGlobalFree(old_buf - self->_offset);
-        self->_offset = 0;
+        wwmGlobalFree(old_buf - self->offset);
+        self->offset = 0;
     }
 }
 
@@ -208,17 +208,17 @@ shift_buffer_t *sliceBuffer(const uint8_t tid, shift_buffer_t *const self, const
 
     void        *tmp_pbuf   = self->pbuf;
     void        *tmp_refc   = self->refc;
-    unsigned int tmp_offset = self->_offset;
+    unsigned int tmpoffset = self->offset;
 
     self->refc    = newbuf->refc;
     self->pbuf    = newbuf->pbuf;
-    self->_offset = newbuf->_offset;
+    self->offset = newbuf->offset;
     *newbuf       = (struct shift_buffer_s){.calc_len = self->calc_len,
                                             .curpos   = self->curpos,
                                             .full_cap = self->full_cap,
                                             .pbuf     = tmp_pbuf,
                                             .refc     = tmp_refc,
-                                            ._offset  = tmp_offset};
+                                            .offset  = tmpoffset};
 
     memcpy(rawBufMut(self), &(((const char *) rawBuf(newbuf))[bytes]), bufLen(newbuf) - bytes);
     shiftr(self, bytes);
@@ -230,12 +230,12 @@ shift_buffer_t *shallowSliceBuffer(const uint8_t tid, shift_buffer_t *self, cons
 {
     assert(bytes <= bufLen(self));
 
-    if (! isShallow(self) && self->_offset != 0)
+    if (! isShallow(self) && self->offset != 0)
     {
-        self->curpos += self->_offset;
-        self->pbuf -= self->_offset;
-        self->full_cap += self->_offset;
-        self->_offset = 0;
+        self->curpos += self->offset;
+        self->pbuf -= self->offset;
+        self->full_cap += self->offset;
+        self->offset = 0;
     }
 
     shift_buffer_t *shallow = newShallowShiftBuffer(tid, self);
