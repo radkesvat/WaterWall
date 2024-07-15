@@ -19,8 +19,8 @@
 enum
 {
     kMaxPacketSize    = (65536 * 1),
-    kMaxRecvBeforeAck = (1 << 16),
-    kMaxSendBeforeAck = (1 << 19)
+    kMaxRecvBeforeAck = (1 << 14),
+    kMaxSendBeforeAck = (1 << 17)
 };
 
 typedef struct protobuf_server_state_s
