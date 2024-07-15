@@ -279,7 +279,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
             if (settings->ram_profile <= 0)
             {
                 fprintf(stderr, "CoreSettings: ram-profile can hold \"server\" or \"client\" "
-                                "or \"client-larger\" or \"ultralow\" \n");
+                                "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
 
                 exit(1);
             }

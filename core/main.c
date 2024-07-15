@@ -12,15 +12,19 @@
 
 int main(void)
 {
-    // test ASAN works -_-
+    // check address sanitizer works properly
     // int test[3] = {0};
-    // printf("hello world %d", test[4]);
+    // printf("hello world %d", test[3]);
 
+    /*
+        setup ww memory manager, since it is used everywhere in ww lib
+        we can't even call readfile without it
+    */
     initHeap();
 
     static const char *core_file_name    = "core.json";
     char              *core_file_content = readFile(core_file_name);
-    
+
     if (core_file_content == NULL)
     {
         fprintf(stderr, "Waterwall version %s\nCould not read core settings file \"%s\" \n",
@@ -34,17 +38,18 @@ int main(void)
     hv_mkdir_p(getCoreSettings()->log_path);
 
     ww_construction_data_t runtime_data = {
-        .workers_count       = getCoreSettings()->workers_count,
-        .ram_profile         = getCoreSettings()->ram_profile,
-        .core_logger_data    = (logger_construction_data_t){.log_file_path = getCoreSettings()->core_log_file_fullpath,
-                                                            .log_level     = getCoreSettings()->core_log_level,
-                                                            .log_console   = getCoreSettings()->core_log_console},
-        .network_logger_data = (logger_construction_data_t){.log_file_path = getCoreSettings()->network_log_file_fullpath,
-                                                            .log_level     = getCoreSettings()->network_log_level,
-                                                            .log_console   = getCoreSettings()->network_log_console},
-        .dns_logger_data     = (logger_construction_data_t){.log_file_path = getCoreSettings()->dns_log_file_fullpath,
-                                                            .log_level     = getCoreSettings()->dns_log_level,
-                                                            .log_console   = getCoreSettings()->dns_log_console},
+        .workers_count    = getCoreSettings()->workers_count,
+        .ram_profile      = getCoreSettings()->ram_profile,
+        .core_logger_data = (logger_construction_data_t) {.log_file_path = getCoreSettings()->core_log_file_fullpath,
+                                                          .log_level     = getCoreSettings()->core_log_level,
+                                                          .log_console   = getCoreSettings()->core_log_console},
+        .network_logger_data =
+            (logger_construction_data_t) {.log_file_path = getCoreSettings()->network_log_file_fullpath,
+                                          .log_level     = getCoreSettings()->network_log_level,
+                                          .log_console   = getCoreSettings()->network_log_console},
+        .dns_logger_data = (logger_construction_data_t) {.log_file_path = getCoreSettings()->dns_log_file_fullpath,
+                                                         .log_level     = getCoreSettings()->dns_log_level,
+                                                         .log_console   = getCoreSettings()->dns_log_console},
     };
 
     // core logger is available after ww setup
@@ -63,11 +68,10 @@ int main(void)
             LOGD("Core: begin parsing config file \"%s\"", *k.ref);
             config_file_t *cfile = parseConfigFile(*k.ref);
 
-            if (cfile == NULL)
-            {
-                LOGF("Core: could not read file \"%s\" ", *k.ref);
-                exit(1);
-            }
+            /*
+                in case of error in config file, the details is already printed out and the
+                program will not reach this line
+            */
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);

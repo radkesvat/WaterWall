@@ -245,7 +245,7 @@ node_t *newNode(void)
     return new_node;
 }
 
-static void startParsingFile(node_manager_config_t *cfg)
+static void startInstallingConfigFile(node_manager_config_t *cfg)
 {
     cJSON *nodes_json = cfg->config_file->nodes;
     cJSON *node_json  = NULL;
@@ -288,7 +288,7 @@ void runConfigFile(config_file_t *config_file)
 {
 
     node_manager_config_t cfg = {.config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap)};
-    startParsingFile(&cfg);
+    startInstallingConfigFile(&cfg);
     vec_configs_t_push(&(state->configs), cfg);
 }
 
