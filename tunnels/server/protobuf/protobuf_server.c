@@ -94,7 +94,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 cstate->bytes_sent_nack -= consumed;
 
-                if (cstate->bytes_sent_nack < kMaxSendBeforeAck / 2)
+                if (cstate->bytes_sent_nack <= kMaxSendBeforeAck / 3)
                 {
                     resumeLineUpSide(c->line);
                 }
