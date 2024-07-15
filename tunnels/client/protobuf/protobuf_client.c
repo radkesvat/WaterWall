@@ -122,21 +122,11 @@ static void downStream(tunnel_t *self, context_t *c)
                 memcpy(&consumed, rawBuf(full_data), sizeof(uint32_t));
                 consumed = ntohl(consumed);
                 shiftr(full_data, sizeof(uint32_t));
+                cstate->bytes_sent_nack -= consumed;
 
-                if (cstate->bytes_sent_nack >= kMaxSendBeforeAck)
+                if (cstate->bytes_sent_nack < kMaxSendBeforeAck / 2)
                 {
-                    cstate->bytes_sent_nack -= consumed;
-                    // LOGD("consumed: %d left: %d", consumed, (int) cstate->bytes_sent_nack);
-
-                    if (cstate->bytes_sent_nack < kMaxSendBeforeAck)
-                    {
-                        resumeLineDownSide(c->line);
-                    }
-                }
-                else
-                {
-                    cstate->bytes_sent_nack -= consumed;
-                    // LOGD("consumed: %d left: %d", consumed, (int) cstate->bytes_sent_nack);
+                    resumeLineDownSide(c->line);
                 }
 
                 if (bufLen(full_data) > 0)
@@ -169,7 +159,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     context_t *send_flow_ctx = newContextFrom(c);
                     send_flow_ctx->payload   = flowctl_buf;
                     self->up->upStream(self->up, send_flow_ctx);
-                    
+
                     if (! isAlive(c->line))
                     {
                         reuseBuffer(getContextBufferPool(c), full_data);
