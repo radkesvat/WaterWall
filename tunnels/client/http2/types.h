@@ -7,7 +7,6 @@
 #include "loggers/network_logger.h"
 #include "nghttp2/nghttp2.h"
 
-
 enum http2_actions
 {
     kActionInvalid,
@@ -38,6 +37,7 @@ typedef struct http2_client_child_con_state_s
     line_t                                *line;
     size_t                                 grpc_bytes_needed;
     int32_t                                stream_id;
+    bool                                   paused;
 
 } http2_client_child_con_state_t;
 
@@ -50,6 +50,7 @@ typedef struct http2_client_con_state_s
     htimer_t                      *ping_timer;
     tunnel_t                      *tunnel;
     line_t                        *line;
+    line_t                        *current_stream_write_line;
     const char                    *path;
     const char                    *host; // authority
     const char                    *scheme;

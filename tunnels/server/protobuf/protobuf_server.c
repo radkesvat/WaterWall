@@ -20,7 +20,7 @@ enum
 {
     kMaxPacketSize    = (65536 * 1),
     kMaxRecvBeforeAck = (1 << 15),
-    kMaxSendBeforeAck = (1 << 21)
+    kMaxSendBeforeAck = (1 << 20)
 };
 
 typedef struct protobuf_server_state_s
@@ -94,7 +94,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 cstate->bytes_sent_nack -= consumed;
 
-                if (cstate->bytes_sent_nack <= kMaxSendBeforeAck / 3)
+                if (cstate->bytes_sent_nack <= kMaxSendBeforeAck / 2)
                 {
                     resumeLineUpSide(c->line);
                 }

@@ -15,6 +15,9 @@ static int onStreamClosedCallback(nghttp2_session *session, int32_t stream_id, u
     http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
     // LOGD("callback end stream for: %d", stream_id);
 
+    // todo (optimize) nghttp2 is calling this callback even if we close the con ourselves
+    // this should be omitted
+    
     if (! stream)
     {
         return 0;

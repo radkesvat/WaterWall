@@ -19,6 +19,10 @@ static int onStreamClosedCallback(nghttp2_session *session, int32_t stream_id, u
     http2_client_con_state_t       *con    = (http2_client_con_state_t *) userdata;
     http2_client_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
     // LOGD("callback end stream for: %d", stream_id);
+
+    // todo (optimize) nghttp2 is calling this callback even if we close the con ourselves
+    // this should be omitted
+
     if (! stream)
     {
         return 0;
@@ -110,8 +114,9 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     writeRaw(buf, data, len);
     lockLine(stream->line);
 
-    action_queue_t_push(&con->actions,
-                        (http2_action_t) {.action_id = kActionStreamDataReceived, .stream_line = stream->line, .buf = buf});
+    action_queue_t_push(
+        &con->actions,
+        (http2_action_t) {.action_id = kActionStreamDataReceived, .stream_line = stream->line, .buf = buf});
 
     return 0;
 }
@@ -185,7 +190,6 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     return 0;
 }
 
-
 static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con_state_t *stream, shift_buffer_t *buf)
 {
     http2_flag flags = kHttP2FlagNone;
@@ -212,9 +216,13 @@ static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con
     framehd.stream_id = stream->stream_id;
     shiftl(buf, HTTP2_FRAME_HDLEN);
     http2FrameHdPack(&framehd, rawBufMut(buf));
-    context_t *data = newContext(con->line);
-    data->payload   = buf;
+    context_t *data                = newContext(con->line);
+    data->payload                  = buf;
+    con->current_stream_write_line = stream->line;
+    lockLine(stream->line);
     con->tunnel->up->upStream(con->tunnel->up, data);
+    unLockLine(stream->line);
+    con->current_stream_write_line = NULL;
 }
 
 static bool sendNgHttp2Data(tunnel_t *self, http2_client_con_state_t *con)
@@ -310,7 +318,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
         {
             shift_buffer_t *buf         = action.buf;
             context_t      *stream_data = newContext(stream->line);
-            stream_data->payload = buf;
+            stream_data->payload        = buf;
             stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);
         }
         if (! isAlive(action.stream_line) || ! isAlive(main_line))
@@ -331,7 +339,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
     }
     break;
     case kActionConData: {
-        sendStreamData(con,stream,action.buf);
+        sendStreamData(con, stream, action.buf);
     }
     break;
     case kActionInvalid:

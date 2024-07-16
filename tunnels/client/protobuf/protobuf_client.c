@@ -18,7 +18,7 @@ enum
 {
     kMaxPacketSize    = (65536 * 1),
     kMaxRecvBeforeAck = (1 << 15),
-    kMaxSendBeforeAck = (1 << 21)
+    kMaxSendBeforeAck = (1 << 20)
 };
 
 typedef struct protobuf_client_state_s
@@ -124,7 +124,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 shiftr(full_data, sizeof(uint32_t));
                 cstate->bytes_sent_nack -= consumed;
 
-                if (cstate->bytes_sent_nack <=kMaxSendBeforeAck / 3)
+                if (cstate->bytes_sent_nack <=kMaxSendBeforeAck / 2)
                 {
                     resumeLineDownSide(c->line);
                 }

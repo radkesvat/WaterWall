@@ -43,16 +43,26 @@ static void onStreamLineResumed(void *arg)
 
 static void onH2LinePaused(void *arg)
 {
-    http2_client_con_state_t *con = (http2_client_con_state_t *) arg;
+    http2_client_con_state_t *con  = (http2_client_con_state_t *) arg;
+    tunnel_t                 *self = con->tunnel;
+
+    line_t *stream_line = con->current_stream_write_line;
+    if (stream_line && isAlive(stream_line))
+    {
+        http2_client_child_con_state_t *stream = LSTATE(stream_line);
+        stream->paused                         = true;
+        pauseLineDownSide(stream->line);
+    }
+
     // ++(con->pause_counter);
     // if (con->pause_counter > 8)
     // {
-    http2_client_child_con_state_t *stream_i;
-    for (stream_i = con->root.next; stream_i;)
-    {
-        pauseLineDownSide(stream_i->line);
-        stream_i = stream_i->next;
-    }
+    // http2_client_child_con_state_t *stream_i;
+    // for (stream_i = con->root.next; stream_i;)
+    // {
+    //     pauseLineDownSide(stream_i->line);
+    //     stream_i = stream_i->next;
+    // }
     // }
 }
 
@@ -63,7 +73,11 @@ static void onH2LineResumed(void *arg)
     http2_client_child_con_state_t *stream_i;
     for (stream_i = con->root.next; stream_i;)
     {
-        resumeLineDownSide(stream_i->line);
+        if (stream_i->paused)
+        {
+            stream_i->paused = false;
+            resumeLineDownSide(stream_i->line);
+        }
         stream_i = stream_i->next;
     }
 }
@@ -214,7 +228,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
         }
         unLockLine(k.ref->stream_line);
     }
-    
+
     action_queue_t_drop(&con->actions);
     doneLineDownSide(con->line);
     LSTATE_DROP(con->line);
