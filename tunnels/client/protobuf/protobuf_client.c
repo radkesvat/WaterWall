@@ -17,8 +17,8 @@
 enum
 {
     kMaxPacketSize    = (65536 * 1),
-    kMaxRecvBeforeAck = (1 << 15),
-    kMaxSendBeforeAck = (1 << 20)
+    kMaxRecvBeforeAck = (1 << 16),
+    kMaxSendBeforeAck = (1 << 22)
 };
 
 typedef struct protobuf_client_state_s
