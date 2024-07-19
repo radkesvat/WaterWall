@@ -180,7 +180,7 @@ void createWW(const ww_construction_data_t init_data)
     // [Section] workers and pools heap allocation
     {
         workers_count = init_data.workers_count;
-        if (workers_count <= 0 || workers_count > (256 - kAdditionalReservedWorkers))
+        if (workers_count <= 0 || workers_count > (255 - kAdditionalReservedWorkers))
         {
             fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - 255]\n", workers_count);
         }

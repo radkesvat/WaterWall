@@ -76,15 +76,15 @@ typedef struct udpsock_s
 
 } udpsock_t;
 
-// if you asked for udp, youll get such struct when a udp packet received and passed all filters
+// if you asked for udp, you'll get such struct when a udp packet received and passed all filters
 typedef struct udp_payload_s
 {
     udpsock_t      *sock;
     tunnel_t       *tunnel;
-    uint8_t         tid;
+    shift_buffer_t *buf;
     sockaddr_u      peer_addr;
     uint16_t        real_localport;
-    shift_buffer_t *buf;
+    uint8_t         tid;
 
 } udp_payload_t;
 

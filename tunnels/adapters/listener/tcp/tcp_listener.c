@@ -206,21 +206,18 @@ static void downStream(tunnel_t *self, context_t *c)
     }
     else
     {
-
-        if (c->est)
-        {
-            assert(! cstate->established);
-            cstate->established = true;
-            hio_set_keepalive_timeout(cstate->io, kEstablishedKeepAliveTimeOutMs);
-            destroyContext(c);
-            return;
-        }
         if (c->fin)
         {
             CSTATE_DROP(c);
             cleanup(cstate, true);
             destroyContext(c);
-            return;
+        }
+        else if (c->est)
+        {
+            assert(! cstate->established);
+            cstate->established = true;
+            hio_set_keepalive_timeout(cstate->io, kEstablishedKeepAliveTimeOutMs);
+            destroyContext(c);
         }
     }
 }

@@ -64,19 +64,19 @@ int main(void)
     {
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {
-            // read config file
             LOGD("Core: begin parsing config file \"%s\"", *k.ref);
             config_file_t *cfile = parseConfigFile(*k.ref);
 
             /*
                 in case of error in config file, the details is already printed out and the
-                program will not reach this line
+                program will not reach this line.
             */
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
             runConfigFile(cfile);
         }
     }
+    
     LOGD("Core: starting workers ...");
     startSocketManager();
     runMainThread();

@@ -186,7 +186,7 @@ static int __nio_write(hio_t* io, const void* buf, int len) {
 static void nio_read(hio_t* io) {
     // printd("nio_read fd=%d\n", io->fd);
     int nread = 0, err = 0;
-//  read:;
+    //  read:;
 
     // #if defined(OS_LINUX) && defined(HAVE_PIPE)
     //     if(io->pfd_w){
@@ -195,7 +195,10 @@ static void nio_read(hio_t* io) {
     // #endif
     shift_buffer_t* buf = popBuffer(io->loop->bufpool);
     unsigned int available = rCap(buf);
-    if (WW_UNLIKELY(available < 1024)) {
+    if (available > (1U << 15)) {
+        available = (1U << 15);
+    }
+    else if (WW_UNLIKELY(available < 1024)) {
         reserveBufSpace(buf, 1024);
     }
     nread = __nio_read(io, rawBufMut(buf), available);
@@ -488,7 +491,6 @@ int hio_close(hio_t* io) {
     //     return hio_close_async(io); /*  tid lost its meaning, its now ww tid */
     // }
 
-    
     if (io->closed) {
 
         return 0;
