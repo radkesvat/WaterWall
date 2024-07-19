@@ -29,7 +29,7 @@ void chain(tunnel_t *from, tunnel_t *to)
 
 tunnel_t *newTunnel(void)
 {
-    tunnel_t *ptr = wwmGlobalMalloc(sizeof(tunnel_t));
+    tunnel_t *ptr = globalMalloc(sizeof(tunnel_t));
 
     tunnel_t tunnel = (tunnel_t) {
         .upStream   = &defaultUpStream,
@@ -43,24 +43,24 @@ tunnel_t *newTunnel(void)
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return wwmGlobalMalloc(sizeof(line_t));
+    return globalMalloc(sizeof(line_t));
 }
 void destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    wwmGlobalFree(item);
+    globalFree(item);
 }
 
 pool_item_t *allocContextPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return wwmGlobalMalloc(sizeof(context_t));
+    return globalMalloc(sizeof(context_t));
 }
 
 void destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    wwmGlobalFree(item);
+    globalFree(item);
 }
 
 void defaultUpStream(tunnel_t *self, context_t *c)

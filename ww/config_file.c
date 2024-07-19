@@ -15,19 +15,19 @@ void destroyConfigFile(config_file_t *state)
 
     if (state->file_path != NULL)
     {
-        wwmGlobalFree(state->file_path);
+        globalFree(state->file_path);
     }
     if (state->name != NULL)
     {
-        wwmGlobalFree(state->name);
+        globalFree(state->name);
     }
     if (state->author != NULL)
     {
-        wwmGlobalFree(state->author);
+        globalFree(state->author);
     }
     hmutex_destroy(&(state->guard));
 
-    wwmGlobalFree(state);
+    globalFree(state);
 }
 
 void acquireUpdateLock(config_file_t *state)
@@ -78,11 +78,11 @@ void commitChangesSoft(config_file_t *state)
 
 config_file_t *parseConfigFile(const char *const file_path)
 {
-    config_file_t *state = wwmGlobalMalloc(sizeof(config_file_t));
+    config_file_t *state = globalMalloc(sizeof(config_file_t));
     memset(state, 0, sizeof(config_file_t));
     hmutex_init(&(state->guard));
 
-    state->file_path = wwmGlobalMalloc(strlen(file_path) + 1);
+    state->file_path = globalMalloc(strlen(file_path) + 1);
     strcpy(state->file_path, file_path);
 
     char *data_json = readFile(file_path);
@@ -107,7 +107,7 @@ config_file_t *parseConfigFile(const char *const file_path)
         }
         exit(1);
     }
-    wwmGlobalFree(data_json);
+    globalFree(data_json);
 
     if (! getStringFromJsonObject((&state->name), json, "name"))
     {

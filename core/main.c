@@ -32,7 +32,7 @@ int main(void)
         exit(1);
     }
     parseCoreSettings(core_file_content);
-    wwmGlobalFree(core_file_content);
+    globalFree(core_file_content);
 
     //  [Runtime setup]
     hv_mkdir_p(getCoreSettings()->log_path);

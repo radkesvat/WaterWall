@@ -44,7 +44,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
     }
     doneLineUpSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
-    wwmGlobalFree(cstate);
+    globalFree(cstate);
 }
 
 static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
@@ -211,7 +211,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             tcp_connector_state_t *state = TSTATE(self);
-            CSTATE_MUT(c)                = wwmGlobalMalloc(sizeof(tcp_connector_con_state_t));
+            CSTATE_MUT(c)                = globalMalloc(sizeof(tcp_connector_con_state_t));
             cstate                       = CSTATE(c);
 
             *cstate = (tcp_connector_con_state_t) {.buffer_pool  = getContextBufferPool(c),
@@ -312,7 +312,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
-            hloop_t *loop   = loops[c->line->tid];
+            hloop_t *loop   = WORKERS[c->line->tid].loop;;
             int      sockfd = socket(dest_ctx->address.sa.sa_family, SOCK_STREAM, 0);
             if (sockfd < 0)
             {
@@ -406,7 +406,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 {
-    tcp_connector_state_t *state = wwmGlobalMalloc(sizeof(tcp_connector_state_t));
+    tcp_connector_state_t *state = globalMalloc(sizeof(tcp_connector_state_t));
     memset(state, 0, sizeof(tcp_connector_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 

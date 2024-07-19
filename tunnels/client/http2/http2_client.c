@@ -554,7 +554,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 {
     http2_client_state_t *state =
-        wwmGlobalMalloc(sizeof(http2_client_state_t) + (workers_count * sizeof(thread_connection_pool_t)));
+        globalMalloc(sizeof(http2_client_state_t) + (WORKERS_COUNT * sizeof(thread_connection_pool_t)));
     memset(state, 0, sizeof(http2_client_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
@@ -564,7 +564,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, onFrameRecvCallback);
     nghttp2_session_callbacks_set_on_stream_close_callback(state->cbs, onStreamClosedCallback);
 
-    for (size_t i = 0; i < workers_count; i++)
+    for (size_t i = 0; i < WORKERS_COUNT; i++)
     {
         state->thread_cpool[i] = (thread_connection_pool_t) {.round_index = 0, .cons = vec_cons_with_capacity(8)};
     }
@@ -588,7 +588,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     if (getStringFromJsonObject(&content_type_buf, settings, "content-type"))
     {
         state->content_type = httpContentTypeEnum(content_type_buf);
-        wwmGlobalFree(content_type_buf);
+        globalFree(content_type_buf);
     }
 
     int int_concurrency;

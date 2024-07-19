@@ -80,7 +80,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            cstate = wwmGlobalMalloc(sizeof(halfduplex_con_state_t));
+            cstate = globalMalloc(sizeof(halfduplex_con_state_t));
 
             *cstate = (halfduplex_con_state_t) {.download_line = NULL, .upload_line = NULL, .main_line = c->line};
 
@@ -147,7 +147,7 @@ static void upStream(tunnel_t *self, context_t *c)
             self->up->upStream(self->up, newFinContext(download_line));
             destroyLine(download_line);
 
-            wwmGlobalFree(cstate);
+            globalFree(cstate);
         }
     }
 }
@@ -198,7 +198,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 self->dw->downStream(self->dw, newFinContext(cstate->main_line));
             }
 
-            wwmGlobalFree(cstate);
+            globalFree(cstate);
             destroyContext(c);
         }
         else
@@ -218,7 +218,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newHalfDuplexClient(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    halfduplex_state_t *state = wwmGlobalMalloc(sizeof(halfduplex_state_t));
+    halfduplex_state_t *state = globalMalloc(sizeof(halfduplex_state_t));
     memset(state, 0, sizeof(halfduplex_state_t));
 
     tunnel_t *t   = newTunnel();

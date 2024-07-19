@@ -149,7 +149,7 @@ static void downStream(tunnel_t *self, context_t *c)
 static void startReverseClient(htimer_t *timer)
 {
     tunnel_t *self = hevent_userdata(timer);
-    for (unsigned int i = 0; i < workers_count; i++)
+    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
     {
         initiateConnect(self, i, true);
     }
@@ -161,21 +161,21 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     const size_t start_delay_ms = 150;
 
-    reverse_client_state_t *state = wwmGlobalMalloc(sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * workers_count));
-    memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * workers_count));
+    reverse_client_state_t *state = globalMalloc(sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * WORKERS_COUNT));
+    memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * WORKERS_COUNT));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject((int *) &(state->min_unused_cons), settings, "minimum-unused");
 
-    state->min_unused_cons = min(max((workers_count * (ssize_t) 8), state->min_unused_cons), 128);
+    state->min_unused_cons = min(max((WORKERS_COUNT * (ssize_t) 8), state->min_unused_cons), 128);
     
-    state->starved_connections = newIdleTable(loops[0]);
+    state->starved_connections = newIdleTable(WORKERS[0].loop);
 
     tunnel_t *t           = newTunnel();
     t->state              = state;
     t->upStream           = &upStream;
     t->downStream         = &downStream;
-    htimer_t *start_timer = htimer_add(loops[0], startReverseClient, start_delay_ms, 1);
+    htimer_t *start_timer = htimer_add(WORKERS[0].loop, startReverseClient, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
 
     return t;

@@ -86,7 +86,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
     destroyContextQueue(cstate->queue);
 
-    wwmGlobalFree(cstate);
+    globalFree(cstate);
     CSTATE_DROP(c);
 }
 
@@ -152,7 +152,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            reality_client_con_state_t *cstate = wwmGlobalMalloc(sizeof(reality_client_con_state_t));
+            reality_client_con_state_t *cstate = globalMalloc(sizeof(reality_client_con_state_t));
             memset(cstate, 0, sizeof(reality_client_con_state_t));
             CSTATE_MUT(c)          = cstate;
             cstate->rbio           = BIO_new(BIO_s_mem());
@@ -415,14 +415,14 @@ failed:;
 
 tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 {
-    reality_client_state_t *state = wwmGlobalMalloc(sizeof(reality_client_state_t));
+    reality_client_state_t *state = globalMalloc(sizeof(reality_client_state_t));
     memset(state, 0, sizeof(reality_client_state_t));
 
-    state->threadlocal_ssl_context    = wwmGlobalMalloc(sizeof(ssl_ctx_t) * workers_count);
-    state->threadlocal_cipher_context = wwmGlobalMalloc(sizeof(EVP_CIPHER_CTX *) * workers_count);
-    state->threadlocal_sign_context   = wwmGlobalMalloc(sizeof(EVP_MD_CTX *) * workers_count);
+    state->threadlocal_ssl_context    = globalMalloc(sizeof(ssl_ctx_t) * WORKERS_COUNT);
+    state->threadlocal_cipher_context = globalMalloc(sizeof(EVP_CIPHER_CTX *) * WORKERS_COUNT);
+    state->threadlocal_sign_context   = globalMalloc(sizeof(EVP_MD_CTX *) * WORKERS_COUNT);
 
-    ssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(ssl_ctx_opt_t));
+    ssl_ctx_opt_t *ssl_param = globalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -484,12 +484,12 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     {
         uint8_t len;
         char    alpn_data[];
-    } *ossl_alpn   = wwmGlobalMalloc(1 + alpn_len);
+    } *ossl_alpn   = globalMalloc(1 + alpn_len);
 
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
 
-    for (unsigned int i = 0; i < workers_count; i++)
+    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
     {
         state->threadlocal_ssl_context[i] = sslCtxNew(ssl_param);
 
@@ -505,8 +505,8 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
         state->threadlocal_sign_context[i]   = EVP_MD_CTX_create();
     }
 
-    wwmGlobalFree(ssl_param);
-    wwmGlobalFree(ossl_alpn);
+    globalFree(ssl_param);
+    globalFree(ossl_alpn);
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

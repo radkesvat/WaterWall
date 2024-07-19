@@ -79,7 +79,7 @@ static void onH2LineResumed(void *arg)
 static http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_t *con, line_t *this_line,
                                                          tunnel_t *self, int32_t stream_id)
 {
-    http2_server_child_con_state_t *stream = wwmGlobalMalloc(sizeof(http2_server_child_con_state_t));
+    http2_server_child_con_state_t *stream = globalMalloc(sizeof(http2_server_child_con_state_t));
 
     *stream = (http2_server_child_con_state_t) {.stream_id          = stream_id,
                                                 .grpc_buffer_stream = NULL,
@@ -112,15 +112,15 @@ static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
     destroyLine(stream->line);
     if (stream->request_path)
     {
-        wwmGlobalFree(stream->request_path);
+        globalFree(stream->request_path);
     }
-    wwmGlobalFree(stream);
+    globalFree(stream);
 }
 
 static http2_server_con_state_t *createHttp2Connection(tunnel_t *self, line_t *line)
 {
     http2_server_state_t     *state = TSTATE(self);
-    http2_server_con_state_t *con   = wwmGlobalMalloc(sizeof(http2_server_con_state_t));
+    http2_server_con_state_t *con   = globalMalloc(sizeof(http2_server_con_state_t));
     memset(con, 0, sizeof(http2_server_con_state_t));
     nghttp2_session_server_new2(&con->session, state->cbs, con, state->ngoptions);
     con->tunnel  = self;
@@ -165,5 +165,5 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
     doneLineUpSide(con->line);
     nghttp2_session_del(con->session);
     LSTATE_DROP(con->line);
-    wwmGlobalFree(con);
+    globalFree(con);
 }

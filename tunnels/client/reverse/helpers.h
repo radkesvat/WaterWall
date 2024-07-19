@@ -35,7 +35,7 @@ static void onLineResumedD(void *cstate)
 
 static reverse_client_con_state_t *createCstate(tunnel_t *self, uint8_t tid)
 {
-    reverse_client_con_state_t *cstate = wwmGlobalMalloc(sizeof(reverse_client_con_state_t));
+    reverse_client_con_state_t *cstate = globalMalloc(sizeof(reverse_client_con_state_t));
     line_t                     *up     = newLine(tid);
     line_t                     *dw     = newLine(tid);
     // reserveChainStateIndex(dw); // we always take one from the down line
@@ -57,14 +57,14 @@ static void cleanup(reverse_client_con_state_t *cstate)
     destroyLine(cstate->u);
     destroyLine(cstate->d);
 
-    wwmGlobalFree(cstate);
+    globalFree(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t *self = cg->t;
     // reverse_client_state_t     *state  = TSTATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
-    wwmGlobalFree(cg);
+    globalFree(cg);
     context_t *hello_data_ctx = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
 
@@ -87,7 +87,7 @@ static void connectTimerFinished(htimer_t *timer)
 static void beforeConnect(hevent_t *ev)
 {
     struct connect_arg *cg            = hevent_userdata(ev);
-    htimer_t           *connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
+    htimer_t           *connect_timer = htimer_add(WORKERS[cg->tid].loop, connectTimerFinished, cg->delay, 1);
     if (connect_timer)
     {
         hevent_set_userdata(connect_timer, cg);
@@ -123,10 +123,10 @@ static void initiateConnect(tunnel_t *self, uint8_t tid, bool delay)
     //     }
     // }
 
-    hloop_t *worker_loop = loops[tid];
+    hloop_t *worker_loop = WORKERS[tid].loop;
 
     hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
-    struct connect_arg *cg = wwmGlobalMalloc(sizeof(struct connect_arg));
+    struct connect_arg *cg = globalMalloc(sizeof(struct connect_arg));
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;

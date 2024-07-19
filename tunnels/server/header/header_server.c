@@ -90,7 +90,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else if (c->init)
     {
-        cstate        = wwmGlobalMalloc(sizeof(header_server_con_state_t));
+        cstate        = globalMalloc(sizeof(header_server_con_state_t));
         *cstate       = (header_server_con_state_t) {0};
         CSTATE_MUT(c) = cstate;
         destroyContext(c);
@@ -102,7 +102,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             reuseBuffer(getContextBufferPool(c), cstate->buf);
         }
-        wwmGlobalFree(cstate);
+        globalFree(cstate);
         CSTATE_DROP(c);
         if (send_fin)
         {
@@ -126,7 +126,7 @@ static void downStream(tunnel_t *self, context_t *c)
             reuseBuffer(getContextBufferPool(c), cstate->buf);
         }
 
-        wwmGlobalFree(cstate);
+        globalFree(cstate);
         CSTATE_DROP(c);
     }
 
@@ -136,7 +136,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newHeaderServer(node_instance_context_t *instance_info)
 {
 
-    header_server_state_t *state = wwmGlobalMalloc(sizeof(header_server_state_t));
+    header_server_state_t *state = globalMalloc(sizeof(header_server_state_t));
     memset(state, 0, sizeof(header_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
     state->data           = parseDynamicNumericValueFromJsonObject(settings, "override", 1, "dest_context->port");

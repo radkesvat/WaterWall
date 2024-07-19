@@ -16,8 +16,8 @@
 
 // NOLINTBEGIN
 
-#define MEMORY_PROFILE_SMALL    (ram_profile >= kRamProfileM1Memory ? kRamProfileM1Memory : ram_profile)
-#define MEMORY_PROFILE_SELECTED ram_profile
+#define MEMORY_PROFILE_SMALL    (RAM_PROFILE >= kRamProfileM1Memory ? kRamProfileM1Memory : RAM_PROFILE)
+#define MEMORY_PROFILE_SELECTED RAM_PROFILE
 
 #define BASE_READ_BUFSIZE              (1U << 13) // 8k
 #define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((MEMORY_PROFILE_SMALL)))
@@ -26,7 +26,7 @@
 #define BUFFER_SIZE_MORE                                                                                               \
     (((int) (MEMORY_PROFILE_SELECTED / 16)) > 1 ? (((int) (MEMORY_PROFILE_SELECTED / 16)) - 1) : (0))
 
-#define BUFFER_SIZE (ram_profile >= kRamProfileS2Memory ? (1U << 15) : (1U << 12)) // 32k (same as nginx file streaming)
+#define BUFFER_SIZE (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 15) : (1U << 12)) // 32k (same as nginx file streaming)
 
 // #define BUFFER_SIZE (BASE_READ_BUFSIZE + (BASE_READ_BUFSIZE * BUFFER_SIZE_MORE)) // [8k,32k]
 
@@ -156,7 +156,7 @@ static buffer_pool_t *allocBufferPool(uint8_t tid,unsigned long bufcount, unsign
     bufcount = 2 * bufcount;
 
     const unsigned long container_len = bufcount * sizeof(shift_buffer_t *);
-    buffer_pool_t      *pool          = wwmGlobalMalloc(sizeof(buffer_pool_t) + container_len);
+    buffer_pool_t      *pool          = globalMalloc(sizeof(buffer_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool, 0xEE, sizeof(buffer_pool_t) + container_len);
 #endif

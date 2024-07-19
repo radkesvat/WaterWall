@@ -204,7 +204,7 @@ void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *node_sett
     {
         new_node->route_starter = true;
     }
-    struct tunnel_lib_s *heap_lib = wwmGlobalMalloc(sizeof(struct tunnel_lib_s));
+    struct tunnel_lib_s *heap_lib = globalMalloc(sizeof(struct tunnel_lib_s));
     memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
     *heap_lib     = lib;
     new_node->lib = heap_lib;
@@ -240,7 +240,7 @@ node_t *getNode(node_manager_config_t *cfg, hash_t hash_node_name)
 
 node_t *newNode(void)
 {
-    node_t *new_node = wwmGlobalMalloc(sizeof(node_t));
+    node_t *new_node = globalMalloc(sizeof(node_t));
     memset(new_node, 0, sizeof(node_t));
     return new_node;
 }
@@ -296,7 +296,7 @@ node_manager_t *createNodeManager(void)
 {
     assert(state == NULL);
 
-    state = wwmGlobalMalloc(sizeof(node_manager_t));
+    state = globalMalloc(sizeof(node_manager_t));
     memset(state, 0, sizeof(node_manager_t));
 
     state->configs = vec_configs_t_with_capacity(kVecCap);

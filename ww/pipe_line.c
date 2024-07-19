@@ -33,13 +33,13 @@ typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
 pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return wwmGlobalMalloc(sizeof(struct msg_event));
+    return globalMalloc(sizeof(struct msg_event));
 }
 
 void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    wwmGlobalFree(item);
+    globalFree(item);
 }
 
 static void lock(pipe_line_t *pl)
@@ -70,7 +70,7 @@ static void unlock(pipe_line_t *pl)
             exit(1);
         }
 #endif
-        wwmGlobalFree((void *) pl->memptr); // NOLINT
+        globalFree((void *) pl->memptr); // NOLINT
     }
 }
 
@@ -79,7 +79,7 @@ static void onMsgReceived(hevent_t *ev)
     struct msg_event *msg_ev = hevent_userdata(ev);
     pipe_line_t      *pl     = msg_ev->pl;
     (*(MsgTargetFunction *) (&(msg_ev->function)))(pl, msg_ev->arg);
-    reusePoolItem(pipeline_msg_pools[msg_ev->target_tid], msg_ev);
+    reusePoolItem(WORKERS[msg_ev->target_tid].pipeline_msg_pool, msg_ev);
     unlock(pl);
 }
 
@@ -92,15 +92,15 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
         return;
     }
     lock(pl);
-    struct msg_event *evdata = popPoolItem(pipeline_msg_pools[tid_from]);
+    struct msg_event *evdata = popPoolItem(WORKERS[tid_from].pipeline_msg_pool);
     *evdata = (struct msg_event) {.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
 
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
-    ev.loop = loops[tid_to];
+    ev.loop = WORKERS[tid_to].loop;
     ev.cb   = onMsgReceived;
     hevent_set_userdata(&ev, evdata);
-    hloop_post_event(loops[tid_to], &ev);
+    hloop_post_event(WORKERS[tid_to].loop, &ev);
 }
 
 static void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
@@ -108,7 +108,7 @@ static void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
     shift_buffer_t *buf = arg;
     if (pl->left_line == NULL)
     {
-        reuseBuffer(buffer_pools[pl->left_tid], buf);
+        reuseBuffer(WORKERS[pl->left_tid].buffer_pool, buf);
         return;
     }
     context_t *ctx = newContext(pl->left_line);
@@ -121,7 +121,7 @@ static void writeBufferToRightSide(pipe_line_t *pl, void *arg)
     shift_buffer_t *buf = arg;
     if (pl->right_line == NULL)
     {
-        reuseBuffer(buffer_pools[pl->right_tid], buf);
+        reuseBuffer(WORKERS[pl->right_tid].buffer_pool, buf);
         return;
     }
     context_t *ctx = newContext(pl->right_line);
@@ -363,7 +363,7 @@ void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid, PipeLineFl
     }
 
     // allocate memory, placing pipe_line_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) wwmGlobalMalloc(memsize);
+    uintptr_t ptr = (uintptr_t) globalMalloc(memsize);
 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 

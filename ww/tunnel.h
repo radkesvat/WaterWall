@@ -174,7 +174,7 @@ void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *ite
 
 static inline line_t *newLine(uint8_t tid)
 {
-    line_t *result = popPoolItem(line_pools[tid]);
+    line_t *result = popPoolItem(WORKERS[tid].line_pool);
 
     *result = (line_t) {
         .tid          = tid,
@@ -288,10 +288,10 @@ static inline void internalUnRefLine(line_t *const l)
 
     if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_constant)
     {
-        wwmGlobalFree(l->dest_ctx.domain);
+        globalFree(l->dest_ctx.domain);
     }
 
-    reusePoolItem(line_pools[l->tid], l);
+    reusePoolItem(WORKERS[l->tid].line_pool, l);
 }
 
 /*
@@ -331,12 +331,12 @@ static inline void destroyContext(context_t *c)
     assert(c->payload == NULL);
     const uint8_t tid = c->line->tid;
     unLockLine(c->line);
-    reusePoolItem(context_pools[tid], c);
+    reusePoolItem(WORKERS[tid].context_pool, c);
 }
 
 static inline context_t *newContext(line_t *const line)
 {
-    context_t *new_ctx = popPoolItem(context_pools[line->tid]);
+    context_t *new_ctx = popPoolItem(WORKERS[line->tid].context_pool);
     *new_ctx           = (context_t) {.line = line};
     lockLine(line);
     return new_ctx;
@@ -345,7 +345,7 @@ static inline context_t *newContext(line_t *const line)
 static inline context_t *newContextFrom(const context_t *const source)
 {
     lockLine(source->line);
-    context_t *new_ctx = popPoolItem(context_pools[source->line->tid]);
+    context_t *new_ctx = popPoolItem(WORKERS[source->line->tid].context_pool);
     *new_ctx           = (context_t) {.line = source->line};
     return new_ctx;
 }
@@ -401,17 +401,17 @@ static inline bool isAuthenticated(line_t *const line)
 
 static inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
 {
-    return buffer_pools[tid];
+    return WORKERS[tid].buffer_pool;
 }
 
 static inline buffer_pool_t *getLineBufferPool(const line_t *const l)
 {
-    return buffer_pools[l->tid];
+    return WORKERS[l->tid].buffer_pool;
 }
 
 static inline buffer_pool_t *getContextBufferPool(const context_t *const c)
 {
-    return buffer_pools[c->line->tid];
+    return WORKERS[c->line->tid].buffer_pool;
 }
 
 // same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
@@ -446,5 +446,5 @@ static inline bool isDownPiped(const line_t *const l)
 
 static inline hloop_t *getLineLoop(const line_t *const l)
 {
-    return loops[l->tid];
+    return WORKERS[l->tid].loop;
 }

@@ -36,7 +36,7 @@ static void initCoreSettings(void)
 {
     assert(settings == NULL);
 
-    settings = wwmGlobalMalloc(sizeof(struct core_settings_s));
+    settings = globalMalloc(sizeof(struct core_settings_s));
     memset(settings, 0, sizeof(struct core_settings_s));
 
     settings->config_paths = vec_config_path_t_with_capacity(2);
@@ -58,8 +58,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->core_log_level = wwmGlobalMalloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
-            settings->core_log_file  = wwmGlobalMalloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
+            settings->core_log_level = globalMalloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
+            settings->core_log_file  = globalMalloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
 
 #if defined(OS_UNIX)
             strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
@@ -87,8 +87,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->network_log_level = wwmGlobalMalloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
-            settings->network_log_file  = wwmGlobalMalloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
+            settings->network_log_level = globalMalloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
+            settings->network_log_file  = globalMalloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
 #if defined(OS_UNIX)
             strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
             strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
@@ -112,8 +112,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->dns_log_level = wwmGlobalMalloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
-            settings->dns_log_file  = wwmGlobalMalloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
+            settings->dns_log_level = globalMalloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
+            settings->dns_log_file  = globalMalloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
 
 #if defined(OS_UNIX)
             strcpy(settings->dns_log_level, DEFAULT_DNS_LOG_LEVEL);
@@ -136,13 +136,13 @@ static void parseLogPartOfJson(cJSON *log_obj)
     else
     {
 
-        settings->log_path          = wwmGlobalMalloc(strlen(DEFAULT_LOG_PATH) + 1);
-        settings->core_log_file     = wwmGlobalMalloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
-        settings->core_log_level    = wwmGlobalMalloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
-        settings->network_log_file  = wwmGlobalMalloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
-        settings->network_log_level = wwmGlobalMalloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
-        settings->dns_log_file      = wwmGlobalMalloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
-        settings->dns_log_level     = wwmGlobalMalloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
+        settings->log_path          = globalMalloc(strlen(DEFAULT_LOG_PATH) + 1);
+        settings->core_log_file     = globalMalloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
+        settings->core_log_level    = globalMalloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
+        settings->network_log_file  = globalMalloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
+        settings->network_log_level = globalMalloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
+        settings->dns_log_file      = globalMalloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
+        settings->dns_log_level     = globalMalloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
 
 #if defined(OS_UNIX)
         strcpy(settings->log_path, DEFAULT_LOG_PATH);
@@ -188,7 +188,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
         {
             had_child          = true;
             unsigned long size = strlen(path->valuestring) + 1;
-            char         *buf  = wwmGlobalMalloc(size);
+            char         *buf  = globalMalloc(size);
 #if defined(OS_UNIX)
             strcpy(buf, path->valuestring);
 #else
@@ -283,7 +283,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
 
                 exit(1);
             }
-            wwmGlobalFree(string_ram_profile);
+            globalFree(string_ram_profile);
         }
         else
         {
@@ -293,7 +293,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     else
     {
         unsigned long size  = strlen(DEFAULT_LIBS_PATH) + 1;
-        settings->libs_path = wwmGlobalMalloc(size);
+        settings->libs_path = globalMalloc(size);
 #if defined(OS_UNIX)
         strcpy(settings->libs_path, DEFAULT_LIBS_PATH);
 #else

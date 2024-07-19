@@ -391,7 +391,7 @@ tunnel_t *newMuxClientTunnel(size_t parallel_lines)
 {
 
     tunnel_t *t = newTunnel();
-    t->state = wwmGlobalMalloc(sizeof(mux_state_t));
+    t->state = globalMalloc(sizeof(mux_state_t));
     memset(t->state, 0, sizeof(mux_state_t));
     TSTATE(t)->parallel_lines = parallel_lines;
 
@@ -401,7 +401,7 @@ tunnel_t *newMuxClientTunnel(size_t parallel_lines)
     t->packetDownStream = &muxPacketDownStream;
 
     assert(parallel_lines > 0);
-    TSTATE(t)->up_cons = wwmGlobalMalloc(TSTATE(t)->parallel_lines * sizeof(up_con_t));
+    TSTATE(t)->up_cons = globalMalloc(TSTATE(t)->parallel_lines * sizeof(up_con_t));
 
     TSTATE(t)->dw_cons = hmap_iio_with_capacity(CHILDREN_VEC_INIT_CAP);
     TSTATE(t)->waiters = hmap_iio_with_capacity(CHILDREN_VEC_INIT_CAP);

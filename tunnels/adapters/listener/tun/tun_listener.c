@@ -27,7 +27,7 @@ typedef struct tun_listener_con_state_s
 static void cleanup(tun_listener_con_state_t *cstate, bool write_queue)
 {
  
-    wwmGlobalFree(cstate);
+    globalFree(cstate);
 }
 
 static bool resumeWriteQueue(tun_listener_con_state_t *cstate)
@@ -193,7 +193,7 @@ static void onInboundConnected(hevent_t *ev)
 
     tunnel_t                 *self   = data->tunnel;
     line_t                   *line   = newLine(tid);
-    tun_listener_con_state_t *cstate = wwmGlobalMalloc(sizeof(tun_listener_con_state_t));
+    tun_listener_con_state_t *cstate = globalMalloc(sizeof(tun_listener_con_state_t));
 
     LSTATE_MUT(line)               = cstate;
     line->src_ctx.address_protocol = kSapTcp;
@@ -292,7 +292,7 @@ static void parsePortSection(tun_listener_state_t *state, const cJSON *settings)
 }
 tunnel_t *newTunListener(node_instance_context_t *instance_info)
 {
-    tun_listener_state_t *state = wwmGlobalMalloc(sizeof(tun_listener_state_t));
+    tun_listener_state_t *state = globalMalloc(sizeof(tun_listener_state_t));
     memset(state, 0, sizeof(tun_listener_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -337,7 +337,7 @@ tunnel_t *newTunListener(node_instance_context_t *instance_info)
         size_t len = cJSON_GetArraySize(wlist);
         if (len > 0)
         {
-            char **list = (char **) wwmGlobalMalloc(sizeof(char *) * (len + 1));
+            char **list = (char **) globalMalloc(sizeof(char *) * (len + 1));
             memset((void *) list, 0, sizeof(char *) * (len + 1));
             list[len]              = 0x0;
             int          i         = 0;

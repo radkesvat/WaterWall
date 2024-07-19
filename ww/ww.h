@@ -1,9 +1,10 @@
 #pragma once
+#include "buffer_pool.h"
 #include "generic_pool.h"
 #include "hthread.h"
 #include "managers/memory_manager.h"
-#include <stddef.h>
 
+#include <stddef.h>
 /*
     This is a global state file that powers many WW things up
 
@@ -50,11 +51,11 @@ enum
 
 #define ALIGN2(n, w) (((n) + ((w) - 1)) & ~((w) - 1))
 
-struct ww_runtime_state_s;
+struct ww_global_state_s;
 
-WWEXPORT void setWW(struct ww_runtime_state_s *state);
+WWEXPORT void setWW(struct ww_global_state_s *state);
 
-struct ww_runtime_state_s *getWW(void);
+struct ww_global_state_s *getWW(void);
 
 typedef struct
 {
@@ -65,13 +66,13 @@ typedef struct
 
 enum ram_profiles
 {
-    kRamProfileInvalid  = 0, // 0 is invalid memory multiplier
+    kRamProfileInvalid  = 0,
     kRamProfileS1Memory = 1,
     kRamProfileS2Memory = 8,
-    kRamProfileM1Memory = 8 * 16 * 1,
-    kRamProfileM2Memory = 8 * 16 * 2,
-    kRamProfileL1Memory = 8 * 16 * 3,
-    kRamProfileL2Memory = 8 * 16 * 4
+    kRamProfileM1Memory = 16 * 8 * 1,
+    kRamProfileM2Memory = 16 * 8 * 2,
+    kRamProfileL1Memory = 16 * 8 * 3,
+    kRamProfileL2Memory = 16 * 8 * 4
 };
 
 typedef struct
@@ -89,20 +90,37 @@ void createWW(ww_construction_data_t data);
 
 _Noreturn void runMainThread(void);
 
-extern unsigned int                workers_count;
-extern hthread_t                  *workers;
-extern unsigned int                ram_profile;
-extern struct hloop_s            **loops;
-extern struct buffer_pool_s      **buffer_pools;
-extern struct generic_pool_s     **shift_buffer_pools;
-extern struct generic_pool_s     **context_pools;
-extern struct generic_pool_s     **line_pools;
-extern struct generic_pool_s     **pipeline_msg_pools;
-extern struct generic_pool_s     **libhv_hio_pools;
-extern struct dedicated_memory_s **dedicated_memory_managers;
-extern struct dedicated_memory_s    *memory_manager;
-extern struct socket_manager_s    *socekt_manager;
-extern struct node_manager_s      *node_manager;
-extern struct logger_s            *core_logger;
-extern struct logger_s            *network_logger;
-extern struct logger_s            *dns_logger;
+typedef uint8_t tid_t;
+
+typedef struct worker_s
+{
+    hthread_t              thread;
+    struct hloop_s        *loop;
+    struct buffer_pool_s  *buffer_pool;
+    struct generic_pool_s *shift_buffer_pool;
+    struct generic_pool_s *context_pool;
+    struct generic_pool_s *line_pool;
+    struct generic_pool_s *pipeline_msg_pool;
+    tid_t                  tid;
+
+} worker_t;
+
+typedef struct ww_global_state_s
+{
+    struct worker_s         *workers;
+    struct socket_manager_s *socekt_manager;
+    struct node_manager_s   *node_manager;
+    struct logger_s         *core_logger;
+    struct logger_s         *network_logger;
+    struct logger_s         *dns_logger;
+    unsigned int             workers_count;
+    unsigned int             ram_profile;
+
+} ww_global_state_t;
+
+extern ww_global_state_t global_ww_state;
+
+#define GSTATE        global_ww_state
+#define RAM_PROFILE   global_ww_state.ram_profile
+#define WORKERS       global_ww_state.workers
+#define WORKERS_COUNT global_ww_state.workers_count

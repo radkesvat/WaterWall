@@ -26,7 +26,7 @@ HV_EXPORT void  hv_free(void* ptr);
     do {\
         if (ptr) {\
             hv_free(ptr);\
-            printd("wwmGlobalFree( %p )\tat [%s:%d:%s]\n", ptr, __FILE__, __LINE__, __FUNCTION__);\
+            printd("globalFree( %p )\tat [%s:%d:%s]\n", ptr, __FILE__, __LINE__, __FUNCTION__);\
             ptr = NULL;\
         }\
     } while(0)

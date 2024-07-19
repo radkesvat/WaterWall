@@ -24,7 +24,7 @@ long hv_free_cnt(void) {
 
 void* hv_malloc(size_t size) {
     hatomic_inc(&s_alloc_cnt);
-    void* ptr = wwmGlobalMalloc(size);
+    void* ptr = globalMalloc(size);
     if (!ptr) {
         fprintf(stderr, "malloc failed!\n");
         exit(-1);
@@ -48,7 +48,7 @@ void* hv_realloc(void* oldptr, size_t newsize, size_t oldsize) {
 
 void* hv_calloc(size_t nmemb, size_t size) {
     hatomic_inc(&s_alloc_cnt);
-    void* ptr = wwmGlobalMalloc(nmemb* size);
+    void* ptr = globalMalloc(nmemb* size);
     if (!ptr) {
         fprintf(stderr, "calloc failed!\n");
         exit(-1);
@@ -60,7 +60,7 @@ void* hv_calloc(size_t nmemb, size_t size) {
 
 void* hv_zalloc(size_t size) {
     hatomic_inc(&s_alloc_cnt);
-    void* ptr = wwmGlobalMalloc(size);
+    void* ptr = globalMalloc(size);
     if (!ptr) {
         fprintf(stderr, "malloc failed!\n");
         exit(-1);
@@ -71,7 +71,7 @@ void* hv_zalloc(size_t size) {
 
 void hv_free(void* ptr) {
     if (ptr) {
-        wwmGlobalFree(ptr);
+        globalFree(ptr);
         ptr = NULL;
         hatomic_inc(&s_free_cnt);
     }

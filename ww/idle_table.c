@@ -48,7 +48,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
     }
 
     // allocate memory, placing idle_table_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) wwmGlobalMalloc(memsize);
+    uintptr_t ptr = (uintptr_t) globalMalloc(memsize);
 
     // align c to line cache boundary
     MUSTALIGN2(ptr, kCpuLineCacheSize);
@@ -71,10 +71,10 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
                          uint64_t age_ms)
 {
     assert(self);
-    idle_item_t *item = wwmGlobalMalloc(sizeof(idle_item_t));
+    idle_item_t *item = globalMalloc(sizeof(idle_item_t));
     hhybridmutex_lock(&(self->mutex));
 
-    *item = (idle_item_t){.expire_at_ms = hloop_now_ms(loops[tid]) + age_ms,
+    *item = (idle_item_t){.expire_at_ms = hloop_now_ms(WORKERS[tid].loop) + age_ms,
                           .hash         = key,
                           .tid          = tid,
                           .userdata     = userdata,
@@ -85,7 +85,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     {
         // hash is already in the table !
         hhybridmutex_unlock(&(self->mutex));
-        wwmGlobalFree(item);
+        globalFree(item);
         return NULL;
     }
     heapq_idles_t_push(&(self->hqueue), item);
@@ -141,7 +141,7 @@ static void beforeCloseCallBack(hevent_t *ev)
     idle_item_t *item = hevent_userdata(ev);
     if (! item->removed)
     {
-        if (item->expire_at_ms > hloop_now_ms(loops[item->tid]))
+        if (item->expire_at_ms > hloop_now_ms(WORKERS[item->tid].loop))
         {
             hhybridmutex_lock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
@@ -156,7 +156,7 @@ static void beforeCloseCallBack(hevent_t *ev)
             item->cb(item);
         }
         
-        if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > hloop_now_ms(loops[item->tid]))
+        if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > hloop_now_ms(WORKERS[item->tid].loop))
         {
             hhybridmutex_lock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
@@ -167,12 +167,12 @@ static void beforeCloseCallBack(hevent_t *ev)
             bool removal_result = removeIdleItemByHash(item->tid, item->table, item->hash);
             assert(removal_result);
             (void) removal_result;
-            wwmGlobalFree(item);
+            globalFree(item);
         }
     }
     else
     {
-        wwmGlobalFree(item);
+        globalFree(item);
     }
 }
 
@@ -194,7 +194,7 @@ void idleCallBack(htimer_t *timer)
             if (item->removed)
             {
                 // already removed
-                wwmGlobalFree(item);
+                globalFree(item);
             }
             else
             {
@@ -202,10 +202,10 @@ void idleCallBack(htimer_t *timer)
                 // hmap_idles_t_erase(&(self->hmap), item->hash);
                 hevent_t ev;
                 memset(&ev, 0, sizeof(ev));
-                ev.loop = loops[item->tid];
+                ev.loop = WORKERS[item->tid].loop;
                 ev.cb   = beforeCloseCallBack;
                 hevent_set_userdata(&ev, item);
-                hloop_post_event(loops[item->tid], &ev);
+                hloop_post_event(WORKERS[item->tid].loop, &ev);
             }
         }
         else
@@ -222,5 +222,5 @@ void destroyIdleTable(idle_table_t *self)
     heapq_idles_t_drop(&self->hqueue);
     hmap_idles_t_drop(&self->hmap);
     hhybridmutex_destroy(&self->mutex);
-    wwmGlobalFree((void *) (self->memptr)); // NOLINT
+    globalFree((void *) (self->memptr)); // NOLINT
 }

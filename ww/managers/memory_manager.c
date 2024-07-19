@@ -14,6 +14,7 @@ struct dedicated_memory_s
     mi_heap_t     *mi_heap;
     unsigned int   free_counter;
 };
+
 enum
 {
     kFreeThreShouldCounter = 64
@@ -21,17 +22,17 @@ enum
 
 #ifdef ALLOCATOR_BYPASS
 
-dedicated_memory_t *createWWMemoryManager(void)
+dedicated_memory_t *initMemoryManager(void)
 {
     return NULL;
 }
 
-dedicated_memory_t *getWWMemoryManager(void)
+dedicated_memory_t *getMemoryManager(void)
 {
     return NULL;
 }
 
-void setWWMemoryManager(dedicated_memory_t *new_state)
+void setMemoryManager(dedicated_memory_t *new_state)
 {
     (void) new_state;
 }
@@ -43,23 +44,17 @@ dedicated_memory_t *createWWDedicatedMemory(void)
 
 #else
 
-static dedicated_memory_t *state;
 
-dedicated_memory_t *createWWMemoryManager(void)
+void initMemoryManager(void)
 {
-
-    return NULL;
     // assert(state == NULL);
     // state = createWWDedicatedMemory();
     // return state;
 }
 
-dedicated_memory_t *getWWMemoryManager(void)
-{
-    return state;
-}
 
-void setWWMemoryManager(dedicated_memory_t *new_state)
+
+void setMemoryManager(dedicated_memory_t *new_state)
 {
     (void) new_state;
     
@@ -82,7 +77,7 @@ dedicated_memory_t *createWWDedicatedMemory(void)
     Note: mimalloc has its own thred local heaps, makes no sense if we uses dedicated mem and mutex for it.
 
 */
-void *wwmGlobalMalloc(size_t size)
+void *globalMalloc(size_t size)
 {
     return mi_malloc(size);
 }
@@ -90,7 +85,7 @@ void *wwmGlobalRealloc(void *ptr, size_t size)
 {
     return mi_realloc(ptr, size);
 }
-void wwmGlobalFree(void *ptr)
+void globalFree(void *ptr)
 {
     mi_free(ptr);
 }
@@ -106,7 +101,7 @@ void *wwmDedicatedMalloc(dedicated_memory_t *dm, size_t size)
 {
     (void) dm;
 
-    return wwmGlobalMalloc(size);
+    return globalMalloc(size);
     // hhybridmutex_lock(&dm->mut);
     // void *ptr = mi_heap_malloc(dm->mi_heap, size);
     // hhybridmutex_unlock(&dm->mut);
@@ -127,7 +122,7 @@ void wwmDedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
     (void) dm;
 
-    wwmGlobalFree(ptr);
+    globalFree(ptr);
 
     // hhybridmutex_lock(&dm->mut);
     // wof_free(dm->mi_heap, ptr);

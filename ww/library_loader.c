@@ -51,7 +51,7 @@ void registerStaticLib(tunnel_lib_t lib)
 {
     if (state == NULL)
     {
-        state = wwmGlobalMalloc(sizeof(*state));
+        state = globalMalloc(sizeof(*state));
         memset(state, 0, sizeof(*state));
         state->slibs = vec_static_libs_init();
     }

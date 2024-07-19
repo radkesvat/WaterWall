@@ -33,7 +33,7 @@ static void removeConnection(thread_box_t *box, preconnect_client_con_state_t *c
 
 static preconnect_client_con_state_t *createCstate(uint8_t tid)
 {
-    preconnect_client_con_state_t *cstate = wwmGlobalMalloc(sizeof(preconnect_client_con_state_t));
+    preconnect_client_con_state_t *cstate = globalMalloc(sizeof(preconnect_client_con_state_t));
     memset(cstate, 0, sizeof(preconnect_client_con_state_t));
     cstate->u = newLine(tid);
     return cstate;
@@ -42,13 +42,13 @@ static preconnect_client_con_state_t *createCstate(uint8_t tid)
 static void destroyCstate(preconnect_client_con_state_t *cstate)
 {
     destroyLine(cstate->u);
-    wwmGlobalFree(cstate);
+    globalFree(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t                      *self   = cg->t;
     preconnect_client_con_state_t *cstate = createCstate(cg->tid);
-    wwmGlobalFree(cg);
+    globalFree(cg);
     LSTATE_MUT(cstate->u) = cstate;
     self->up->upStream(self->up, newInitContext(cstate->u));
 }
@@ -61,7 +61,7 @@ static void connectTimerFinished(htimer_t *timer)
 static void beforeConnect(hevent_t *ev)
 {
     struct connect_arg *cg            = hevent_userdata(ev);
-    htimer_t           *connect_timer = htimer_add(loops[cg->tid], connectTimerFinished, cg->delay, 1);
+    htimer_t           *connect_timer = htimer_add(WORKERS[cg->tid].loop, connectTimerFinished, cg->delay, 1);
     if (connect_timer)
     {
         hevent_set_userdata(connect_timer, cg);
@@ -82,21 +82,21 @@ static void initiateConnect(tunnel_t *self, bool delay)
     }
 
     uint8_t tid = 0;
-    if (workers_count > 0)
+    if (WORKERS_COUNT > 0)
     {
         tid = atomic_fetch_add_explicit(&(state->round_index), 1, memory_order_relaxed);
 
-        if (tid >= workers_count)
+        if (tid >= WORKERS_COUNT)
         {
             atomic_store_explicit(&(state->round_index), 0, memory_order_relaxed);
             tid = 0;
         }
     }
 
-    hloop_t *worker_loop = loops[tid];
+    hloop_t *worker_loop = WORKERS[tid].loop;
 
     hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
-    struct connect_arg *cg = wwmGlobalMalloc(sizeof(struct connect_arg));
+    struct connect_arg *cg = globalMalloc(sizeof(struct connect_arg));
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;

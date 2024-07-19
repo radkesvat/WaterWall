@@ -109,7 +109,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     wssl_server_con_state_t *cstate = CSTATE(c);
     destroyBufferStream(cstate->fallback_buf);
     SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
-    wwmGlobalFree(cstate);
+    globalFree(cstate);
     CSTATE_DROP(c);
 }
 
@@ -366,7 +366,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            CSTATE_MUT(c) = wwmGlobalMalloc(sizeof(wssl_server_con_state_t));
+            CSTATE_MUT(c) = globalMalloc(sizeof(wssl_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(wssl_server_con_state_t));
             cstate               = CSTATE(c);
             cstate->rbio         = BIO_new(BIO_s_mem());
@@ -541,10 +541,10 @@ disconnect:;
 
 tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 {
-    wssl_server_state_t *state = wwmGlobalMalloc(sizeof(wssl_server_state_t));
+    wssl_server_state_t *state = globalMalloc(sizeof(wssl_server_state_t));
     memset(state, 0, sizeof(wssl_server_state_t));
 
-    ssl_ctx_opt_t *ssl_param = wwmGlobalMalloc(sizeof(ssl_ctx_opt_t));
+    ssl_ctx_opt_t *ssl_param = globalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -580,7 +580,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     if (cJSON_IsArray(aplns_array))
     {
         size_t len   = cJSON_GetArraySize(aplns_array);
-        state->alpns = wwmGlobalMalloc(len * sizeof(alpn_item_t));
+        state->alpns = globalMalloc(len * sizeof(alpn_item_t));
         memset(state->alpns, 0, len * sizeof(alpn_item_t));
 
         int          i = 0;
@@ -628,7 +628,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
         state->fallback = next_node->instance;
     }
-    wwmGlobalFree(fallback_node);
+    globalFree(fallback_node);
 
     getBoolFromJsonObjectOrDefault(&(state->anti_tit), settings, "anti-tls-in-tls", false);
     if (state->anti_tit)
@@ -643,9 +643,9 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     // SSL_set1_cert_comp_preference(state->ssl_context,&brotli_alg,1);
     // SSL_compress_certs(state->ssl_context,TLSEXT_comp_cert_brotli);
 
-    wwmGlobalFree((char *) ssl_param->crt_file);
-    wwmGlobalFree((char *) ssl_param->key_file);
-    wwmGlobalFree(ssl_param);
+    globalFree((char *) ssl_param->crt_file);
+    globalFree((char *) ssl_param->key_file);
+    globalFree(ssl_param);
 
     if (state->ssl_context == NULL)
     {

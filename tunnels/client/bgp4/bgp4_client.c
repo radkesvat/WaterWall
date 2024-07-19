@@ -93,14 +93,14 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            cstate        = wwmGlobalMalloc(sizeof(bgp4_client_con_state_t));
+            cstate        = globalMalloc(sizeof(bgp4_client_con_state_t));
             *cstate       = (bgp4_client_con_state_t) {.read_stream = newBufferStream(getContextBufferPool(c))};
             CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)
         {
             destroyBufferStream(cstate->read_stream);
-            wwmGlobalFree(cstate);
+            globalFree(cstate);
             CSTATE_DROP(c);
         }
     }
@@ -137,7 +137,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     LOGE("Bgp4Client: invalid marker");
                     destroyBufferStream(cstate->read_stream);
                     reuseBuffer(getContextBufferPool(c), buf);
-                    wwmGlobalFree(cstate);
+                    globalFree(cstate);
                     CSTATE_DROP(c);
                     self->up->upStream(self->up, newFinContextFrom(c));
                     self->dw->downStream(self->dw, newFinContextFrom(c));
@@ -168,7 +168,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->fin)
     {
         destroyBufferStream(cstate->read_stream);
-        wwmGlobalFree(cstate);
+        globalFree(cstate);
         CSTATE_DROP(c);
     }
 
@@ -177,7 +177,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 disconnect:
     destroyBufferStream(cstate->read_stream);
-    wwmGlobalFree(cstate);
+    globalFree(cstate);
     CSTATE_DROP(c);
     self->up->upStream(self->up, newFinContextFrom(c));
     self->dw->downStream(self->dw, newFinContextFrom(c));
@@ -187,14 +187,14 @@ disconnect:
 tunnel_t *newBgp4Client(node_instance_context_t *instance_info)
 {
 
-    bgp4_client_state_t *state = wwmGlobalMalloc(sizeof(bgp4_client_state_t));
+    bgp4_client_state_t *state = globalMalloc(sizeof(bgp4_client_state_t));
     memset(state, 0, sizeof(bgp4_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;
     char        *buf      = NULL;
     getStringFromJsonObjectOrDefault(&buf, settings, "password", "passwd");
     state->hpassword = CALC_HASH_BYTES(buf, strlen(buf));
-    wwmGlobalFree(buf);
+    globalFree(buf);
 
     // todo (random data) its better to fill these with real data
     state->as_number = (uint16_t) fastRand();

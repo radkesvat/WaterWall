@@ -31,11 +31,11 @@ char *readFile(const char *const path)
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
-    char  *string = wwmGlobalMalloc(fsize + 1);
+    char  *string = globalMalloc(fsize + 1);
     size_t count  = fread(string, fsize, 1, f);
     if (count == 0)
     {
-        wwmGlobalFree(string);
+        globalFree(string);
         return NULL;
     }
     fclose(f);
@@ -66,7 +66,7 @@ bool writeFile(const char *const path, const char *data, size_t len)
 
 char *concat(const char *s1, const char *s2)
 {
-    char *result = wwmGlobalMalloc(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
+    char *result = globalMalloc(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
     strcpy(result, s1);
     strcat(result, s2);
     return result;
@@ -146,7 +146,7 @@ bool getStringFromJson(char **dest, const cJSON *json_str_node)
     if (cJSON_IsString(json_str_node) && (json_str_node->valuestring != NULL))
     {
 
-        *dest = wwmGlobalMalloc(strlen(json_str_node->valuestring) + 1);
+        *dest = globalMalloc(strlen(json_str_node->valuestring) + 1);
         strcpy(*dest, json_str_node->valuestring);
         return true;
     }
@@ -160,7 +160,7 @@ bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key
     if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
     {
 
-        *dest = wwmGlobalMalloc(strlen(jstr->valuestring) + 1);
+        *dest = globalMalloc(strlen(jstr->valuestring) + 1);
         strcpy(*dest, jstr->valuestring);
         return true;
     }
@@ -172,7 +172,7 @@ bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const 
     assert(def != NULL);
     if (! getStringFromJsonObject(dest, json_obj, key))
     {
-        *dest = wwmGlobalMalloc(strlen(def) + 1);
+        *dest = globalMalloc(strlen(def) + 1);
         strcpy(*dest, def);
         return false;
     }
@@ -307,12 +307,12 @@ void socketContextDomainSet(socket_context_t *restrict scontext, const char *res
     {
         if (scontext->domain_constant)
         {
-            scontext->domain = wwmGlobalMalloc(256);
+            scontext->domain = globalMalloc(256);
         }
     }
     else
     {
-        scontext->domain = wwmGlobalMalloc(256);
+        scontext->domain = globalMalloc(256);
     }
     scontext->domain_constant = false;
     memcpy(scontext->domain, domain, len);
@@ -323,7 +323,7 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
-        wwmGlobalFree(scontext->domain);
+        globalFree(scontext->domain);
     }
     scontext->domain_constant = true;
     scontext->domain          = (char *) domain;
@@ -391,7 +391,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     {
         return NULL;
     }
-    user_t *user = wwmGlobalMalloc(sizeof(user_t));
+    user_t *user = globalMalloc(sizeof(user_t));
     memset(user, 0, sizeof(user_t));
 
     getStringFromJsonObjectOrDefault(&(user->name), user_json, "name", "EMPTY_NAME");
@@ -400,7 +400,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
 
     if (! getStringFromJsonObject(&(user->uid), user_json, "uid"))
     {
-        wwmGlobalFree(user);
+        globalFree(user);
         return NULL;
     }
     user->hash_uid = CALC_HASH_BYTES(user->uid, strlen(user->uid));
@@ -408,7 +408,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     bool enable;
     if (! getBoolFromJsonObject(&(enable), user_json, "enable"))
     {
-        wwmGlobalFree(user);
+        globalFree(user);
         return NULL;
     }
     user->enable = enable;
@@ -510,7 +510,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
 
         va_end(argp);
         result.status    = kDvsConstant;
-        result.value_ptr = wwmGlobalMalloc(strlen(jstr->valuestring) + 1);
+        result.value_ptr = globalMalloc(strlen(jstr->valuestring) + 1);
         strcpy(result.value_ptr, jstr->valuestring);
     }
     return result;
