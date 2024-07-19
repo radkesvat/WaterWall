@@ -81,7 +81,7 @@ void *globalMalloc(size_t size)
 {
     return mi_malloc(size);
 }
-void *wwmGlobalRealloc(void *ptr, size_t size)
+void *globalRealloc(void *ptr, size_t size)
 {
     return mi_realloc(ptr, size);
 }
@@ -97,7 +97,7 @@ void globalFree(void *ptr)
 
 */
 
-void *wwmDedicatedMalloc(dedicated_memory_t *dm, size_t size)
+void *dedicatedMalloc(dedicated_memory_t *dm, size_t size)
 {
     (void) dm;
 
@@ -107,18 +107,18 @@ void *wwmDedicatedMalloc(dedicated_memory_t *dm, size_t size)
     // hhybridmutex_unlock(&dm->mut);
     // return ptr;
 }
-void *wwmDedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
+void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
 {
     (void) dm;
 
-    return wwmGlobalRealloc(ptr,size);
+    return globalRealloc(ptr,size);
 
     // hhybridmutex_lock(&dm->mut);
     // void *newptr = mi_heap_realloc(dm->mi_heap, ptr, size);
     // hhybridmutex_unlock(&dm->mut);
     // return newptr;
 }
-void wwmDedicatedFree(dedicated_memory_t *dm, void *ptr)
+void dedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
     (void) dm;
 

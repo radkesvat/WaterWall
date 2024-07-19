@@ -81,7 +81,6 @@ enum
 typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
-typedef uint8_t  tid_t;
 typedef uint8_t  chain_index_t;
 
 /*

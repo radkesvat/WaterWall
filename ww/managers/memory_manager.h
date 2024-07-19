@@ -27,7 +27,7 @@ static inline void *globalMalloc(size_t size)
 {
     return malloc(size);
 }
-static inline void *wwmGlobalRealloc(void *ptr, size_t size)
+static inline void *globalRealloc(void *ptr, size_t size)
 {
     return realloc(ptr, size);
 }
@@ -36,17 +36,17 @@ static inline void globalFree(void *ptr)
     free(ptr);
 }
 
-static inline void *wwmDedicatedMalloc(dedicated_memory_t *dm, size_t size)
+static inline void *dedicatedMalloc(dedicated_memory_t *dm, size_t size)
 {
     (void) dm;
     return malloc(size);
 }
-static inline void *wwmDedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
+static inline void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
 {
     (void) dm;
     return realloc(ptr, size);
 }
-static inline void wwmDedicatedFree(dedicated_memory_t *dm, void *ptr)
+static inline void dedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
     (void) dm;
     free(ptr);
@@ -55,11 +55,11 @@ static inline void wwmDedicatedFree(dedicated_memory_t *dm, void *ptr)
 #else
 
 void *globalMalloc(size_t size);
-void *wwmGlobalRealloc(void *ptr, size_t size);
+void *globalRealloc(void *ptr, size_t size);
 void  globalFree(void *ptr);
 
-void *wwmDedicatedMalloc(dedicated_memory_t *dm, size_t size);
-void *wwmDedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size);
-void  wwmDedicatedFree(dedicated_memory_t *dm, void *ptr);
+void *dedicatedMalloc(dedicated_memory_t *dm, size_t size);
+void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size);
+void  dedicatedFree(dedicated_memory_t *dm, void *ptr);
 
 #endif

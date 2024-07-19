@@ -35,7 +35,7 @@ void* hv_malloc(size_t size) {
 void* hv_realloc(void* oldptr, size_t newsize, size_t oldsize) {
     hatomic_inc(&s_alloc_cnt);
     if (oldptr) hatomic_inc(&s_free_cnt);
-    void* ptr = wwmGlobalRealloc(oldptr, newsize);
+    void* ptr = globalRealloc(oldptr, newsize);
     if (!ptr) {
         fprintf(stderr, "realloc failed!\n");
         exit(-1);

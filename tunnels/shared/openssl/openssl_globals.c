@@ -17,21 +17,21 @@ static void *opennsl_dedicated_malloc(size_t num, const char *file, int line)
 {
     (void) file;
     (void) line;
-    return wwmDedicatedMalloc(openssl_dedicated_memory_manager, num);
+    return dedicatedMalloc(openssl_dedicated_memory_manager, num);
 }
 
 static void *opennsl_dedicated_realloc(void *addr, size_t num, const char *file, int line)
 {
     (void) file;
     (void) line;
-    return wwmDedicatedRealloc(openssl_dedicated_memory_manager, addr, num);
+    return dedicatedRealloc(openssl_dedicated_memory_manager, addr, num);
 }
 
 static void opennsl_dedicated_free(void *addr, const char *file, int line)
 {
     (void) file;
     (void) line;
-    wwmDedicatedFree(openssl_dedicated_memory_manager, addr);
+    dedicatedFree(openssl_dedicated_memory_manager, addr);
 }
 
 void opensslGlobalInit(void)
