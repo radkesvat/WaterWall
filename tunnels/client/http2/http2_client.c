@@ -220,9 +220,14 @@ static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con
     data->payload                  = buf;
     con->current_stream_write_line = stream->line;
     lockLine(stream->line);
+
+    line_t *h2_line = data->line;
     con->tunnel->up->upStream(con->tunnel->up, data);
     unLockLine(stream->line);
-    con->current_stream_write_line = NULL;
+    if (isAlive(h2_line))
+    {
+        con->current_stream_write_line = NULL;
+    }
 }
 
 static bool sendNgHttp2Data(tunnel_t *self, http2_client_con_state_t *con)
@@ -366,6 +371,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
 
         lockLine(con->line);
+
         while (sendNgHttp2Data(self, con))
         {
             if (! isAlive(con->line))
@@ -375,9 +381,10 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
-        unLockLine(con->line);
 
         sendStreamData(con, stream, c->payload);
+        
+        unLockLine(con->line);
 
         dropContexPayload(c);
         destroyContext(c);

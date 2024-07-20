@@ -227,6 +227,7 @@ static mux_client_con_state_t *grabConnection(tunnel_t *self, tid_t tid)
     vec_cons_push(vector, con);
     return con;
 }
+
 static bool shouldClose(tunnel_t *self, mux_client_con_state_t *main_con)
 {
     mux_client_state_t *state  = TSTATE(self);
@@ -269,8 +270,28 @@ static void upStream(tunnel_t *self, context_t *c)
     mux_client_child_con_state_t *child_con = CSTATE(c);
     if (c->payload != NULL)
     {
+        line_t* current_writing_line = c->line;
+        line_t* main_line = child_con->parent;
+
+        switchLine(c, main_line);
+        mux_client_con_state_t *main_con = CSTATE(c);
+
         makeDataFrame(c->payload, child_con->cid);
-        self->up->upStream(self->up, switchLine(c, child_con->parent));
+
+        lockLine(main_line);
+        lockLine(current_writing_line);
+
+        main_con->current_writing_line = current_writing_line;
+        
+        self->up->upStream(self->up, c);
+
+        if(isAlive(main_line)){
+            main_con->current_writing_line = NULL;
+        }
+
+        unLockLine(main_line);
+        unLockLine(current_writing_line);
+
     }
     else
     {
@@ -357,9 +378,11 @@ static void downStream(tunnel_t *self, context_t *c)
                     switch (frame.flags)
                     {
                     case kMuxFlagClose: {
+                        reuseBuffer(getLineBufferPool(c->line), frame_payload);
                         context_t *fin_ctx = newFinContext(child_con_i->line);
                         destroyChildConnecton(child_con_i);
                         dest->downStream(dest, fin_ctx);
+                        frame_payload = NULL;
                     }
 
                     break;
@@ -368,12 +391,13 @@ static void downStream(tunnel_t *self, context_t *c)
                         context_t *data_ctx = newContext(child_con_i->line);
                         data_ctx->payload   = frame_payload;
                         dest->downStream(dest, data_ctx);
+                        frame_payload = NULL;
                     }
 
                     break;
 
                     case kMuxFlagFlow:
-                        LOGE("MuxClient: kMuxFlagFlow not implemented"); //fall through
+                        LOGE("MuxClient: kMuxFlagFlow not implemented"); // fall through
                     case kMuxFlagOpen:
                     default:
                         LOGE("MuxClient: incorrect frame flag");
@@ -385,6 +409,16 @@ static void downStream(tunnel_t *self, context_t *c)
                     break;
                 }
                 child_con_i = child_con_i->next;
+            }
+            if (frame_payload != NULL)
+            {
+                LOGE("MuxClient: a payload could not find consumer cid: %d", (int) frame.cid);
+                reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
+            }
+            else if (! isAlive(c->line))
+            {
+                destroyContext(c);
+                return;
             }
         }
         else
