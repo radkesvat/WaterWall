@@ -73,6 +73,7 @@ option(INCLUDE_HALFDUPLEX_SERVER "link HalfDuplexServer staticly to the core"  T
 option(INCLUDE_HALFDUPLEX_CLIENT "link HalfDuplexClient staticly to the core"  TRUE)
 option(INCLUDE_BGP4_SERVER "link Bgp4Server staticly to the core"  TRUE)
 option(INCLUDE_BGP4_CLIENT "link Bgp4Client staticly to the core"  TRUE)
+option(INCLUDE_MUX_CLIENT "link MuxClient staticly to the core"  TRUE)
 
 set(OPENSSL_CONFIGURE_VERBOSE ON)
 
@@ -354,6 +355,19 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
 target_link_libraries(Waterwall Bgp4Client)
 endif()
+
+#Mux client
+if (INCLUDE_MUX_CLIENT)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_MUX_CLIENT=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/mux)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/mux)
+target_link_libraries(Waterwall MuxClient)
+endif()
+
+
+
+
+
 
 
 #------------------------------------------------------------------------------------------
