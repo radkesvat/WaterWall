@@ -474,7 +474,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 testing how the filtering behaves if we force protocol client to recevie at least
                 2 full chunks before sending anymore data
 
-                sometimes udp or http channel is the underlying protol so we should not do weird
+                sometimes udp or is the underlying protocol so we should not do weird
                 kind of stuff to that data otherwise speedtest app may sometimes give up the test :(
                 forexample speedtest first packet is sometimes 65 bytes total !
             */
@@ -617,7 +617,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 
         int          i = 0;
         const cJSON *alpn_item;
-        // multi port given
+
         cJSON_ArrayForEach(alpn_item, aplns_array)
         {
             if (cJSON_IsObject(alpn_item))

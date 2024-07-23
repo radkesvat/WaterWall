@@ -585,7 +585,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
         int          i = 0;
         const cJSON *alpn_item;
-        // multi port given
+
         cJSON_ArrayForEach(alpn_item, aplns_array)
         {
             if (cJSON_IsObject(alpn_item))

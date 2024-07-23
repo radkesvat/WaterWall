@@ -124,3 +124,16 @@ extern ww_global_state_t global_ww_state;
 #define RAM_PROFILE   global_ww_state.ram_profile
 #define WORKERS       global_ww_state.workers
 #define WORKERS_COUNT global_ww_state.workers_count
+
+
+static inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
+{
+    return WORKERS[tid].buffer_pool;
+}
+
+static inline struct hloop_s *getThreadLoop(uint8_t tid)
+{
+    return WORKERS[tid].loop;
+}
+
+

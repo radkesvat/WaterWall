@@ -398,10 +398,7 @@ static inline bool isAuthenticated(line_t *const line)
     return line->auth_cur > 0;
 }
 
-static inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
-{
-    return WORKERS[tid].buffer_pool;
-}
+
 
 static inline buffer_pool_t *getLineBufferPool(const line_t *const l)
 {
