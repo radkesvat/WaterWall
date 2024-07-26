@@ -2,7 +2,6 @@
 #include "buffer_stream.h"
 #include "loggers/network_logger.h"
 #include "mux_frame.h"
-#include "utils/jsonutils.h"
 
 typedef struct mux_server_state_s
 {
@@ -161,43 +160,6 @@ static mux_server_con_state_t *createMainConnection(tunnel_t *self, line_t *main
     return con;
 }
 
-static bool shouldClose(tunnel_t *self, mux_server_con_state_t *main_con)
-{
-    mux_server_state_t *state  = TSTATE(self);
-    tid_t               tid    = main_con->line->tid;
-    vec_cons           *vector = &(state->threadlocal_cons[tid].cons);
-
-    switch (state->mode)
-    {
-    default:
-    case kCuncurrencyModeCounter:
-        if (main_con->contained >= state->connection_cunc_capacity && main_con->children_root.next == NULL)
-        {
-            vec_cons_iter find_result = vec_cons_find(vector, main_con);
-            if (find_result.ref != vec_cons_end(vector).ref)
-            {
-                vec_cons_erase_at(vector, find_result);
-            }
-            return true;
-        }
-        break;
-
-    case kCuncurrencyModeTimer:
-        if (main_con->creation_epoch >= hloop_now(getWorkerLoop(tid)) + state->connection_cunc_duration)
-        {
-            vec_cons_iter find_result = vec_cons_find(vector, main_con);
-            if (find_result.ref != vec_cons_end(vector).ref)
-            {
-                vec_cons_erase_at(vector, find_result);
-            }
-            return true;
-        }
-
-        break;
-    }
-    return false;
-}
-
 static void upStream(tunnel_t *self, context_t *c)
 {
     mux_server_con_state_t *main_con = CSTATE(c);
@@ -228,19 +190,40 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     if (WW_UNLIKELY(bufLen(frame_payload) <= 0))
                     {
+                        LOGE("MuxServer: payload length < 0");
+                        reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
+                        destroyMainConnecton(main_con);
+                        destroyContext(c);
+                        continue;
                     }
+
+                    mux_server_child_con_state_t *child      = createChildConnection(main_con, c->line->tid);
+                    line_t                       *child_line = child->line;
+                    lockLine(child_line);
+
+                    self->up->upStream(self->up, newInitContext(child->line));
+
+                    if (! isAlive(child_line))
+                    {
+                        unLockLine(child_line);
+                        reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
+                        continue;
+                    }
+                    unLockLine(child_line);
+
+                    context_t *data_ctx = newContext(child_line);
+                    data_ctx->payload   = frame_payload;
+                    self->up->upStream(self->up, data_ctx);
 
                     if (! isAlive(c->line))
                     {
-                        reuseBuffer(getLineBufferPool(c->line), frame_payload);
                         destroyContext(c);
                         return;
                     }
-
-                    frame_payload = NULL;
+                    continue;
                 }
 
-                mux_client_child_con_state_t *child_con_i;
+                mux_server_child_con_state_t *child_con_i;
                 for (child_con_i = main_con->children_root.next; child_con_i;)
                 {
                     if (child_con_i->cid == frame.cid)
@@ -248,33 +231,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         switch (frame.flags)
                         {
-                        case kMuxFlagOpen: {
-                            if (WW_UNLIKELY(bufLen(frame_payload) <= 0))
-                            {
-                                LOGE("MuxServer: payload length < 0");
-                                reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
-                                destroyMainConnecton(main_con);
-                                destroyContext(c);
-                                return;
-                            }
-                            mux_server_child_con_state_t *child      = createChildConnection(main_con, c->line->tid);
-                            line_t                       *child_line = child->line;
-                            lockLine(child_line);
-
-                            self->up->upStream(self->up, newInitContext(child->line));
-
-                            if (! isAlive(child_line))
-                            {
-                                unLockLine(child_line);
-                            }
-                            unLockLine(child_line);
-                            context_t *data_ctx = newContext(child_con_i->line);
-                            data_ctx->payload   = frame_payload;
-                            self->dw->downStream(self->dw, data_ctx);
-                            frame_payload = NULL;
-                        }
-                        break;
-
                         case kMuxFlagClose: {
                             reuseBuffer(getLineBufferPool(c->line), frame_payload);
                             context_t *fin_ctx = newFinContext(child_con_i->line);
@@ -305,7 +261,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         case kMuxFlagFlow:
                             LOGE("MuxServer: kMuxFlagFlow not implemented"); // fall through
-                        case kMuxFlagOpen:
                         default:
                             LOGE("MuxServer: incorrect frame flag");
                             reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
@@ -367,12 +322,10 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newMuxServer(node_instance_context_t *instance_info)
 {
-
+    (void) instance_info;
     mux_server_state_t *state = globalMalloc(sizeof(mux_server_state_t));
     memset(state, 0, sizeof(mux_server_state_t));
 
-    const cJSON *settings = instance_info->node_settings_json;
-    (void) settings;
 
     tunnel_t *t   = newTunnel();
     t->state      = state;
