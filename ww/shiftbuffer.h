@@ -27,14 +27,16 @@
 
 */
 
+typedef unsigned int shiftbuffer_refc_t;
+
 struct shift_buffer_s
 {
-    char         *pbuf;
-    unsigned int *refc;
-    unsigned int  calc_len;
-    unsigned int  curpos;
-    unsigned int  full_cap;
-    unsigned int  offset;
+    char               *pbuf;
+    shiftbuffer_refc_t *refc;
+    unsigned int        calc_len;
+    unsigned int        curpos;
+    unsigned int        full_cap;
+    unsigned int        offset;
 };
 
 typedef struct shift_buffer_s shift_buffer_t;
@@ -105,7 +107,7 @@ begin:;
     self->calc_len += bytes;
 }
 
-static inline void shiftr(shift_buffer_t * const self, const unsigned int bytes)
+static inline void shiftr(shift_buffer_t *const self, const unsigned int bytes)
 {
     // caller knows if there is space or not, checking here makes no sense
     self->curpos += bytes;
@@ -113,7 +115,7 @@ static inline void shiftr(shift_buffer_t * const self, const unsigned int bytes)
 }
 
 // developer should call this function or reserve function before writing
-static inline void setLen(shift_buffer_t * const self, const unsigned int bytes)
+static inline void setLen(shift_buffer_t *const self, const unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {
@@ -129,7 +131,7 @@ static inline unsigned int bufLen(const shift_buffer_t *const self)
     return self->calc_len;
 }
 
-static inline void reserveBufSpace(shift_buffer_t * const self, const unsigned int bytes)
+static inline void reserveBufSpace(shift_buffer_t *const self, const unsigned int bytes)
 {
     if (rCap(self) < bytes)
     {

@@ -404,6 +404,7 @@ static void downStream(tunnel_t *self, context_t *c)
         destroyContext(c);
         return;
     }
+    assert(c->payload != NULL);
 
     bufferStreamPushContextPayload(main_con->read_stream, c);
     while (bufferStreamLen(main_con->read_stream) > sizeof(mux_frame_t))

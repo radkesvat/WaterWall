@@ -52,10 +52,13 @@ static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
 
     worker->shift_buffer_pool =
         newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    GSTATE.shortcut_shift_buffer_pools[tid] = (getWorker(tid)->shift_buffer_pool);
 
-    worker->buffer_pool = createSmallBufferPool(worker->tid);
+    worker->buffer_pool               = createSmallBufferPool(worker->tid);
+    GSTATE.shortcut_buffer_pools[tid] = (getWorker(tid)->buffer_pool);
 
-    worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+    GSTATE.shortcut_loops[tid] = (getWorker(tid)->loop);
 }
 
 static void initalizeWorker(worker_t *worker, tid_t tid)
@@ -64,18 +67,24 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
 
     worker->shift_buffer_pool =
         newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    GSTATE.shortcut_shift_buffer_pools[tid] = (getWorker(tid)->shift_buffer_pool);
 
-    worker->buffer_pool = createBufferPool(worker->tid);
+    worker->buffer_pool               = createBufferPool(worker->tid);
+    GSTATE.shortcut_buffer_pools[tid] = (getWorker(tid)->buffer_pool);
 
-    worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+    GSTATE.shortcut_loops[tid] = (getWorker(tid)->loop);
 
     worker->context_pool =
         newGenericPoolWithCap((16) + GSTATE.ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
+    GSTATE.shortcut_context_pools[tid] = (getWorker(tid)->context_pool);
 
     worker->line_pool = newGenericPoolWithCap((8) + GSTATE.ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
+    GSTATE.shortcut_line_pools[tid] = (getWorker(tid)->line_pool);
 
     worker->pipeline_msg_pool =
         newGenericPoolWithCap((8) + GSTATE.ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
+    GSTATE.shortcut_pipeline_msg_pools[tid] = (getWorker(tid)->pipeline_msg_pool);
 }
 
 static void runWorker(worker_t *worker)
@@ -115,7 +124,7 @@ void initHeap(void)
     initMemoryManager();
 }
 
-static void buildShortCuts(void)
+static void initializeShortCuts(void)
 {
     assert(GSTATE.initialized);
 
@@ -132,16 +141,6 @@ static void buildShortCuts(void)
     GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (3 * sizeof(void *) * total_workers));
     GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (4 * sizeof(void *) * total_workers));
     GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (5 * sizeof(void *) * total_workers));
-
-    for (int i = 0; i < total_workers; i++)
-    {
-        GSTATE.shortcut_loops[i]              = (getWorker(i)->loop);
-        GSTATE.shortcut_buffer_pools[i]       = (getWorker(i)->buffer_pool);
-        GSTATE.shortcut_shift_buffer_pools[i] = (getWorker(i)->shift_buffer_pool);
-        GSTATE.shortcut_context_pools[i]      = (getWorker(i)->context_pool);
-        GSTATE.shortcut_line_pools[i]         = (getWorker(i)->line_pool);
-        GSTATE.shortcut_pipeline_msg_pools[i] = (getWorker(i)->pipeline_msg_pool);
-    }
 }
 
 void createWW(const ww_construction_data_t init_data)
@@ -194,6 +193,8 @@ void createWW(const ww_construction_data_t init_data)
 
         WORKERS = (worker_t *) malloc(sizeof(worker_t) * (WORKERS_COUNT + kAdditionalReservedWorkers));
 
+        initializeShortCuts();
+
         for (unsigned int i = 0; i < WORKERS_COUNT; ++i)
         {
             initalizeWorker(getWorker(i), i);
@@ -214,8 +215,6 @@ void createWW(const ww_construction_data_t init_data)
     {
         GSTATE.node_manager = createNodeManager();
     }
-
-    buildShortCuts();
 
     // [Section] Spawn all workers expect main worker which is current thread
     {
