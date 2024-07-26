@@ -74,7 +74,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     idle_item_t *item = globalMalloc(sizeof(idle_item_t));
     hhybridmutex_lock(&(self->mutex));
 
-    *item = (idle_item_t){.expire_at_ms = hloop_now_ms(WORKERS[tid].loop) + age_ms,
+    *item = (idle_item_t){.expire_at_ms = hloop_now_ms(getWorkerLoop(tid)) + age_ms,
                           .hash         = key,
                           .tid          = tid,
                           .userdata     = userdata,
@@ -141,7 +141,7 @@ static void beforeCloseCallBack(hevent_t *ev)
     idle_item_t *item = hevent_userdata(ev);
     if (! item->removed)
     {
-        if (item->expire_at_ms > hloop_now_ms(WORKERS[item->tid].loop))
+        if (item->expire_at_ms > hloop_now_ms(getWorkerLoop(item->tid)))
         {
             hhybridmutex_lock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
@@ -156,7 +156,7 @@ static void beforeCloseCallBack(hevent_t *ev)
             item->cb(item);
         }
         
-        if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > hloop_now_ms(WORKERS[item->tid].loop))
+        if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > hloop_now_ms(getWorkerLoop(item->tid)))
         {
             hhybridmutex_lock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
@@ -202,10 +202,10 @@ void idleCallBack(htimer_t *timer)
                 // hmap_idles_t_erase(&(self->hmap), item->hash);
                 hevent_t ev;
                 memset(&ev, 0, sizeof(ev));
-                ev.loop = WORKERS[item->tid].loop;
+                ev.loop = getWorkerLoop(item->tid);
                 ev.cb   = beforeCloseCallBack;
                 hevent_set_userdata(&ev, item);
-                hloop_post_event(WORKERS[item->tid].loop, &ev);
+                hloop_post_event(getWorkerLoop(item->tid), &ev);
             }
         }
         else

@@ -7,8 +7,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#define LEFTPADDING (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 13) : ((1U << 8) + 512))
-#define RIGHTPADDING    (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8))
+#define LEFTPADDING  (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 13) : ((1U << 8) + 512))
+#define RIGHTPADDING (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8))
 
 pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
 {
@@ -38,12 +38,12 @@ void destroyShiftBuffer(uint8_t tid, shift_buffer_t *self)
     if (*(self->refc) <= 0)
     {
         globalFree(self->pbuf - self->offset);
-        reusePoolItem(WORKERS[tid].shift_buffer_pool, self);
+        reusePoolItem(getWorkerShiftBufferPool(tid), self);
     }
     else
     {
         self->refc = globalMalloc(sizeof(self->refc[0]));
-        reusePoolItem(WORKERS[tid].shift_buffer_pool, self);
+        reusePoolItem(getWorkerShiftBufferPool(tid), self);
     }
 }
 
@@ -57,7 +57,7 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
     unsigned int real_cap = pre_cap + LEFTPADDING + RIGHTPADDING;
 
     // shift_buffer_t *self = globalMalloc(sizeof(shift_buffer_t));
-    shift_buffer_t *self = (shift_buffer_t *) popPoolItem(WORKERS[tid].shift_buffer_pool);
+    shift_buffer_t *self = (shift_buffer_t *) popPoolItem(getWorkerShiftBufferPool(tid));
 
     self->calc_len = 0;
     self->offset   = 0;
@@ -83,7 +83,7 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
 shift_buffer_t *newShallowShiftBuffer(uint8_t tid, shift_buffer_t *owner)
 {
     *(owner->refc) += 1;
-    shift_buffer_t *shallow = (shift_buffer_t *) popPoolItem(WORKERS[tid].shift_buffer_pool);
+    shift_buffer_t *shallow = (shift_buffer_t *) popPoolItem(getWorkerShiftBufferPool(tid));
     globalFree(shallow->refc);
     *shallow = *owner;
 

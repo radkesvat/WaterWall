@@ -180,7 +180,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
                                                                   .scheme       = state->scheme,
                                                                   .method       = state->content_type == kApplicationGrpc ? kHttpPost : kHttpGet,
                                                                   .line         = newLine(tid),
-                                                                  .ping_timer   = htimer_add(WORKERS[tid].loop, onPingTimer, kPingInterval, INFINITE),
+                                                                  .ping_timer   = htimer_add(getWorkerLoop(tid), onPingTimer, kPingInterval, INFINITE),
                                                                   .tunnel       = self,
                                                                   .actions      = action_queue_t_with_capacity(16)};
     LSTATE_MUT(con->line)           = con;
@@ -224,7 +224,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     {
         if (k.ref->buf)
         {
-            reuseBuffer(getThreadBufferPool(con->line->tid), k.ref->buf);
+            reuseBuffer(getWorkerBufferPool(con->line->tid), k.ref->buf);
         }
         unLockLine(k.ref->stream_line);
     }

@@ -10,7 +10,7 @@
     Tunnels basicly encapsulate / decapsulate the packets and pass it to the next tunnel.
     something like this:
 
-    ------------------------------ chain --------------------------------
+    ------------------------------ chain ---------------------------------
 
       --------------            --------------            --------------
       |            | ---------> |            | ---------> |            |
@@ -173,7 +173,7 @@ void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *ite
 
 static inline line_t *newLine(uint8_t tid)
 {
-    line_t *result = popPoolItem(WORKERS[tid].line_pool);
+    line_t *result = popPoolItem(getWorkerLinePool(tid));
 
     *result = (line_t) {
         .tid          = tid,
@@ -290,7 +290,7 @@ static inline void internalUnRefLine(line_t *const l)
         globalFree(l->dest_ctx.domain);
     }
 
-    reusePoolItem(WORKERS[l->tid].line_pool, l);
+    reusePoolItem(getWorkerLinePool(l->tid), l);
 }
 
 /*
@@ -330,12 +330,12 @@ static inline void destroyContext(context_t *c)
     assert(c->payload == NULL);
     const uint8_t tid = c->line->tid;
     unLockLine(c->line);
-    reusePoolItem(WORKERS[tid].context_pool, c);
+    reusePoolItem(getWorkerContextPool(tid), c);
 }
 
 static inline context_t *newContext(line_t *const line)
 {
-    context_t *new_ctx = popPoolItem(WORKERS[line->tid].context_pool);
+    context_t *new_ctx = popPoolItem(getWorkerContextPool(line->tid));
     *new_ctx           = (context_t) {.line = line};
     lockLine(line);
     return new_ctx;
@@ -344,7 +344,7 @@ static inline context_t *newContext(line_t *const line)
 static inline context_t *newContextFrom(const context_t *const source)
 {
     lockLine(source->line);
-    context_t *new_ctx = popPoolItem(WORKERS[source->line->tid].context_pool);
+    context_t *new_ctx = popPoolItem(getWorkerContextPool(source->line->tid));
     *new_ctx           = (context_t) {.line = source->line};
     return new_ctx;
 }
@@ -398,16 +398,14 @@ static inline bool isAuthenticated(line_t *const line)
     return line->auth_cur > 0;
 }
 
-
-
 static inline buffer_pool_t *getLineBufferPool(const line_t *const l)
 {
-    return WORKERS[l->tid].buffer_pool;
+    return getWorkerBufferPool(l->tid);
 }
 
 static inline buffer_pool_t *getContextBufferPool(const context_t *const c)
 {
-    return WORKERS[c->line->tid].buffer_pool;
+    return getWorkerBufferPool(c->line->tid);
 }
 
 // same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
@@ -442,5 +440,5 @@ static inline bool isDownPiped(const line_t *const l)
 
 static inline hloop_t *getLineLoop(const line_t *const l)
 {
-    return WORKERS[l->tid].loop;
+    return getWorkerLoop(l->tid);
 }

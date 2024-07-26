@@ -107,6 +107,12 @@ typedef struct worker_s
 
 typedef struct ww_global_state_s
 {
+    struct hloop_s         **shortcut_loops;
+    struct buffer_pool_s   **shortcut_buffer_pools;
+    struct generic_pool_s  **shortcut_shift_buffer_pools;
+    struct generic_pool_s  **shortcut_context_pools;
+    struct generic_pool_s  **shortcut_line_pools;
+    struct generic_pool_s  **shortcut_pipeline_msg_pools;
     struct worker_s         *workers;
     struct socket_manager_s *socekt_manager;
     struct node_manager_s   *node_manager;
@@ -115,6 +121,7 @@ typedef struct ww_global_state_s
     struct logger_s         *dns_logger;
     unsigned int             workers_count;
     unsigned int             ram_profile;
+    bool                     initialized;
 
 } ww_global_state_t;
 
@@ -125,15 +132,42 @@ extern ww_global_state_t global_ww_state;
 #define WORKERS       global_ww_state.workers
 #define WORKERS_COUNT global_ww_state.workers_count
 
-
-static inline buffer_pool_t *getThreadBufferPool(uint8_t tid)
+static inline tid_t getWorkersCount(void)
 {
-    return WORKERS[tid].buffer_pool;
+    return WORKERS_COUNT;
 }
 
-static inline struct hloop_s *getThreadLoop(uint8_t tid)
+static inline worker_t *getWorker(tid_t tid)
 {
-    return WORKERS[tid].loop;
+    return &(WORKERS[tid]);
 }
 
+static inline struct generic_pool_s *getWorkerShiftBufferPool(uint8_t tid)
+{
+    return GSTATE.shortcut_shift_buffer_pools[tid];
+}
 
+static inline struct buffer_pool_s *getWorkerBufferPool(uint8_t tid)
+{
+    return GSTATE.shortcut_buffer_pools[tid];
+}
+
+static inline struct generic_pool_s *getWorkerLinePool(uint8_t tid)
+{
+    return GSTATE.shortcut_line_pools[tid];
+}
+
+static inline struct generic_pool_s *getWorkerContextPool(uint8_t tid)
+{
+    return GSTATE.shortcut_context_pools[tid];
+}
+
+static inline struct generic_pool_s *getWorkerPipeLineMsgPool(uint8_t tid)
+{
+    return GSTATE.shortcut_pipeline_msg_pools[tid];
+}
+
+static inline struct hloop_s *getWorkerLoop(uint8_t tid)
+{
+    return GSTATE.shortcut_loops[tid];
+}

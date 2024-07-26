@@ -79,7 +79,7 @@ static void onMsgReceived(hevent_t *ev)
     struct msg_event *msg_ev = hevent_userdata(ev);
     pipe_line_t      *pl     = msg_ev->pl;
     (*(MsgTargetFunction *) (&(msg_ev->function)))(pl, msg_ev->arg);
-    reusePoolItem(WORKERS[msg_ev->target_tid].pipeline_msg_pool, msg_ev);
+    reusePoolItem(getWorkerPipeLineMsgPool(msg_ev->target_tid), msg_ev);
     unlock(pl);
 }
 
@@ -92,15 +92,15 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
         return;
     }
     lock(pl);
-    struct msg_event *evdata = popPoolItem(WORKERS[tid_from].pipeline_msg_pool);
+    struct msg_event *evdata = popPoolItem(getWorkerPipeLineMsgPool(tid_from));
     *evdata = (struct msg_event) {.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
 
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
-    ev.loop = WORKERS[tid_to].loop;
+    ev.loop = getWorkerLoop(tid_to);
     ev.cb   = onMsgReceived;
     hevent_set_userdata(&ev, evdata);
-    hloop_post_event(WORKERS[tid_to].loop, &ev);
+    hloop_post_event(getWorkerLoop(tid_to), &ev);
 }
 
 static void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
@@ -108,7 +108,7 @@ static void writeBufferToLeftSide(pipe_line_t *pl, void *arg)
     shift_buffer_t *buf = arg;
     if (pl->left_line == NULL)
     {
-        reuseBuffer(WORKERS[pl->left_tid].buffer_pool, buf);
+        reuseBuffer(getWorkerBufferPool(pl->left_tid), buf);
         return;
     }
     context_t *ctx = newContext(pl->left_line);
@@ -121,7 +121,7 @@ static void writeBufferToRightSide(pipe_line_t *pl, void *arg)
     shift_buffer_t *buf = arg;
     if (pl->right_line == NULL)
     {
-        reuseBuffer(WORKERS[pl->right_tid].buffer_pool, buf);
+        reuseBuffer(getWorkerBufferPool(pl->right_tid), buf);
         return;
     }
     context_t *ctx = newContext(pl->right_line);

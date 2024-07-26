@@ -74,7 +74,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->tunnel      = self;
             cstate->line        = c->line;
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
-            hloop_t   *loop      = WORKERS[c->line->tid].loop;
+            hloop_t   *loop      = getWorkerLoop(c->line->tid);
             sockaddr_u host_addr = {0};
             sockaddr_set_ipport(&host_addr, "0.0.0.0", 0);
 

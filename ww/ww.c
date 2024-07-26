@@ -1,5 +1,4 @@
 #include "ww.h"
-
 #include "hloop.h"
 #include "hthread.h"
 #include "loggers/core_logger.h"
@@ -17,20 +16,21 @@
 
     the only purpose of this is to reduce memory usage
 
-    // additional therad 1 : socket manager
+    additional therad 1 : socket manager
 
 */
+
 enum
 {
-    kAdditionalReservedWorkers = 1,
-    kUnInitializedTid          = 0x10000U
+    kSocketManagerWorkerId     = 0,
+    kAdditionalReservedWorkers = 1
 };
 
 ww_global_state_t global_ww_state = {0};
 
 void setWW(struct ww_global_state_s *state)
 {
-
+    assert(! GSTATE.initialized && state->initialized);
     GSTATE = *state;
 
     setCoreLogger(GSTATE.core_logger);
@@ -45,17 +45,27 @@ struct ww_global_state_s *getWW(void)
     return &(GSTATE);
 }
 
-atomic_uint last_thread_id;
-
-static void initalizeWorker(tid_t tid)
+// same as regular workers except that it uses smaller buffer pools and won't allocate unused pools
+static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
 {
-    worker_t *worker = &(WORKERS[tid]);
+    *worker = (worker_t) {.tid = tid};
 
-    worker->tid = tid;
     worker->shift_buffer_pool =
         newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
 
-    worker->buffer_pool = createBufferPool(tid);
+    worker->buffer_pool = createSmallBufferPool(worker->tid);
+
+    worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+}
+
+static void initalizeWorker(worker_t *worker, tid_t tid)
+{
+    *worker = (worker_t) {.tid = tid};
+
+    worker->shift_buffer_pool =
+        newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+
+    worker->buffer_pool = createBufferPool(worker->tid);
 
     worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
 
@@ -68,22 +78,23 @@ static void initalizeWorker(tid_t tid)
         newGenericPoolWithCap((8) + GSTATE.ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
 }
 
-static void runWorker(tid_t tid)
+static void runWorker(worker_t *worker)
 {
-    worker_t *worker = &(WORKERS[tid]);
-
     hloop_run(worker->loop);
     hloop_free(&worker->loop);
 }
 
 _Noreturn void runMainThread(void)
 {
-    runWorker(0);
+    assert(GSTATE.initialized);
+
+    runWorker(getWorker(0));
+
     LOGF("Unexpected: main loop joined");
 
     for (size_t i = 1; i < WORKERS_COUNT; i++)
     {
-        hthread_join(WORKERS[i].thread);
+        hthread_join(getWorker(i)->thread);
     }
     LOGF("Unexpected: other loops joined");
     exit(1);
@@ -91,10 +102,9 @@ _Noreturn void runMainThread(void)
 
 static HTHREAD_ROUTINE(worker_thread) // NOLINT
 {
-    (void) userdata;
+    worker_t *worker = userdata;
 
-    tid_t worker_tid = (tid_t) atomic_fetch_add(&(last_thread_id), 1);
-    runWorker(worker_tid);
+    runWorker(worker);
 
     return 0;
 }
@@ -105,8 +115,38 @@ void initHeap(void)
     initMemoryManager();
 }
 
+static void buildShortCuts(void)
+{
+    assert(GSTATE.initialized);
+
+    tid_t workers_count = GSTATE.workers_count;
+
+    static const int kShourtcutsCount = 6;
+    const int        total_workers    = workers_count + kAdditionalReservedWorkers;
+
+    void **space = globalMalloc(sizeof(void *) * kShourtcutsCount * total_workers);
+
+    GSTATE.shortcut_loops              = (hloop_t **) (space + (0 * sizeof(void *) * total_workers));
+    GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1 * sizeof(void *) * total_workers));
+    GSTATE.shortcut_shift_buffer_pools = (generic_pool_t **) (space + (2 * sizeof(void *) * total_workers));
+    GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (3 * sizeof(void *) * total_workers));
+    GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (4 * sizeof(void *) * total_workers));
+    GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (5 * sizeof(void *) * total_workers));
+
+    for (int i = 0; i < total_workers; i++)
+    {
+        GSTATE.shortcut_loops[i]              = (getWorker(i)->loop);
+        GSTATE.shortcut_buffer_pools[i]       = (getWorker(i)->buffer_pool);
+        GSTATE.shortcut_shift_buffer_pools[i] = (getWorker(i)->shift_buffer_pool);
+        GSTATE.shortcut_context_pools[i]      = (getWorker(i)->context_pool);
+        GSTATE.shortcut_line_pools[i]         = (getWorker(i)->line_pool);
+        GSTATE.shortcut_pipeline_msg_pools[i] = (getWorker(i)->pipeline_msg_pool);
+    }
+}
+
 void createWW(const ww_construction_data_t init_data)
 {
+    GSTATE.initialized = true;
 
     // [Section] loggers
     {
@@ -114,6 +154,7 @@ void createWW(const ww_construction_data_t init_data)
         {
             GSTATE.core_logger =
                 createCoreLogger(init_data.core_logger_data.log_file_path, init_data.core_logger_data.log_console);
+
             toUpperCase(init_data.core_logger_data.log_level);
             setCoreLoggerLevelByStr(init_data.core_logger_data.log_level);
         }
@@ -121,10 +162,11 @@ void createWW(const ww_construction_data_t init_data)
         {
             GSTATE.network_logger = createNetworkLogger(init_data.network_logger_data.log_file_path,
                                                         init_data.network_logger_data.log_console);
+
             toUpperCase(init_data.network_logger_data.log_level);
             setNetworkLoggerLevelByStr(init_data.network_logger_data.log_level);
 
-            // libhv has a separate logger,  attach it to the network logger
+            // libhv has a separate logger, attach it to the network logger
             logger_set_level_by_str(hv_default_logger(), init_data.network_logger_data.log_level);
             logger_set_handler(hv_default_logger(), getNetworkLoggerHandle());
         }
@@ -132,48 +174,40 @@ void createWW(const ww_construction_data_t init_data)
         {
             GSTATE.dns_logger =
                 createDnsLogger(init_data.dns_logger_data.log_file_path, init_data.dns_logger_data.log_console);
+
             toUpperCase(init_data.dns_logger_data.log_level);
             setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
         }
     }
 
-    // [Section] workers and pools heap allocation
+    // [Section] workers and pools creation
     {
-        WORKERS_COUNT = init_data.workers_count;
-        GSTATE.ram_profile   = init_data.ram_profile;
+        WORKERS_COUNT      = init_data.workers_count;
+        GSTATE.ram_profile = init_data.ram_profile;
 
         if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (255 - kAdditionalReservedWorkers))
         {
-            fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - 255]\n", WORKERS_COUNT);
+            fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT,
+                    (255 - kAdditionalReservedWorkers));
+            WORKERS_COUNT = (255 - kAdditionalReservedWorkers);
         }
 
         WORKERS = (worker_t *) malloc(sizeof(worker_t) * (WORKERS_COUNT + kAdditionalReservedWorkers));
 
-        atomic_store(&last_thread_id, 1);
-
         for (unsigned int i = 0; i < WORKERS_COUNT; ++i)
         {
-            initalizeWorker(i);
-            // WORKERS[i].thread = hthread_create(worker_thread, NULL);
+            initalizeWorker(getWorker(i), i);
         }
     }
 
-    // [Section] setup SocketMangager thread, note that we use smaller buffer pool here
+    // [Section] setup SocketMangager thread (Additional Worker 1)
     {
+        tid_t     accept_thread_tid = (WORKERS_COUNT) + kSocketManagerWorkerId;
+        worker_t *accept_worker     = getWorker(accept_thread_tid);
 
-        tid_t accept_thread_tid = (tid_t) atomic_fetch_add(&(last_thread_id), 1);
+        initalizeSocketManagerWorker(accept_worker, accept_thread_tid);
 
-        worker_t *worker = &(WORKERS[accept_thread_tid]);
-
-        worker->tid = accept_thread_tid;
-        worker->shift_buffer_pool =
-            newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-
-        worker->buffer_pool = createSmallBufferPool(accept_thread_tid);
-
-        worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
-
-        GSTATE.socekt_manager = createSocketManager(worker->loop, worker->tid);
+        GSTATE.socekt_manager = createSocketManager(accept_worker);
     }
 
     // [Section] setup NodeManager
@@ -181,10 +215,14 @@ void createWW(const ww_construction_data_t init_data)
         GSTATE.node_manager = createNodeManager();
     }
 
-    WORKERS[0].thread = (hthread_t)NULL;
+    buildShortCuts();
+
     // [Section] Spawn all workers expect main worker which is current thread
-    for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
     {
-        WORKERS[i].thread = hthread_create(worker_thread, NULL);
+        WORKERS[0].thread = (hthread_t) NULL;
+        for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
+        {
+            WORKERS[i].thread = hthread_create(worker_thread, getWorker(i));
+        }
     }
 }

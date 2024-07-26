@@ -412,7 +412,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     oss_client_state_t *state = globalMalloc(sizeof(oss_client_state_t));
     memset(state, 0, sizeof(oss_client_state_t));
 
-    state->threadlocal_ssl_context = globalMalloc(sizeof(ssl_ctx_t) * WORKERS_COUNT);
+    state->threadlocal_ssl_context = globalMalloc(sizeof(ssl_ctx_t) * getWorkersCount());
 
     ssl_ctx_opt_t *ssl_param = globalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
@@ -453,7 +453,7 @@ tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
 
-    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
+    for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
         state->threadlocal_ssl_context[i] = sslCtxNew(ssl_param);
 

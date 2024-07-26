@@ -176,8 +176,8 @@ static mux_client_con_state_t *createMainConnection(tunnel_t *self, tid_t tid)
     *con = (mux_client_con_state_t) {.tunnel         = self,
                                      .line           = newLine(tid),
                                      .children_root  = {0},
-                                     .creation_epoch = hloop_now(getThreadLoop(tid)),
-                                     .read_stream    = newBufferStream(getThreadBufferPool(tid))};
+                                     .creation_epoch = hloop_now(getWorkerLoop(tid)),
+                                     .read_stream    = newBufferStream(getWorkerBufferPool(tid))};
 
     setupLineDownSide(con->line, onMainLinePaused, con, onMainLineResumed);
 
@@ -229,7 +229,7 @@ static mux_client_con_state_t *grabConnection(tunnel_t *self, tid_t tid)
             break;
 
         case kCuncurrencyModeTimer:
-            if (con->creation_epoch < hloop_now(WORKERS[tid].loop) + state->connection_cunc_duration)
+            if (con->creation_epoch < hloop_now(getWorkerLoop(tid)) + state->connection_cunc_duration)
             {
                 return con;
                 break;
@@ -267,7 +267,7 @@ static bool shouldClose(tunnel_t *self, mux_client_con_state_t *main_con)
         break;
 
     case kCuncurrencyModeTimer:
-        if (main_con->creation_epoch >= hloop_now(WORKERS[tid].loop) + state->connection_cunc_duration)
+        if (main_con->creation_epoch >= hloop_now(getWorkerLoop(tid)) + state->connection_cunc_duration)
         {
             vec_cons_iter find_result = vec_cons_find(vector, main_con);
             if (find_result.ref != vec_cons_end(vector).ref)

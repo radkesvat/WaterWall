@@ -61,7 +61,7 @@ static void connectTimerFinished(htimer_t *timer)
 static void beforeConnect(hevent_t *ev)
 {
     struct connect_arg *cg            = hevent_userdata(ev);
-    htimer_t           *connect_timer = htimer_add(WORKERS[cg->tid].loop, connectTimerFinished, cg->delay, 1);
+    htimer_t           *connect_timer = htimer_add(getWorkerLoop(cg->tid), connectTimerFinished, cg->delay, 1);
     if (connect_timer)
     {
         hevent_set_userdata(connect_timer, cg);
@@ -82,18 +82,18 @@ static void initiateConnect(tunnel_t *self, bool delay)
     }
 
     uint8_t tid = 0;
-    if (WORKERS_COUNT > 0)
+    if (getWorkersCount() > 0)
     {
         tid = atomic_fetch_add_explicit(&(state->round_index), 1, memory_order_relaxed);
 
-        if (tid >= WORKERS_COUNT)
+        if (tid >= getWorkersCount())
         {
             atomic_store_explicit(&(state->round_index), 0, memory_order_relaxed);
             tid = 0;
         }
     }
 
-    hloop_t *worker_loop = WORKERS[tid].loop;
+    hloop_t *worker_loop = getWorkerLoop(tid);
 
     hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
     struct connect_arg *cg = globalMalloc(sizeof(struct connect_arg));

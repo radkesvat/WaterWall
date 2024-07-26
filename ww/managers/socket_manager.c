@@ -450,7 +450,7 @@ static inline uint16_t getCurrentDistributeTid(void)
 static inline void incrementDistributeTid(void)
 {
     state->last_round_tid++;
-    if (state->last_round_tid >= WORKERS_COUNT)
+    if (state->last_round_tid >= getWorkersCount())
     {
         state->last_round_tid = 0;
     }
@@ -466,7 +466,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
 
     result->real_localport = local_port;
 
-    hloop_t *worker_loop = WORKERS[tid].loop;
+    hloop_t *worker_loop = getWorkerLoop(tid);
     hevent_t ev          = (hevent_t){.loop = worker_loop, .cb = filter->cb};
     result->tid          = tid;
     result->io           = io;
@@ -825,7 +825,7 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
     *pl = post_pl;
 
     pl->tunnel           = filter->tunnel;
-    hloop_t *worker_loop = WORKERS[pl->tid].loop;
+    hloop_t *worker_loop = getWorkerLoop(pl->tid);
     hevent_t ev          = (hevent_t){.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
@@ -922,7 +922,7 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
     udpsock_t *socket     = hevent_userdata(io);
     uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr_u(io));
-    uint8_t target_tid = local_port % WORKERS_COUNT;
+    uint8_t target_tid = local_port % getWorkersCount();
 
     udp_payload_t item = (udp_payload_t){.sock           = socket,
                                          .buf            = buf,
@@ -1065,14 +1065,14 @@ void startSocketManager(void)
     state->accept_thread = hthread_create(accept_thread, NULL);
 }
 
-socket_manager_state_t *createSocketManager(hloop_t *event_loop, uint8_t tid)
+socket_manager_state_t *createSocketManager(worker_t *worker)
 {
     assert(state == NULL);
     state = globalMalloc(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
 
-    state->tid  = tid;
-    state->loop = event_loop;
+    state->tid  = worker->tid;
+    state->loop = worker->loop;
     for (size_t i = 0; i < kFilterLevels; i++)
     {
         state->filters[i] = filters_t_init();
@@ -1080,13 +1080,13 @@ socket_manager_state_t *createSocketManager(hloop_t *event_loop, uint8_t tid)
 
     hhybridmutex_init(&state->mutex);
 
-    state->udp_pools = globalMalloc(sizeof(*state->udp_pools) * WORKERS_COUNT);
-    memset(state->udp_pools, 0, sizeof(*state->udp_pools) * WORKERS_COUNT);
+    state->udp_pools = globalMalloc(sizeof(*state->udp_pools) * getWorkersCount());
+    memset(state->udp_pools, 0, sizeof(*state->udp_pools) * getWorkersCount());
 
-    state->tcp_pools = globalMalloc(sizeof(*state->tcp_pools) * WORKERS_COUNT);
-    memset(state->tcp_pools, 0, sizeof(*state->tcp_pools) * WORKERS_COUNT);
+    state->tcp_pools = globalMalloc(sizeof(*state->tcp_pools) * getWorkersCount());
+    memset(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
 
-    for (unsigned int i = 0; i < WORKERS_COUNT; ++i)
+    for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
         state->udp_pools[i].pool =
             newGenericPoolWithCap((8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);

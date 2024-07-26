@@ -1,6 +1,5 @@
 #include "context_queue.h"
 #include "buffer_pool.h"
-#include "hloop.h"
 #include "stc/common.h"
 #include "tunnel.h"
 #include <stddef.h>

@@ -200,7 +200,7 @@ static void onInboundConnected(hevent_t *ev)
     line->src_ctx.address          = *(sockaddr_u *) hio_peeraddr(io);
 
     *cstate = (tun_listener_con_state_t) {.line              = line,
-                                          .buffer_pool       = getThreadBufferPool(tid),
+                                          .buffer_pool       = getWorkerBufferPool(tid),
                                           .data_queue        = newContextQueue(),
                                           .io                = io,
                                           .tunnel            = self,

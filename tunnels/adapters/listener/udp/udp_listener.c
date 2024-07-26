@@ -154,9 +154,9 @@ static udp_listener_con_state_t *newConnection(uint8_t tid, tunnel_t *self, udps
     line->src_ctx.address_protocol   = kSapUdp;
     line->src_ctx.address            = *(sockaddr_u *) hio_peeraddr(uio->io);
 
-    *cstate = (udp_listener_con_state_t) {.loop              = WORKERS[tid].loop,
+    *cstate = (udp_listener_con_state_t) {.loop              = getWorkerLoop(tid),
                                           .line              = line,
-                                          .buffer_pool       = getThreadBufferPool(tid),
+                                          .buffer_pool       = getWorkerBufferPool(tid),
                                           .uio               = uio,
                                           .tunnel            = self,
                                           .established       = false,
@@ -205,7 +205,7 @@ static void onFilteredRecv(hevent_t *ev)
                            (uint64_t) kUdpInitExpireTime);
         if (! idle)
         {
-            reuseBuffer(getThreadBufferPool(data->tid), data->buf);
+            reuseBuffer(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }
@@ -214,7 +214,7 @@ static void onFilteredRecv(hevent_t *ev)
         if (! con)
         {
             removeIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
-            reuseBuffer(getThreadBufferPool(data->tid), data->buf);
+            reuseBuffer(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }

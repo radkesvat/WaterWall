@@ -420,10 +420,10 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         hevent_t ev;
                         memset(&ev, 0, sizeof(ev));
-                        ev.loop = WORKERS[tid_upload_line].loop;
+                        ev.loop = getWorkerLoop(tid_upload_line);
                         ev.cb   = callNotifyDownloadLineIsReadyForBind;
                         hevent_set_userdata(&ev, evdata);
-                        hloop_post_event(WORKERS[tid_upload_line].loop, &ev);
+                        hloop_post_event(getWorkerLoop(tid_upload_line), &ev);
                     }
                 }
                 else

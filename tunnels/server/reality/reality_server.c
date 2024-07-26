@@ -297,10 +297,10 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     memset(state, 0, sizeof(reality_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
-    state->threadlocal_cipher_context = globalMalloc(sizeof(EVP_CIPHER_CTX *) * WORKERS_COUNT);
-    state->threadlocal_sign_context   = globalMalloc(sizeof(EVP_MD_CTX *) * WORKERS_COUNT);
+    state->threadlocal_cipher_context = globalMalloc(sizeof(EVP_CIPHER_CTX *) * getWorkersCount());
+    state->threadlocal_sign_context   = globalMalloc(sizeof(EVP_MD_CTX *) * getWorkersCount());
 
-    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
+    for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
         state->threadlocal_cipher_context[i] = EVP_CIPHER_CTX_new();
         state->threadlocal_sign_context[i]   = EVP_MD_CTX_create();

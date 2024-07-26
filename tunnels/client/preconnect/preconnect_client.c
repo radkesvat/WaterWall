@@ -194,7 +194,7 @@ static void startPreconnect(htimer_t *timer)
     tunnel_t                  *self  = hevent_userdata(timer);
     preconnect_client_state_t *state = TSTATE(self);
 
-    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
+    for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
         const size_t cpt = state->connection_per_thread;
         for (size_t ci = 0; ci < cpt; ci++)
@@ -210,21 +210,21 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
     const size_t start_delay_ms = 150;
 
     preconnect_client_state_t *state =
-        globalMalloc(sizeof(preconnect_client_state_t) + (WORKERS_COUNT * sizeof(thread_box_t)));
-    memset(state, 0, sizeof(preconnect_client_state_t) + (WORKERS_COUNT * sizeof(thread_box_t)));
+        globalMalloc(sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
+    memset(state, 0, sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject((int *) &(state->min_unused_cons), settings, "minimum-unused");
 
-    state->min_unused_cons       = min(max((WORKERS_COUNT * (ssize_t) 4), state->min_unused_cons), 128);
-    state->connection_per_thread = min(4, state->min_unused_cons / WORKERS_COUNT);
+    state->min_unused_cons       = min(max((getWorkersCount() * (ssize_t) 4), state->min_unused_cons), 128);
+    state->connection_per_thread = min(4, state->min_unused_cons / getWorkersCount());
 
     tunnel_t *t   = newTunnel();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    htimer_t *start_timer = htimer_add(WORKERS[0].loop, startPreconnect, start_delay_ms, 1);
+    htimer_t *start_timer = htimer_add(getWorkerLoop(0), startPreconnect, start_delay_ms, 1);
     hevent_set_userdata(start_timer, t);
 
     return t;

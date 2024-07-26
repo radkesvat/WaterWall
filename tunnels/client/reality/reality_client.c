@@ -418,9 +418,9 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     reality_client_state_t *state = globalMalloc(sizeof(reality_client_state_t));
     memset(state, 0, sizeof(reality_client_state_t));
 
-    state->threadlocal_ssl_context    = globalMalloc(sizeof(ssl_ctx_t) * WORKERS_COUNT);
-    state->threadlocal_cipher_context = globalMalloc(sizeof(EVP_CIPHER_CTX *) * WORKERS_COUNT);
-    state->threadlocal_sign_context   = globalMalloc(sizeof(EVP_MD_CTX *) * WORKERS_COUNT);
+    state->threadlocal_ssl_context    = globalMalloc(sizeof(ssl_ctx_t) * getWorkersCount());
+    state->threadlocal_cipher_context = globalMalloc(sizeof(EVP_CIPHER_CTX *) * getWorkersCount());
+    state->threadlocal_sign_context   = globalMalloc(sizeof(EVP_MD_CTX *) * getWorkersCount());
 
     ssl_ctx_opt_t *ssl_param = globalMalloc(sizeof(ssl_ctx_opt_t));
     memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
@@ -489,7 +489,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
 
-    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
+    for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
         state->threadlocal_ssl_context[i] = sslCtxNew(ssl_param);
 

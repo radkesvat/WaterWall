@@ -122,7 +122,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         }
                         else
                         {
-                            for (unsigned int i = 0; i < WORKERS_COUNT; i++)
+                            for (unsigned int i = 0; i < getWorkersCount(); i++)
                             {
                                 if (atomic_load_explicit(&(state->threadlocal_pool[i].u_count), memory_order_relaxed) >
                                     0)
@@ -335,8 +335,8 @@ tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     reverse_server_state_t *state =
-        globalMalloc(sizeof(reverse_server_state_t) + (WORKERS_COUNT * sizeof(thread_box_t)));
-    memset(state, 0, sizeof(reverse_server_state_t) + (WORKERS_COUNT * sizeof(thread_box_t)));
+        globalMalloc(sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
+    memset(state, 0, sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

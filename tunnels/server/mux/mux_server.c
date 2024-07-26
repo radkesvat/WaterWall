@@ -183,7 +183,7 @@ static bool shouldClose(tunnel_t *self, mux_server_con_state_t *main_con)
         break;
 
     case kCuncurrencyModeTimer:
-        if (main_con->creation_epoch >= hloop_now(WORKERS[tid].loop) + state->connection_cunc_duration)
+        if (main_con->creation_epoch >= hloop_now(getWorkerLoop(tid)) + state->connection_cunc_duration)
         {
             vec_cons_iter find_result = vec_cons_find(vector, main_con);
             if (find_result.ref != vec_cons_end(vector).ref)
@@ -257,16 +257,16 @@ static void upStream(tunnel_t *self, context_t *c)
                                 destroyContext(c);
                                 return;
                             }
-                            mux_server_child_con_state_t *child = createChildConnection(main_con, c->line->tid);
-                            line_t* child_line = child->line;
+                            mux_server_child_con_state_t *child      = createChildConnection(main_con, c->line->tid);
+                            line_t                       *child_line = child->line;
                             lockLine(child_line);
 
                             self->up->upStream(self->up, newInitContext(child->line));
 
-                            if(!isAlive(child_line)){
-                            unLockLine(child_line);
-
-                            } 
+                            if (! isAlive(child_line))
+                            {
+                                unLockLine(child_line);
+                            }
                             unLockLine(child_line);
                             context_t *data_ctx = newContext(child_con_i->line);
                             data_ctx->payload   = frame_payload;
