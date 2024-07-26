@@ -174,6 +174,8 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 LOGE("MuxServer: payload length < kMuxMinFrameLength");
                 destroyMainConnecton(main_con);
+                self->dw->downStream(self->dw, newFinContext(c->line));
+
                 destroyContext(c);
                 return;
             }
@@ -190,9 +192,10 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     if (WW_UNLIKELY(bufLen(frame_payload) <= 0))
                     {
-                        LOGE("MuxServer: payload length < 0");
+                        LOGE("MuxServer: payload length <= 0");
                         reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
                         destroyMainConnecton(main_con);
+                        self->dw->downStream(self->dw, newFinContext(c->line));
                         destroyContext(c);
                         continue;
                     }
@@ -244,9 +247,10 @@ static void upStream(tunnel_t *self, context_t *c)
                         case kMuxFlagData: {
                             if (WW_UNLIKELY(bufLen(frame_payload) <= 0))
                             {
-                                LOGE("MuxServer: payload length < 0");
+                                LOGE("MuxServer: payload length <= 0");
                                 reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
                                 destroyMainConnecton(main_con);
+                                self->dw->downStream(self->dw, newFinContext(c->line));
                                 destroyContext(c);
                                 return;
                             }
@@ -265,6 +269,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             LOGE("MuxServer: incorrect frame flag");
                             reuseBuffer(getLineBufferPool(main_con->line), frame_payload);
                             destroyMainConnecton(main_con);
+                            self->dw->downStream(self->dw, newFinContext(c->line));
                             destroyContext(c);
                             return;
                             break;
@@ -310,13 +315,69 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    mux_server_con_state_t *main_con = CSTATE(c);
+    mux_server_child_con_state_t *child_con = CSTATE(c);
 
-    if (c->fin)
+    if (c->payload != NULL)
     {
-        destroyMainConnecton(main_con);
-        destroyContext(c);
-        return;
+        line_t                 *current_writing_line = c->line;
+        line_t                 *main_line            = child_con->parent;
+        mux_server_con_state_t *main_con             = LSTATE(main_line);
+
+        switchLine(c, main_line);
+
+        lockLine(main_line);
+        lockLine(current_writing_line);
+        main_con->current_writing_line = current_writing_line;
+
+        while (bufLen(c->payload) > kMuxMaxFrameLength)
+        {
+            shift_buffer_t *chunk = popBuffer(getContextBufferPool(c));
+            sliceBufferTo(chunk, c->payload, kMuxMaxFrameLength);
+            makeDataFrame(chunk, child_con->cid);
+
+            context_t *data_chunk_ctx = newContextFrom(c);
+            data_chunk_ctx->payload   = chunk;
+            self->dw->downStream(self->dw, data_chunk_ctx);
+
+            if (! isAlive(main_line))
+            {
+                unLockLine(main_line);
+                unLockLine(current_writing_line);
+
+                reuseContextPayload(c);
+                destroyContext(c);
+                return;
+            }
+        }
+
+        makeDataFrame(c->payload, child_con->cid);
+
+        self->up->upStream(self->up, c);
+
+        if (isAlive(main_line))
+        {
+            main_con->current_writing_line = NULL;
+        }
+
+        unLockLine(main_line);
+        unLockLine(current_writing_line);
+    }
+    else
+    {
+        if (c->fin)
+        {
+            context_t *data_fin_ctx = newContext(child_con->parent);
+            data_fin_ctx->payload   = popBuffer(getLineBufferPool(child_con->parent));
+            makeCloseFrame(data_fin_ctx->payload, child_con->cid);
+            destroyChildConnecton(child_con);
+            self->dw->downStream(self->dw, data_fin_ctx);
+            return;
+        }
+        if (WW_UNLIKELY(c->est))
+        {
+            destroyContext(c);
+            return;
+        }
     }
 }
 
@@ -325,7 +386,6 @@ tunnel_t *newMuxServer(node_instance_context_t *instance_info)
     (void) instance_info;
     mux_server_state_t *state = globalMalloc(sizeof(mux_server_state_t));
     memset(state, 0, sizeof(mux_server_state_t));
-
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

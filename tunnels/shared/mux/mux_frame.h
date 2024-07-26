@@ -22,7 +22,7 @@ enum
     kMuxFlagFlow  = 2,
     kMuxFlagData  = 3,
     kMuxMinFrameLength = (sizeof(mux_frame_t) - sizeof(mux_length_t)),
-    kMuxMaxFrameLength = (1U << (8*sizeof(mux_length_t))) - 4
+    kMuxMaxFrameLength = (1U << (8*sizeof(mux_length_t))) - (1+kMuxMinFrameLength)
 };
 
 
@@ -32,7 +32,7 @@ enum
 static void makeOpenFrame(shift_buffer_t *buf, cid_t cid)
 {
     shiftl(buf, sizeof(mux_frame_t));
-    mux_frame_t frame = {.length = sizeof(mux_frame_t) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagOpen};
+    mux_frame_t frame = {.length = bufLen(buf) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagOpen};
     writeRaw(buf, &frame, sizeof(mux_frame_t));
 }
 
@@ -46,6 +46,6 @@ static void makeCloseFrame(shift_buffer_t *buf, cid_t cid)
 static void makeDataFrame(shift_buffer_t *buf, cid_t cid)
 {
     shiftl(buf, sizeof(mux_frame_t));
-    mux_frame_t frame = {.length = sizeof(mux_frame_t) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagData};
+    mux_frame_t frame = {.length = bufLen(buf) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagData};
     writeRaw(buf, &frame, sizeof(mux_frame_t));
 }
