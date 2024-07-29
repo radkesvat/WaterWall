@@ -11,7 +11,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versio
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
 
 # set(CMAKE_EXE_LINKER_FLAGS ""  CACHE INTERNAL "")
-  
+
+ 
+# untill they update the CPM library, i don't want a dirty build log system
+#   CMake Warning (dev) at /snap/cmake/1408/share/cmake-3.30/Modules/FetchContent.cmake:1953 (message):
+#   [cmake]   Calling FetchContent_Populate(komihash) is deprecated, call
+#   [cmake]   FetchContent_MakeAvailable(komihash) instead.  Policy CMP0169 can be set to
+#   [cmake]   OLD to allow FetchContent_Populate(komihash) to be called directly for now,
+#   [cmake]   but the ability to call it with declared details will be removed completely
+#   [cmake]   in a future version.
+cmake_policy(SET CMP0169 OLD) 
+set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
+
+
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   cmake_policy(SET CMP0069 NEW) 
   set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
