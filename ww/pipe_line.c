@@ -274,6 +274,11 @@ bool pipeSendToUpStream(pipe_line_t *pl, context_t *c)
         return false;
     }
     assert(c->payload != NULL);
+    if (WW_UNLIKELY(isShallow(c->payload)))
+    {
+        LOGW("Pipeline: optimization warning, buffer unshallow");
+        unShallow(c->payload);
+    }
     sendMessage(pl, writeBufferToRightSide, c->payload, pl->left_tid, pl->right_tid);
     dropContexPayload(c);
     destroyContext(c);
@@ -319,6 +324,11 @@ bool pipeSendToDownStream(pipe_line_t *pl, context_t *c)
         return false;
     }
     assert(c->payload != NULL);
+    if (WW_UNLIKELY(isShallow(c->payload)))
+    {
+        LOGW("Pipeline: optimization warning, buffer unshallow");
+        unShallow(c->payload);
+    }
     sendMessage(pl, writeBufferToLeftSide, c->payload, pl->right_tid, pl->left_tid);
     dropContexPayload(c);
     destroyContext(c);

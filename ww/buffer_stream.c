@@ -22,7 +22,7 @@ buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
     return bs;
 }
 
-void empytBufferStream(buffer_stream_t *self)
+void emptyBufferStream(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {

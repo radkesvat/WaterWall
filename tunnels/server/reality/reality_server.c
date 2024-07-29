@@ -132,7 +132,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->giveup_counter -= 0;
             if (cstate->giveup_counter == 0)
             {
-                empytBufferStream(cstate->read_stream);
+                emptyBufferStream(cstate->read_stream);
                 cstate->auth_state = kConUnAuthorized;
             }
         }

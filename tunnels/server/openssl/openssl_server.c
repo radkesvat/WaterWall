@@ -103,7 +103,7 @@ static size_t paddingDecisionCb(SSL *ssl, int type, size_t len, void *arg)
     (void) type;
     oss_server_con_state_t *cstate = arg;
     // todo (private note)
-    if (cstate->reply_sent_tit >= 0 && cstate->reply_sent_tit < 32)
+    if (cstate->reply_sent_tit >= 1 && cstate->reply_sent_tit < 4)
     {
         if (len <= 4096)
         {
@@ -271,7 +271,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 LOGD("OpensslServer: Tls handshake complete");
                 cstate->handshake_completed = true;
-                empytBufferStream(cstate->fallback_buf);
+                emptyBufferStream(cstate->fallback_buf);
             }
 
             /* The encrypted data is now in the input bio so now we can perform actual

@@ -45,7 +45,6 @@ typedef struct halfduplex_server_con_state_s
     line_t                *upload_line;
     line_t                *download_line;
     line_t                *main_line;
-    pipe_line_t           *pipe;
     enum connection_status state;
 
     hash_t hash;
@@ -61,28 +60,15 @@ struct notify_argument_s
 static void onMainLinePaused(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    if (cstate->pipe)
-    {
-        pipeOnUpLinePaused(cstate->pipe);
-    }
-    else
-    {
-        pauseLineDownSide(cstate->upload_line);
-    }
-    // pauseLineDownSide(cstate->download_line);
+
+    pauseLineDownSide(cstate->upload_line);
 }
 
 static void onMainLineResumed(void *_cstate)
 {
     halfduplex_server_con_state_t *cstate = _cstate;
-    if (cstate->pipe)
-    {
-        pipeOnUpLineResumed(cstate->pipe);
-    }
-    else
-    {
-        resumeLineDownSide(cstate->upload_line);
-    }
+
+    resumeLineDownSide(cstate->upload_line);
     resumeLineDownSide(cstate->download_line);
 }
 
@@ -486,7 +472,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             cstate  = globalMalloc(sizeof(halfduplex_server_con_state_t));
             *cstate = (halfduplex_server_con_state_t) {
-                .state = kCsUnkown, .buffering = NULL, .pipe = NULL, .upload_line = NULL, .download_line = NULL};
+                .state = kCsUnkown, .buffering = NULL, .upload_line = NULL, .download_line = NULL};
 
             CSTATE_MUT(c) = cstate;
             if (isDownPiped(c->line))
