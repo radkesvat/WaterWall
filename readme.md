@@ -1,8 +1,3 @@
-پروژه شاید دو یا سه سال آپدیت نشه ؛ به علت یادگیری tun device و این چنین مباحث که سخت و وقت گیره ...
-
-
----
-
 Waterwall!
 
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/radkesvat/WaterWall)
