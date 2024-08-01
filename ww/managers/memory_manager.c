@@ -22,19 +22,21 @@ enum
 
 #ifdef ALLOCATOR_BYPASS
 
-dedicated_memory_t *initMemoryManager(void)
+
+void initMemoryManager(void)
 {
-    return NULL;
+    // assert(state == NULL);
+    // state = createWWDedicatedMemory();
+    // return state;
 }
 
-dedicated_memory_t *getMemoryManager(void)
-{
-    return NULL;
-}
 
 void setMemoryManager(dedicated_memory_t *new_state)
 {
     (void) new_state;
+    
+    // assert(state == NULL);
+    // state = new_state;
 }
 
 dedicated_memory_t *createWWDedicatedMemory(void)
