@@ -12,7 +12,7 @@
 
 /*
     additional threads that dose not require instances of every pools and they will create what they need
-    so, these additions will only reserve their own space on the workers array
+    so, these additions will reserve their own space on the workers array
 
     the only purpose of this is to reduce memory usage
 
@@ -23,7 +23,8 @@
 enum
 {
     kSocketManagerWorkerId     = 0,
-    kAdditionalReservedWorkers = 1
+    kTunManagerWorkerId        = 1,
+    kAdditionalReservedWorkers = 2
 };
 
 ww_global_state_t global_ww_state = {0};
@@ -135,12 +136,12 @@ static void initializeShortCuts(void)
 
     void **space = globalMalloc(sizeof(void *) * kShourtcutsCount * total_workers);
 
-    GSTATE.shortcut_loops              = (hloop_t **) (space + (0 *total_workers));
-    GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1 * total_workers));
-    GSTATE.shortcut_shift_buffer_pools = (generic_pool_t **) (space + (2 * total_workers));
-    GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (3 * total_workers));
-    GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (4 * total_workers));
-    GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (5 * total_workers));
+    GSTATE.shortcut_loops              = (hloop_t **) (space + (0UL * total_workers));
+    GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1UL * total_workers));
+    GSTATE.shortcut_shift_buffer_pools = (generic_pool_t **) (space + (2UL * total_workers));
+    GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (3UL * total_workers));
+    GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (4UL * total_workers));
+    GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (5UL * total_workers));
 }
 
 void createWW(const ww_construction_data_t init_data)

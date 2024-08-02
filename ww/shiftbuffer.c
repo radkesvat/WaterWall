@@ -52,7 +52,7 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
         pre_cap = (unsigned int) pow(2, ceil(log2((double) max(16, pre_cap))));
     }
 
-    unsigned int real_cap = pre_cap + LEFTPADDING + RIGHTPADDING;
+    unsigned int real_cap = (pre_cap + LEFTPADDING + RIGHTPADDING) - REFC_SIZE;
 
     // shift_buffer_t *self = globalMalloc(sizeof(shift_buffer_t));
     shift_buffer_t *self = (shift_buffer_t *) popPoolItem(getWorkerShiftBufferPool(tid));
@@ -64,16 +64,6 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
     self->pbuf     = globalMalloc(real_cap + REFC_SIZE);
     self->refc     = (shiftbuffer_refc_t *) (self->pbuf + real_cap);
     *(self->refc)  = 1;
-
-    if (real_cap > 0) // map the virtual memory page to physical memory
-    {
-        unsigned int i = 0;
-        do
-        {
-            self->pbuf[i] = 0x0;
-            i += 4096;
-        } while (i < real_cap);
-    }
 
     return self;
 }
@@ -98,7 +88,7 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
         pre_cap = (unsigned int) pow(2, ceil(log2(((double) max(16, pre_cap)))));
     }
 
-    unsigned int real_cap = pre_cap + LEFTPADDING + RIGHTPADDING;
+    unsigned int real_cap = (pre_cap + LEFTPADDING + RIGHTPADDING) - REFC_SIZE;
 
     if (self->offset != 0)
     {
@@ -111,7 +101,7 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
     if (self->full_cap != real_cap)
     {
         globalFree(self->pbuf - self->offset);
-        self->pbuf     = globalMalloc(real_cap + +REFC_SIZE);
+        self->pbuf     = globalMalloc(real_cap + REFC_SIZE);
         self->refc     = (shiftbuffer_refc_t *) (self->pbuf + real_cap);
         *(self->refc)  = 1;
         self->full_cap = real_cap;
@@ -140,7 +130,13 @@ void expand(shift_buffer_t *self, unsigned int increase)
     if (isShallow(self))
     {
         const unsigned int old_realcap = self->full_cap;
-        unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap) + (increase * 2))));
+        // unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap) + (increase * 2))));
+        const unsigned int calculated_increase = increase * 2UL;
+        const unsigned int minimum_increase    = old_realcap / 4;
+
+        unsigned int new_realcap =
+            old_realcap + (minimum_increase > calculated_increase ? minimum_increase : calculated_increase);
+
         // unShallow
         char *old_buf = self->pbuf;
         *(self->refc) -= 1;
@@ -156,12 +152,17 @@ void expand(shift_buffer_t *self, unsigned int increase)
     else
     {
         const unsigned int old_realcap = self->full_cap;
-        unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap) + (increase * 2))));
-        char              *old_buf     = self->pbuf;
-        self->pbuf                     = globalMalloc(new_realcap + REFC_SIZE);
-        self->refc                     = (shiftbuffer_refc_t *) (self->pbuf + new_realcap);
-        *(self->refc)                  = 1;
-        unsigned int dif               = (new_realcap - self->full_cap) / 2;
+        // unsigned int       new_realcap = (unsigned int) pow(2, ceil(log2((old_realcap) + (increase * 2))));
+        const unsigned int calculated_increase = increase * 2UL;
+        const unsigned int minimum_increase    = old_realcap / 4;
+
+        unsigned int new_realcap =
+            old_realcap + (minimum_increase > calculated_increase ? minimum_increase : calculated_increase);
+        char *old_buf    = self->pbuf;
+        self->pbuf       = globalMalloc(new_realcap + REFC_SIZE);
+        self->refc       = (shiftbuffer_refc_t *) (self->pbuf + new_realcap);
+        *(self->refc)    = 1;
+        unsigned int dif = (new_realcap - self->full_cap) / 2;
         memcpy(&(self->pbuf[self->curpos + dif]), &(old_buf[self->curpos]), self->calc_len);
         self->curpos += dif;
         self->full_cap = new_realcap;
