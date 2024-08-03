@@ -1,9 +1,7 @@
 #pragma once
+#include "master_pool.h"
 #include <stdatomic.h>
 #include <stddef.h>
-#ifdef OS_LINUX
-#include <malloc.h>
-#endif
 
 /*
     A growable pool, very simple.
@@ -36,21 +34,23 @@ typedef void (*PoolItemDestroyHandle)(struct generic_pool_s *pool, pool_item_t *
 #define GENERIC_POOL_FIELDS                                                                                            \
     unsigned int          len;                                                                                         \
     unsigned int          cap;                                                                                         \
-    unsigned int          free_threshould;                                                                             \
-    const unsigned int    item_size;                                                                                   \
+    unsigned int          free_threshold;                                                                              \
+    unsigned int          item_size;                                                                                   \
     atomic_size_t         in_use;                                                                                      \
     PoolItemCreateHandle  create_item_handle;                                                                          \
     PoolItemDestroyHandle destroy_item_handle;                                                                         \
+    master_pool_t        *mp;                                                                                          \
     pool_item_t          *available[];
 #else
 
 #define GENERIC_POOL_FIELDS                                                                                            \
     unsigned int          len;                                                                                         \
     unsigned int          cap;                                                                                         \
-    unsigned int          free_threshould;                                                                             \
-    const unsigned int    item_size;                                                                                   \
+    unsigned int          free_threshold;                                                                              \
+    unsigned int          item_size;                                                                                   \
     PoolItemCreateHandle  create_item_handle;                                                                          \
     PoolItemDestroyHandle destroy_item_handle;                                                                         \
+    master_pool_t        *mp;                                                                                          \
     pool_item_t          *available[];
 
 #endif
@@ -84,7 +84,6 @@ static inline pool_item_t *popPoolItem(generic_pool_t *pool)
     poolReCharge(pool);
     --(pool->len);
     return pool->available[pool->len];
-
 }
 
 static inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)
@@ -97,7 +96,7 @@ static inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)
 #if defined(DEBUG) && defined(POOL_DEBUG)
     pool->in_use -= 1;
 #endif
-    if (pool->len > pool->free_threshould)
+    if (pool->len > pool->free_threshold)
     {
         poolShrink(pool);
     }
@@ -105,12 +104,14 @@ static inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)
     pool->available[(pool->len)++] = b;
 }
 
-generic_pool_t *newGenericPool(PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h);
-generic_pool_t *newGenericPoolWithCap(unsigned int pool_width, PoolItemCreateHandle create_h,
+generic_pool_t *newGenericPool(struct master_pool_s *mp, PoolItemCreateHandle create_h,
+                               PoolItemDestroyHandle destroy_h);
+generic_pool_t *newGenericPoolWithCap(struct master_pool_s *mp, unsigned int pool_width, PoolItemCreateHandle create_h,
                                       PoolItemDestroyHandle destroy_h);
 
-generic_pool_t *newGenericPoolDefaultAllocator(unsigned int item_size);
-generic_pool_t *newGenericPoolDefaultAllocatorWithCap(unsigned int item_size, unsigned int pool_width);
+generic_pool_t *newGenericPoolDefaultAllocator(struct master_pool_s *mp, unsigned int item_size);
+generic_pool_t *newGenericPoolDefaultAllocatorWithCap(struct master_pool_s *mp, unsigned int item_size,
+                                                      unsigned int pool_width);
 
 #undef BYPASS_POOL
 #undef POOL_DEBUG

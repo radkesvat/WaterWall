@@ -1,7 +1,24 @@
 #include "master_pool.h"
+#include "ww.h"
 
-master_pool_t *newMasterPoolWithCap(unsigned int pool_width, MasterPoolItemCreateHandle const create_h,
-                                    MasterPoolItemDestroyHandle const destroy_h)
+static void defaultCreateHandle(struct master_pool_s *pool, void *userdata)
+{
+    (void) pool;
+    (void) userdata;
+    perror("MasterPool Callback is not set. this is a bug");
+    exit(1);
+}
+
+static void defaultDestroyHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
+{
+    (void) pool;
+    (void) userdata;
+    (void) item;
+    perror("MasterPool Callback is not set. this is a bug");
+    exit(1);
+}
+
+master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
 {
 
     pool_width = (max(1, pool_width) + 15) & ~0x0F;
@@ -37,8 +54,8 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width, MasterPoolItemCreat
     master_pool_t pool = {.memptr              = pool_ptr,
                           .cap                 = pool_width,
                           .len                 = 0,
-                          .create_item_handle  = create_h,
-                          .destroy_item_handle = destroy_h};
+                          .create_item_handle  = defaultCreateHandle,
+                          .destroy_item_handle = defaultDestroyHandle};
 
     memcpy(pool_ptr, &pool, sizeof(master_pool_t));
     hhybridmutex_init(&(pool_ptr->mutex));

@@ -29,7 +29,7 @@ typedef struct reality_server_state_s
     uint8_t      hashes[EVP_MAX_MD_SIZE];
     char         context_password[kSignPasswordLen];
     uint32_t     max_delta_time;
-    uint32_t     counter_threshould;
+    uint32_t     counter_threshold;
     char        *password;
     unsigned int password_length;
 
@@ -192,7 +192,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate = CSTATE_MUT(c) = globalMalloc(sizeof(reality_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(reality_server_con_state_t));
             cstate->auth_state     = kConAuthPending;
-            cstate->giveup_counter = state->counter_threshould;
+            cstate->giveup_counter = state->counter_threshold;
             cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
             cstate->sign_context   = state->threadlocal_sign_context[c->line->tid];
             cstate->read_stream    = newBufferStream(getContextBufferPool(c));
@@ -317,7 +317,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         LOGF("JSON Error: RealityServer->settings->password (string field) : The data was empty or invalid");
         return NULL;
     }
-    getIntFromJsonObjectOrDefault((int *) &(state->counter_threshould), settings, "sniffing-counter", 7);
+    getIntFromJsonObjectOrDefault((int *) &(state->counter_threshold), settings, "sniffing-counter", 7);
     getIntFromJsonObjectOrDefault((int *) &(state->max_delta_time), settings, "max-delta-time", 10);
 
     state->password_length = (int) strlen(state->password);

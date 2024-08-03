@@ -2,7 +2,6 @@
 
 #include "hmutex.h"
 #include "utils/mathutils.h"
-#include "ww.h"
 
 /*
     Master Pool
@@ -15,14 +14,46 @@
     interacting with os, malloc,free; in a single batch allocation for a full charge with only 1 mutex lock
 
 
+                                |-----------|
+                                |           |
+                                |           |
+                                |           | -------------> |---------------|
+                                |           |                | Worker 1 pools|
+                                |           | <------------- |---------------|
+                                |           |
+                                |           |
+                                |           |
+                                |           |
+                                |           | -------------> |---------------|
+                                |           |                | Worker 2 pools|
+                                |           | <------------- |---------------|
+     |-----------|              |           |
+     |  Malloc   | -----------> |  MASTER   |
+     | --------  |              |           |
+     |   Free    | <----------- |   POOL    |
+     |-----------|              |           |
+                                |           | -------------> |---------------|
+                                |           |                | Worker 3 pools|
+                                |           | <------------- |---------------|
+                                |           |
+                                |           |
+                                |           |
+                                |           |
+                                |           | -------------> |---------------|
+                                |           |                | Worker 4 pools|
+                                |           | <------------- |---------------|
+                                |           |
+                                |           |
+                                |-----------|
+
 
 */
 
 struct master_pool_s;
 typedef void master_pool_item_t;
 
-typedef master_pool_item_t *(*MasterPoolItemCreateHandle)(struct master_pool_s *pool,void* userdata);
-typedef void (*MasterPoolItemDestroyHandle)(struct master_pool_s *pool, master_pool_item_t *item,void* userdata);
+typedef master_pool_item_t *(*MasterPoolItemCreateHandle)(struct master_pool_s *pool, void *userdata);
+typedef void (*MasterPoolItemDestroyHandle)(struct master_pool_s *pool, master_pool_item_t *item, void *userdata);
 
 /*
     do not read this pool properties from the struct, its a multi-threaded object
@@ -40,8 +71,13 @@ typedef struct master_pool_s
 } master_pool_t;
 
 static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
-                                      const unsigned int count,void* userdata)
+                                      const unsigned int count, void *userdata)
 {
+    // for (unsigned int i = 0; i < count; i++)
+    // {
+    //     iptr[i] = pool->create_item_handle(pool, userdata);
+    // }
+    // return;
 
     if (atomic_load_explicit(&(pool->len), memory_order_relaxed) > 0)
     {
@@ -59,7 +95,7 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
             }
             for (; i < count; i++)
             {
-                iptr[i] = pool->create_item_handle(pool,userdata);
+                iptr[i] = pool->create_item_handle(pool, userdata);
             }
         }
 
@@ -69,18 +105,24 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
 
     for (unsigned int i = 0; i < count; i++)
     {
-        iptr[i] = pool->create_item_handle(pool,userdata);
+        iptr[i] = pool->create_item_handle(pool, userdata);
     }
 }
 
 static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_item_t **const iptr,
-                                        const unsigned int count,void* userdata)
+                                        const unsigned int count, void *userdata)
 {
-    if (pool->cap - atomic_load_explicit(&(pool->len), memory_order_relaxed) == 0)
+    // for (unsigned int i = 0; i < count; i++)
+    // {
+    //     pool->destroy_item_handle(pool, iptr[i], userdata);
+    // }
+    // return;
+
+    if (pool->cap == atomic_load_explicit(&(pool->len), memory_order_relaxed))
     {
         for (unsigned int i = 0; i < count; i++)
         {
-            pool->destroy_item_handle(pool, iptr[i],userdata);
+            pool->destroy_item_handle(pool, iptr[i], userdata);
         }
         return;
     }
@@ -101,12 +143,20 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
         }
         for (; i < count; i++)
         {
-            pool->destroy_item_handle(pool, iptr[i],userdata);
+            pool->destroy_item_handle(pool, iptr[i], userdata);
         }
     }
 
     hhybridmutex_unlock(&(pool->mutex));
 }
 
-master_pool_t *newMasterPoolWithCap(unsigned int pool_width, MasterPoolItemCreateHandle create_h,
-                                    MasterPoolItemDestroyHandle destroy_h);
+static void installMasterPoolAllocCallbacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
+                                     MasterPoolItemDestroyHandle destroy_h)
+{
+    hhybridmutex_lock(&(pool->mutex));
+    pool->create_item_handle = create_h;
+    pool->destroy_item_handle = destroy_h;
+    hhybridmutex_unlock(&(pool->mutex));
+}
+
+master_pool_t *newMasterPoolWithCap(unsigned int pool_width);

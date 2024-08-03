@@ -23,6 +23,7 @@ context_queue_t *newContextQueue(void)
     cb->q               = queue_with_capacity(kQCap);
     return cb;
 }
+
 void destroyContextQueue(context_queue_t *self)
 {
     c_foreach(i, queue, self->q)

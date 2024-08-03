@@ -29,7 +29,7 @@
 
 typedef struct buffer_pool_s buffer_pool_t;
 
-buffer_pool_t  *createBufferPool(uint8_t tid);
+buffer_pool_t  *createBufferPool(struct master_pool_s* mp_large,struct master_pool_s* mp_small,uint8_t tid);
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool);
 void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
@@ -39,13 +39,17 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 // notify the original buffer pool that 1 buffer is lost form it
 // this however, is not used
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+
 static inline void notifyDetached(buffer_pool_t *pool)
 {
     pool->in_use -= 1;
 }
+
 #else
+
 static inline void notifyDetached(buffer_pool_t *pool)
 {
     (void) pool;
 }
+
 #endif
