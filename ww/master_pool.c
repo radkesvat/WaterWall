@@ -1,7 +1,7 @@
 #include "master_pool.h"
 #include "ww.h"
 
-static void defaultCreateHandle(struct master_pool_s *pool, void *userdata)
+static master_pool_item_t* defaultCreateHandle(struct master_pool_s *pool, void *userdata)
 {
     (void) pool;
     (void) userdata;

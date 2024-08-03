@@ -80,7 +80,7 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
     const size_t increase = min((pool->cap - pool->large_buffers_len), pool->cap / 2);
 
     popMasterPoolItems(pool->large_buffers_mp, (void const **) &(pool->large_buffers[pool->large_buffers_len]),
-                        increase, pool);
+                       increase, pool);
 
     pool->large_buffers_len += increase;
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
@@ -93,7 +93,7 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
     const size_t increase = min((pool->cap - pool->small_buffers_len), pool->cap / 2);
 
     popMasterPoolItems(pool->small_buffers_mp, (void const **) &(pool->small_buffers[pool->small_buffers_len]),
-                        increase, pool);
+                       increase, pool);
 
     pool->small_buffers_len += increase;
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
@@ -226,7 +226,8 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     return b2;
 }
 
-static buffer_pool_t *allocBufferPool(struct master_pool_s* mp_large,struct master_pool_s* mp_small,uint8_t tid, unsigned int bufcount, unsigned int large_buffer_size,
+static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint8_t tid,
+                                      unsigned int bufcount, unsigned int large_buffer_size,
                                       unsigned int small_buffer_size)
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
@@ -239,19 +240,18 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s* mp_large,struct mast
 
     buffer_pool_t *ptr_pool = globalMalloc(sizeof(buffer_pool_t));
 
-    *ptr_pool = (buffer_pool_t) {
-        .cap                = bufcount,
-        .large_buffers_size = large_buffer_size,
-        .small_buffers_size = small_buffer_size,
-        .free_threshold    = max(bufcount / 2, (bufcount * 2) / 3),
+    *ptr_pool = (buffer_pool_t) {.cap                = bufcount,
+                                 .large_buffers_size = large_buffer_size,
+                                 .small_buffers_size = small_buffer_size,
+                                 .free_threshold     = max(bufcount / 2, (bufcount * 2) / 3),
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
-        .in_use = 0,
+                                 .in_use = 0,
 #endif
-        .large_buffers_mp = mp_large,
-        .large_buffers    = globalMalloc(container_len),
-        .small_buffers_mp = mp_small,
-        .small_buffers    = globalMalloc(container_len),
-        .tid              = tid};
+                                 .large_buffers_mp = mp_large,
+                                 .large_buffers    = globalMalloc(container_len),
+                                 .small_buffers_mp = mp_small,
+                                 .small_buffers    = globalMalloc(container_len),
+                                 .tid              = tid};
 
     installMasterPoolAllocCallbacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
     installMasterPoolAllocCallbacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
@@ -265,7 +265,7 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s* mp_large,struct mast
     return ptr_pool;
 }
 
-buffer_pool_t *createBufferPool(struct master_pool_s* mp_large,struct master_pool_s* mp_small,uint8_t tid)
+buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint8_t tid)
 {
-    return allocBufferPool(mp_large,mp_small,tid, BUFFERPOOL_CONTAINER_LEN, BUFFER_SIZE, SMALL_BUFSIZE);
+    return allocBufferPool(mp_large, mp_small, tid, BUFFERPOOL_CONTAINER_LEN, BUFFER_SIZE, SMALL_BUFSIZE);
 }

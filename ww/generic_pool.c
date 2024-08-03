@@ -10,16 +10,22 @@ static master_pool_item_t *poolCreateItemHandle(struct master_pool_s *pool, void
 {
     (void) pool;
     generic_pool_t *gpool = userdata;
-    ifgp
-    
-    return gpool->create_item_handle(gpool);
+    if (gpool->item_size == 0)
+    {
+        return gpool->create_item_handle(gpool);
+    }
+    return globalMalloc(gpool->item_size);
 }
 
 static void poolDestroyItemHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     generic_pool_t *gpool = userdata;
-    gpool->destroy_item_handle(gpool, item);
+    if (gpool->item_size == 0)
+    {
+        gpool->destroy_item_handle(gpool, item);
+    }
+    globalFree(item);
 }
 
 void poolReCharge(generic_pool_t *pool)

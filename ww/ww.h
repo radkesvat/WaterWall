@@ -113,6 +113,12 @@ typedef struct ww_global_state_s
     struct generic_pool_s  **shortcut_context_pools;
     struct generic_pool_s  **shortcut_line_pools;
     struct generic_pool_s  **shortcut_pipeline_msg_pools;
+    struct master_pool_s    *masterpool_buffer_pools_large;
+    struct master_pool_s    *masterpool_buffer_pools_small;
+    struct master_pool_s    *masterpool_shift_buffer_pools;
+    struct master_pool_s    *masterpool_context_pools;
+    struct master_pool_s    *masterpool_line_pools;
+    struct master_pool_s    *masterpool_pipeline_msg_pools;
     struct worker_s         *workers;
     struct socket_manager_s *socekt_manager;
     struct node_manager_s   *node_manager;

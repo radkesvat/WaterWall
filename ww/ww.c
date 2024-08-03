@@ -50,11 +50,12 @@ static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
 {
     *worker = (worker_t) {.tid = tid};
 
-    worker->shift_buffer_pool =
-        newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+                                                      allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
-    worker->buffer_pool               = createBufferPool(worker->tid);
+    worker->buffer_pool =
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, worker->tid);
     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
@@ -65,25 +66,27 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
 {
     *worker = (worker_t) {.tid = tid};
 
-    worker->shift_buffer_pool =
-        newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+                                                      allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
-    worker->buffer_pool               = createBufferPool(worker->tid);
+    worker->buffer_pool =
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, worker->tid);
     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
     GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
 
-    worker->context_pool =
-        newGenericPoolWithCap((16) + GSTATE.ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
+    worker->context_pool = newGenericPoolWithCap(GSTATE.masterpool_context_pools, (16) + GSTATE.ram_profile,
+                                                 allocContextPoolHandle, destroyContextPoolHandle);
     GSTATE.shortcut_context_pools[tid] = getWorker(tid)->context_pool;
 
-    worker->line_pool = newGenericPoolWithCap((8) + GSTATE.ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
+    worker->line_pool               = newGenericPoolWithCap(GSTATE.masterpool_line_pools, (8) + GSTATE.ram_profile,
+                                                            allocLinePoolHandle, destroyLinePoolHandle);
     GSTATE.shortcut_line_pools[tid] = getWorker(tid)->line_pool;
 
-    worker->pipeline_msg_pool =
-        newGenericPoolWithCap((8) + GSTATE.ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
+    worker->pipeline_msg_pool = newGenericPoolWithCap(GSTATE.masterpool_pipeline_msg_pools, (8) + GSTATE.ram_profile,
+                                                      allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
     GSTATE.shortcut_pipeline_msg_pools[tid] = getWorker(tid)->pipeline_msg_pool;
 }
 
@@ -128,10 +131,8 @@ static void initializeShortCuts(void)
 {
     assert(GSTATE.initialized);
 
-    tid_t workers_count = GSTATE.workers_count;
-
     static const int kShourtcutsCount = 6;
-    const int        total_workers    = workers_count + kAdditionalReservedWorkers;
+    const int        total_workers    = WORKERS_COUNT + kAdditionalReservedWorkers;
 
     void **space = globalMalloc(sizeof(void *) * kShourtcutsCount * total_workers);
 
@@ -141,6 +142,18 @@ static void initializeShortCuts(void)
     GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (3UL * total_workers));
     GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (4UL * total_workers));
     GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (5UL * total_workers));
+}
+
+static void initializeMasterPools(void)
+{
+    assert(GSTATE.initialized);
+
+    GSTATE.masterpool_shift_buffer_pools = newMasterPoolWithCap(2 * ((64) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_large = newMasterPoolWithCap(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_small = newMasterPoolWithCap(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_context_pools      = newMasterPoolWithCap(2 * ((16) + GSTATE.ram_profile));
+    GSTATE.masterpool_line_pools         = newMasterPoolWithCap(2 * ((8) + GSTATE.ram_profile));
+    GSTATE.masterpool_pipeline_msg_pools = newMasterPoolWithCap(2 * ((8) + GSTATE.ram_profile));
 }
 
 void createWW(const ww_construction_data_t init_data)
@@ -191,9 +204,10 @@ void createWW(const ww_construction_data_t init_data)
             WORKERS_COUNT = (255 - kAdditionalReservedWorkers);
         }
 
-        WORKERS = (worker_t *) malloc(sizeof(worker_t) * (WORKERS_COUNT + kAdditionalReservedWorkers));
+        WORKERS = (worker_t *) globalMalloc(sizeof(worker_t) * (WORKERS_COUNT + kAdditionalReservedWorkers));
 
         initializeShortCuts();
+        initializeMasterPools();
 
         for (unsigned int i = 0; i < WORKERS_COUNT; ++i)
         {
