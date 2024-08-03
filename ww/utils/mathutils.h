@@ -18,9 +18,9 @@
         unsigned long long: maxULL,                                                                                    \
         unsigned long int: maxULInt,                                                                                   \
         unsigned int: maxUInt,                                                                                         \
+        signed long int: maxSLInt,                                                                                     \
         int: maxInt,                                                                                                   \
-        double: maxDouble,                                                                                             \
-        ssize_t: maxSsize)(a, b)
+        double: maxDouble)(a, b)
 
 static inline unsigned long long maxULL(unsigned long long a, unsigned long long b)
 {
@@ -36,6 +36,11 @@ static inline unsigned int maxUInt(unsigned int a, unsigned int b)
 {
     return a > b ? a : b;
 }
+static inline signed long int maxSLInt(signed long int a, signed long int b)
+{
+    return a > b ? a : b;
+}
+
 static inline int maxInt(int a, int b)
 {
     return a > b ? a : b;
@@ -44,10 +49,7 @@ static inline double maxDouble(double a, double b)
 {
     return a > b ? a : b;
 }
-static inline ssize_t maxSsize(ssize_t a, ssize_t b)
-{
-    return a > b ? a : b;
-}
+
 static inline long maxLong(long a, long b)
 {
     return a > b ? a : b;
@@ -59,9 +61,9 @@ static inline long maxLong(long a, long b)
         unsigned long long: minULL,                                                                                    \
         unsigned long int: minULInt,                                                                                   \
         unsigned int: minUInt,                                                                                         \
+        signed long int: minSLInt,                                                                                     \
         int: minInt,                                                                                                   \
-        double: minDouble,                                                                                             \
-        ssize_t: minSsize)(a, b)
+        double: minDouble)(a, b)
 
 static inline unsigned long long minULL(unsigned long long a, unsigned long long b)
 {
@@ -70,10 +72,15 @@ static inline unsigned long long minULL(unsigned long long a, unsigned long long
 
 static inline unsigned long int minULInt(unsigned long int a, unsigned long int b)
 {
-    return a > b ? a : b;
+    return a < b ? a : b;
 }
 
 static inline unsigned int minUInt(unsigned int a, unsigned int b)
+{
+    return a < b ? a : b;
+}
+
+static inline signed long int minSLInt(signed long int a, signed long int b)
 {
     return a < b ? a : b;
 }
@@ -82,14 +89,12 @@ static inline int minInt(int a, int b)
 {
     return a < b ? a : b;
 }
+
 static inline double minDouble(double a, double b)
 {
     return a < b ? a : b;
 }
-static inline ssize_t minSsize(ssize_t a, ssize_t b)
-{
-    return a < b ? a : b;
-}
+
 static inline long minLong(long a, long b)
 {
     return a < b ? a : b;
