@@ -20,6 +20,7 @@ pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
     *self = (shift_buffer_t) {0};
     return self;
 }
+
 void destroyShiftBufferPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;

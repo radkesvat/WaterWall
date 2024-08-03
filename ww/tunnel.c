@@ -10,6 +10,7 @@ void chainUp(tunnel_t *from, tunnel_t *to)
 {
     from->up = to;
 }
+
 // `to` downstreams to `from`
 void chainDown(tunnel_t *from, tunnel_t *to)
 {
@@ -18,6 +19,7 @@ void chainDown(tunnel_t *from, tunnel_t *to)
     // but the cyclic refrence detection is already done in node map
     to->dw = from;
 }
+
 // `from` <-> `to`
 void chain(tunnel_t *from, tunnel_t *to)
 {
@@ -45,6 +47,7 @@ pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool)
     (void) pool;
     return globalMalloc(sizeof(line_t));
 }
+
 void destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
@@ -90,6 +93,7 @@ void pipeUpStream(context_t *c)
         destroyContext(c);
     }
 }
+
 void pipeDownStream(context_t *c)
 {
     if (! pipeSendToDownStream((pipe_line_t *) c->line->dw_state, c))
@@ -114,6 +118,7 @@ static void defaultPipeLocalUpStream(struct tunnel_s *self, struct context_s *c,
         self->upStream(self, c);
     }
 }
+
 static void defaultPipeLocalDownStream(struct tunnel_s *self, struct context_s *c, struct pipe_line_s *pl)
 {
     (void) pl;
@@ -126,6 +131,7 @@ static void defaultPipeLocalDownStream(struct tunnel_s *self, struct context_s *
         self->dw->downStream(self->dw, c);
     }
 }
+
 void pipeTo(tunnel_t *self, line_t *l, uint8_t tid)
 {
     assert(l->up_state == NULL);

@@ -23,8 +23,7 @@
 enum
 {
     kSocketManagerWorkerId     = 0,
-    kTunManagerWorkerId        = 1,
-    kAdditionalReservedWorkers = 2
+    kAdditionalReservedWorkers = 1
 };
 
 ww_global_state_t global_ww_state = {0};
@@ -53,13 +52,13 @@ static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
 
     worker->shift_buffer_pool =
         newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    GSTATE.shortcut_shift_buffer_pools[tid] = (getWorker(tid)->shift_buffer_pool);
+    GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
     worker->buffer_pool               = createSmallBufferPool(worker->tid);
-    GSTATE.shortcut_buffer_pools[tid] = (getWorker(tid)->buffer_pool);
+    GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
-    GSTATE.shortcut_loops[tid] = (getWorker(tid)->loop);
+    GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
 }
 
 static void initalizeWorker(worker_t *worker, tid_t tid)
@@ -68,24 +67,24 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
 
     worker->shift_buffer_pool =
         newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    GSTATE.shortcut_shift_buffer_pools[tid] = (getWorker(tid)->shift_buffer_pool);
+    GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
     worker->buffer_pool               = createBufferPool(worker->tid);
-    GSTATE.shortcut_buffer_pools[tid] = (getWorker(tid)->buffer_pool);
+    GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
-    GSTATE.shortcut_loops[tid] = (getWorker(tid)->loop);
+    GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
 
     worker->context_pool =
         newGenericPoolWithCap((16) + GSTATE.ram_profile, allocContextPoolHandle, destroyContextPoolHandle);
-    GSTATE.shortcut_context_pools[tid] = (getWorker(tid)->context_pool);
+    GSTATE.shortcut_context_pools[tid] = getWorker(tid)->context_pool;
 
     worker->line_pool = newGenericPoolWithCap((8) + GSTATE.ram_profile, allocLinePoolHandle, destroyLinePoolHandle);
-    GSTATE.shortcut_line_pools[tid] = (getWorker(tid)->line_pool);
+    GSTATE.shortcut_line_pools[tid] = getWorker(tid)->line_pool;
 
     worker->pipeline_msg_pool =
         newGenericPoolWithCap((8) + GSTATE.ram_profile, allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
-    GSTATE.shortcut_pipeline_msg_pools[tid] = (getWorker(tid)->pipeline_msg_pool);
+    GSTATE.shortcut_pipeline_msg_pools[tid] = getWorker(tid)->pipeline_msg_pool;
 }
 
 static void runWorker(worker_t *worker)

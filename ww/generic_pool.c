@@ -51,7 +51,8 @@ static generic_pool_t *allocateGenericPool(unsigned int item_size, unsigned int 
                                            PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
 {
 
-    pool_width = (unsigned long) pow(2, floor(log2((double) (max(1, (ssize_t) pool_width)))));
+    pool_width = (max(1,pool_width) + 15) & ~0x0F;
+
     // half of the pool is used, other half is free at startup
     pool_width = 2 * pool_width;
 

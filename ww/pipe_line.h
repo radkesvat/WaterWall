@@ -4,9 +4,9 @@
 
 /*
 
-    
+
     <---------------  Down Line  ------------------>
-    
+
     ----------------------------|------------------|
                <- con ->           Pipe 1 thread 1 |
     ----------------------------|------------------|
@@ -47,14 +47,11 @@ typedef struct pipe_line_s pipe_line_t;
 
 pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool);
 void         destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
-
-void pipeOnUpLinePaused(void *state);
-void pipeOnUpLineResumed(void *state);
-void pipeOnDownLineResumed(void *state);
-void pipeOnDownLinePaused(void *state);
-
-bool pipeSendToUpStream(pipe_line_t *pl, context_t *c);
-bool pipeSendToDownStream(pipe_line_t *pl, context_t *c);
-
-void newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid,
-                 PipeLineFlowRoutine local_up_stream, PipeLineFlowRoutine local_down_stream);
+void         pipeOnUpLinePaused(void *state);
+void         pipeOnUpLineResumed(void *state);
+void         pipeOnDownLineResumed(void *state);
+void         pipeOnDownLinePaused(void *state);
+bool         pipeSendToUpStream(pipe_line_t *pl, context_t *c);
+bool         pipeSendToDownStream(pipe_line_t *pl, context_t *c);
+void         newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid, PipeLineFlowRoutine local_up_stream,
+                         PipeLineFlowRoutine local_down_stream);

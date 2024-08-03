@@ -71,16 +71,20 @@ static inline pool_item_t *popPoolItem(generic_pool_t *pool)
     return pool->create_item_handle(pool);
 #endif
 
-    if (pool->len <= 0)
-    {
-        poolReCharge(pool);
-    }
-
 #if defined(DEBUG) && defined(POOL_DEBUG)
     pool->in_use += 1;
 #endif
+
+    if (pool->len > 0)
+    {
+        --(pool->len);
+        return pool->available[pool->len];
+    }
+
+    poolReCharge(pool);
     --(pool->len);
     return pool->available[pool->len];
+
 }
 
 static inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)

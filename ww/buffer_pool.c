@@ -53,7 +53,7 @@ static void firstCharge(buffer_pool_t *pool)
 {
     for (size_t i = 0; i < (pool->cap / 2); i++)
     {
-        pool->available[i] = newShiftBuffer(pool->tid,pool->buffers_size);
+        pool->available[i] = newShiftBuffer(pool->tid, pool->buffers_size);
     }
     pool->len = pool->cap / 2;
 }
@@ -64,7 +64,7 @@ static void reCharge(buffer_pool_t *pool)
 
     for (size_t i = pool->len; i < (pool->len + increase); i++)
     {
-        pool->available[i] = newShiftBuffer(pool->tid,pool->buffers_size);
+        pool->available[i] = newShiftBuffer(pool->tid, pool->buffers_size);
     }
     pool->len += increase;
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
@@ -78,7 +78,7 @@ static void giveMemBackToOs(buffer_pool_t *pool)
 
     for (size_t i = pool->len - decrease; i < pool->len; i++)
     {
-        destroyShiftBuffer(pool->tid,pool->available[i]);
+        destroyShiftBuffer(pool->tid, pool->available[i]);
     }
     pool->len -= decrease;
 
@@ -95,15 +95,17 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
     return newShiftBuffer(pool->buffers_size);
 #endif
-
-    if (pool->len <= 0)
-    {
-        reCharge(pool);
-    }
-
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
 #endif
+
+    if (pool->len > 0)
+    {
+        --(pool->len);
+        return pool->available[pool->len];
+    }
+    reCharge(pool);
+
     --(pool->len);
     return pool->available[pool->len];
 }
@@ -117,7 +119,7 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 
     if (isShallow(b))
     {
-        destroyShiftBuffer(pool->tid,b);
+        destroyShiftBuffer(pool->tid, b);
         return;
     }
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
@@ -147,7 +149,7 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     return b2;
 }
 
-static buffer_pool_t *allocBufferPool(uint8_t tid,unsigned long bufcount, unsigned int buffer_size) // NOLINT
+static buffer_pool_t *allocBufferPool(uint8_t tid, unsigned long bufcount, unsigned int buffer_size) // NOLINT
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
     assert(bufcount >= 1);
@@ -164,17 +166,17 @@ static buffer_pool_t *allocBufferPool(uint8_t tid,unsigned long bufcount, unsign
     pool->cap             = bufcount;
     pool->buffers_size    = buffer_size;
     pool->free_threshould = max(pool->cap / 2, (pool->cap * 2) / 3);
-    pool->tid = tid;
+    pool->tid             = tid;
     firstCharge(pool);
     return pool;
 }
 
 buffer_pool_t *createBufferPool(uint8_t tid)
 {
-    return allocBufferPool(tid,BUFFERPOOL_CONTAINER_LEN, BUFFER_SIZE);
+    return allocBufferPool(tid, BUFFERPOOL_CONTAINER_LEN, BUFFER_SIZE);
 }
 
 buffer_pool_t *createSmallBufferPool(uint8_t tid)
 {
-    return allocBufferPool(tid,BUFFERPOOL_SMALL_CONTAINER_LEN, BUFFER_SIZE_SMALL);
+    return allocBufferPool(tid, BUFFERPOOL_SMALL_CONTAINER_LEN, BUFFER_SIZE_SMALL);
 }
