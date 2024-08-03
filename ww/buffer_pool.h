@@ -1,5 +1,6 @@
 #pragma once
 
+#include "master_pool.h"
 #include "shiftbuffer.h"
 #include <stdatomic.h>
 
@@ -7,7 +8,7 @@
     A growable pool, very simple.
 
     preallocates (n) number of buffers at each call to charge(),
-    
+
     users should call popBuffer() when they want a buffer, and later call reuseBuffer when they are done with
     the buffer.
 
@@ -23,15 +24,14 @@
 
     for performance reasons, this pool dose not inherit from generic_pool, so 80% of the code is the same
     but also it has its own differences ofcourse
-    
+
 */
 
-struct buffer_pool_s;
 typedef struct buffer_pool_s buffer_pool_t;
 
-buffer_pool_t  *createSmallBufferPool(uint8_t tid);
 buffer_pool_t  *createBufferPool(uint8_t tid);
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
+shift_buffer_t *popSmallBuffer(buffer_pool_t *pool);
 void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2);
 
