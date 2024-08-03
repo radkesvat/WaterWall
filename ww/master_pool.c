@@ -1,18 +1,7 @@
 #include "master_pool.h"
 
-static void poolFirstCharge(master_pool_t *pool)
-{
-    hhybridmutex_lock(&(pool->mutex));
-    pool->len = pool->cap / 2;
-    for (size_t i = 0; i < pool->len; i++)
-    {
-        pool->available[i] = pool->create_item_handle(pool);
-    }
-    hhybridmutex_unlock(&(pool->mutex));
-}
-
-master_pool_t *newMasterPoolWithCap(unsigned int pool_width, MasterPoolItemCreateHandle create_h,
-                                    MasterPoolItemDestroyHandle destroy_h)
+master_pool_t *newMasterPoolWithCap(unsigned int pool_width, MasterPoolItemCreateHandle const create_h,
+                                    MasterPoolItemDestroyHandle const destroy_h)
 {
 
     pool_width = (max(1, pool_width) + 15) & ~0x0F;
@@ -45,11 +34,14 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width, MasterPoolItemCreat
     memset(pool_ptr, 0xEB, sizeof(master_pool_t) + container_len);
 #endif
 
-    master_pool_t pool = {
-        .memptr = pool_ptr, .cap = pool_width, .create_item_handle = create_h, .destroy_item_handle = destroy_h};
+    master_pool_t pool = {.memptr              = pool_ptr,
+                          .cap                 = pool_width,
+                          .len                 = 0,
+                          .create_item_handle  = create_h,
+                          .destroy_item_handle = destroy_h};
 
     memcpy(pool_ptr, &pool, sizeof(master_pool_t));
     hhybridmutex_init(&(pool_ptr->mutex));
-    poolFirstCharge(pool_ptr);
+
     return pool_ptr;
 }
