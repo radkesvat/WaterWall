@@ -1,6 +1,6 @@
 #pragma once
 #include "master_pool.h"
-#include <stdatomic.h>
+#include "ww.h"
 #include <stddef.h>
 
 /*

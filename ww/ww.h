@@ -1,6 +1,5 @@
 #pragma once
 #include "buffer_pool.h"
-#include "generic_pool.h"
 #include "hthread.h"
 #include "managers/memory_manager.h"
 
