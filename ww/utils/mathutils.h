@@ -4,16 +4,64 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// windows defines min/max in header <stdlib.h> :)
 #undef max
 #undef min
-static inline ssize_t min(ssize_t x, ssize_t y)
+#undef MAX
+#undef MIN
+
+// Waterwall requires minimum c11, so its ok to use this c11 feature
+
+// NOLINTNEXTLINE
+#define max(a, b) _Generic((a), unsigned int: maxUInt, int: maxInt, double: maxDouble, ssize_t: maxSsize)(a, b)
+
+static inline unsigned int maxUInt(unsigned int a, unsigned int b)
 {
-    return (((x) < (y)) ? (x) : (y));
+    return a > b ? a : b;
 }
-static inline ssize_t max(ssize_t x, ssize_t y)
+static inline int maxInt(int a, int b)
 {
-    return (((x) < (y)) ? (y) : (x));
+    return a > b ? a : b;
 }
+static inline double maxDouble(double a, double b)
+{
+    return a > b ? a : b;
+}
+static inline ssize_t maxSsize(ssize_t a, ssize_t b)
+{
+    return a > b ? a : b;
+}
+static inline long maxLong(long a, long b)
+{
+    return a > b ? a : b;
+}
+
+// NOLINTNEXTLINE
+#define min(a, b) _Generic((a), unsigned int: minUInt, int: minInt, double: minDouble, ssize_t: minSsize)(a, b)
+
+static inline unsigned int minUInt(unsigned int a, unsigned int b)
+{
+    return a < b ? a : b;
+}
+
+static inline int minInt(int a, int b)
+{
+    return a < b ? a : b;
+}
+static inline double minDouble(double a, double b)
+{
+    return a < b ? a : b;
+}
+static inline ssize_t minSsize(ssize_t a, ssize_t b)
+{
+    return a < b ? a : b;
+}
+static inline long minLong(long a, long b)
+{
+    return a < b ? a : b;
+}
+
+
 
 #define ISSIGNED(t) (((t) (-1)) < ((t) 0))
 
@@ -23,8 +71,7 @@ static inline ssize_t max(ssize_t x, ssize_t y)
 
 #define MAXOF(t) ((unsigned long long) (ISSIGNED(t) ? SMAXOF(t) : UMAXOF(t)))
 
-
-#if __BIG_ENDIAN__ 
+#if __BIG_ENDIAN__
 #ifndef htonll
 #define htonll(x) (x)
 #endif
