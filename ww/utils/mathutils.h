@@ -18,6 +18,7 @@
         unsigned long long: maxULL,                                                                                    \
         unsigned long int: maxULInt,                                                                                   \
         unsigned int: maxUInt,                                                                                         \
+        long long: maxLL,                                                                                              \
         signed long int: maxSLInt,                                                                                     \
         int: maxInt,                                                                                                   \
         double: maxDouble)(a, b)
@@ -36,6 +37,12 @@ static inline unsigned int maxUInt(unsigned int a, unsigned int b)
 {
     return a > b ? a : b;
 }
+
+static inline long long maxLL(long long a, long long b)
+{
+    return a > b ? a : b;
+}
+
 static inline signed long int maxSLInt(signed long int a, signed long int b)
 {
     return a > b ? a : b;
@@ -61,6 +68,7 @@ static inline long maxLong(long a, long b)
         unsigned long long: minULL,                                                                                    \
         unsigned long int: minULInt,                                                                                   \
         unsigned int: minUInt,                                                                                         \
+        long long: minLL,                                                                                              \
         signed long int: minSLInt,                                                                                     \
         int: minInt,                                                                                                   \
         double: minDouble)(a, b)
@@ -76,6 +84,11 @@ static inline unsigned long int minULInt(unsigned long int a, unsigned long int 
 }
 
 static inline unsigned int minUInt(unsigned int a, unsigned int b)
+{
+    return a < b ? a : b;
+}
+
+static inline long long minLL(long long a, long long b)
 {
     return a < b ? a : b;
 }
