@@ -75,7 +75,7 @@ static inline pool_item_t *popPoolItem(generic_pool_t *pool)
     pool->in_use += 1;
 #endif
 
-    if (pool->len > 0)
+    if (WW_LIKELY(pool->len > 0))
     {
         --(pool->len);
         return pool->available[pool->len];
