@@ -13,7 +13,24 @@
 // Waterwall requires minimum c11, so its ok to use this c11 feature
 
 // NOLINTNEXTLINE
-#define max(a, b) _Generic((a), unsigned int: maxUInt, int: maxInt, double: maxDouble, ssize_t: maxSsize)(a, b)
+#define max(a, b)                                                                                                      \
+    _Generic((a),                                                                                                      \
+        unsigned long long: maxULL,                                                                                    \
+        unsigned long int: maxULInt,                                                                                   \
+        unsigned int: maxUInt,                                                                                         \
+        int: maxInt,                                                                                                   \
+        double: maxDouble,                                                                                             \
+        ssize_t: maxSsize)(a, b)
+
+static inline unsigned long long maxULL(unsigned long long a, unsigned long long b)
+{
+    return a > b ? a : b;
+}
+
+static inline unsigned long int maxULInt(unsigned long int a, unsigned long int b)
+{
+    return a > b ? a : b;
+}
 
 static inline unsigned int maxUInt(unsigned int a, unsigned int b)
 {
@@ -37,7 +54,24 @@ static inline long maxLong(long a, long b)
 }
 
 // NOLINTNEXTLINE
-#define min(a, b) _Generic((a), unsigned int: minUInt, int: minInt, double: minDouble, ssize_t: minSsize)(a, b)
+#define min(a, b)                                                                                                      \
+    _Generic((a),                                                                                                      \
+        unsigned long long: minULL,                                                                                    \
+        unsigned long int: minULInt,                                                                                   \
+        unsigned int: minUInt,                                                                                         \
+        int: minInt,                                                                                                   \
+        double: minDouble,                                                                                             \
+        ssize_t: minSsize)(a, b)
+
+static inline unsigned long long minULL(unsigned long long a, unsigned long long b)
+{
+    return a < b ? a : b;
+}
+
+static inline unsigned long int minULInt(unsigned long int a, unsigned long int b)
+{
+    return a > b ? a : b;
+}
 
 static inline unsigned int minUInt(unsigned int a, unsigned int b)
 {
@@ -60,8 +94,6 @@ static inline long minLong(long a, long b)
 {
     return a < b ? a : b;
 }
-
-
 
 #define ISSIGNED(t) (((t) (-1)) < ((t) 0))
 
