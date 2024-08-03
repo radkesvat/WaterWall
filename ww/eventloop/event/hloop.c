@@ -148,15 +148,15 @@ int hloop_process_events(hloop_t* loop, int timeout_ms) {
         int64_t blocktime_us = blocktime_ms * 1000;
         if (loop->timers.root) {
             int64_t min_timeout = TIMER_ENTRY(loop->timers.root)->next_timeout - loop->cur_hrtime;
-            blocktime_us = MIN(blocktime_us, min_timeout);
+            blocktime_us = min(blocktime_us, min_timeout);
         }
         if (loop->realtimers.root) {
             int64_t min_timeout = TIMER_ENTRY(loop->realtimers.root)->next_timeout - hloop_now_us(loop);
-            blocktime_us = MIN(blocktime_us, min_timeout);
+            blocktime_us = min(blocktime_us, min_timeout);
         }
         if (blocktime_us < 0) goto process_timers;
         blocktime_ms = blocktime_us / 1000 + 1;
-        blocktime_ms = MIN(blocktime_ms, timeout_ms);
+        blocktime_ms = min(blocktime_ms, timeout_ms);
     }
 
     if (loop->nios) {
@@ -717,7 +717,7 @@ const char* hio_engine(void) {
 static inline hio_t* __hio_get(hloop_t* loop, int fd) {
     if (fd >= (int)loop->ios.maxsize) {
         int newsize = ceil2e(fd);
-        newsize = MAX(newsize, IO_ARRAY_INIT_SIZE);
+        newsize = max(newsize, IO_ARRAY_INIT_SIZE);
         io_array_resize(&loop->ios, newsize > fd ? newsize : 2 * fd);
     }
     return loop->ios.ptr[fd];

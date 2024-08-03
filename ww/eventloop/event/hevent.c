@@ -480,7 +480,7 @@ void hio_set_write_timeout(hio_t* io, int timeout_ms) {
 
 static void __keepalive_timeout_cb(htimer_t* timer) {
     hio_t* io = (hio_t*)timer->privdata;
-    uint64_t last_rw_hrtime = MAX(io->last_read_hrtime, io->last_write_hrtime);
+    uint64_t last_rw_hrtime = max(io->last_read_hrtime, io->last_write_hrtime);
     uint64_t inactive_ms = (io->loop->cur_hrtime - last_rw_hrtime) / 1000;
     if (inactive_ms + 100 < (uint64_t)io->keepalive_timeout) {
         htimer_reset(io->keepalive_timer, io->keepalive_timeout - inactive_ms);

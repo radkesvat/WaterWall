@@ -4,6 +4,7 @@
 #include "hexport.h"
 #include "hplatform.h"
 #include "hdef.h"
+#include "utils/mathutils.h"
 #include "buffer_pool.h"
 
 typedef struct hloop_s hloop_t;
@@ -471,8 +472,8 @@ HV_INLINE uint32_t reconn_setting_calc_delay(reconn_setting_t* reconn) {
         // exponential
         reconn->cur_delay *= reconn->delay_policy;
     }
-    reconn->cur_delay = MAX(reconn->cur_delay, reconn->min_delay);
-    reconn->cur_delay = MIN(reconn->cur_delay, reconn->max_delay);
+    reconn->cur_delay = max(reconn->cur_delay, reconn->min_delay);
+    reconn->cur_delay = min(reconn->cur_delay, reconn->max_delay);
     return reconn->cur_delay;
 }
 
