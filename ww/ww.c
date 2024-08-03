@@ -54,7 +54,7 @@ static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
         newGenericPoolWithCap((64) + GSTATE.ram_profile, allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
-    worker->buffer_pool               = createSmallBufferPool(worker->tid);
+    worker->buffer_pool               = createBufferPool(worker->tid);
     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);

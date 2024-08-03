@@ -62,6 +62,11 @@ static inline bool isShallow(shift_buffer_t *self)
     return (*(self->refc) > 1);
 }
 
+static inline unsigned int bufCap(shift_buffer_t *const self)
+{
+    return self->full_cap;
+}
+
 // caps mean how much memory we own to be able to shift left/right
 static inline unsigned int lCap(shift_buffer_t *const self)
 {

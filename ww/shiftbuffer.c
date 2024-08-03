@@ -7,8 +7,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#define LEFTPADDING  (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 13) : ((1U << 8) + 512))
-#define RIGHTPADDING (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8))
+#define LEFTPADDING  (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8))
+#define RIGHTPADDING (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 9) : (1U << 7))
 
 #define REFC_SIZE sizeof(shiftbuffer_refc_t)
 
@@ -50,7 +50,9 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
 {
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
-        pre_cap = (unsigned int) pow(2, ceil(log2((double) max(16, pre_cap))));
+        // pre_cap = (unsigned int) pow(2, ceil(log2((double) max(16, pre_cap))));
+        pre_cap = (max(16, pre_cap) + 15) & ~0x0F;
+
     }
 
     unsigned int real_cap = (pre_cap + LEFTPADDING + RIGHTPADDING) - REFC_SIZE;
@@ -86,7 +88,7 @@ void reset(shift_buffer_t *self, unsigned int pre_cap)
 
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
-        pre_cap = (unsigned int) pow(2, ceil(log2(((double) max(16, pre_cap)))));
+        pre_cap = (max(16, pre_cap) + 15) & ~0x0F;
     }
 
     unsigned int real_cap = (pre_cap + LEFTPADDING + RIGHTPADDING) - REFC_SIZE;
