@@ -72,7 +72,7 @@ static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, shift_
     struct msg_event *msg;
     popMasterPoolItems(tdev->reader_message_pool, (const void **) &(msg), 1);
 
-    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
     hevent_t ev;
     memset(&ev, 0, sizeof(ev));
@@ -82,13 +82,13 @@ static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, shift_
     hloop_post_event(getWorkerLoop(target_tid), &ev);
 }
 
-static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
+static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 {
     tun_device_t *tdev = userdata;
 
     tid_t distribute_tid = 0;
 
-    while (atomic_load_explicit(&(tdev->notstop), memory_order_relaxed))
+    while (atomic_load_explicit(&(tdev->running), memory_order_relaxed))
     {
         shift_buffer_t *buf = popSmallBuffer(tdev->reader_buffer_pool);
 
@@ -98,13 +98,13 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 
         if (nread < 0)
         {
-            LOGF("Reading from TUN device");
+            LOGF("TunDevice: Reading from TUN device failed");
             exit(1);
         }
 
         if (TUN_LOG_EVERYTHING)
         {
-            LOGD("Read %zd bytes from device %s\n", nread, tdev->name);
+            LOGD("TunDevice: Read %zd bytes from device %s\n", nread, tdev->name);
         }
 
         distributePacketPayload(tdev, distribute_tid++, buf);
@@ -118,10 +118,10 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     return 0;
 }
 
-static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
+static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 {
     tun_device_t *tdev = userdata;
-    while (atomic_load_explicit(&(tdev->notstop), memory_order_relaxed))
+    while (atomic_load_explicit(&(tdev->running), memory_order_relaxed))
     {
     }
     return 0;
@@ -132,7 +132,7 @@ void bringTunDeviceUP(tun_device_t *tdev)
     assert(! tdev->up);
 
     tdev->up      = true;
-    tdev->notstop = true;
+    tdev->running = true;
     hthread_create(tdev->routine_reader, tdev);
     hthread_create(tdev->routine_writer, tdev);
 }
@@ -146,7 +146,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     int fd = open("/tdev/net/tun", O_RDWR);
     if (fd < 0)
     {
-        perror("Opening /tdev/net/tun");
+        LOGF("TunDevice:  Opening /tdev/net/tun failed");
         return NULL;
     }
 
@@ -161,7 +161,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     int err = ioctl(fd, TUNSETIFF, (void *) &ifr);
     if (err < 0)
     {
-        perror("ioctl(TUNSETIFF)");
+        LOGF("TunDevice: ioctl(TUNSETIFF) failed");
         close(fd);
         return NULL;
     }
@@ -172,6 +172,8 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
 
     *tdev = (tun_device_t) {.name                     = strdup(ifr.ifr_name),
+                            .running                  = false,
+                            .up                       = false,
                             .handle                   = fd,
                             .reader_shift_buffer_pool = sb_pool,
                             .read_event_callback      = cb,

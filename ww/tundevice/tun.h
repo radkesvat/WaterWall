@@ -33,7 +33,7 @@ typedef struct tun_device_s
     struct hchan_s    *writer_buffer_channel;
     TunReadEventHandle read_event_callback;
     void              *userdata;
-    atomic_bool        notstop;
+    atomic_bool        running;
     atomic_bool        up;
 
 } tun_device_t;
