@@ -45,8 +45,8 @@ typedef void (*PipeLineFlowRoutine)(struct tunnel_s *, struct context_s *, struc
 
 typedef struct pipe_line_s pipe_line_t;
 
-pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool);
-void         destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item);
+pool_item_t *allocPipeLineMsgPoolHandle(generic_pool_t *pool);
+void         destroyPipeLineMsgPoolHandle(generic_pool_t *pool, pool_item_t *item);
 void         pipeOnUpLinePaused(void *state);
 void         pipeOnUpLineResumed(void *state);
 void         pipeOnDownLineResumed(void *state);

@@ -24,6 +24,8 @@
 // #define BYPASS_POOL
 
 struct generic_pool_s;
+typedef struct generic_pool_s generic_pool_t;
+
 // struct pool_item_s; // void
 typedef void pool_item_t;
 
@@ -60,7 +62,6 @@ struct generic_pool_s
     GENERIC_POOL_FIELDS
 };
 
-typedef struct generic_pool_s generic_pool_t;
 
 void poolReCharge(generic_pool_t *pool);
 void poolShrink(generic_pool_t *pool);

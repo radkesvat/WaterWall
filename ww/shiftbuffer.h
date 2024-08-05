@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ww.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -41,21 +42,19 @@ struct shift_buffer_s
 
 typedef struct shift_buffer_s shift_buffer_t;
 
-struct generic_pool_s;
+void *allocShiftBufferPoolHandle(generic_pool_t *pool);
+void  destroyShiftBufferPoolHandle(generic_pool_t *pool, void *item);
 
-void *allocShiftBufferPoolHandle(struct generic_pool_s *pool);
-void  destroyShiftBufferPoolHandle(struct generic_pool_s *pool, void *item);
-
-shift_buffer_t *newShiftBuffer(struct generic_pool_s *pool, unsigned int pre_cap);
-shift_buffer_t *newShallowShiftBuffer(struct generic_pool_s *pool, shift_buffer_t *owner);
-void            destroyShiftBuffer(struct generic_pool_s *pool, shift_buffer_t *self);
+shift_buffer_t *newShiftBuffer(generic_pool_t *pool, unsigned int pre_cap);
+shift_buffer_t *newShallowShiftBuffer(generic_pool_t *pool, shift_buffer_t *owner);
+void            destroyShiftBuffer(generic_pool_t *pool, shift_buffer_t *self);
 void            reset(shift_buffer_t *self, unsigned int cap);
 void            unShallow(shift_buffer_t *self);
 void            expand(shift_buffer_t *self, unsigned int increase);
 void            concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t *restrict buf);
 void            sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, unsigned int bytes);
-shift_buffer_t *sliceBuffer(struct generic_pool_s *pool, shift_buffer_t *self, unsigned int bytes);
-shift_buffer_t *shallowSliceBuffer(struct generic_pool_s *pool, shift_buffer_t *self, unsigned int bytes);
+shift_buffer_t *sliceBuffer(generic_pool_t *pool, shift_buffer_t *self, unsigned int bytes);
+shift_buffer_t *shallowSliceBuffer(generic_pool_t *pool, shift_buffer_t *self, unsigned int bytes);
 
 static inline bool isShallow(shift_buffer_t *self)
 {

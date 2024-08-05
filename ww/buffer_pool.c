@@ -11,8 +11,6 @@
 #include <string.h>
 // #define BYPASS_BUFFERPOOL
 
-// NOLINTBEGIN
-
 #define MEMORY_PROFILE_SMALL    (RAM_PROFILE >= kRamProfileM1Memory ? kRamProfileM1Memory : RAM_PROFILE)
 #define MEMORY_PROFILE_SELECTED RAM_PROFILE
 
@@ -25,13 +23,13 @@
 struct buffer_pool_s
 {
 
-    uint16_t               cap;
-    uint16_t               free_threshold;
-    unsigned int           large_buffers_len;
-    unsigned int           small_buffers_len;
-    unsigned int           large_buffers_size;
-    unsigned int           small_buffers_size;
-    struct generic_pool_s *shift_buffer_pool;
+    uint16_t        cap;
+    uint16_t        free_threshold;
+    unsigned int    large_buffers_len;
+    unsigned int    small_buffers_len;
+    unsigned int    large_buffers_size;
+    unsigned int    small_buffers_size;
+    generic_pool_t *shift_buffer_pool;
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     atomic_size_t in_use;
 #endif
@@ -227,8 +225,8 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     return b2;
 }
 
-static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small,struct generic_pool_s *sb_pool,
-                                      unsigned int bufcount, unsigned int large_buffer_size,
+static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small,
+                                      generic_pool_t *sb_pool, unsigned int bufcount, unsigned int large_buffer_size,
                                       unsigned int small_buffer_size)
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
@@ -241,19 +239,20 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
 
     buffer_pool_t *ptr_pool = globalMalloc(sizeof(buffer_pool_t));
 
-    *ptr_pool = (buffer_pool_t) {.cap                = bufcount,
-                                 .large_buffers_size = large_buffer_size,
-                                 .small_buffers_size = small_buffer_size,
-                                 .free_threshold     = max(bufcount / 2, (bufcount * 2) / 3),
-                                 .shift_buffer_pool              = sb_pool,
+    *ptr_pool = (buffer_pool_t) {
+        .cap                = bufcount,
+        .large_buffers_size = large_buffer_size,
+        .small_buffers_size = small_buffer_size,
+        .free_threshold     = max(bufcount / 2, (bufcount * 2) / 3),
+        .shift_buffer_pool  = sb_pool,
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
-                                 .in_use = 0,
+        .in_use = 0,
 #endif
-                                 .large_buffers_mp = mp_large,
-                                 .large_buffers    = globalMalloc(container_len),
-                                 .small_buffers_mp = mp_small,
-                                 .small_buffers    = globalMalloc(container_len),
-                                 };
+        .large_buffers_mp = mp_large,
+        .large_buffers    = globalMalloc(container_len),
+        .small_buffers_mp = mp_small,
+        .small_buffers    = globalMalloc(container_len),
+    };
 
     installMasterPoolAllocCallbacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
     installMasterPoolAllocCallbacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
@@ -267,8 +266,7 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
     return ptr_pool;
 }
 
-buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small,
-                                struct generic_pool_s *sb_pool)
+buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, generic_pool_t *sb_pool)
 {
     return allocBufferPool(mp_large, mp_small, sb_pool, BUFFERPOOL_CONTAINER_LEN, BUFFER_SIZE, SMALL_BUFSIZE);
 }

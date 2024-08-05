@@ -12,7 +12,7 @@
 
 #define REFC_SIZE sizeof(shiftbuffer_refc_t)
 
-pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
+pool_item_t *allocShiftBufferPoolHandle(generic_pool_t *pool)
 {
     (void) pool;
     shift_buffer_t *self = globalMalloc(sizeof(shift_buffer_t));
@@ -21,13 +21,13 @@ pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
     return self;
 }
 
-void destroyShiftBufferPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+void destroyShiftBufferPoolHandle(generic_pool_t *pool, pool_item_t *item)
 {
     (void) pool;
     globalFree((shift_buffer_t *) item);
 }
 
-void destroyShiftBuffer(struct generic_pool_s *pool, shift_buffer_t *self)
+void destroyShiftBuffer(generic_pool_t *pool, shift_buffer_t *self)
 {
     assert(*(self->refc) > 0);
     // if its a shallow then the underlying buffer survives
@@ -44,7 +44,7 @@ void destroyShiftBuffer(struct generic_pool_s *pool, shift_buffer_t *self)
     }
 }
 
-shift_buffer_t *newShiftBuffer(struct generic_pool_s *pool, unsigned int pre_cap) // NOLINT
+shift_buffer_t *newShiftBuffer(generic_pool_t *pool, unsigned int pre_cap) // NOLINT
 {
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
@@ -68,7 +68,7 @@ shift_buffer_t *newShiftBuffer(struct generic_pool_s *pool, unsigned int pre_cap
     return self;
 }
 
-shift_buffer_t *newShallowShiftBuffer(struct generic_pool_s *pool, shift_buffer_t *owner)
+shift_buffer_t *newShallowShiftBuffer(generic_pool_t *pool, shift_buffer_t *owner)
 {
     *(owner->refc) += 1;
     shift_buffer_t *shallow = (shift_buffer_t *) popPoolItem(pool);
@@ -203,14 +203,14 @@ void sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict sourc
     setLen(dest, bytes);
 }
 
-shift_buffer_t *sliceBuffer(struct generic_pool_s *pool, shift_buffer_t *const self, const unsigned int bytes)
+shift_buffer_t *sliceBuffer(generic_pool_t *pool, shift_buffer_t *const self, const unsigned int bytes)
 {
     shift_buffer_t *newbuf = newShiftBuffer(pool, self->full_cap - (LEFTPADDING + RIGHTPADDING));
     sliceBufferTo(newbuf, self, bytes);
     return newbuf;
 }
 
-shift_buffer_t *shallowSliceBuffer(struct generic_pool_s *pool, shift_buffer_t *self, const unsigned int bytes)
+shift_buffer_t *shallowSliceBuffer(generic_pool_t *pool, shift_buffer_t *self, const unsigned int bytes)
 {
     assert(bytes <= bufLen(self));
 

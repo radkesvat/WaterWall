@@ -1,5 +1,4 @@
 #pragma once
-#include "buffer_pool.h"
 #include "hthread.h"
 #include "managers/memory_manager.h"
 
@@ -90,6 +89,7 @@ void createWW(ww_construction_data_t data);
 _Noreturn void runMainThread(void);
 
 typedef uint8_t tid_t;
+typedef struct generic_pool_s generic_pool_t;
 
 typedef struct worker_s
 {
