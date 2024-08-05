@@ -33,7 +33,7 @@ add_library(ww STATIC
 
 )
 
-if(UNIX)
+if(LINUX)
   target_sources(ww PRIVATE tundevice/tun_unix.c)
 endif()
 

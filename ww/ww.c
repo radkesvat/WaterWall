@@ -29,24 +29,6 @@ struct ww_global_state_s *getWW(void)
     return &(GSTATE);
 }
 
-// // same as regular workers except that it uses smaller buffer pools and won't allocate unused pools
-// static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
-// {
-//     *worker = (worker_t) {.tid = tid};
-
-//     worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) +
-//     GSTATE.ram_profile,
-//                                                       allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-//     GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
-
-//     worker->buffer_pool =
-//         createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-//         worker->shift_buffer_pool);
-//     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
-
-//     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
-//     GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
-// }
 
 static void initalizeWorker(worker_t *worker, tid_t tid)
 {
@@ -200,7 +182,7 @@ void createWW(const ww_construction_data_t init_data)
         }
     }
 
-    // [Section] setup SocketMangager thread (Additional Worker 1)
+    // [Section] setup SocketMangager
     {
         GSTATE.socekt_manager = createSocketManager();
     }
