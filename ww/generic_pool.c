@@ -32,7 +32,7 @@ void poolReCharge(generic_pool_t *pool)
 {
     const size_t increase = min((pool->cap - pool->len), (pool->cap) / 2);
 
-    popMasterPoolItems(pool->mp, (void const **) &(pool->available[pool->len]), increase, pool);
+    popMasterPoolItems(pool->mp, (void const **) &(pool->available[pool->len]), increase);
 
     pool->len += increase;
 #if defined(DEBUG) && defined(POOL_DEBUG)
@@ -44,7 +44,7 @@ void poolShrink(generic_pool_t *pool)
 {
     const size_t decrease = (pool->len < (pool->cap / 2) ? pool->len : (pool->cap / 2));
 
-    reuseMasterPoolItems(pool->mp, &(pool->available[pool->len - decrease]), decrease, pool);
+    reuseMasterPoolItems(pool->mp, &(pool->available[pool->len - decrease]), decrease);
 
     pool->len -= decrease;
 
@@ -78,7 +78,7 @@ static generic_pool_t *allocateGenericPool(struct master_pool_s *mp, unsigned in
                                   .mp                  = mp,
                                   .create_item_handle  = create_h,
                                   .destroy_item_handle = destroy_h};
-    installMasterPoolAllocCallbacks(pool_ptr->mp, poolCreateItemHandle, poolDestroyItemHandle);
+    installMasterPoolAllocCallbacks(pool_ptr->mp, pool_ptr,poolCreateItemHandle, poolDestroyItemHandle);
     poolFirstCharge(pool_ptr);
     return pool_ptr;
 }
