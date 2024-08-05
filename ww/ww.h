@@ -147,32 +147,32 @@ static inline worker_t *getWorker(tid_t tid)
     return &(WORKERS[tid]);
 }
 
-static inline struct generic_pool_s *getWorkerShiftBufferPool(uint8_t tid)
+static inline struct generic_pool_s *getWorkerShiftBufferPool(tid_t tid)
 {
     return GSTATE.shortcut_shift_buffer_pools[tid];
 }
 
-static inline struct buffer_pool_s *getWorkerBufferPool(uint8_t tid)
+static inline struct buffer_pool_s *getWorkerBufferPool(tid_t tid)
 {
     return GSTATE.shortcut_buffer_pools[tid];
 }
 
-static inline struct generic_pool_s *getWorkerLinePool(uint8_t tid)
+static inline struct generic_pool_s *getWorkerLinePool(tid_t tid)
 {
     return GSTATE.shortcut_line_pools[tid];
 }
 
-static inline struct generic_pool_s *getWorkerContextPool(uint8_t tid)
+static inline struct generic_pool_s *getWorkerContextPool(tid_t tid)
 {
     return GSTATE.shortcut_context_pools[tid];
 }
 
-static inline struct generic_pool_s *getWorkerPipeLineMsgPool(uint8_t tid)
+static inline struct generic_pool_s *getWorkerPipeLineMsgPool(tid_t tid)
 {
     return GSTATE.shortcut_pipeline_msg_pools[tid];
 }
 
-static inline struct hloop_s *getWorkerLoop(uint8_t tid)
+static inline struct hloop_s *getWorkerLoop(tid_t tid)
 {
     return GSTATE.shortcut_loops[tid];
 }

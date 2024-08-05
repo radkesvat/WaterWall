@@ -24,12 +24,10 @@ pool_item_t *allocShiftBufferPoolHandle(struct generic_pool_s *pool)
 void destroyShiftBufferPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    shift_buffer_t *self = item;
-
-    globalFree(self);
+    globalFree((shift_buffer_t *) item);
 }
 
-void destroyShiftBuffer(uint8_t tid, shift_buffer_t *self)
+void destroyShiftBuffer(struct generic_pool_s *pool, shift_buffer_t *self)
 {
     assert(*(self->refc) > 0);
     // if its a shallow then the underlying buffer survives
@@ -38,27 +36,26 @@ void destroyShiftBuffer(uint8_t tid, shift_buffer_t *self)
     if (*(self->refc) <= 0)
     {
         globalFree(self->pbuf - self->offset);
-        reusePoolItem(getWorkerShiftBufferPool(tid), self);
+        reusePoolItem(pool, self);
     }
     else
     {
-        reusePoolItem(getWorkerShiftBufferPool(tid), self);
+        reusePoolItem(pool, self);
     }
 }
 
-shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
+shift_buffer_t *newShiftBuffer(struct generic_pool_s *pool, unsigned int pre_cap) // NOLINT
 {
     if (pre_cap != 0 && pre_cap % 16 != 0)
     {
         // pre_cap = (unsigned int) pow(2, ceil(log2((double) max(16, pre_cap))));
         pre_cap = (max(16, pre_cap) + 15) & ~0x0F;
-
     }
 
     unsigned int real_cap = (pre_cap + LEFTPADDING + RIGHTPADDING) - REFC_SIZE;
 
     // shift_buffer_t *self = globalMalloc(sizeof(shift_buffer_t));
-    shift_buffer_t *self = (shift_buffer_t *) popPoolItem(getWorkerShiftBufferPool(tid));
+    shift_buffer_t *self = (shift_buffer_t *) popPoolItem(pool);
 
     self->calc_len = 0;
     self->offset   = 0;
@@ -71,10 +68,10 @@ shift_buffer_t *newShiftBuffer(uint8_t tid, unsigned int pre_cap) // NOLINT
     return self;
 }
 
-shift_buffer_t *newShallowShiftBuffer(uint8_t tid, shift_buffer_t *owner)
+shift_buffer_t *newShallowShiftBuffer(struct generic_pool_s *pool, shift_buffer_t *owner)
 {
     *(owner->refc) += 1;
-    shift_buffer_t *shallow = (shift_buffer_t *) popPoolItem(getWorkerShiftBufferPool(tid));
+    shift_buffer_t *shallow = (shift_buffer_t *) popPoolItem(pool);
     // globalFree(shallow->refc);
     *shallow = *owner;
 
@@ -206,14 +203,14 @@ void sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict sourc
     setLen(dest, bytes);
 }
 
-shift_buffer_t *sliceBuffer(const uint8_t tid, shift_buffer_t *const self, const unsigned int bytes)
+shift_buffer_t *sliceBuffer(struct generic_pool_s *pool, shift_buffer_t *const self, const unsigned int bytes)
 {
-    shift_buffer_t *newbuf = newShiftBuffer(tid, self->full_cap - (LEFTPADDING + RIGHTPADDING));
+    shift_buffer_t *newbuf = newShiftBuffer(pool, self->full_cap - (LEFTPADDING + RIGHTPADDING));
     sliceBufferTo(newbuf, self, bytes);
     return newbuf;
 }
 
-shift_buffer_t *shallowSliceBuffer(const uint8_t tid, shift_buffer_t *self, const unsigned int bytes)
+shift_buffer_t *shallowSliceBuffer(struct generic_pool_s *pool, shift_buffer_t *self, const unsigned int bytes)
 {
     assert(bytes <= bufLen(self));
 
@@ -225,7 +222,7 @@ shift_buffer_t *shallowSliceBuffer(const uint8_t tid, shift_buffer_t *self, cons
         self->offset = 0;
     }
 
-    shift_buffer_t *shallow = newShallowShiftBuffer(tid, self);
+    shift_buffer_t *shallow = newShallowShiftBuffer(pool, self);
     setLen(shallow, bytes);
     constrainRight(shallow);
 

@@ -32,7 +32,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const uint8_t tid     = c->line->tid;
+        const tid_t tid     = c->line->tid;
         thread_box_t *this_tb = &(state->workers[tid]);
         if (c->init)
         {

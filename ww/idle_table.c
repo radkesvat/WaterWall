@@ -67,7 +67,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
     return newtable;
 }
 
-idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
+idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, tid_t tid,
                          uint64_t age_ms)
 {
     assert(self);
@@ -104,7 +104,7 @@ void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_
     heapq_idles_t_make_heap(&self->hqueue);
     hhybridmutex_unlock(&(self->mutex));
 }
-idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
+idle_item_t *getIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key)
 {
     hhybridmutex_lock(&(self->mutex));
 
@@ -118,7 +118,7 @@ idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
     return (find_result.ref->second);
 }
 
-bool removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key)
+bool removeIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key)
 {
     hhybridmutex_lock(&(self->mutex));
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);

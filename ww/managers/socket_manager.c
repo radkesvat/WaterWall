@@ -108,14 +108,14 @@ static void destroyUdpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t
 
 void destroySocketAcceptResult(socket_accept_result_t *sar)
 {
-    const uint8_t tid = sar->tid;
+    const tid_t tid = sar->tid;
 
     hhybridmutex_lock(&(state->tcp_pools[tid].mutex));
     reusePoolItem(state->tcp_pools[tid].pool, sar);
     hhybridmutex_unlock(&(state->tcp_pools[tid].mutex));
 }
 
-static udp_payload_t *newUpdPayload(uint8_t tid)
+static udp_payload_t *newUpdPayload(tid_t tid)
 {
     hhybridmutex_lock(&(state->udp_pools[tid].mutex));
     udp_payload_t *item = popPoolItem(state->udp_pools[tid].pool);
@@ -125,7 +125,7 @@ static udp_payload_t *newUpdPayload(uint8_t tid)
 
 void destroyUdpPayload(udp_payload_t *upl)
 {
-    const uint8_t tid = upl->tid;
+    const tid_t tid = upl->tid;
 
     hhybridmutex_lock(&(state->udp_pools[tid].mutex));
     reusePoolItem(state->udp_pools[tid].pool, upl);
@@ -458,7 +458,7 @@ static inline void incrementDistributeTid(void)
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
 
-    uint8_t tid = (uint8_t) getCurrentDistributeTid();
+    tid_t tid = (uint8_t) getCurrentDistributeTid();
 
     hhybridmutex_lock(&(state->tcp_pools[tid].mutex));
     socket_accept_result_t *result = popPoolItem(state->tcp_pools[tid].pool);

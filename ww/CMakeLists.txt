@@ -33,6 +33,12 @@ add_library(ww STATIC
 
 )
 
+if(UNIX)
+  target_sources(ww PRIVATE tundevice/tun_unix.c)
+endif()
+
+
+
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # add dependencies
@@ -105,7 +111,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
   message( FATAL_ERROR
-   "MSVC compiler is not supported, because WW relies on <stdatomic.h>"
+   "MSVC compiler is not supported"
    "on windows you can still use GCC or CLANG to compile."
    )
 endif()

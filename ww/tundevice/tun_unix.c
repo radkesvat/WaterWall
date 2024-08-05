@@ -10,6 +10,21 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include "hchan.h"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 tun_device_t *createTunDevice(hloop_t *loop, const char *name, bool offload)
 {
@@ -41,7 +56,7 @@ tun_device_t *createTunDevice(hloop_t *loop, const char *name, bool offload)
     }
 
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
-    *tdev = (tun_device_t) {.name = strdup(ifr.ifr_name), .handle = (tun_handle_t) {.fd = fd}, .io = hio_get(loop, fd)};
+    *tdev = (tun_device_t) {.name = strdup(ifr.ifr_name), .handle = fd, .io = hio_get(loop, fd)};
 
     return tdev;
 }

@@ -31,7 +31,7 @@ static void removeConnection(thread_box_t *box, preconnect_client_con_state_t *c
     box->length -= 1;
 }
 
-static preconnect_client_con_state_t *createCstate(uint8_t tid)
+static preconnect_client_con_state_t *createCstate(tid_t tid)
 {
     preconnect_client_con_state_t *cstate = globalMalloc(sizeof(preconnect_client_con_state_t));
     memset(cstate, 0, sizeof(preconnect_client_con_state_t));
@@ -81,7 +81,7 @@ static void initiateConnect(tunnel_t *self, bool delay)
         return;
     }
 
-    uint8_t tid = 0;
+    tid_t tid = 0;
     if (getWorkersCount() > 0)
     {
         tid = atomic_fetch_add_explicit(&(state->round_index), 1, memory_order_relaxed);

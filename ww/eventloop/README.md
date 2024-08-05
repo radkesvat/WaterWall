@@ -19,13 +19,17 @@ so we can no longer write to a hio_t from multiple threads
 
 small optimization tweaks
 
-added small changes such as splice call support (not yet integrated into waterwall)
+added changes such as splice call support (not yet integrated into waterwall)
 
-changed loop buffer to ww/buffer_pool
+changed loop buffer to ww/buffer_pool and integrated thread local pools
 
-added hybridmutex(and used it instead of regular mutex) , Lsema (light weight semaphore), thread channels
+added hybridmutex and used it instead of regular mutex , Lsema (light weight semaphore), thread channels
 
 changed the use of localtime() to localtime_r() (helgrind no longer shouts)
+
+modified many parts of the source to support -pedantic compile flag, and other flags that we have enabled in ww.
+
+logging structure changed, it will no longer use macros ( compiler exensions )
 
 
 

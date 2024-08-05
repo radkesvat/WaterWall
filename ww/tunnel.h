@@ -165,13 +165,13 @@ void      defaultUpStream(tunnel_t *self, context_t *c);
 void      defaultDownStream(tunnel_t *self, context_t *c);
 void      pipeUpStream(context_t *c);
 void      pipeDownStream(context_t *c);
-void      pipeTo(tunnel_t *self, line_t *l, uint8_t tid);
+void      pipeTo(tunnel_t *self, line_t *l, tid_t tid);
 
 // pool handles, instead of malloc / free for the generic pool
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool);
 void         destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item);
 
-static inline line_t *newLine(uint8_t tid)
+static inline line_t *newLine(tid_t tid)
 {
     line_t *result = popPoolItem(getWorkerLinePool(tid));
 
@@ -328,7 +328,7 @@ void         destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *
 static inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
-    const uint8_t tid = c->line->tid;
+    const tid_t tid = c->line->tid;
     unLockLine(c->line);
     reusePoolItem(getWorkerContextPool(tid), c);
 }

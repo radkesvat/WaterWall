@@ -29,7 +29,8 @@
 
 typedef struct buffer_pool_s buffer_pool_t;
 
-buffer_pool_t  *createBufferPool(struct master_pool_s* mp_large,struct master_pool_s* mp_small,uint8_t tid);
+buffer_pool_t  *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small,
+                                 struct generic_pool_s *sb_pool);
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool);
 void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);

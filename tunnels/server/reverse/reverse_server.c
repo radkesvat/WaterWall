@@ -172,7 +172,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const uint8_t tid     = c->line->tid;
+        const tid_t tid     = c->line->tid;
         thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
         if (c->init)
         {
@@ -222,7 +222,7 @@ static void downStream(tunnel_t *self, context_t *c)
         // so the context is null if nothing is received so far...
         if (ucstate == NULL)
         {
-            const uint8_t tid     = c->line->tid;
+            const tid_t tid     = c->line->tid;
             thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
 
             if (this_tb->d_count > 0)
@@ -321,7 +321,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                const uint8_t tid     = c->line->tid;
+                const tid_t tid     = c->line->tid;
                 thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
                 removeConnectionU(this_tb, ucstate);
                 cleanup(ucstate);

@@ -132,7 +132,7 @@ static void defaultPipeLocalDownStream(struct tunnel_s *self, struct context_s *
     }
 }
 
-void pipeTo(tunnel_t *self, line_t *l, uint8_t tid)
+void pipeTo(tunnel_t *self, line_t *l, tid_t tid)
 {
     assert(l->up_state == NULL);
     newPipeLine(self, l, tid, defaultPipeLocalUpStream, defaultPipeLocalDownStream);

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "basic_types.h"
+#include "ww.h"
 #include "hloop.h"
 #include <stdint.h>
 
@@ -50,8 +50,8 @@ struct idle_item_s
 idle_table_t *newIdleTable(hloop_t *loop);
 void          destroyIdleTable(idle_table_t *self);
 
-idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, uint8_t tid,
+idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, tid_t tid,
                          uint64_t age_ms);
-idle_item_t *getIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key);
+idle_item_t *getIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key);
 void         keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
-bool         removeIdleItemByHash(uint8_t tid, idle_table_t *self, hash_t key);
+bool         removeIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key);
