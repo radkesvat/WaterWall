@@ -193,7 +193,15 @@ static void nio_read(hio_t* io) {
     //         len = (1U << 20); // 1 MB
     //     }else
     // #endif
-    shift_buffer_t* buf = popBuffer(io->loop->bufpool);
+    shift_buffer_t* buf;
+
+    switch (io->io_type) {
+    default:
+    case HIO_TYPE_TCP: buf = popBuffer(io->loop->bufpool); break;
+    case HIO_TYPE_UDP:
+    case HIO_TYPE_IP: buf = popSmallBuffer(io->loop->bufpool); break;
+    }
+
     unsigned int available = rCap(buf);
     if (available > (1U << 15)) {
         available = (1U << 15);
