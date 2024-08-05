@@ -67,8 +67,7 @@ typedef struct socket_manager_s
     hhybridmutex_t          mutex;
     balancegroup_registry_t balance_groups;
     hthread_t               accept_thread;
-    hloop_t                *loop;
-    uint8_t                 tid;
+    worker_t               *worker;
 
     uint16_t last_round_tid;
     bool     iptables_installed;
@@ -422,7 +421,7 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
 
         if (find_result.ref == balancegroup_registry_t_end(&(state->balance_groups)).ref)
         {
-            b_table = newIdleTable(state->loop);
+            b_table = newIdleTable(state->worker->loop);
             balancegroup_registry_t_insert(&(state->balance_groups), name_hash, b_table);
         }
         else
@@ -537,7 +536,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     idle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
-    const uint8_t           this_tid   = state->tid;
+    const uint8_t           this_tid   = state->worker->tid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -843,7 +842,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     idle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
-    const uint8_t           this_tid   = state->tid;
+    const uint8_t           this_tid   = state->worker->tid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -1025,23 +1024,22 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
 {
     (void) userdata;
 
-    assert(state->tid >= 1);
-    assert(state && state->loop && ! state->started);
+    assert(state && state->worker->loop && ! state->started);
 
     hhybridmutex_lock(&(state->mutex));
 
     {
         uint8_t ports_overlapped[65536] = {0};
-        listenTcp(state->loop, ports_overlapped);
+        listenTcp(state->worker->loop, ports_overlapped);
     }
     {
         uint8_t ports_overlapped[65536] = {0};
-        listenUdp(state->loop, ports_overlapped);
+        listenUdp(state->worker->loop, ports_overlapped);
     }
     state->started = true;
     hhybridmutex_unlock(&(state->mutex));
 
-    hloop_run(state->loop);
+    hloop_run(state->worker->loop);
     LOGW("AcceptThread eventloop finished!");
     return 0;
 }
@@ -1065,14 +1063,27 @@ void startSocketManager(void)
     state->accept_thread = hthread_create(accept_thread, NULL);
 }
 
-socket_manager_state_t *createSocketManager(worker_t *worker)
+socket_manager_state_t *createSocketManager(void)
 {
     assert(state == NULL);
     state = globalMalloc(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
 
-    state->tid  = worker->tid;
-    state->loop = worker->loop;
+    worker_t*  worker = globalMalloc(sizeof(worker_t));
+    
+    *worker = (worker_t) {.tid = 255};
+
+    worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+                                                      allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+
+    worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                                           worker->shift_buffer_pool);
+
+    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+
+    state->worker  = worker;
+
+
     for (size_t i = 0; i < kFilterLevels; i++)
     {
         state->filters[i] = filters_t_init();

@@ -26,7 +26,7 @@
 
 
 
-tun_device_t *createTunDevice(hloop_t *loop, const char *name, bool offload)
+tun_device_t *createTunDevice(const char *name, bool offload)
 {
     (void) offload; // todo (send/receive offloading)
 
@@ -56,7 +56,7 @@ tun_device_t *createTunDevice(hloop_t *loop, const char *name, bool offload)
     }
 
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
-    *tdev = (tun_device_t) {.name = strdup(ifr.ifr_name), .handle = fd, .io = hio_get(loop, fd)};
+    *tdev = (tun_device_t) {.name = strdup(ifr.ifr_name), .handle = fd};
 
     return tdev;
 }

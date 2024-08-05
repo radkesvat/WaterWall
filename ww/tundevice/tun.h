@@ -13,11 +13,14 @@ typedef void *tun_handle_t; // Windows handle (void* can hold HANDLE)
 typedef struct tun_device_s
 {
     char        *name;
-    hio_t       *io;
+    // hio_t       *io; not using fd multiplexer
     tun_handle_t handle;
     hthread_t    readThread;
     hthread_t    writeThread;
+    atomic_bool stop;
+    atomic_bool up;
+
 
 } tun_device_t;
 
-tun_device_t *createTunDevice(hloop_t *loop, const char *name, bool offload);
+tun_device_t *createTunDevice(const char *name, bool offload);

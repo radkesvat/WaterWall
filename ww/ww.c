@@ -10,22 +10,6 @@
 #include "pipe_line.h"
 #include "utils/stringutils.h"
 
-/*
-    additional threads that dose not require instances of every pools and they will create what they need
-    so, these additions will reserve their own space on the workers array
-
-    the only purpose of this is to reduce memory usage
-
-    additional therad 1 : socket manager
-
-*/
-
-enum
-{
-    kSocketManagerWorkerId     = 0,
-    kAdditionalReservedWorkers = 1
-};
-
 ww_global_state_t global_ww_state = {0};
 
 void setWW(struct ww_global_state_s *state)
@@ -45,31 +29,28 @@ struct ww_global_state_s *getWW(void)
     return &(GSTATE);
 }
 
-// same as regular workers except that it uses smaller buffer pools and won't allocate unused pools
-static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
-{
-    *worker = (worker_t) {.tid = tid};
+// // same as regular workers except that it uses smaller buffer pools and won't allocate unused pools
+// static void initalizeSocketManagerWorker(worker_t *worker, tid_t tid)
+// {
+//     *worker = (worker_t) {.tid = tid};
 
-    worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                                      allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
+//     worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) +
+//     GSTATE.ram_profile,
+//                                                       allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+//     GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
-    worker->buffer_pool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, worker->shift_buffer_pool);
-    GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
+//     worker->buffer_pool =
+//         createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+//         worker->shift_buffer_pool);
+//     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
-    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
-    GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
-}
+//     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+//     GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
+// }
 
 static void initalizeWorker(worker_t *worker, tid_t tid)
 {
     *worker = (worker_t) {.tid = tid};
-
-
-
-    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
-    GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
 
     worker->context_pool = newGenericPoolWithCap(GSTATE.masterpool_context_pools, (16) + GSTATE.ram_profile,
                                                  allocContextPoolHandle, destroyContextPoolHandle);
@@ -83,13 +64,16 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
                                                       allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
     GSTATE.shortcut_pipeline_msg_pools[tid] = getWorker(tid)->pipeline_msg_pool;
 
-        worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+    worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
                                                       allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
-    worker->buffer_pool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, worker->shift_buffer_pool);
+    worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                                           worker->shift_buffer_pool);
     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
+
+    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+    GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
 }
 
 static void runWorker(worker_t *worker)
@@ -134,7 +118,7 @@ static void initializeShortCuts(void)
     assert(GSTATE.initialized);
 
     static const int kShourtcutsCount = 6;
-    const int        total_workers    = WORKERS_COUNT + kAdditionalReservedWorkers;
+    const int        total_workers    = WORKERS_COUNT;
 
     void **space = globalMalloc(sizeof(void *) * kShourtcutsCount * total_workers);
 
@@ -199,14 +183,13 @@ void createWW(const ww_construction_data_t init_data)
         WORKERS_COUNT      = init_data.workers_count;
         GSTATE.ram_profile = init_data.ram_profile;
 
-        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (255 - kAdditionalReservedWorkers))
+        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (255))
         {
-            fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT,
-                    (255 - kAdditionalReservedWorkers));
-            WORKERS_COUNT = (255 - kAdditionalReservedWorkers);
+            fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (255));
+            WORKERS_COUNT = (255);
         }
 
-        WORKERS = (worker_t *) globalMalloc(sizeof(worker_t) * (WORKERS_COUNT + kAdditionalReservedWorkers));
+        WORKERS = (worker_t *) globalMalloc(sizeof(worker_t) * (WORKERS_COUNT));
 
         initializeShortCuts();
         initializeMasterPools();
@@ -219,12 +202,7 @@ void createWW(const ww_construction_data_t init_data)
 
     // [Section] setup SocketMangager thread (Additional Worker 1)
     {
-        tid_t     accept_thread_tid = (WORKERS_COUNT) + kSocketManagerWorkerId;
-        worker_t *accept_worker     = getWorker(accept_thread_tid);
-
-        initalizeSocketManagerWorker(accept_worker, accept_thread_tid);
-
-        GSTATE.socekt_manager = createSocketManager(accept_worker);
+        GSTATE.socekt_manager = createSocketManager();
     }
 
     // [Section] setup NodeManager
