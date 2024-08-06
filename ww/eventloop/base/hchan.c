@@ -1,9 +1,7 @@
 #include "hchan.h"
 #include "hmutex.h"
+#include "ww.h"
 
-#define MUSTALIGN2(n, w) assert(((w) & ((w) - 1)) == 0); /* alignment w is not a power of two */
-
-#define align2(n, w) (((n) + ((w) - 1)) & ~((w) - 1))
 
 // DEBUG_CHAN_LOG: define to enable debug logging of send and recv
 // #define DEBUG_CHAN_LOG
@@ -17,7 +15,6 @@
 // TODO: set value depending on target preprocessor information.
 #define LINE_CACHE_SIZE 64
 
-#define ATTR_ALIGNED_LINE_CACHE __attribute__((aligned(LINE_CACHE_SIZE)))
 
 typedef _Atomic(unsigned int) atomic_uint32_t;
 typedef _Atomic(unsigned long long) atomic_uint64_t;
@@ -548,12 +545,12 @@ static bool chan_recv_direct(hchan_t* c, void* dstelemptr, Thr* sendert) {
     return ok;
 }
 
-hchan_t* hchan_Open(size_t elemsize, uint32_t bufcap) {
+hchan_t* hchanOpen(size_t elemsize, uint32_t bufcap) {
     int64_t memsize = (int64_t)sizeof(hchan_t) + ((int64_t)bufcap * (int64_t)elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
-    memsize = align2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
+    memsize = ALIGN2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
 
     // check for overflow
     if (memsize < (int64_t)sizeof(hchan_t)) {
@@ -562,11 +559,11 @@ hchan_t* hchan_Open(size_t elemsize, uint32_t bufcap) {
     }
 
     // allocate memory, placing hchan_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t)malloc(memsize);
+    uintptr_t ptr = (uintptr_t)globalMalloc(memsize);
 
     // align c to line cache boundary
     MUSTALIGN2(ptr, LINE_CACHE_SIZE);
-    hchan_t* c = (hchan_t*)align2(ptr, LINE_CACHE_SIZE);
+    hchan_t* c = (hchan_t*)ALIGN2(ptr, LINE_CACHE_SIZE);
 
     c->memptr = ptr;
     c->elemsize = elemsize;
@@ -581,7 +578,7 @@ hchan_t* hchan_Open(size_t elemsize, uint32_t bufcap) {
     return c;
 }
 
-void hchan_Close(hchan_t* c) {
+void hchanClose(hchan_t* c) {
     // dlog_chan("--- close ---");
 
     chan_lock(&c->lock);
@@ -615,24 +612,24 @@ void hchan_Close(hchan_t* c) {
     // dlog_chan("close: done");
 }
 
-void hchan_Free(hchan_t* c) {
+void hchanFree(hchan_t* c) {
     assert(atomic_load_explicit(&c->closed, memory_order_acquire)); // must close channel before freeing its memory
     chan_lock_destroy(&c->lock);
-    free((void*)c->memptr);
+    globalFree((void*)c->memptr);
 }
 
-uint32_t hchan_Cap(const hchan_t* c) {
+uint32_t hchanCap(const hchan_t* c) {
     return c->qcap;
 }
-bool hchan_Send(hchan_t* c, void* elemptr) {
+bool hchanSend(hchan_t* c, void* elemptr) {
     return chan_send(c, elemptr, NULL);
 }
-bool hchan_Recv(hchan_t* c, void* elemptr) {
+bool hchanRecv(hchan_t* c, void* elemptr) {
     return chan_recv(c, elemptr, NULL);
 }
-bool hchan_TrySend(hchan_t* c, void* elemptr, bool* closed) {
+bool hchanTrySend(hchan_t* c, void* elemptr, bool* closed) {
     return chan_send(c, elemptr, closed);
 }
-bool hchan_TryRecv(hchan_t* c, void* elemptr, bool* closed) {
+bool hchanTryRecv(hchan_t* c, void* elemptr, bool* closed) {
     return chan_recv(c, elemptr, closed);
 }
