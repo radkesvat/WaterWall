@@ -16,10 +16,6 @@ int main(void)
     // int test[3] = {0};
     // printf("hello world %d", test[3]);
 
-    /*
-        setup ww memory manager, since it is used everywhere in ww lib
-        we can't even call readfile without it
-    */
     initHeap();
 
     static const char *core_file_name    = "core.json";

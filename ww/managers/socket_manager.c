@@ -1069,8 +1069,8 @@ socket_manager_state_t *createSocketManager(void)
     state = globalMalloc(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
 
-    worker_t*  worker = globalMalloc(sizeof(worker_t));
-    
+    worker_t *worker = globalMalloc(sizeof(worker_t));
+
     *worker = (worker_t) {.tid = 255};
 
     worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
@@ -1079,10 +1079,9 @@ socket_manager_state_t *createSocketManager(void)
     worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            worker->shift_buffer_pool);
 
-    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+    worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
 
-    state->worker  = worker;
-
+    state->worker = worker;
 
     for (size_t i = 0; i < kFilterLevels; i++)
     {

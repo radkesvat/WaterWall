@@ -58,8 +58,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->core_log_level = globalMalloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
-            settings->core_log_file  = globalMalloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
+            settings->core_log_level =strdup(DEFAULT_CORE_LOG_LEVEL);
+            settings->core_log_file  =strdup(DEFAULT_CORE_LOG_FILE);
 
 #if defined(OS_UNIX)
             strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
@@ -87,8 +87,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->network_log_level = globalMalloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
-            settings->network_log_file  = globalMalloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
+            settings->network_log_level =strdup(DEFAULT_NETWORK_LOG_LEVEL);
+            settings->network_log_file  =strdup(DEFAULT_NETWORK_LOG_FILE);
 #if defined(OS_UNIX)
             strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
             strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
@@ -112,16 +112,9 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->dns_log_level = globalMalloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
-            settings->dns_log_file  = globalMalloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
+            settings->dns_log_level =strdup(DEFAULT_DNS_LOG_LEVEL);
+            settings->dns_log_file  =strdup(DEFAULT_DNS_LOG_FILE);
 
-#if defined(OS_UNIX)
-            strcpy(settings->dns_log_level, DEFAULT_DNS_LOG_LEVEL);
-            strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
-#else
-            strcpy_s(settings->dns_log_level, strlen(DEFAULT_DNS_LOG_LEVEL) + 1, DEFAULT_DNS_LOG_LEVEL);
-            strcpy_s(settings->dns_log_file, strlen(DEFAULT_DNS_LOG_FILE) + 1, DEFAULT_DNS_LOG_FILE);
-#endif
             settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
         }
     }
@@ -136,33 +129,14 @@ static void parseLogPartOfJson(cJSON *log_obj)
     else
     {
 
-        settings->log_path          = globalMalloc(strlen(DEFAULT_LOG_PATH) + 1);
-        settings->core_log_file     = globalMalloc(strlen(DEFAULT_CORE_LOG_FILE) + 1);
-        settings->core_log_level    = globalMalloc(strlen(DEFAULT_CORE_LOG_LEVEL) + 1);
-        settings->network_log_file  = globalMalloc(strlen(DEFAULT_NETWORK_LOG_FILE) + 1);
-        settings->network_log_level = globalMalloc(strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1);
-        settings->dns_log_file      = globalMalloc(strlen(DEFAULT_DNS_LOG_FILE) + 1);
-        settings->dns_log_level     = globalMalloc(strlen(DEFAULT_DNS_LOG_LEVEL) + 1);
+        settings->log_path          =strdup(DEFAULT_LOG_PATH);
+        settings->core_log_file     =strdup(DEFAULT_CORE_LOG_FILE);
+        settings->core_log_level    =strdup(DEFAULT_CORE_LOG_LEVEL);
+        settings->network_log_file  =strdup(DEFAULT_NETWORK_LOG_FILE);
+        settings->network_log_level =strdup(DEFAULT_NETWORK_LOG_LEVEL);
+        settings->dns_log_file      =strdup(DEFAULT_DNS_LOG_FILE);
+        settings->dns_log_level     =strdup(DEFAULT_DNS_LOG_LEVEL);
 
-#if defined(OS_UNIX)
-        strcpy(settings->log_path, DEFAULT_LOG_PATH);
-        strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
-        strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
-        strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
-        strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
-        strcpy(settings->dns_log_file, DEFAULT_DNS_LOG_FILE);
-        strcpy(settings->log_path, DEFAULT_DNS_LOG_LEVEL);
-
-#else
-        strcpy_s(settings->log_path, strlen(DEFAULT_LOG_PATH) + 1, DEFAULT_LOG_PATH);
-        strcpy_s(settings->core_log_file, strlen(DEFAULT_CORE_LOG_FILE) + 1, DEFAULT_CORE_LOG_FILE);
-        strcpy_s(settings->core_log_level, strlen(DEFAULT_CORE_LOG_LEVEL) + 1, DEFAULT_CORE_LOG_LEVEL);
-        strcpy_s(settings->network_log_file, strlen(DEFAULT_NETWORK_LOG_FILE) + 1, DEFAULT_NETWORK_LOG_FILE);
-        strcpy_s(settings->network_log_level, strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1, DEFAULT_NETWORK_LOG_LEVEL);
-        strcpy_s(settings->dns_log_file, strlen(DEFAULT_DNS_LOG_FILE) + 1, DEFAULT_DNS_LOG_FILE);
-        strcpy_s(settings->log_path, strlen(DEFAULT_DNS_LOG_LEVEL) + 1, DEFAULT_DNS_LOG_LEVEL);
-
-#endif
 
         settings->core_log_console    = DEFAULT_CORE_ENABLE_CONSOLE;
         settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
