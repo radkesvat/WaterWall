@@ -33,12 +33,18 @@
 /*
     kCpuLineCacheSize is the size of a cache line of the target CPU.
     The value 64 covers i386, x86_64, arm32, arm64.
-    Note that Intel TBB uses 128 (max_nfs_size).
-    todo (platform code) set value depending on target preprocessor information.
 */
 enum
 {
+#if defined(__i386__) || defined(__x86_64__)
     kCpuLineCacheSize = 64
+#elif defined(__arm__) || defined(__aarch64__)
+#define LINE_CACHE_SIZE 64
+#elif defined(__powerpc64__)
+    kCpuLineCacheSize = 128
+#else
+    kCpuLineCacheSize = 64
+#endif
 };
 
 #define ATTR_ALIGNED_LINE_CACHE __attribute__((aligned(kCpuLineCacheSize)))
@@ -86,7 +92,7 @@ void createWW(ww_construction_data_t data);
 
 _Noreturn void runMainThread(void);
 
-typedef uint8_t tid_t;
+typedef uint8_t               tid_t;
 typedef struct generic_pool_s generic_pool_t;
 
 typedef struct worker_s
