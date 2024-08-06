@@ -93,17 +93,18 @@ static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, shift_
 
 static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 {
-    tun_device_t *tdev = userdata;
-
-    tid_t distribute_tid = 0;
+    tun_device_t   *tdev           = userdata;
+    tid_t           distribute_tid = 0;
+    shift_buffer_t *buf;
+    ssize_t         nread;
 
     while (atomic_load_explicit(&(tdev->running), memory_order_relaxed))
     {
-        shift_buffer_t *buf = popSmallBuffer(tdev->reader_buffer_pool);
+        buf = popSmallBuffer(tdev->reader_buffer_pool);
 
         reserveBufSpace(buf, kReadPacketSize);
 
-        ssize_t nread = read(tdev->handle, rawBufMut(buf), kReadPacketSize);
+        nread = read(tdev->handle, rawBufMut(buf), kReadPacketSize);
 
         if (nread < 0)
         {
@@ -132,10 +133,12 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 
 static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 {
-    tun_device_t *tdev = userdata;
+    tun_device_t   *tdev = userdata;
+    shift_buffer_t *buf;
+    ssize_t         nwrite;
+
     while (atomic_load_explicit(&(tdev->running), memory_order_relaxed))
     {
-        shift_buffer_t *buf;
         if (! hchanRecv(tdev->writer_buffer_channel, &buf))
         {
             LOGD("TunDevice: routine write will exit due to channel closed");
@@ -148,7 +151,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
             return 0;
         }
 
-        ssize_t nwrite = write(tdev->handle, rawBufMut(buf), bufLen(buf));
+        nwrite = write(tdev->handle, rawBuf(buf), bufLen(buf));
 
         reuseBufferThreadSafe(buf);
 
@@ -250,7 +253,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     int fd = open("/tdev/net/tun", O_RDWR);
     if (fd < 0)
     {
-        LOGF("TunDevice:  Opening /tdev/net/tun failed");
+        LOGF("TunDevice: opening /tdev/net/tun failed");
         return NULL;
     }
 

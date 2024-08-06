@@ -1,10 +1,13 @@
 #pragma once
-
-// #define ALLOCATOR_BYPASS // switch to stdlib allocators
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+
+// #define ALLOCATOR_BYPASS // switch to stdlib allocators
+
+
+
 
 struct dedicated_memory_s;
 typedef struct dedicated_memory_s dedicated_memory_t;
