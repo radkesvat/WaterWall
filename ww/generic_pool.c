@@ -79,7 +79,7 @@ static generic_pool_t *allocateGenericPool(struct master_pool_s *mp, unsigned in
                                   .create_item_handle  = create_h,
                                   .destroy_item_handle = destroy_h};
     installMasterPoolAllocCallbacks(pool_ptr->mp, pool_ptr,poolCreateItemHandle, poolDestroyItemHandle);
-    poolFirstCharge(pool_ptr);
+    // poolFirstCharge(pool_ptr);
     return pool_ptr;
 }
 

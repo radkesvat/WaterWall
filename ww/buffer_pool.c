@@ -268,7 +268,7 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
     memset(ptr_pool->small_buffers, 0xFE, container_len);
 #endif
 
-    firstCharge(ptr_pool);
+    // firstCharge(ptr_pool);
     return ptr_pool;
 }
 
