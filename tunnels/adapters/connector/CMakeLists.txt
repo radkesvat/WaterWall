@@ -5,8 +5,6 @@ add_library(Connector STATIC
   
 )
 
-#ww api
-target_include_directories(Connector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(Connector ww)
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)

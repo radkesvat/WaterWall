@@ -13,8 +13,6 @@ add_library(WolfSSLServer STATIC
 ## libs will be saved at: /src/.libs/libwolfssl.a
 
 
-#ww api
-target_include_directories(WolfSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WolfSSLServer ww)
 
 target_include_directories(WolfSSLServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)

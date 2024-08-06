@@ -3,8 +3,6 @@ add_library(OpenSSLGlobals STATIC
     openssl_globals.c
 )
 
-#ww api
-target_include_directories(OpenSSLGlobals PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(OpenSSLGlobals ww)
 
 target_include_directories(OpenSSLGlobals PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

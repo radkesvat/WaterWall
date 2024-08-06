@@ -4,8 +4,6 @@ add_library(UdpConnector STATIC
                  
 )
 
-#ww api
-target_include_directories(UdpConnector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(UdpConnector ww)
 
 # add dependencies

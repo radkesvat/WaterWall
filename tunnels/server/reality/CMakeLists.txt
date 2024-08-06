@@ -4,8 +4,6 @@ add_library(RealityServer STATIC
       
 )
 
-#ww api
-target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(RealityServer ww OpenSSLGlobals)
 
 target_include_directories(RealityServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/reality)

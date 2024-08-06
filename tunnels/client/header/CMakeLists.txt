@@ -4,8 +4,6 @@ add_library(HeaderClient STATIC
 
 )
 
-#ww api
-target_include_directories(HeaderClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(HeaderClient PUBLIC ww)
 
 # add dependencies

@@ -3,8 +3,6 @@ add_library(Http2Client STATIC
       http2_client.c
 )
 
-#ww api
-target_include_directories(Http2Client PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(Http2Client PUBLIC ww)
 
 

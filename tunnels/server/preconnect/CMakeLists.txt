@@ -4,8 +4,6 @@ add_library(PreConnectServer STATIC
 
 )
 
-#ww api
-target_include_directories(PreConnectServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(PreConnectServer PUBLIC ww)
 
 # add dependencies

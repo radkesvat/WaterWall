@@ -3,8 +3,6 @@ add_library(RealityClient STATIC
     reality_client.c      
 )
 
-#ww api
-target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(RealityClient ww OpenSSLGlobals)
 target_include_directories(RealityClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/reality)
 

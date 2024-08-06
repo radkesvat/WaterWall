@@ -6,8 +6,6 @@ add_library(TcpConnector STATIC
 )
 
 
-#ww api
-target_include_directories(TcpConnector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(TcpConnector ww)
 
 # add dependencies

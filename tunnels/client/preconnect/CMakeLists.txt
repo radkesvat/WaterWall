@@ -4,8 +4,6 @@ add_library(PreConnectClient STATIC
 
 )
 
-#ww api
-target_include_directories(PreConnectClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(PreConnectClient PUBLIC ww)
 
 

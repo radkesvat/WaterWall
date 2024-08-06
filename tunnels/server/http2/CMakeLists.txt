@@ -3,8 +3,6 @@ add_library(Http2Server STATIC
       http2_server.c
 )
 
-#ww api
-target_include_directories(Http2Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(Http2Server PUBLIC ww)
 
 

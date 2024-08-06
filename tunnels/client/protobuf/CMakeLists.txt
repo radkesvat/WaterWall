@@ -9,8 +9,6 @@ add_library(ProtoBufClient STATIC
 )
 
 
-#ww api
-target_include_directories(ProtoBufClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(ProtoBufClient PUBLIC ww)
 
 

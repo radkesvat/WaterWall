@@ -4,8 +4,6 @@ add_library(Bgp4Server STATIC
 
 )
 
-#ww api
-target_include_directories(Bgp4Server PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(Bgp4Server PUBLIC ww)
 
 # add dependencies

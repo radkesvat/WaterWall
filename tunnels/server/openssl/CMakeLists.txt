@@ -3,8 +3,6 @@ add_library(OpenSSLServer STATIC
       openssl_server.c
 )
 
-#ww api
-target_include_directories(OpenSSLServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(OpenSSLServer ww OpenSSLGlobals)
 
 # add dependencies

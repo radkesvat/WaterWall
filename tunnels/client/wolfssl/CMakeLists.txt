@@ -12,8 +12,6 @@ add_library(WolfSSLClient STATIC
 ## if compiling for ARM: ./configure  --enable-distro --enable-sp=rsa2048,asm --enable-harden --enable-static --enable-fast-rsa --enable-opensslall --enable-opensslextra --enable-tls13 --disable-oldtls
 ## libs will be saved at: /src/.libs/libwolfssl.a
 
-#ww api
-target_include_directories(WolfSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WolfSSLClient ww)
 
 target_include_directories(WolfSSLClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/wolfssl)

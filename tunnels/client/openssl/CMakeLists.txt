@@ -3,8 +3,6 @@ add_library(OpenSSLClient STATIC
       openssl_client.c
 )
 
-#ww api
-target_include_directories(OpenSSLClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(OpenSSLClient ww OpenSSLGlobals)
 
 # add dependencies

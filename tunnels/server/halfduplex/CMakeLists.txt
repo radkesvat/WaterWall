@@ -4,8 +4,6 @@ add_library(HalfDuplexServer STATIC
 
 )
 
-#ww api
-target_include_directories(HalfDuplexServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(HalfDuplexServer PUBLIC ww)
 
 # add dependencies

@@ -4,8 +4,6 @@ add_library(WireGuard STATIC
 
 )
 
-#ww api
-target_include_directories(WireGuard PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(WireGuard PUBLIC ww)
 
 # add dependencies

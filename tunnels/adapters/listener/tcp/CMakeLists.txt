@@ -5,7 +5,6 @@ add_library(TcpListener STATIC
 )
 
 #ww api
-target_include_directories(TcpListener PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(TcpListener ww)
 
 # add dependencies

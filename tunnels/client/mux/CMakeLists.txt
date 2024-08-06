@@ -4,8 +4,6 @@ add_library(MuxClient STATIC
 
 )
 
-#ww api
-target_include_directories(MuxClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../../ww)
 target_link_libraries(MuxClient PUBLIC ww)
 
 # add dependencies
