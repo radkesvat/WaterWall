@@ -28,7 +28,6 @@ typedef struct reality_server_state_s
     // settings
     uint8_t      hashes[EVP_MAX_MD_SIZE];
     char         context_password[kSignPasswordLen];
-    uint32_t     max_delta_time;
     uint32_t     counter_threshold;
     char        *password;
     unsigned int password_length;
@@ -318,7 +317,6 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         return NULL;
     }
     getIntFromJsonObjectOrDefault((int *) &(state->counter_threshold), settings, "sniffing-counter", 7);
-    getIntFromJsonObjectOrDefault((int *) &(state->max_delta_time), settings, "max-delta-time", 10);
 
     state->password_length = (int) strlen(state->password);
     if (state->password_length < 3)

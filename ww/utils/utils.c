@@ -71,6 +71,7 @@ char *concat(const char *s1, const char *s2)
     strcat(result, s2);
     return result;
 }
+
 void toUpperCase(char *str)
 {
     int i = 0;
@@ -80,6 +81,7 @@ void toUpperCase(char *str)
         i++;
     }
 }
+
 void toLowerCase(char *str)
 {
     int i = 0;
@@ -152,6 +154,7 @@ bool getStringFromJson(char **dest, const cJSON *json_str_node)
     }
     return false;
 }
+
 bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key)
 {
 
@@ -193,6 +196,7 @@ bool sockAddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restric
 {
     return (addr1->sin.sin_addr.s_addr == addr2->sin.sin_addr.s_addr);
 }
+
 bool sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
 {
     int r = memcmp(addr1->sin6.sin6_addr.s6_addr, addr2->sin6.sin6_addr.s6_addr, sizeof(addr1->sin6.sin6_addr.s6_addr));
@@ -319,6 +323,7 @@ void socketContextDomainSet(socket_context_t *restrict scontext, const char *res
     scontext->domain[len] = 0x0;
     scontext->domain_len  = len;
 }
+
 void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
@@ -330,6 +335,7 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
     scontext->domain_len      = len;
     assert(scontext->domain[len] == 0x0);
 }
+
 hash_t sockAddrCalcHashNoPort(const sockaddr_u *saddr)
 {
     hash_t result;
@@ -515,6 +521,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
     }
     return result;
 }
+
 dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...)
 {
 
