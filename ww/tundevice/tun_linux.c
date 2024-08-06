@@ -112,6 +112,8 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
             return 0;
         }
 
+        setLen(buf, nread);
+
         if (TUN_LOG_EVERYTHING)
         {
             LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
@@ -133,6 +135,28 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     tun_device_t *tdev = userdata;
     while (atomic_load_explicit(&(tdev->running), memory_order_relaxed))
     {
+        shift_buffer_t *buf;
+        if (! hchanRecv(tdev->writer_buffer_channel, &buf))
+        {
+            LOGD("TunDevice: routine write will exit due to channel closed");
+            return 0;
+        }
+
+        if (! atomic_load_explicit(&(tdev->running), memory_order_relaxed))
+        {
+            reuseBufferThreadSafe(buf);
+            return 0;
+        }
+
+        ssize_t nwrite = write(tdev->handle, rawBufMut(buf), bufLen(buf));
+
+        reuseBufferThreadSafe(buf);
+
+        if (nwrite < 0)
+        {
+            LOGE("TunDevice: writing to TUN device failed");
+            return 0;
+        }
     }
     return 0;
 }
@@ -193,6 +217,8 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     tdev->running = false;
     tdev->up      = false;
 
+    hchanClose(tdev->writer_buffer_channel);
+
     char command[128];
 
     snprintf(command, sizeof(command), "ip link set dev %s down", tdev->name);
@@ -203,9 +229,15 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     }
     LOGD("TunDevice: device %s is now down", tdev->name);
 
-    hchan_Close(tdev->writer_buffer_channel);
     hthread_join(tdev->read_thread);
     hthread_join(tdev->write_thread);
+
+    shift_buffer_t *buf;
+    while (hchanRecv(tdev->writer_buffer_channel, &buf))
+    {
+        reuseBufferThreadSafe(buf);
+    }
+
     return true;
 }
 
@@ -251,7 +283,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
                             .reader_shift_buffer_pool = sb_pool,
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
-                            .writer_buffer_channel    = hchan_Open(sizeof(void *), kTunWriteChannelQueueMax),
+                            .writer_buffer_channel    = hchanOpen(sizeof(void *), kTunWriteChannelQueueMax),
                             .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
                             .reader_buffer_pool       = bpool};
 
