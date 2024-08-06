@@ -35,6 +35,10 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool);
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool);
 void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2);
+unsigned int    getBufferPoolLargeBufferDefaultSize(void);
+unsigned int    getBufferPoolSmallBufferDefaultSize(void);
+bool            isLargeBuffer(shift_buffer_t *buf);
+void            reuseBufferThreadSafe(shift_buffer_t* buf);
 
 // [not used] when you change the owner thread of a buffer, you should
 // notify the original buffer pool that 1 buffer is lost form it
