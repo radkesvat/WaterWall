@@ -39,7 +39,7 @@ enum
 #if defined(__i386__) || defined(__x86_64__)
     kCpuLineCacheSize = 64
 #elif defined(__arm__) || defined(__aarch64__)
-#define LINE_CACHE_SIZE 64
+    kCpuLineCacheSize = 64
 #elif defined(__powerpc64__)
     kCpuLineCacheSize = 128
 #else
