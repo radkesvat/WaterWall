@@ -192,7 +192,7 @@ void createWW(const ww_construction_data_t init_data)
         GSTATE.node_manager = createNodeManager();
     }
 
-    // [Section] Spawn all workers expect main worker which is current thread
+    // [Section] Spawn all workers except main worker which is current thread
     {
         WORKERS[0].thread = (hthread_t) NULL;
         for (unsigned int i = 1; i < WORKERS_COUNT; ++i)

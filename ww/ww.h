@@ -30,8 +30,6 @@
 #define WW_UNLIKELY(x) (v)
 #endif
 
-#define MUSTALIGN2(n, w) assert(((w) & ((w) - 1)) == 0); /* alignment w is not a power of two */
-
 /*
     kCpuLineCacheSize is the size of a cache line of the target CPU.
     The value 64 covers i386, x86_64, arm32, arm64.
