@@ -66,13 +66,10 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    if (tundevice_node->instance != NULL)
+    if (tundevice_node->instance == NULL)
     {
-        LOGF("Layer3Sender: tun device \"%s\" cannot be used by 2 receivers", state->tundevice_name);
-        globalFree(state);
-        return NULL;
+        runNode(instance_info->node_manager_config, tundevice_node, 0);
     }
-    runNode(instance_info->node_manager_config, tundevice_node, 0);
 
     if (tundevice_node->instance == NULL)
     {
