@@ -4,7 +4,6 @@
 #include "managers/node_manager.h"
 #include "utils/jsonutils.h"
 #include "utils/stringutils.h"
-#include <endian.h>
 
 typedef struct layer3_ip_overrider_state_s
 {
@@ -23,14 +22,12 @@ typedef struct layer3_ip_overrider_con_state_s
 
 struct ipv4hdr
 {
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-    unsigned int ihl : 4;
-    unsigned int version : 4;
-#elif __BYTE_ORDER == __BIG_ENDIAN
+#if __BIG_ENDIAN__
     unsigned int version : 4;
     unsigned int ihl : 4;
 #else
-#error "byte order macro is not defined"
+    unsigned int ihl : 4;
+    unsigned int version : 4;
 #endif
     uint8_t  tos;
     uint16_t tot_len;
@@ -46,12 +43,10 @@ struct ipv4hdr
 
 struct ipv6hdr
 {
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-    uint8_t priority : 4, version : 4;
-#elif __BYTE_ORDER == __BIG_ENDIAN
+#if __BIG_ENDIAN__
     uint8_t version : 4, priority : 4;
 #else
-#error "byte order macro is not defined"
+    uint8_t priority : 4, version : 4;
 #endif
     uint8_t flow_lbl[3];
 

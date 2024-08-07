@@ -3,7 +3,6 @@
 #include <math.h> //cel,log2,pow
 #include <stdint.h>
 #include <stdlib.h>
-#include <endian.h> 
 
 // windows defines min/max in header <stdlib.h> :)
 #undef max
