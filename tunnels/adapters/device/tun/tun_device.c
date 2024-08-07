@@ -1,25 +1,31 @@
 #include "tun_device.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
-#include "utils/stringutils.h"
+#include "utils/jsonutils.h"
+#include "utils/sockutils.h"
 #include "ww/devices/tun/tun.h"
 
 typedef struct tun_device_state_s
 {
     tun_device_t *tdev;
 
-    const char  *name;
-    const char  *ip_present;
+    char        *name;
+    char        *ip_subnet;
+    char        *ip_present;
     unsigned int subnet_mask;
 
 } tun_device_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
 {
+    (void) self;
+    (void) c;
 }
 
 static void downStream(tunnel_t *self, context_t *c)
 {
+    (void) self;
+    (void) c;
 }
 
 tunnel_t *newTunDevice(node_instance_context_t *instance_info)
@@ -31,9 +37,33 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: Listener->settings (object field) : The object was empty or invalid");
+        LOGF("JSON Error: TunDevice->settings (object field) : The object was empty or invalid");
         return NULL;
     }
+
+    if (! getStringFromJsonObject(&(state->name), settings, "device-name"))
+    {
+        LOGF("JSON Error: TunDevice->settings->device-name (string field) : The data was empty or invalid");
+        return NULL;
+    }
+
+    if (! getStringFromJsonObject(&(state->ip_subnet), settings, "device-ip"))
+    {
+        LOGF("JSON Error: TunDevice->settings->device-name (string field) : The data was empty or invalid");
+        return NULL;
+    }
+    verifyIpCdir(state->ip_subnet, getNetworkLogger());
+
+    char *slash        = strchr(state->ip_subnet, '/');
+    slash[0]           = 0x0;
+    state->ip_present  = strdup(state->ip_subnet);
+    slash[0]           = '/';
+    char *subnet_part  = slash + 1;
+    state->subnet_mask = atoi(subnet_part);
+
+
+    state->tdev = createTunDevice(state->name, false, state, NULL);
+
 
     tunnel_t *t   = newTunnel();
     t->state      = state;
