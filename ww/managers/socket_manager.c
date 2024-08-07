@@ -289,75 +289,7 @@ static inline int checkIPRange6(const struct in6_addr test_addr, const struct in
     // return 0;
 }
 
-static int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask)
-{
-    char *slash;
-    char *ip_part;
-    char *subnet_part;
-    char  input_copy[strlen(input) + 1];
-    strcpy(input_copy, input);
 
-    slash = strchr(input_copy, '/');
-    if (slash == NULL)
-    {
-        fprintf(stderr, "Invalid input format.\n");
-        return -1;
-    }
-
-    *slash      = '\0';
-    ip_part     = input_copy;
-    subnet_part = slash + 1;
-
-    if (inet_pton(AF_INET, ip_part, base_addr) == 1)
-    {
-        // IPv4 address
-        int prefix_length = atoi(subnet_part);
-        if (prefix_length < 0 || prefix_length > 32)
-        {
-            fprintf(stderr, "Invalid subnet mask length.\n");
-            return -1;
-        }
-        uint32_t mask;
-        if (prefix_length > 0)
-        {
-            mask = htonl(0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length)));
-        }
-        else
-        {
-            mask = 0;
-        }
-        struct in_addr mask_addr = {.s_addr = mask};
-        memcpy(subnet_mask, &mask_addr, 4);
-        // inet_ntop(AF_INET, &mask_addr, subnet_mask, INET_ADDRSTRLEN);
-    }
-    else if (inet_pton(AF_INET6, ip_part, base_addr) == 1)
-    {
-        // IPv6 address
-        int prefix_length = atoi(subnet_part);
-        if (prefix_length < 0 || prefix_length > 128)
-        {
-            fprintf(stderr, "Invalid subnet mask length.\n");
-            return -1;
-        }
-
-        for (int i = 0; i < 16; i++)
-        {
-            int bits                     = prefix_length >= 8 ? 8 : prefix_length;
-            ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (0xFF << (8 - bits));
-            prefix_length -= bits;
-        }
-        // struct in6_addr mask_addr;
-        // memcpy(&(subnet_mask->s6_addr), subnet_mask, 16);
-        // inet_ntop(AF_INET6, &mask_addr, subnet_mask, INET6_ADDRSTRLEN);
-    }
-    else
-    {
-        fprintf(stderr, "Invalid IP address.\n");
-        return -1;
-    }
-
-    return 0;
-}
 
 static void parseWhiteListOption(socket_filter_option_t *option)
 {

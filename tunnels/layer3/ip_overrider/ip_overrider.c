@@ -1,8 +1,16 @@
 #include "ip_overrider.h"
 #include "hsocket.h"
 #include "loggers/network_logger.h"
-#include "utils/jsonutils.h"
 #include "packet_types.h"
+#include "utils/jsonutils.h"
+
+enum mode_dynamic_value_status
+{
+    kDvsSourceMode = kDvsFirstOption,
+    kDvsDestMode
+};
+
+
 
 typedef struct layer3_ip_overrider_state_s
 {
@@ -17,6 +25,7 @@ typedef struct layer3_ip_overrider_state_s
 typedef struct layer3_ip_overrider_con_state_s
 {
     void *_;
+    
 } layer3_ip_overrider_con_state_t;
 
 static void upStreamSrcMode(tunnel_t *self, context_t *c)
@@ -60,11 +69,6 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     self->up->upStream(self->up, c);
 }
 
-enum mode_dynamic_value_status
-{
-    kDvsSourceMode = kDvsFirstOption,
-    kDvsDestMode
-};
 
 static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
@@ -110,7 +114,15 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    self->dw->downStream(self->dw, c);
+    (void) (self);
+    (void) (c);
+    assert(false);
+
+    if (c->payload)
+    {
+        dropContexPayload(c);
+    }
+    destroyContext(c);
 }
 
 tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)

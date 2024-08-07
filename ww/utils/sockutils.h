@@ -19,3 +19,5 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
 struct logger_s;
 bool                     verifyIpCdir(const char *ipc, struct logger_s *logger);
 enum socket_address_type getHostAddrType(char *host);
+
+int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask);
