@@ -40,6 +40,7 @@ endif()
 
 
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
