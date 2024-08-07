@@ -33,28 +33,9 @@ buffer_pool_t  *createBufferPool(struct master_pool_s *mp_large, struct master_p
                                  generic_pool_t *sb_pool);
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool);
-void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2);
+void            reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
+void            reuseBufferThreadSafe(shift_buffer_t *buf);
 unsigned int    getBufferPoolLargeBufferDefaultSize(void);
 unsigned int    getBufferPoolSmallBufferDefaultSize(void);
 bool            isLargeBuffer(shift_buffer_t *buf);
-void            reuseBufferThreadSafe(shift_buffer_t* buf);
-
-// [not used] when you change the owner thread of a buffer, you should
-// notify the original buffer pool that 1 buffer is lost form it
-// this however, is not used
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
-
-static inline void notifyDetached(buffer_pool_t *pool)
-{
-    pool->in_use -= 1;
-}
-
-#else
-
-static inline void notifyDetached(buffer_pool_t *pool)
-{
-    (void) pool;
-}
-
-#endif
