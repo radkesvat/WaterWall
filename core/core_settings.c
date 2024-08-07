@@ -58,17 +58,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->core_log_level =strdup(DEFAULT_CORE_LOG_LEVEL);
-            settings->core_log_file  =strdup(DEFAULT_CORE_LOG_FILE);
-
-#if defined(OS_UNIX)
-            strcpy(settings->core_log_level, DEFAULT_CORE_LOG_LEVEL);
-            strcpy(settings->core_log_file, DEFAULT_CORE_LOG_FILE);
-#else
-            strcpy_s(settings->core_log_level, strlen(DEFAULT_CORE_LOG_LEVEL) + 1, DEFAULT_CORE_LOG_LEVEL);
-            strcpy_s(settings->core_log_file, strlen(DEFAULT_CORE_LOG_FILE) + 1, DEFAULT_CORE_LOG_FILE);
-#endif
-
+            settings->core_log_level = strdup(DEFAULT_CORE_LOG_LEVEL);
+            settings->core_log_file  = strdup(DEFAULT_CORE_LOG_FILE);
             settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
         }
     }
@@ -87,16 +78,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->network_log_level =strdup(DEFAULT_NETWORK_LOG_LEVEL);
-            settings->network_log_file  =strdup(DEFAULT_NETWORK_LOG_FILE);
-#if defined(OS_UNIX)
-            strcpy(settings->network_log_level, DEFAULT_NETWORK_LOG_LEVEL);
-            strcpy(settings->network_log_file, DEFAULT_NETWORK_LOG_FILE);
-#else
-            strcpy_s(settings->network_log_level, strlen(DEFAULT_NETWORK_LOG_LEVEL) + 1, DEFAULT_NETWORK_LOG_LEVEL);
-            strcpy_s(settings->network_log_file, strlen(DEFAULT_NETWORK_LOG_FILE) + 1, DEFAULT_NETWORK_LOG_FILE);
-#endif
-
+            settings->network_log_level = strdup(DEFAULT_NETWORK_LOG_LEVEL);
+            settings->network_log_file  = strdup(DEFAULT_NETWORK_LOG_FILE);
             settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
         }
     }
@@ -112,8 +95,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->dns_log_level =strdup(DEFAULT_DNS_LOG_LEVEL);
-            settings->dns_log_file  =strdup(DEFAULT_DNS_LOG_FILE);
+            settings->dns_log_level = strdup(DEFAULT_DNS_LOG_LEVEL);
+            settings->dns_log_file  = strdup(DEFAULT_DNS_LOG_FILE);
 
             settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
         }
@@ -129,14 +112,13 @@ static void parseLogPartOfJson(cJSON *log_obj)
     else
     {
 
-        settings->log_path          =strdup(DEFAULT_LOG_PATH);
-        settings->core_log_file     =strdup(DEFAULT_CORE_LOG_FILE);
-        settings->core_log_level    =strdup(DEFAULT_CORE_LOG_LEVEL);
-        settings->network_log_file  =strdup(DEFAULT_NETWORK_LOG_FILE);
-        settings->network_log_level =strdup(DEFAULT_NETWORK_LOG_LEVEL);
-        settings->dns_log_file      =strdup(DEFAULT_DNS_LOG_FILE);
-        settings->dns_log_level     =strdup(DEFAULT_DNS_LOG_LEVEL);
-
+        settings->log_path          = strdup(DEFAULT_LOG_PATH);
+        settings->core_log_file     = strdup(DEFAULT_CORE_LOG_FILE);
+        settings->core_log_level    = strdup(DEFAULT_CORE_LOG_LEVEL);
+        settings->network_log_file  = strdup(DEFAULT_NETWORK_LOG_FILE);
+        settings->network_log_level = strdup(DEFAULT_NETWORK_LOG_LEVEL);
+        settings->dns_log_file      = strdup(DEFAULT_DNS_LOG_FILE);
+        settings->dns_log_level     = strdup(DEFAULT_DNS_LOG_LEVEL);
 
         settings->core_log_console    = DEFAULT_CORE_ENABLE_CONSOLE;
         settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
@@ -266,13 +248,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     }
     else
     {
-        unsigned long size  = strlen(DEFAULT_LIBS_PATH) + 1;
-        settings->libs_path = globalMalloc(size);
-#if defined(OS_UNIX)
-        strcpy(settings->libs_path, DEFAULT_LIBS_PATH);
-#else
-        strcpy_s(settings->libs_path, size, DEFAULT_LIBS_PATH);
-#endif
+        settings->libs_path = strdup(DEFAULT_LIBS_PATH);
         settings->workers_count = get_ncpu();
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }
