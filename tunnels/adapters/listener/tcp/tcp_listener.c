@@ -46,7 +46,7 @@ typedef struct tcp_listener_con_state_s
     bool             read_paused;
 } tcp_listener_con_state_t;
 
-static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
+static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
 {
     if (cstate->io)
     {
@@ -56,7 +56,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool write_queue)
             // all data must be written before sending fin, event loop will hold them for us
             context_t *cw = contextQueuePop(cstate->data_queue);
 
-            if (write_queue)
+            if (flush_queue)
             {
                 hio_write(cstate->io, cw->payload);
                 dropContexPayload(cw);
