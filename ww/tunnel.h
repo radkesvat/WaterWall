@@ -46,9 +46,9 @@ enum
 // mutate the line state at index I
 #define LSTATE_I_MUT(x, y) (x)->chains_state[(y)]
 
-// get the line state of current tunnel which is assumed to be named as `self`
+// get the line state by using the chain_index of current tunnel which is assumed to be named as `self`
 #define LSTATE(x) LSTATE_I(x, self->chain_index)
-// mutate the line state of current tunnel which is assumed to be named as `self`
+// mutate the line state by using the chain_index of current tunnel which is assumed to be named as `self`
 #define LSTATE_MUT(x) LSTATE_I_MUT(x, self->chain_index)
 
 // get the line state from the line of the context
