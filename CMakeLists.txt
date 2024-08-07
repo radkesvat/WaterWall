@@ -53,6 +53,9 @@ set(ENABLE_TSAN OFF CACHE BOOL "enable thread sanitizer" FORCE)
 set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 
+
+option(INCLUDE_LAYER3_IP_OVERRIDER "link Layer3IpOverrider staticly to the core"  TRUE)
+
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  TRUE)
 option(INCLUDE_LISTENER "link Listener staticly to the core"  TRUE)
@@ -122,6 +125,16 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_libraries(Waterwall ww)
+
+
+
+#layer3 ip overrider
+if (INCLUDE_LAYER3_IP_OVERRIDER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_IP_OVERRIDER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip_overrider)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip_overrider)
+target_link_libraries(Waterwall Layer3IpOverrider)
+endif()
 
 #tcp listener
 if (INCLUDE_TCP_LISTENER)
