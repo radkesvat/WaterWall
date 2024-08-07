@@ -45,7 +45,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
 
 bool bringTunDeviceUP(tun_device_t *tdev);
 bool bringTunDeviceDown(tun_device_t *tdev);
-bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation,unsigned int subnet);
-bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation,unsigned int subnet);
-
+bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
+bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 void writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf);
+void printIPPacketInfo(const char *devname, const unsigned char *buffer);

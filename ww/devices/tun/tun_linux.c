@@ -28,7 +28,7 @@ struct msg_event
     shift_buffer_t *buf;
 };
 
-static void printIPPacketInfo(const char *devname, const unsigned char *buffer)
+void printIPPacketInfo(const char *devname, const unsigned char *buffer)
 {
     struct iphdr *ip_header = (struct iphdr *) buffer;
     char          src_ip[INET_ADDRSTRLEN];
@@ -37,13 +37,13 @@ static void printIPPacketInfo(const char *devname, const unsigned char *buffer)
     inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
     inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
 
-    char  logbuf[128];
+    char  logbuf[256];
     int   rem = sizeof(logbuf);
     char *ptr = logbuf;
-    int   ret = snprintf(ptr, rem, "TunDevice: %s => From %s to %s, Data:", devname, src_ip, dst_ip);
+    int   ret = snprintf(ptr, rem, "TunDevice: %s => From %s to %s, Data: ", devname, src_ip, dst_ip);
     ptr += ret;
     rem -= ret;
-    for (int i = sizeof(struct iphdr); i < 10; i++)
+    for (int i = 0; i < 48; i++)
     {
         ret = snprintf(ptr, rem, "%02x ", buffer[i]);
         ptr += ret;
@@ -164,7 +164,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     return 0;
 }
 
-bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation,unsigned int subnet)
+bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
     char command[128];
 
@@ -178,7 +178,7 @@ bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation,unsig
     return true;
 }
 
-bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation,unsigned int subnet)
+bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
     char command[128];
 
@@ -275,13 +275,16 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
 
     generic_pool_t *sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
                                                     allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
+    buffer_pool_t  *bpool =
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
 
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
 
     *tdev = (tun_device_t) {.name                     = strdup(ifr.ifr_name),
                             .running                  = false,
                             .up                       = false,
+                            .routine_reader           = routineReadFromTun,
+                            .routine_writer           = routineWriteToTun,
                             .handle                   = fd,
                             .reader_shift_buffer_pool = sb_pool,
                             .read_event_callback      = cb,
