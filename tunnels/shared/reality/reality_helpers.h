@@ -8,15 +8,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MSG_DIGEST_ALG NID_sha256           //"SHA256"
+#define MSG_DIGEST_ALG NID_sha256 //"SHA256"
 
 enum reality_consts
 {
-    kEncryptionBlockSize  = 16,
-    kSignPasswordLen      = kEncryptionBlockSize,
-    kIVlen                = 16, // iv size for *most* modes is the same as the block size. For AES this is 128 bits
-    kSignLen              = (256 / 8),
-    kTLSVersion12         = 0x0303, // endian checking is not done for this!, you are responsible to add htons if you change it
+    kMaxSSLChunkSize     = (1 << 16) - 1,
+    kEncryptionBlockSize = 16,
+    kSignPasswordLen     = kEncryptionBlockSize,
+    kIVlen               = 16, // iv size for *most* modes is the same as the block size. For AES this is 128 bits
+    kSignLen             = (256 / 8),
+    kTLSVersion12 = 0x0303, // endian checking is not done for this!, you are responsible to add htons if you change it
     kTLS12ApplicationData = 0x17,
     kTLSHeaderlen         = 1 + 2 + 2,
 };
@@ -121,7 +122,7 @@ static shift_buffer_t *genericEncrypt(shift_buffer_t *in, EVP_CIPHER_CTX *encryp
     shift_buffer_t *out          = popBuffer(pool);
     int             input_length = (int) bufLen(in);
 
-    uint32_t iv[kIVlen/ sizeof(uint32_t)];  // uint32_t because we need 32 mem alignment
+    uint32_t iv[kIVlen / sizeof(uint32_t)]; // uint32_t because we need 32 mem alignment
 
     for (int i = 0; i < (int) (kIVlen / sizeof(uint32_t)); i++)
     {
@@ -174,4 +175,3 @@ static void appendTlsHeader(shift_buffer_t *buf)
     shiftl(buf, sizeof(uint8_t));
     writeUI8(buf, kTLS12ApplicationData);
 }
-

@@ -117,7 +117,7 @@ static void upStream(tunnel_t *self, context_t *c)
         shift_buffer_t *buf = c->payload;
         c->payload          = NULL;
 
-        const unsigned int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
+        const unsigned int chunk_size = (kMaxSSLChunkSize - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
         if (bufLen(buf) < chunk_size)
         {
@@ -477,14 +477,14 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 
     ssl_param->verify_peer = state->verify ? 1 : 0;
     ssl_param->endpoint    = kSslClient;
-    
+
     size_t alpn_len = strlen(state->alpn);
 
     struct
     {
         uint8_t len;
         char    alpn_data[];
-    } *ossl_alpn   = globalMalloc(1 + alpn_len);
+    } *ossl_alpn = globalMalloc(1 + alpn_len);
 
     ossl_alpn->len = alpn_len;
     memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
@@ -520,7 +520,7 @@ api_result_t apiRealityClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyRealityClient(tunnel_t *self)
@@ -531,5 +531,5 @@ tunnel_t *destroyRealityClient(tunnel_t *self)
 
 tunnel_metadata_t getMetadataRealityClient(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

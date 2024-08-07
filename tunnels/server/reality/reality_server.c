@@ -47,7 +47,6 @@ typedef struct reality_server_con_state_s
 
 } reality_server_con_state_t;
 
-
 static void cleanup(tunnel_t *self, context_t *c)
 {
     reality_server_con_state_t *cstate = CSTATE(c);
@@ -104,8 +103,8 @@ static void upStream(tunnel_t *self, context_t *c)
                             return;
                         }
 
-                        record_buf                       = genericDecrypt(record_buf, cstate->cipher_context, state->context_password,
-                                                                   getContextBufferPool(c));
+                        record_buf = genericDecrypt(record_buf, cstate->cipher_context, state->context_password,
+                                                    getContextBufferPool(c));
                         context_t *plain_data_ctx = newContextFrom(c);
                         plain_data_ctx->payload   = record_buf;
                         self->up->upStream(self->up, plain_data_ctx);
@@ -237,7 +236,7 @@ static void downStream(tunnel_t *self, context_t *c)
         case kConAuthorized:;
             shift_buffer_t *buf           = c->payload;
             c->payload                    = NULL;
-            const unsigned int chunk_size = ((1 << 16) - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
+            const unsigned int chunk_size = (kMaxSSLChunkSize - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
             if (bufLen(buf) < chunk_size)
             {
@@ -374,7 +373,7 @@ api_result_t apiRealityServer(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyRealityServer(tunnel_t *self)
@@ -385,5 +384,5 @@ tunnel_t *destroyRealityServer(tunnel_t *self)
 
 tunnel_metadata_t getMetadataRealityServer(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }
