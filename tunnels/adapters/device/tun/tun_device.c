@@ -28,6 +28,16 @@ static void downStream(tunnel_t *self, context_t *c)
     (void) c;
 }
 
+static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_buffer_t *buf, tid_t tid){
+    (void) tdev;
+    (void) userdata;
+
+    printIPPacketInfo(tdev->name,rawBuf(buf));
+    
+    reuseBuffer(getWorkerBufferPool(tid), buf);
+
+}
+
 tunnel_t *newTunDevice(node_instance_context_t *instance_info)
 {
     tun_device_state_t *state = globalMalloc(sizeof(tun_device_state_t));
@@ -62,9 +72,11 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
     state->subnet_mask = atoi(subnet_part);
 
 
-    state->tdev = createTunDevice(state->name, false, state, NULL);
+    state->tdev = createTunDevice(state->name, false, state, onIPPacketReceived);
 
     assignIpToTunDevice(state->tdev, state->ip_present,state->subnet_mask);
+
+    bringTunDeviceUP(state->tdev);
 
     tunnel_t *t   = newTunnel();
     t->state      = state;
