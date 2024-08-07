@@ -1,10 +1,8 @@
-// Remember to define _CRT_RAND_S before you include
-// stdlib.h.
-#define _CRT_RAND_S
 
 #include "tcp_connector.h"
 #include "basic_types.h"
 #include "frand.h"
+#include "freebind.h"
 #include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "sync_dns.h"
@@ -14,7 +12,7 @@
 #include "utils/mathutils.h"
 #include "utils/sockutils.h"
 
-static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
+static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
 {
     if (cstate->io)
     {
@@ -24,7 +22,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool write_queue)
             // all data must be written before sending fin, event loop will hold them for us
             context_t *cw = contextQueuePop(cstate->data_queue);
 
-            if (write_queue)
+            if (flush_queue)
             {
                 hio_write(cstate->io, cw->payload);
                 dropContexPayload(cw);
@@ -250,6 +248,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCdvsFromDest:
                 break;
             }
+
             if (dest_ctx->address_type == kSatDomainName)
             {
                 if (! dest_ctx->domain_resolved)
@@ -262,48 +261,11 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                 }
             }
+
             if (state->outbound_ip_range > 0)
             {
-                unsigned int seed = fastRand();
-
-                switch (dest_ctx->address.sa.sa_family)
+                if (! applyFreeBindRandomDestIp(self, dest_ctx))
                 {
-                case AF_INET:
-                    // no probelm if overflows
-                    {
-#ifdef OS_UNIX
-                        const uint32_t large_random = (((uint32_t) rand_r(&seed)) % state->outbound_ip_range);
-#else
-                        const uint32_t large_random = (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
-#endif
-                        uint32_t calc = ntohl((uint32_t) dest_ctx->address.sin.sin_addr.s_addr);
-                        calc          = calc & ~(state->outbound_ip_range - 1ULL);
-                        calc          = htonl(calc + large_random);
-
-                        memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
-                    }
-                    break;
-                case AF_INET6:
-                    // no probelm if overflows
-                    {
-#ifdef OS_UNIX
-                        const uint64_t large_random = (((uint64_t) rand_r(&seed)) % state->outbound_ip_range);
-#else
-                        const uint64_t large_random = (((uint64_t) rand_s(&seed)) % state->outbound_ip_range);
-#endif
-                        uint64_t *addr_ptr = (uint64_t *) &dest_ctx->address.sin6.sin6_addr;
-                        addr_ptr += 1;
-
-                        uint64_t calc = ntohll(*addr_ptr);
-                        calc          = calc & ~(state->outbound_ip_range - 1ULL);
-                        calc          = htonll(calc + large_random);
-
-                        memcpy(8 + ((char *) &(dest_ctx->address.sin6.sin6_addr)), &calc, sizeof(calc));
-                    }
-                    break;
-
-                default:
-                    LOGE("TcpConnector: invalid destination address family");
                     CSTATE_DROP(c);
                     cleanup(cstate, false);
                     goto fail;
@@ -314,6 +276,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             hloop_t *loop   = getWorkerLoop(c->line->tid);
             int      sockfd = socket(dest_ctx->address.sa.sa_family, SOCK_STREAM, 0);
+
             if (sockfd < 0)
             {
                 LOGE("TcpConnector: socket fd < 0");
@@ -332,6 +295,19 @@ static void upStream(tunnel_t *self, context_t *c)
                 const int yes = 1;
                 setsockopt(sockfd, IPPROTO_TCP, TCP_FASTOPEN, (const char *) &yes, sizeof(yes));
             }
+
+#ifdef OS_LINUX
+            if (state->fwmark != kFwMarkInvalid)
+            {
+                if (setsockopt(sockfd, SOL_SOCKET, SO_MARK, &state->fwmark, sizeof(state->fwmark)) < 0)
+                {
+                    LOGE("TcpConnector: setsockopt SO_MARK error");
+                    CSTATE_DROP(c);
+                    cleanup(cstate, false);
+                    goto fail;
+                }
+            }
+#endif
 
             hio_t *upstream_io = hio_get(loop, sockfd);
             assert(upstream_io != NULL);
@@ -524,10 +500,13 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
         LOGF("JSON Error: TcpConnector->settings->port (number field) : The vaule was empty or invalid");
         return NULL;
     }
+
     if (state->dest_port_selected.status == kDvsConstant)
     {
         socketContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
+
+    getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

@@ -12,6 +12,11 @@ enum tcp_connector_dynamic_value_status
     kCdvsFromDest,
 };
 
+enum
+{
+    kFwMarkInvalid = -1
+};
+
 typedef struct tcp_connector_state_s
 {
     // settings
@@ -23,6 +28,7 @@ typedef struct tcp_connector_state_s
     dynamic_value_t  dest_port_selected;
     socket_context_t constant_dest_addr;
     uint64_t         outbound_ip_range;
+    int              fwmark;
 
 } tcp_connector_state_t;
 

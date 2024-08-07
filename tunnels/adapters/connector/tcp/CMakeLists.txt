@@ -2,6 +2,7 @@
 
 add_library(TcpConnector STATIC
                     tcp_connector.c
+                    freebind.c
                  
 )
 
