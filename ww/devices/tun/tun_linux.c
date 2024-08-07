@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <linux/ipv6.h>
 #include <netinet/ip.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,25 +31,49 @@ struct msg_event
 
 void printIPPacketInfo(const char *devname, const unsigned char *buffer)
 {
-    struct iphdr *ip_header = (struct iphdr *) buffer;
-    char          src_ip[INET_ADDRSTRLEN];
-    char          dst_ip[INET_ADDRSTRLEN];
-
-    inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
-    inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
-
+    char  src_ip[INET6_ADDRSTRLEN];
+    char  dst_ip[INET6_ADDRSTRLEN];
     char  logbuf[256];
     int   rem = sizeof(logbuf);
     char *ptr = logbuf;
-    int   ret = snprintf(ptr, rem, "TunDevice: %s => From %s to %s, Data: ", devname, src_ip, dst_ip);
+    int   ret;
+
+    uint8_t version = buffer[0] >> 4;
+
+    if (version == 4)
+    {
+        struct iphdr *ip_header = (struct iphdr *) buffer;
+
+        inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
+
+        ret = snprintf(ptr, rem, "TunDevice: %s => From %s to %s, Data: ", devname, src_ip, dst_ip);
+    }
+    else if (version == 6)
+    {
+        struct ipv6hdr *ip6_header = (struct ipv6hdr *) buffer;
+
+        inet_ntop(AF_INET6, &ip6_header->saddr, src_ip, INET6_ADDRSTRLEN);
+        inet_ntop(AF_INET6, &ip6_header->daddr, dst_ip, INET6_ADDRSTRLEN);
+
+        ret = snprintf(ptr, rem, "TunDevice: %s => From %s to %s, Data: ", devname, src_ip, dst_ip);
+    }
+    else
+    {
+        ret = snprintf(ptr, rem, "TunDevice: %s => Unknown IP version, Data: ", devname);
+    }
+
     ptr += ret;
     rem -= ret;
-    for (int i = 0; i < 48; i++)
+
+    for (int i = 0; i < 16; i++)
     {
         ret = snprintf(ptr, rem, "%02x ", buffer[i]);
         ptr += ret;
         rem -= ret;
     }
+    *ptr = '\0';
+
     LOGD(logbuf);
 }
 
