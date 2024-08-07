@@ -210,7 +210,7 @@ bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsign
     snprintf(command, sizeof(command), "ip addr add %s/%d dev %s", ip_presentation, subnet, tdev->name);
     if (execCmd(command).exit_code != 0)
     {
-        LOGF("TunDevice: error setting ip address");
+        LOGE("TunDevice: error setting ip address");
         return false;
     }
     LOGD("TunDevice: ip address %s/%d assigned to dev %s", ip_presentation, subnet, tdev->name);
@@ -228,7 +228,7 @@ bool bringTunDeviceUP(tun_device_t *tdev)
     snprintf(command, sizeof(command), "ip link set dev %s up", tdev->name);
     if (execCmd(command).exit_code != 0)
     {
-        LOGF("TunDevice: error bringing device %s up", tdev->name);
+        LOGE("TunDevice: error bringing device %s up", tdev->name);
         return false;
     }
     LOGD("TunDevice: device %s is now up", tdev->name);
@@ -252,7 +252,7 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     snprintf(command, sizeof(command), "ip link set dev %s down", tdev->name);
     if (execCmd(command).exit_code != 0)
     {
-        LOGF("TunDevice: error bringing %s down", tdev->name);
+        LOGE("TunDevice: error bringing %s down", tdev->name);
         return false;
     }
     LOGD("TunDevice: device %s is now down", tdev->name);
@@ -278,7 +278,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     int fd = open("/dev/net/tun", O_RDWR);
     if (fd < 0)
     {
-        LOGF("TunDevice: opening /dev/net/tun failed");
+        LOGE("TunDevice: opening /dev/net/tun failed");
         return NULL;
     }
 
@@ -293,7 +293,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     int err = ioctl(fd, TUNSETIFF, (void *) &ifr);
     if (err < 0)
     {
-        LOGF("TunDevice: ioctl(TUNSETIFF) failed");
+        LOGE("TunDevice: ioctl(TUNSETIFF) failed");
         close(fd);
         return NULL;
     }
