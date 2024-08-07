@@ -2,7 +2,6 @@
 #include "hmutex.h"
 #include "ww.h"
 
-
 // DEBUG_CHAN_LOG: define to enable debug logging of send and recv
 // #define DEBUG_CHAN_LOG
 
@@ -14,7 +13,6 @@
 // Note that Intel TBB uses 128 (max_nfs_size).
 // TODO: set value depending on target preprocessor information.
 #define LINE_CACHE_SIZE 64
-
 
 typedef _Atomic(unsigned int) atomic_uint32_t;
 typedef _Atomic(unsigned long long) atomic_uint64_t;
@@ -62,7 +60,7 @@ static const char* tcolor() {
 // This all means that log messages may be out of order; use the "causality" sequence number
 // to understand what other messages were produced according to the CPU.
 ATTR_FORMAT(printf, 2, 3)
-static void _                                            // dlog_chan(const char* fname, const char* fmt, ...) {
+static void _                             // dlog_chan(const char* fname, const char* fmt, ...) {
     static atomic_uint32_t seqnext = (1); // start at 1 to map to line nubmers
 
 uint32_t seq = atomic_fetch_add_explicitx(&seqnext, 1, memory_order_acquire);
@@ -218,7 +216,7 @@ inline static Thr* thr_current(void) {
     static _Thread_local Thr _thr = {0};
 
     Thr* t = &_thr;
-    if (!t->init) thr_init(t);
+    if (WW_UNLIKELY(!t->init)) thr_init(t);
     return t;
 }
 
@@ -322,7 +320,7 @@ inline static bool chan_send(hchan_t* c, void* srcelemptr, bool* closed) {
 
     chan_lock(&c->lock);
 
-    if (atomic_load_explicit(&c->closed, memory_order_relaxed)) {
+    if (WW_UNLIKELY(atomic_load_explicit(&c->closed, memory_order_relaxed))) {
         chan_unlock(&c->lock);
         if (block) {
             fprintf(stderr, "send on closed channel");
@@ -416,7 +414,7 @@ inline static bool chan_recv(hchan_t* c, void* dstelemptr, bool* closed) {
 
     chan_lock(&c->lock);
 
-    if (atomic_load_explicit(&c->closed, memory_order_relaxed) && atomic_load_explicit(&c->qlen, memory_order_relaxed) == 0) {
+    if (atomic_load_explicit(&c->closed, memory_order_relaxed) && (atomic_load_explicit(&c->qlen, memory_order_relaxed) == 0)) {
         // channel is closed and the buffer queue is empty
         // dlog_recv("channel closed & empty queue");
         chan_unlock(&c->lock);
@@ -559,7 +557,7 @@ hchan_t* hchanOpen(size_t elemsize, uint32_t bufcap) {
 
     // allocate memory, placing hchan_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t)globalMalloc(memsize);
-    memset((void*)ptr,0,memsize);
+    memset((void*)ptr, 0, memsize);
 
     // align c to line cache boundary
     hchan_t* c = (hchan_t*)ALIGN2(ptr, LINE_CACHE_SIZE);
