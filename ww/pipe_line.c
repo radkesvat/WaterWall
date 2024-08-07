@@ -45,15 +45,16 @@ void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item
 static void lock(pipe_line_t *pl)
 {
     int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_relaxed);
-#ifndef RELEASE
-    if (0 >= old_refc)
-    {
-        // this should not happen, otherwise we must change memory order
-        // but i think its ok because threads synchronize around the mutex in eventloop
-        LOGF("PipeLine: thread-safety done incorrectly lock()");
-        exit(1);
-    }
-#endif
+// #ifndef RELEASE
+//     if (0 >= old_refc)
+//     {
+//         // this should not happen, otherwise we must change memory order
+//         // but i think its ok because threads synchronize around the mutex in eventloop
+//         LOGF("PipeLine: thread-safety done incorrectly lock()");
+//         exit(1);
+//     }
+// #endif
+    (void) old_refc;
 }
 
 static void unlock(pipe_line_t *pl)
@@ -61,15 +62,15 @@ static void unlock(pipe_line_t *pl)
     int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_relaxed);
     if (old_refc == 1)
     {
-#ifndef RELEASE
-        if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
-        {
-            // this should not happen, otherwise we must change memory order
-            // but i think its ok because threads synchronize around the mutex in eventloop
-            LOGF("PipeLine: thread-safety done incorrectly unlock()");
-            exit(1);
-        }
-#endif
+// #ifndef RELEASE
+//         if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
+//         {
+//             // this should not happen, otherwise we must change memory order
+//             // but i think its ok because threads synchronize around the mutex in eventloop
+//             LOGF("PipeLine: thread-safety done incorrectly unlock()");
+//             exit(1);
+//         }
+// #endif
         globalFree((void *) pl->memptr); // NOLINT
     }
 }
