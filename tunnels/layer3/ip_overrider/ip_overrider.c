@@ -20,7 +20,7 @@ typedef struct layer3_ip_overrider_con_state_s
     void *_;
 } layer3_ip_overrider_con_state_t;
 
-struct ipv4hdr
+struct ipv4header
 {
 #if __BIG_ENDIAN__
     unsigned int version : 4;
@@ -41,7 +41,7 @@ struct ipv4hdr
     /*The options start here. */
 };
 
-struct ipv6hdr
+struct ipv6header
 {
 #if __BIG_ENDIAN__
     uint8_t version : 4, priority : 4;
@@ -59,8 +59,8 @@ struct ipv6hdr
 };
 
 typedef union {
-    struct ipv4hdr ip4_header;
-    struct ipv6hdr ip6_header;
+    struct ipv4header ip4_header;
+    struct ipv6header ip6_header;
 
 } packet_mask;
 
@@ -68,7 +68,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4hdr)))
+    if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
     {
         LOGW("Layer3IpOverrider: dropped a packet that was too small");
         dropContexPayload(c);
@@ -84,7 +84,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     }
     else if (packet->ip4_header.version == 6)
     {
-        if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6hdr)))
+        if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
         {
             LOGW("Layer3IpOverrider: dropped a ipv6 packet that was too small");
             dropContexPayload(c);
@@ -115,7 +115,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4hdr)))
+    if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
     {
         LOGW("Layer3IpOverrider: dropped a packet that was too small");
         dropContexPayload(c);
@@ -131,7 +131,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
     }
     else if (packet->ip4_header.version == 6)
     {
-        if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6hdr)))
+        if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
         {
             LOGW("Layer3IpOverrider: dropped a ipv6 packet that was too small");
             dropContexPayload(c);
