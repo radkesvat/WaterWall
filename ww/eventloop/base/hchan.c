@@ -549,7 +549,6 @@ hchan_t* hchanOpen(size_t elemsize, uint32_t bufcap) {
     int64_t memsize = (int64_t)sizeof(hchan_t) + ((int64_t)bufcap * (int64_t)elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
-    MUSTALIGN2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
     memsize = ALIGN2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
 
     // check for overflow
@@ -560,9 +559,9 @@ hchan_t* hchanOpen(size_t elemsize, uint32_t bufcap) {
 
     // allocate memory, placing hchan_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t)globalMalloc(memsize);
+    memset((void*)ptr,0,memsize);
 
     // align c to line cache boundary
-    MUSTALIGN2(ptr, LINE_CACHE_SIZE);
     hchan_t* c = (hchan_t*)ALIGN2(ptr, LINE_CACHE_SIZE);
 
     c->memptr = ptr;
