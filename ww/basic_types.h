@@ -88,11 +88,14 @@ enum domain_strategy
     kDsOnlyIpV4,
     kDsOnlyIpV6
 };
+
 enum dynamic_value_status
 {
     kDvsEmpty = 0x0,
     kDvsConstant,
+    kDvsFirstOption,
 };
+
 typedef struct dynamic_value_s
 {
     enum dynamic_value_status status;
