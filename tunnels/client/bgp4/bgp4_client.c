@@ -220,6 +220,7 @@ tunnel_t *destroyBgp4Client(tunnel_t *self)
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataBgp4Client(void)
 {
     return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};

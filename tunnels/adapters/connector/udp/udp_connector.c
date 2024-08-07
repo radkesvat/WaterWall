@@ -241,11 +241,13 @@ api_result_t apiUdpConnector(tunnel_t *self, const char *msg)
     (void) (msg);
     return (api_result_t){0};
 }
+
 tunnel_t *destroyUdpConnector(tunnel_t *self)
 {
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataUdpConnector(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};

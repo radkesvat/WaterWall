@@ -156,6 +156,7 @@ static void startReverseClient(htimer_t *timer)
 
     htimer_del(timer);
 }
+
 tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 {
 
@@ -193,6 +194,7 @@ tunnel_t *destroyReverseClient(tunnel_t *self)
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataReverseClient(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};

@@ -205,6 +205,7 @@ static void startPreconnect(htimer_t *timer)
 
     htimer_del(timer);
 }
+
 tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 {
     const size_t start_delay_ms = 150;
@@ -242,6 +243,7 @@ tunnel_t *destroyPreConnectClient(tunnel_t *self)
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataPreConnectClient(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};

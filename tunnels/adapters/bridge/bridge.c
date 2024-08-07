@@ -119,6 +119,7 @@ tunnel_t *destroyBridge(tunnel_t *self)
 
     return NULL;
 }
+
 tunnel_metadata_t getMetadataBridge(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};

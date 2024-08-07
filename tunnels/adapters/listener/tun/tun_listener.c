@@ -290,6 +290,7 @@ static void parsePortSection(tun_listener_state_t *state, const cJSON *settings)
         }
     }
 }
+
 tunnel_t *newTunListener(node_instance_context_t *instance_info)
 {
     tun_listener_state_t *state = globalMalloc(sizeof(tun_listener_state_t));
@@ -386,6 +387,7 @@ tunnel_t *destroyTunListener(tunnel_t *self)
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataTunListener(void)
 {
     return (tunnel_metadata_t) {.version = 0001, .flags = kNodeFlagChainHead};

@@ -78,11 +78,13 @@ api_result_t apiConnector(tunnel_t *self, const char *msg)
     (void) (msg);
     return (api_result_t){0};
 }
+
 tunnel_t *destroyConnector(tunnel_t *self)
 {
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataConnector(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = 0x0};

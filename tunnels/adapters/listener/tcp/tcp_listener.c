@@ -364,6 +364,7 @@ static void parsePortSection(tcp_listener_state_t *state, const cJSON *settings)
         }
     }
 }
+
 tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 {
     tcp_listener_state_t *state = globalMalloc(sizeof(tcp_listener_state_t));
@@ -460,6 +461,7 @@ tunnel_t *destroyTcpListener(tunnel_t *self)
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataTcpListener(void)
 {
     return (tunnel_metadata_t) {.version = 0001, .flags = kNodeFlagChainHead};

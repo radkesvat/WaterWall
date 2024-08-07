@@ -55,6 +55,7 @@ tunnel_t *destroyTunDevice(tunnel_t *self)
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataTunDevice(void)
 {
     return (tunnel_metadata_t) {.version = 0001, .flags = kNodeFlagChainHead};

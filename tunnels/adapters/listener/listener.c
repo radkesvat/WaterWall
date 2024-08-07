@@ -95,11 +95,13 @@ api_result_t apiListener(tunnel_t *self, const char *msg)
     (void) (msg);
     return (api_result_t){0};
 }
+
 tunnel_t *destroyListener(tunnel_t *self)
 {
     (void) (self);
     return NULL;
 }
+
 tunnel_metadata_t getMetadataListener(void)
 {
     return (tunnel_metadata_t){.version = 0001, .flags = kNodeFlagChainHead};
