@@ -275,7 +275,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
 
     generic_pool_t *sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
                                                     allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *bpool   = createBufferPool(NULL, GSTATE.masterpool_buffer_pools_small, sb_pool);
+    buffer_pool_t  *bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
 
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
 
