@@ -64,6 +64,7 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
 
     state->tdev = createTunDevice(state->name, false, state, NULL);
 
+    assignIpToTunDevice(state->tdev, state->ip_present,state->subnet_mask);
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

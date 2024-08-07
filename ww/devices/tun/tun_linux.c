@@ -164,7 +164,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     return 0;
 }
 
-bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, int subnet)
+bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation,unsigned int subnet)
 {
     char command[128];
 
@@ -178,7 +178,7 @@ bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, int 
     return true;
 }
 
-bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, int subnet)
+bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation,unsigned int subnet)
 {
     char command[128];
 
