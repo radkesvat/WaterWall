@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hmutex.h"
+#include "ww.h"
 #include "utils/mathutils.h"
 
 /*
@@ -69,7 +70,7 @@ typedef struct master_pool_s
     atomic_uint                 len;
     const unsigned int          cap;
     void                       *available[];
-} master_pool_t;
+} ATTR_ALIGNED_LINE_CACHE  master_pool_t;
 
 static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
                                       const unsigned int count)
