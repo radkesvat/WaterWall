@@ -65,6 +65,10 @@
 #include "tunnels/adapters/bridge/bridge.h"
 #endif
 
+#ifdef INCLUDE_TUNDEVICE
+#include "tunnels/adapters/device/tun/tun_device.h"
+#endif
+
 #ifdef INCLUDE_WOLFSSL_SERVER
 #include "tunnels/server/wolfssl/wolfssl_server.h"
 #endif
@@ -141,6 +145,19 @@
 #include "tunnels/client/bgp4/bgp4_client.h"
 #endif
 
+#ifdef INCLUDE_MUX_SERVER
+#include "tunnels/server/mux/mux_server.h"
+#endif
+
+#ifdef INCLUDE_MUX_CLIENT
+#include "tunnels/client/mux/mux_client.h"
+#endif
+
+
+
+
+
+
 void loadStaticTunnelsIntoCore(void)
 {
 #ifdef INCLUDE_TCP_LISTENER
@@ -189,6 +206,10 @@ void loadStaticTunnelsIntoCore(void)
 
 #ifdef INCLUDE_BRIDGE
     USING(Bridge);
+#endif
+
+#ifdef INCLUDE_TUNDEVICE
+    USING(TunDevice);
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
@@ -267,6 +288,13 @@ void loadStaticTunnelsIntoCore(void)
     USING(Bgp4Client);
 #endif
 
+#ifdef INCLUDE_MUX_SERVER
+    USING(MuxClient);
+#endif
+
+#ifdef INCLUDE_MUX_CLIENT
+    USING(MuxServer);
+#endif
 
 
 

@@ -61,6 +61,7 @@ option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_UDP_CONNECTOR "link UdpConnector staticly to the core"  TRUE)
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  TRUE)
+option(INCLUDE_TUNDEVICE "link TunDevice staticly to the core"  TRUE)
 
 option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_CLIENT "link OpenSSLClient staticly to the core"  TRUE)
@@ -174,6 +175,14 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_BRIDGE=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
 target_link_libraries(Waterwall Bridge)
+endif()
+
+#tun device
+if (INCLUDE_TUNDEVICE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TUNDEVICE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
+target_link_libraries(Waterwall TunDevice)
 endif()
 
 #http2 server
