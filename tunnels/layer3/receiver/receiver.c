@@ -7,7 +7,8 @@
 
 typedef struct layer3_receiver_state_s
 {
-    char *tundevice_name;
+    char     *tundevice_name;
+    tunnel_t *tun_device_tunnel;
 
 } layer3_receiver_state_t;
 
@@ -93,6 +94,8 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
         return NULL;
     }
 
+    state->tun_device_tunnel = tundevice_node->instance;
+
     tunnel_t *t = newTunnel();
 
     t->state      = state;
@@ -103,6 +106,7 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
 
     return t;
 }
+
 api_result_t apiLayer3Receiver(tunnel_t *self, const char *msg)
 {
     (void) (self);

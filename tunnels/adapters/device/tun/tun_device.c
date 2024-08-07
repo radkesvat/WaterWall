@@ -11,24 +11,21 @@ typedef struct tun_device_state_s
 {
     tun_device_t *tdev;
     line_t      **thread_lines;
-
-    char        *name;
-    char        *ip_subnet;
-    char        *ip_present;
-    unsigned int subnet_mask;
+    char         *name;
+    char         *ip_subnet;
+    char         *ip_present;
+    unsigned int  subnet_mask;
 
 } tun_device_state_t;
 
 static void upStream(tunnel_t *self, context_t *c)
 {
-    (void) (self);
-    (void) (c);
-    assert(false);
+    tun_device_state_t *state = TSTATE((tunnel_t *) self);
 
-    if (c->payload)
-    {
-        dropContexPayload(c);
-    }
+    tun_device_t *tdev = state->tdev;
+    writeToTunDevce(tdev,c->payload);
+
+    dropContexPayload(c);
     destroyContext(c);
 }
 
@@ -48,9 +45,8 @@ static void downStream(tunnel_t *self, context_t *c)
 static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_buffer_t *buf, tid_t tid)
 {
     (void) tdev;
-    tunnel_t* self = userdata;
-    tun_device_state_t *state = TSTATE((tunnel_t*)self);
-
+    tunnel_t           *self  = userdata;
+    tun_device_state_t *state = TSTATE((tunnel_t *) self);
 
 #if LOG_PACKET_INFO
     printIPPacketInfo(tdev->name, rawBuf(buf));
@@ -58,8 +54,8 @@ static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_
 
     // reuseBuffer(getWorkerBufferPool(tid), buf);
 
-    context_t* ctx = newContext(state->thread_lines[tid]);
-    ctx->payload = buf;
+    context_t *ctx = newContext(state->thread_lines[tid]);
+    ctx->payload   = buf;
     self->up->upStream(self->up, ctx);
 }
 
@@ -102,11 +98,12 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
         state->thread_lines[i] = newLine(i);
     }
 
-    state->tdev = createTunDevice(state->name, false, state, onIPPacketReceived);
+    tunnel_t *t = newTunnel();
+
+    state->tdev = createTunDevice(state->name, false, t, onIPPacketReceived);
     assignIpToTunDevice(state->tdev, state->ip_present, state->subnet_mask);
     bringTunDeviceUP(state->tdev);
 
-    tunnel_t *t   = newTunnel();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
@@ -129,5 +126,5 @@ tunnel_t *destroyTunDevice(tunnel_t *self)
 
 tunnel_metadata_t getMetadataTunDevice(void)
 {
-    return (tunnel_metadata_t) {.version = 0001, .flags = kNodeFlagChainHead};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }
