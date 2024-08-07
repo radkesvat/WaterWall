@@ -250,10 +250,10 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
 
     struct ifreq ifr;
 
-    int fd = open("/tdev/net/tun", O_RDWR);
+    int fd = open("/dev/net/tun", O_RDWR);
     if (fd < 0)
     {
-        LOGF("TunDevice: opening /tdev/net/tun failed");
+        LOGF("TunDevice: opening /dev/net/tun failed");
         return NULL;
     }
 
