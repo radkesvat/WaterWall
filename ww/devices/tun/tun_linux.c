@@ -189,6 +189,26 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     return 0;
 }
 
+void writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
+{
+
+    bool closed = false;
+    if (! hchanTrySend(tdev->writer_buffer_channel, &buf, &closed))
+    {
+        if (closed)
+        {
+            LOGE("TunDevice: write failed, channel was closed");
+        }
+        else
+        {
+            LOGE("TunDevice: write failed, ring is full");
+
+        }
+        reuseBufferThreadSafe(buf);
+
+    }
+}
+
 bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
     char command[128];
