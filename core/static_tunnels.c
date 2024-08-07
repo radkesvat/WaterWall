@@ -17,6 +17,22 @@
         LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                                                      \
     } while (0);
 
+
+
+
+
+#ifdef INCLUDE_TUNDEVICE
+#include "tunnels/adapters/device/tun/tun_device.h"
+#endif
+
+#ifdef INCLUDE_LAYER3_RECEIVER
+#include "tunnels/layer3/receiver/receiver.h"
+#endif
+
+#ifdef INCLUDE_LAYER3_IP_OVERRIDER
+#include "tunnels/layer3/ip_overrider/ip_overrider.h"
+#endif
+
 #ifdef INCLUDE_TCP_LISTENER
 #include "tunnels/adapters/listener/tcp/tcp_listener.h"
 #endif
@@ -63,10 +79,6 @@
 
 #ifdef INCLUDE_BRIDGE
 #include "tunnels/adapters/bridge/bridge.h"
-#endif
-
-#ifdef INCLUDE_TUNDEVICE
-#include "tunnels/adapters/device/tun/tun_device.h"
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
@@ -160,6 +172,19 @@
 
 void loadStaticTunnelsIntoCore(void)
 {
+
+#ifdef INCLUDE_LAYER3_RECEIVER
+    USING(Layer3Receiver);
+#endif
+
+#ifdef INCLUDE_LAYER3_IP_OVERRIDER
+    USING(Layer3IpOverrider);
+#endif
+
+#ifdef INCLUDE_TUNDEVICE
+    USING(TunDevice);
+#endif
+
 #ifdef INCLUDE_TCP_LISTENER
     USING(TcpListener);
 #endif
@@ -206,10 +231,6 @@ void loadStaticTunnelsIntoCore(void)
 
 #ifdef INCLUDE_BRIDGE
     USING(Bridge);
-#endif
-
-#ifdef INCLUDE_TUNDEVICE
-    USING(TunDevice);
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER

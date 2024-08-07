@@ -54,6 +54,7 @@ set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 
 
+option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_IP_OVERRIDER "link Layer3IpOverrider staticly to the core"  TRUE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
@@ -72,8 +73,8 @@ option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
 option(INCLUDE_OPENSSL_CLIENT "link OpenSSLClient staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER "link TrojanAuthServer staticly to the core"  TRUE)
 option(INCLUDE_TROJAN_SOCKS_SERVER "link TrojanSocksServer staticly to the core"  TRUE)
-option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  TRUE)  # this downloads 750 mb of data!
-option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  TRUE)  # this downloads 750 mb of data!
+option(INCLUDE_WOLFSSL_SERVER "link WolfSSLServer staticly to the core"  OFF)  # this downloads 750 mb of data!
+option(INCLUDE_WOLFSSL_CLIENT "link WolfSSLClient staticly to the core"  OFF)  # this downloads 750 mb of data!
 option(INCLUDE_HTTP2_SERVER "link Http2Server staticly to the core"  TRUE)
 option(INCLUDE_HTTP2_CLIENT "link Http2Client staticly to the core"  TRUE)
 option(INCLUDE_PROTOBUF_SERVER "link ProtoBufServer staticly to the core"  TRUE)
@@ -125,6 +126,16 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_libraries(Waterwall ww)
+
+
+
+#layer3 receiver
+if (INCLUDE_LAYER3_RECEIVER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_RECEIVER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/receiver)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/receiver)
+target_link_libraries(Waterwall Layer3Receiver)
+endif()
 
 
 
