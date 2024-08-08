@@ -1,11 +1,11 @@
 #include "basic_types.h"
 #include "cJSON.h"
-#include "managers/memory_manager.h"
 #include "fileutils.h"
 #include "hashutils.h"
 #include "hlog.h"
 #include "hplatform.h"
 #include "jsonutils.h"
+#include "managers/memory_manager.h"
 #include "procutils.h"
 #include "sockutils.h"
 #include "stringutils.h"
@@ -391,7 +391,6 @@ enum socket_address_type getHostAddrType(char *host)
     return kSatDomainName;
 }
 
-
 int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask)
 {
     char *slash;
@@ -420,20 +419,13 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
             fprintf(stderr, "Invalid subnet mask length.\n");
             return -1;
         }
-        uint32_t mask;
-        if (prefix_length > 0)
-        {
-            mask = htonl(0xFFFFFFFF & (0xFFFFFFFF << (32 - prefix_length)));
-        }
-        else
-        {
-            mask = 0;
-        }
+        uint32_t mask = prefix_length > 0 ? htonl(~((1 << (32 - prefix_length)) - 1)) : 0;
         struct in_addr mask_addr = {.s_addr = mask};
         memcpy(subnet_mask, &mask_addr, 4);
-        // inet_ntop(AF_INET, &mask_addr, subnet_mask, INET_ADDRSTRLEN);
+        return 4;
     }
-    else if (inet_pton(AF_INET6, ip_part, base_addr) == 1)
+
+    if (inet_pton(AF_INET6, ip_part, base_addr) == 1)
     {
         // IPv6 address
         int prefix_length = atoi(subnet_part);
@@ -449,19 +441,13 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
             ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (0xFF << (8 - bits));
             prefix_length -= bits;
         }
-        // struct in6_addr mask_addr;
-        // memcpy(&(subnet_mask->s6_addr), subnet_mask, 16);
-        // inet_ntop(AF_INET6, &mask_addr, subnet_mask, INET6_ADDRSTRLEN);
-    }
-    else
-    {
-        fprintf(stderr, "Invalid IP address.\n");
-        return -1;
+
+        return 6;
     }
 
-    return 0;
+    fprintf(stderr, "Invalid IP address.\n");
+    return -1;
 }
-
 
 struct user_s *parseUserFromJsonObject(const cJSON *user_json)
 {
@@ -512,8 +498,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: \"%s\" is not a valid ip address",
-                         ipc);
+            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: \"%s\" is not a valid ip address", ipc);
         }
         return false;
     }
@@ -635,9 +620,9 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
 // blocking io
 cmd_result_t execCmd(const char *str)
 {
-    FILE       *fp;
-    cmd_result_t result = (cmd_result_t){{0}, -1};
-    char       *buf    = &(result.output[0]);
+    FILE        *fp;
+    cmd_result_t result = (cmd_result_t) {{0}, -1};
+    char        *buf    = &(result.output[0]);
     /* Open the command for reading. */
 #if defined(OS_UNIX)
     fp = popen(str, "r");
@@ -648,7 +633,7 @@ cmd_result_t execCmd(const char *str)
     if (fp == NULL)
     {
         printf("Failed to run command \"%s\"\n", str);
-        return (cmd_result_t){{0}, -1};
+        return (cmd_result_t) {{0}, -1};
     }
 
     int read = fscanf(fp, "%2047s", buf);
