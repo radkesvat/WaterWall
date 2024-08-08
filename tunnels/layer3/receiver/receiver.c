@@ -2,6 +2,7 @@
 #include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
+#include "packet_types.h"
 #include "utils/jsonutils.h"
 #include "utils/stringutils.h"
 
@@ -17,6 +18,11 @@ typedef struct layer3_receiver_con_state_s
     void *_;
 } layer3_receiver_con_state_t;
 
+enum
+{
+    kCheckPacketSizes = true
+};
+
 enum mode_dynamic_value_status
 {
     kDvsSourceMode = kDvsFirstOption,
@@ -28,14 +34,42 @@ static void upStream(tunnel_t *self, context_t *c)
     // layer3_receiver_state_t *state = TSTATE(self);
     (void) (self);
 
-    LOGD("got a packet");
-    if (c->payload)
-    {
-        reuseContextPayload(c);
-    }
-    destroyContext(c);
+    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
-    // self->up->upStream(self->up, c);
+    /*      im not sure these checks are necessary    */
+    if (kCheckPacketSizes)
+    {
+        if (packet->ip4_header.version == 4)
+        {
+            if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
+            {
+                LOGW("Layer3Receiver: dropped a ipv4 packet that was too small");
+                reuseContextPayload(c);
+                destroyContext(c);
+                return;
+            }
+        }
+        else if (packet->ip4_header.version == 6)
+        {
+
+            if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
+            {
+                LOGW("Layer3Receiver: dropped a ipv6 packet that was too small");
+                reuseContextPayload(c);
+                destroyContext(c);
+                return;
+            }
+        }
+        else
+        {
+            LOGW("Layer3Receiver: dropped a non ip protocol packet");
+            reuseContextPayload(c);
+            destroyContext(c);
+            return;
+        }
+    }
+
+    self->up->upStream(self->up, c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -90,7 +124,7 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
         globalFree(state);
         return NULL;
     }
-    
+
     if (tundevice_node->instance->up != NULL)
     {
         LOGF("Layer3Receiver: tun device \"%s\" cannot be used by 2 receivers", state->tundevice_name);

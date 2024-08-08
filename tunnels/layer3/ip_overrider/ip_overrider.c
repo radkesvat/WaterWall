@@ -32,13 +32,6 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
-    {
-        LOGW("Layer3IpOverrider: dropped a packet that was too small");
-        reuseContextPayload(c);
-        destroyContext(c);
-        return;
-    }
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
     if (packet->ip4_header.version == 4)
@@ -48,24 +41,11 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     }
     else if (packet->ip4_header.version == 6)
     {
-        if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
-        {
-            LOGW("Layer3IpOverrider: dropped a ipv6 packet that was too small");
-            reuseContextPayload(c);
-            destroyContext(c);
-            return;
-        }
+      
         // alignment must be correct
         packet->ip6_header.saddr = state->ov_6;
     }
-    else
-    {
-        LOGW("Layer3IpOverrider: dropped a non ip protocol packet");
-        reuseContextPayload(c);
-        destroyContext(c);
-        return;
-    }
-
+    
     self->up->upStream(self->up, c);
 }
 
@@ -74,13 +54,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
-    {
-        LOGW("Layer3IpOverrider: dropped a packet that was too small");
-        reuseContextPayload(c);
-        destroyContext(c);
-        return;
-    }
+  
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
     if (packet->ip4_header.version == 4)
@@ -90,24 +64,11 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
     }
     else if (packet->ip4_header.version == 6)
     {
-        if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
-        {
-            LOGW("Layer3IpOverrider: dropped a ipv6 packet that was too small");
-            reuseContextPayload(c);
-            destroyContext(c);
-            return;
-        }
-
+       
         // alignment must be correct
         packet->ip6_header.daddr = state->ov_6;
     }
-    else
-    {
-        LOGW("Layer3IpOverrider: dropped a non ip protocol packet");
-        reuseContextPayload(c);
-        destroyContext(c);
-        return;
-    }
+ 
 
     self->up->upStream(self->up, c);
 }
@@ -138,7 +99,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
     }
 
     dynamic_value_t mode_dv =
-        parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "dest-override", "src-override");
+        parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
 
     if ((int) mode_dv.status != kDvsDestMode && (int) mode_dv.status != kDvsSourceMode)
     {
@@ -175,6 +136,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
 
     return t;
 }
+
 api_result_t apiLayer3IpOverrider(tunnel_t *self, const char *msg)
 {
     (void) (self);

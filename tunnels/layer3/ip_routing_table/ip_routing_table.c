@@ -1,8 +1,16 @@
 #include "ip_routing_table.h"
 #include "loggers/network_logger.h"
+#include "managers/node_manager.h"
 #include "packet_types.h"
 #include "utils/jsonutils.h"
 #include "utils/sockutils.h"
+
+
+enum mode_dynamic_value_status
+{
+    kDvsSourceMode = kDvsFirstOption,
+    kDvsDestMode
+};
 
 typedef struct
 {
@@ -36,34 +44,86 @@ typedef struct layer3_ip_overrider_con_state_s
 
 static void upStreamSrcMode(tunnel_t *self, context_t *c)
 {
-    layer3_ip_overrider_state_t *state = TSTATE(self);
+     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    self->up->upStream(self->up, c);
+    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+
+    if (packet->ip4_header.version == 4)
+    {
+        for (unsigned int i = 0; i < state->routes_len; i++)
+        {
+            if (checkIPRange4((struct in_addr) {packet->ip4_header.saddr}, state->routes[i].ip.ip4,
+                              state->routes[i].mask.mask4))
+            {
+                state->routes[i].next->upStream(state->routes[i].next, c);
+            }
+        }
+    }
+    else if (packet->ip4_header.version == 6)
+    {
+        for (unsigned int i = 0; i < state->routes_len; i++)
+        {
+            if (checkIPRange6(packet->ip6_header.saddr, state->routes[i].ip.ip6, state->routes[i].mask.mask6))
+            {
+                state->routes[i].next->upStream(state->routes[i].next, c);
+            }
+        }
+    }
+
+    LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
+    reuseContextPayload(c);
+    destroyContext(c);
 }
 
-enum mode_dynamic_value_status
-{
-    kDvsSourceMode = kDvsFirstOption,
-    kDvsDestMode
-};
+
 
 static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    for (unsigned int i = 0; i < state->routes_len; i++)
+    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+
+    if (packet->ip4_header.version == 4)
     {
+        for (unsigned int i = 0; i < state->routes_len; i++)
+        {
+            if (checkIPRange4((struct in_addr) {packet->ip4_header.daddr}, state->routes[i].ip.ip4,
+                              state->routes[i].mask.mask4))
+            {
+                state->routes[i].next->upStream(state->routes[i].next, c);
+            }
+        }
+    }
+    else if (packet->ip4_header.version == 6)
+    {
+        for (unsigned int i = 0; i < state->routes_len; i++)
+        {
+            if (checkIPRange6(packet->ip6_header.daddr, state->routes[i].ip.ip6, state->routes[i].mask.mask6))
+            {
+                state->routes[i].next->upStream(state->routes[i].next, c);
+            }
+        }
     }
 
-    self->up->upStream(self->up, c);
+    LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
+    reuseContextPayload(c);
+    destroyContext(c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    self->dw->downStream(self->dw, c);
+    (void) (self);
+    (void) (c);
+    assert(false);
+
+    if (c->payload)
+    {
+        reuseContextPayload(c);
+    }
+    destroyContext(c);
 }
 
-static routing_rule_t parseRule(const cJSON *rule_obj)
+static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int chain_index, const cJSON *rule_obj)
 {
     char *temp = NULL;
 
@@ -81,6 +141,30 @@ static routing_rule_t parseRule(const cJSON *rule_obj)
     }
     rule.v4 = ipver == 4;
     globalFree(temp);
+
+    if (! getStringFromJsonObject(&(temp), rule_obj, "next"))
+    {
+        LOGF("JSON Error: Layer3IpRoutingTable->settings->rules next tunnel not specified");
+        exit(1);
+    }
+    hash_t  hash_node_name = CALC_HASH_BYTES(temp, strlen(temp));
+    node_t *node           = getNode(cfg, hash_node_name);
+
+    if (node == NULL)
+    {
+        LOGF("JSON Error: Layer3IpRoutingTable->settings->rules node %s not found", temp);
+        exit(1);
+    }
+    if (node->instance == NULL)
+    {
+        runNode(cfg, node, chain_index + 1);
+        if (node->instance == NULL)
+        {
+            exit(1);
+        }
+    }
+    globalFree(temp);
+
     return rule;
 }
 
@@ -97,7 +181,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
     }
 
     dynamic_value_t mode_dv =
-        parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "dest-override", "src-override");
+        parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
 
     if ((int) mode_dv.status != kDvsDestMode && (int) mode_dv.status != kDvsSourceMode)
     {
@@ -118,7 +202,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
     const cJSON *list_item = NULL;
     cJSON_ArrayForEach(list_item, rules)
     {
-        state->routes[i++] = parseRule(list_item);
+        state->routes[i++] = parseRule(instance_info->node_manager_config, instance_info->chain_index, list_item);
     }
     if (i == 0)
     {
@@ -130,8 +214,6 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
         LOGF("Layer3IpRoutingTable: too much rules");
         exit(1);
     }
-
-
 
     tunnel_t *t = newTunnel();
 
