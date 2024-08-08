@@ -10,8 +10,6 @@ enum mode_dynamic_value_status
     kDvsDestMode
 };
 
-
-
 typedef struct layer3_ip_overrider_state_s
 {
 
@@ -25,7 +23,7 @@ typedef struct layer3_ip_overrider_state_s
 typedef struct layer3_ip_overrider_con_state_s
 {
     void *_;
-    
+
 } layer3_ip_overrider_con_state_t;
 
 static void upStreamSrcMode(tunnel_t *self, context_t *c)
@@ -41,20 +39,18 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     }
     else if (packet->ip4_header.version == 6)
     {
-      
+
         // alignment assumed to be correct
         packet->ip6_header.saddr = state->ov_6;
     }
-    
+
     self->up->upStream(self->up, c);
 }
-
 
 static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-  
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
     if (packet->ip4_header.version == 4)
@@ -64,11 +60,10 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
     }
     else if (packet->ip4_header.version == 6)
     {
-       
+
         // alignment assumed to be correct
         packet->ip6_header.daddr = state->ov_6;
     }
- 
 
     self->up->upStream(self->up, c);
 }
@@ -98,8 +93,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    dynamic_value_t mode_dv =
-        parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
+    dynamic_value_t mode_dv = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
 
     if ((int) mode_dv.status != kDvsDestMode && (int) mode_dv.status != kDvsSourceMode)
     {
@@ -108,24 +102,28 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
         exit(1);
     }
 
-    char ipbuf[128];
+    char *ipbuf = NULL;
 
-    if (getStringFromJsonObject((char **) &ipbuf, settings, "ipv4"))
+    if (getStringFromJsonObject(&ipbuf, settings, "ipv4"))
     {
         state->support4 = true;
         sockaddr_u sa;
         sockaddr_set_ip(&(sa), ipbuf);
 
         memcpy(&(state->ov_4), &(sa.sin.sin_addr.s_addr), sizeof(sa.sin.sin_addr.s_addr));
+        globalFree(ipbuf);
+        ipbuf = NULL;
     }
 
-    if (getStringFromJsonObject((char **) &ipbuf, settings, "ipv6"))
+    if (getStringFromJsonObject(&ipbuf, settings, "ipv6"))
     {
         state->support6 = true;
         sockaddr_u sa;
         sockaddr_set_ip(&(sa), ipbuf);
 
         memcpy(&(state->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
+        globalFree(ipbuf);
+        ipbuf = NULL;
     }
 
     tunnel_t *t = newTunnel();

@@ -139,7 +139,8 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
     }
     rule.v4 = ipver == 4;
     globalFree(temp);
-
+    temp = NULL;
+    
     if (! getStringFromJsonObject(&(temp), rule_obj, "next"))
     {
         LOGF("JSON Error: Layer3IpRoutingTable->settings->rules next tunnel not specified");
