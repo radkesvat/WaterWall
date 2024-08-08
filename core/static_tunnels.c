@@ -29,6 +29,14 @@
 #include "tunnels/layer3/receiver/receiver.h"
 #endif
 
+#ifdef INCLUDE_LAYER3_SENDER
+#include "tunnels/layer3/sender/sender.h"
+#endif
+
+#ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
+#include "tunnels/layer3/ip_routing_table/ip_routing_table.h"
+#endif
+
 #ifdef INCLUDE_LAYER3_IP_OVERRIDER
 #include "tunnels/layer3/ip_overrider/ip_overrider.h"
 #endif
@@ -169,12 +177,19 @@
 
 
 
-
 void loadStaticTunnelsIntoCore(void)
 {
 
 #ifdef INCLUDE_LAYER3_RECEIVER
     USING(Layer3Receiver);
+#endif
+
+#ifdef INCLUDE_LAYER3_SENDER
+    USING(Layer3Sender);
+#endif
+
+#ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
+    USING(Layer3IpRoutingTable);
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_OVERRIDER

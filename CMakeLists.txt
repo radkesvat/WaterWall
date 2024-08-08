@@ -55,6 +55,8 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 
 
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  TRUE)
+option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  TRUE)
+option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_IP_OVERRIDER "link Layer3IpOverrider staticly to the core"  TRUE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
@@ -137,7 +139,21 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/lay
 target_link_libraries(Waterwall Layer3Receiver)
 endif()
 
+#layer3 sender
+if (INCLUDE_LAYER3_SENDER)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_SENDER=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/sender)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/sender)
+target_link_libraries(Waterwall Layer3Sender)
+endif()
 
+#layer3 ip route table
+if (INCLUDE_LAYER3_IP_ROUTING_TABLE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_IP_ROUTING_TABLE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip_routing_table)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip_routing_table)
+target_link_libraries(Waterwall Layer3IpRoutingTable)
+endif()
 
 #layer3 ip overrider
 if (INCLUDE_LAYER3_IP_OVERRIDER)
