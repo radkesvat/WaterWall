@@ -51,9 +51,8 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     {
         for (unsigned int i = 0; i < state->routes_len; i++)
         {
-            const struct in_addr addr = { .s_addr = packet->ip4_header.saddr };
-            if (state->routes[i].v4 && checkIPRange4(addr,
-                                                     state->routes[i].ip.ip4, state->routes[i].mask.mask4))
+            const struct in_addr addr = {.s_addr = packet->ip4_header.saddr};
+            if (state->routes[i].v4 && checkIPRange4(addr, state->routes[i].ip.ip4, state->routes[i].mask.mask4))
             {
                 state->routes[i].next->upStream(state->routes[i].next, c);
             }
@@ -86,8 +85,8 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
     {
         for (unsigned int i = 0; i < state->routes_len; i++)
         {
-            if (checkIPRange4((struct in_addr) {packet->ip4_header.daddr}, state->routes[i].ip.ip4,
-                              state->routes[i].mask.mask4))
+            const struct in_addr addr = {.s_addr = packet->ip4_header.saddr};
+            if (checkIPRange4(addr, state->routes[i].ip.ip4, state->routes[i].mask.mask4))
             {
                 state->routes[i].next->upStream(state->routes[i].next, c);
             }
@@ -141,7 +140,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
     rule.v4 = ipver == 4;
     globalFree(temp);
     temp = NULL;
-    
+
     if (! getStringFromJsonObject(&(temp), rule_obj, "next"))
     {
         LOGF("JSON Error: Layer3IpRoutingTable->settings->rules next tunnel not specified");
