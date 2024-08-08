@@ -85,7 +85,6 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    chain(tundevice_node->instance, t);
 
     return t;
 }
