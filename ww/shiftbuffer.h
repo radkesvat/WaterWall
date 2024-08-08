@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ww.h"
+#include "generic_pool.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
