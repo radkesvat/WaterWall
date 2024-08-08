@@ -58,7 +58,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
             }
         }
     }
-    else if (packet->ip4_header.version == 6)
+    else if (packet->ip6_header.version == 6)
     {
         for (unsigned int i = 0; i < state->routes_len; i++)
         {
