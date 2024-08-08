@@ -254,42 +254,6 @@ static inline bool needsV4SocketStrategy(sockaddr_u *peer_addr)
     return use_v4_strategy;
 }
 
-static inline int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr,
-                                const struct in_addr subnet_mask)
-{
-    if ((test_addr.s_addr & subnet_mask.s_addr) == (base_addr.s_addr & subnet_mask.s_addr))
-    {
-        return 1;
-    }
-    return 0;
-}
-static inline int checkIPRange6(const struct in6_addr test_addr, const struct in6_addr base_addr,
-                                const struct in6_addr subnet_mask)
-{
-
-    uint64_t *test_addr_p   = (uint64_t *) &(test_addr.s6_addr[0]);
-    uint64_t *base_addr_p   = (uint64_t *) &(base_addr.s6_addr[0]);
-    uint64_t *subnet_mask_p = (uint64_t *) &(subnet_mask.s6_addr[0]);
-
-    if ((base_addr_p[0] & subnet_mask_p[0]) != test_addr_p[0] || (base_addr_p[1] & subnet_mask_p[1]) != test_addr_p[1])
-    {
-        return 0;
-    }
-    return 1;
-
-    // // IPv6 addresses
-    // for (int i = 0; i < 16; i++)
-    // {
-    //     result_addr.s6_addr[i] = base_addr.s6_addr[i] & subnet_mask.s6_addr[i];
-    // }
-    // if (memcmp(&test_addr, &result_addr, sizeof(struct in6_addr)) == 0)
-    // {
-    //     return 1;
-    // }
-    // return 0;
-}
-
-
 
 static void parseWhiteListOption(socket_filter_option_t *option)
 {
