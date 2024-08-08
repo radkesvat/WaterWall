@@ -35,7 +35,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
     {
         LOGW("Layer3IpOverrider: dropped a packet that was too small");
-        dropContexPayload(c);
+        reuseContextPayload(c);
         destroyContext(c);
         return;
     }
@@ -51,7 +51,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
         if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
         {
             LOGW("Layer3IpOverrider: dropped a ipv6 packet that was too small");
-            dropContexPayload(c);
+            reuseContextPayload(c);
             destroyContext(c);
             return;
         }
@@ -61,7 +61,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     else
     {
         LOGW("Layer3IpOverrider: dropped a non ip protocol packet");
-        dropContexPayload(c);
+        reuseContextPayload(c);
         destroyContext(c);
         return;
     }
@@ -77,7 +77,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
     if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
     {
         LOGW("Layer3IpOverrider: dropped a packet that was too small");
-        dropContexPayload(c);
+        reuseContextPayload(c);
         destroyContext(c);
         return;
     }
@@ -93,7 +93,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
         if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
         {
             LOGW("Layer3IpOverrider: dropped a ipv6 packet that was too small");
-            dropContexPayload(c);
+            reuseContextPayload(c);
             destroyContext(c);
             return;
         }
@@ -104,7 +104,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
     else
     {
         LOGW("Layer3IpOverrider: dropped a non ip protocol packet");
-        dropContexPayload(c);
+        reuseContextPayload(c);
         destroyContext(c);
         return;
     }
@@ -120,7 +120,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        dropContexPayload(c);
+        reuseContextPayload(c);
     }
     destroyContext(c);
 }

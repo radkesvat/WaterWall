@@ -32,7 +32,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        dropContexPayload(c);
+        reuseContextPayload(c);
     }
     destroyContext(c);
 }
