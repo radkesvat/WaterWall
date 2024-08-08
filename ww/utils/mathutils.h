@@ -122,24 +122,31 @@ static inline long minLong(long a, long b)
 #define MAXOF(t) ((unsigned long long) (ISSIGNED(t) ? SMAXOF(t) : UMAXOF(t)))
 
 #if __BIG_ENDIAN__
+
 #ifndef htonll
 #define htonll(x) (x)
 #endif
 #ifndef ntohll
 #define ntohll(x) (x)
 #endif
+
 #else
+
+#ifndef htonll
 static inline uint64_t htonll(uint64_t x)
 {
     uint32_t low  = htonl((uint32_t) (x & 0xFFFFFFFF));
     uint32_t high = htonl((uint32_t) (x >> 32));
     return ((uint64_t) low << 32) | high;
 }
-
+#endif
+#ifndef ntohll
 static inline uint64_t ntohll(uint64_t x)
 {
     uint32_t low  = ntohl((uint32_t) (x & 0xFFFFFFFF));
     uint32_t high = ntohl((uint32_t) (x >> 32));
     return ((uint64_t) low << 32) | high;
 }
+#endif
+
 #endif
