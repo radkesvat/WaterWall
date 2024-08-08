@@ -20,7 +20,7 @@ typedef struct layer3_receiver_con_state_s
 
 enum
 {
-    kCheckPacketSizes = true
+    kCheckPackets = true
 };
 
 enum mode_dynamic_value_status
@@ -37,7 +37,7 @@ static void upStream(tunnel_t *self, context_t *c)
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
     /*      im not sure these checks are necessary    */
-    if (kCheckPacketSizes)
+    if (kCheckPackets)
     {
         if (packet->ip4_header.version == 4)
         {
@@ -107,6 +107,7 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
 
     hash_t  hash_tdev_name = CALC_HASH_BYTES(state->tundevice_name, strlen(state->tundevice_name));
     node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
+    
     if (tundevice_node == NULL)
     {
         LOGF("Layer3Receiver: could not find tun device node \"%s\"", state->tundevice_name);

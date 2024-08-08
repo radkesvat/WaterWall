@@ -36,13 +36,13 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
 
     if (packet->ip4_header.version == 4)
     {
-        // alignment must be correct
+        // alignment assumed to be correct
         packet->ip4_header.saddr = state->ov_4;
     }
     else if (packet->ip4_header.version == 6)
     {
       
-        // alignment must be correct
+        // alignment assumed to be correct
         packet->ip6_header.saddr = state->ov_6;
     }
     
@@ -59,13 +59,13 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
 
     if (packet->ip4_header.version == 4)
     {
-        // alignment must be correct
+        // alignment assumed to be correct
         packet->ip4_header.daddr = state->ov_4;
     }
     else if (packet->ip4_header.version == 6)
     {
        
-        // alignment must be correct
+        // alignment assumed to be correct
         packet->ip6_header.daddr = state->ov_6;
     }
  

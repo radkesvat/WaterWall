@@ -5,7 +5,6 @@
 #include "utils/jsonutils.h"
 #include "utils/sockutils.h"
 
-
 enum mode_dynamic_value_status
 {
     kDvsSourceMode = kDvsFirstOption,
@@ -44,7 +43,7 @@ typedef struct layer3_ip_overrider_con_state_s
 
 static void upStreamSrcMode(tunnel_t *self, context_t *c)
 {
-     layer3_ip_overrider_state_t *state = TSTATE(self);
+    layer3_ip_overrider_state_t *state = TSTATE(self);
 
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
@@ -74,8 +73,6 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     reuseContextPayload(c);
     destroyContext(c);
 }
-
-
 
 static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
@@ -180,8 +177,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    dynamic_value_t mode_dv =
-        parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
+    dynamic_value_t mode_dv = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
 
     if ((int) mode_dv.status != kDvsDestMode && (int) mode_dv.status != kDvsSourceMode)
     {
