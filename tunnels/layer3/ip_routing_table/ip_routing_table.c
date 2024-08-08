@@ -51,7 +51,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     {
         for (unsigned int i = 0; i < state->routes_len; i++)
         {
-            if (state->routes[i].v4 && checkIPRange4((struct in_addr) {packet->ip4_header.saddr},
+            if (state->routes[i].v4 && checkIPRange4(*(struct in_addr*) (&packet->ip4_header.saddr),
                                                      state->routes[i].ip.ip4, state->routes[i].mask.mask4))
             {
                 state->routes[i].next->upStream(state->routes[i].next, c);
