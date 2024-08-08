@@ -41,6 +41,10 @@
 #include "tunnels/layer3/ip_overrider/ip_overrider.h"
 #endif
 
+#ifdef INCLUDE_LAYER3_TCP_MANIPULATOR
+#include "tunnels/layer3/tcp_manipulator/tcp_manipulator.h"
+#endif
+
 #ifdef INCLUDE_TCP_LISTENER
 #include "tunnels/adapters/listener/tcp/tcp_listener.h"
 #endif
@@ -194,6 +198,10 @@ void loadStaticTunnelsIntoCore(void)
 
 #ifdef INCLUDE_LAYER3_IP_OVERRIDER
     USING(Layer3IpOverrider);
+#endif
+
+#ifdef INCLUDE_LAYER3_TCP_MANIPULATOR
+    USING(Layer3TcpManipulator);
 #endif
 
 #ifdef INCLUDE_TUNDEVICE

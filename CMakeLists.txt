@@ -58,6 +58,7 @@ option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_IP_OVERRIDER "link Layer3IpOverrider staticly to the core"  TRUE)
+option(INCLUDE_LAYER3_TCP_MANIPULATOR "link Layer3TcpManipulator staticly to the core"  TRUE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  TRUE)
@@ -161,6 +162,14 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_IP_OVERRIDER=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip_overrider)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip_overrider)
 target_link_libraries(Waterwall Layer3IpOverrider)
+endif()
+
+#layer3 tcp manipulator
+if (INCLUDE_LAYER3_TCP_MANIPULATOR)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_TCP_MANIPULATOR=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/tcp_manipulator)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/tcp_manipulator)
+target_link_libraries(Waterwall Layer3TcpManipulator)
 endif()
 
 #tcp listener
