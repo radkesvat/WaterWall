@@ -32,12 +32,12 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
 
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
-    if (packet->ip4_header.version == 4)
+    if (state->support4 && packet->ip4_header.version == 4)
     {
         // alignment assumed to be correct
         packet->ip4_header.saddr = state->ov_4;
     }
-    else if (packet->ip6_header.version == 6)
+    else if (state->support6 && packet->ip6_header.version == 6)
     {
 
         // alignment assumed to be correct

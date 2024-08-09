@@ -28,6 +28,7 @@ enum mode_dynamic_value_status
     kDvsSourceMode = kDvsFirstOption,
     kDvsDestMode
 };
+struct ip6_hdr;
 
 static void upStream(tunnel_t *self, context_t *c)
 {
@@ -35,7 +36,8 @@ static void upStream(tunnel_t *self, context_t *c)
     (void) (self);
 
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
-
+    volatile int x = sizeof(unsigned int);
+    (void)x;
     /*      im not sure these checks are necessary    */
     if (kCheckPackets)
     {
@@ -49,7 +51,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
         }
-        else if (packet->ip4_header.version == 6)
+        else if (packet->ip6_header.version == 6)
         {
 
             if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))

@@ -28,7 +28,10 @@ struct ipv6header
 #if __BIG_ENDIAN__
     uint32_t version : 4, traffic_class : 8, flow_label : 20;
 #else
-    uint32_t flow_label : 20, traffic_class : 8, version : 4;
+    // uint32_t flow_label : 20;
+    // uint32_t traffic_class : 8;
+    uint32_t useless : 4;
+    uint32_t version : 4;
 #endif
     uint16_t        payload_len; // Payload Length
     uint8_t         nexthdr;     // Next Header
