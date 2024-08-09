@@ -2,8 +2,9 @@
 #include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
+#include "packet_types.h"
 #include "utils/jsonutils.h"
-#include "utils/stringutils.h"
+#include "utils/mathutils.h"
 
 typedef struct layer3_senderstate_s
 {
@@ -17,9 +18,68 @@ typedef struct layer3_sendercon_state_s
     void *_;
 } layer3_sendercon_state_t;
 
+static void printSendingIPPacketInfo(const unsigned char *buffer, unsigned int len)
+{
+    char  src_ip[INET6_ADDRSTRLEN];
+    char  dst_ip[INET6_ADDRSTRLEN];
+    char  logbuf[2048];
+    int   rem = sizeof(logbuf);
+    char *ptr = logbuf;
+    int   ret;
+
+    uint8_t version = buffer[0] >> 4;
+
+    if (version == 4)
+    {
+        struct ipv4header *ip_header = (struct ipv4header *) buffer;
+
+        inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
+
+        ret = snprintf(ptr, rem, "Sending: => From %s to %s, Data: ", src_ip, dst_ip);
+    }
+    else if (version == 6)
+    {
+        struct ipv6header *ip6_header = (struct ipv6header *) buffer;
+
+        inet_ntop(AF_INET6, &ip6_header->saddr, src_ip, INET6_ADDRSTRLEN);
+        inet_ntop(AF_INET6, &ip6_header->daddr, dst_ip, INET6_ADDRSTRLEN);
+
+        ret = snprintf(ptr, rem, "Sending:  From %s to %s, Data: ", src_ip, dst_ip);
+    }
+    else
+    {
+        ret = snprintf(ptr, rem, "Sending: => Unknown IP version, Data: ");
+    }
+
+    ptr += ret;
+    rem -= ret;
+
+    for (int i = 0; i < (int) min(len,640); i++)
+    {
+        ret = snprintf(ptr, rem, "%02x ", buffer[i]);
+        ptr += ret;
+        rem -= ret;
+    }
+    *ptr = '\0';
+
+    LOGD(logbuf);
+}
+
 static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_senderstate_t *state = TSTATE(self);
+    printSendingIPPacketInfo(rawBuf(c->payload),bufLen(c->payload));
+    // reuseContextPayload(c);
+    // shift_buffer_t* buf = popBuffer(getContextBufferPool(c));
+    // writeRaw(buf, const void *const restrict buffer, const unsigned int len)
+    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+
+    if (packet->ip4_header.version == 4)
+    {
+        int ip_header_len = packet->ip4_header.ihl * 4;
+        packet->ip4_header.check = standardCheckSum((void *) packet, ip_header_len);
+    }
 
     state->tun_device_tunnel->upStream(state->tun_device_tunnel, c);
 }
@@ -84,7 +144,6 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-
 
     return t;
 }

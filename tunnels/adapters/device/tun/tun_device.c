@@ -23,7 +23,7 @@ static void upStream(tunnel_t *self, context_t *c)
     tun_device_state_t *state = TSTATE((tunnel_t *) self);
 
     tun_device_t *tdev = state->tdev;
-    writeToTunDevce(tdev,c->payload);
+    writeToTunDevce(tdev, c->payload);
 
     dropContexPayload(c);
     destroyContext(c);
@@ -101,6 +101,12 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
     tunnel_t *t = newTunnel();
 
     state->tdev = createTunDevice(state->name, false, t, onIPPacketReceived);
+
+    if (state->tdev == NULL)
+    {
+        LOGF("TunDevice: could not create device");
+        return NULL;
+    }
     assignIpToTunDevice(state->tdev, state->ip_present, state->subnet_mask);
     bringTunDeviceUP(state->tdev);
 
