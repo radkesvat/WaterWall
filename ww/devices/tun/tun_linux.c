@@ -170,12 +170,6 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
             return 0;
         }
 
-        if (! atomic_load_explicit(&(tdev->running), memory_order_relaxed))
-        {
-            reuseBufferThreadSafe(buf);
-            return 0;
-        }
-
         nwrite = write(tdev->handle, rawBuf(buf), bufLen(buf));
 
         reuseBufferThreadSafe(buf);
