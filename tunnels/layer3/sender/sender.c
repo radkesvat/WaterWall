@@ -55,7 +55,7 @@ static void printSendingIPPacketInfo(const unsigned char *buffer, unsigned int l
     ptr += ret;
     rem -= ret;
 
-    for (int i = 0; i < (int) min(len,640); i++)
+    for (int i = 0; i < (int) min(len, 640); i++)
     {
         ret = snprintf(ptr, rem, "%02x ", buffer[i]);
         ptr += ret;
@@ -69,16 +69,15 @@ static void printSendingIPPacketInfo(const unsigned char *buffer, unsigned int l
 static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_senderstate_t *state = TSTATE(self);
-    printSendingIPPacketInfo(rawBuf(c->payload),bufLen(c->payload));
-    // reuseContextPayload(c);
-    // shift_buffer_t* buf = popBuffer(getContextBufferPool(c));
-    // writeRaw(buf, const void *const restrict buffer, const unsigned int len)
+
+    // printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
+
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
     if (packet->ip4_header.version == 4)
     {
-        int ip_header_len = packet->ip4_header.ihl * 4;
-        packet->ip4_header.check = standardCheckSum((void *) packet, ip_header_len);
+        packet->ip4_header.check = 0x0;
+        packet->ip4_header.check = standardCheckSum((void *) packet, packet->ip4_header.ihl * 4);
     }
 
     state->tun_device_tunnel->upStream(state->tun_device_tunnel, c);
@@ -95,6 +94,35 @@ static void downStream(tunnel_t *self, context_t *c)
         reuseContextPayload(c);
     }
     destroyContext(c);
+}
+
+// only for debug and tests
+static void onTimer(htimer_t *timer)
+{
+    LOGD("sending...");
+    tunnel_t             *self  = hevent_userdata(timer);
+    layer3_senderstate_t *state = TSTATE(self);
+    line_t               *l     = newLine(0);
+    context_t            *c     = newContext(l);
+    c->payload                  = popBuffer(getContextBufferPool(c));
+
+    unsigned char bpacket[] = {0x45, 0x00, 0x00, 0x2C, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0xC4, 0xC0, 0x00, 0x02,
+                               0x02, 0x22, 0xC2, 0x95, 0x43, 0x78, 0x0C, 0x00, 0x50, 0xF4, 0x70, 0x98, 0x8B, 0x00, 0x00,
+                               0x00, 0x00, 0x60, 0x02, 0xFF, 0xFF, 0x18, 0xC6, 0x00, 0x00, 0x02, 0x04, 0x05, 0xB4};
+
+    setLen(c->payload, sizeof(bpacket));
+    writeRaw(c->payload, bpacket, sizeof(bpacket));
+
+    printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
+
+    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+
+    packet->ip4_header.check = 0x0;
+
+    int ip_header_len        = packet->ip4_header.ihl * 4;
+    packet->ip4_header.check = standardCheckSum((void *) packet, ip_header_len);
+
+    state->tun_device_tunnel->upStream(state->tun_device_tunnel, c);
 }
 
 tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
@@ -119,6 +147,7 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
 
     hash_t  hash_tdev_name = CALC_HASH_BYTES(state->tundevice_name, strlen(state->tundevice_name));
     node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
+    
     if (tundevice_node == NULL)
     {
         LOGF("Layer3Sender: could not find tun device node \"%s\"", state->tundevice_name);
@@ -144,6 +173,10 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
+
+    // for testing
+    // htimer_t *tm = htimer_add(getWorkerLoop(0), onTimer, 500, INFINITE);
+    // hevent_set_userdata(tm, t);
 
     return t;
 }

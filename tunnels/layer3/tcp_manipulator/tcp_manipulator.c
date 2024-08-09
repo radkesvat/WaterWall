@@ -27,30 +27,29 @@ typedef struct layer3_tcp_manipulator_con_state_s
 
 static void reCalculateCheckSum(struct tcpheader *tcp_header, int len)
 {
+    tcp_header->check = 0x0;
     tcp_header->check = tcpCheckSum(tcp_header, len);
 }
 
-static inline void handleResetBitAction(struct tcpheader *tcp_header, dynamic_value_t *reset_bit, int tlen)
+static inline void handleResetBitAction(struct tcpheader *tcp_header, dynamic_value_t *reset_bit)
 {
     switch ((enum bitaction_dynamic_value_status) reset_bit->status)
     {
     case kDvsOff:
         tcp_header->rst = 0;
-        reCalculateCheckSum(tcp_header, tlen);
 
         break;
     case kDvsOn:
         tcp_header->rst = 1;
-        reCalculateCheckSum(tcp_header, tlen);
 
         break;
     case kDvsToggle:
         tcp_header->rst = ! tcp_header->rst;
-        reCalculateCheckSum(tcp_header, tlen);
-        
+
         break;
     default:
     case kDvsNothing:
+        return;
         break;
     }
 }
@@ -110,7 +109,9 @@ static void upStream(tunnel_t *self, context_t *c)
     struct tcpheader *tcp_header            = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
     const int         transport_palyoad_len = (int) (bufLen(c->payload) - ip_header_len);
 
-    handleResetBitAction(tcp_header, &(state->reset_bit_action), transport_palyoad_len);
+    handleResetBitAction(tcp_header, &(state->reset_bit_action));
+
+    reCalculateCheckSum(tcp_header, transport_palyoad_len);
 
     self->up->upStream(self->up, c);
 }
