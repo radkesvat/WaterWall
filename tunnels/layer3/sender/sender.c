@@ -55,7 +55,7 @@ static void printSendingIPPacketInfo(const unsigned char *buffer, unsigned int l
     ptr += ret;
     rem -= ret;
 
-    for (int i = 0; i < (int) min(len, 640); i++)
+    for (int i = 0; i < (int) min(len, 16); i++)
     {
         ret = snprintf(ptr, rem, "%02x ", buffer[i]);
         ptr += ret;
@@ -70,7 +70,7 @@ static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_senderstate_t *state = TSTATE(self);
 
-    // printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
+    printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
 
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
 
@@ -106,7 +106,13 @@ static void onTimer(htimer_t *timer)
     context_t            *c     = newContext(l);
     c->payload                  = popBuffer(getContextBufferPool(c));
 
-    unsigned char bpacket[] = {0x45, 0x00, 0x00, 0x2C, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0xC4, 0xC0, 0x00, 0x02,
+    // unsigned char bpacket[] = {0x45, 0x00, 0x00, 0x2C, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0xC4, 0xC0, 0x00,
+    // 0x02,
+    //                            0x02, 0x22, 0xC2, 0x95, 0x43, 0x78, 0x0C, 0x00, 0x50, 0xF4, 0x70, 0x98, 0x8B, 0x00,
+    //                            0x00, 0x00, 0x00, 0x60, 0x02, 0xFF, 0xFF, 0x18, 0xC6, 0x00, 0x00, 0x02, 0x04, 0x05,
+    //                            0xB4};
+
+    unsigned char bpacket[] = {0x45, 0x00, 0x00, 0x2C, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0xC4, 0x0A, 0x00, 0x00,
                                0x02, 0x22, 0xC2, 0x95, 0x43, 0x78, 0x0C, 0x00, 0x50, 0xF4, 0x70, 0x98, 0x8B, 0x00, 0x00,
                                0x00, 0x00, 0x60, 0x02, 0xFF, 0xFF, 0x18, 0xC6, 0x00, 0x00, 0x02, 0x04, 0x05, 0xB4};
 
@@ -147,7 +153,7 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
 
     hash_t  hash_tdev_name = CALC_HASH_BYTES(state->tundevice_name, strlen(state->tundevice_name));
     node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
-    
+
     if (tundevice_node == NULL)
     {
         LOGF("Layer3Sender: could not find tun device node \"%s\"", state->tundevice_name);

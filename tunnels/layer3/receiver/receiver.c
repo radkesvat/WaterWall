@@ -36,8 +36,7 @@ static void upStream(tunnel_t *self, context_t *c)
     (void) (self);
 
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
-    volatile int x = sizeof(unsigned int);
-    (void)x;
+
     /*      im not sure these checks are necessary    */
     if (kCheckPackets)
     {
