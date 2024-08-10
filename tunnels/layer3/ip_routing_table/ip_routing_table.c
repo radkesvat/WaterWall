@@ -61,6 +61,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
             if (state->routes[i].v4 && checkIPRange4(addr, state->routes[i].ip.ip4, state->routes[i].mask.mask4))
             {
                 state->routes[i].next->upStream(state->routes[i].next, c);
+                return;
             }
         }
     }
@@ -72,6 +73,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
                 checkIPRange6(packet->ip6_header.saddr, state->routes[i].ip.ip6, state->routes[i].mask.mask6))
             {
                 state->routes[i].next->upStream(state->routes[i].next, c);
+                return;
             }
         }
     }
@@ -174,6 +176,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
         LOGF("JSON Error: Layer3IpRoutingTable->settings->rules node %s not found", temp);
         exit(1);
     }
+
     if (node->instance == NULL)
     {
         runNode(cfg, node, chain_index + 1);
@@ -183,6 +186,8 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
         }
     }
     globalFree(temp);
+
+    rule.next = node->instance;
 
     return rule;
 }
@@ -248,6 +253,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
         LOGF("Layer3IpRoutingTable: too much rules");
         exit(1);
     }
+    state->routes_len = i;
 
     tunnel_t *t = newTunnel();
 
