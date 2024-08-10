@@ -11,6 +11,11 @@ enum mode_dynamic_value_status
     kDvsDestMode
 };
 
+enum default_action_dynamic_value_status
+{
+    kDvsDrop = kDvsFirstOption
+};
+
 typedef struct
 {
     union {
@@ -30,8 +35,9 @@ typedef struct
 
 typedef struct layer3_ip_overrider_state_s
 {
-
     routing_rule_t routes[8];
+    int            default_rule;
+    bool           default_drop;
     uint8_t        routes_len;
 
 } layer3_ip_overrider_state_t;
@@ -70,9 +76,16 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
         }
     }
 
-    LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
-    reuseContextPayload(c);
-    destroyContext(c);
+    if (state->default_drop)
+    {
+        LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
+        reuseContextPayload(c);
+        destroyContext(c);
+    }
+    else
+    {
+        state->routes[state->default_rule].next->upStream(state->routes[state->default_rule].next, c);
+    }
 }
 
 static void upStreamDestMode(tunnel_t *self, context_t *c)
@@ -103,9 +116,16 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
         }
     }
 
-    LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
-    reuseContextPayload(c);
-    destroyContext(c);
+    if (state->default_drop)
+    {
+        LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
+        reuseContextPayload(c);
+        destroyContext(c);
+    }
+    else
+    {
+        state->routes[state->default_rule].next->upStream(state->routes[state->default_rule].next, c);
+    }
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -179,6 +199,19 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
         return NULL;
     }
 
+    dynamic_value_t def_action = parseDynamicNumericValueFromJsonObject(settings, "default-action", 1, "drop");
+
+    if (def_action.status == kDvsConstant)
+    {
+        state->default_drop = false;
+        state->default_rule = (int) def_action.status;
+    }
+    else
+    {
+        state->default_drop = true;
+    }
+    destroyDynamicValue(def_action);
+
     dynamic_value_t mode_dv = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
 
     if ((int) mode_dv.status != kDvsDestMode && (int) mode_dv.status != kDvsSourceMode)
@@ -188,6 +221,8 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
              "want to filter based on source ip or dest ip?");
         exit(1);
     }
+    destroyDynamicValue(mode_dv);
+
 
     const cJSON *rules = cJSON_GetObjectItemCaseSensitive(settings, "rules");
     if (! cJSON_IsArray(rules))
@@ -202,6 +237,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
     {
         state->routes[i++] = parseRule(instance_info->node_manager_config, instance_info->chain_index, list_item);
     }
+
     if (i == 0)
     {
         LOGF("Layer3IpRoutingTable: no rules");

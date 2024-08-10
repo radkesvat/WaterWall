@@ -101,6 +101,8 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
              "want to override source ip or dest ip?");
         exit(1);
     }
+    destroyDynamicValue(mode_dv);
+
 
     char *ipbuf = NULL;
 
