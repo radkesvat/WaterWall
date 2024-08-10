@@ -617,6 +617,12 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
     return result;
 }
 
+void destroyDynamicValue(const dynamic_value_t dy){
+    if(dy.value_ptr){
+        globalFree(dy.value_ptr);
+    }
+}
+
 // blocking io
 cmd_result_t execCmd(const char *str)
 {

@@ -16,8 +16,6 @@ bool getStringFromJson(char **dest, const cJSON *json_str_node);
 
 bool getPortFromJsonObject(uint16_t *dest_pmin, const cJSON *json_obj, uint16_t *dest_pmax, const char *key);
 
-
-
 dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...);
 dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...);
-
+void            destroyDynamicValue(dynamic_value_t dy);
