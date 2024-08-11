@@ -1,13 +1,13 @@
+#include "static_tunnels.h"
 #include "library_loader.h"
 #include "loggers/core_logger.h"
-#include "static_tunnels.h"
 #include "ww.h"
 
 #define USING(x)                                                                                                       \
     do                                                                                                                 \
     {                                                                                                                  \
         hash_t h = CALC_HASH_BYTES(#x, strlen(#x));                                                                    \
-        registerStaticLib((tunnel_lib_t){                                                                              \
+        registerStaticLib((tunnel_lib_t) {                                                                             \
             .hash_name         = h,                                                                                    \
             .createHandle      = new##x,                                                                               \
             .destroyHandle     = destroy##x,                                                                           \
@@ -17,12 +17,12 @@
         LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                                                      \
     } while (0);
 
-
-
-
-
 #ifdef INCLUDE_TUNDEVICE
 #include "tunnels/adapters/device/tun/tun_device.h"
+#endif
+
+#ifdef INCLUDE_RAWDEVICE
+#include "tunnels/adapters/device/raw/raw_device.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_RECEIVER
@@ -177,12 +177,16 @@
 #include "tunnels/client/mux/mux_client.h"
 #endif
 
-
-
-
-
 void loadStaticTunnelsIntoCore(void)
 {
+
+#ifdef INCLUDE_TUNDEVICE
+    USING(TunDevice);
+#endif
+
+#ifdef INCLUDE_RAWDEVICE
+    USING(RawDevice);
+#endif
 
 #ifdef INCLUDE_LAYER3_RECEIVER
     USING(Layer3Receiver);
@@ -202,10 +206,6 @@ void loadStaticTunnelsIntoCore(void)
 
 #ifdef INCLUDE_LAYER3_TCP_MANIPULATOR
     USING(Layer3TcpManipulator);
-#endif
-
-#ifdef INCLUDE_TUNDEVICE
-    USING(TunDevice);
 #endif
 
 #ifdef INCLUDE_TCP_LISTENER
@@ -339,7 +339,4 @@ void loadStaticTunnelsIntoCore(void)
 #ifdef INCLUDE_MUX_CLIENT
     USING(MuxServer);
 #endif
-
-
-
 }

@@ -68,8 +68,10 @@ option(INCLUDE_CONNECTOR "link Connector staticly to the core"  TRUE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_UDP_CONNECTOR "link UdpConnector staticly to the core"  TRUE)
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  TRUE)
-if(LINUX) # todo (tun other platforms)
+
+if(LINUX) # todo (other platforms)
   option(INCLUDE_TUNDEVICE "link TunDevice staticly to the core"  TRUE)
+  option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  TRUE)
 endif()
 
 option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
@@ -131,6 +133,22 @@ target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_libraries(Waterwall ww)
 
 
+
+#tun device
+if (INCLUDE_TUNDEVICE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TUNDEVICE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
+target_link_libraries(Waterwall TunDevice)
+endif()
+
+#raw device
+if (INCLUDE_RAWDEVICE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_RAWDEVICE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/raw)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/raw)
+target_link_libraries(Waterwall RawDevice)
+endif()
 
 #layer3 receiver
 if (INCLUDE_LAYER3_RECEIVER)
@@ -228,13 +246,6 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ada
 target_link_libraries(Waterwall Bridge)
 endif()
 
-#tun device
-if (INCLUDE_TUNDEVICE)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_TUNDEVICE=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
-target_link_libraries(Waterwall TunDevice)
-endif()
 
 #http2 server
 if (INCLUDE_OPENSSL_SERVER)
