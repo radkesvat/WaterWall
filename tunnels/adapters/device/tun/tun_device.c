@@ -1,6 +1,6 @@
 #include "tun_device.h"
 #include "loggers/network_logger.h"
-#include "managers/node_manager.h"
+#include "packet_types.h"
 #include "utils/jsonutils.h"
 #include "utils/sockutils.h"
 #include "ww/devices/tun/tun.h"
@@ -17,6 +17,56 @@ typedef struct tun_device_state_s
     unsigned int  subnet_mask;
 
 } tun_device_state_t;
+
+static void printIPPacketInfo(const unsigned char *buffer, unsigned int len)
+{
+    char  src_ip[INET6_ADDRSTRLEN];
+    char  dst_ip[INET6_ADDRSTRLEN];
+    char  logbuf[2048];
+    int   rem = sizeof(logbuf);
+    char *ptr = logbuf;
+    int   ret;
+
+    uint8_t version = buffer[0] >> 4;
+
+    if (version == 4)
+    {
+        struct ipv4header *ip_header = (struct ipv4header *) buffer;
+
+        inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
+
+        ret = snprintf(ptr, rem, "Received: => From %s to %s, Data: ", src_ip, dst_ip);
+    }
+    else if (version == 6)
+    {
+        struct ipv6header *ip6_header = (struct ipv6header *) buffer;
+
+        inet_ntop(AF_INET6, &ip6_header->saddr, src_ip, INET6_ADDRSTRLEN);
+        inet_ntop(AF_INET6, &ip6_header->daddr, dst_ip, INET6_ADDRSTRLEN);
+
+        ret = snprintf(ptr, rem, "Received:  From %s to %s, Data: ", src_ip, dst_ip);
+    }
+    else
+    {
+        ret = snprintf(ptr, rem, "Received: => Unknown IP version, Data: ");
+    }
+
+    ptr += ret;
+    rem -= ret;
+
+    for (int i = 0; i < (int) min(len, 240); i++)
+    {
+        ret = snprintf(ptr, rem, "%02x ", buffer[i]);
+        ptr += ret;
+        rem -= ret;
+    }
+    *ptr = '\0';
+
+    LOGD(logbuf);
+}
+
+
 
 static void upStream(tunnel_t *self, context_t *c)
 {
@@ -49,7 +99,7 @@ static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_
     tun_device_state_t *state = TSTATE((tunnel_t *) self);
 
 #if LOG_PACKET_INFO
-    printIPPacketInfo(tdev->name, rawBuf(buf));
+    printIPPacketInfo(rawBuf(buf),bufLen(buf));
 #endif
 
     // reuseBuffer(getWorkerBufferPool(tid), buf);

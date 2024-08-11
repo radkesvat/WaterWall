@@ -29,7 +29,7 @@ struct msg_event
     shift_buffer_t *buf;
 };
 
-void printIPPacketInfo(const char *devname, const unsigned char *buffer)
+static void printIPPacketInfo(const char *devname, const unsigned char *buffer)
 {
     char  src_ip[INET6_ADDRSTRLEN];
     char  dst_ip[INET6_ADDRSTRLEN];
@@ -196,10 +196,8 @@ void writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
         else
         {
             LOGE("TunDevice: write failed, ring is full");
-
         }
         reuseBufferThreadSafe(buf);
-
     }
 }
 
@@ -247,7 +245,10 @@ bool bringTunDeviceUP(tun_device_t *tdev)
     }
     LOGD("TunDevice: device %s is now up", tdev->name);
 
-    tdev->read_thread  = hthread_create(tdev->routine_reader, tdev);
+    if (tdev->read_event_callback != NULL)
+    {
+        tdev->read_thread = hthread_create(tdev->routine_reader, tdev);
+    }
     tdev->write_thread = hthread_create(tdev->routine_writer, tdev);
     return true;
 }
@@ -271,7 +272,10 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     }
     LOGD("TunDevice: device %s is now down", tdev->name);
 
-    hthread_join(tdev->read_thread);
+    if (tdev->read_event_callback != NULL)
+    {
+        hthread_join(tdev->read_thread);
+    }
     hthread_join(tdev->write_thread);
 
     shift_buffer_t *buf;

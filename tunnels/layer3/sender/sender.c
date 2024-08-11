@@ -55,7 +55,7 @@ static void printSendingIPPacketInfo(const unsigned char *buffer, unsigned int l
     ptr += ret;
     rem -= ret;
 
-    for (int i = 0; i < (int) min(len, 16); i++)
+    for (int i = 0; i < (int) min(len, 240); i++)
     {
         ret = snprintf(ptr, rem, "%02x ", buffer[i]);
         ptr += ret;
