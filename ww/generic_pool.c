@@ -25,7 +25,10 @@ static void poolDestroyItemHandle(struct master_pool_s *pool, master_pool_item_t
     {
         gpool->destroy_item_handle(gpool, item);
     }
-    globalFree(item);
+    else
+    {
+        globalFree(item);
+    }
 }
 
 void poolReCharge(generic_pool_t *pool)
@@ -78,7 +81,7 @@ static generic_pool_t *allocateGenericPool(struct master_pool_s *mp, unsigned in
                                   .mp                  = mp,
                                   .create_item_handle  = create_h,
                                   .destroy_item_handle = destroy_h};
-    installMasterPoolAllocCallbacks(pool_ptr->mp, pool_ptr,poolCreateItemHandle, poolDestroyItemHandle);
+    installMasterPoolAllocCallbacks(pool_ptr->mp, pool_ptr, poolCreateItemHandle, poolDestroyItemHandle);
     // poolFirstCharge(pool_ptr);
     return pool_ptr;
 }
