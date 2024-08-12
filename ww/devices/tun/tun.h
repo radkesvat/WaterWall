@@ -6,7 +6,7 @@
 #include "master_pool.h"
 #include <stdint.h>
 
-#define TUN_LOG_EVERYTHING true
+#define TUN_LOG_EVERYTHING false
 
 #ifdef OS_UNIX
 typedef int tun_handle_t;

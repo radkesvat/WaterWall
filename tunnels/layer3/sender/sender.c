@@ -66,20 +66,48 @@ static void printSendingIPPacketInfo(const unsigned char *buffer, unsigned int l
     LOGD(logbuf);
 }
 
+
 static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_senderstate_t *state = TSTATE(self);
 
-    printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
+    // printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
 
     packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    unsigned int ip_header_len;
+
+    /* Tcp checksum must be recalculated even if ip header is the only changed part of packet */
 
     if (packet->ip4_header.version == 4)
     {
+        ip_header_len = packet->ip4_header.ihl * 4;
+
         packet->ip4_header.check = 0x0;
         packet->ip4_header.check = standardCheckSum((void *) packet, packet->ip4_header.ihl * 4);
+
+        if (packet->ip4_header.protocol == 6)
+        {
+            struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
+            tcpCheckSum4(&(packet->ip4_header),tcp_header);
+        }
+    }
+    else if (packet->ip6_header.version == 6)
+    {
+        ip_header_len = sizeof(struct ipv6header);
+
+        if (packet->ip6_header.nexthdr == 6)
+        {
+            struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
+            tcpCheckSum6(&(packet->ip6_header),tcp_header);
+        }
+    }
+    else
+    {
+        LOGF("Layer3Sender: non ip packets is assumed to be per filtered by receiver node");
+        exit(1);
     }
 
+   
     state->tun_device_tunnel->upStream(state->tun_device_tunnel, c);
 }
 

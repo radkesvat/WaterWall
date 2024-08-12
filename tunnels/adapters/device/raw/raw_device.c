@@ -18,7 +18,6 @@ typedef struct raw_device_state_s
     raw_device_t *rdev;
     line_t      **thread_lines;
     char         *name;
-    unsigned int  subnet_mask;
 
 } raw_device_state_t;
 
@@ -125,7 +124,7 @@ tunnel_t *newRawDevice(node_instance_context_t *instance_info)
     }
 
     // not forced
-    getStringFromJsonObject(&(state->name), settings, "device-name");
+    getStringFromJsonObjectOrDefault(&(state->name), settings, "device-name","unnamed-device");
     uint32_t fwmark = 0;
     getIntFromJsonObjectOrDefault((int *) &fwmark, settings, "mark", 0);
 

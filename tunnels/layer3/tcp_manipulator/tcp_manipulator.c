@@ -25,11 +25,6 @@ typedef struct layer3_tcp_manipulator_con_state_s
 
 } layer3_tcp_manipulator_con_state_t;
 
-static void reCalculateCheckSum(struct tcpheader *tcp_header, int len)
-{
-    tcp_header->check = 0x0;
-    tcp_header->check = tcpCheckSum(tcp_header, len);
-}
 
 static inline void handleResetBitAction(struct tcpheader *tcp_header, dynamic_value_t *reset_bit)
 {
@@ -107,11 +102,10 @@ static void upStream(tunnel_t *self, context_t *c)
     }
 
     struct tcpheader *tcp_header            = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
-    const int         transport_palyoad_len = (int) (bufLen(c->payload) - ip_header_len);
 
     handleResetBitAction(tcp_header, &(state->reset_bit_action));
 
-    reCalculateCheckSum(tcp_header, transport_palyoad_len);
+    // reCalculateCheckSum(tcp_header, transport_palyoad_len);
 
     self->up->upStream(self->up, c);
 }
