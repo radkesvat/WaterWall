@@ -1,4 +1,5 @@
 #include "signal_manager.h"
+#include "hplatform.h"
 
 static signal_manager_t *state = NULL;
 
@@ -79,6 +80,9 @@ void startSignalManager(void)
             exit(1);
         }
     }
+    
+#ifndef OS_WIN
+
     if (state->handle_sigquit)
     {
         if (signal(SIGQUIT, multiplexedSignalHandler) == SIG_ERR)
@@ -95,6 +99,9 @@ void startSignalManager(void)
             exit(1);
         }
     }
+
+#endif
+
     if (state->handle_sigill)
     {
         if (signal(SIGILL, multiplexedSignalHandler) == SIG_ERR)
@@ -135,6 +142,9 @@ void startSignalManager(void)
             exit(1);
         }
     }
+
+#ifndef OS_WIN
+
     if (state->handle_sigpipe)
     {
         if (signal(SIGPIPE, multiplexedSignalHandler) == SIG_ERR)
@@ -143,6 +153,7 @@ void startSignalManager(void)
             exit(1);
         }
     }
+
     if (state->handle_sigalrm)
     {
         if (signal(SIGALRM, multiplexedSignalHandler) == SIG_ERR)
@@ -151,4 +162,6 @@ void startSignalManager(void)
             exit(1);
         }
     }
+
+#endif
 }
