@@ -20,7 +20,7 @@ enum
 {
     kReadPacketSize          = 1500,
     kMasterMessagePoolCap    = 64,
-    kTunWriteChannelQueueMax = 128
+    kTunWriteChannelQueueMax = 256
 };
 
 struct msg_event
