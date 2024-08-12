@@ -212,8 +212,9 @@ static bool resetIptables(bool safe_mode)
     return result;
 }
 
-static void exitHook(int _)
+static void exitHook(void *userdata, int _)
 {
+    (void) (userdata);
     (void) _;
     if (state->iptables_used)
     {
@@ -1008,7 +1009,7 @@ socket_manager_state_t *createSocketManager(void)
 
 #endif
 
-    registerAtExitCallback(exitHook);
+    registerAtExitCallback(exitHook, NULL);
 
     return state;
 }

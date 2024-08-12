@@ -3,11 +3,11 @@
 
 static signal_manager_t *state = NULL;
 
-void registerAtExitCallback(SignalHandler handle)
+void registerAtExitCallback(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
     assert(state->handlers_len < kMaxSigHandles);
-    state->handlers[state->handlers_len++] = handle;
+    state->handlers[state->handlers_len++] = (signal_handler_t) {.handle = handle, .userdata = userdata};
 }
 
 signal_manager_t *createSignalManager(void)
@@ -52,12 +52,21 @@ static void multiplexedSignalHandler(int signum)
 
     for (unsigned int i = 0; i < state->handlers_len; i++)
     {
-        state->handlers[i](signum);
+        state->handlers[i].handle(state->handlers[i].userdata, signum);
     }
 
     if (state->raise_defaults)
     {
         raise(signum);
+    }
+}
+
+static void multiplexedSignalHandlerNoArg(void)
+{
+
+    for (unsigned int i = 0; i < state->handlers_len; i++)
+    {
+        state->handlers[i].handle(state->handlers[i].userdata, 0);
     }
 }
 
@@ -80,7 +89,7 @@ void startSignalManager(void)
             exit(1);
         }
     }
-    
+
 #ifndef OS_WIN
 
     if (state->handle_sigquit)
@@ -162,6 +171,7 @@ void startSignalManager(void)
             exit(1);
         }
     }
-
 #endif
+
+    atexit(multiplexedSignalHandlerNoArg);
 }
