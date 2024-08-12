@@ -22,7 +22,7 @@ option(MI_LOCAL_DYNAMIC_TLS "Use slightly slower, dlopen-compatible TLS mechanis
 option(MI_LIBC_MUSL         "Set this when linking with musl libc" OFF)
 option(MI_BUILD_SHARED      "Build shared library" OFF)
 option(MI_BUILD_STATIC      "Build static library" ON)
-option(MI_BUILD_OBJECT      "Build object library" ON)
+option(MI_BUILD_OBJECT      "Build object library" OFF)
 option(MI_BUILD_TESTS       "Build test executables" OFF)
 option(MI_DEBUG_TSAN        "Build with thread sanitizer (needs clang)" OFF)
 option(MI_DEBUG_UBSAN       "Build with undefined-behavior sanitizer (needs clang++)" OFF)
