@@ -29,6 +29,7 @@ typedef struct capture_device_state_s
 {
     capture_device_t *cdev;
     line_t          **thread_lines;
+    char             *ip;
     char             *name;
     char             *exitcmd;
     uint32_t          queue_number;
@@ -163,8 +164,8 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
         return NULL;
     }
     state->queue_number = 200 + (fastRand() % 200);
-    char *ipbuf         = NULL;
-    if (! getStringFromJsonObject(&ipbuf, settings, "ip"))
+    state->ip           = NULL;
+    if (! getStringFromJsonObject(&state->ip, settings, "ip"))
     {
         LOGF("JSON Error: CaptureDevice->settings->ip (string field) : mode is not specified or invalid");
     }
@@ -176,7 +177,7 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
     {
         if ((int) fmode.status == kDvsSourceIp)
         {
-            snprintf(cmdbuf, 100, ip_tables_enable_queue_mi, ipbuf, (int) state->queue_number);
+            snprintf(cmdbuf, 100, ip_tables_enable_queue_mi, state->ip, (int) state->queue_number);
             if (execCmd(cmdbuf).exit_code != 0)
             {
                 LOGF("CaptureDevicer: command failed: %s", cmdbuf);
@@ -184,12 +185,12 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
             }
 
             state->exitcmd = cmdbuf;
-            snprintf(cmdbuf, 100, ip_tables_disable_queue_mi, ipbuf, (int) state->queue_number);
+            snprintf(cmdbuf, 100, ip_tables_disable_queue_mi, state->ip, (int) state->queue_number);
             registerAtExitCallback(exitHook, t);
         }
         else
         {
-            //todo
+            // todo
         }
     }
 

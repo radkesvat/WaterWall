@@ -76,8 +76,9 @@ static void distributePacketPayload(capture_device_t *cdev, tid_t target_tid, sh
 static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa_type, uint16_t res_id, bool ack,
                                  void *msg, size_t size)
 {
-    size_t           nl_size = NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(size));
-    uint8_t          buff[nl_size];
+    size_t  nl_size = NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(size));
+    uint8_t buff[nl_size];
+    memset(buff, 0, nl_size);
     struct nlmsghdr *nl_hdr = (struct nlmsghdr *) buff;
 
     nl_hdr->nlmsg_len   = NLMSG_LENGTH(sizeof(struct nfgenmsg));
@@ -146,9 +147,7 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
  */
 static bool netfilterSetConfig(int netfilter_socket, uint8_t cmd, uint16_t qnum, uint16_t pf)
 {
-    struct nfqnl_msg_config_cmd nl_cmd;
-    nl_cmd.command = cmd;
-    nl_cmd.pf      = htons(pf);
+    struct nfqnl_msg_config_cmd nl_cmd = {.command = cmd, .pf = htons(pf)};
     return netfilterSendMessage(netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_CMD, qnum, true, &nl_cmd, sizeof(nl_cmd));
 }
 
@@ -157,9 +156,7 @@ static bool netfilterSetConfig(int netfilter_socket, uint8_t cmd, uint16_t qnum,
  */
 static bool netfilterSetParams(int netfilter_socket, uint16_t qnumber, uint8_t mode, uint32_t range)
 {
-    struct nfqnl_msg_config_params nl_params;
-    nl_params.copy_mode  = mode;
-    nl_params.copy_range = htonl(range);
+    struct nfqnl_msg_config_params nl_params = {.copy_mode = mode, .copy_range = htonl(range)};
     return netfilterSendMessage(netfilter_socket, NFQNL_MSG_CONFIG, NFQA_CFG_PARAMS, qnumber, true, &nl_params,
                                 sizeof(nl_params));
 }
