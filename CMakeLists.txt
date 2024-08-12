@@ -72,6 +72,7 @@ option(INCLUDE_BRIDGE "link Bridge staticly to the core"  TRUE)
 if(LINUX) # todo (other platforms)
   option(INCLUDE_TUNDEVICE "link TunDevice staticly to the core"  TRUE)
   option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  TRUE)
+  option(INCLUDE_CAPTURE "link CapTureDevice staticly to the core"  TRUE)
 endif()
 
 option(INCLUDE_OPENSSL_SERVER "link OpenSSlServer staticly to the core"  TRUE)
@@ -148,6 +149,14 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_RAWDEVICE=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/raw)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/raw)
 target_link_libraries(Waterwall RawDevice)
+endif()
+
+#capture device
+if (INCLUDE_CAPTURE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_CAPTURE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/capture)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/capture)
+target_link_libraries(Waterwall CaptureDevice)
 endif()
 
 #layer3 receiver

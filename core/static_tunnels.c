@@ -25,6 +25,10 @@
 #include "tunnels/adapters/device/raw/raw_device.h"
 #endif
 
+#ifdef INCLUDE_CAPTURE
+#include "tunnels/adapters/device/capture/caputre_device.h"
+#endif
+
 #ifdef INCLUDE_LAYER3_RECEIVER
 #include "tunnels/layer3/receiver/receiver.h"
 #endif
@@ -186,6 +190,10 @@ void loadStaticTunnelsIntoCore(void)
 
 #ifdef INCLUDE_RAWDEVICE
     USING(RawDevice);
+#endif
+
+#ifdef INCLUDE_CAPTURE
+    USING(CaptureDevice);
 #endif
 
 #ifdef INCLUDE_LAYER3_RECEIVER

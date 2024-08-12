@@ -15,7 +15,6 @@
 #include <netinet/ip.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <unistd.h>
 
 enum
 {
@@ -342,7 +341,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         if (nwrite < 0)
         {
-            LOGE("CaptureDevice: CaptureDevice: writing to Capture device failed");
+            LOGE("CaptureDevice: writing to Capture device failed");
             return 0;
         }
     }
@@ -356,11 +355,11 @@ void writeToCaptureDevce(capture_device_t *cdev, shift_buffer_t *buf)
     {
         if (closed)
         {
-            LOGE("CaptureDevice: CaptureDevice: write failed, channel was closed");
+            LOGE("CaptureDevice: write failed, channel was closed");
         }
         else
         {
-            LOGE("CaptureDevice: CaptureDevice: write failed, ring is full");
+            LOGE("CaptureDevice:write failed, ring is full");
         }
         reuseBufferThreadSafe(buf);
     }
