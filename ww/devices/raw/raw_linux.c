@@ -211,12 +211,21 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
         }
     }
 
-    generic_pool_t *sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                                    allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
-
     raw_device_t *rdev = globalMalloc(sizeof(raw_device_t));
+
+    generic_pool_t *sb_pool = NULL;
+    buffer_pool_t  *bpool   = NULL;
+    master_pool_t  *mpool   = NULL;
+    if (cb != NULL)
+    {
+        // if the user really wanted to read from raw socket
+        sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+                                        allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+        bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
+        mpool   = newMasterPoolWithCap(kMasterMessagePoolCap);
+
+        installMasterPoolAllocCallbacks(mpool, rdev, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
+    }
 
     *rdev = (raw_device_t) {.name                     = strdup(name),
                             .running                  = false,
@@ -229,10 +238,8 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
                             .writer_buffer_channel    = hchanOpen(sizeof(void *), kRawWriteChannelQueueMax),
-                            .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
+                            .reader_message_pool      = mpool,
                             .reader_buffer_pool       = bpool};
-
-    installMasterPoolAllocCallbacks(rdev->reader_message_pool, rdev, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
 
     return rdev;
 }

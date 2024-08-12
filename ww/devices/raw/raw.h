@@ -33,8 +33,8 @@ typedef struct raw_device_s
 
 } raw_device_t;
 
-bool bringRawDeviceUP(raw_device_t *tdev);
-bool bringRawDeviceDown(raw_device_t *tdev);
+bool bringRawDeviceUP(raw_device_t *rdev);
+bool bringRawDeviceDown(raw_device_t *rdev);
 
 raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb);
 
