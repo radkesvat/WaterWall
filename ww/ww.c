@@ -55,7 +55,7 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
                                            worker->shift_buffer_pool);
     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
-    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, 0);
+    worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, tid);
     GSTATE.shortcut_loops[tid] = getWorker(tid)->loop;
 }
 
