@@ -4,7 +4,7 @@
 #include "utils/jsonutils.h"
 #include "ww/devices/raw/raw.h"
 
-#define LOG_PACKET_INFO 1
+#define LOG_PACKET_INFO 0
 
 enum rawdevice_mode_dynamic_value_status
 {
@@ -39,7 +39,7 @@ static void printIPPacketInfo(const unsigned char *buffer, unsigned int len)
         inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
         inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
 
-        ret = snprintf(ptr, rem, "Received: => From %s to %s, Data: ", src_ip, dst_ip);
+        ret = snprintf(ptr, rem, "RawDevice Received: => From %s to %s, Data: ", src_ip, dst_ip);
     }
     else if (version == 6)
     {
@@ -48,11 +48,11 @@ static void printIPPacketInfo(const unsigned char *buffer, unsigned int len)
         inet_ntop(AF_INET6, &ip6_header->saddr, src_ip, INET6_ADDRSTRLEN);
         inet_ntop(AF_INET6, &ip6_header->daddr, dst_ip, INET6_ADDRSTRLEN);
 
-        ret = snprintf(ptr, rem, "Received:  From %s to %s, Data: ", src_ip, dst_ip);
+        ret = snprintf(ptr, rem, "RawDevice Received:  From %s to %s, Data: ", src_ip, dst_ip);
     }
     else
     {
-        ret = snprintf(ptr, rem, "Received: => Unknown IP version, Data: ");
+        ret = snprintf(ptr, rem, "RawDevice Received: => Unknown IP version, Data: ");
     }
 
     ptr += ret;

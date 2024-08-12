@@ -7,7 +7,7 @@
 #include "utils/procutils.h"
 #include "ww/devices/capture/capture.h"
 
-#define LOG_PACKET_INFO 1
+#define LOG_PACKET_INFO 0
 
 enum capturedevice_direction_dynamic_value_status
 {
@@ -54,7 +54,7 @@ static void printIPPacketInfo(const unsigned char *buffer, unsigned int len)
         inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
         inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
 
-        ret = snprintf(ptr, rem, "Received: => From %s to %s, Data: ", src_ip, dst_ip);
+        ret = snprintf(ptr, rem, "CaptureDevice Received: => From %s to %s, Data: ", src_ip, dst_ip);
     }
     else if (version == 6)
     {
@@ -63,11 +63,11 @@ static void printIPPacketInfo(const unsigned char *buffer, unsigned int len)
         inet_ntop(AF_INET6, &ip6_header->saddr, src_ip, INET6_ADDRSTRLEN);
         inet_ntop(AF_INET6, &ip6_header->daddr, dst_ip, INET6_ADDRSTRLEN);
 
-        ret = snprintf(ptr, rem, "Received:  From %s to %s, Data: ", src_ip, dst_ip);
+        ret = snprintf(ptr, rem, "CaptureDevice Received:  From %s to %s, Data: ", src_ip, dst_ip);
     }
     else
     {
-        ret = snprintf(ptr, rem, "Received: => Unknown IP version, Data: ");
+        ret = snprintf(ptr, rem, "CaptureDevice Received: => Unknown IP version, Data: ");
     }
 
     ptr += ret;
@@ -156,10 +156,10 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
         LOGF("JSON Error: CaptureDevice->settings->direction (string field) : direction is not specified or invalid");
         return NULL;
     }
-    dynamic_value_t mode = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
-    if ((int) mode.status < kDvsSourceIp)
+    dynamic_value_t fmode = parseDynamicNumericValueFromJsonObject(settings, "filter-mode", 2, "source-ip", "dest-ip");
+    if ((int) fmode.status < kDvsSourceIp)
     {
-        LOGF("JSON Error: CaptureDevice->settings->mode (string field) : mode is not specified or invalid");
+        LOGF("JSON Error: CaptureDevice->settings->filter-mode (string field) : mode is not specified or invalid");
         return NULL;
     }
     state->queue_number = 200 + (fastRand() % 200);
@@ -174,7 +174,7 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
 
     if ((int) directoin.status == kDvsIncoming)
     {
-        if ((int) mode.status == kDvsSourceIp)
+        if ((int) fmode.status == kDvsSourceIp)
         {
             snprintf(cmdbuf, 100, ip_tables_enable_queue_mi, ipbuf, (int) state->queue_number);
             if (execCmd(cmdbuf).exit_code != 0)
