@@ -20,9 +20,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versio
 #   [cmake]   OLD to allow FetchContent_Populate(komihash) to be called directly for now,
 #   [cmake]   but the ability to call it with declared details will be removed completely
 #   [cmake]   in a future version.
-cmake_policy(SET CMP0169 OLD) 
-set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
 
+if(POLICY CMP0169)
+  cmake_policy(SET CMP0169 OLD) 
+  set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
+endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   cmake_policy(SET CMP0069 NEW) 
