@@ -6,6 +6,7 @@
 #include "loggers/network_logger.h"
 #include "managers/memory_manager.h"
 #include "managers/node_manager.h"
+#include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
 #include "pipe_line.h"
 #include "utils/stringutils.h"
@@ -20,6 +21,7 @@ void setWW(struct ww_global_state_s *state)
     setCoreLogger(GSTATE.core_logger);
     setNetworkLogger(GSTATE.network_logger);
     setDnsLogger(GSTATE.dns_logger);
+    setSignalManager(GSTATE.signal_manager);
     setSocketManager(GSTATE.socekt_manager);
     setNodeManager(GSTATE.node_manager);
 }
@@ -28,7 +30,6 @@ struct ww_global_state_s *getWW(void)
 {
     return &(GSTATE);
 }
-
 
 static void initalizeWorker(worker_t *worker, tid_t tid)
 {
@@ -182,6 +183,11 @@ void createWW(const ww_construction_data_t init_data)
         }
     }
 
+    // [Section] setup SignalManager
+    {
+        GSTATE.signal_manager = createSignalManager();
+        startSignalManager();
+    }
     // [Section] setup SocketMangager
     {
         GSTATE.socekt_manager = createSocketManager();

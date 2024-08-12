@@ -122,6 +122,7 @@ typedef struct ww_global_state_s
     struct master_pool_s    *masterpool_line_pools;
     struct master_pool_s    *masterpool_pipeline_msg_pools;
     struct worker_s         *workers;
+    struct signal_manager_s *signal_manager;
     struct socket_manager_s *socekt_manager;
     struct node_manager_s   *node_manager;
     struct logger_s         *core_logger;

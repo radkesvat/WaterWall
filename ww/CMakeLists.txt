@@ -19,6 +19,7 @@ add_library(ww STATIC
                   pipe_line.c
                   utils/utils.c
                   utils/btree.c
+                  managers/signal_manager.c
                   managers/socket_manager.c
                   managers/node_manager.c
                   managers/memory_manager.c

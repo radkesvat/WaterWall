@@ -6,6 +6,7 @@
 #include "hmutex.h"
 #include "idle_table.h"
 #include "loggers/network_logger.h"
+#include "signal_manager.h"
 #include "stc/common.h"
 #include "tunnel.h"
 #include "utils/hashutils.h"
@@ -210,21 +211,14 @@ static bool resetIptables(bool safe_mode)
 
     return result;
 }
-static void exitHook(void)
+
+static void exitHook(int _)
 {
+    (void) _;
     if (state->iptables_used)
     {
         resetIptables(true);
     }
-}
-static void signalHandler(int signum)
-{
-    signal(signum, SIG_DFL);
-    if (signum == SIGTERM || signum == SIGINT)
-    {
-        exitHook();
-    }
-    raise(signum);
 }
 
 #ifndef IN6_IS_ADDR_V4MAPPED
@@ -253,7 +247,6 @@ static inline bool needsV4SocketStrategy(sockaddr_u *peer_addr)
     }
     return use_v4_strategy;
 }
-
 
 static void parseWhiteListOption(socket_filter_option_t *option)
 {
@@ -1015,16 +1008,7 @@ socket_manager_state_t *createSocketManager(void)
 
 #endif
 
-    if (signal(SIGTERM, signalHandler) == SIG_ERR)
-    {
-        perror("Error setting SIGTERM signal handler");
-        exit(1);
-    }
-    if (signal(SIGINT, signalHandler) == SIG_ERR)
-    {
-        perror("Error setting SIGINT signal handler");
-        exit(1);
-    }
+    registerAtExitCallback(exitHook);
 
     return state;
 }
