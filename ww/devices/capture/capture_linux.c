@@ -176,12 +176,13 @@ static bool netfilterSetQueueLength(int netfilter_socket, uint16_t qnumber, uint
 static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, shift_buffer_t *buff)
 {
     // Read a message from netlink
-    char               nl_buff[kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr)];
+    char               nl_buff[512+kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr)];
     struct sockaddr_nl nl_addr;
     socklen_t          nl_addr_len = sizeof(nl_addr);
     ssize_t            result =
         recvfrom(netfilter_socket, nl_buff, sizeof(nl_buff), 0, (struct sockaddr *) &nl_addr, &nl_addr_len);
-    if (result <= (int) sizeof(struct nlmsghdr))
+   
+   if (result <= (int) sizeof(struct nlmsghdr))
     {
         errno = EINVAL;
         return -1;
@@ -274,7 +275,7 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, shift_buff
     // eth_header->h_proto = htons(ETH_P_IP);
 
     struct iphdr *ip_header = (struct iphdr *) rawBufMut(buff);
-    memcpy(ip_header, nl_data, nl_data_size);
+    memmove(ip_header, nl_data, nl_data_size);
 
     return (int) (nl_data_size);
 }
