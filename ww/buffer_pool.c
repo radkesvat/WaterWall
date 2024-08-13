@@ -9,6 +9,7 @@
 #include <assert.h> // for assert
 #include <stdlib.h>
 #include <string.h>
+
 // #define BYPASS_BUFFERPOOL
 
 #define MEMORY_PROFILE_SMALL    (RAM_PROFILE >= kRamProfileM1Memory ? kRamProfileM1Memory : RAM_PROFILE)
@@ -157,7 +158,7 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBuffer(pool->large_buffers_default_size);
+    return newShiftBuffer(pool->shift_buffer_pool,pool->large_buffers_default_size);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -177,7 +178,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBuffer(pool->small_buffer_size);
+    return newShiftBuffer(pool->shift_buffer_pool,pool->small_buffers_default_size);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -197,7 +198,7 @@ shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    destroyShiftBuffer(b);
+    destroyShiftBuffer(pool->shift_buffer_pool,b);
     return;
 #endif
 

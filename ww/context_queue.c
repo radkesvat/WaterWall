@@ -7,6 +7,7 @@
 
 #define i_TYPE queue, context_t * // NOLINT
 #include "stc/deq.h"
+
 enum
 {
     kQCap = 16
@@ -30,8 +31,7 @@ void destroyContextQueue(context_queue_t *self)
     {
         if ((*i.ref)->payload != NULL)
         {
-            reuseBuffer(getContextBufferPool((*i.ref)), (*i.ref)->payload);
-            dropContexPayload((*i.ref));
+            reuseContextPayload(*i.ref);
         }
         destroyContext((*i.ref));
     }

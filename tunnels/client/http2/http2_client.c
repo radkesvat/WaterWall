@@ -218,10 +218,10 @@ static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con
     http2FrameHdPack(&framehd, rawBufMut(buf));
     context_t *data                = newContext(con->line);
     data->payload                  = buf;
-    con->current_stream_write_line = stream->line;
-    lockLine(stream->line);
-
     line_t *h2_line = data->line;
+    // make sure line is not freed, to be able to pause it
+    lockLine(stream->line);
+    con->current_stream_write_line = stream->line;
     con->tunnel->up->upStream(con->tunnel->up, data);
     unLockLine(stream->line);
     if (isAlive(h2_line))
