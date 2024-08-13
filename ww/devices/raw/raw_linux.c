@@ -121,7 +121,7 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         nwrite = sendto(rdev->socket, ip_header, bufLen(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        reuseBuffer(rdev->reader_buffer_pool, buf);
+        reuseBuffer(rdev->writer_buffer_pool, buf);
 
         if (nwrite < 0)
         {

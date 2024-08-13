@@ -335,7 +335,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         nwrite = sendto(cdev->socket, ip_header, bufLen(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        reuseBuffer(cdev->reader_buffer_pool, buf);
+        reuseBuffer(cdev->writer_buffer_pool, buf);
 
         if (nwrite < 0)
         {
