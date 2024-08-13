@@ -52,7 +52,7 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
     GSTATE.shortcut_shift_buffer_pools[tid] = getWorker(tid)->shift_buffer_pool;
 
     worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           worker->shift_buffer_pool);
+                                           worker->shift_buffer_pool, (0) + GSTATE.ram_profile);
     GSTATE.shortcut_buffer_pools[tid] = getWorker(tid)->buffer_pool;
 
     worker->loop               = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, tid);

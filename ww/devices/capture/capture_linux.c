@@ -52,13 +52,13 @@ static void localThreadEventReceived(hevent_t *ev)
 
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
-    reuseMasterPoolItems(msg->cdev->reader_message_pool, (void **) &msg, 1);
+    reuseMasterPoolItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
 }
 
 static void distributePacketPayload(capture_device_t *cdev, tid_t target_tid, shift_buffer_t *buf)
 {
     struct msg_event *msg;
-    popMasterPoolItems(cdev->reader_message_pool, (const void **) &(msg), 1);
+    popMasterPoolItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
     *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
 
@@ -176,13 +176,13 @@ static bool netfilterSetQueueLength(int netfilter_socket, uint16_t qnumber, uint
 static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, shift_buffer_t *buff)
 {
     // Read a message from netlink
-    char               nl_buff[512+kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr)];
+    char               nl_buff[512 + kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr)];
     struct sockaddr_nl nl_addr;
     socklen_t          nl_addr_len = sizeof(nl_addr);
     ssize_t            result =
         recvfrom(netfilter_socket, nl_buff, sizeof(nl_buff), 0, (struct sockaddr *) &nl_addr, &nl_addr_len);
-   
-   if (result <= (int) sizeof(struct nlmsghdr))
+
+    if (result <= (int) sizeof(struct nlmsghdr))
     {
         errno = EINVAL;
         return -1;
@@ -335,7 +335,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         nwrite = sendto(cdev->socket, ip_header, bufLen(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        reuseBufferThreadSafe(buf);
+        reuseBuffer(cdev->reader_buffer_pool, buf);
 
         if (nwrite < 0)
         {
@@ -346,7 +346,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
     return 0;
 }
 
-void writeToCaptureDevce(capture_device_t *cdev, shift_buffer_t *buf)
+bool writeToCaptureDevce(capture_device_t *cdev, shift_buffer_t *buf)
 {
     bool closed = false;
     if (! hchanTrySend(cdev->writer_buffer_channel, &buf, &closed))
@@ -359,8 +359,9 @@ void writeToCaptureDevce(capture_device_t *cdev, shift_buffer_t *buf)
         {
             LOGE("CaptureDevice:write failed, ring is full");
         }
-        reuseBufferThreadSafe(buf);
+        return false;
     }
+    return true;
 }
 
 bool bringCaptureDeviceUP(capture_device_t *cdev)
@@ -394,7 +395,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     shift_buffer_t *buf;
     while (hchanRecv(cdev->writer_buffer_channel, &buf))
     {
-        reuseBufferThreadSafe(buf);
+        reuseBuffer(cdev->reader_buffer_pool, buf);
     }
 
     return true;
@@ -446,8 +447,13 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
 
     generic_pool_t *sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
                                                     allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
+    buffer_pool_t  *bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                                             sb_pool, GSTATE.ram_profile);
+
+    generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, 1,
+                                                           allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    buffer_pool_t  *writer_bpool =
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool, 1);
 
     capture_device_t *cdev = globalMalloc(sizeof(capture_device_t));
 
@@ -463,10 +469,11 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
                                 .userdata                 = userdata,
                                 .writer_buffer_channel    = hchanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
                                 .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
-                                .reader_buffer_pool       = bpool};
+                                .reader_buffer_pool       = bpool,
+                                .writer_shift_buffer_pool = writer_sb_pool,
+                                .writer_buffer_pool       = writer_bpool};
 
-    installMasterPoolAllocCallbacks(cdev->reader_message_pool, cdev, allocCaptureMsgPoolHandle,
-                                    destroyCaptureMsgPoolHandle);
+    installMasterPoolAllocCallbacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 
     return cdev;
 }

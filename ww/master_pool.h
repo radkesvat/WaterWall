@@ -63,7 +63,6 @@ typedef void (*MasterPoolItemDestroyHandle)(struct master_pool_s *pool, master_p
 typedef struct master_pool_s
 {
     void                       *memptr;
-    void                       *userdata;
     hhybridmutex_t              mutex;
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;
@@ -73,11 +72,11 @@ typedef struct master_pool_s
 } ATTR_ALIGNED_LINE_CACHE  master_pool_t;
 
 static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
-                                      const unsigned int count)
+                                      const unsigned int count,void* userdata)
 {
     // for (unsigned int i = 0; i < count; i++)
     // {
-    //     iptr[i] = pool->create_item_handle(pool, pool->userdata);
+    //     iptr[i] = pool->create_item_handle(pool, userdata);
     // }
     // return;
 
@@ -97,7 +96,7 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
             }
             for (; i < count; i++)
             {
-                iptr[i] = pool->create_item_handle(pool, pool->userdata);
+                iptr[i] = pool->create_item_handle(pool, userdata);
             }
         }
 
@@ -107,16 +106,16 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
 
     for (unsigned int i = 0; i < count; i++)
     {
-        iptr[i] = pool->create_item_handle(pool, pool->userdata);
+        iptr[i] = pool->create_item_handle(pool, userdata);
     }
 }
 
 static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_item_t **const iptr,
-                                        const unsigned int count)
+                                        const unsigned int count,void* userdata)
 {
     // for (unsigned int i = 0; i < count; i++)
     // {
-    //     pool->destroy_item_handle(pool, iptr[i], pool->userdata);
+    //     pool->destroy_item_handle(pool, iptr[i], userdata);
     // }
     // return;
 
@@ -124,7 +123,7 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
     {
         for (unsigned int i = 0; i < count; i++)
         {
-            pool->destroy_item_handle(pool, iptr[i], pool->userdata);
+            pool->destroy_item_handle(pool, iptr[i], userdata);
         }
         return;
     }
@@ -145,18 +144,17 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
         }
         for (; i < count; i++)
         {
-            pool->destroy_item_handle(pool, iptr[i], pool->userdata);
+            pool->destroy_item_handle(pool, iptr[i], userdata);
         }
     }
 
     hhybridmutex_unlock(&(pool->mutex));
 }
 
-static void installMasterPoolAllocCallbacks(master_pool_t *pool, void *userdata, MasterPoolItemCreateHandle create_h,
+static void installMasterPoolAllocCallbacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
                                             MasterPoolItemDestroyHandle destroy_h)
 {
     hhybridmutex_lock(&(pool->mutex));
-    pool->userdata            = userdata;
     pool->create_item_handle  = create_h;
     pool->destroy_item_handle = destroy_h;
     hhybridmutex_unlock(&(pool->mutex));

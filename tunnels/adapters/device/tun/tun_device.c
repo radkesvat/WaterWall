@@ -66,16 +66,20 @@ static void printIPPacketInfo(const unsigned char *buffer, unsigned int len)
     LOGD(logbuf);
 }
 
-
-
 static void upStream(tunnel_t *self, context_t *c)
 {
     tun_device_state_t *state = TSTATE((tunnel_t *) self);
 
     tun_device_t *tdev = state->tdev;
-    writeToTunDevce(tdev, c->payload);
+    if (! writeToTunDevce(tdev, c->payload))
+    {
+        reuseContextPayload(c);
+    }
+    else
+    {
+        dropContexPayload(c);
+    }
 
-    dropContexPayload(c);
     destroyContext(c);
 }
 
@@ -99,7 +103,7 @@ static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_
     tun_device_state_t *state = TSTATE((tunnel_t *) self);
 
 #if LOG_PACKET_INFO
-    printIPPacketInfo(rawBuf(buf),bufLen(buf));
+    printIPPacketInfo(rawBuf(buf), bufLen(buf));
 #endif
 
     // reuseBuffer(getWorkerBufferPool(tid), buf);

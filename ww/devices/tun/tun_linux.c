@@ -98,13 +98,13 @@ static void localThreadEventReceived(hevent_t *ev)
 
     msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, tid);
 
-    reuseMasterPoolItems(msg->tdev->reader_message_pool, (void **) &msg, 1);
+    reuseMasterPoolItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
 }
 
 static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, shift_buffer_t *buf)
 {
     struct msg_event *msg;
-    popMasterPoolItems(tdev->reader_message_pool, (const void **) &(msg), 1);
+    popMasterPoolItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
     *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
@@ -172,7 +172,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 
         nwrite = write(tdev->handle, rawBuf(buf), bufLen(buf));
 
-        reuseBufferThreadSafe(buf);
+        reuseBuffer(tdev->writer_buffer_pool, buf);
 
         if (nwrite < 0)
         {
@@ -183,7 +183,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     return 0;
 }
 
-void writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
+bool writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
 {
 
     bool closed = false;
@@ -197,8 +197,9 @@ void writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
         {
             LOGE("TunDevice: write failed, ring is full");
         }
-        reuseBufferThreadSafe(buf);
+        return false;
     }
+    return true;
 }
 
 bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
@@ -281,7 +282,7 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     shift_buffer_t *buf;
     while (hchanRecv(tdev->writer_buffer_channel, &buf))
     {
-        reuseBufferThreadSafe(buf);
+        reuseBuffer(tdev->reader_buffer_pool, buf);
     }
 
     return true;
@@ -318,8 +319,13 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
 
     generic_pool_t *sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
                                                     allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
+    buffer_pool_t  *bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                                             sb_pool, (0) + GSTATE.ram_profile);
+
+    generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, 1,
+                                                           allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    buffer_pool_t  *writer_bpool =
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool, 1);
 
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
 
@@ -329,14 +335,18 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
                             .routine_reader           = routineReadFromTun,
                             .routine_writer           = routineWriteToTun,
                             .handle                   = fd,
-                            .reader_shift_buffer_pool = sb_pool,
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
                             .writer_buffer_channel    = hchanOpen(sizeof(void *), kTunWriteChannelQueueMax),
+                            .reader_shift_buffer_pool = sb_pool,
                             .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
-                            .reader_buffer_pool       = bpool};
+                            .reader_buffer_pool       = bpool,
+                            .writer_shift_buffer_pool = writer_sb_pool,
+                            .writer_buffer_pool       = writer_bpool
 
-    installMasterPoolAllocCallbacks(tdev->reader_message_pool, tdev, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
+    };
+
+    installMasterPoolAllocCallbacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
     return tdev;
 }

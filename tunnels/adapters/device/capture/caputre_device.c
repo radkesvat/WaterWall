@@ -90,9 +90,14 @@ static void upStream(tunnel_t *self, context_t *c)
     capture_device_state_t *state = TSTATE((tunnel_t *) self);
 
     capture_device_t *cdev = state->cdev;
-    writeToCaptureDevce(cdev, c->payload);
-
-    dropContexPayload(c);
+    if (! writeToCaptureDevce(cdev, c->payload))
+    {
+        reuseContextPayload(c);
+    }
+    else
+    {
+        dropContexPayload(c);
+    }
     destroyContext(c);
 }
 

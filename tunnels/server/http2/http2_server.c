@@ -355,7 +355,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (ret != (ssize_t) consumed)
             {
-                assert(false);
+                // assert(false);
                 deleteHttp2Connection(con);
                 self->dw->downStream(self->dw, newFinContext(c->line));
                 reuseContextPayload(c);

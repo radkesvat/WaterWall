@@ -33,6 +33,9 @@ typedef struct tun_device_s
     master_pool_t     *reader_message_pool;
     generic_pool_t    *reader_shift_buffer_pool;
     buffer_pool_t     *reader_buffer_pool;
+    generic_pool_t    *writer_shift_buffer_pool;
+    buffer_pool_t     *writer_buffer_pool;
+    
     TunReadEventHandle read_event_callback;
 
     struct hchan_s *writer_buffer_channel;
@@ -47,4 +50,4 @@ bool bringTunDeviceUP(tun_device_t *tdev);
 bool bringTunDeviceDown(tun_device_t *tdev);
 bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
-void writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf);
+bool writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf);

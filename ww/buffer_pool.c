@@ -38,24 +38,10 @@ struct buffer_pool_s
     shift_buffer_t **large_buffers;
     master_pool_t   *small_buffers_mp;
     shift_buffer_t **small_buffers;
-    uint8_t          tid;
 };
 
 // NOLINTEND
 
-void reuseBufferThreadSafe(shift_buffer_t *buf)
-{
-    if (isLargeBuffer(buf))
-    {
-        reset(buf, getBufferPoolLargeBufferDefaultSize());
-        reuseMasterPoolItems(GSTATE.masterpool_buffer_pools_large, (void **) &buf, 1);
-    }
-    else
-    {
-        reset(buf, getBufferPoolSmallBufferDefaultSize());
-        reuseMasterPoolItems(GSTATE.masterpool_buffer_pools_small, (void **) &buf, 1);
-    }
-}
 
 unsigned int getBufferPoolLargeBufferDefaultSize(void)
 {
@@ -74,6 +60,7 @@ bool isLargeBuffer(shift_buffer_t *buf)
 static master_pool_item_t *createLargeBufHandle(struct master_pool_s *pool, void *userdata)
 {
     (void) pool;
+
     buffer_pool_t *bpool = userdata;
     return newShiftBuffer(bpool->shift_buffer_pool, bpool->large_buffers_default_size);
 }
@@ -104,7 +91,7 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
     const size_t increase = min((pool->cap - pool->large_buffers_container_len), pool->cap / 2);
 
     popMasterPoolItems(pool->large_buffers_mp,
-                       (void const **) &(pool->large_buffers[pool->large_buffers_container_len]), increase);
+                       (void const **) &(pool->large_buffers[pool->large_buffers_container_len]), increase, pool);
 
     pool->large_buffers_container_len += increase;
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
@@ -117,7 +104,7 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
     const size_t increase = min((pool->cap - pool->small_buffers_container_len), pool->cap / 2);
 
     popMasterPoolItems(pool->small_buffers_mp,
-                       (void const **) &(pool->small_buffers[pool->small_buffers_container_len]), increase);
+                       (void const **) &(pool->small_buffers[pool->small_buffers_container_len]), increase, pool);
 
     pool->small_buffers_container_len += increase;
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
@@ -142,7 +129,8 @@ static void shrinkLargeBuffers(buffer_pool_t *pool)
     const size_t decrease = min(pool->large_buffers_container_len, pool->cap / 2);
 
     reuseMasterPoolItems(pool->large_buffers_mp,
-                         (void **) &(pool->large_buffers[pool->large_buffers_container_len - decrease]), decrease);
+                         (void **) &(pool->large_buffers[pool->large_buffers_container_len - decrease]), decrease,
+                         pool);
 
     pool->large_buffers_container_len -= decrease;
 
@@ -156,7 +144,8 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
     const size_t decrease = min(pool->small_buffers_container_len, pool->cap / 2);
 
     reuseMasterPoolItems(pool->small_buffers_mp,
-                         (void **) &(pool->small_buffers[pool->small_buffers_container_len - decrease]), decrease);
+                         (void **) &(pool->small_buffers[pool->small_buffers_container_len - decrease]), decrease,
+                         pool);
 
     pool->small_buffers_container_len -= decrease;
 
@@ -285,8 +274,8 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
         .small_buffers    = globalMalloc(container_len),
     };
 
-    installMasterPoolAllocCallbacks(ptr_pool->large_buffers_mp, ptr_pool, createLargeBufHandle, destroyLargeBufHandle);
-    installMasterPoolAllocCallbacks(ptr_pool->small_buffers_mp, ptr_pool, createSmallBufHandle, destroySmallBufHandle);
+    installMasterPoolAllocCallbacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
+    installMasterPoolAllocCallbacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
 
 #ifdef DEBUG
     memset(ptr_pool->large_buffers, 0xFE, container_len);
@@ -297,7 +286,8 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
     return ptr_pool;
 }
 
-buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, generic_pool_t *sb_pool)
+buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, generic_pool_t *sb_pool,
+                                unsigned int pool_width)
 {
-    return allocBufferPool(mp_large, mp_small, sb_pool, BUFFERPOOL_CONTAINER_LEN, LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE);
+    return allocBufferPool(mp_large, mp_small, sb_pool, pool_width, LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE);
 }

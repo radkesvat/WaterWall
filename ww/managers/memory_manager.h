@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 
-// #define ALLOCATOR_BYPASS // switch to stdlib allocators
+#define ALLOCATOR_BYPASS // switch to stdlib allocators
 
 
 

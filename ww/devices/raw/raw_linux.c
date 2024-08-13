@@ -46,13 +46,13 @@ static void localThreadEventReceived(hevent_t *ev)
 
     msg->rdev->read_event_callback(msg->rdev, msg->rdev->userdata, msg->buf, tid);
 
-    reuseMasterPoolItems(msg->rdev->reader_message_pool, (void **) &msg, 1);
+    reuseMasterPoolItems(msg->rdev->reader_message_pool, (void **) &msg, 1, msg->rdev);
 }
 
 static void distributePacketPayload(raw_device_t *rdev, tid_t target_tid, shift_buffer_t *buf)
 {
     struct msg_event *msg;
-    popMasterPoolItems(rdev->reader_message_pool, (const void **) &(msg), 1);
+    popMasterPoolItems(rdev->reader_message_pool, (const void **) &(msg), 1, rdev);
 
     *msg = (struct msg_event) {.rdev = rdev, .buf = buf};
 
@@ -121,7 +121,7 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         nwrite = sendto(rdev->socket, ip_header, bufLen(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        reuseBufferThreadSafe(buf);
+        reuseBuffer(rdev->reader_buffer_pool, buf);
 
         if (nwrite < 0)
         {
@@ -132,7 +132,7 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
     return 0;
 }
 
-void writeToRawDevce(raw_device_t *rdev, shift_buffer_t *buf)
+bool writeToRawDevce(raw_device_t *rdev, shift_buffer_t *buf)
 {
     bool closed = false;
     if (! hchanTrySend(rdev->writer_buffer_channel, &buf, &closed))
@@ -145,8 +145,9 @@ void writeToRawDevce(raw_device_t *rdev, shift_buffer_t *buf)
         {
             LOGE("RawDevice: write failed, ring is full");
         }
-        reuseBufferThreadSafe(buf);
+        return false;
     }
+    return true;
 }
 
 bool bringRawDeviceUP(raw_device_t *rdev)
@@ -186,7 +187,7 @@ bool bringRawDeviceDown(raw_device_t *rdev)
     shift_buffer_t *buf;
     while (hchanRecv(rdev->writer_buffer_channel, &buf))
     {
-        reuseBufferThreadSafe(buf);
+        reuseBuffer(rdev->reader_buffer_pool, buf);
     }
 
     return true;
@@ -221,11 +222,17 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
         // if the user really wanted to read from raw socket
         sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
                                         allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-        bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool);
+        bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool,
+                                   GSTATE.ram_profile);
         mpool   = newMasterPoolWithCap(kMasterMessagePoolCap);
 
-        installMasterPoolAllocCallbacks(mpool, rdev, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
+        installMasterPoolAllocCallbacks(mpool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
     }
+
+    generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, GSTATE.ram_profile,
+                                                           allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    buffer_pool_t  *writer_bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large,
+                                                      GSTATE.masterpool_buffer_pools_small, sb_pool, GSTATE.ram_profile);
 
     *rdev = (raw_device_t) {.name                     = strdup(name),
                             .running                  = false,
@@ -239,7 +246,9 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
                             .userdata                 = userdata,
                             .writer_buffer_channel    = hchanOpen(sizeof(void *), kRawWriteChannelQueueMax),
                             .reader_message_pool      = mpool,
-                            .reader_buffer_pool       = bpool};
+                            .reader_buffer_pool       = bpool,
+                            .writer_shift_buffer_pool = writer_sb_pool,
+                            .writer_buffer_pool       = writer_bpool};
 
     return rdev;
 }

@@ -74,9 +74,14 @@ static void upStream(tunnel_t *self, context_t *c)
     raw_device_state_t *state = TSTATE((tunnel_t *) self);
 
     raw_device_t *rdev = state->rdev;
-    writeToRawDevce(rdev, c->payload);
-
-    dropContexPayload(c);
+    if (! writeToRawDevce(rdev, c->payload))
+    {
+        reuseContextPayload(c);
+    }
+    else
+    {
+        dropContexPayload(c);
+    }
     destroyContext(c);
 }
 
@@ -124,7 +129,7 @@ tunnel_t *newRawDevice(node_instance_context_t *instance_info)
     }
 
     // not forced
-    getStringFromJsonObjectOrDefault(&(state->name), settings, "device-name","unnamed-device");
+    getStringFromJsonObjectOrDefault(&(state->name), settings, "device-name", "unnamed-device");
     uint32_t fwmark = 0;
     getIntFromJsonObjectOrDefault((int *) &fwmark, settings, "mark", 0);
 
