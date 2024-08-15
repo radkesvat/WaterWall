@@ -50,6 +50,7 @@ context_t *contextQueuePop(context_queue_t *self)
     context_t *context = queue_pull_front(&self->q);
     return context;
 }
+
 size_t contextQueueLen(context_queue_t *self)
 {
     return queue_size(&self->q);

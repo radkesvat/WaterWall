@@ -105,8 +105,6 @@ static void upStream(tunnel_t *self, context_t *c)
 
     handleResetBitAction(tcp_header, &(state->reset_bit_action));
 
-    // reCalculateCheckSum(tcp_header, transport_palyoad_len);
-
     self->up->upStream(self->up, c);
 }
 

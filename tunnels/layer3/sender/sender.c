@@ -66,7 +66,6 @@ static void printSendingIPPacketInfo(const unsigned char *buffer, unsigned int l
     LOGD(logbuf);
 }
 
-
 static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_senderstate_t *state = TSTATE(self);
@@ -88,7 +87,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (packet->ip4_header.protocol == 6)
         {
             struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
-            tcpCheckSum4(&(packet->ip4_header),tcp_header);
+            tcpCheckSum4(&(packet->ip4_header), tcp_header);
         }
     }
     else if (packet->ip6_header.version == 6)
@@ -98,7 +97,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (packet->ip6_header.nexthdr == 6)
         {
             struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
-            tcpCheckSum6(&(packet->ip6_header),tcp_header);
+            tcpCheckSum6(&(packet->ip6_header), tcp_header);
         }
     }
     else
@@ -107,7 +106,6 @@ static void upStream(tunnel_t *self, context_t *c)
         exit(1);
     }
 
-   
     state->tun_device_tunnel->upStream(state->tun_device_tunnel, c);
 }
 

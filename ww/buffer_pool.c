@@ -48,6 +48,7 @@ unsigned int getBufferPoolLargeBufferDefaultSize(void)
 {
     return LARGE_BUFFER_SIZE;
 }
+
 unsigned int getBufferPoolSmallBufferDefaultSize(void)
 {
     return SMALL_BUFFER_SIZE;
@@ -197,6 +198,7 @@ shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
+    
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
     destroyShiftBuffer(pool->shift_buffer_pool,b);
     return;

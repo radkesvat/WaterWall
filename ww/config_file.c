@@ -34,10 +34,12 @@ void acquireUpdateLock(config_file_t *state)
 {
     hmutex_lock(&(state->guard));
 }
+
 void releaseUpdateLock(config_file_t *state)
 {
     hmutex_unlock(&(state->guard));
 }
+
 // only use if you acquired lock before
 void unsafeCommitChanges(config_file_t *state)
 {

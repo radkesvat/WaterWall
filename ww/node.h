@@ -19,6 +19,7 @@ enum node_flags
     // this node can be a chain head (begin of the chain)
     kNodeFlagChainHead = (1 << 1)
 };
+
 typedef struct tunnel_metadata_s
 {
     int32_t         version;
@@ -43,4 +44,5 @@ typedef struct node_s
     tunnel_metadata_t       metadata;
     uint32_t                refrenced;
     bool                    route_starter;
+    
 } node_t;

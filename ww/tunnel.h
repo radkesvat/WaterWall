@@ -124,8 +124,6 @@ typedef struct line_s
 
     and it can contain a payload buffer, or be just a flag context
 
-    the only flag that also has a payload is `first` , other flags have no payload
-
 */
 typedef struct context_s
 {
@@ -408,9 +406,10 @@ static inline buffer_pool_t *getContextBufferPool(const context_t *const c)
     return getWorkerBufferPool(c->line->tid);
 }
 
-// same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
-// build
-
+/*
+    same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
+    build
+*/
 static inline void dropContexPayload(context_t *const c)
 {
 #if defined(RELEASE)

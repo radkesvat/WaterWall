@@ -28,6 +28,7 @@ struct idle_table_s
     hhybridmutex_t mutex;
     uint64_t       last_update_ms;
     uintptr_t      memptr;
+
 } ATTR_ALIGNED_LINE_CACHE;
 
 void idleCallBack(htimer_t *timer);
@@ -92,6 +93,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     hhybridmutex_unlock(&(self->mutex));
     return item;
 }
+
 void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
     if (item->removed)
@@ -104,6 +106,7 @@ void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_
     heapq_idles_t_make_heap(&self->hqueue);
     hhybridmutex_unlock(&(self->mutex));
 }
+
 idle_item_t *getIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key)
 {
     hhybridmutex_lock(&(self->mutex));

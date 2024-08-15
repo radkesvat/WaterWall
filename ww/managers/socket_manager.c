@@ -344,6 +344,7 @@ static inline void incrementDistributeTid(void)
         state->last_round_tid = 0;
     }
 }
+
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
 
@@ -653,6 +654,7 @@ static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
     }
     filter->v6_dualstack = hio_localaddr(filter->listen_io)->sa_family == AF_INET6;
 }
+
 static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)

@@ -28,7 +28,7 @@ enum mode_dynamic_value_status
     kDvsSourceMode = kDvsFirstOption,
     kDvsDestMode
 };
-struct ip6_hdr;
+
 
 static void upStream(tunnel_t *self, context_t *c)
 {
