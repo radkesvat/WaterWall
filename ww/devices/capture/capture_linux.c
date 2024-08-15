@@ -295,10 +295,17 @@ static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
 
+        if (nread == 0)
+        {
+            reuseBuffer(cdev->reader_buffer_pool, buf);
+            LOGW("CaptureDevice: Exit read routine due to End Of File");
+            return 0;
+        }
+
         if (nread < 0)
         {
-            LOGW("CaptureDevice: failed to read packet from netfilter socket");
             reuseBuffer(cdev->reader_buffer_pool, buf);
+            LOGW("CaptureDevice: failed to read a packet from netfilter socket, retrying...");
             continue;
         }
 
@@ -337,9 +344,20 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         reuseBuffer(cdev->writer_buffer_pool, buf);
 
+        if (nwrite == 0)
+        {
+            LOGW("CaptureDevice: Exit write routine due to End Of File");
+            return 0;
+        }
+        
         if (nwrite < 0)
         {
-            LOGE("CaptureDevice: writing to Capture device failed");
+            LOGW("CaptureDevice: writing a packet to Capture device failed, code: %d", (int) nwrite);
+            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            {
+                continue;
+            }
+            LOGE("CaptureDevice: Exit write routine due to critical error");
             return 0;
         }
     }
@@ -445,10 +463,11 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
         LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kQueueLen);
     }
 
-    generic_pool_t *reader_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                                    allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *reader_bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                             reader_sb_pool, GSTATE.ram_profile);
+    generic_pool_t *reader_sb_pool =
+        newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+                              allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    buffer_pool_t *reader_bpool = createBufferPool(
+        GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, reader_sb_pool, GSTATE.ram_profile);
 
     generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, 1,
                                                            allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);

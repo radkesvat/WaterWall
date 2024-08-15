@@ -131,10 +131,23 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 
         nread = read(tdev->handle, rawBufMut(buf), kReadPacketSize);
 
+        if (nread == 0)
+        {
+            reuseBuffer(tdev->reader_buffer_pool, buf);
+            LOGW("TunDevice: Exit read routine due to End Of File");
+            return 0;
+        }
+
         if (nread < 0)
         {
-            LOGE("TunDevice: reading from TUN device failed");
             reuseBuffer(tdev->reader_buffer_pool, buf);
+
+            LOGE("TunDevice: reading a packet from TUN device failed, code: %d", (int) nread);
+            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            {
+                continue;
+            }
+            LOGE("TunDevice: Exit read routine due to critical error");
             return 0;
         }
 
@@ -170,13 +183,26 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
             return 0;
         }
 
+        assert(bufLen(buf) > sizeof(struct iphdr));
+
         nwrite = write(tdev->handle, rawBuf(buf), bufLen(buf));
 
         reuseBuffer(tdev->writer_buffer_pool, buf);
 
+        if (nwrite == 0)
+        {
+            LOGW("TunDevice: Exit write routine due to End Of File");
+            return 0;
+        }
+
         if (nwrite < 0)
         {
-            LOGE("TunDevice: writing to TUN device failed");
+            LOGW("TunDevice: writing a packet to TUN device failed, code: %d", (int) nwrite);
+            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            {
+                continue;
+            }
+            LOGE("TunDevice: Exit write routine due to critical error");
             return 0;
         }
     }
@@ -185,6 +211,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 
 bool writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
 {
+    assert(bufLen(buf) > sizeof(struct iphdr));
 
     bool closed = false;
     if (! hchanTrySend(tdev->writer_buffer_channel, &buf, &closed))
@@ -317,10 +344,12 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
         return NULL;
     }
 
-    generic_pool_t *reader_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                                    allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *reader_bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                             reader_sb_pool, (0) + GSTATE.ram_profile);
+    generic_pool_t *reader_sb_pool =
+        newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+                              allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+    buffer_pool_t *reader_bpool =
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, reader_sb_pool,
+                         (0) + GSTATE.ram_profile);
 
     generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, 1,
                                                            allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);

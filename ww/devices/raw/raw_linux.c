@@ -81,10 +81,23 @@ static HTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 
         nread = recvfrom(rdev->socket, rawBufMut(buf), kReadPacketSize, 0, &saddr, (socklen_t *) &saddr_len);
 
+        if (nread == 0)
+        {
+            reuseBuffer(rdev->reader_buffer_pool, buf);
+            LOGW("RawDevice: Exit read routine due to End Of File");
+            return 0;
+        }
+
         if (nread < 0)
         {
-            LOGE("RawDevice: reading from RAW device failed");
             reuseBuffer(rdev->reader_buffer_pool, buf);
+
+            LOGE("RawDevice: reading a packet from RAW device failed, code: %d", (int) nread);
+            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            {
+                continue;
+            }
+            LOGE("RawDevice: Exit read routine due to critical error");
             return 0;
         }
 
@@ -115,6 +128,8 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             return 0;
         }
 
+        assert(bufLen(buf) > sizeof(struct iphdr));
+
         struct iphdr *ip_header = (struct iphdr *) rawBuf(buf);
 
         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
@@ -123,9 +138,20 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         reuseBuffer(rdev->writer_buffer_pool, buf);
 
+        if (nwrite == 0)
+        {
+            LOGW("RawDevice: Exit write routine due to End Of File");
+            return 0;
+        }
+
         if (nwrite < 0)
         {
-            LOGE("RawDevice: writing to RAW device failed");
+            LOGW("RawDevice: writing a packet to RAW  device failed, code: %d", (int) nwrite);
+            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            {
+                continue;
+            }
+            LOGE("RawDevice: Exit write routine due to critical error");
             return 0;
         }
     }
@@ -134,6 +160,8 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
 bool writeToRawDevce(raw_device_t *rdev, shift_buffer_t *buf)
 {
+    assert(bufLen(buf) > sizeof(struct iphdr));
+
     bool closed = false;
     if (! hchanTrySend(rdev->writer_buffer_channel, &buf, &closed))
     {
@@ -214,26 +242,25 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
 
     raw_device_t *rdev = globalMalloc(sizeof(raw_device_t));
 
-    generic_pool_t *reader_sb_pool = NULL;
-    buffer_pool_t  *reader_bpool   = NULL;
-    master_pool_t  *reader_message_pool   = NULL;
+    generic_pool_t *reader_sb_pool      = NULL;
+    buffer_pool_t  *reader_bpool        = NULL;
+    master_pool_t  *reader_message_pool = NULL;
     if (cb != NULL)
     {
         // if the user really wanted to read from raw socket
         reader_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                        allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-        reader_bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, reader_sb_pool,
-                                   GSTATE.ram_profile);
-        reader_message_pool   = newMasterPoolWithCap(kMasterMessagePoolCap);
+                                               allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+        reader_bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                                          reader_sb_pool, GSTATE.ram_profile);
+        reader_message_pool = newMasterPoolWithCap(kMasterMessagePoolCap);
 
         installMasterPoolAllocCallbacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
     }
 
-
     generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, GSTATE.ram_profile,
                                                            allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *writer_bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large,
-                                                      GSTATE.masterpool_buffer_pools_small, writer_sb_pool, GSTATE.ram_profile);
+    buffer_pool_t  *writer_bpool   = createBufferPool(
+        GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, writer_sb_pool, GSTATE.ram_profile);
 
     *rdev = (raw_device_t) {.name                     = strdup(name),
                             .running                  = false,
