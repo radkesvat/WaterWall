@@ -35,7 +35,6 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
 {
     *worker = (worker_t) {.tid = tid};
 
-    worker->loop              = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, tid);
     worker->context_pool      = newGenericPoolWithCap(GSTATE.masterpool_context_pools, (16) + GSTATE.ram_profile,
                                                       allocContextPoolHandle, destroyContextPoolHandle);
     worker->line_pool         = newGenericPoolWithCap(GSTATE.masterpool_line_pools, (8) + GSTATE.ram_profile,
@@ -46,6 +45,9 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
                                                       allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            worker->shift_buffer_pool, (0) + GSTATE.ram_profile);
+
+    // note that loops depeneds on worker->buffer_pool
+    worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, tid);
 
     GSTATE.shortcut_context_pools[tid]      = worker->context_pool;
     GSTATE.shortcut_line_pools[tid]         = worker->line_pool;
