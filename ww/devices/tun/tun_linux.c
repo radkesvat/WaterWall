@@ -317,15 +317,15 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
         return NULL;
     }
 
-    generic_pool_t *sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
+    generic_pool_t *reader_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
                                                     allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                             sb_pool, (0) + GSTATE.ram_profile);
+    buffer_pool_t  *reader_bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                                             reader_sb_pool, (0) + GSTATE.ram_profile);
 
     generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, 1,
                                                            allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     buffer_pool_t  *writer_bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, sb_pool, 1);
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, writer_sb_pool, 1);
 
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
 
@@ -338,9 +338,9 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
                             .writer_buffer_channel    = hchanOpen(sizeof(void *), kTunWriteChannelQueueMax),
-                            .reader_shift_buffer_pool = sb_pool,
+                            .reader_shift_buffer_pool = reader_sb_pool,
                             .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
-                            .reader_buffer_pool       = bpool,
+                            .reader_buffer_pool       = reader_bpool,
                             .writer_shift_buffer_pool = writer_sb_pool,
                             .writer_buffer_pool       = writer_bpool
 
