@@ -21,7 +21,7 @@ static void defaultDestroyHandle(struct master_pool_s *pool, master_pool_item_t 
 master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
 {
 
-    pool_width = (max(1, pool_width) + 15) & ~0x0F;
+    pool_width = max(1, pool_width);
     // half of the pool is used, other half is free at startup
     pool_width = 2 * pool_width;
 

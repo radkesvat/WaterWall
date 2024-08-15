@@ -1,8 +1,8 @@
 #pragma once
 
 #include "hmutex.h"
-#include "ww.h"
 #include "utils/mathutils.h"
+#include "ww.h"
 
 /*
     Master Pool
@@ -69,10 +69,10 @@ typedef struct master_pool_s
     atomic_uint                 len;
     const unsigned int          cap;
     void                       *available[];
-} ATTR_ALIGNED_LINE_CACHE  master_pool_t;
+} ATTR_ALIGNED_LINE_CACHE master_pool_t;
 
 static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
-                                      const unsigned int count,void* userdata)
+                                      const unsigned int count, void *userdata)
 {
     // for (unsigned int i = 0; i < count; i++)
     // {
@@ -85,19 +85,20 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
         hhybridmutex_lock(&(pool->mutex));
         const unsigned int tmp_len  = atomic_load_explicit(&(pool->len), memory_order_relaxed);
         const unsigned int consumed = min(tmp_len, count);
+        unsigned int       i        = 0;
+
         if (consumed > 0)
         {
             atomic_fetch_add_explicit(&(pool->len), -consumed, memory_order_relaxed);
             const unsigned int pbase = (tmp_len - consumed);
-            unsigned int       i     = 0;
             for (; i < consumed; i++)
             {
                 iptr[i] = pool->available[pbase + i];
             }
-            for (; i < count; i++)
-            {
-                iptr[i] = pool->create_item_handle(pool, userdata);
-            }
+        }
+        for (; i < count; i++)
+        {
+            iptr[i] = pool->create_item_handle(pool, userdata);
         }
 
         hhybridmutex_unlock(&(pool->mutex));
@@ -111,7 +112,7 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
 }
 
 static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_item_t **const iptr,
-                                        const unsigned int count,void* userdata)
+                                        const unsigned int count, void *userdata)
 {
     // for (unsigned int i = 0; i < count; i++)
     // {
@@ -132,20 +133,18 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
 
     const unsigned int tmp_len  = atomic_load_explicit(&(pool->len), memory_order_relaxed);
     const unsigned int consumed = min(pool->cap - tmp_len, count);
+    unsigned int       i        = 0;
 
     atomic_fetch_add_explicit(&(pool->len), consumed, memory_order_relaxed);
 
-    if (consumed > 0)
+    for (; i < consumed; i++)
     {
-        unsigned int i = 0;
-        for (; i < consumed; i++)
-        {
-            pool->available[i + tmp_len] = iptr[i];
-        }
-        for (; i < count; i++)
-        {
-            pool->destroy_item_handle(pool, iptr[i], userdata);
-        }
+        pool->available[i + tmp_len] = iptr[i];
+    }
+
+    for (; i < count; i++)
+    {
+        pool->destroy_item_handle(pool, iptr[i], userdata);
     }
 
     hhybridmutex_unlock(&(pool->mutex));
