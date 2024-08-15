@@ -46,7 +46,7 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
     worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            worker->shift_buffer_pool, (0) + GSTATE.ram_profile);
 
-    // note that loops depeneds on worker->buffer_pool
+    // note that loop depeneds on worker->buffer_pool
     worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, tid);
 
     GSTATE.shortcut_context_pools[tid]      = worker->context_pool;
