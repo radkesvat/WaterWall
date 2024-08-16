@@ -200,7 +200,7 @@ static mux_client_con_state_t *grabConnection(tunnel_t *self, tid_t tid)
             state->threadlocal_cons[tid].round_index = 0;
         }
 
-        if (vec_cons_size(vector) <= i)
+        if ((unsigned int)vec_cons_size(vector) <= i)
         {
             mux_client_con_state_t *con = createMainConnection(self, tid);
             vec_cons_push(vector, con);
