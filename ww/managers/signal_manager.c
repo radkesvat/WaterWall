@@ -47,7 +47,8 @@ static void multiplexedSignalHandler(int signum)
 {
     char message[50];
     int  length = snprintf(message, sizeof(message), "SignalManager: Received signal %d\n", signum);
-    write(STDOUT_FILENO, message, length);
+    int unused = write(STDOUT_FILENO, message, length);
+    (void) unused;
 
     if (state->raise_defaults)
     {
@@ -68,7 +69,8 @@ static void multiplexedSignalHandler(int signum)
 static void multiplexedSignalHandlerNoArg(void)
 {
     static const char kMessage[] = "SignalManager: Executing exit callabck\n";
-    write(STDOUT_FILENO, kMessage, sizeof(kMessage) - 1);
+    int  unused = write(STDOUT_FILENO, kMessage, sizeof(kMessage) - 1);
+    (void) unused;
 
     for (unsigned int i = 0; i < state->handlers_len; i++)
     {
