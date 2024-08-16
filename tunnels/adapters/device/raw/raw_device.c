@@ -8,9 +8,9 @@
 
 enum rawdevice_mode_dynamic_value_status
 {
-    kDvsRead = kDvsFirstOption,
-    kDvsWrite,
-    kDvsReadWrite
+    kDvsWatcher = kDvsFirstOption,
+    kDvsInjector,
+    kDvsBoth
 };
 
 typedef struct raw_device_state_s
@@ -133,8 +133,8 @@ tunnel_t *newRawDevice(node_instance_context_t *instance_info)
     uint32_t fwmark = 0;
     getIntFromJsonObjectOrDefault((int *) &fwmark, settings, "mark", 0);
 
-    dynamic_value_t mode = parseDynamicNumericValueFromJsonObject(settings, "mode", 3, "R", "W", "RW");
-    if ((int) mode.status < kDvsRead)
+    dynamic_value_t mode = parseDynamicNumericValueFromJsonObject(settings, "mode", 3, "watcher", "injector", "watcher/injector");
+    if ((int) mode.status < kDvsWatcher)
     {
         LOGF("JSON Error: RawDevice->settings->mode (string field) : mode is not specified or invalid");
         return NULL;
@@ -148,12 +148,13 @@ tunnel_t *newRawDevice(node_instance_context_t *instance_info)
 
     tunnel_t *t = newTunnel();
 
-    if ((int) mode.status == kDvsRead || (int) mode.status == kDvsReadWrite)
+    if ((int) mode.status == kDvsWatcher || (int) mode.status == kDvsBoth)
     {
         state->rdev = createRawDevice(state->name, fwmark, t, onIPPacketReceived);
     }
     else
     {
+        // we are not going to read, so pass read call back as null therfore no buffers for read will be allocated
         state->rdev = createRawDevice(state->name, fwmark, t, NULL);
     }
 

@@ -63,7 +63,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (WW_UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
-            LOGE("TcpManipulator: ipv4 packet too short for TCP header");
+            LOGW("TcpManipulator: dropped an ipv4 packet, length is too short for TCP header");
             reuseContextPayload(c);
             destroyContext(c);
             return;
@@ -82,7 +82,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (WW_UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
-            LOGE("TcpManipulator: ipv6 packet too short for TCP header");
+            LOGW("TcpManipulator: dropped an ipv6 packet, length is too short for TCP header");
             reuseContextPayload(c);
             destroyContext(c);
             return;
@@ -97,7 +97,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        LOGF("TcpManipulator: non ip packets is assumed to be per filtered by receiver node");
+        LOGF("TcpManipulator: non ip packets is assumed to be pre-filtered by receiver node");
         exit(1);
     }
 
