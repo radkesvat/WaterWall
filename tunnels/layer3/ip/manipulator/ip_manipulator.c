@@ -1,6 +1,4 @@
 #include "ip_manipulator.h"
-#include "frand.h"
-#include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "packet_types.h"
 #include "utils/jsonutils.h"
@@ -78,6 +76,7 @@ static inline void handleProtocolAction4(struct ipv4header *ip_header, dynamic_v
         ip_header->protocol = protocol_action->value;
     }
 }
+
 static inline void handleProtocolAction6(struct ipv6header *ip_header, dynamic_value_t *protocol_action)
 {
     if (protocol_action->status != kDvsEmpty)
@@ -122,7 +121,7 @@ static void downStream(tunnel_t *self, context_t *c)
     destroyContext(c);
 }
 
-tunnel_t *newLayer3IPManipulator(node_instance_context_t *instance_info)
+tunnel_t *newLayer3IpManipulator(node_instance_context_t *instance_info)
 {
     layer3_ip_manipulator_state_t *state = globalMalloc(sizeof(layer3_ip_manipulator_state_t));
     memset(state, 0, sizeof(layer3_ip_manipulator_state_t));
@@ -130,14 +129,14 @@ tunnel_t *newLayer3IPManipulator(node_instance_context_t *instance_info)
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: Layer3IPManipulator->settings (object field) : The object was empty or invalid");
+        LOGF("JSON Error: Layer3IpManipulator->settings (object field) : The object was empty or invalid");
         return NULL;
     }
 
     state->protocol_action = parseDynamicNumericValueFromJsonObject(
-        settings, "bit-reset", 36, "ICMP", "IGMP", "TCP", "EGP", "UDP", "RDP", "DCCP", "IPv6", "IPv6-Frag", "RSVP",
-        "GRE", "ESP", "AH", "ICMPv6", "NoNext", "DestOpts", "EIGRP", "OSPF", "IPIP", "PIM", "PCAP", "VRRP", "L2TP",
-        "ISIS", "SCTP", "FC", "UDPLite", "MPLS", "MANET", "HIP", "Shim6", "WESP", "ROHC", "Test1", "Test2", "Reserved");
+        settings, "bit-reset", 36, "icmp", "igmp", "tcp", "egp", "udp", "rdp", "dccp", "ipv6", "ipv6-frag", "rsvp",
+        "gre", "esp", "ah", "icmpv6", "nonext", "destopts", "eigrp", "ospf", "ipip", "pim", "pcap", "vrrp", "l2tp",
+        "isis", "sctp", "fc", "udplite", "mpls", "manet", "hip", "shim6", "wesp", "rohc", "test1", "test2", "reserved");
 
     int map_array[36] = {1,  2,   6,   8,   17,  27,  33,  41,  43,  44,  47,  50,  51,  58,  59,  60,  88,  89,
                          94, 103, 108, 112, 115, 124, 132, 133, 136, 137, 138, 139, 140, 141, 142, 253, 254, 255};
@@ -146,6 +145,7 @@ tunnel_t *newLayer3IPManipulator(node_instance_context_t *instance_info)
     {
         state->protocol_action.value = map_array[state->protocol_action.status];
     }
+
     tunnel_t *t = newTunnel();
 
     t->state      = state;
@@ -155,20 +155,20 @@ tunnel_t *newLayer3IPManipulator(node_instance_context_t *instance_info)
     return t;
 }
 
-api_result_t apiLayer3IPManipulator(tunnel_t *self, const char *msg)
+api_result_t apiLayer3IpManipulator(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
     return (api_result_t) {0};
 }
 
-tunnel_t *destroyLayer3IPManipulator(tunnel_t *self)
+tunnel_t *destroyLayer3IpManipulator(tunnel_t *self)
 {
     (void) (self);
     return NULL;
 }
 
-tunnel_metadata_t getMetadataLayer3IPManipulator(void)
+tunnel_metadata_t getMetadataLayer3IpManipulator(void)
 {
     return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }
