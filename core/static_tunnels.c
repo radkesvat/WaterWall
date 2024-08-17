@@ -25,7 +25,7 @@
 #include "tunnels/adapters/device/raw/raw_device.h"
 #endif
 
-#ifdef INCLUDE_CAPTURE
+#ifdef INCLUDE_CAPTUREDEVICE
 #include "tunnels/adapters/device/capture/caputre_device.h"
 #endif
 
@@ -38,15 +38,15 @@
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
-#include "tunnels/layer3/ip_routing_table/ip_routing_table.h"
+#include "tunnels/layer3/ip/routing_table/ip_routing_table.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_OVERRIDER
-#include "tunnels/layer3/ip_overrider/ip_overrider.h"
+#include "tunnels/layer3/ip/overrider/ip_overrider.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_TCP_MANIPULATOR
-#include "tunnels/layer3/tcp_manipulator/tcp_manipulator.h"
+#include "tunnels/layer3/tcp/manipulator/tcp_manipulator.h"
 #endif
 
 #ifdef INCLUDE_TCP_LISTENER
@@ -192,7 +192,7 @@ void loadStaticTunnelsIntoCore(void)
     USING(RawDevice);
 #endif
 
-#ifdef INCLUDE_CAPTURE
+#ifdef INCLUDE_CAPTUREDEVICE
     USING(CaptureDevice);
 #endif
 

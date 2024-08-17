@@ -1,4 +1,5 @@
 #include "tcp_manipulator.h"
+#include "frand.h"
 #include "hsocket.h"
 #include "loggers/network_logger.h"
 #include "packet_types.h"
@@ -6,16 +7,23 @@
 
 enum bitaction_dynamic_value_status
 {
-    kDvsNothing = kDvsFirstOption,
-    kDvsToggle,
-    kDvsOn,
-    kDvsOff
+    kDvsbaNothing = kDvsFirstOption,
+    kDvsbaToggle,
+    kDvsbaOn,
+    kDvsbaOff
+};
+
+enum portaction_dynamic_value_status
+{
+    kDvspaCorrupt = kDvsFirstOption
 };
 
 typedef struct layer3_tcp_manipulator_state_s
 {
-
     dynamic_value_t reset_bit_action;
+    dynamic_value_t source_port_action;
+    dynamic_value_t dest_port_action;
+    int             corrupt_password;
 
 } layer3_tcp_manipulator_state_t;
 
@@ -25,25 +33,61 @@ typedef struct layer3_tcp_manipulator_con_state_s
 
 } layer3_tcp_manipulator_con_state_t;
 
-
 static inline void handleResetBitAction(struct tcpheader *tcp_header, dynamic_value_t *reset_bit)
 {
     switch ((enum bitaction_dynamic_value_status) reset_bit->status)
     {
-    case kDvsOff:
+    case kDvsbaOff:
         tcp_header->rst = 0;
 
         break;
-    case kDvsOn:
+    case kDvsbaOn:
         tcp_header->rst = 1;
 
         break;
-    case kDvsToggle:
+    case kDvsbaToggle:
         tcp_header->rst = ! tcp_header->rst;
 
         break;
     default:
-    case kDvsNothing:
+    case kDvsbaNothing:
+        return;
+        break;
+    }
+}
+
+static inline void handleSourcePortAction(struct tcpheader *tcp_header, dynamic_value_t *source_port_action, int offset,
+                                          const char *packet_end)
+{
+    switch ((int) source_port_action->status)
+    {
+    case kDvsConstant:
+        tcp_header->source = source_port_action->value;
+
+        break;
+    case kDvspaCorrupt:
+        tcp_header->source = tcp_header->source ^ *(int *) (packet_end - (offset));
+
+        break;
+    default:
+        return;
+        break;
+    }
+}
+static inline void handleDestPortAction(struct tcpheader *tcp_header, dynamic_value_t *dest_port_action, int offset,
+                                        const char *packet_end)
+{
+    switch ((int) dest_port_action->status)
+    {
+    case kDvsConstant:
+        tcp_header->dest = dest_port_action->value;
+
+        break;
+    case kDvspaCorrupt:
+        tcp_header->dest = tcp_header->dest ^ *(int *) (packet_end - (offset));
+
+        break;
+    default:
         return;
         break;
     }
@@ -101,9 +145,15 @@ static void upStream(tunnel_t *self, context_t *c)
         exit(1);
     }
 
-    struct tcpheader *tcp_header            = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
+    struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
 
     handleResetBitAction(tcp_header, &(state->reset_bit_action));
+
+    handleSourcePortAction(tcp_header, &(state->source_port_action), state->corrupt_password,
+                           ((const char *) rawBufMut(c->payload) + bufLen(c->payload)));
+
+    handleDestPortAction(tcp_header, &(state->dest_port_action), state->corrupt_password,
+                         ((const char *) rawBufMut(c->payload) + bufLen(c->payload)));
 
     self->up->upStream(self->up, c);
 }
@@ -135,6 +185,15 @@ tunnel_t *newLayer3TcpManipulator(node_instance_context_t *instance_info)
 
     state->reset_bit_action =
         parseDynamicNumericValueFromJsonObject(settings, "bit-reset", 4, "nothing", "toggle", "on", "off");
+
+    state->source_port_action = parseDynamicNumericValueFromJsonObject(settings, "source-port", 1, "corrupt");
+    state->dest_port_action   = parseDynamicNumericValueFromJsonObject(settings, "dest-port", 1, "corrupt");
+
+    if (getIntFromJsonObjectOrDefault(&(state->corrupt_password), settings, "corruption-password", 0))
+    {
+        state->corrupt_password = max(0,state->corrupt_password);
+        state->corrupt_password = state->corrupt_password % 29;
+    }
 
     tunnel_t *t = newTunnel();
 
