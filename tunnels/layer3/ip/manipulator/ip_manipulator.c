@@ -134,7 +134,7 @@ tunnel_t *newLayer3IpManipulator(node_instance_context_t *instance_info)
     }
 
     state->protocol_action = parseDynamicNumericValueFromJsonObject(
-        settings, "bit-reset", 36, "icmp", "igmp", "tcp", "egp", "udp", "rdp", "dccp", "ipv6", "ipv6-frag", "rsvp",
+        settings, "protocol", 36, "icmp", "igmp", "tcp", "egp", "udp", "rdp", "dccp", "ipv6", "ipv6-frag", "rsvp",
         "gre", "esp", "ah", "icmpv6", "nonext", "destopts", "eigrp", "ospf", "ipip", "pim", "pcap", "vrrp", "l2tp",
         "isis", "sctp", "fc", "udplite", "mpls", "manet", "hip", "shim6", "wesp", "rohc", "test1", "test2", "reserved");
 
@@ -143,7 +143,7 @@ tunnel_t *newLayer3IpManipulator(node_instance_context_t *instance_info)
 
     if (state->protocol_action.status > kDvsConstant)
     {
-        state->protocol_action.value = map_array[state->protocol_action.status];
+        state->protocol_action.value = map_array[state->protocol_action.status - kDvsFirstOption];
     }
 
     tunnel_t *t = newTunnel();

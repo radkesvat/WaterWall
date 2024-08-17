@@ -8,8 +8,8 @@
 
 typedef struct layer3_senderstate_s
 {
-    char     *tundevice_name;
-    tunnel_t *tun_device_tunnel;
+    char     *device_name;
+    tunnel_t *device_tunnel;
 
 } layer3_senderstate_t;
 
@@ -106,7 +106,7 @@ static void upStream(tunnel_t *self, context_t *c)
         exit(1);
     }
 
-    state->tun_device_tunnel->upStream(state->tun_device_tunnel, c);
+    state->device_tunnel->upStream(state->device_tunnel, c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -154,7 +154,7 @@ static void onTimer(htimer_t *timer)
     int ip_header_len        = packet->ip4_header.ihl * 4;
     packet->ip4_header.check = standardCheckSum((void *) packet, ip_header_len);
 
-    state->tun_device_tunnel->upStream(state->tun_device_tunnel, c);
+    state->device_tunnel->upStream(state->device_tunnel, c);
 }
 
 tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
@@ -170,19 +170,19 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    if (! getStringFromJsonObject(&(state->tundevice_name), settings, "device"))
+    if (! getStringFromJsonObject(&(state->device_name), settings, "device"))
     {
         LOGF("JSON Error: Layer3Sender->settings->device (string field) : The string was empty or invalid");
         globalFree(state);
         return NULL;
     }
 
-    hash_t  hash_tdev_name = CALC_HASH_BYTES(state->tundevice_name, strlen(state->tundevice_name));
+    hash_t  hash_tdev_name = CALC_HASH_BYTES(state->device_name, strlen(state->device_name));
     node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
 
     if (tundevice_node == NULL)
     {
-        LOGF("Layer3Sender: could not find tun device node \"%s\"", state->tundevice_name);
+        LOGF("Layer3Sender: could not find tun device node \"%s\"", state->device_name);
         globalFree(state);
         return NULL;
     }
@@ -198,7 +198,7 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    state->tun_device_tunnel = tundevice_node->instance;
+    state->device_tunnel = tundevice_node->instance;
 
     tunnel_t *t = newTunnel();
 

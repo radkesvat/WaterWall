@@ -8,8 +8,8 @@
 
 typedef struct layer3_receiver_state_s
 {
-    char     *tundevice_name;
-    tunnel_t *tun_device_tunnel;
+    char     *device_name;
+    tunnel_t *device_tunnel;
 
 } layer3_receiver_state_t;
 
@@ -99,19 +99,19 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    if (! getStringFromJsonObject(&(state->tundevice_name), settings, "device"))
+    if (! getStringFromJsonObject(&(state->device_name), settings, "device"))
     {
         LOGF("JSON Error: Layer3Receiver->settings->device (string field) : The string was empty or invalid");
         globalFree(state);
         return NULL;
     }
 
-    hash_t  hash_tdev_name = CALC_HASH_BYTES(state->tundevice_name, strlen(state->tundevice_name));
+    hash_t  hash_tdev_name = CALC_HASH_BYTES(state->device_name, strlen(state->device_name));
     node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
     
     if (tundevice_node == NULL)
     {
-        LOGF("Layer3Receiver: could not find tun device node \"%s\"", state->tundevice_name);
+        LOGF("Layer3Receiver: could not find tun device node \"%s\"", state->device_name);
         globalFree(state);
         return NULL;
     }
@@ -129,12 +129,12 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
 
     if (tundevice_node->instance->up != NULL)
     {
-        LOGF("Layer3Receiver: tun device \"%s\" cannot be used by 2 receivers", state->tundevice_name);
+        LOGF("Layer3Receiver: tun device \"%s\" cannot be used by 2 receivers", state->device_name);
         globalFree(state);
         return NULL;
     }
 
-    state->tun_device_tunnel = tundevice_node->instance;
+    state->device_tunnel = tundevice_node->instance;
 
     tunnel_t *t = newTunnel();
 

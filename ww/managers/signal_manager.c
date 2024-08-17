@@ -68,9 +68,9 @@ static void multiplexedSignalHandler(int signum)
 
 static void multiplexedSignalHandlerNoArg(void)
 {
-    static const char kMessage[] = "SignalManager: Executing exit callabck\n";
-    int  unused = write(STDOUT_FILENO, kMessage, sizeof(kMessage) - 1);
-    (void) unused;
+    // static const char kMessage[] = "SignalManager: Executing exit callabck\n";
+    // int  unused = write(STDOUT_FILENO, kMessage, sizeof(kMessage) - 1);
+    // (void) unused;
 
     for (unsigned int i = 0; i < state->handlers_len; i++)
     {
@@ -179,6 +179,7 @@ void startSignalManager(void)
             exit(1);
         }
     }
+    
 #endif
 
     atexit(multiplexedSignalHandlerNoArg);
