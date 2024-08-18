@@ -334,6 +334,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     if (*name)
     {
         strncpy(ifr.ifr_name, name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ-1] = '\0';  
     }
 
     int err = ioctl(fd, TUNSETIFF, (void *) &ifr);
