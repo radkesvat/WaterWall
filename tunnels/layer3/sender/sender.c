@@ -102,7 +102,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        LOGF("Layer3Sender: non ip packets is assumed to be per filtered by receiver node");
+        LOGF("Layer3Sender: non ip packets is assumed to be pre-filtered by receiver node");
         exit(1);
     }
 
