@@ -347,7 +347,7 @@ static void downStream(tunnel_t *self, context_t *c)
             do
             {
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-                shiftl(buf, 8192 / 2);
+                
                 setLen(buf, 0);
                 int avail = (int) rCap(buf);
                 n         = SSL_read(cstate->ssl, rawBufMut(buf), avail);
