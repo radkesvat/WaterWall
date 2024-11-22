@@ -1,5 +1,5 @@
-#include "hplatform.h"
 #include "udp_connector.h"
+#include "hplatform.h"
 #include "loggers/network_logger.h"
 #include "sync_dns.h"
 #include "types.h"
@@ -160,7 +160,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
     }
     return;
-fail:;
+fail:
     self->dw->downStream(self->dw, newFinContext(c->line));
     destroyContext(c);
 }
@@ -239,7 +239,7 @@ api_result_t apiUdpConnector(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyUdpConnector(tunnel_t *self)
@@ -250,5 +250,5 @@ tunnel_t *destroyUdpConnector(tunnel_t *self)
 
 tunnel_metadata_t getMetadataUdpConnector(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

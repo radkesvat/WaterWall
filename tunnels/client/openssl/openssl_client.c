@@ -213,7 +213,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed:;
+failed:
     self->up->upStream(self->up, newFinContextFrom(c));
 
     context_t *fail_context = newFinContextFrom(c);
@@ -345,7 +345,7 @@ static void downStream(tunnel_t *self, context_t *c)
             do
             {
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-                
+
                 setLen(buf, 0);
                 int avail = (int) rCap(buf);
                 n         = SSL_read(cstate->ssl, rawBufMut(buf), avail);
@@ -397,7 +397,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed:;
+failed: {
     context_t *fail_context_up = newFinContextFrom(c);
     self->up->upStream(self->up, fail_context_up);
 
@@ -405,6 +405,7 @@ failed:;
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
+}
 }
 
 tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
@@ -481,7 +482,7 @@ api_result_t apiOpenSSLClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyOpenSSLClient(tunnel_t *self)
@@ -492,5 +493,5 @@ tunnel_t *destroyOpenSSLClient(tunnel_t *self)
 
 tunnel_metadata_t getMetadataOpenSSLClient(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

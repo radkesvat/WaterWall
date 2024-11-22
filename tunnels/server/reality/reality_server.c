@@ -142,7 +142,7 @@ static void upStream(tunnel_t *self, context_t *c)
             break;
         case kConAuthorized: {
             bufferStreamPushContextPayload(cstate->read_stream, c);
-        authorized:;
+        authorized: {
             uint8_t tls_header[1 + 2 + 2];
             while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
@@ -178,6 +178,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             destroyContext(c);
         }
+        }
 
         break;
         }
@@ -209,7 +210,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
     }
     return;
-failed:;
+failed: {
     context_t *fail_context_up = newFinContextFrom(c);
     self->up->upStream(self->up, fail_context_up);
 
@@ -217,6 +218,7 @@ failed:;
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
+}
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -233,7 +235,7 @@ static void downStream(tunnel_t *self, context_t *c)
         case kConUnAuthorized:
             self->dw->downStream(self->dw, c);
             break;
-        case kConAuthorized:;
+        case kConAuthorized: {
             shift_buffer_t *buf           = c->payload;
             c->payload                    = NULL;
             const unsigned int chunk_size = (kMaxSSLChunkSize - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
@@ -265,8 +267,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 reuseBuffer(getContextBufferPool(c), buf);
                 destroyContext(c);
             }
-
-            break;
+        }
+        break;
         }
     }
     else

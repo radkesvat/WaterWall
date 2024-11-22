@@ -124,7 +124,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 shiftr(full_data, sizeof(uint32_t));
                 cstate->bytes_sent_nack -= consumed;
 
-                if (cstate->bytes_sent_nack <=kMaxSendBeforeAck / 2)
+                if (cstate->bytes_sent_nack <= kMaxSendBeforeAck / 2)
                 {
                     resumeLineDownSide(c->line);
                 }
@@ -208,7 +208,7 @@ static void downStream(tunnel_t *self, context_t *c)
         self->dw->downStream(self->dw, c);
     }
     return;
-disconnect:;
+disconnect:
     CSTATE_DROP(c);
     cleanup(cstate);
     self->up->upStream(self->up, newFinContext(c->line));

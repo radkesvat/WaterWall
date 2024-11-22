@@ -178,7 +178,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (state->fallback != NULL && ! cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, newShallowShiftBuffer(getWorkerShiftBufferPool(c->line->tid), c->payload));
+            bufferStreamPush(cstate->fallback_buf,
+                             newShallowShiftBuffer(getWorkerShiftBufferPool(c->line->tid), c->payload));
         }
         if (cstate->fallback_mode)
         {
@@ -424,7 +425,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
     return;
 
-disconnect:;
+disconnect:
     if (cstate->init_sent)
     {
         self->up->upStream(self->up, newFinContextFrom(c));
@@ -559,7 +560,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     return;
 
-disconnect:;
+disconnect: {
     context_t *fail_context_up = newFinContextFrom(c);
     self->up->upStream(self->up, fail_context_up);
 
@@ -567,6 +568,7 @@ disconnect:;
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
+}
 }
 
 tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)

@@ -42,7 +42,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             switch ((enum header_dynamic_value_status) state->data.status)
             {
-            case kHdvsDestPort:;
+            case kHdvsDestPort: {
 
                 uint16_t port = 0;
                 if (bufLen(c->payload) < 2)
@@ -63,7 +63,9 @@ static void upStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
-                break;
+            }
+
+            break;
             default:
                 break;
             }

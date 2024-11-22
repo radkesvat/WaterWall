@@ -32,7 +32,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const tid_t tid     = c->line->tid;
+        const tid_t   tid     = c->line->tid;
         thread_box_t *this_tb = &(state->workers[tid]);
         if (c->init)
         {
@@ -74,13 +74,15 @@ static void upStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, c);
                 break;
 
-            case kConnectedPair:;
-                line_t *u_line      = dcon->u;
+            case kConnectedPair: {
+                line_t *u_line = dcon->u;
                 LSTATE_DROP(dcon->u);
-                context_t *fctx     = switchLine(c, u_line); // created here to prevent destruction of line
+                context_t *fctx = switchLine(c, u_line); // created here to prevent destruction of line
                 destroyCstate(dcon);
                 self->up->upStream(self->up, fctx);
-                break;
+            }
+
+            break;
             case kNotconnected:
             default:
                 LOGF("PreConnectClient: invalid value of connection state (memory error?)");
@@ -140,15 +142,15 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 break;
 
-            case kConnectedPair:;
+            case kConnectedPair: {
                 atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
-                line_t *d_line      = ucon->d;
+                line_t *d_line = ucon->d;
                 LSTATE_DROP(ucon->d);
                 destroyCstate(ucon);
                 self->dw->downStream(self->dw, switchLine(c, d_line));
                 initiateConnect(self, false);
-
-                break;
+            }
+            break;
 
             case kNotconnected:
                 if (ucon->prev != NULL)
@@ -235,7 +237,7 @@ api_result_t apiPreConnectClient(tunnel_t *self, const char *msg)
 {
     (void) (self);
     (void) (msg);
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroyPreConnectClient(tunnel_t *self)
@@ -246,5 +248,5 @@ tunnel_t *destroyPreConnectClient(tunnel_t *self)
 
 tunnel_metadata_t getMetadataPreConnectClient(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

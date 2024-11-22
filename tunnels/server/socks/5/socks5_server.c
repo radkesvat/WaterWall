@@ -127,7 +127,7 @@ static void encapsulateUdpPacket(context_t *c)
     {                                                                                                                  \
         if ((int) bufLen(c->payload) < (x))                                                                            \
         {                                                                                                              \
-            reuseContextPayload(c);                                                                                     \
+            reuseContextPayload(c);                                                                                    \
             goto disconnect;                                                                                           \
         }                                                                                                              \
     } while (0);
@@ -234,7 +234,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
     }
 
     return;
-disconnect:;
+disconnect:
     if (cstate->init_sent)
     {
         self->up->upStream(self->up, newFinContext(c->line));
@@ -278,7 +278,7 @@ static void upStream(tunnel_t *self, context_t *c)
             c->payload      = appendBufferMerge(getContextBufferPool(c), cstate->waitbuf, c->payload);
             cstate->waitbuf = NULL;
         }
-    parsebegin:;
+    parsebegin:
 
         if (bufLen(c->payload) < cstate->need)
         {
@@ -502,8 +502,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 if (bufLen(bytes) > 0)
                 {
-                    context_t *updata  = newContextFrom(c);
-                    updata->payload    = bytes;
+                    context_t *updata = newContextFrom(c);
+                    updata->payload   = bytes;
                     self->up->upStream(self->up, updata);
                 }
                 else
@@ -599,7 +599,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
     }
     return;
-disconnect:;
+disconnect:
     cleanup(cstate, getContextBufferPool(c));
     globalFree(cstate);
     CSTATE_DROP(c);
@@ -728,7 +728,7 @@ api_result_t apiSocks5Server(tunnel_t *self, const char *msg)
 {
     (void) self;
     (void) msg;
-    return (api_result_t){0};
+    return (api_result_t) {0};
 }
 
 tunnel_t *destroySocks5Server(tunnel_t *self)
@@ -739,5 +739,5 @@ tunnel_t *destroySocks5Server(tunnel_t *self)
 
 tunnel_metadata_t getMetadataSocks5Server(void)
 {
-    return (tunnel_metadata_t){.version = 0001, .flags = 0x0};
+    return (tunnel_metadata_t) {.version = 0001, .flags = 0x0};
 }

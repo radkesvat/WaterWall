@@ -90,7 +90,7 @@ void runNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index)
 
 static void runNodes(node_manager_config_t *cfg)
 {
-begin:;
+begin:
     c_foreach(p1, map_node_t, cfg->node_map)
     {
         node_t *n1 = p1.ref->second;

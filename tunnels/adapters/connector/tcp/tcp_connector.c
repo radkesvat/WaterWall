@@ -328,7 +328,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
     }
     return;
-fail:;
+fail:
     self->dw->downStream(self->dw, newFinContextFrom(c));
     destroyContext(c);
 }

@@ -219,7 +219,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed:;
+failed:
     self->up->upStream(self->up, newFinContextFrom(c));
 
     context_t *fail_context = newFinContextFrom(c);
@@ -403,7 +403,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     return;
 
-failed:;
+failed: {
     context_t *fail_context_up = newFinContextFrom(c);
     self->up->upStream(self->up, fail_context_up);
 
@@ -411,6 +411,7 @@ failed:;
     cleanup(self, c);
     destroyContext(c);
     self->dw->downStream(self->dw, fail_context);
+}
 }
 
 tunnel_t *newRealityClient(node_instance_context_t *instance_info)
