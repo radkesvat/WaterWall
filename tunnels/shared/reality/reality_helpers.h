@@ -90,7 +90,7 @@ static shift_buffer_t *genericDecrypt(shift_buffer_t *in, EVP_CIPHER_CTX *decryp
                        (const uint8_t *) rawBuf(in));
     shiftr(in, kIVlen);
     uint16_t input_length = bufLen(in);
-    reserveBufSpace(out, input_length);
+    out = reserveBufSpace(out, input_length);
     int out_len = 0;
 
     /*
@@ -131,7 +131,7 @@ static shift_buffer_t *genericEncrypt(shift_buffer_t *in, EVP_CIPHER_CTX *encryp
 
     EVP_EncryptInit_ex(encryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password, (const uint8_t *) iv);
 
-    reserveBufSpace(out, input_length + kEncryptionBlockSize + (input_length % kEncryptionBlockSize));
+    out = reserveBufSpace(out, input_length + kEncryptionBlockSize + (input_length % kEncryptionBlockSize));
     int out_len = 0;
 
     /*

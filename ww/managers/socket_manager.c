@@ -965,11 +965,10 @@ socket_manager_state_t *createSocketManager(void)
 
     *worker = (worker_t) {.tid = 255};
 
-    worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                                      allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+
 
     worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           worker->shift_buffer_pool,GSTATE.ram_profile);
+                                           GSTATE.ram_profile);
 
     worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->tid);
 

@@ -291,7 +291,7 @@ static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     {
         buf = popSmallBuffer(cdev->reader_buffer_pool);
 
-        reserveBufSpace(buf, kReadPacketSize);
+        buf = reserveBufSpace(buf, kReadPacketSize);
 
         nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
 
@@ -349,7 +349,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
             LOGW("CaptureDevice: Exit write routine due to End Of File");
             return 0;
         }
-        
+
         if (nwrite < 0)
         {
             LOGW("CaptureDevice: writing a packet to Capture device failed, code: %d", (int) nwrite);
@@ -463,34 +463,27 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
         LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kQueueLen);
     }
 
-    generic_pool_t *reader_sb_pool =
-        newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                              allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t *reader_bpool = createBufferPool(
-        GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, reader_sb_pool, GSTATE.ram_profile);
+    buffer_pool_t *reader_bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small, GSTATE.ram_profile);
 
-    generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, 1,
-                                                           allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
-    buffer_pool_t  *writer_bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, writer_sb_pool, 1);
+    buffer_pool_t *writer_bpool =
+        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 1);
 
     capture_device_t *cdev = globalMalloc(sizeof(capture_device_t));
 
-    *cdev = (capture_device_t) {.name                     = strdup(name),
-                                .running                  = false,
-                                .up                       = false,
-                                .routine_reader           = routineReadFromCapture,
-                                .routine_writer           = routineWriteToCapture,
-                                .socket                   = socket_netfilter,
-                                .queue_number             = queue_number,
-                                .reader_shift_buffer_pool = reader_sb_pool,
-                                .read_event_callback      = cb,
-                                .userdata                 = userdata,
-                                .writer_buffer_channel    = hchanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
-                                .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
-                                .reader_buffer_pool       = reader_bpool,
-                                .writer_shift_buffer_pool = writer_sb_pool,
-                                .writer_buffer_pool       = writer_bpool};
+    *cdev = (capture_device_t) {.name                  = strdup(name),
+                                .running               = false,
+                                .up                    = false,
+                                .routine_reader        = routineReadFromCapture,
+                                .routine_writer        = routineWriteToCapture,
+                                .socket                = socket_netfilter,
+                                .queue_number          = queue_number,
+                                .read_event_callback   = cb,
+                                .userdata              = userdata,
+                                .writer_buffer_channel = hchanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
+                                .reader_message_pool   = newMasterPoolWithCap(kMasterMessagePoolCap),
+                                .reader_buffer_pool    = reader_bpool,
+                                .writer_buffer_pool    = writer_bpool};
 
     installMasterPoolAllocCallbacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 

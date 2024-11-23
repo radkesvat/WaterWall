@@ -2,6 +2,7 @@
 
 #include "master_pool.h"
 #include "shiftbuffer.h"
+#include "generic_pool.h"
 #include <stdatomic.h>
 
 /*
@@ -29,8 +30,7 @@
 
 typedef struct buffer_pool_s buffer_pool_t;
 
-buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, generic_pool_t *sb_pool,
-                                unsigned int pool_width);
+buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, unsigned int pool_width);
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool);
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2);

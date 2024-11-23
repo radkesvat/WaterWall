@@ -77,7 +77,7 @@ static HTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
     {
         buf = popSmallBuffer(rdev->reader_buffer_pool);
 
-        reserveBufSpace(buf, kReadPacketSize);
+        buf = reserveBufSpace(buf, kReadPacketSize);
 
         nread = recvfrom(rdev->socket, rawBufMut(buf), kReadPacketSize, 0, &saddr, (socklen_t *) &saddr_len);
 
@@ -242,25 +242,21 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
 
     raw_device_t *rdev = globalMalloc(sizeof(raw_device_t));
 
-    generic_pool_t *reader_sb_pool      = NULL;
     buffer_pool_t  *reader_bpool        = NULL;
     master_pool_t  *reader_message_pool = NULL;
     if (cb != NULL)
     {
         // if the user really wanted to read from raw socket
-        reader_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                               allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
+       
         reader_bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                          reader_sb_pool, GSTATE.ram_profile);
+                                           GSTATE.ram_profile);
         reader_message_pool = newMasterPoolWithCap(kMasterMessagePoolCap);
 
         installMasterPoolAllocCallbacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
     }
 
-    generic_pool_t *writer_sb_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, GSTATE.ram_profile,
-                                                           allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     buffer_pool_t  *writer_bpool   = createBufferPool(
-        GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, writer_sb_pool, GSTATE.ram_profile);
+        GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  GSTATE.ram_profile);
 
     *rdev = (raw_device_t) {.name                     = strdup(name),
                             .running                  = false,
@@ -269,13 +265,11 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
                             .routine_writer           = routineWriteToRaw,
                             .socket                   = rsocket,
                             .mark                     = mark,
-                            .reader_shift_buffer_pool = reader_sb_pool,
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
                             .writer_buffer_channel    = hchanOpen(sizeof(void *), kRawWriteChannelQueueMax),
                             .reader_message_pool      = reader_message_pool,
                             .reader_buffer_pool       = reader_bpool,
-                            .writer_shift_buffer_pool = writer_sb_pool,
                             .writer_buffer_pool       = writer_bpool};
 
     return rdev;

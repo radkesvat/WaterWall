@@ -23,9 +23,7 @@ typedef struct raw_device_s
     hthread_routine routine_writer;
 
     master_pool_t  *reader_message_pool;
-    generic_pool_t *reader_shift_buffer_pool;
     buffer_pool_t  *reader_buffer_pool;
-    generic_pool_t *writer_shift_buffer_pool;
     buffer_pool_t  *writer_buffer_pool;
 
     RawReadEventHandle read_event_callback;

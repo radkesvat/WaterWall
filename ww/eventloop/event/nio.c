@@ -207,7 +207,7 @@ static void nio_read(hio_t* io) {
         available = (1U << 15);
     }
     else if (WW_UNLIKELY(available < 1024)) {
-        reserveBufSpace(buf, 1024);
+        buf = reserveBufSpace(buf, 1024);
     }
     nread = __nio_read(io, rawBufMut(buf), available);
 

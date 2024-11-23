@@ -45,6 +45,9 @@ enum
 #else
     kCpuLineCacheSize = 64
 #endif
+        ,
+
+    kCpuLineCacheSizeMin1 = kCpuLineCacheSize - 1
 };
 
 #define ATTR_ALIGNED_LINE_CACHE __attribute__((aligned(kCpuLineCacheSize)))
@@ -52,6 +55,8 @@ enum
 #define MUSTALIGN2(n, w) assert(((w) & ((w) - 1)) == 0); /* alignment w is not a power of two */
 
 #define ALIGN2(n, w) (((n) + ((w) - 1)) & ~((w) - 1))
+
+
 
 struct ww_global_state_s;
 
@@ -92,14 +97,13 @@ void createWW(ww_construction_data_t data);
 
 _Noreturn void runMainThread(void);
 
-typedef uint8_t               tid_t;
+typedef uint8_t tid_t;
 
 typedef struct worker_s
 {
     hthread_t              thread;
     struct hloop_s        *loop;
     struct buffer_pool_s  *buffer_pool;
-    struct generic_pool_s *shift_buffer_pool;
     struct generic_pool_s *context_pool;
     struct generic_pool_s *line_pool;
     struct generic_pool_s *pipeline_msg_pool;
@@ -111,13 +115,11 @@ typedef struct ww_global_state_s
 {
     struct hloop_s         **shortcut_loops;
     struct buffer_pool_s   **shortcut_buffer_pools;
-    struct generic_pool_s  **shortcut_shift_buffer_pools;
     struct generic_pool_s  **shortcut_context_pools;
     struct generic_pool_s  **shortcut_line_pools;
     struct generic_pool_s  **shortcut_pipeline_msg_pools;
     struct master_pool_s    *masterpool_buffer_pools_large;
     struct master_pool_s    *masterpool_buffer_pools_small;
-    struct master_pool_s    *masterpool_shift_buffer_pools;
     struct master_pool_s    *masterpool_context_pools;
     struct master_pool_s    *masterpool_line_pools;
     struct master_pool_s    *masterpool_pipeline_msg_pools;
@@ -151,10 +153,6 @@ static inline worker_t *getWorker(tid_t tid)
     return &(WORKERS[tid]);
 }
 
-static inline struct generic_pool_s *getWorkerShiftBufferPool(tid_t tid)
-{
-    return GSTATE.shortcut_shift_buffer_pools[tid];
-}
 
 static inline struct buffer_pool_s *getWorkerBufferPool(tid_t tid)
 {

@@ -185,6 +185,12 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 
 endif()
 
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+
+target_compile_definitions(ww PUBLIC WW_AVX=1)
+target_compile_options(ww PUBLIC -mavx)
+
+endif()
 
 target_compile_options(ww PUBLIC 
                                   -Wall 

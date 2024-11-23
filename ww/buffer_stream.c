@@ -10,7 +10,8 @@
 
 enum
 {
-    kQCap = 16
+    kQCap                = 16,
+    kConcatMaxThreshould = 4096
 };
 
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
@@ -44,6 +45,18 @@ void destroyBufferStream(buffer_stream_t *self)
 
 void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
 {
+    if (self->size > 0 && bufLen(buf) <= kConcatMaxThreshould)
+    {
+        shift_buffer_t *last = queue_pull_back(&self->q);
+
+        if (rCap(last) >= bufLen(buf))
+        {
+            self->size += bufLen(buf);
+            concatBufferNoCheck(last, buf);
+            return;
+        }
+    }
+
     queue_push_back(&self->q, buf);
     self->size += bufLen(buf);
 }
@@ -61,7 +74,7 @@ shift_buffer_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
         if (available > bytes)
         {
             shift_buffer_t *slice = popBuffer(self->pool);
-            sliceBufferTo(slice, container, bytes);
+            slice = sliceBufferTo(slice, container, bytes);
             queue_push_front(&self->q, container);
             return slice;
         }
@@ -112,7 +125,7 @@ void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
 
         shift_buffer_t *b    = *qi.ref;
         size_t          blen = bufLen(b);
-        
+
         if (len - buf_i <= blen - bufferstream_i)
         {
             memcpy(buf + buf_i, ((char *) rawBuf(b)) + bufferstream_i, len - buf_i);

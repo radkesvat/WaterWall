@@ -25,13 +25,12 @@
 struct buffer_pool_s
 {
 
-    uint16_t        cap;
-    uint16_t        free_threshold;
-    unsigned int    large_buffers_container_len;
-    unsigned int    small_buffers_container_len;
-    unsigned int    large_buffers_default_size;
-    unsigned int    small_buffers_default_size;
-    generic_pool_t *shift_buffer_pool;
+    uint16_t     cap;
+    uint16_t     free_threshold;
+    unsigned int large_buffers_container_len;
+    unsigned int small_buffers_container_len;
+    unsigned int large_buffers_default_size;
+    unsigned int small_buffers_default_size;
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     atomic_size_t in_use;
 #endif
@@ -40,9 +39,6 @@ struct buffer_pool_s
     master_pool_t   *small_buffers_mp;
     shift_buffer_t **small_buffers;
 };
-
-// NOLINTEND
-
 
 unsigned int getBufferPoolLargeBufferDefaultSize(void)
 {
@@ -64,28 +60,28 @@ static master_pool_item_t *createLargeBufHandle(struct master_pool_s *pool, void
     (void) pool;
 
     buffer_pool_t *bpool = userdata;
-    return newShiftBuffer(bpool->shift_buffer_pool, bpool->large_buffers_default_size);
+    return newShiftBuffer(bpool->large_buffers_default_size);
 }
 
 static master_pool_item_t *createSmallBufHandle(struct master_pool_s *pool, void *userdata)
 {
     (void) pool;
     buffer_pool_t *bpool = userdata;
-    return newShiftBuffer(bpool->shift_buffer_pool, bpool->small_buffers_default_size);
+    return newShiftBuffer(bpool->small_buffers_default_size);
 }
 
 static void destroyLargeBufHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
-    buffer_pool_t *bpool = userdata;
-    destroyShiftBuffer(bpool->shift_buffer_pool, item);
+    (void) userdata;
+    destroyShiftBuffer(item);
 }
 
 static void destroySmallBufHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
-    buffer_pool_t *bpool = userdata;
-    destroyShiftBuffer(bpool->shift_buffer_pool, item);
+    (void) userdata;
+    destroyShiftBuffer(item);
 }
 
 static void reChargeLargeBuffers(buffer_pool_t *pool)
@@ -159,7 +155,7 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBuffer(pool->shift_buffer_pool,pool->large_buffers_default_size);
+    return newShiftBuffer(pool->shift_buffer_pool, pool->large_buffers_default_size);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -179,7 +175,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBuffer(pool->shift_buffer_pool,pool->small_buffers_default_size);
+    return newShiftBuffer(pool->shift_buffer_pool, pool->small_buffers_default_size);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -198,17 +194,12 @@ shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
-    
+
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    destroyShiftBuffer(pool->shift_buffer_pool,b);
+    destroyShiftBuffer(pool->shift_buffer_pool, b);
     return;
 #endif
 
-    if (WW_UNLIKELY(isShallow(b)))
-    {
-        destroyShiftBuffer(pool->shift_buffer_pool, b);
-        return;
-    }
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use -= 1;
 #endif
@@ -236,20 +227,22 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 {
     unsigned int b1_length = bufLen(b1);
     unsigned int b2_length = bufLen(b2);
-    if (b1_length >= b2_length || lCap(b2) < b1_length)
+
+    if (b2_length >= b1_length && lCap(b2) >= b1_length)
     {
-        concatBuffer(b1, b2);
-        reuseBuffer(pool, b2);
-        return b1;
+        shiftl(b2, b1_length);
+        memCopy128(rawBufMut(b2), rawBuf(b1), b1_length);
+        reuseBuffer(pool, b1);
+        return b2;
     }
-    shiftl(b2, b1_length);
-    memcpy(rawBufMut(b2), rawBuf(b1), b1_length);
-    reuseBuffer(pool, b1);
-    return b2;
+
+    b1 = concatBuffer(b1, b2);
+    reuseBuffer(pool, b2);
+    return b1;
 }
 
 static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small,
-                                      generic_pool_t *sb_pool, unsigned int bufcount, unsigned int large_buffer_size,
+                                      unsigned int bufcount, unsigned int large_buffer_size,
                                       unsigned int small_buffer_size)
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and reuseBuffer
@@ -267,30 +260,28 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
         .large_buffers_default_size = large_buffer_size,
         .small_buffers_default_size = small_buffer_size,
         .free_threshold             = max(bufcount / 2, (bufcount * 2) / 3),
-        .shift_buffer_pool          = sb_pool,
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
         .in_use = 0,
 #endif
         .large_buffers_mp = mp_large,
-        .large_buffers    = globalMalloc(container_len),
+        .large_buffers    = (shift_buffer_t **) globalMalloc(container_len),
         .small_buffers_mp = mp_small,
-        .small_buffers    = globalMalloc(container_len),
+        .small_buffers    = (shift_buffer_t **) globalMalloc(container_len),
     };
 
     installMasterPoolAllocCallbacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
     installMasterPoolAllocCallbacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
 
 #ifdef DEBUG
-    memset(ptr_pool->large_buffers, 0xFE, container_len);
-    memset(ptr_pool->small_buffers, 0xFE, container_len);
+    memset((void *) ptr_pool->large_buffers, 0xFE, container_len);
+    memset((void *) ptr_pool->small_buffers, 0xFE, container_len);
 #endif
 
     // firstCharge(ptr_pool);
     return ptr_pool;
 }
 
-buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, generic_pool_t *sb_pool,
-                                unsigned int pool_width)
+buffer_pool_t *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, unsigned int pool_width)
 {
-    return allocBufferPool(mp_large, mp_small, sb_pool, pool_width, LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE);
+    return allocBufferPool(mp_large, mp_small, pool_width, LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE);
 }

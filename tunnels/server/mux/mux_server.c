@@ -332,7 +332,7 @@ static void downStream(tunnel_t *self, context_t *c)
         while (bufLen(c->payload) > kMuxMaxFrameLength)
         {
             shift_buffer_t *chunk = popBuffer(getContextBufferPool(c));
-            sliceBufferTo(chunk, c->payload, kMuxMaxFrameLength);
+            sliceBufferTo(&chunk, c->payload, kMuxMaxFrameLength);
             makeDataFrame(chunk, child_con->cid);
 
             context_t *data_chunk_ctx = newContextFrom(c);

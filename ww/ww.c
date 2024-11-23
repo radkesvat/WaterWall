@@ -41,10 +41,8 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
                                                       allocLinePoolHandle, destroyLinePoolHandle);
     worker->pipeline_msg_pool = newGenericPoolWithCap(GSTATE.masterpool_pipeline_msg_pools, (8) + GSTATE.ram_profile,
                                                       allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
-    worker->shift_buffer_pool = newGenericPoolWithCap(GSTATE.masterpool_shift_buffer_pools, (64) + GSTATE.ram_profile,
-                                                      allocShiftBufferPoolHandle, destroyShiftBufferPoolHandle);
     worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           worker->shift_buffer_pool, (0) + GSTATE.ram_profile);
+                                            (0) + GSTATE.ram_profile);
 
     // note that loop depeneds on worker->buffer_pool
     worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, tid);
@@ -52,7 +50,6 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
     GSTATE.shortcut_context_pools[tid]      = worker->context_pool;
     GSTATE.shortcut_line_pools[tid]         = worker->line_pool;
     GSTATE.shortcut_pipeline_msg_pools[tid] = worker->pipeline_msg_pool;
-    GSTATE.shortcut_shift_buffer_pools[tid] = worker->shift_buffer_pool;
     GSTATE.shortcut_buffer_pools[tid]       = worker->buffer_pool;
     GSTATE.shortcut_loops[tid]              = worker->loop;
 }
@@ -98,24 +95,22 @@ static void initializeShortCuts(void)
 {
     assert(GSTATE.initialized);
 
-    static const int kShourtcutsCount = 6;
+    static const int kShourtcutsCount = 5;
     const int        total_workers    = WORKERS_COUNT;
 
-    void **space = globalMalloc(sizeof(void *) * kShourtcutsCount * total_workers);
+    void **space = (void **) globalMalloc(sizeof(void *) * kShourtcutsCount * total_workers);
 
-    GSTATE.shortcut_loops              = (hloop_t **) (space + (0UL * total_workers));
-    GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1UL * total_workers));
-    GSTATE.shortcut_shift_buffer_pools = (generic_pool_t **) (space + (2UL * total_workers));
-    GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (3UL * total_workers));
-    GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (4UL * total_workers));
-    GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (5UL * total_workers));
+    GSTATE.shortcut_loops              = (hloop_t **) (space + (0ULL * total_workers));
+    GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1ULL * total_workers));
+    GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (2ULL * total_workers));
+    GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (3ULL * total_workers));
+    GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (4ULL * total_workers));
 }
 
 static void initializeMasterPools(void)
 {
     assert(GSTATE.initialized);
 
-    GSTATE.masterpool_shift_buffer_pools = newMasterPoolWithCap(2 * ((64) + GSTATE.ram_profile));
     GSTATE.masterpool_buffer_pools_large = newMasterPoolWithCap(2 * ((0) + GSTATE.ram_profile));
     GSTATE.masterpool_buffer_pools_small = newMasterPoolWithCap(2 * ((0) + GSTATE.ram_profile));
     GSTATE.masterpool_context_pools      = newMasterPoolWithCap(2 * ((16) + GSTATE.ram_profile));
