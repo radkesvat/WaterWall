@@ -65,7 +65,7 @@ int main(void)
             config_file_t *cfile = parseConfigFile(*k.ref);
 
             /*
-                in case of error in config file, the details is already printed out and the
+                in case of error in config file, the details are already printed out and the
                 program will not reach this line.
             */
 

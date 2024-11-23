@@ -18,13 +18,68 @@
 
 */
 
+#if defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+
+#define EXTRA_ALLOC  128
+#define BUF_USES_AVX 1
+
+#include <x86intrin.h>
+static inline void memCopy128(void *dest, const void *src, long int n)
+{
+    __m256i       *d_vec = (__m256i *) (dest);
+    const __m256i *s_vec = (const __m256i *) (src);
+
+    if ((uintptr_t) dest % 128 != 0 || (uintptr_t) src % 128 != 0)
+    {
+
+        while (n > 0)
+        {
+            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
+            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
+            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
+
+            n -= 128;
+            d_vec += 4;
+            s_vec += 4;
+        }
+
+        return;
+    }
+
+    while (n > 0)
+    {
+        _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
+        _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+        _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
+        _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
+
+        n -= 128;
+        d_vec += 4;
+        s_vec += 4;
+    }
+}
+#elif
+
+#define EXTRA_ALLOC  0
+#define BUF_USES_AVX 0
+
+static inline void memCopy128(void *__restrict __dest, const void *__restrict __src, size_t __n)
+{
+    memcpy(__dest, __src, __n);
+}
+
+#endif
 
 struct shift_buffer_s
 {
     uint32_t len;
     uint32_t curpos;
-    uint64_t capacity;
-    uint8_t  buf[];
+    uint32_t capacity;
+#if BUF_USES_AVX
+    uint8_t _pad_[EXTRA_ALLOC];
+#endif
+    uint8_t buf[];
 };
 
 typedef struct shift_buffer_s shift_buffer_t;
@@ -36,8 +91,6 @@ shift_buffer_t *concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t
 shift_buffer_t *sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, uint32_t bytes);
 shift_buffer_t *sliceBuffer(shift_buffer_t *self, uint32_t bytes);
 shift_buffer_t *duplicateBuffer(shift_buffer_t *b);
-
-
 
 static inline unsigned int bufCap(shift_buffer_t *const self)
 {
@@ -167,7 +220,7 @@ static inline shift_buffer_t *reserveBufSpace(shift_buffer_t *const self, const 
     {
         shift_buffer_t *bigger_buf = newShiftBuffer(bytes);
         setLen(bigger_buf, bufLen(self));
-        memcpy(rawBufMut(bigger_buf), rawBuf(self), bufLen(self));
+        memCopy128(rawBufMut(bigger_buf), rawBuf(self), bufLen(self));
         destroyShiftBuffer(self);
         return bigger_buf;
     }
@@ -181,7 +234,6 @@ static inline void concatBufferNoCheck(shift_buffer_t *restrict root, const shif
     setLen(root, root_length + append_length);
     memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
 }
-
 
 #ifdef DEBUG
 // free and re create the buffer so in case of use after free we catch it

@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#define LEFTPADDING  (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8))
+#define LEFTPADDING  ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8)) - (sizeof(uint32_t) * 3))
 #define RIGHTPADDING ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 9) : (1U << 7)))
 
 #define TOTALPADDING ((uint32_t) (sizeof(shift_buffer_t) + (LEFTPADDING + RIGHTPADDING)))
@@ -24,7 +24,7 @@ shift_buffer_t *newShiftBuffer(uint32_t pre_cap) // NOLINT
     }
 
     uint32_t        real_cap = pre_cap + TOTALPADDING;
-    shift_buffer_t *self     = globalMalloc(real_cap);
+    shift_buffer_t *self     = globalMalloc(real_cap + EXTRA_ALLOC);
 
     self->len      = 0;
     self->curpos   = LEFTPADDING;
@@ -61,7 +61,7 @@ shift_buffer_t *duplicateBuffer(shift_buffer_t *b)
     uint32_t        pre_cap = bufCap(b) - TOTALPADDING;
     shift_buffer_t *newbuf  = newShiftBuffer(pre_cap);
     setLen(newbuf, bufLen(b));
-    memcpy(rawBufMut(newbuf), rawBuf(b), bufLen(b));
+    memCopy128(rawBufMut(newbuf), rawBuf(b), bufLen(b));
     return newbuf;
 }
 
@@ -87,7 +87,7 @@ shift_buffer_t *sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *res
         dest = bigger_buf;
     }
     setLen(dest, bytes);
-    memcpy(rawBufMut(dest), rawBuf(source), bytes);
+    memCopy128(rawBufMut(dest), rawBuf(source), bytes);
     shiftr(source, bytes);
 
     return dest;

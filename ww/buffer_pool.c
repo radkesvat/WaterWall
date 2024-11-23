@@ -253,7 +253,7 @@ shift_buffer_t *duplicateBufferP(buffer_pool_t *pool, shift_buffer_t *b)
         bnew = popSmallBuffer(pool);
     }
     setLen(bnew, bufLen(b));
-    memcpy(rawBufMut(bnew), rawBuf(b), bufLen(b));
+    memCopy128(rawBufMut(bnew), rawBuf(b), bufLen(b));
     return bnew;
 }
 
