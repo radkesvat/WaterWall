@@ -136,7 +136,10 @@ typedef struct context_s
 
 struct tunnel_s;
 
-typedef void (*TunnelFlowRoutine)(struct tunnel_s *, struct context_s *);
+typedef void (*TunnelFlowRoutineInit)(struct tunnel_s *, line_t *line);
+typedef void (*TunnelFlowRoutinePayload)(struct tunnel_s *, line_t *line, shift_buffer_t *payload);
+typedef void (*TunnelFlowRoutineEst)(struct tunnel_s *, line_t *line);
+typedef void (*TunnelFlowRoutineFin)(struct tunnel_s *, line_t *line);
 
 /*
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
@@ -148,8 +151,20 @@ typedef struct tunnel_s // 48
     void            *state;
     struct tunnel_s *dw, *up;
 
-    TunnelFlowRoutine upStream;
-    TunnelFlowRoutine downStream;
+    // TunnelFlowRoutine upStream;
+    // TunnelFlowRoutine downStream;
+
+    TunnelFlowRoutineInit    fnInitU;
+    TunnelFlowRoutineInit    fnInitD;
+    TunnelFlowRoutinePayload fnPayloadU;
+    TunnelFlowRoutinePayload fnPayloadD;
+    TunnelFlowRoutineEst     fnEstU;
+    TunnelFlowRoutineEst     fnEstD;
+    TunnelFlowRoutineFin     fnFinU;
+    TunnelFlowRoutineFin     fnFinD;
+
+    uint16_t cstate_offset;
+    uint16_t cstate_size;
 
     chain_index_t chain_index;
 } tunnel_t;

@@ -66,19 +66,65 @@ void destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
     globalFree(item);
 }
 
-void defaultUpStream(tunnel_t *self, context_t *c)
+void defaultUpStreamInit(tunnel_t *self, line_t *line)
 {
     if (self->up != NULL)
     {
-        self->up->upStream(self->up, c);
+        self->up->fnInitU(self->up, line);
     }
 }
 
-void defaultDownStream(tunnel_t *self, context_t *c)
+void defaultUpStreamEst(tunnel_t *self, line_t *line)
 {
-    if (self->dw != NULL)
+    if (self->up != NULL)
     {
-        self->dw->downStream(self->dw, c);
+        self->up->fnEstU(self->up, line);
+    }
+}
+
+void defaultUpStreamFin(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnFinU(self->up, line);
+    }
+}
+void defaultUpStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnPayloadU(self->up, line, payload);
+    }
+}
+
+void defaultdownStreamInit(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnInitD(self->up, line);
+    }
+}
+
+void defaultdownStreamEst(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnEstD(self->up, line);
+    }
+}
+
+void defaultdownStreamFin(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnFinD(self->up, line);
+    }
+}
+void defaultdownStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnPayloadD(self->up, line, payload);
     }
 }
 
