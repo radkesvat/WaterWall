@@ -59,7 +59,8 @@ static inline void memCopy128(void *dest, const void *src, long int n)
         s_vec += 4;
     }
 }
-#elif
+
+#else
 
 #define EXTRA_ALLOC  0
 #define BUF_USES_AVX 0
