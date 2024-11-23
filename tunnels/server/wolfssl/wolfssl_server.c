@@ -156,7 +156,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, c->payload);
+            bufferStreamPush(cstate->fallback_buf, duplicateBufferP(getContextBufferPool(c),c->payload));
         }
         if (cstate->fallback_mode)
         {

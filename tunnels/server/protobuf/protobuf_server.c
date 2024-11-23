@@ -140,7 +140,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 context_t *upstream_ctx = newContextFrom(c);
                 upstream_ctx->payload   = popBuffer(getContextBufferPool(c));
 
-                sliceBufferTo(&upstream_ctx->payload, full_data, data_len);
+                upstream_ctx->payload = sliceBufferTo(upstream_ctx->payload, full_data, data_len);
 
                 if (bufLen(full_data) > 0)
                 {

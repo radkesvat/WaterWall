@@ -7,7 +7,7 @@
 #include <string.h>
 
 #define LEFTPADDING  (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8))
-#define RIGHTPADDING ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 9) : (1U << 7)) + 128) // 128 for avx memcpy
+#define RIGHTPADDING ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 9) : (1U << 7)))
 
 #define TOTALPADDING ((uint32_t) (sizeof(shift_buffer_t) + (LEFTPADDING + RIGHTPADDING)))
 
@@ -56,18 +56,26 @@ shift_buffer_t *reset(shift_buffer_t *self, uint32_t pre_cap)
     return self;
 }
 
+shift_buffer_t *duplicateBuffer(shift_buffer_t *b)
+{
+    uint32_t        pre_cap = bufCap(b) - TOTALPADDING;
+    shift_buffer_t *newbuf  = newShiftBuffer(pre_cap);
+    setLen(newbuf, bufLen(b));
+    memcpy(rawBufMut(newbuf), rawBuf(b), bufLen(b));
+    return newbuf;
+}
 
-shift_buffer_t * concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t *restrict const buf)
+shift_buffer_t *concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t *restrict const buf)
 {
     uint32_t root_length   = bufLen(root);
     uint32_t append_length = bufLen(buf);
-    root = reserveBufSpace(root, root_length + append_length);
+    root                   = reserveBufSpace(root, root_length + append_length);
     setLen(root, root_length + append_length);
     memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
     return root;
 }
 
-shift_buffer_t * sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, const uint32_t bytes)
+shift_buffer_t *sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, const uint32_t bytes)
 {
     assert(bytes <= bufLen(source));
     assert(bufLen(dest) == 0);
@@ -79,11 +87,10 @@ shift_buffer_t * sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *re
         dest = bigger_buf;
     }
     setLen(dest, bytes);
-    memCopy128(rawBufMut(dest), rawBuf(source), bytes);
+    memcpy(rawBufMut(dest), rawBuf(source), bytes);
     shiftr(source, bytes);
 
     return dest;
-
 }
 
 shift_buffer_t *sliceBuffer(shift_buffer_t *const self, const uint32_t bytes)

@@ -217,6 +217,6 @@ target_compile_options(ww PUBLIC -Wno-unused-function)
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  target_compile_definitions(ww PUBLIC DEBUG=1)
+  target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)
 endif()
 

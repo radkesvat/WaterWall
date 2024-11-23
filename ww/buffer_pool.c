@@ -155,7 +155,7 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBuffer(pool->shift_buffer_pool, pool->large_buffers_default_size);
+    return newShiftBuffer(pool->large_buffers_default_size);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -175,7 +175,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBuffer(pool->shift_buffer_pool, pool->small_buffers_default_size);
+    return newShiftBuffer(pool->small_buffers_default_size);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -196,7 +196,7 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 {
 
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    destroyShiftBuffer(pool->shift_buffer_pool, b);
+    destroyShiftBuffer(b);
     return;
 #endif
 
@@ -231,7 +231,7 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     if (b2_length >= b1_length && lCap(b2) >= b1_length)
     {
         shiftl(b2, b1_length);
-        memCopy128(rawBufMut(b2), rawBuf(b1), b1_length);
+        memcpy(rawBufMut(b2), rawBuf(b1), b1_length);
         reuseBuffer(pool, b1);
         return b2;
     }
@@ -239,6 +239,22 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
     b1 = concatBuffer(b1, b2);
     reuseBuffer(pool, b2);
     return b1;
+}
+
+shift_buffer_t *duplicateBufferP(buffer_pool_t *pool, shift_buffer_t *b)
+{
+    shift_buffer_t *bnew;
+    if (isLargeBuffer(b))
+    {
+        bnew = popBuffer(pool);
+    }
+    else
+    {
+        bnew = popSmallBuffer(pool);
+    }
+    setLen(bnew, bufLen(b));
+    memcpy(rawBufMut(bnew), rawBuf(b), bufLen(b));
+    return bnew;
 }
 
 static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small,

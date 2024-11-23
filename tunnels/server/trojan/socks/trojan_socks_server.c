@@ -496,6 +496,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (cstate->udp_stream)
                     {
                         destroyBufferStream(cstate->udp_stream);
+                        cstate->udp_stream = NULL;
                     }
                     cleanup(cstate);
                     CSTATE_DROP(c);

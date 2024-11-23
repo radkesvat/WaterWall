@@ -171,7 +171,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 context_t *downstream_ctx = newContextFrom(c);
                 downstream_ctx->payload   = popBuffer(getContextBufferPool(c));
 
-                sliceBufferTo(&downstream_ctx->payload, full_data, data_len);
+                downstream_ctx->payload = sliceBufferTo(downstream_ctx->payload, full_data, data_len);
 
                 if (bufLen(full_data) > 0)
                 {

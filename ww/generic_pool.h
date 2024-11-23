@@ -15,12 +15,12 @@
 
         define POOL_DEBUG to view debug logs about how many itmes are in use or in pool
 
-        define BYPASS_POOL to bypass the pool for your debug goals or leak finding
+        define BYPASS_GENERIC_POOL to bypass the pool for your debug goals or leak finding
 
 */
 
 // #define POOL_DEBUG
-// #define BYPASS_POOL
+// #define BYPASS_GENERIC_POOL
 
 struct generic_pool_s;
 typedef struct generic_pool_s generic_pool_t;
@@ -67,7 +67,7 @@ void poolShrink(generic_pool_t *pool);
 
 static inline pool_item_t *popPoolItem(generic_pool_t *pool)
 {
-#if defined(DEBUG) && defined(BYPASS_POOL)
+#if defined(DEBUG) && defined(BYPASS_GENERIC_POOL)
     return pool->create_item_handle(pool);
 #endif
 
@@ -88,7 +88,7 @@ static inline pool_item_t *popPoolItem(generic_pool_t *pool)
 
 static inline void reusePoolItem(generic_pool_t *pool, pool_item_t *b)
 {
-#if defined(DEBUG) && defined(BYPASS_POOL)
+#if defined(DEBUG) && defined(BYPASS_GENERIC_POOL)
     pool->destroy_item_handle(pool, b);
     return;
 #endif
@@ -113,5 +113,5 @@ generic_pool_t *newGenericPoolDefaultAllocator(struct master_pool_s *mp, unsigne
 generic_pool_t *newGenericPoolDefaultAllocatorWithCap(struct master_pool_s *mp, unsigned int item_size,
                                                       unsigned int pool_width);
 
-#undef BYPASS_POOL
+#undef BYPASS_GENERIC_POOL
 #undef POOL_DEBUG

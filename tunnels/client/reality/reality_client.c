@@ -136,7 +136,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
                 shift_buffer_t *chunk  = popBuffer(getContextBufferPool(c));
-                sliceBufferTo(&chunk, buf, remain);
+                chunk = sliceBufferTo( chunk,buf, remain);
 
                 chunk = genericEncrypt(chunk, cstate->cipher_context, state->context_password, getContextBufferPool(c));
                 signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);

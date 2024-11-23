@@ -18,12 +18,12 @@
 
 */
 
+
 struct shift_buffer_s
 {
     uint32_t len;
     uint32_t curpos;
-    uint32_t capacity;
-    uint8_t  _pad_[128];
+    uint64_t capacity;
     uint8_t  buf[];
 };
 
@@ -35,35 +35,9 @@ shift_buffer_t *reset(shift_buffer_t *self, uint32_t cap);
 shift_buffer_t *concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t *restrict buf);
 shift_buffer_t *sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *restrict source, uint32_t bytes);
 shift_buffer_t *sliceBuffer(shift_buffer_t *self, uint32_t bytes);
+shift_buffer_t *duplicateBuffer(shift_buffer_t *b);
 
-#if defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
-#include <x86intrin.h>
-static inline void memCopy128(void *dest, const void *src, size_t n)
-{
-    // d, s -> 128 byte aligned
-    // n -> multiple of 128
 
-    __m256i       *d_vec  = (__m256i *) ((char *) dest - ((uintptr_t) dest & 127));
-    const __m256i *s_vecc = (const __m256i *) ((char *) src - ((uintptr_t) src & 127));
-    size_t         n_vec  = (n / sizeof(__m256i)) + 1;
-    while (n_vec > 0)
-    {
-        _mm256_store_si256(d_vec, _mm256_load_si256(s_vecc));
-        _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vecc + 1));
-        _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vecc + 2));
-        _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vecc + 3));
-        n_vec -= 4;
-        s_vecc += 4;
-        d_vec += 4;
-    }
-}
-#elif
-static inline void memCopy128(void *__restrict __dest, const void *__restrict __src, size_t __n)
-{
-    memcpy(__dest, __src, __n);
-}
-
-#endif
 
 static inline unsigned int bufCap(shift_buffer_t *const self)
 {
@@ -192,8 +166,8 @@ static inline shift_buffer_t *reserveBufSpace(shift_buffer_t *const self, const 
     if (rCap(self) < bytes)
     {
         shift_buffer_t *bigger_buf = newShiftBuffer(bytes);
-
-        memCopy128(rawBufMut(bigger_buf), rawBufMut(self), bufLen(self));
+        setLen(bigger_buf, bufLen(self));
+        memcpy(rawBufMut(bigger_buf), rawBuf(self), bufLen(self));
         destroyShiftBuffer(self);
         return bigger_buf;
     }
@@ -207,3 +181,21 @@ static inline void concatBufferNoCheck(shift_buffer_t *restrict root, const shif
     setLen(root, root_length + append_length);
     memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
 }
+
+
+#ifdef DEBUG
+// free and re create the buffer so in case of use after free we catch it
+static shift_buffer_t *debugBufferWontBeReused(shift_buffer_t *b)
+{
+    shift_buffer_t *nbuf = duplicateBuffer(b);
+    destroyShiftBuffer(b);
+    return nbuf;
+}
+
+#define BUFFER_WONT_BE_REUSED(x) x = debugBufferWontBeReused(x)
+
+#else
+
+#define BUFFER_WONT_BE_REUSED(x)
+
+#endif

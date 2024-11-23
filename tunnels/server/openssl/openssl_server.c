@@ -178,14 +178,16 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (state->fallback != NULL && ! cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, c->payload);
+            bufferStreamPush(cstate->fallback_buf, duplicateBufferP(getContextBufferPool(c),c->payload));
         }
+
         if (cstate->fallback_mode)
         {
             reuseContextPayload(c);
             fallbackWrite(self, c);
             return;
         }
+        
         enum sslstatus status;
         int            n;
         unsigned int   len = bufLen(c->payload);

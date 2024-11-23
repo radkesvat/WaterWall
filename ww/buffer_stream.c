@@ -45,6 +45,9 @@ void destroyBufferStream(buffer_stream_t *self)
 
 void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
 {
+    
+    BUFFER_WONT_BE_REUSED(buf);
+    
     if (self->size > 0 && bufLen(buf) <= kConcatMaxThreshould)
     {
         shift_buffer_t *last = queue_pull_back(&self->q);
@@ -53,6 +56,7 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
         {
             self->size += bufLen(buf);
             concatBufferNoCheck(last, buf);
+            destroyShiftBuffer(buf);
             return;
         }
     }
