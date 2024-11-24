@@ -58,7 +58,7 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
                           .destroy_item_handle = defaultDestroyHandle};
 
     memcpy(pool_ptr, &pool, sizeof(master_pool_t));
-    hhybridmutex_init(&(pool_ptr->mutex));
+    hmutex_init(&(pool_ptr->mutex));
 
     return pool_ptr;
 }

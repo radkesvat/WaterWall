@@ -36,7 +36,7 @@ struct logger_s {
     time_t              last_logfile_ts;
     int                 can_write_cnt;
 
-    hhybridmutex_t            mutex_; // thread-safe
+    hmutex_t            mutex_; // thread-safe
 };
 
 static void logger_init(logger_t* logger) {
@@ -61,7 +61,7 @@ static void logger_init(logger_t* logger) {
     logger_set_file(logger, DEFAULT_LOG_FILE);
     logger->last_logfile_ts = 0;
     logger->can_write_cnt = -1;
-    hhybridmutex_init(&logger->mutex_);
+    hmutex_init(&logger->mutex_);
 }
 
 logger_t* logger_create(void) {
@@ -101,7 +101,7 @@ void logger_destroy(logger_t* logger) {
             fclose(logger->fp_);
             logger->fp_ = NULL;
         }
-        hhybridmutex_destroy(&logger->mutex_);
+        hmutex_destroy(&logger->mutex_);
         globalFree(logger);
     }
 }
@@ -213,11 +213,11 @@ void logger_enable_fsync(logger_t* logger, int on) {
 }
 
 void logger_fsync(logger_t* logger) {
-    hhybridmutex_lock(&logger->mutex_);
+    hmutex_lock(&logger->mutex_);
     if (logger->fp_) {
         fflush(logger->fp_);
     }
-    hhybridmutex_unlock(&logger->mutex_);
+    hmutex_unlock(&logger->mutex_);
 }
 
 const char* logger_get_cur_file(logger_t* logger) {
@@ -385,7 +385,7 @@ int vlogger_print(logger_t* logger, int level, const char* fmt, va_list ap) {
 #undef XXX
 
     // lock logger->buf
-    hhybridmutex_lock(&logger->mutex_);
+    hmutex_lock(&logger->mutex_);
 
     char* buf = logger->buf;
     int bufsize = logger->bufsize;
@@ -470,7 +470,7 @@ int vlogger_print(logger_t* logger, int level, const char* fmt, va_list ap) {
         logfile_write(logger, buf, len);
     }
 
-    hhybridmutex_unlock(&logger->mutex_);
+    hmutex_unlock(&logger->mutex_);
     return len;
 }
 

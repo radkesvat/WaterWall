@@ -25,7 +25,7 @@ struct idle_table_s
     htimer_t      *idle_handle;
     heapq_idles_t  hqueue;
     hmap_idles_t   hmap;
-    hhybridmutex_t mutex;
+    hmutex_t mutex;
     uint64_t       last_update_ms;
     uintptr_t      memptr;
 
@@ -63,7 +63,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
                                .hmap           = hmap_idles_t_with_capacity(kVecCap),
                                .last_update_ms = hloop_now_ms(loop)};
 
-    hhybridmutex_init(&(newtable->mutex));
+    hmutex_init(&(newtable->mutex));
     hevent_set_userdata(newtable->idle_handle, newtable);
     return newtable;
 }
@@ -73,7 +73,7 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
 {
     assert(self);
     idle_item_t *item = globalMalloc(sizeof(idle_item_t));
-    hhybridmutex_lock(&(self->mutex));
+    hmutex_lock(&(self->mutex));
 
     *item = (idle_item_t){.expire_at_ms = hloop_now_ms(getWorkerLoop(tid)) + age_ms,
                           .hash         = key,
@@ -85,12 +85,12 @@ idle_item_t *newIdleItem(idle_table_t *self, hash_t key, void *userdata, ExpireC
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
     {
         // hash is already in the table !
-        hhybridmutex_unlock(&(self->mutex));
+        hmutex_unlock(&(self->mutex));
         globalFree(item);
         return NULL;
     }
     heapq_idles_t_push(&(self->hqueue), item);
-    hhybridmutex_unlock(&(self->mutex));
+    hmutex_unlock(&(self->mutex));
     return item;
 }
 
@@ -102,32 +102,32 @@ void keepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_
     }
     item->expire_at_ms = self->last_update_ms + age_ms;
 
-    hhybridmutex_lock(&(self->mutex));
+    hmutex_lock(&(self->mutex));
     heapq_idles_t_make_heap(&self->hqueue);
-    hhybridmutex_unlock(&(self->mutex));
+    hmutex_unlock(&(self->mutex));
 }
 
 idle_item_t *getIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key)
 {
-    hhybridmutex_lock(&(self->mutex));
+    hmutex_lock(&(self->mutex));
 
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
     if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->tid != tid)
     {
-        hhybridmutex_unlock(&(self->mutex));
+        hmutex_unlock(&(self->mutex));
         return NULL;
     }
-    hhybridmutex_unlock(&(self->mutex));
+    hmutex_unlock(&(self->mutex));
     return (find_result.ref->second);
 }
 
 bool removeIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key)
 {
-    hhybridmutex_lock(&(self->mutex));
+    hmutex_lock(&(self->mutex));
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
     if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->tid != tid)
     {
-        hhybridmutex_unlock(&(self->mutex));
+        hmutex_unlock(&(self->mutex));
         return false;
     }
     idle_item_t *item = (find_result.ref->second);
@@ -135,7 +135,7 @@ bool removeIdleItemByHash(tid_t tid, idle_table_t *self, hash_t key)
     item->removed = true;
     // heapq_idles_t_make_heap(&self->hqueue);
 
-    hhybridmutex_unlock(&(self->mutex));
+    hmutex_unlock(&(self->mutex));
     return true;
 }
 
@@ -146,9 +146,9 @@ static void beforeCloseCallBack(hevent_t *ev)
     {
         if (item->expire_at_ms > hloop_now_ms(getWorkerLoop(item->tid)))
         {
-            hhybridmutex_lock(&(item->table->mutex));
+            hmutex_lock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
-            hhybridmutex_unlock(&(item->table->mutex));
+            hmutex_unlock(&(item->table->mutex));
             return;
         }
 
@@ -161,9 +161,9 @@ static void beforeCloseCallBack(hevent_t *ev)
         
         if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > hloop_now_ms(getWorkerLoop(item->tid)))
         {
-            hhybridmutex_lock(&(item->table->mutex));
+            hmutex_lock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
-            hhybridmutex_unlock(&(item->table->mutex));
+            hmutex_unlock(&(item->table->mutex));
         }
         else
         {
@@ -184,7 +184,7 @@ void idleCallBack(htimer_t *timer)
     idle_table_t  *self  = hevent_userdata(timer);
     const uint64_t now   = hloop_now_ms(self->loop);
     self->last_update_ms = now;
-    hhybridmutex_lock(&(self->mutex));
+    hmutex_lock(&(self->mutex));
 
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
@@ -216,7 +216,7 @@ void idleCallBack(htimer_t *timer)
             break;
         }
     }
-    hhybridmutex_unlock(&(self->mutex));
+    hmutex_unlock(&(self->mutex));
 }
 
 void destroyIdleTable(idle_table_t *self)
@@ -224,6 +224,6 @@ void destroyIdleTable(idle_table_t *self)
     htimer_del(self->idle_handle);
     heapq_idles_t_drop(&self->hqueue);
     hmap_idles_t_drop(&self->hmap);
-    hhybridmutex_destroy(&self->mutex);
+    hmutex_destroy(&self->mutex);
     globalFree((void *) (self->memptr)); // NOLINT
 }

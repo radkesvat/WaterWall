@@ -145,12 +145,12 @@ static uint32_t chlock_count = 0;
 // #define chan_lock(lock)         hmutex_lock(lock)
 // #define chan_unlock(lock)       hmutex_unlock(lock)
 
-// hhybridmutex_
-#define CHAN_LOCK_T hhybridmutex_t
-#define chan_lock_init(lock) hhybridmutex_init(lock)
-#define chan_lock_destroy(lock) hhybridmutex_destroy(lock)
-#define chan_lock(lock) hhybridmutex_lock(lock)
-#define chan_unlock(lock) hhybridmutex_unlock(lock)
+// hmutex_
+#define CHAN_LOCK_T hmutex_t
+#define chan_lock_init(lock) hmutex_init(lock)
+#define chan_lock_destroy(lock) hmutex_destroy(lock)
+#define chan_lock(lock) hmutex_lock(lock)
+#define chan_unlock(lock) hmutex_unlock(lock)
 #endif
 
 // -------------------------------------------------------------------------

@@ -10,7 +10,7 @@
 
 struct dedicated_memory_s
 {
-    hhybridmutex_t mut;
+    hmutex_t mut;
     mi_heap_t     *mi_heap;
     unsigned int   free_counter;
 };
@@ -70,7 +70,7 @@ dedicated_memory_t *createWWDedicatedMemory(void)
 
     // dedicated_memory_t *dm = malloc(sizeof(dedicated_memory_t));
     // *dm                    = (struct dedicated_memory_s) {.free_counter = 0, .mi_heap = mi_heap_new()};
-    // hhybridmutex_init(&dm->mut);
+    // hmutex_init(&dm->mut);
     // return dm;
 }
 
@@ -104,9 +104,9 @@ void *dedicatedMalloc(dedicated_memory_t *dm, size_t size)
     (void) dm;
 
     return globalMalloc(size);
-    // hhybridmutex_lock(&dm->mut);
+    // hmutex_lock(&dm->mut);
     // void *ptr = mi_heap_malloc(dm->mi_heap, size);
-    // hhybridmutex_unlock(&dm->mut);
+    // hmutex_unlock(&dm->mut);
     // return ptr;
 }
 void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
@@ -115,9 +115,9 @@ void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
 
     return globalRealloc(ptr,size);
 
-    // hhybridmutex_lock(&dm->mut);
+    // hmutex_lock(&dm->mut);
     // void *newptr = mi_heap_realloc(dm->mi_heap, ptr, size);
-    // hhybridmutex_unlock(&dm->mut);
+    // hmutex_unlock(&dm->mut);
     // return newptr;
 }
 void dedicatedFree(dedicated_memory_t *dm, void *ptr)
@@ -126,14 +126,14 @@ void dedicatedFree(dedicated_memory_t *dm, void *ptr)
 
     globalFree(ptr);
 
-    // hhybridmutex_lock(&dm->mut);
+    // hmutex_lock(&dm->mut);
     // wof_free(dm->mi_heap, ptr);
     // if (dm->free_counter++ > kFreeThreShouldCounter)
     // {
     //     wof_gc(dm->mi_heap);
     //     dm->free_counter = 0;
     // }
-    // hhybridmutex_unlock(&dm->mut);
+    // hmutex_unlock(&dm->mut);
 }
 
 #endif

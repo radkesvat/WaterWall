@@ -208,7 +208,7 @@ static void eventfd_read_cb(hio_t* io, shift_buffer_t* buf) {
 #endif
     (void)count;
     for (uint64_t i = 0; i < count; ++i) {
-        hhybridmutex_lock(&loop->custom_events_mutex);
+        hmutex_lock(&loop->custom_events_mutex);
         if (event_queue_empty(&loop->custom_events)) {
             goto unlock;
         }
@@ -219,7 +219,7 @@ static void eventfd_read_cb(hio_t* io, shift_buffer_t* buf) {
         ev = *pev;
         event_queue_pop_front(&loop->custom_events);
         // NOTE: unlock before cb, avoid deadlock if hloop_post_event called in cb.
-        hhybridmutex_unlock(&loop->custom_events_mutex);
+        hmutex_unlock(&loop->custom_events_mutex);
         if (ev.cb) {
             ev.cb(&ev);
         }
@@ -227,7 +227,7 @@ static void eventfd_read_cb(hio_t* io, shift_buffer_t* buf) {
     reuseBuffer(io->loop->bufpool, buf);
     return;
 unlock:
-    hhybridmutex_unlock(&loop->custom_events_mutex);
+    hmutex_unlock(&loop->custom_events_mutex);
     reuseBuffer(io->loop->bufpool, buf);
 }
 
@@ -283,7 +283,7 @@ void hloop_post_event(hloop_t* loop, hevent_t* ev) {
     }
 
     int nwrite = 0;
-    hhybridmutex_lock(&loop->custom_events_mutex);
+    hmutex_lock(&loop->custom_events_mutex);
     if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1) {
         if (hloop_create_eventfds(loop) != 0) {
             goto unlock;
@@ -306,7 +306,7 @@ void hloop_post_event(hloop_t* loop, hevent_t* ev) {
     }
     event_queue_push_back(&loop->custom_events, ev);
 unlock:
-    hhybridmutex_unlock(&loop->custom_events_mutex);
+    hmutex_unlock(&loop->custom_events_mutex);
 }
 
 static void hloop_init(hloop_t* loop) {
@@ -337,7 +337,7 @@ static void hloop_init(hloop_t* loop) {
     // iowatcher_init(loop);
 
     // custom_events
-    hhybridmutex_init(&loop->custom_events_mutex);
+    hmutex_init(&loop->custom_events_mutex);
     // NOTE: hloop_create_eventfds when hloop_post_event or hloop_run
     loop->eventfds[0] = loop->eventfds[1] = -1;
 
@@ -394,11 +394,11 @@ static void hloop_cleanup(hloop_t* loop) {
     iowatcher_cleanup(loop);
 
     // custom_events
-    hhybridmutex_lock(&loop->custom_events_mutex);
+    hmutex_lock(&loop->custom_events_mutex);
     hloop_destroy_eventfds(loop);
     event_queue_cleanup(&loop->custom_events);
-    hhybridmutex_unlock(&loop->custom_events_mutex);
-    hhybridmutex_destroy(&loop->custom_events_mutex);
+    hmutex_unlock(&loop->custom_events_mutex);
+    hmutex_destroy(&loop->custom_events_mutex);
 }
 
 hloop_t* hloop_new(int flags, buffer_pool_t* swimmingpool, long tid) {
@@ -438,11 +438,11 @@ int hloop_run(hloop_t* loop) {
     // hlogd("hloop_run tid=%ld", loop->tid);
 
     if (loop->intern_nevents == 0) {
-        hhybridmutex_lock(&loop->custom_events_mutex);
+        hmutex_lock(&loop->custom_events_mutex);
         if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1) {
             hloop_create_eventfds(loop);
         }
-        hhybridmutex_unlock(&loop->custom_events_mutex);
+        hmutex_unlock(&loop->custom_events_mutex);
 
 #ifdef DEBUG
         _loop_debug_timer = htimer_add(loop, hloop_stat_timer_cb, HLOOP_STAT_TIMEOUT, INFINITE);

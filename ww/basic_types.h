@@ -59,7 +59,7 @@ typedef struct user_stat_s
 typedef struct user_s
 {
     struct cJSON   *json;
-    hhybridmutex_t *fsync_lock;
+    hmutex_t *fsync_lock;
     //-----------------
     char            *name;
     char            *email;

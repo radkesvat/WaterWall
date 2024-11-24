@@ -343,17 +343,17 @@ static void HybridMutexLock(hybrid_mutex_t* m);
 static void HybridMutexUnlock(hybrid_mutex_t* m);
 
 
-static inline  bool HybridMutexInit(hybrid_mutex_t* m) {
+static inline bool HybridMutexInit(hybrid_mutex_t* m) {
     m->flag = false;
     m->nwait = 0;
     return hsem_init(&m->sema, 0);
 }
 
-static inline  void HybridMutexDestroy(hybrid_mutex_t* m) {
+static inline void HybridMutexDestroy(hybrid_mutex_t* m) {
     hsem_destroy(&m->sema);
 }
 
-static inline  void HybridMutexLock(hybrid_mutex_t* m) {
+static inline void HybridMutexLock(hybrid_mutex_t* m) {
     if (atomic_exchange_explicit(&m->flag, true, memory_order_acquire)) {
         // already locked -- slow path
         while (1)
@@ -382,10 +382,11 @@ static inline  void HybridMutexLock(hybrid_mutex_t* m) {
     }
 }
 
-static inline  bool HybridMutexTryLock(hybrid_mutex_t* m) {
+static inline bool HybridMutexTryLock(hybrid_mutex_t* m) {
     return  0 == atomic_exchange_explicit(&m->flag, true, memory_order_acquire); 
 }
-static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
+
+static inline void HybridMutexUnlock(hybrid_mutex_t* m) {
     atomic_exchange(&m->flag, false);
     if (atomic_load(&m->nwait) != 0) {
         // at least one thread waiting on a semaphore signal -- wake one thread
@@ -399,22 +400,21 @@ static inline  void HybridMutexUnlock(hybrid_mutex_t* m) {
 // #define TEST_HELGRIND   // will transform hybrid mutex to a regular mutex
 
 
-#ifdef TEST_HELGRIND
-#define hhybridmutex_t              hmutex_t
-#define hhybridmutex_init           hmutex_init
-#define hhybridmutex_destroy        hmutex_destroy
-#define hhybridmutex_lock           hmutex_lock
-#define hhybridmutex_trylock        hmutex_trylock
-#define hhybridmutex_unlock         hmutex_unlock
+#ifndef TEST_HELGRIND
 
+#undef hmutex_t            
+#undef hmutex_init         
+#undef hmutex_destroy      
+#undef hmutex_lock         
+#undef hmutex_trylock      
+#undef hmutex_unlock       
 
-#else
-#define hhybridmutex_t              hybrid_mutex_t
-#define hhybridmutex_init           HybridMutexInit
-#define hhybridmutex_destroy        HybridMutexDestroy
-#define hhybridmutex_lock           HybridMutexLock
-#define hhybridmutex_trylock        HybridMutexTryLock
-#define hhybridmutex_unlock         HybridMutexUnlock
+#define hmutex_t              hybrid_mutex_t
+#define hmutex_init           HybridMutexInit
+#define hmutex_destroy        HybridMutexDestroy
+#define hmutex_lock           HybridMutexLock
+#define hmutex_trylock        HybridMutexTryLock
+#define hmutex_unlock         HybridMutexUnlock
 
 
 #endif
