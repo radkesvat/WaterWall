@@ -223,7 +223,7 @@ static inline shift_buffer_t *reserveBufSpace(shift_buffer_t *const b, const uin
     if (rCap(b) < bytes)
     {
         shift_buffer_t *bigger_buf = newShiftBuffer(bufLen(b) + bytes);
-        setLen(bigger_buf, bufLen(b) + bytes);
+        setLen(bigger_buf, bufLen(b));
         copyBuf(bigger_buf, b, bufLen(b));
         destroyShiftBuffer(b);
         return bigger_buf;

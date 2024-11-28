@@ -282,7 +282,6 @@ static void upStream(tunnel_t *self, context_t *c)
             do
             {
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-                shiftl(buf, lCap(buf) / 2);
                 setLen(buf, 0);
                 unsigned int avail = rCapNoPadding(buf);
                 n                  = SSL_read(cstate->ssl, rawBufMut(buf), (int) avail);

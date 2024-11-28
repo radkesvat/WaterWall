@@ -58,24 +58,21 @@ uint32_t getBufferPoolSmallBufferDefaultSize(void)
     return SMALL_BUFFER_SIZE;
 }
 
-bool isLargeBuffer(shift_buffer_t *buf)
-{
-    return (bufCap(buf) >= LARGE_BUFFER_SIZE) ? true : false;
-}
-
 static master_pool_item_t *createLargeBufHandle(struct master_pool_s *pool, void *userdata)
 {
     (void) pool;
 
     buffer_pool_t *bpool = userdata;
-    return  newShiftBufferWithPad(bpool->large_buffers_default_size,bpool->large_buffer_left_padding,bpool->large_buffer_right_padding);
+    return newShiftBufferWithPad(bpool->large_buffers_default_size, bpool->large_buffer_left_padding,
+                                 bpool->large_buffer_right_padding);
 }
 
 static master_pool_item_t *createSmallBufHandle(struct master_pool_s *pool, void *userdata)
 {
     (void) pool;
     buffer_pool_t *bpool = userdata;
-    return  newShiftBufferWithPad(bpool->small_buffers_default_size,bpool->small_buffer_left_padding,bpool->small_buffer_right_padding);
+    return newShiftBufferWithPad(bpool->small_buffers_default_size, bpool->small_buffer_left_padding,
+                                 bpool->small_buffer_right_padding);
 }
 
 static void destroyLargeBufHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
@@ -163,7 +160,8 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 shift_buffer_t *popBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBufferWithPad(pool->large_buffers_default_size,pool->large_buffer_left_padding,pool->large_buffer_right_padding);
+    return newShiftBufferWithPad(pool->large_buffers_default_size, pool->large_buffer_left_padding,
+                                 pool->large_buffer_right_padding);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -183,7 +181,8 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return newShiftBufferWithPad(pool->small_buffers_default_size,pool->small_buffer_left_padding,pool->small_buffer_right_padding);
+    return newShiftBufferWithPad(pool->small_buffers_default_size, pool->small_buffer_left_padding,
+                                 pool->small_buffer_right_padding);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -236,17 +235,6 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2)
 {
-    uint32_t b1_length = bufLen(b1);
-    uint32_t b2_length = bufLen(b2);
-
-    if (b2_length >= b1_length && lCap(b2) >= b1_length)
-    {
-        shiftl(b2, b1_length);
-        memcpy(rawBufMut(b2), rawBuf(b1), b1_length);
-        reuseBuffer(pool, b1);
-        return b2;
-    }
-
     b1 = concatBuffer(b1, b2);
     reuseBuffer(pool, b2);
     return b1;
@@ -255,17 +243,32 @@ shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict 
 shift_buffer_t *duplicateBufferP(buffer_pool_t *pool, shift_buffer_t *b)
 {
     shift_buffer_t *bnew;
-    if (isLargeBuffer(b))
+    if (bufCapNoPadding(b) == pool->large_buffers_default_size)
     {
         bnew = popBuffer(pool);
     }
-    else
+    else if (bufCapNoPadding(b) == pool->small_buffers_default_size)
     {
         bnew = popSmallBuffer(pool);
     }
+    else
+    {
+        return duplicateBuffer(b);
+    }
     setLen(bnew, bufLen(b));
-    memCopy128(rawBufMut(bnew), rawBuf(b), bufLen(b));
+    copyBuf(bnew, b, bufLen(b));
     return bnew;
+}
+
+void updatBufferPooleAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
+                                        uint16_t large_buffer_right_padding, uint16_t small_buffer_left_padding,
+                                        uint16_t small_buffer_right_padding)
+{
+    assert(pool->small_buffers_container_len == 0 && pool->large_buffers_container_len == 0);
+    pool->large_buffer_left_padding  = large_buffer_left_padding;
+    pool->large_buffer_right_padding = large_buffer_right_padding;
+    pool->small_buffer_left_padding  = small_buffer_left_padding;
+    pool->small_buffer_right_padding = small_buffer_right_padding;
 }
 
 static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t bufcount,

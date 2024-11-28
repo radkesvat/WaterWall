@@ -24,7 +24,7 @@ shift_buffer_t *newShiftBufferWithPad(uint32_t minimum_capacity, uint16_t pad_le
     }
 
     uint32_t        real_cap = minimum_capacity + pad_left + pad_right;
-    shift_buffer_t *b     = globalMalloc(real_cap);
+    shift_buffer_t *b        = globalMalloc(real_cap);
 
     b->len      = 0;
     b->curpos   = pad_left;
@@ -54,6 +54,16 @@ shift_buffer_t *concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t
     uint32_t append_length = bufLen(buf);
     root                   = reserveBufSpace(root, root_length + append_length);
     setLen(root, root_length + append_length);
+
+    if (rCap(root) - append_length >= 128 && rCap(buf) >= 128)
+    {
+        memCopy128(rawBufMut(root) + root_length, rawBuf(buf), append_length);
+    }
+    else
+    {
+        memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
+    }
+
     memcpy(rawBufMut(root) + root_length, rawBuf(buf), append_length);
     return root;
 }

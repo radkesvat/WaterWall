@@ -239,7 +239,6 @@ static bool sendNgHttp2Data(tunnel_t *self, http2_client_con_state_t *con)
     if (len > 0)
     {
         shift_buffer_t *send_buf = popBuffer(getLineBufferPool(main_line));
-        shiftl(send_buf, lCap(send_buf) / 2); // use some unused space
         setLen(send_buf, len);
         writeRaw(send_buf, buf, len);
         context_t *data = newContext(main_line);
