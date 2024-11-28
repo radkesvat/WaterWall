@@ -97,7 +97,7 @@ static void encapsulateUdpPacket(context_t *c)
     uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
     port          = (port << 8) | (port >> 8);
     shiftl(packet, 2); // port
-    writeUI16(packet, port);
+    writeUnAlignedUI16(packet, port);
 
     switch (c->line->dest_ctx.address_type)
     {
@@ -105,7 +105,7 @@ static void encapsulateUdpPacket(context_t *c)
         shiftl(packet, 16);
         writeRaw(packet, &(c->line->dest_ctx.address.sin6.sin6_addr), 16);
         shiftl(packet, 1);
-        writeUI8(packet, kIPv6Addr);
+        writeUnAlignedUI8(packet, kIPv6Addr);
         break;
 
     case kSatIPV4:
@@ -113,13 +113,13 @@ static void encapsulateUdpPacket(context_t *c)
         shiftl(packet, 4);
         writeRaw(packet, &(c->line->dest_ctx.address.sin.sin_addr), 4);
         shiftl(packet, 1);
-        writeUI8(packet, kIPv4Addr);
+        writeUnAlignedUI8(packet, kIPv4Addr);
         break;
     }
     shiftl(packet, 1);
-    writeUI8(packet, 0x0);
+    writeUnAlignedUI8(packet, 0x0);
     shiftl(packet, 2);
-    writeUI16(packet, 0x0);
+    writeUnAlignedUI16(packet, 0x0);
 }
 
 #define ATLEAST(x)                                                                                                     \
@@ -298,10 +298,10 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSAuthMethodsCount: {
             assert(cstate->need == 2);
             uint8_t version = 0;
-            readUI8(bytes, &version);
+            readUnAlignedUI8(bytes, &version);
             shiftr(bytes, 1);
             uint8_t methodscount = 0;
-            readUI8(bytes, &methodscount);
+            readUnAlignedUI8(bytes, &methodscount);
             shiftr(bytes, 1);
             if (version != SOCKS5_VERSION || methodscount == 0)
             {
@@ -320,9 +320,9 @@ static void upStream(tunnel_t *self, context_t *c)
             // send auth mothod
             shift_buffer_t *resp = popBuffer(getContextBufferPool(c));
             shiftl(resp, 1);
-            writeUI8(resp, kNoAuth);
+            writeUnAlignedUI8(resp, kNoAuth);
             shiftl(resp, 1);
-            writeUI8(resp, SOCKS5_VERSION);
+            writeUnAlignedUI8(resp, SOCKS5_VERSION);
             shiftr(bytes, cstate->need); // we've read and choosed 1 method
             context_t *reply = newContextFrom(c);
             reply->payload   = resp;
@@ -349,11 +349,11 @@ static void upStream(tunnel_t *self, context_t *c)
             assert(cstate->need == 3);
 
             uint8_t version = 0;
-            readUI8(bytes, &version);
+            readUnAlignedUI8(bytes, &version);
             shiftr(bytes, 1);
 
             uint8_t cmd = 0;
-            readUI8(bytes, &cmd);
+            readUnAlignedUI8(bytes, &cmd);
             shiftr(bytes, 1);
 
             if (version != SOCKS5_VERSION || (cmd != kConnectCommand && cmd != kAssociateCommand))
@@ -383,7 +383,7 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSDstAddrType: {
             assert(cstate->need == 1);
             uint8_t satyp = 0;
-            readUI8(bytes, &satyp);
+            readUnAlignedUI8(bytes, &satyp);
             shiftr(bytes, 1);
 
             switch ((socks5_addr_type) satyp)
@@ -415,7 +415,7 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSDstAddrLen: {
             assert(cstate->need == 1);
             uint8_t addr_len = 0;
-            readUI8(bytes, &addr_len);
+            readUnAlignedUI8(bytes, &addr_len);
             shiftr(bytes, 1);
 
             if (addr_len == 0)

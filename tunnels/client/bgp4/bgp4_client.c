@@ -77,11 +77,11 @@ static void upStream(tunnel_t *self, context_t *c)
         }
 
         shiftl(c->payload, 1); // type
-        writeUI8(c->payload, bgp_type);
+        writeUnAlignedUI8(c->payload, bgp_type);
 
         uint16_t blen = (uint16_t) bufLen(c->payload);
         shiftl(c->payload, 2); // length
-        writeUI16(c->payload, blen);
+        writeUnAlignedUI16(c->payload, blen);
 
         shiftl(c->payload, kMarkerLength);
         memset(rawBufMut(c->payload), kMarker, kMarkerLength);

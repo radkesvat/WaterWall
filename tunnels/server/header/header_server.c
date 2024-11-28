@@ -53,7 +53,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     return;
                 }
 
-                readUI16(buf, &port);
+                readUnAlignedUI16(buf, &port);
                 sockaddr_set_port(&(c->line->dest_ctx.address), port);
                 shiftr(c->payload, sizeof(uint16_t));
                 if (port < 10)

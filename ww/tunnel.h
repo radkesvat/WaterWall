@@ -140,15 +140,16 @@ typedef void (*TunnelFlowRoutineInit)(struct tunnel_s *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(struct tunnel_s *, line_t *line, shift_buffer_t *payload);
 typedef void (*TunnelFlowRoutineEst)(struct tunnel_s *, line_t *line);
 typedef void (*TunnelFlowRoutineFin)(struct tunnel_s *, line_t *line);
+typedef void (*TunnelFlowRoutinePause)(struct tunnel_s *, line_t *line);
+typedef void (*TunnelFlowRoutineResume)(struct tunnel_s *, line_t *line);
 
 /*
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
     which later gets accessed by the chain_index which is fixed
 
 */
-typedef struct tunnel_s // 48
+typedef struct tunnel_s
 {
-    void            *state;
     struct tunnel_s *dw, *up;
 
     // TunnelFlowRoutine upStream;
@@ -162,11 +163,18 @@ typedef struct tunnel_s // 48
     TunnelFlowRoutineEst     fnEstD;
     TunnelFlowRoutineFin     fnFinU;
     TunnelFlowRoutineFin     fnFinD;
+    TunnelFlowRoutinePause   fnPauseU;
+    TunnelFlowRoutinePause   fnPauseD;
+    TunnelFlowRoutineResume  fnResumeU;
+    TunnelFlowRoutineResume  fnResumeD;
 
-    uint16_t cstate_offset;
-    uint16_t cstate_size;
-
+    uint16_t      cstate_offset;
+    uint16_t      cstate_size;
+    uint16_t      tstate_size;
     chain_index_t chain_index;
+
+    uint8_t state[];
+
 } tunnel_t;
 
 tunnel_t *newTunnel(void);
@@ -425,6 +433,7 @@ static inline buffer_pool_t *getContextBufferPool(const context_t *const c)
     same as c->payload = NULL, this is necessary before destroying a context to prevent bugs, dose nothing on release
     build
 */
+
 static inline void dropContexPayload(context_t *const c)
 {
 #if defined(RELEASE)

@@ -55,11 +55,11 @@ static void encapsulateUdpPacket(context_t *c)
     writeRaw(c->payload, (unsigned char *) "\r\n", 2);
 
     shiftl(c->payload, 2); // LEN
-    writeUI16(c->payload, htons(packet_len));
+    writeUnAlignedUI16(c->payload, htons(packet_len));
 
     uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
     shiftl(c->payload, 2); // port
-    writeUI16(c->payload, htons(port));
+    writeUnAlignedUI16(c->payload, htons(port));
 
     switch (c->line->dest_ctx.address_type)
     {
@@ -67,7 +67,7 @@ static void encapsulateUdpPacket(context_t *c)
         shiftl(c->payload, 16);
         writeRaw(c->payload, &(c->line->dest_ctx.address.sin6.sin6_addr), 16);
         shiftl(c->payload, 1);
-        writeUI8(c->payload, kTrojanatypIpV6);
+        writeUnAlignedUI8(c->payload, kTrojanatypIpV6);
         break;
 
     case kSatIPV4:
@@ -75,7 +75,7 @@ static void encapsulateUdpPacket(context_t *c)
         shiftl(c->payload, 4);
         writeRaw(c->payload, &(c->line->dest_ctx.address.sin.sin_addr), 4);
         shiftl(c->payload, 1);
-        writeUI8(c->payload, kTrojanatypIpV4);
+        writeUnAlignedUI8(c->payload, kTrojanatypIpV4);
         break;
     }
 }

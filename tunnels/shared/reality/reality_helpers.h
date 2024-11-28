@@ -167,11 +167,11 @@ static void appendTlsHeader(shift_buffer_t *buf)
     assert(data_length < (1U << 16));
 
     shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, htons((uint16_t) data_length));
+    writeUnAlignedUI16(buf, htons((uint16_t) data_length));
 
     shiftl(buf, sizeof(uint16_t));
-    writeUI16(buf, htons(kTLSVersion12));
+    writeUnAlignedUI16(buf, htons(kTLSVersion12));
 
     shiftl(buf, sizeof(uint8_t));
-    writeUI8(buf, kTLS12ApplicationData);
+    writeUnAlignedUI8(buf, kTLS12ApplicationData);
 }

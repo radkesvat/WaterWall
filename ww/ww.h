@@ -1,8 +1,8 @@
 #pragma once
 #include "hthread.h"
 #include "managers/memory_manager.h"
-
 #include <stddef.h>
+
 /*
     This is a global state file that powers many WW things up
 
@@ -56,7 +56,59 @@ enum
 
 #define ALIGN2(n, w) (((n) + ((w) - 1)) & ~((w) - 1))
 
+#if defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 
+#define EXTRA_ALLOC  128
+#define BUF_USES_AVX 1
+
+#include <x86intrin.h>
+static inline void memCopy128(void *dest, const void *src, long int n)
+{
+    __m256i       *d_vec = (__m256i *) (dest);
+    const __m256i *s_vec = (const __m256i *) (src);
+
+    if ((uintptr_t) dest % 128 != 0 || (uintptr_t) src % 128 != 0)
+    {
+
+        while (n > 0)
+        {
+            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
+            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
+            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
+
+            n -= 128;
+            d_vec += 4;
+            s_vec += 4;
+        }
+
+        return;
+    }
+
+    while (n > 0)
+    {
+        _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
+        _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+        _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
+        _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
+
+        n -= 128;
+        d_vec += 4;
+        s_vec += 4;
+    }
+}
+
+#else
+
+#define EXTRA_ALLOC  0
+#define BUF_USES_AVX 0
+
+static inline void memCopy128(void *__restrict __dest, const void *__restrict __src, size_t __n)
+{
+    memcpy(__dest, __src, __n);
+}
+
+#endif
 
 struct ww_global_state_s;
 
@@ -152,7 +204,6 @@ static inline worker_t *getWorker(tid_t tid)
 {
     return &(WORKERS[tid]);
 }
-
 
 static inline struct buffer_pool_s *getWorkerBufferPool(tid_t tid)
 {

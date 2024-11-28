@@ -6,60 +6,43 @@
 #include <stdint.h>
 #include <string.h>
 
-#define LEFTPADDING  ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8)) - (sizeof(uint32_t) * 3))
-#define RIGHTPADDING ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 9) : (1U << 7)))
+// #define LEFTPADDING  ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8)) - (sizeof(uint32_t) * 3))
+// #define RIGHTPADDING ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 9) : (1U << 7)))
 
-#define TOTALPADDING ((uint32_t) (sizeof(shift_buffer_t) + (LEFTPADDING + RIGHTPADDING)))
+// #define TOTALPADDING ((uint32_t) (sizeof(shift_buffer_t) + (LEFTPADDING + RIGHTPADDING)))
 
-void destroyShiftBuffer(shift_buffer_t *self)
+void destroyShiftBuffer(shift_buffer_t *b)
 {
-    globalFree(self);
+    globalFree(b);
 }
 
-shift_buffer_t *newShiftBuffer(uint32_t pre_cap) // NOLINT
+shift_buffer_t *newShiftBufferWithPad(uint32_t minimum_capacity, uint16_t pad_left, uint16_t pad_right)
 {
-    if (pre_cap != 0 && pre_cap % kCpuLineCacheSize != 0)
+    if (minimum_capacity != 0 && minimum_capacity % kCpuLineCacheSize != 0)
     {
-        pre_cap = (max(kCpuLineCacheSize, pre_cap) + kCpuLineCacheSizeMin1) & ~kCpuLineCacheSizeMin1;
+        minimum_capacity = (max(kCpuLineCacheSize, minimum_capacity) + kCpuLineCacheSizeMin1) & ~kCpuLineCacheSizeMin1;
     }
 
-    uint32_t        real_cap = pre_cap + TOTALPADDING;
-    shift_buffer_t *self     = globalMalloc(real_cap + EXTRA_ALLOC);
+    uint32_t        real_cap = minimum_capacity + pad_left + pad_right;
+    shift_buffer_t *b     = globalMalloc(real_cap);
 
-    self->len      = 0;
-    self->curpos   = LEFTPADDING;
-    self->capacity = real_cap;
+    b->len      = 0;
+    b->curpos   = pad_left;
+    b->capacity = real_cap;
+    b->l_pad    = pad_left;
+    b->r_pad    = pad_right;
 
-    return self;
+    return b;
 }
 
-// this function is made for internal use (most probably in bufferpool)
-shift_buffer_t *reset(shift_buffer_t *self, uint32_t pre_cap)
+shift_buffer_t *newShiftBuffer(uint32_t minimum_capacity)
 {
-
-    if (pre_cap != 0 && pre_cap % kCpuLineCacheSize != 0)
-    {
-        pre_cap = (max(kCpuLineCacheSize, pre_cap) + kCpuLineCacheSizeMin1) & ~kCpuLineCacheSizeMin1;
-    }
-
-    uint32_t real_cap = pre_cap + TOTALPADDING;
-
-    if (self->capacity != real_cap)
-    {
-        destroyShiftBuffer(self);
-        return newShiftBuffer(pre_cap);
-    }
-
-    self->len      = 0;
-    self->curpos   = LEFTPADDING;
-    self->capacity = real_cap;
-    return self;
+    return newShiftBufferWithPad(minimum_capacity, 0, 0);
 }
 
 shift_buffer_t *duplicateBuffer(shift_buffer_t *b)
 {
-    uint32_t        pre_cap = bufCap(b) - TOTALPADDING;
-    shift_buffer_t *newbuf  = newShiftBuffer(pre_cap);
+    shift_buffer_t *newbuf = newShiftBufferWithPad(bufCapNoPadding(b), b->l_pad, b->r_pad);
     setLen(newbuf, bufLen(b));
     memCopy128(rawBufMut(newbuf), rawBuf(b), bufLen(b));
     return newbuf;
@@ -80,22 +63,19 @@ shift_buffer_t *sliceBufferTo(shift_buffer_t *restrict dest, shift_buffer_t *res
     assert(bytes <= bufLen(source));
     assert(bufLen(dest) == 0);
 
-    if (rCap(dest) < bytes)
-    {
-        shift_buffer_t *bigger_buf = newShiftBuffer(bytes);
-        destroyShiftBuffer(dest);
-        dest = bigger_buf;
-    }
+    dest = reserveBufSpace(dest, bytes);
     setLen(dest, bytes);
-    memCopy128(rawBufMut(dest), rawBuf(source), bytes);
+
+    copyBuf(dest, source, bytes);
+
     shiftr(source, bytes);
 
     return dest;
 }
 
-shift_buffer_t *sliceBuffer(shift_buffer_t *const self, const uint32_t bytes)
+shift_buffer_t *sliceBuffer(shift_buffer_t *const b, const uint32_t bytes)
 {
-    shift_buffer_t *newbuf = newShiftBuffer(self->capacity - TOTALPADDING);
-    sliceBufferTo(newbuf, self, bytes);
+    shift_buffer_t *newbuf = newShiftBufferWithPad(bufCapNoPadding(b), b->l_pad, b->r_pad);
+    sliceBufferTo(newbuf, b, bytes);
     return newbuf;
 }

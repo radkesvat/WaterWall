@@ -204,7 +204,7 @@ static void eventfd_read_cb(hio_t* io, shift_buffer_t* buf) {
     uint64_t count = bufLen(buf);
 #if defined(OS_UNIX) && HAVE_EVENTFD
     assert(bufLen(buf) == sizeof(count));
-    readUI64(buf, &count);
+    readUnAlignedUI64(buf, &count);
 #endif
     (void)count;
     for (uint64_t i = 0; i < count; ++i) {

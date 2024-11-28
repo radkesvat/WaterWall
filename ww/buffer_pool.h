@@ -9,7 +9,7 @@
     A growable pool, very simple.
 
     preallocates (n) number of buffers at each call to charge(),
-
+,
     users should call popBuffer() when they want a buffer, and later call reuseBuffer when they are done with
     the buffer.
 
@@ -31,7 +31,7 @@
 typedef struct buffer_pool_s buffer_pool_t;
 
 buffer_pool_t  *createBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small,
-                                 unsigned int pool_width);
+                                 uint32_t pool_width);
 shift_buffer_t *popBuffer(buffer_pool_t *pool);
 shift_buffer_t *popSmallBuffer(buffer_pool_t *pool);
 shift_buffer_t *appendBufferMerge(buffer_pool_t *pool, shift_buffer_t *restrict b1, shift_buffer_t *restrict b2);
@@ -39,7 +39,7 @@ shift_buffer_t *duplicateBufferP(buffer_pool_t *pool, shift_buffer_t *b);
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
 // void            reuseBufferThreadSafe(shift_buffer_t *buf);
-unsigned int getBufferPoolLargeBufferDefaultSize(void);
-unsigned int getBufferPoolSmallBufferDefaultSize(void);
+uint32_t getBufferPoolLargeBufferDefaultSize(void);
+uint32_t getBufferPoolSmallBufferDefaultSize(void);
 bool         isLargeBuffer(shift_buffer_t *buf);
 

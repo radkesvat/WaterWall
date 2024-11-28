@@ -60,7 +60,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             shift_buffer_t *full_data = bufferStreamFullRead(bstream);
             uint8_t         flags;
-            readUI8(full_data, &flags);
+            readUnAlignedUI8(full_data, &flags);
             shiftr(full_data, 1); // first byte is  (protobuf flag)
 
             const uint8_t *uleb_data    = rawBuf(full_data);
@@ -117,14 +117,14 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     shift_buffer_t *flowctl_buf = popBuffer(getContextBufferPool(c));
                     setLen(flowctl_buf, sizeof(uint32_t));
-                    writeUI32(flowctl_buf, htonl(cstate->bytes_received_nack));
+                    writeUnAlignedUI32(flowctl_buf, htonl(cstate->bytes_received_nack));
                     cstate->bytes_received_nack = 0;
 
                     size_t blen             = bufLen(flowctl_buf);
                     size_t calculated_bytes = sizeUleb128(blen);
                     shiftl(flowctl_buf, calculated_bytes + 1);
                     writeUleb128(rawBufMut(flowctl_buf) + 1, blen);
-                    writeUI8(flowctl_buf, 0x1);
+                    writeUnAlignedUI8(flowctl_buf, 0x1);
 
                     context_t *send_flow_ctx = newContextFrom(c);
                     send_flow_ctx->payload   = flowctl_buf;
@@ -202,7 +202,7 @@ static void downStream(tunnel_t *self, context_t *c)
         size_t calculated_bytes = sizeUleb128(blen);
         shiftl(c->payload, calculated_bytes + 1);
         writeUleb128(rawBufMut(c->payload) + 1, blen);
-        writeUI8(c->payload, '\n');
+        writeUnAlignedUI8(c->payload, '\n');
         cstate->bytes_sent_nack += blen;
         if (cstate->bytes_sent_nack > kMaxSendBeforeAck)
         {

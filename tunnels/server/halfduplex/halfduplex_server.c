@@ -215,7 +215,7 @@ static void upStream(tunnel_t *self, context_t *c)
             ((uint8_t *) rawBufMut(c->payload))[0] = (((uint8_t *) rawBuf(c->payload))[0] & 0x7F);
 
             hash_t hash = 0x0;
-            readUI64(c->payload, (uint64_t *) &hash);
+            readUnAlignedUI64(c->payload, (uint64_t *) &hash);
             cstate->hash = hash;
 
             if (is_upload)

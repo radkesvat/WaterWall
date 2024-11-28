@@ -80,7 +80,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
 
                     uint8_t bgp_type;
-                    readUI8(buf, &bgp_type);
+                    readUnAlignedUI8(buf, &bgp_type);
                     if (bgp_type == 1)
                     {
                         cstate->open_received = true;
@@ -95,7 +95,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     shiftr(buf, kBgpOpenPacketHeaderSize); // now at index addition
 
                     uint8_t bgp_additions;
-                    readUI8(buf, &bgp_additions);
+                    readUnAlignedUI8(buf, &bgp_additions);
 
                     if (bgp_additions > 0 && bufLen(buf) - 1 < bgp_additions)
                     {
@@ -163,11 +163,11 @@ static void downStream(tunnel_t *self, context_t *c)
         uint8_t bgp_type = 2 + (fastRand() % kBgpTypes - 1);
 
         shiftl(c->payload, 1); // type
-        writeUI8(c->payload, bgp_type);
+        writeUnAlignedUI8(c->payload, bgp_type);
 
         uint16_t blen = (uint16_t) bufLen(c->payload);
         shiftl(c->payload, 2); // length
-        writeUI16(c->payload, blen);
+        writeUnAlignedUI16(c->payload, blen);
 
         shiftl(c->payload, kMarkerLength);
         memset(rawBufMut(c->payload), kMarker, kMarkerLength);
