@@ -216,7 +216,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     do
                     {
                         shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        unsigned int    avail = rCap(buf);
+                        unsigned int    avail = rCapNoPadding(buf);
                         n                     = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
                         // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
                         if (n > 0)
@@ -284,7 +284,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
                 shiftl(buf, lCap(buf) / 2);
                 setLen(buf, 0);
-                unsigned int avail = rCap(buf);
+                unsigned int avail = rCapNoPadding(buf);
                 n                  = SSL_read(cstate->ssl, rawBufMut(buf), (int) avail);
 
                 if (n > 0)
@@ -330,7 +330,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 do
                 {
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    unsigned int    avail = rCap(buf);
+                    unsigned int    avail = rCapNoPadding(buf);
 
                     n = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
                     if (n > 0)
@@ -500,7 +500,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 do
                 {
                     shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    unsigned int    avail = rCap(buf);
+                    unsigned int    avail = rCapNoPadding(buf);
                     n                     = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
                     if (n > 0)
                     {

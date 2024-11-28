@@ -187,7 +187,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (status == kSslstatusWantIo)
             {
                 shift_buffer_t *buf   = popBuffer(getContextBufferPool(client_hello_ctx));
-                int             avail = (int) rCap(buf);
+                int             avail = (int) rCapNoPadding(buf);
                 n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {
@@ -312,7 +312,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     do
                     {
                         shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        int             avail = (int) rCap(buf);
+                        int             avail = (int) rCapNoPadding(buf);
                         n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
 
                         if (n > 0)
@@ -351,7 +351,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 /* Did SSL request to write bytes? */
                 shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                int             avail = (int) rCap(buf);
+                int             avail = (int) rCapNoPadding(buf);
                 n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
                 if (n > 0)
                 {

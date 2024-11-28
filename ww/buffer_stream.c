@@ -52,7 +52,7 @@ void bufferStreamPush(buffer_stream_t *self, shift_buffer_t *buf)
     {
         shift_buffer_t *last = queue_pull_back(&self->q);
 
-        if (rCap(last) >= bufLen(buf))
+        if (rCapNoPadding(last) >= bufLen(buf))
         {
             self->size += bufLen(buf);
             concatBufferNoCheck(last, buf);

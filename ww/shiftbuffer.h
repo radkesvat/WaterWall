@@ -56,10 +56,19 @@ static inline uint32_t lCap(shift_buffer_t *const b)
 {
     return b->curpos;
 }
+static inline uint32_t lCapNoPadding(shift_buffer_t *const b)
+{
+    return b->curpos - b->l_pad;
+}
 
 static inline uint32_t rCap(shift_buffer_t *const b)
 {
     return (b->capacity - b->curpos);
+}
+
+static inline uint32_t rCapNoPadding(shift_buffer_t *const b)
+{
+    return b->capacity - (b->r_pad + b->curpos);
 }
 
 static inline void shiftl(shift_buffer_t *const b, const uint32_t bytes)

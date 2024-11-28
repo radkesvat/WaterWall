@@ -202,13 +202,14 @@ static void nio_read(hio_t* io) {
     case HIO_TYPE_IP: buf = popSmallBuffer(io->loop->bufpool); break;
     }
 
-    unsigned int available = rCap(buf);
+    unsigned int available = rCapNoPadding(buf);
+    assert(available >= 1024);
+
     if (available > (1U << 15)) {
         available = (1U << 15);
     }
-    else if (WW_UNLIKELY(available < 1024)) {
-        buf = reserveBufSpace(buf, 1024);
-    }
+  
+  
     nread = __nio_read(io, rawBufMut(buf), available);
 
     // printd("read retval=%d\n", nread);
