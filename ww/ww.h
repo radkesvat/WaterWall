@@ -58,9 +58,6 @@ enum
 
 #if defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 
-#define EXTRA_ALLOC  128
-#define BUF_USES_AVX 1
-
 #include <x86intrin.h>
 static inline void memCopy128(void *dest, const void *src, long int n)
 {
@@ -100,12 +97,15 @@ static inline void memCopy128(void *dest, const void *src, long int n)
 
 #else
 
-#define EXTRA_ALLOC  0
-#define BUF_USES_AVX 0
-
-static inline void memCopy128(void *__restrict __dest, const void *__restrict __src, size_t __n)
+static inline void memCopy128(uint8_t *__restrict __dest, const uint8_t *__restrict __src, size_t __n)
 {
-    memcpy(__dest, __src, __n);
+    while (n > 0)
+    {
+        memcpy(__dest, __src, 128);
+        n -= 128;
+        __dest += 128;
+        __src += 128;
+    }
 }
 
 #endif

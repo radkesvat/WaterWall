@@ -56,6 +56,7 @@ static inline uint32_t lCap(shift_buffer_t *const b)
 {
     return b->curpos;
 }
+
 static inline uint32_t lCapNoPadding(shift_buffer_t *const b)
 {
     return b->curpos - b->l_pad;

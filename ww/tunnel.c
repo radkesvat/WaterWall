@@ -29,14 +29,165 @@ void chain(tunnel_t *from, tunnel_t *to)
     to->chain_index = from->chain_index + 1;
 }
 
+static void defaultUpStreamInit(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnInitU(self->up, line);
+    }
+}
+
+static void defaultUpStreamEst(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnEstU(self->up, line);
+    }
+}
+
+static void defaultUpStreamFin(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnFinU(self->up, line);
+    }
+}
+
+static void defaultUpStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnPayloadU(self->up, line, payload);
+    }
+}
+
+static void defaultUpStreamPause(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnPauseU(self->up, line);
+    }
+}
+
+static void defaultUpStreamResume(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnResumeU(self->up, line);
+    }
+}
+
+static void defaultUpStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
+{
+    assert(info->len < kMaxChainLen);
+
+    info->tuns[(info->len)++] = self;
+
+    if (self->up != NULL)
+    {
+        self->up->fnGBufInfoU(self->up, info);
+    }
+}
+
+static void defaultdownStreamInit(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnInitD(self->up, line);
+    }
+}
+
+static void defaultdownStreamEst(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnEstD(self->up, line);
+    }
+}
+
+static void defaultdownStreamFin(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnFinD(self->up, line);
+    }
+}
+
+static void defaultdownStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnPayloadD(self->up, line, payload);
+    }
+}
+
+static void defaultDownStreamPause(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnPauseD(self->up, line);
+    }
+}
+
+static void defaultDownStreamResume(tunnel_t *self, line_t *line)
+{
+    if (self->up != NULL)
+    {
+        self->up->fnResumeD(self->up, line);
+    }
+}
+
+static void defaultDownStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
+{
+    assert(info->len < kMaxChainLen);
+
+    info->tuns[(info->len)++] = self;
+
+    if (self->up != NULL)
+    {
+        self->up->fnGBufInfoD(self->up, info);
+    }
+}
+
+static void defaultOnChainingComplete(tunnel_t *self)
+{
+    (void) self;
+}
+
+static void defaultBeforeChainStart(tunnel_t *self)
+{
+    (void) self;
+}
+
+static void defaultOnChainStart(tunnel_t *self)
+{
+    (void) self;
+}
+
 tunnel_t *newTunnel(void)
 {
     tunnel_t *ptr = globalMalloc(sizeof(tunnel_t));
 
     tunnel_t tunnel = (tunnel_t) {
-        .upStream   = &defaultUpStream,
-        .downStream = &defaultDownStream,
-    };
+
+        .fnInitU            = &defaultUpStreamInit,
+        .fnInitD            = &defaultdownStreamInit,
+        .fnPayloadU         = &defaultUpStreamPayload,
+        .fnPayloadD         = &defaultdownStreamPayload,
+        .fnEstU             = &defaultUpStreamEst,
+        .fnEstD             = &defaultdownStreamEst,
+        .fnFinU             = &defaultUpStreamFin,
+        .fnFinD             = &defaultdownStreamFin,
+        .fnPauseU           = &defaultUpStreamPause,
+        .fnPauseD           = &defaultDownStreamPause,
+        .fnResumeU          = &defaultUpStreamResume,
+        .fnResumeD          = &defaultDownStreamResume,
+        .fnGBufInfoU        = &defaultUpStreamGetBufInfo,
+        .fnGBufInfoD        = &defaultDownStreamGetBufInfo,
+        .onChainingComplete = &defaultOnChainingComplete,
+        .beforeChainStart   = &defaultBeforeChainStart,
+        .onChainStart       = &defaultOnChainStart};
+        
     memcpy(ptr, &tunnel, sizeof(tunnel_t));
 
     return ptr;
@@ -64,68 +215,6 @@ void destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
     globalFree(item);
-}
-
-void defaultUpStreamInit(tunnel_t *self, line_t *line)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnInitU(self->up, line);
-    }
-}
-
-void defaultUpStreamEst(tunnel_t *self, line_t *line)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnEstU(self->up, line);
-    }
-}
-
-void defaultUpStreamFin(tunnel_t *self, line_t *line)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnFinU(self->up, line);
-    }
-}
-void defaultUpStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnPayloadU(self->up, line, payload);
-    }
-}
-
-void defaultdownStreamInit(tunnel_t *self, line_t *line)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnInitD(self->up, line);
-    }
-}
-
-void defaultdownStreamEst(tunnel_t *self, line_t *line)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnEstD(self->up, line);
-    }
-}
-
-void defaultdownStreamFin(tunnel_t *self, line_t *line)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnFinD(self->up, line);
-    }
-}
-void defaultdownStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
-{
-    if (self->up != NULL)
-    {
-        self->up->fnPayloadD(self->up, line, payload);
-    }
 }
 
 void pipeUpStream(context_t *c)

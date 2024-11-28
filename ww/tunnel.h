@@ -81,7 +81,6 @@ enum
 typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
-typedef uint8_t  chain_index_t;
 
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
@@ -105,12 +104,12 @@ typedef struct line_s
     bool             alive;
     bool             up_piped;
     bool             dw_piped;
-    void            *up_state;
-    void            *dw_state;
-    LineFlowSignal   up_pause_cb;
-    LineFlowSignal   up_resume_cb;
-    LineFlowSignal   dw_pause_cb;
-    LineFlowSignal   dw_resume_cb;
+    // void            *up_state;
+    // void            *dw_state;
+    // LineFlowSignal   up_pause_cb;
+    // LineFlowSignal   up_resume_cb;
+    // LineFlowSignal   dw_pause_cb;
+    // LineFlowSignal   dw_resume_cb;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
     void            *chains_state[kMaxChainLen];
@@ -136,12 +135,25 @@ typedef struct context_s
 
 struct tunnel_s;
 
+typedef struct tunnel_buffinfo_s
+{
+    uint16_t         sum_lef_pad;
+    uint16_t         sum_right_pad;
+    uint16_t         len;
+    struct tunnel_s *tuns[kMaxChainLen];
+
+} tunnel_buffinfo_t;
+
+struct tunnel_s;
+
+typedef void (*TunnelStatusCb)(struct tunnel_s *);
 typedef void (*TunnelFlowRoutineInit)(struct tunnel_s *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(struct tunnel_s *, line_t *line, shift_buffer_t *payload);
 typedef void (*TunnelFlowRoutineEst)(struct tunnel_s *, line_t *line);
 typedef void (*TunnelFlowRoutineFin)(struct tunnel_s *, line_t *line);
 typedef void (*TunnelFlowRoutinePause)(struct tunnel_s *, line_t *line);
 typedef void (*TunnelFlowRoutineResume)(struct tunnel_s *, line_t *line);
+typedef void (*TunnelFlowGatherBufInfo)(struct tunnel_s *, tunnel_buffinfo_t *info);
 
 /*
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
@@ -167,13 +179,19 @@ typedef struct tunnel_s
     TunnelFlowRoutinePause   fnPauseD;
     TunnelFlowRoutineResume  fnResumeU;
     TunnelFlowRoutineResume  fnResumeD;
+    TunnelFlowGatherBufInfo  fnGBufInfoU;
+    TunnelFlowGatherBufInfo  fnGBufInfoD;
+    TunnelStatusCb           onChainingComplete;
+    TunnelStatusCb           beforeChainStart;
+    TunnelStatusCb           onChainStart;
 
-    uint16_t      cstate_offset;
-    uint16_t      cstate_size;
-    uint16_t      tstate_size;
-    chain_index_t chain_index;
+    uint16_t cstate_offset;
+    uint16_t cstate_size;
+    uint16_t tstate_size;
+    uint16_t chain_index;
+    uint8_t  _pad_[4];
 
-    uint8_t state[];
+    uintptr_t state[];
 
 } tunnel_t;
 
@@ -182,8 +200,6 @@ void      destroyTunnel(tunnel_t *self);
 void      chain(tunnel_t *from, tunnel_t *to);
 void      chainDown(tunnel_t *from, tunnel_t *to);
 void      chainUp(tunnel_t *from, tunnel_t *to);
-void      defaultUpStream(tunnel_t *self, context_t *c);
-void      defaultDownStream(tunnel_t *self, context_t *c);
 void      pipeUpStream(context_t *c);
 void      pipeDownStream(context_t *c);
 void      pipeTo(tunnel_t *self, line_t *l, tid_t tid);
@@ -218,71 +234,71 @@ static inline bool isAlive(const line_t *const line)
     Once the up state is setup, it will receive pasue/resume events from down end of the line, with the `state` as
    userdata
 */
-static inline void setupLineUpSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
-                                   LineFlowSignal resume_cb)
-{
-    assert(l->up_state == NULL);
-    l->up_state     = state;
-    l->up_pause_cb  = pause_cb;
-    l->up_resume_cb = resume_cb;
-}
+// static inline void setupLineUpSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
+//                                    LineFlowSignal resume_cb)
+// {
+//     assert(l->up_state == NULL);
+//     l->up_state     = state;
+//     l->up_pause_cb  = pause_cb;
+//     l->up_resume_cb = resume_cb;
+// }
 
 /*
     Once the down state is setup, it will receive pasue/resume events from up end of the line, with the `state` as
    userdata
 */
-static inline void setupLineDownSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
-                                     LineFlowSignal resume_cb)
-{
-    assert(l->dw_state == NULL);
-    l->dw_state     = state;
-    l->dw_pause_cb  = pause_cb;
-    l->dw_resume_cb = resume_cb;
-}
+// static inline void setupLineDownSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
+//                                      LineFlowSignal resume_cb)
+// {
+//     assert(l->dw_state == NULL);
+//     l->dw_state     = state;
+//     l->dw_pause_cb  = pause_cb;
+//     l->dw_resume_cb = resume_cb;
+// }
 
-static inline void doneLineUpSide(line_t *const l)
-{
-    assert(l->up_state != NULL || l->up_pause_cb == NULL);
-    l->up_state = NULL;
-}
+// static inline void doneLineUpSide(line_t *const l)
+// {
+//     assert(l->up_state != NULL || l->up_pause_cb == NULL);
+//     l->up_state = NULL;
+// }
 
-static inline void doneLineDownSide(line_t *const l)
-{
-    assert(l->dw_state != NULL || l->dw_pause_cb == NULL);
-    l->dw_state = NULL;
-}
+// static inline void doneLineDownSide(line_t *const l)
+// {
+//     assert(l->dw_state != NULL || l->dw_pause_cb == NULL);
+//     l->dw_state = NULL;
+// }
 
-static inline void pauseLineUpSide(line_t *const l)
-{
-    if (l->up_state)
-    {
-        l->up_pause_cb(l->up_state);
-    }
-}
+// static inline void pauseLineUpSide(line_t *const l)
+// {
+//     if (l->up_state)
+//     {
+//         l->up_pause_cb(l->up_state);
+//     }
+// }
 
-static inline void pauseLineDownSide(line_t *const l)
-{
-    if (l->dw_state)
-    {
-        l->dw_pause_cb(l->dw_state);
-    }
-}
+// static inline void pauseLineDownSide(line_t *const l)
+// {
+//     if (l->dw_state)
+//     {
+//         l->dw_pause_cb(l->dw_state);
+//     }
+// }
 
-static inline void resumeLineUpSide(line_t *const l)
-{
-    if (l->up_state)
-    {
-        l->up_resume_cb(l->up_state);
-    }
-}
+// static inline void resumeLineUpSide(line_t *const l)
+// {
+//     if (l->up_state)
+//     {
+//         l->up_resume_cb(l->up_state);
+//     }
+// }
 
-static inline void resumeLineDownSide(line_t *const l)
-{
-    if (l->dw_state)
-    {
-        l->dw_resume_cb(l->dw_state);
-    }
-}
+// static inline void resumeLineDownSide(line_t *const l)
+// {
+//     if (l->dw_state)
+//     {
+//         l->dw_resume_cb(l->dw_state);
+//     }
+// }
 
 /*
     called from unlockline which mostly is because destroy context
@@ -301,8 +317,8 @@ static inline void internalUnRefLine(line_t *const l)
     {
         assert(LSTATE_I(l, i) == NULL);
     }
-    assert(l->up_state == NULL);
-    assert(l->dw_state == NULL);
+    // assert(l->up_state == NULL);
+    // assert(l->dw_state == NULL);
 
     // assert(l->src_ctx.domain == NULL); // impossible (source domain?) (no need to assert)
 
