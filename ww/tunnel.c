@@ -31,50 +31,38 @@ void chain(tunnel_t *from, tunnel_t *to)
 
 static void defaultUpStreamInit(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnInitU(self->up, line);
-    }
+    assert(self->up != NULL);
+    self->up->fnInitU(self->up, line);
 }
 
 static void defaultUpStreamEst(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnEstU(self->up, line);
-    }
+    assert(self->up != NULL);
+    self->up->fnEstU(self->up, line);
 }
 
 static void defaultUpStreamFin(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnFinU(self->up, line);
-    }
+    assert(self->up != NULL);
+    self->up->fnFinU(self->up, line);
 }
 
 static void defaultUpStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnPayloadU(self->up, line, payload);
-    }
+    assert(self->up != NULL);
+    self->up->fnPayloadU(self->up, line, payload);
 }
 
 static void defaultUpStreamPause(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnPauseU(self->up, line);
-    }
+    assert(self->up != NULL);
+    self->up->fnPauseU(self->up, line);
 }
 
 static void defaultUpStreamResume(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnResumeU(self->up, line);
-    }
+    assert(self->up != NULL);
+    self->up->fnResumeU(self->up, line);
 }
 
 static void defaultUpStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
@@ -83,58 +71,44 @@ static void defaultUpStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
 
     info->tuns[(info->len)++] = self;
 
-    if (self->up != NULL)
-    {
-        self->up->fnGBufInfoU(self->up, info);
-    }
+    assert(self->up != NULL);
+    self->up->fnGBufInfoU(self->up, info);
 }
 
 static void defaultdownStreamInit(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnInitD(self->up, line);
-    }
+    assert(self->dw != NULL);
+    self->up->fnInitD(self->up, line);
 }
 
 static void defaultdownStreamEst(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnEstD(self->up, line);
-    }
+    assert(self->dw != NULL);
+    self->up->fnEstD(self->up, line);
 }
 
 static void defaultdownStreamFin(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnFinD(self->up, line);
-    }
+    assert(self->dw != NULL);
+    self->up->fnFinD(self->up, line);
 }
 
 static void defaultdownStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnPayloadD(self->up, line, payload);
-    }
+    assert(self->dw != NULL);
+    self->up->fnPayloadD(self->up, line, payload);
 }
 
 static void defaultDownStreamPause(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnPauseD(self->up, line);
-    }
+    assert(self->dw != NULL);
+    self->up->fnPauseD(self->up, line);
 }
 
 static void defaultDownStreamResume(tunnel_t *self, line_t *line)
 {
-    if (self->up != NULL)
-    {
-        self->up->fnResumeD(self->up, line);
-    }
+    assert(self->dw != NULL);
+    self->up->fnResumeD(self->up, line);
 }
 
 static void defaultDownStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
@@ -143,10 +117,8 @@ static void defaultDownStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
 
     info->tuns[(info->len)++] = self;
 
-    if (self->up != NULL)
-    {
-        self->up->fnGBufInfoD(self->up, info);
-    }
+    assert(self->dw != NULL);
+    self->up->fnGBufInfoD(self->up, info);
 }
 
 static void defaultOnChainingComplete(tunnel_t *self)
@@ -164,31 +136,30 @@ static void defaultOnChainStart(tunnel_t *self)
     (void) self;
 }
 
-tunnel_t *newTunnel(void)
+tunnel_t *newTunnel(uint16_t tstate_size, uint16_t cstate_size)
 {
-    tunnel_t *ptr = globalMalloc(sizeof(tunnel_t));
+    tunnel_t *ptr = globalMalloc(sizeof(tunnel_t) + tstate_size);
 
-    tunnel_t tunnel = (tunnel_t) {
+    *ptr = (tunnel_t) {.cstate_size        = cstate_size,
+                       .fnInitU            = &defaultUpStreamInit,
+                       .fnInitD            = &defaultdownStreamInit,
+                       .fnPayloadU         = &defaultUpStreamPayload,
+                       .fnPayloadD         = &defaultdownStreamPayload,
+                       .fnEstU             = &defaultUpStreamEst,
+                       .fnEstD             = &defaultdownStreamEst,
+                       .fnFinU             = &defaultUpStreamFin,
+                       .fnFinD             = &defaultdownStreamFin,
+                       .fnPauseU           = &defaultUpStreamPause,
+                       .fnPauseD           = &defaultDownStreamPause,
+                       .fnResumeU          = &defaultUpStreamResume,
+                       .fnResumeD          = &defaultDownStreamResume,
+                       .fnGBufInfoU        = &defaultUpStreamGetBufInfo,
+                       .fnGBufInfoD        = &defaultDownStreamGetBufInfo,
+                       .onChainingComplete = &defaultOnChainingComplete,
+                       .beforeChainStart   = &defaultBeforeChainStart,
+                       .onChainStart       = &defaultOnChainStart};
 
-        .fnInitU            = &defaultUpStreamInit,
-        .fnInitD            = &defaultdownStreamInit,
-        .fnPayloadU         = &defaultUpStreamPayload,
-        .fnPayloadD         = &defaultdownStreamPayload,
-        .fnEstU             = &defaultUpStreamEst,
-        .fnEstD             = &defaultdownStreamEst,
-        .fnFinU             = &defaultUpStreamFin,
-        .fnFinD             = &defaultdownStreamFin,
-        .fnPauseU           = &defaultUpStreamPause,
-        .fnPauseD           = &defaultDownStreamPause,
-        .fnResumeU          = &defaultUpStreamResume,
-        .fnResumeD          = &defaultDownStreamResume,
-        .fnGBufInfoU        = &defaultUpStreamGetBufInfo,
-        .fnGBufInfoD        = &defaultDownStreamGetBufInfo,
-        .onChainingComplete = &defaultOnChainingComplete,
-        .beforeChainStart   = &defaultBeforeChainStart,
-        .onChainStart       = &defaultOnChainStart};
-        
-    memcpy(ptr, &tunnel, sizeof(tunnel_t));
+
 
     return ptr;
 }
@@ -267,8 +238,8 @@ static void defaultPipeLocalDownStream(struct tunnel_s *self, struct context_s *
     }
 }
 
-void pipeTo(tunnel_t *self, line_t *l, tid_t tid)
-{
-    assert(l->up_state == NULL);
-    newPipeLine(self, l, tid, defaultPipeLocalUpStream, defaultPipeLocalDownStream);
-}
+// void pipeTo(tunnel_t *self, line_t *l, tid_t tid)
+// {
+//     assert(l->up_state == NULL);
+//     newPipeLine(self, l, tid, defaultPipeLocalUpStream, defaultPipeLocalDownStream);
+// }

@@ -99,11 +99,13 @@ typedef uint32_t line_refc_t;
 
 typedef struct line_s
 {
-    line_refc_t      refc;
-    tid_t            tid;
-    bool             alive;
-    bool             up_piped;
-    bool             dw_piped;
+    line_refc_t refc;
+    tid_t       tid;
+    bool        alive;
+    bool        up_piped;
+    bool        dw_piped;
+    uint8_t     auth_cur;
+
     // void            *up_state;
     // void            *dw_state;
     // LineFlowSignal   up_pause_cb;
@@ -112,8 +114,11 @@ typedef struct line_s
     // LineFlowSignal   dw_resume_cb;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
-    void            *chains_state[kMaxChainLen];
-    uint8_t          auth_cur;
+    
+    struct line_s   *up_pipeline;
+    struct line_s   *dw_pipeline;
+
+    uintptr_t *chains_state[] __attribute__((aligned(sizeof(void *))));
 
 } line_t;
 
@@ -185,24 +190,26 @@ typedef struct tunnel_s
     TunnelStatusCb           beforeChainStart;
     TunnelStatusCb           onChainStart;
 
-    uint16_t cstate_offset;
-    uint16_t cstate_size;
     uint16_t tstate_size;
-    uint16_t chain_index;
-    uint8_t  _pad_[4];
+    uint16_t cstate_size;
 
-    uintptr_t state[];
+    uint16_t cstate_offset;
+    uint16_t chain_index;
+
+    uint8_t state[] __attribute__((aligned(sizeof(void *))));
 
 } tunnel_t;
 
-tunnel_t *newTunnel(void);
+tunnel_t *newTunnel(uint16_t tstate_size, uint16_t cstate_size);
 void      destroyTunnel(tunnel_t *self);
 void      chain(tunnel_t *from, tunnel_t *to);
 void      chainDown(tunnel_t *from, tunnel_t *to);
 void      chainUp(tunnel_t *from, tunnel_t *to);
-void      pipeUpStream(context_t *c);
-void      pipeDownStream(context_t *c);
-void      pipeTo(tunnel_t *self, line_t *l, tid_t tid);
+
+static inline void setTunnelState(tunnel_t *self, void *state)
+{
+    memcpy(&(self->state[0]), state, self->tstate_size);
+}
 
 // pool handles, instead of malloc / free for the generic pool
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool);

@@ -47,11 +47,20 @@ typedef struct pipe_line_s pipe_line_t;
 
 pool_item_t *allocPipeLineMsgPoolHandle(generic_pool_t *pool);
 void         destroyPipeLineMsgPoolHandle(generic_pool_t *pool, pool_item_t *item);
-void         pipeOnUpLinePaused(void *state);
-void         pipeOnUpLineResumed(void *state);
-void         pipeOnDownLineResumed(void *state);
-void         pipeOnDownLinePaused(void *state);
-bool         pipeSendToUpStream(pipe_line_t *pl, context_t *c);
-bool         pipeSendToDownStream(pipe_line_t *pl, context_t *c);
-void         newPipeLine(tunnel_t *self, line_t *left_line, uint8_t dest_tid, PipeLineFlowRoutine local_up_stream,
-                         PipeLineFlowRoutine local_down_stream);
+
+void pipeUpStreamInit(tunnel_t *self, line_t *line);
+void pipeUpStreamEst(tunnel_t *self, line_t *line);
+void pipeUpStreamFin(tunnel_t *self, line_t *line);
+void pipeUpStreamPayload(tunnel_t *self, line_t *line, shift_buffer_t *payload);
+void pipeUpStreamPause(tunnel_t *self, line_t *line);
+void pipeUpStreamResume(tunnel_t *self, line_t *line);
+
+void pipeOnUpLinePaused(void *state);
+void pipeOnUpLineResumed(void *state);
+void pipeOnDownLineResumed(void *state);
+void pipeOnDownLinePaused(void *state);
+bool pipeSendToUpStream(pipe_line_t *pl, context_t *c);
+bool pipeSendToDownStream(pipe_line_t *pl, context_t *c);
+
+void      pipeTo(tunnel_t *t, line_t *l, tid_t tid);
+tunnel_t *newPipeTunnel(tunnel_t *t);
