@@ -3,7 +3,7 @@
 #include "cJSON.h"
 #include "config_file.h"
 #include "library_loader.h"
-#include "loggers/core_logger.h"
+#include "loggers/ww_logger.h"
 #include "node.h"
 #include "stc/common.h"
 #include "tunnel.h"
@@ -43,61 +43,178 @@ typedef struct node_manager_s
 
 static node_manager_t *state;
 
-void runNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index)
-{
-    if (n1 == NULL)
-    {
-        LOGF("Node Map Failure: please check the graph");
-        exit(1);
-    }
-    if (n1->hash_next != 0)
-    {
-        node_t *n2 = getNode(cfg, n1->hash_next);
+// void runNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index)
+// {
+//     if (n1 == NULL)
+//     {
+//         LOGF("Node Map Failure: please check the graph");
+//         exit(1);
+//     }
 
-        if (n2->instance == NULL)
-        {
-            runNode(cfg, n2, chain_index + 1);
-        }
+//     if (n1->hash_next != 0)
+//     {
+//         node_t *n2 = getNode(cfg, n1->hash_next);
 
-        LOGD("NodeManager: starting node \"%s\"", n1->name);
-        n1->instance_context.chain_index = chain_index;
-        n1->instance                     = n1->lib->createHandle(&(n1->instance_context));
-        atomic_thread_fence(memory_order_release);
-        if (n1->instance == NULL)
-        {
-            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
-            exit(1);
-        }
+//         if (n2->instance == NULL)
+//         {
+//             runNode(cfg, n2, chain_index + 1);
+//         }
 
-        memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+//         LOGD("NodeManager: starting node \"%s\"", n1->name);
+//         n1->instance = n1->lib->createHandle(n1);
 
-        chain(n1->instance, n2->instance);
-    }
-    else
-    {
-        LOGD("NodeManager: starting node \"%s\"", n1->name);
-        n1->instance_context.chain_index = chain_index;
-        n1->instance                     = n1->lib->createHandle(&(n1->instance_context));
-        atomic_thread_fence(memory_order_release);
-        if (n1->instance == NULL)
-        {
-            LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
-            exit(1);
-        }
-        memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
-    }
-}
+//         if (n1->instance == NULL)
+//         {
+//             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
+//             exit(1);
+//         }
+
+//         memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+
+//         chain(n1->instance, n2->instance);
+//     }
+//     else
+//     {
+//         LOGD("NodeManager: starting node \"%s\"", n1->name);
+//         n1->instance = n1->lib->createHandle(n1);
+//         atomic_thread_fence(memory_order_release);
+//         if (n1->instance == NULL)
+//         {
+//             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
+//             exit(1);
+//         }
+//         memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+//     }
+// }
 
 static void runNodes(node_manager_config_t *cfg)
 {
-begin:
-    c_foreach(p1, map_node_t, cfg->node_map)
+    enum
     {
-        node_t *n1 = p1.ref->second;
-        if (n1 != NULL && n1->instance == NULL && n1->route_starter == true)
+        kMaxTarraySize = 512
+    };
+
+    tunnel_t *t_starters_array[kMaxTarraySize] = {0};
+    tunnel_t *t_array[kMaxTarraySize]          = {0};
+
+    int tunnels_count         = 0;
+    int starter_tunnels_count = 0;
+    {
+        int index          = 0;
+        int index_starters = 0;
+        c_foreach(p1, map_node_t, cfg->node_map)
         {
-            runNode(cfg, n1, 0);
-            goto begin;
+            node_t *n1 = p1.ref->second;
+            assert(n1 != NULL && n1->instance == NULL);
+            t_array[index++] = n1->instance = n1->lib->createHandle(n1);
+
+            if (n1->flag_route_starter)
+            {
+                t_starters_array[index_starters++] = n1->instance;
+            }
+            if (index == kMaxTarraySize + 1)
+            {
+                LOGF("NodeManager:  too many nodes in config");
+                exit(1);
+            }
+        }
+        tunnels_count         = index;
+        starter_tunnels_count = index_starters;
+    }
+
+    if (tunnels_count == 0)
+    {
+        LOGW("NodeManager:  0 nodes in config");
+        return;
+    }
+
+    tunnel_t *t_array_cpy[kMaxTarraySize];
+    memcpy(t_array_cpy, t_array, sizeof(t_array_cpy));
+
+    uint16_t buffs_sum_lef_pad   = 0;
+    uint16_t buffs_sum_right_pad = 0;
+
+    {
+        for (int i = 0; i < tunnels_count; i++)
+        {
+            tunnel_t *tunnel = t_array[i];
+
+            if (tunnel == NULL)
+            {
+                continue;
+            }
+
+            tunnel_chain_info_t tci = {0};
+            tunnel->onChain(tunnel, &tci);
+
+            buffs_sum_lef_pad   = max(buffs_sum_lef_pad, tci.sum_padding_left);
+            buffs_sum_right_pad = max(buffs_sum_right_pad, tci.sum_padding_right);
+
+            for (int cti = 0; cti < tci.tunnels.len; cti++)
+            {
+                for (int ti = 0; ti < tunnels_count; ti++)
+                {
+                    if (t_array[ti] == tci.tunnels.tuns[cti])
+                    {
+                        t_array[ti] = NULL;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    for (int wi = 0; wi < getWorkersCount(); wi++)
+    {
+        updateBufferPooleAllocationPaddings(getWorkerBufferPool(wi), buffs_sum_lef_pad, buffs_sum_right_pad,
+                                            buffs_sum_lef_pad, buffs_sum_right_pad);
+    }
+
+    {
+        for (int i = 0; i < tunnels_count; i++)
+        {
+            assert(t_array_cpy[i] != NULL);
+            t_array_cpy[i]->onChainingComplete(t_array_cpy[i]);
+        }
+    }
+
+    {
+        for (int i = 0; i < starter_tunnels_count; i++)
+        {
+            tunnel_t *tunnel = t_starters_array[i];
+
+            if (tunnel == NULL)
+            {
+                continue;
+            }
+
+            tunnel->chain_head = true;
+
+            tunnel_array_t tc = {0};
+            tunnel->onIndex(tunnel, &tc, 0, 0);
+
+            for (int cti = 0; cti < tc.len; cti++)
+            {
+                for (int ti = 0; ti < starter_tunnels_count; ti++)
+                {
+                    if (t_starters_array[ti] == tc.tuns[cti])
+                    {
+                        t_starters_array[ti] = NULL;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    {
+        for (int i = 0; i < tunnels_count; i++)
+        {
+            assert(t_array_cpy[i] != NULL);
+            tunnel_t *tunnel = t_array_cpy[i];
+            if (tunnel->chain_head)
+            {
+                tunnel->onChainStart(tunnel);
+            }
         }
     }
 }
@@ -139,7 +256,6 @@ static void cycleProcess(node_manager_config_t *cfg)
             continue;
         }
 
-        bool found = false;
         c_foreach(n2, map_node_t, cfg->node_map)
         {
             if (next_hash == n2.ref->second->hash_name)
@@ -151,31 +267,20 @@ static void cycleProcess(node_manager_config_t *cfg)
                     exit(1);
                 }
                 // LOGD("%-17s -> %s", n1.ref->second->name, n2.ref->second->name);
-
-                found = true;
             }
-        }
-        if (! found)
-        {
-            LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", n1.ref->second->name,
-                 n1.ref->second->next);
-            exit(1);
         }
     }
+
+    // very basic check to see if there is no route starter node
     {
-        bool found = false;
         c_foreach(n1, map_node_t, cfg->node_map)
         {
-            if (n1.ref->second->route_starter)
+            if (n1.ref->second->flag_route_starter)
             {
-                found                         = true;
-                n1.ref->second->route_starter = true;
+                return;
             }
         }
-        if (! found)
-        {
-            LOGW("NodeMap: detecetd 0 chainhead nodes, the");
-        }
+        LOGW("NodeMap: detecetd 0 chainhead nodes, the");
     }
 }
 
@@ -202,21 +307,16 @@ void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *node_sett
     new_node->metadata = lib.getMetadataHandle();
     if ((new_node->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
     {
-        new_node->route_starter = true;
+        new_node->flag_route_starter = true;
     }
+
     struct tunnel_lib_s *heap_lib = globalMalloc(sizeof(struct tunnel_lib_s));
-    memset(heap_lib, 0, sizeof(struct tunnel_lib_s));
-    *heap_lib     = lib;
-    new_node->lib = heap_lib;
+    *heap_lib = lib;
 
-    node_instance_context_t new_node_ctx = {0};
-
-    new_node_ctx.node_json           = NULL;
-    new_node_ctx.node_settings_json  = node_settings;
-    new_node_ctx.node                = new_node;
-    new_node_ctx.node_manager_config = cfg;
-
-    new_node->instance_context = new_node_ctx;
+    new_node->lib                 = heap_lib;
+    new_node->node_json           = NULL;
+    new_node->node_settings_json  = node_settings;
+    new_node->node_manager_config = cfg;
 
     map_node_t *map = &(cfg->node_map);
 
@@ -269,6 +369,7 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
         getIntFromJsonObjectOrDefault((int *) &(new_node->version), node_json, "version", 0);
         registerNode(cfg, new_node, cJSON_GetObjectItemCaseSensitive(node_json, "settings"));
     }
+
     cycleProcess(cfg);
     pathWalk(cfg);
     runNodes(cfg);

@@ -3,6 +3,7 @@
 #include "buffer_pool.h"
 #include "generic_pool.h"
 #include "hloop.h"
+#include "node.h"
 #include "shiftbuffer.h"
 #include "ww.h"
 
@@ -35,7 +36,7 @@
 
 enum
 {
-    kMaxChainLen = (16 * 2)
+    kMaxChainLen = (16 * 4)
 };
 
 // get the state object of each tunnel
@@ -101,10 +102,11 @@ typedef struct line_s
 {
     line_refc_t refc;
     tid_t       tid;
-    bool        alive;
-    bool        up_piped;
-    bool        dw_piped;
-    uint8_t     auth_cur;
+
+    bool    alive;
+    bool    up_piped;
+    bool    dw_piped;
+    uint8_t auth_cur;
 
     // void            *up_state;
     // void            *dw_state;
@@ -114,9 +116,9 @@ typedef struct line_s
     // LineFlowSignal   dw_resume_cb;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
-    
-    struct line_s   *up_pipeline;
-    struct line_s   *dw_pipeline;
+
+    struct line_s *up_pipeline;
+    struct line_s *dw_pipeline;
 
     uintptr_t *chains_state[] __attribute__((aligned(sizeof(void *))));
 
@@ -139,35 +141,42 @@ typedef struct context_s
 } context_t;
 
 struct tunnel_s;
+typedef struct tunnel_s tunnel_t;
 
-typedef struct tunnel_buffinfo_s
+typedef struct tunnel_array_t
 {
-    uint16_t         sum_lef_pad;
-    uint16_t         sum_right_pad;
-    uint16_t         len;
-    struct tunnel_s *tuns[kMaxChainLen];
+    uint16_t  len;
+    tunnel_t *tuns[kMaxChainLen];
 
-} tunnel_buffinfo_t;
+} tunnel_array_t;
 
-struct tunnel_s;
+typedef struct tunnel_chain_info_s
+{
 
-typedef void (*TunnelStatusCb)(struct tunnel_s *);
-typedef void (*TunnelFlowRoutineInit)(struct tunnel_s *, line_t *line);
-typedef void (*TunnelFlowRoutinePayload)(struct tunnel_s *, line_t *line, shift_buffer_t *payload);
-typedef void (*TunnelFlowRoutineEst)(struct tunnel_s *, line_t *line);
-typedef void (*TunnelFlowRoutineFin)(struct tunnel_s *, line_t *line);
-typedef void (*TunnelFlowRoutinePause)(struct tunnel_s *, line_t *line);
-typedef void (*TunnelFlowRoutineResume)(struct tunnel_s *, line_t *line);
-typedef void (*TunnelFlowGatherBufInfo)(struct tunnel_s *, tunnel_buffinfo_t *info);
+    uint16_t       sum_padding_left;
+    uint16_t       sum_padding_right;
+    tunnel_array_t tunnels;
+
+} tunnel_chain_info_t;
+
+typedef void (*TunnelStatusCb)(tunnel_t *);
+typedef void (*TunnelChainFn)(tunnel_t *, tunnel_chain_info_t *info);
+typedef void (*TunnelIndexFn)(tunnel_t *, tunnel_array_t *arr, uint16_t index, uint16_t mem_offset);
+typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
+typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, shift_buffer_t *payload);
+typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
+typedef void (*TunnelFlowRoutineFin)(tunnel_t *, line_t *line);
+typedef void (*TunnelFlowRoutinePause)(tunnel_t *, line_t *line);
+typedef void (*TunnelFlowRoutineResume)(tunnel_t *, line_t *line);
 
 /*
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
     which later gets accessed by the chain_index which is fixed
 
 */
-typedef struct tunnel_s
+struct tunnel_s
 {
-    struct tunnel_s *dw, *up;
+    tunnel_t *up, *dw;
 
     // TunnelFlowRoutine upStream;
     // TunnelFlowRoutine downStream;
@@ -184,11 +193,11 @@ typedef struct tunnel_s
     TunnelFlowRoutinePause   fnPauseD;
     TunnelFlowRoutineResume  fnResumeU;
     TunnelFlowRoutineResume  fnResumeD;
-    TunnelFlowGatherBufInfo  fnGBufInfoU;
-    TunnelFlowGatherBufInfo  fnGBufInfoD;
-    TunnelStatusCb           onChainingComplete;
-    TunnelStatusCb           beforeChainStart;
-    TunnelStatusCb           onChainStart;
+
+    TunnelChainFn  onChain;
+    TunnelIndexFn  onIndex;
+    TunnelStatusCb onChainingComplete;
+    TunnelStatusCb onChainStart;
 
     uint16_t tstate_size;
     uint16_t cstate_size;
@@ -196,15 +205,21 @@ typedef struct tunnel_s
     uint16_t cstate_offset;
     uint16_t chain_index;
 
+    node_t *node;
+
+    bool chain_head;
+
     uint8_t state[] __attribute__((aligned(sizeof(void *))));
+};
 
-} tunnel_t;
-
-tunnel_t *newTunnel(uint16_t tstate_size, uint16_t cstate_size);
+tunnel_t *newTunnel(node_t *node, uint16_t tstate_size, uint16_t cstate_size);
 void      destroyTunnel(tunnel_t *self);
 void      chain(tunnel_t *from, tunnel_t *to);
 void      chainDown(tunnel_t *from, tunnel_t *to);
 void      chainUp(tunnel_t *from, tunnel_t *to);
+
+void insertTunnelToArray(tunnel_array_t *tc, tunnel_t *t);
+void insertTunnelToChainInfo(tunnel_chain_info_t *tci, tunnel_t *t);
 
 static inline void setTunnelState(tunnel_t *self, void *state)
 {
@@ -219,15 +234,15 @@ static inline line_t *newLine(tid_t tid)
 {
     line_t *result = popPoolItem(getWorkerLinePool(tid));
 
-    *result = (line_t) {
-        .tid          = tid,
-        .refc         = 1,
-        .auth_cur     = 0,
-        .alive        = true,
-        .chains_state = {0},
-        // to set a port we need to know the AF family, default v4
-        .dest_ctx = (socket_context_t) {.address.sa = (struct sockaddr) {.sa_family = AF_INET, .sa_data = {0}}},
-        .src_ctx  = (socket_context_t) {.address.sa = (struct sockaddr) {.sa_family = AF_INET, .sa_data = {0}}}};
+    *result =
+        (line_t){.tid          = tid,
+                 .refc         = 1,
+                 .auth_cur     = 0,
+                 .alive        = true,
+                 .chains_state = {0},
+                 // to set a port we need to know the AF family, default v4
+                 .dest_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+                 .src_ctx  = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}};
 
     return result;
 }
@@ -380,7 +395,7 @@ static inline void destroyContext(context_t *c)
 static inline context_t *newContext(line_t *const line)
 {
     context_t *new_ctx = popPoolItem(getWorkerContextPool(line->tid));
-    *new_ctx           = (context_t) {.line = line};
+    *new_ctx           = (context_t){.line = line};
     lockLine(line);
     return new_ctx;
 }
@@ -389,7 +404,7 @@ static inline context_t *newContextFrom(const context_t *const source)
 {
     lockLine(source->line);
     context_t *new_ctx = popPoolItem(getWorkerContextPool(source->line->tid));
-    *new_ctx           = (context_t) {.line = source->line};
+    *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
 }
 

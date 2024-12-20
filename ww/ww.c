@@ -4,6 +4,7 @@
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
+#include "loggers/ww_logger.h"
 #include "managers/memory_manager.h"
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
@@ -21,6 +22,7 @@ void setWW(struct ww_global_state_s *state)
     setCoreLogger(GSTATE.core_logger);
     setNetworkLogger(GSTATE.network_logger);
     setDnsLogger(GSTATE.dns_logger);
+    setWWLogger(GSTATE.ww_logger);
     setSignalManager(GSTATE.signal_manager);
     setSocketManager(GSTATE.socekt_manager);
     setNodeManager(GSTATE.node_manager);
@@ -33,7 +35,7 @@ struct ww_global_state_s *getWW(void)
 
 static void initalizeWorker(worker_t *worker, tid_t tid)
 {
-    *worker = (worker_t) {.tid = tid};
+    *worker = (worker_t){.tid = tid};
 
     worker->context_pool      = newGenericPoolWithCap(GSTATE.masterpool_context_pools, (16) + GSTATE.ram_profile,
                                                       allocContextPoolHandle, destroyContextPoolHandle);
@@ -42,7 +44,7 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
     worker->pipeline_msg_pool = newGenericPoolWithCap(GSTATE.masterpool_pipeline_msg_pools, (8) + GSTATE.ram_profile,
                                                       allocPipeLineMsgPoolHandle, destroyPipeLineMsgPoolHandle);
     worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                            (0) + GSTATE.ram_profile);
+                                           (0) + GSTATE.ram_profile);
 
     // note that loop depeneds on worker->buffer_pool
     worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, tid);
@@ -124,6 +126,8 @@ void createWW(const ww_construction_data_t init_data)
 
     // [Section] loggers
     {
+        GSTATE.ww_logger = createWWLogger(NULL, true);
+
         if (init_data.core_logger_data.log_file_path)
         {
             GSTATE.core_logger =
@@ -154,15 +158,15 @@ void createWW(const ww_construction_data_t init_data)
         }
     }
 
-    // [Section] workers and pools creation
+    // workers and pools creation
     {
         WORKERS_COUNT      = init_data.workers_count;
         GSTATE.ram_profile = init_data.ram_profile;
 
-        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (255))
+        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (254))
         {
-            fprintf(stderr, "workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (255));
-            WORKERS_COUNT = (255);
+            LOGW("workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (254));
+            WORKERS_COUNT = (254);
         }
 
         WORKERS = (worker_t *) globalMalloc(sizeof(worker_t) * (WORKERS_COUNT));
@@ -176,23 +180,13 @@ void createWW(const ww_construction_data_t init_data)
         }
     }
 
-    // [Section] setup SignalManager
-    {
-        GSTATE.signal_manager = createSignalManager();
-        startSignalManager();
-    }
+    GSTATE.signal_manager = createSignalManager();
+    startSignalManager();
 
-    // [Section] setup SocketMangager
-    {
-        GSTATE.socekt_manager = createSocketManager();
-    }
+    GSTATE.socekt_manager = createSocketManager();
+    GSTATE.node_manager   = createNodeManager();
 
-    // [Section] setup NodeManager
-    {
-        GSTATE.node_manager = createNodeManager();
-    }
-
-    // [Section] Spawn all workers except main worker which is current thread
+    // Spawn all workers except main worker which is current thread
     {
         WORKERS[0].thread = (hthread_t) NULL;
         for (unsigned int i = 1; i < WORKERS_COUNT; ++i)

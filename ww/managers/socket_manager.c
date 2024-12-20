@@ -5,7 +5,7 @@
 #include "hloop.h"
 #include "hmutex.h"
 #include "idle_table.h"
-#include "loggers/network_logger.h"
+#include "loggers/ww_logger.h"
 #include "signal_manager.h"
 #include "stc/common.h"
 #include "tunnel.h"

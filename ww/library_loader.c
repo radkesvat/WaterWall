@@ -1,7 +1,7 @@
 #include "library_loader.h"
 #include "ww.h"
 #include "basic_types.h"
-#include "loggers/core_logger.h" //NOLINT
+#include "loggers/ww_logger.h" //NOLINT
 #include "stc/common.h"
 #include "utils/hashutils.h"
 #include "hplatform.h"

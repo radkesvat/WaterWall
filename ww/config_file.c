@@ -1,7 +1,7 @@
 #include "config_file.h"
 #include "cJSON.h"
 #include "ww.h"
-#include "loggers/core_logger.h" //NOLINT
+#include "loggers/ww_logger.h" //NOLINT
 #include "utils/fileutils.h"
 #include "utils/jsonutils.h"
 #include <hmutex.h>

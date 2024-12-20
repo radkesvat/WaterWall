@@ -2,7 +2,7 @@
 #include "utils/mathutils.h"
 #include "ww.h"
 #ifdef POOL_DEBUG
-#include "loggers/network_logger.h"
+#include "loggers/ww_logger.h"
 #endif
 #define GENERIC_POOL_DEFAULT_WIDTH ((unsigned long) ((RAM_PROFILE)))
 

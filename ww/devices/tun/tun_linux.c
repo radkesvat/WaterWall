@@ -1,6 +1,6 @@
 #include "generic_pool.h"
 #include "hchan.h"
-#include "loggers/network_logger.h"
+#include "loggers/ww_logger.h"
 #include "tun.h"
 #include "utils/procutils.h"
 #include "ww.h"

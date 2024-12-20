@@ -97,14 +97,14 @@ static inline void memCopy128(void *dest, const void *src, long int n)
 
 #else
 
-static inline void memCopy128(uint8_t *__restrict __dest, const uint8_t *__restrict __src, size_t __n)
+static inline void memCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, size_t n)
 {
     while (n > 0)
     {
-        memcpy(__dest, __src, 128);
+        memcpy(_dest, _src, 128);
         n -= 128;
-        __dest += 128;
-        __src += 128;
+        _dest += 128;
+        _src += 128;
     }
 }
 
@@ -182,6 +182,7 @@ typedef struct ww_global_state_s
     struct logger_s         *core_logger;
     struct logger_s         *network_logger;
     struct logger_s         *dns_logger;
+    struct logger_s         *ww_logger;
     unsigned int             workers_count;
     unsigned int             ram_profile;
     bool                     initialized;

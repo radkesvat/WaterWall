@@ -1,7 +1,7 @@
 #include "buffer_pool.h"
 #include "hplatform.h"
 #ifdef DEBUG
-#include "loggers/network_logger.h"
+#include "loggers/ww_logger.h"
 #endif
 #include "shiftbuffer.h"
 #include "utils/mathutils.h"
@@ -260,15 +260,17 @@ shift_buffer_t *duplicateBufferP(buffer_pool_t *pool, shift_buffer_t *b)
     return bnew;
 }
 
-void updatBufferPooleAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
+void updateBufferPooleAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
                                         uint16_t large_buffer_right_padding, uint16_t small_buffer_left_padding,
                                         uint16_t small_buffer_right_padding)
 {
     assert(pool->small_buffers_container_len == 0 && pool->large_buffers_container_len == 0);
-    pool->large_buffer_left_padding  = large_buffer_left_padding;
-    pool->large_buffer_right_padding = large_buffer_right_padding;
-    pool->small_buffer_left_padding  = small_buffer_left_padding;
-    pool->small_buffer_right_padding = small_buffer_right_padding;
+    
+
+    pool->large_buffer_left_padding  = max(pool->large_buffer_left_padding,large_buffer_left_padding);
+    pool->large_buffer_right_padding = max(pool->large_buffer_right_padding,large_buffer_right_padding);
+    pool->small_buffer_left_padding  = max(pool->small_buffer_left_padding,small_buffer_left_padding);
+    pool->small_buffer_right_padding = max(pool->small_buffer_right_padding,small_buffer_right_padding);
 }
 
 static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t bufcount,

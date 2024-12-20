@@ -6,10 +6,9 @@
 #include <time.h>
 
 struct logger_s;
-
 static logger_t *logger = NULL;
 
-static void destroyNetworkLogger(void)
+static void destroyWWLogger(void)
 {
     if (logger)
     {
@@ -19,7 +18,7 @@ static void destroyNetworkLogger(void)
     }
 }
 
-static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+static void wwLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     switch (loglevel)
     {
@@ -35,41 +34,41 @@ static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int 
     logfile_write(logger, buf, len);
 }
 
-static void networkLoggerHandle(int loglevel, const char *buf, int len)
+static void wwLoggerHandle(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
     logfile_write(logger, buf, len);
 }
 
-logger_t *getNetworkLogger(void)
+logger_t *getWWLogger(void)
 {
     return logger;
 }
-void setNetworkLogger(logger_t *newlogger)
+void setWWLogger(logger_t *newlogger)
 {
     assert(logger == NULL);
     logger = newlogger;
 }
 
-logger_t *createNetworkLogger(const char *log_file, bool console)
+logger_t *createWWLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
     logger = logger_create();
     logger_set_file(logger, log_file);
     if (console)
     {
-        logger_set_handler(logger, networkLoggerHandleWithStdStream);
+        logger_set_handler(logger, wwLoggerHandleWithStdStream);
     }
     else
     {
-        logger_set_handler(logger, networkLoggerHandle);
+        logger_set_handler(logger, wwLoggerHandle);
     }
 
-    atexit(destroyNetworkLogger);
+    atexit(destroyWWLogger);
     return logger;
 }
 
-logger_handler getNetworkLoggerHandle(void)
+logger_handler getWWLoggerHandle(void)
 {
     return logger_handle(logger);
 }

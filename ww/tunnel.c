@@ -1,9 +1,30 @@
 #include "tunnel.h"
+#include "loggers/ww_logger.h"
+#include "managers/node_manager.h"
+#include "node.h"
 #include "pipe_line.h"
 #include "string.h" // memset
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+void insertTunnelToArray(tunnel_array_t *tc, tunnel_t *t)
+{
+    if (t->chain_index == kMaxChainLen)
+    {
+        LOGF("insertTunnelToArray overflow!");
+        exit(1);
+    }
+
+    tc->tuns[tc->len++] = t;
+}
+
+void insertTunnelToChainInfo(tunnel_chain_info_t *tci, tunnel_t *t)
+{
+    insertTunnelToArray(&(tci->tunnels), t);
+    tci->sum_padding_left += t->node->metadata.required_padding_left;
+    tci->sum_padding_right += t->node->metadata.required_padding_right;
+}
 
 // `from` upstreams to `to`
 void chainUp(tunnel_t *from, tunnel_t *to)
@@ -25,8 +46,6 @@ void chain(tunnel_t *from, tunnel_t *to)
 {
     chainUp(from, to);
     chainDown(from, to);
-
-    to->chain_index = from->chain_index + 1;
 }
 
 static void defaultUpStreamInit(tunnel_t *self, line_t *line)
@@ -65,16 +84,6 @@ static void defaultUpStreamResume(tunnel_t *self, line_t *line)
     self->up->fnResumeU(self->up, line);
 }
 
-static void defaultUpStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
-{
-    assert(info->len < kMaxChainLen);
-
-    info->tuns[(info->len)++] = self;
-
-    assert(self->up != NULL);
-    self->up->fnGBufInfoU(self->up, info);
-}
-
 static void defaultdownStreamInit(tunnel_t *self, line_t *line)
 {
     assert(self->dw != NULL);
@@ -111,55 +120,80 @@ static void defaultDownStreamResume(tunnel_t *self, line_t *line)
     self->up->fnResumeD(self->up, line);
 }
 
-static void defaultDownStreamGetBufInfo(tunnel_t *self, tunnel_buffinfo_t *info)
+static void defaultOnChain(tunnel_t *t, tunnel_chain_info_t *info)
 {
-    assert(info->len < kMaxChainLen);
+    node_t *node = t->node;
+    insertTunnelToChainInfo(info, t);
 
-    info->tuns[(info->len)++] = self;
+    if (node->hash_next == 0x0)
+    {
+        return;
+    }
 
-    assert(self->dw != NULL);
-    self->up->fnGBufInfoD(self->up, info);
+    node_t *next = getNode(node->node_manager_config, node->hash_next);
+
+    if (next == NULL)
+    {
+        LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, next->name);
+        exit(1);
+    }
+
+    assert(next->instance); // every node in node map is created byfore chaining
+
+    tunnel_t *tnext = next->instance;
+    chain(t, tnext);
+    tnext->onChain(tnext, info);
 }
 
-static void defaultOnChainingComplete(tunnel_t *self)
+static void defaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t index, uint16_t mem_offset)
 {
-    (void) self;
+    insertTunnelToArray(arr, t);
+    t->chain_index   = index;
+    t->cstate_offset = mem_offset;
+
+    if (t->up)
+    {
+        t->up->onIndex(t->up, arr, index + 1, mem_offset + t->cstate_size);
+    }
 }
 
-static void defaultBeforeChainStart(tunnel_t *self)
+static void defaultOnChainingComplete(tunnel_t *t)
 {
-    (void) self;
+    (void)t;
 }
 
-static void defaultOnChainStart(tunnel_t *self)
+static void defaultOnChainStart(tunnel_t *t)
 {
-    (void) self;
+    if (t->up)
+    {
+        t->up->onChainStart(t->up);
+    }
 }
 
-tunnel_t *newTunnel(uint16_t tstate_size, uint16_t cstate_size)
+tunnel_t *newTunnel(node_t *node, uint16_t tstate_size, uint16_t cstate_size)
 {
     tunnel_t *ptr = globalMalloc(sizeof(tunnel_t) + tstate_size);
 
-    *ptr = (tunnel_t) {.cstate_size        = cstate_size,
-                       .fnInitU            = &defaultUpStreamInit,
-                       .fnInitD            = &defaultdownStreamInit,
-                       .fnPayloadU         = &defaultUpStreamPayload,
-                       .fnPayloadD         = &defaultdownStreamPayload,
-                       .fnEstU             = &defaultUpStreamEst,
-                       .fnEstD             = &defaultdownStreamEst,
-                       .fnFinU             = &defaultUpStreamFin,
-                       .fnFinD             = &defaultdownStreamFin,
-                       .fnPauseU           = &defaultUpStreamPause,
-                       .fnPauseD           = &defaultDownStreamPause,
-                       .fnResumeU          = &defaultUpStreamResume,
-                       .fnResumeD          = &defaultDownStreamResume,
-                       .fnGBufInfoU        = &defaultUpStreamGetBufInfo,
-                       .fnGBufInfoD        = &defaultDownStreamGetBufInfo,
-                       .onChainingComplete = &defaultOnChainingComplete,
-                       .beforeChainStart   = &defaultBeforeChainStart,
-                       .onChainStart       = &defaultOnChainStart};
+    *ptr = (tunnel_t){.cstate_size = cstate_size,
+                      .fnInitU     = &defaultUpStreamInit,
+                      .fnInitD     = &defaultdownStreamInit,
+                      .fnPayloadU  = &defaultUpStreamPayload,
+                      .fnPayloadD  = &defaultdownStreamPayload,
+                      .fnEstU      = &defaultUpStreamEst,
+                      .fnEstD      = &defaultdownStreamEst,
+                      .fnFinU      = &defaultUpStreamFin,
+                      .fnFinD      = &defaultdownStreamFin,
+                      .fnPauseU    = &defaultUpStreamPause,
+                      .fnPauseD    = &defaultDownStreamPause,
+                      .fnResumeU   = &defaultUpStreamResume,
+                      .fnResumeD   = &defaultDownStreamResume,
 
+                      .onChain            = &defaultOnChain,
+                      .onIndex            = &defaultOnIndex,
+                      .onChainingComplete = &defaultOnChainingComplete,
+                      .onChainStart       = &defaultOnChainStart,
 
+                      .node = node};
 
     return ptr;
 }

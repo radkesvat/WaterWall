@@ -35,7 +35,7 @@ shift_buffer_t *duplicateBufferP(buffer_pool_t *pool, shift_buffer_t *b);
 
 void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b);
 
-void updatBufferPooleAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
+void updateBufferPooleAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
                                         uint16_t large_buffer_right_padding, uint16_t small_buffer_left_padding,
                                         uint16_t small_buffer_right_padding);
 

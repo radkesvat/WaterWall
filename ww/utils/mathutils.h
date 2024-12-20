@@ -14,14 +14,15 @@
 
 // NOLINTNEXTLINE
 #define max(a, b)                                                                                                      \
-    _Generic((a),                                                                                                      \
-        unsigned long long: maxULL,                                                                                    \
-        unsigned long int: maxULInt,                                                                                   \
-        unsigned int: maxUInt,                                                                                         \
-        long long: maxLL,                                                                                              \
-        signed long int: maxSLInt,                                                                                     \
-        int: maxInt,                                                                                                   \
-        double: maxDouble)(a, b)
+    _Generic((a), unsigned long long                                                                                   \
+             : maxULL, unsigned long int                                                                               \
+             : maxULInt, unsigned int                                                                                  \
+             : maxUInt, long long                                                                                      \
+             : maxLL, signed long int                                                                                  \
+             : maxSLInt, int                                                                                           \
+             : maxInt, unsigned short                                                                                  \
+             : maxUS, double                                                                                           \
+             : maxDouble)(a, b)
 
 static inline unsigned long long maxULL(unsigned long long a, unsigned long long b)
 {
@@ -52,6 +53,12 @@ static inline int maxInt(int a, int b)
 {
     return a > b ? a : b;
 }
+
+static inline unsigned short maxUS(unsigned short a, unsigned short b)
+{
+    return a > b ? a : b;
+}
+
 static inline double maxDouble(double a, double b)
 {
     return a > b ? a : b;
@@ -64,14 +71,14 @@ static inline long maxLong(long a, long b)
 
 // NOLINTNEXTLINE
 #define min(a, b)                                                                                                      \
-    _Generic((a),                                                                                                      \
-        unsigned long long: minULL,                                                                                    \
-        unsigned long int: minULInt,                                                                                   \
-        unsigned int: minUInt,                                                                                         \
-        long long: minLL,                                                                                              \
-        signed long int: minSLInt,                                                                                     \
-        int: minInt,                                                                                                   \
-        double: minDouble)(a, b)
+    _Generic((a), unsigned long long                                                                                   \
+             : minULL, unsigned long int                                                                               \
+             : minULInt, unsigned int                                                                                  \
+             : minUInt, long long                                                                                      \
+             : minLL, signed long int                                                                                  \
+             : minSLInt, int                                                                                           \
+             : minInt, double                                                                                          \
+             : minDouble)(a, b)
 
 static inline unsigned long long minULL(unsigned long long a, unsigned long long b)
 {
@@ -132,7 +139,6 @@ static inline long minLong(long a, long b)
 
 #else
 
-
 #ifndef htonll
 
 static inline uint64_t htonll(uint64_t x)
@@ -154,6 +160,5 @@ static inline uint64_t ntohll(uint64_t x)
 }
 
 #endif
-
 
 #endif

@@ -1,7 +1,7 @@
 #include "pipe_line.h"
 #include "buffer_pool.h"
 #include "generic_pool.h"
-#include "loggers/network_logger.h"
+#include "loggers/ww_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
 

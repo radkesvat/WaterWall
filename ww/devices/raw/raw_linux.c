@@ -1,6 +1,6 @@
 #include "generic_pool.h"
 #include "hchan.h"
-#include "loggers/network_logger.h"
+#include "loggers/ww_logger.h"
 #include "raw.h"
 #include "ww.h"
 #include <arpa/inet.h>
