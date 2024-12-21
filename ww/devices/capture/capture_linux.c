@@ -471,7 +471,7 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
 
     capture_device_t *cdev = globalMalloc(sizeof(capture_device_t));
 
-    *cdev = (capture_device_t) {.name                  = strdup(name),
+    *cdev = (capture_device_t) {.name                  = stringDuplicate(name),
                                 .running               = false,
                                 .up                    = false,
                                 .routine_reader        = routineReadFromCapture,

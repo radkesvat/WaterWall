@@ -917,6 +917,8 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
     (void) userdata;
 
     assert(state && state->worker->loop && ! state->started);
+    
+    frandInit();
 
     hmutex_lock(&(state->mutex));
 

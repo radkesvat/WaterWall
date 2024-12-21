@@ -58,8 +58,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->core_log_level = strdup(DEFAULT_CORE_LOG_LEVEL);
-            settings->core_log_file  = strdup(DEFAULT_CORE_LOG_FILE);
+            settings->core_log_level   = stringDuplicate(DEFAULT_CORE_LOG_LEVEL);
+            settings->core_log_file    = stringDuplicate(DEFAULT_CORE_LOG_FILE);
             settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
         }
     }
@@ -78,8 +78,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->network_log_level = strdup(DEFAULT_NETWORK_LOG_LEVEL);
-            settings->network_log_file  = strdup(DEFAULT_NETWORK_LOG_FILE);
+            settings->network_log_level   = stringDuplicate(DEFAULT_NETWORK_LOG_LEVEL);
+            settings->network_log_file    = stringDuplicate(DEFAULT_NETWORK_LOG_FILE);
             settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
         }
     }
@@ -95,8 +95,8 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
         }
         else
         {
-            settings->dns_log_level = strdup(DEFAULT_DNS_LOG_LEVEL);
-            settings->dns_log_file  = strdup(DEFAULT_DNS_LOG_FILE);
+            settings->dns_log_level = stringDuplicate(DEFAULT_DNS_LOG_LEVEL);
+            settings->dns_log_file  = stringDuplicate(DEFAULT_DNS_LOG_FILE);
 
             settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
         }
@@ -112,13 +112,13 @@ static void parseLogPartOfJson(cJSON *log_obj)
     else
     {
 
-        settings->log_path          = strdup(DEFAULT_LOG_PATH);
-        settings->core_log_file     = strdup(DEFAULT_CORE_LOG_FILE);
-        settings->core_log_level    = strdup(DEFAULT_CORE_LOG_LEVEL);
-        settings->network_log_file  = strdup(DEFAULT_NETWORK_LOG_FILE);
-        settings->network_log_level = strdup(DEFAULT_NETWORK_LOG_LEVEL);
-        settings->dns_log_file      = strdup(DEFAULT_DNS_LOG_FILE);
-        settings->dns_log_level     = strdup(DEFAULT_DNS_LOG_LEVEL);
+        settings->log_path          = stringDuplicate(DEFAULT_LOG_PATH);
+        settings->core_log_file     = stringDuplicate(DEFAULT_CORE_LOG_FILE);
+        settings->core_log_level    = stringDuplicate(DEFAULT_CORE_LOG_LEVEL);
+        settings->network_log_file  = stringDuplicate(DEFAULT_NETWORK_LOG_FILE);
+        settings->network_log_level = stringDuplicate(DEFAULT_NETWORK_LOG_LEVEL);
+        settings->dns_log_file      = stringDuplicate(DEFAULT_DNS_LOG_FILE);
+        settings->dns_log_level     = stringDuplicate(DEFAULT_DNS_LOG_LEVEL);
 
         settings->core_log_console    = DEFAULT_CORE_ENABLE_CONSOLE;
         settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
@@ -248,7 +248,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     }
     else
     {
-        settings->libs_path = strdup(DEFAULT_LIBS_PATH);
+        settings->libs_path     = stringDuplicate(DEFAULT_LIBS_PATH);
         settings->workers_count = get_ncpu();
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }

@@ -5,7 +5,7 @@
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
 #include "os_helpers.h"
-#include "static_tunnels.h"
+#include "imported_tunnels.h"
 #include "utils/fileutils.h"
 #include "utils/stringutils.h"
 #include "ww.h"

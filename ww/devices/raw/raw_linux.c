@@ -258,7 +258,7 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
     buffer_pool_t  *writer_bpool   = createBufferPool(
         GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  GSTATE.ram_profile);
 
-    *rdev = (raw_device_t) {.name                     = strdup(name),
+    *rdev = (raw_device_t) {.name                     = stringDuplicate(name),
                             .running                  = false,
                             .up                       = false,
                             .routine_reader           = routineReadFromRaw,

@@ -1,4 +1,5 @@
 #include "ww.h"
+#include "frand.h"
 #include "hloop.h"
 #include "hthread.h"
 #include "loggers/core_logger.h"
@@ -11,6 +12,7 @@
 #include "managers/socket_manager.h"
 #include "pipe_line.h"
 #include "utils/stringutils.h"
+
 
 ww_global_state_t global_ww_state = {0};
 
@@ -58,6 +60,7 @@ static void initalizeWorker(worker_t *worker, tid_t tid)
 
 static void runWorker(worker_t *worker)
 {
+    frandInit();
     hloop_run(worker->loop);
     hloop_free(&worker->loop);
 }

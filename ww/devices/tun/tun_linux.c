@@ -354,7 +354,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
 
     tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t) {.name                     = strdup(ifr.ifr_name),
+    *tdev = (tun_device_t) {.name                     = stringDuplicate(ifr.ifr_name),
                             .running                  = false,
                             .up                       = false,
                             .routine_reader           = routineReadFromTun,

@@ -141,7 +141,7 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
 
     char *slash        = strchr(state->ip_subnet, '/');
     slash[0]           = 0x0;
-    state->ip_present  = strdup(state->ip_subnet);
+    state->ip_present  = stringDuplicate(state->ip_subnet);
     slash[0]           = '/';
     char *subnet_part  = slash + 1;
     state->subnet_mask = atoi(subnet_part);

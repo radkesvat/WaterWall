@@ -1,6 +1,5 @@
 #pragma once
 #include "hthread.h"
-#include "managers/memory_manager.h"
 #include <stddef.h>
 
 /*
@@ -109,6 +108,9 @@ static inline void memCopy128(uint8_t *__restrict _dest, const uint8_t *__restri
 }
 
 #endif
+
+
+
 
 struct ww_global_state_s;
 

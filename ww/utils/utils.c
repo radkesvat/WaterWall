@@ -92,6 +92,23 @@ void toLowerCase(char *str)
     }
 }
 
+char *stringDuplicate(const char *src)
+{
+    if (src == NULL)
+    {
+        return NULL;
+    }
+
+    size_t length = strlen(src) + 1;
+    char  *dup    = (char *) globalMalloc(length);
+    if (dup == NULL)
+    {
+        return NULL;
+    }
+    memcpy(dup, src, length);
+    return dup;
+}
+
 bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
 {
     assert(dest != NULL);
@@ -419,7 +436,7 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
             fprintf(stderr, "Invalid subnet mask length.\n");
             return -1;
         }
-        uint32_t mask = prefix_length > 0 ? htonl(~((1 << (32 - prefix_length)) - 1)) : 0;
+        uint32_t       mask      = prefix_length > 0 ? htonl(~((1 << (32 - prefix_length)) - 1)) : 0;
         struct in_addr mask_addr = {.s_addr = mask};
         memcpy(subnet_mask, &mask_addr, 4);
         return 4;
@@ -617,8 +634,10 @@ dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, co
     return result;
 }
 
-void destroyDynamicValue(const dynamic_value_t dy){
-    if(dy.value_ptr){
+void destroyDynamicValue(const dynamic_value_t dy)
+{
+    if (dy.value_ptr)
+    {
         globalFree(dy.value_ptr);
     }
 }
@@ -627,19 +646,19 @@ void destroyDynamicValue(const dynamic_value_t dy){
 cmd_result_t execCmd(const char *str)
 {
     FILE        *fp;
-    cmd_result_t result = (cmd_result_t) {{0}, -1};
+    cmd_result_t result = (cmd_result_t){{0}, -1};
     char        *buf    = &(result.output[0]);
     /* Open the command for reading. */
 #if defined(OS_UNIX)
     fp = popen(str, "r");
 #else
-    fp = _popen(str, "r");
+    fp               = _popen(str, "r");
 #endif
 
     if (fp == NULL)
     {
         printf("Failed to run command \"%s\"\n", str);
-        return (cmd_result_t) {{0}, -1};
+        return (cmd_result_t){{0}, -1};
     }
 
     int read = fscanf(fp, "%2047s", buf);

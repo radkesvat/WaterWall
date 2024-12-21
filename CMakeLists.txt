@@ -110,7 +110,7 @@ set(OPENSSL_CONFIGURE_VERBOSE ON)
 add_executable(Waterwall
                   core/main.c
                   core/core_settings.c
-                  core/static_tunnels.c
+                  core/imported_tunnels.c
                   # core/tests/bench_memcpy.c
 )
 

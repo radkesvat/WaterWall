@@ -241,6 +241,7 @@ static inline void concatBufferNoCheck(shift_buffer_t *restrict root, const shif
 }
 
 #ifdef DEBUG
+
 // free and re create the buffer so in case of use after free we catch it
 static shift_buffer_t *debugBufferWontBeReused(shift_buffer_t *b)
 {

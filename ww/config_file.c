@@ -63,6 +63,7 @@ void commitChangesHard(config_file_t *state)
     unsafeCommitChanges(state);
     releaseUpdateLock(state);
 }
+
 // will not write if the mutex is locked
 void commitChangesSoft(config_file_t *state)
 {

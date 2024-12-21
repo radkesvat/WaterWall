@@ -140,6 +140,13 @@ typedef struct context_s
     bool            fin;
 } context_t;
 
+typedef enum {
+    kSCBlocked,
+    kSCequiredBytes,
+    kSCSuccessNoData,
+    kSCSuccess
+} splice_retcode_t;
+
 struct tunnel_s;
 typedef struct tunnel_s tunnel_t;
 
@@ -166,6 +173,7 @@ typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, shift_buffer_t *payload);
 typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineFin)(tunnel_t *, line_t *line);
+typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line,int pipe_fd,size_t len);
 typedef void (*TunnelFlowRoutinePause)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineResume)(tunnel_t *, line_t *line);
 

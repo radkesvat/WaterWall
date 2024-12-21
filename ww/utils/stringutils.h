@@ -6,5 +6,6 @@
 #define TOSTRING(x) STRINGIFY(x)
 
 char *concat(const char *s1, const char *s2);
-void toUpperCase(char *str);
-void toLowerCase(char *str);
+void  toUpperCase(char *str);
+void  toLowerCase(char *str);
+char *stringDuplicate(const char *src);
