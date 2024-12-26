@@ -105,7 +105,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         ip_header_len = packet->ip4_header.ihl * 4;
 
-        if (WW_UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
+        if (UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
             LOGW("TcpManipulator: dropped an ipv4 packet, length is too short for TCP header");
             reuseContextPayload(c);
@@ -124,7 +124,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         ip_header_len = sizeof(struct ipv6header);
 
-        if (WW_UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
+        if (UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
             LOGW("TcpManipulator: dropped an ipv6 packet, length is too short for TCP header");
             reuseContextPayload(c);

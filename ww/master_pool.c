@@ -1,5 +1,6 @@
 #include "master_pool.h"
 #include "ww.h"
+#include "managers/memory_manager.h"
 
 static master_pool_item_t* defaultCreateHandle(struct master_pool_s *pool, void *userdata)
 {

@@ -78,7 +78,7 @@ static void onMsgReceived(hevent_t *ev)
 static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_t tid_from, uint8_t tid_to)
 {
 
-    if (WW_UNLIKELY(tid_from == tid_to))
+    if (UNLIKELY(tid_from == tid_to))
     {
         fn(pl, arg);
         return;
@@ -305,7 +305,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 
 // bool pipeSendToUpStream(pipe_line_t *pl, context_t *c)
 // {
-//     if (WW_UNLIKELY(c->est))
+//     if (UNLIKELY(c->est))
 //     {
 //         destroyContext(c);
 //         return true;
@@ -349,7 +349,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 // bool pipeSendToDownStream(pipe_line_t *pl, context_t *c)
 // {
 //     // est context is ignored, only fin or data makes sense
-//     if (WW_UNLIKELY(c->est))
+//     if (UNLIKELY(c->est))
 //     {
 //         destroyContext(c);
 //         return true;

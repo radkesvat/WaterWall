@@ -1,6 +1,9 @@
 #include "generic_pool.h"
 #include "utils/mathutils.h"
+#include "managers/memory_manager.h"
 #include "ww.h"
+
+
 #ifdef POOL_DEBUG
 #include "loggers/ww_logger.h"
 #endif

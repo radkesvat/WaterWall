@@ -333,7 +333,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         return NULL;
     }
     uint64_t *p64 = (uint64_t *) state->hashes;
-    p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
+    p64[0]        = calcHashBytes(state->password, strlen(state->password));
     for (int i = 1; i < (int) (EVP_MAX_MD_SIZE / sizeof(uint64_t)); i++)
     {
         p64[i] = p64[i - 1];
@@ -346,7 +346,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    hash_t  hash_next = CALC_HASH_BYTES(dest_node_name, strlen(dest_node_name));
+    hash_t  hash_next = calcHashBytes(dest_node_name, strlen(dest_node_name));
     node_t *next_node = getNode(instance_info->node_manager_config, hash_next);
     if (next_node == NULL)
     {

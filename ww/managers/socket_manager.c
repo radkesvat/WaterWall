@@ -303,7 +303,7 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
 
     if (option.balance_group_name)
     {
-        hash_t        name_hash = CALC_HASH_BYTES(option.balance_group_name, strlen(option.balance_group_name));
+        hash_t        name_hash = calcHashBytes(option.balance_group_name, strlen(option.balance_group_name));
         idle_table_t *b_table   = NULL;
         hmutex_lock(&(state->mutex));
 
@@ -479,7 +479,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
                     return;
                 }
 
-                if (WW_UNLIKELY(balance_selection_filters_length >= kMaxBalanceSelections))
+                if (UNLIKELY(balance_selection_filters_length >= kMaxBalanceSelections))
                 {
                     // probably never but the limit can be simply increased
                     LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
@@ -780,7 +780,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
                     return;
                 }
 
-                if (WW_UNLIKELY(balance_selection_filters_length >= kMaxBalanceSelections))
+                if (UNLIKELY(balance_selection_filters_length >= kMaxBalanceSelections))
                 {
                     // probably never but the limit can be simply increased
                     LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);

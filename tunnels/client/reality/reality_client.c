@@ -472,7 +472,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     }
 
     uint64_t *p64 = (uint64_t *) state->hashes;
-    p64[0]        = CALC_HASH_BYTES(state->password, strlen(state->password));
+    p64[0]        = calcHashBytes(state->password, strlen(state->password));
     for (int i = 1; i < (int) (EVP_MAX_MD_SIZE / sizeof(uint64_t)); i++)
     {
         p64[i] = p64[i - 1];

@@ -5,6 +5,7 @@
 #endif
 #include "shiftbuffer.h"
 #include "utils/mathutils.h"
+#include "managers/memory_manager.h"
 #include "ww.h"
 #include <assert.h> // for assert
 #include <stdlib.h>
@@ -167,7 +168,7 @@ shift_buffer_t *popBuffer(buffer_pool_t *pool)
     pool->in_use += 1;
 #endif
 
-    if (WW_LIKELY(pool->large_buffers_container_len > 0))
+    if (LIKELY(pool->large_buffers_container_len > 0))
     {
         --(pool->large_buffers_container_len);
         return pool->large_buffers[pool->large_buffers_container_len];
@@ -188,7 +189,7 @@ shift_buffer_t *popSmallBuffer(buffer_pool_t *pool)
     pool->in_use += 1;
 #endif
 
-    if (WW_LIKELY(pool->small_buffers_container_len > 0))
+    if (LIKELY(pool->small_buffers_container_len > 0))
     {
         --(pool->small_buffers_container_len);
         return pool->small_buffers[pool->small_buffers_container_len];
@@ -213,7 +214,7 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
 
     if (bufCapNoPadding(b) == pool->large_buffers_default_size)
     {
-        if (WW_UNLIKELY(pool->large_buffers_container_len > pool->free_threshold))
+        if (UNLIKELY(pool->large_buffers_container_len > pool->free_threshold))
         {
             shrinkLargeBuffers(pool);
         }
@@ -221,7 +222,7 @@ void reuseBuffer(buffer_pool_t *pool, shift_buffer_t *b)
     }
     else if (bufCapNoPadding(b) == pool->small_buffers_default_size)
     {
-        if (WW_UNLIKELY(pool->small_buffers_container_len > pool->free_threshold))
+        if (UNLIKELY(pool->small_buffers_container_len > pool->free_threshold))
         {
             shrinkSmallBuffers(pool);
         }

@@ -1,4 +1,5 @@
 #include "shiftbuffer.h"
+#include "managers/memory_manager.h"
 #include "utils/mathutils.h"
 #include "ww.h"
 #include <assert.h> // for assert
@@ -44,7 +45,7 @@ shift_buffer_t *duplicateBuffer(shift_buffer_t *b)
 {
     shift_buffer_t *newbuf = newShiftBufferWithPad(bufCapNoPadding(b), b->l_pad, b->r_pad);
     setLen(newbuf, bufLen(b));
-    memCopy128(rawBufMut(newbuf), rawBuf(b), bufLen(b));
+    memoryCopy128(rawBufMut(newbuf), rawBuf(b), bufLen(b));
     return newbuf;
 }
 
@@ -57,7 +58,7 @@ shift_buffer_t *concatBuffer(shift_buffer_t *restrict root, const shift_buffer_t
 
     if (rCap(root) - append_length >= 128 && rCap(buf) >= 128)
     {
-        memCopy128(rawBufMut(root) + root_length, rawBuf(buf), append_length);
+        memoryCopy128(rawBufMut(root) + root_length, rawBuf(buf), append_length);
     }
     else
     {

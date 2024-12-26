@@ -3,6 +3,8 @@
 #include "buffer_pool.h"
 #include "generic_pool.h"
 #include "hloop.h"
+#include "hsocket.h"
+#include "managers/memory_manager.h"
 #include "node.h"
 #include "shiftbuffer.h"
 #include "ww.h"
@@ -83,6 +85,64 @@ typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
 
+enum domain_strategy
+{
+    kDsInvalid,
+    kDsPreferIpV4,
+    kDsPreferIpV6,
+    kDsOnlyIpV4,
+    kDsOnlyIpV6
+};
+
+enum dynamic_value_status
+{
+    kDvsEmpty = 0x0,
+    kDvsConstant,
+    kDvsFirstOption,
+};
+
+typedef struct dynamic_value_s
+{
+    enum dynamic_value_status status;
+    size_t                    value;
+    void                     *value_ptr;
+} dynamic_value_t;
+
+enum socket_address_type
+{
+    kSatIPV4       = 0X1,
+    kSatDomainName = 0X3,
+    kSatIPV6       = 0X4,
+};
+
+enum socket_address_protocol
+{
+    kSapTcp = IPPROTO_TCP,
+    kSapUdp = IPPROTO_UDP,
+};
+
+typedef struct socket_context_s
+{
+    char                        *domain;
+    sockaddr_u                   address;
+    enum socket_address_protocol address_protocol;
+    enum socket_address_type     address_type;
+    enum domain_strategy         domain_strategy;
+    unsigned int                 domain_len;
+    bool                         domain_resolved;
+    bool                         domain_constant;
+
+} socket_context_t;
+
+typedef struct pipeline_s
+{
+    atomic_bool closed;
+    atomic_uint pipeline_refc;
+    // compiler will insert padding here
+    struct line_s *up;
+    struct line_s *dw;
+} pipe_line_t;
+
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
 
@@ -104,21 +164,11 @@ typedef struct line_s
     tid_t       tid;
 
     bool    alive;
-    bool    up_piped;
-    bool    dw_piped;
     uint8_t auth_cur;
 
-    // void            *up_state;
-    // void            *dw_state;
-    // LineFlowSignal   up_pause_cb;
-    // LineFlowSignal   up_resume_cb;
-    // LineFlowSignal   dw_pause_cb;
-    // LineFlowSignal   dw_resume_cb;
     socket_context_t src_ctx;
     socket_context_t dest_ctx;
-
-    struct line_s *up_pipeline;
-    struct line_s *dw_pipeline;
+    pipe_line_t     *pipe;
 
     uintptr_t *chains_state[] __attribute__((aligned(sizeof(void *))));
 
@@ -140,9 +190,10 @@ typedef struct context_s
     bool            fin;
 } context_t;
 
-typedef enum {
+typedef enum
+{
     kSCBlocked,
-    kSCequiredBytes,
+    kSCRequiredBytes,
     kSCSuccessNoData,
     kSCSuccess
 } splice_retcode_t;
@@ -173,13 +224,15 @@ typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, shift_buffer_t *payload);
 typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineFin)(tunnel_t *, line_t *line);
-typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line,int pipe_fd,size_t len);
 typedef void (*TunnelFlowRoutinePause)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineResume)(tunnel_t *, line_t *line);
+typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line, int pipe_fd, size_t len);
 
 /*
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
     which later gets accessed by the chain_index which is fixed
+
+    node(Create) -> onChain -> onChainingComplete -> onIndex -> onChainStart -> node(Destroy)
 
 */
 struct tunnel_s
@@ -213,14 +266,14 @@ struct tunnel_s
     uint16_t cstate_offset;
     uint16_t chain_index;
 
-    node_t *node;
+    struct node_s *node;
 
     bool chain_head;
 
     uint8_t state[] __attribute__((aligned(sizeof(void *))));
 };
 
-tunnel_t *newTunnel(node_t *node, uint16_t tstate_size, uint16_t cstate_size);
+tunnel_t *newTunnel(struct node_s *node, uint16_t tstate_size, uint16_t cstate_size);
 void      destroyTunnel(tunnel_t *self);
 void      chain(tunnel_t *from, tunnel_t *to);
 void      chainDown(tunnel_t *from, tunnel_t *to);
@@ -499,12 +552,12 @@ static inline void reuseContextPayload(context_t *const c)
 
 static inline bool isUpPiped(const line_t *const l)
 {
-    return l->up_piped;
+    return l->pipe != NULL && l->pipe->up != NULL;
 }
 
 static inline bool isDownPiped(const line_t *const l)
 {
-    return l->dw_piped;
+    return l->pipe != NULL && l->pipe->dw != NULL;
 }
 
 static inline hloop_t *getLineLoop(const line_t *const l)

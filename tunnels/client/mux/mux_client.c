@@ -393,7 +393,7 @@ static void downStream(tunnel_t *self, context_t *c)
 {
     mux_client_con_state_t *main_con = CSTATE(c);
 
-    if (WW_UNLIKELY(c->est))
+    if (UNLIKELY(c->est))
     {
         destroyContext(c);
         return;
@@ -411,7 +411,7 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         mux_length_t length;
         bufferStreamViewBytesAt(main_con->read_stream, 0, (uint8_t *) &length, 2);
-        if (WW_UNLIKELY(length < kMuxMinFrameLength))
+        if (UNLIKELY(length < kMuxMinFrameLength))
         {
             LOGE("MuxClient: payload length < kMuxMinFrameLength");
             destroyMainConnecton(main_con);
@@ -448,7 +448,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                     case kMuxFlagData: {
 
-                        if (WW_UNLIKELY(bufLen(frame_payload) <= 0))
+                        if (UNLIKELY(bufLen(frame_payload) <= 0))
                         {
                             LOGE("MuxClient: payload length <= 0");
                             reuseBuffer(getLineBufferPool(main_con->line), frame_payload);

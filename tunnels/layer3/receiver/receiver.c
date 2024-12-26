@@ -42,7 +42,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (packet->ip4_header.version == 4)
         {
-            if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
+            if (UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
             {
                 LOGW("Layer3Receiver: dropped a ipv4 packet that was too small");
                 reuseContextPayload(c);
@@ -53,7 +53,7 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (packet->ip6_header.version == 6)
         {
 
-            if (WW_UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
+            if (UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
             {
                 LOGW("Layer3Receiver: dropped a ipv6 packet that was too small");
                 reuseContextPayload(c);
@@ -106,7 +106,7 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    hash_t  hash_tdev_name = CALC_HASH_BYTES(state->device_name, strlen(state->device_name));
+    hash_t  hash_tdev_name = calcHashBytes(state->device_name, strlen(state->device_name));
     node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
     
     if (tundevice_node == NULL)

@@ -4,6 +4,7 @@
 #include "hloop.h"
 #include "hmutex.h"
 #include "ww.h"
+#include "managers/memory_manager.h"
 
 enum
 {

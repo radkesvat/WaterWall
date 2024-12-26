@@ -358,11 +358,11 @@ hash_t sockAddrCalcHashNoPort(const sockaddr_u *saddr)
     hash_t result;
     if (saddr->sa.sa_family == AF_INET)
     {
-        result = CALC_HASH_BYTES(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in));
+        result = calcHashBytes(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in));
     }
     else if (saddr->sa.sa_family == AF_INET6)
     {
-        result = CALC_HASH_BYTES(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6));
+        result = calcHashBytes(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6));
     }
     else
     {
@@ -378,13 +378,11 @@ hash_t sockAddrCalcHashWithPort(const sockaddr_u *saddr)
     hash_t result;
     if (saddr->sa.sa_family == AF_INET)
     {
-        result = CALC_HASH_PRIMITIVE(saddr->sin.sin_port);
-        result = CALC_HASH_BYTES_WITH_SEED(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in), result);
+        result = calcHashBytesSeed(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in), saddr->sin.sin_port);
     }
     else if (saddr->sa.sa_family == AF_INET6)
     {
-        result = CALC_HASH_PRIMITIVE(saddr->sin6.sin6_port);
-        result = CALC_HASH_BYTES_WITH_SEED(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6), result);
+        result = calcHashBytesSeed(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6), saddr->sin6.sin6_port);
     }
     else
     {
@@ -484,7 +482,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
         globalFree(user);
         return NULL;
     }
-    user->hash_uid = CALC_HASH_BYTES(user->uid, strlen(user->uid));
+    user->hash_uid = calcHashBytes(user->uid, strlen(user->uid));
 
     bool enable;
     if (! getBoolFromJsonObject(&(enable), user_json, "enable"))

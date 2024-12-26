@@ -4,6 +4,7 @@
 #include "config_file.h"
 #include "library_loader.h"
 #include "loggers/ww_logger.h"
+#include "managers/memory_manager.h"
 #include "node.h"
 #include "stc/common.h"
 #include "tunnel.h"
@@ -13,6 +14,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+
 
 enum
 {
@@ -61,7 +63,7 @@ static node_manager_t *state;
 //         }
 
 //         LOGD("NodeManager: starting node \"%s\"", n1->name);
-//         n1->instance = n1->lib->createHandle(n1);
+//         n1->instance = n1->createHandle(n1);
 
 //         if (n1->instance == NULL)
 //         {
@@ -76,7 +78,7 @@ static node_manager_t *state;
 //     else
 //     {
 //         LOGD("NodeManager: starting node \"%s\"", n1->name);
-//         n1->instance = n1->lib->createHandle(n1);
+//         n1->instance = n1->createHandle(n1);
 //         atomic_thread_fence(memory_order_release);
 //         if (n1->instance == NULL)
 //         {
@@ -106,9 +108,9 @@ static void runNodes(node_manager_config_t *cfg)
         {
             node_t *n1 = p1.ref->second;
             assert(n1 != NULL && n1->instance == NULL);
-            t_array[index++] = n1->instance = n1->lib->createHandle(n1);
+            t_array[index++] = n1->instance = n1->createHandle(n1);
 
-            if (n1->flag_route_starter)
+            if ((n1->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
             {
                 t_starters_array[index_starters++] = n1->instance;
             }
@@ -275,25 +277,27 @@ static void cycleProcess(node_manager_config_t *cfg)
     {
         c_foreach(n1, map_node_t, cfg->node_map)
         {
-            if (n1.ref->second->flag_route_starter)
+
+            if ((n1.ref->second->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
             {
                 return;
             }
         }
-        LOGW("NodeMap: detecetd 0 chainhead nodes, the");
+        LOGF("NodeMap: detecetd 0 chainhead nodes");
+        exit(1);
     }
 }
 
-void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *node_settings)
+void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *settings)
 {
-    new_node->hash_name = CALC_HASH_BYTES(new_node->name, strlen(new_node->name));
-    new_node->hash_type = CALC_HASH_BYTES(new_node->type, strlen(new_node->type));
+    new_node->hash_name = calcHashBytes(new_node->name, strlen(new_node->name));
+    new_node->hash_type = calcHashBytes(new_node->type, strlen(new_node->type));
     if (new_node->next)
     {
-        new_node->hash_next = CALC_HASH_BYTES(new_node->next, strlen(new_node->next));
+        new_node->hash_next = calcHashBytes(new_node->next, strlen(new_node->next));
     }
     // load lib
-    tunnel_lib_t lib = loadTunnelLibByHash(new_node->hash_type);
+    node_t lib = loadNodeLibraryByHash(new_node->hash_type);
     if (lib.hash_name == 0)
     {
         LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
@@ -305,17 +309,13 @@ void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *node_sett
         LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
     }
     new_node->metadata = lib.getMetadataHandle();
-    if ((new_node->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
-    {
-        new_node->flag_route_starter = true;
-    }
+    // if ((new_node->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
+    // {
+    //     new_node->flag_route_starter = true;
+    // }
 
-    struct tunnel_lib_s *heap_lib = globalMalloc(sizeof(struct tunnel_lib_s));
-    *heap_lib = lib;
-
-    new_node->lib                 = heap_lib;
-    new_node->node_json           = NULL;
-    new_node->node_settings_json  = node_settings;
+    new_node->node_json           = settings;
+    new_node->node_settings_json  = cJSON_GetObjectItemCaseSensitive(settings, "settings");
     new_node->node_manager_config = cfg;
 
     map_node_t *map = &(cfg->node_map);
@@ -367,7 +367,7 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
         }
         getStringFromJsonObject(&(new_node->next), node_json, "next");
         getIntFromJsonObjectOrDefault((int *) &(new_node->version), node_json, "version", 0);
-        registerNode(cfg, new_node, cJSON_GetObjectItemCaseSensitive(node_json, "settings"));
+        registerNode(cfg, new_node, node_json);
     }
 
     cycleProcess(cfg);
@@ -379,6 +379,7 @@ struct node_manager_s *getNodeManager(void)
 {
     return state;
 }
+
 void setNodeManager(struct node_manager_s *new_state)
 {
     assert(state == NULL);

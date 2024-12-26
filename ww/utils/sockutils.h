@@ -1,6 +1,7 @@
 #pragma once
 #include "basic_types.h"
 #include "hsocket.h"
+#include "tunnel.h"
 #include <stdint.h>
 
 void   sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source);

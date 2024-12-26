@@ -168,7 +168,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
         LOGF("JSON Error: Layer3IpRoutingTable->settings->rules next tunnel not specified");
         exit(1);
     }
-    hash_t  hash_node_name = CALC_HASH_BYTES(temp, strlen(temp));
+    hash_t  hash_node_name = calcHashBytes(temp, strlen(temp));
     node_t *node           = getNode(cfg, hash_node_name);
 
     if (node == NULL)

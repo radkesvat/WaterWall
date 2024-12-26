@@ -1,18 +1,6 @@
 #ifndef HV_ATOMIC_H_
 #define HV_ATOMIC_H_
 
-#ifdef __cplusplus
-
-// c++11
-#include <atomic>
-
-using std::atomic_flag;
-using std::atomic_long;
-
-#define ATOMIC_FLAG_TEST_AND_SET(p)     ((p)->test_and_set())
-#define ATOMIC_FLAG_CLEAR(p)            ((p)->clear())
-
-#else
 
 #include "hplatform.h"  // for HAVE_STDATOMIC_H
 #if HAVE_STDATOMIC_H
@@ -73,7 +61,6 @@ static inline bool atomic_flag_test_and_set(atomic_flag* p) {
 
 #endif // HAVE_STDATOMIC_H
 
-#endif // __cplusplus
 
 #ifndef ATOMIC_FLAG_INIT
 #define ATOMIC_FLAG_INIT        { 0 }

@@ -288,7 +288,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (n > 0)
                 {
-                    if (WW_UNLIKELY(! cstate->init_sent))
+                    if (UNLIKELY(! cstate->init_sent))
                     {
                         self->up->upStream(self->up, newInitContext(c->line));
                         if (! isAlive(c->line))
@@ -646,7 +646,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     }
     else
     {
-        hash_t  hash_next = CALC_HASH_BYTES(fallback_node, strlen(fallback_node));
+        hash_t  hash_next = calcHashBytes(fallback_node, strlen(fallback_node));
         node_t *next_node = getNode(instance_info->node_manager_config, hash_next);
         if (next_node == NULL)
         {

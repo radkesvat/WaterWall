@@ -1,4 +1,5 @@
 #pragma once
+#include "basic_types.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -9,21 +10,31 @@
 // todo (benchmark) komihash vs Flower–Noll–Vo
 // todo (siphash) add sip hash
 
-// Flower–Noll–Vo
-static inline uint64_t hashFnv1a64(const uint8_t *buf, size_t len)
+// zero as seed provides more performance
+
+enum
 {
-    const uint64_t prime = 0x100000001B3;      // pow(2,40) + pow(2,8) + 0xb3
-    uint64_t       hash  = 0xCBF29CE484222325; // seed
+    kKomihashSeed = 0,
+};
+
+#define K_FNV_SEED 0xCBF29CE484222325
+
+// Flower–Noll–Vo
+static inline uint64_t hashFnv1a64(const uint8_t *buf, size_t len, uint64_t seed)
+{
+    const uint64_t prime = 0x100000001B3; // pow(2,40) + pow(2,8) + 0xb3
     const uint8_t *end   = buf + len;
     while (buf < end)
     {
-        hash = (*buf++ ^ hash) * prime;
+        seed = (*buf++ ^ seed) * prime;
     }
-    return hash;
+    return seed;
 }
 
-// #define CALC_HASH_PRIMITIVE(x)  hashFnv1a64((const uint8_t *) &(x), sizeof((x)))
-// #define CALC_HASH_BYTES(x, len) hashFnv1a64((const uint8_t *) (x), (len))
+static inline hash_t calcHashBytesSeed(const void *data, size_t len, uint64_t seed)
+{
+    return hashFnv1a64(data, len, seed);
+}
 
 // Komi-Hash
 
@@ -32,10 +43,12 @@ static inline uint64_t hashFnv1a64(const uint8_t *buf, size_t len)
 #include "komihash.h"
 #pragma GCC diagnostic pop
 
-// zero as seed provides more performance
-#define KOMIHASH_SEED           0
-#define CALC_HASH_PRIMITIVE(x)  komihash((const uint8_t *) &(x), sizeof((x)), KOMIHASH_SEED)
-#define CALC_HASH_BYTES(x, len) komihash((x), len, KOMIHASH_SEED)
+static inline hash_t calcHashBytesSeed(const void *data, size_t len, uint64_t seed)
+{
+    return komihash(data, len, seed);
+}
 
-#define CALC_HASH_PRIMITIVE_WITH_SEED(x, s)  komihash((const uint8_t *) &(x), sizeof((x)), (s))
-#define CALC_HASH_BYTES_WITH_SEED(x, len, s) komihash((x), len, (s))
+static inline hash_t calcHashBytes(const void *data, size_t len)
+{
+    return calcHashBytesSeed(data, len, kKomihashSeed);
+}

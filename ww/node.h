@@ -1,8 +1,14 @@
 #pragma once
 
-#include "basic_types.h"
+#include "tunnel.h"
 #include <stddef.h>
 #include <stdint.h>
+
+typedef struct api_result_s
+{
+    char  *result;
+    size_t result_len;
+} api_result_t;
 
 enum node_flags
 {
@@ -19,7 +25,9 @@ typedef struct tunnel_metadata_s
     uint16_t        required_padding_right;
 } tunnel_metadata_t;
 
-typedef struct node_s
+typedef struct node_s node_t;
+
+struct node_s
 {
     char    *name;
     char    *type;
@@ -29,17 +37,20 @@ typedef struct node_s
     hash_t   hash_next;
     uint32_t version;
 
-    // evaluated:
-
-    struct tunnel_lib_s *lib;
+    tunnel_t *(*createHandle)(node_t *instance_info);
+    void (*destroyHandle)(node_t node, tunnel_t *instance);
+    api_result_t (*apiHandle)(tunnel_t *instance, const char *msg);
+    tunnel_metadata_t (*getMetadataHandle)(void);
 
     struct cJSON                 *node_json;
     struct cJSON                 *node_settings_json; // node_json -> settings
     struct node_manager_config_s *node_manager_config;
 
-    struct tunnel_s  *instance;
+    tunnel_t         *instance;
     tunnel_metadata_t metadata;
     uint32_t          refrenced;
-    bool flag_route_starter;
+};
 
-} node_t;
+node_t loadNodeLibrary(const char *name);
+node_t loadNodeLibraryByHash(hash_t hname);
+void   registerStaticNodeLib(node_t lib);

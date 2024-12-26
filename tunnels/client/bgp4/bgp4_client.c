@@ -193,7 +193,7 @@ tunnel_t *newBgp4Client(node_instance_context_t *instance_info)
     const cJSON *settings = instance_info->node_settings_json;
     char        *buf      = NULL;
     getStringFromJsonObjectOrDefault(&buf, settings, "password", "passwd");
-    state->hpassword = CALC_HASH_BYTES(buf, strlen(buf));
+    state->hpassword = calcHashBytes(buf, strlen(buf));
     globalFree(buf);
 
     // todo (random data) its better to fill these with real data

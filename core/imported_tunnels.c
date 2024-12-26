@@ -6,8 +6,8 @@
 #define USING(x)                                                                                                       \
     do                                                                                                                 \
     {                                                                                                                  \
-        hash_t h = CALC_HASH_BYTES(#x, strlen(#x));                                                                    \
-        registerStaticLib((tunnel_lib_t) {                                                                             \
+        hash_t h = calcHashBytes(#x, strlen(#x));                                                                    \
+        registerStaticNodeLib((node_lib_t) {                                                                             \
             .hash_name         = h,                                                                                    \
             .createHandle      = new##x,                                                                               \
             .destroyHandle     = destroy##x,                                                                           \

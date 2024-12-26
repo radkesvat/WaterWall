@@ -41,7 +41,7 @@
 
 struct pipe_line_s;
 
-typedef void (*PipeLineFlowRoutine)(struct tunnel_s *, struct context_s *, struct pipe_line_s *pl);
+typedef void (*PipeLineFlowRoutine)(tunnel_t *, struct context_s *, struct pipe_line_s *pl);
 
 typedef struct pipe_line_s pipe_line_t;
 

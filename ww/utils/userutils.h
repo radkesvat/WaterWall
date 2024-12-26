@@ -1,5 +1,5 @@
 #pragma once
-#include "basic_types.h"
+#include "user_types.h"
 #include "cJSON.h"
 
 struct user_s;

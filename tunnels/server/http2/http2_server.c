@@ -36,7 +36,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     (void) namelen;
     (void) valuelen;
     (void) flags;
-    if (WW_UNLIKELY(userdata == NULL))
+    if (UNLIKELY(userdata == NULL))
     {
         return 0;
     }
@@ -91,7 +91,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     http2_server_con_state_t *con = (http2_server_con_state_t *) userdata;
 
     http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, stream_id);
-    if (WW_UNLIKELY(! stream))
+    if (UNLIKELY(! stream))
     {
         return 0;
     }
@@ -110,7 +110,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
 static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata)
 {
     (void) session;
-    if (WW_UNLIKELY(userdata == NULL))
+    if (UNLIKELY(userdata == NULL))
     {
         return 0;
     }
@@ -143,7 +143,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
             // LOGD("end stream for: %d", frame->hd.stream_id);
 
             http2_server_child_con_state_t *stream = nghttp2_session_get_stream_user_data(session, frame->hd.stream_id);
-            if (WW_UNLIKELY(! stream))
+            if (UNLIKELY(! stream))
             {
                 return 0;
             }
@@ -190,7 +190,7 @@ static void sendStreamResposnseData(http2_server_con_state_t *con, http2_server_
                                     shift_buffer_t *buf)
 {
     http2_flag flags = kHttP2FlagNone;
-    if (WW_UNLIKELY(! stream))
+    if (UNLIKELY(! stream))
     {
         reuseBuffer(getLineBufferPool(con->line), buf);
         return;

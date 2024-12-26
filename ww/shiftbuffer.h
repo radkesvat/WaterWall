@@ -1,10 +1,7 @@
 #pragma once
 
 #include "ww.h"
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
+
 
 /*
 
@@ -52,7 +49,7 @@ static inline uint32_t bufCapNoPadding(shift_buffer_t *const b)
 }
 
 // caps mean how much memory we own to be able to shift left/right
-static inline uint32_t lCap(shift_buffer_t *const b)
+static inline uint32_t lCap(const shift_buffer_t *const b)
 {
     return b->curpos;
 }
@@ -62,7 +59,7 @@ static inline uint32_t lCapNoPadding(shift_buffer_t *const b)
     return b->curpos - b->l_pad;
 }
 
-static inline uint32_t rCap(shift_buffer_t *const b)
+static inline uint32_t rCap(const shift_buffer_t *const b)
 {
     return (b->capacity - b->curpos);
 }
@@ -211,7 +208,7 @@ static inline void copyBuf(shift_buffer_t *restrict const to, shift_buffer_t *re
 
     if (rCap(to) - length >= 128 && rCap(from) >= 128)
     {
-        memCopy128(rawBufMut(to), rawBuf(from), length);
+        memoryCopy128(rawBufMut(to), rawBuf(from), length);
     }
     else
     {

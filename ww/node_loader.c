@@ -1,14 +1,14 @@
-#include "library_loader.h"
+#include "node.h"
 #include "ww.h"
 #include "basic_types.h"
-#include "loggers/ww_logger.h" //NOLINT
-#include "stc/common.h"
+#include "loggers/ww_logger.h"
 #include "utils/hashutils.h"
 #include "hplatform.h"
+#include "managers/memory_manager.h"
 #include <stdlib.h> 
 #include <string.h>
 
-#define i_key  tunnel_lib_t    // NOLINT
+#define i_key  node_t    // NOLINT
 #define i_type vec_static_libs // NOLINT
 #include "stc/vec.h"
 
@@ -33,7 +33,7 @@ static struct
 //     #endif
 // }
 
-// static tunnel_lib_t dynLoadTunnelLib(hash_t hname) {
+// static node_t dynLoadNodeLib(hash_t hname) {
 //     char libName[256];
 //     snprintf(libName, sizeof(libName), "libname-%u.so", hname); // Example library name generation
 
@@ -46,13 +46,13 @@ static struct
 
 //     if (!handle) {
 //         LOGF("Failed to load library: %s", libName);
-//         return (tunnel_lib_t){0};
+//         return (node_t){0};
 //     }
 
-//     tunnel_lib_t lib = {0};
-//     lib.createHandle = (struct tunnel_s *(*)(node_instance_context_t *))getSymbol(handle, "createHandle");
-//     lib.destroyHandle = (struct tunnel_s *(*)(struct tunnel_s *))getSymbol(handle, "destroyHandle");
-//     lib.apiHandle = (api_result_t (*)(struct tunnel_s *, const char *))getSymbol(handle, "apiHandle");
+//     node_t lib = {0};
+//     lib.createHandle = (tunnel_t *(*)(node_instance_context_t *))getSymbol(handle, "createHandle");
+//     lib.destroyHandle = (tunnel_t *(*)(tunnel_t *))getSymbol(handle, "destroyHandle");
+//     lib.apiHandle = (api_result_t (*)(tunnel_t *, const char *))getSymbol(handle, "apiHandle");
 //     lib.getMetadataHandle = (tunnel_metadata_t (*)(void))getSymbol(handle, "getMetadataHandle");
 //     lib.hash_name = hname;
 
@@ -61,14 +61,14 @@ static struct
 
 
 
-static tunnel_lib_t dynLoadTunnelLib(hash_t hname)
+static node_t dynLoadNodeLib(hash_t hname)
 {
     (void) hname;
-    LOGF("dynLoadTunnelLib not implemented");
-    return (tunnel_lib_t){0};
+    LOGF("dynLoadNodeLib not implemented");
+    return (node_t){0};
 }
 
-tunnel_lib_t loadTunnelLibByHash(hash_t hname)
+node_t loadNodeLibraryByHash(hash_t hname)
 {
 
     if (state != NULL)
@@ -81,17 +81,17 @@ tunnel_lib_t loadTunnelLibByHash(hash_t hname)
             }
         }
     }
-    return dynLoadTunnelLib(hname);
+    return dynLoadNodeLib(hname);
 }
 
-tunnel_lib_t loadTunnelLib(const char *name)
+node_t loadNodeLibrary(const char *name)
 {
-    hash_t hname = CALC_HASH_BYTES(name, strlen(name));
-    return loadTunnelLibByHash(hname);
+    hash_t hname = calcHashBytes(name, strlen(name));
+    return loadNodeLibraryByHash(hname);
 }
 
 
-void registerStaticLib(tunnel_lib_t lib)
+void registerStaticNodeLib(node_t lib)
 {
     if (state == NULL)
     {

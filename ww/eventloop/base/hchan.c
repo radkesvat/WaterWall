@@ -216,7 +216,7 @@ inline static Thr* thr_current(void) {
     static _Thread_local Thr _thr = {0};
 
     Thr* t = &_thr;
-    if (WW_UNLIKELY(!t->init)) thr_init(t);
+    if (UNLIKELY(!t->init)) thr_init(t);
     return t;
 }
 
@@ -320,7 +320,7 @@ inline static bool chan_send(hchan_t* c, void* srcelemptr, bool* closed) {
 
     chan_lock(&c->lock);
 
-    if (WW_UNLIKELY(atomic_load_explicit(&c->closed, memory_order_relaxed))) {
+    if (UNLIKELY(atomic_load_explicit(&c->closed, memory_order_relaxed))) {
         chan_unlock(&c->lock);
         if (block) {
             fprintf(stderr, "send on closed channel");

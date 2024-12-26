@@ -107,7 +107,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     goto failed;
                 }
 
-                hash_t kh = CALC_HASH_BYTES(rawBuf(c->payload), sizeof(sha224_hex_t));
+                hash_t kh = calcHashBytes(rawBuf(c->payload), sizeof(sha224_hex_t));
 
                 hmap_users_t_iter find_result = hmap_users_t_find(&(state->users), kh);
                 if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
@@ -271,7 +271,7 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
                  tuser->hexed_sha224_of_user_uid);
 
             tuser->hash_of_hexed_sha224_of_user_uid =
-                CALC_HASH_BYTES(tuser->hexed_sha224_of_user_uid, sizeof(sha224_hex_t));
+                calcHashBytes(tuser->hexed_sha224_of_user_uid, sizeof(sha224_hex_t));
 
             if (! hmap_users_t_insert(&(state->users), tuser->hash_of_hexed_sha224_of_user_uid, tuser).inserted)
             {
@@ -297,7 +297,7 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
             state->fallback_delay = 0;
         }
 
-        hash_t  hash_next     = CALC_HASH_BYTES(fallback_node_name, strlen(fallback_node_name));
+        hash_t  hash_next     = calcHashBytes(fallback_node_name, strlen(fallback_node_name));
         node_t *fallback_node = getNode(instance_info->node_manager_config, hash_next);
         if (fallback_node == NULL)
         {

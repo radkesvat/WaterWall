@@ -246,7 +246,7 @@ void pipeDownStream(context_t *c)
     }
 }
 
-static void defaultPipeLocalUpStream(struct tunnel_s *self, struct context_s *c, struct pipe_line_s *pl)
+static void defaultPipeLocalUpStream(tunnel_t *self, struct context_s *c, struct pipe_line_s *pl)
 {
     (void) pl;
     if (isUpPiped(c->line))
@@ -259,7 +259,7 @@ static void defaultPipeLocalUpStream(struct tunnel_s *self, struct context_s *c,
     }
 }
 
-static void defaultPipeLocalDownStream(struct tunnel_s *self, struct context_s *c, struct pipe_line_s *pl)
+static void defaultPipeLocalDownStream(tunnel_t *self, struct context_s *c, struct pipe_line_s *pl)
 {
     (void) pl;
     if (isDownPiped(c->line))

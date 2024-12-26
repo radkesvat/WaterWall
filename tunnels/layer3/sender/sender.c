@@ -177,7 +177,7 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    hash_t  hash_tdev_name = CALC_HASH_BYTES(state->device_name, strlen(state->device_name));
+    hash_t  hash_tdev_name = calcHashBytes(state->device_name, strlen(state->device_name));
     node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
 
     if (tundevice_node == NULL)
