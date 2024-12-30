@@ -24,18 +24,18 @@ typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
 pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return globalMalloc(sizeof(struct msg_event));
+    return memoryAllocate(sizeof(struct msg_event));
 }
 
 void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    globalFree(item);
+    memoryFree(item);
 }
 
 static void lock(pipe_line_t *pl)
 {
-    int old_refc = atomic_fetch_add_explicit(&pl->refc, 1, memory_order_relaxed);
+    int old_refc = atomicAddExplicit(&pl->refc, 1, memory_order_relaxed);
     // #ifndef RELEASE
     //     if (0 >= old_refc)
     //     {
@@ -50,11 +50,11 @@ static void lock(pipe_line_t *pl)
 
 static void unlock(pipe_line_t *pl)
 {
-    int old_refc = atomic_fetch_add_explicit(&pl->refc, -1, memory_order_relaxed);
+    int old_refc = atomicAddExplicit(&pl->refc, -1, memory_order_relaxed);
     if (old_refc == 1)
     {
         // #ifndef RELEASE
-        //         if (! atomic_load_explicit(&(pl->closed), memory_order_relaxed))
+        //         if (! atomicLoadExplicit(&(pl->closed), memory_order_relaxed))
         //         {
         //             // this should not happen, otherwise we must change memory order
         //             // but i think its ok because threads synchronize around the mutex in eventloop
@@ -62,7 +62,7 @@ static void unlock(pipe_line_t *pl)
         //             exit(1);
         //         }
         // #endif
-        globalFree((void *) pl->memptr); // NOLINT
+        memoryFree((void *) pl->memptr); // NOLINT
     }
 }
 
@@ -266,7 +266,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 // void pipeOnUpLinePaused(void *state)
 // {
 //     pipe_line_t *pl = state;
-//     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+//     if (atomicLoadExplicit(&pl->closed, memory_order_relaxed))
 //     {
 //         return;
 //     }
@@ -276,7 +276,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 // void pipeOnUpLineResumed(void *state)
 // {
 //     pipe_line_t *pl = state;
-//     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+//     if (atomicLoadExplicit(&pl->closed, memory_order_relaxed))
 //     {
 //         return;
 //     }
@@ -286,7 +286,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 // void pipeOnDownLinePaused(void *state)
 // {
 //     pipe_line_t *pl = state;
-//     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+//     if (atomicLoadExplicit(&pl->closed, memory_order_relaxed))
 //     {
 //         return;
 //     }
@@ -296,7 +296,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 // void pipeOnDownLineResumed(void *state)
 // {
 //     pipe_line_t *pl = state;
-//     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+//     if (atomicLoadExplicit(&pl->closed, memory_order_relaxed))
 //     {
 //         return;
 //     }
@@ -333,7 +333,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //         return false;
 //     }
 
-//     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+//     if (atomicLoadExplicit(&pl->closed, memory_order_relaxed))
 //     {
 //         return false;
 //     }
@@ -379,7 +379,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //         return false;
 //     }
 
-//     if (atomic_load_explicit(&pl->closed, memory_order_relaxed))
+//     if (atomicLoadExplicit(&pl->closed, memory_order_relaxed))
 //     {
 //         return false;
 //     }
@@ -446,7 +446,7 @@ tunnel_t *newPipeTunnel(tunnel_t *t)
     }
 
     // allocate memory, placing pipe_line_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) globalMalloc(memsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 

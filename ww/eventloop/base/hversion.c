@@ -2,15 +2,15 @@
 
 #include "htime.h"
 
-const char* hv_compile_version(void) {
+const char* wwCompileVersion(void) {
     static char s_version[16] = {0};
-    datetime_t dt = hv_compile_datetime();
+    datetime_t dt = wwCompileDateTime();
     snprintf(s_version, sizeof(s_version), "%d.%d.%d.%d",
         HV_VERSION_MAJOR, dt.year%100, dt.month, dt.day);
     return s_version;
 }
 
-int version_atoi(const char* str) {
+int versionATOI(const char* str) {
     int hex = 0;
 
     // trim v1.2.3.4
@@ -27,7 +27,7 @@ int version_atoi(const char* str) {
     return hex;
 }
 
-void version_itoa(int num, char* str) {
+void versionITOA(int num, char* str) {
     char* ch = (char*)&num;
     sprintf(str, "%d.%d.%d.%d", ch[3], ch[2], ch[1], ch[0]);
 

@@ -17,17 +17,17 @@ BEGIN_EXTERN_C
 #define HV_VERSION_NUMBER   ((HV_VERSION_MAJOR << 16) | (HV_VERSION_MINOR << 8) | HV_VERSION_PATCH)
 
 
-HV_INLINE const char* hv_version(void) {
+HV_INLINE const char* wwVersion(void) {
     return HV_VERSION_STRING;
 }
 
-HV_EXPORT const char* hv_compile_version(void);
+HV_EXPORT const char* wwCompileVersion(void);
 
 // 1.2.3.4 => 0x01020304
-HV_EXPORT int version_atoi(const char* str);
+HV_EXPORT int versionATOI(const char* str);
 
 // 0x01020304 => 1.2.3.4
-HV_EXPORT void version_itoa(int hex, char* str);
+HV_EXPORT void versionITOA(int hex, char* str);
 
 END_EXTERN_C
 

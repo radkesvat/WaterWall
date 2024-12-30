@@ -14,7 +14,7 @@
 
 void destroyShiftBuffer(shift_buffer_t *b)
 {
-    globalFree(b);
+    memoryFree(b);
 }
 
 shift_buffer_t *newShiftBufferWithPad(uint32_t minimum_capacity, uint16_t pad_left, uint16_t pad_right)
@@ -25,7 +25,7 @@ shift_buffer_t *newShiftBufferWithPad(uint32_t minimum_capacity, uint16_t pad_le
     }
 
     uint32_t        real_cap = minimum_capacity + pad_left + pad_right;
-    shift_buffer_t *b        = globalMalloc(real_cap);
+    shift_buffer_t *b        = memoryAllocate(real_cap);
 
     b->len      = 0;
     b->curpos   = pad_left;

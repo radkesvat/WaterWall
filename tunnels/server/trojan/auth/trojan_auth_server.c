@@ -41,7 +41,7 @@ struct timer_eventdata
 
 static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
 {
-    struct timer_eventdata *result = globalMalloc(sizeof(struct timer_eventdata));
+    struct timer_eventdata *result = memoryAllocate(sizeof(struct timer_eventdata));
     result->self                   = self;
     result->c                      = c;
     return result;
@@ -54,7 +54,7 @@ static void onFallbackTimer(htimer_t *timer)
     trojan_auth_server_state_t *state = TSTATE(self);
     context_t                  *c     = data->c;
 
-    globalFree(data);
+    memoryFree(data);
     htimer_del(timer);
 
     if (! isAlive(c->line))
@@ -152,7 +152,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            cstate        = globalMalloc(sizeof(trojan_auth_server_con_state_t));
+            cstate        = memoryAllocate(sizeof(trojan_auth_server_con_state_t));
             *cstate       = (trojan_auth_server_con_state_t) {0};
             CSTATE_MUT(c) = cstate;
             destroyContext(c);
@@ -161,7 +161,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             bool init_sent = cstate->init_sent;
             bool auth      = cstate->authenticated;
-            globalFree(CSTATE(c));
+            memoryFree(CSTATE(c));
             CSTATE_DROP(c);
             if (init_sent)
             {
@@ -190,7 +190,7 @@ failed:
 
     // disconnect:
     reuseContextPayload(c);
-    globalFree(CSTATE(c));
+    memoryFree(CSTATE(c));
     CSTATE_DROP(c);
     context_t *reply = newFinContextFrom(c);
     destroyContext(c);
@@ -223,7 +223,7 @@ static void downStream(tunnel_t *self, context_t *c)
 {
     if (c->fin)
     {
-        globalFree(CSTATE(c));
+        memoryFree(CSTATE(c));
         CSTATE_DROP(c);
     }
     self->dw->downStream(self->dw, c);
@@ -257,10 +257,10 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
         else
         {
             total_parsed++;
-            trojan_user_t *tuser = globalMalloc(sizeof(trojan_user_t));
+            trojan_user_t *tuser = memoryAllocate(sizeof(trojan_user_t));
             memset(tuser, 0, sizeof(trojan_user_t));
             tuser->user = *user;
-            globalFree(user);
+            memoryFree(user);
             sha224((uint8_t *) tuser->user.uid, strlen(tuser->user.uid), &(tuser->sha224_of_user_uid[0]));
 
             for (size_t i = 0; i < sizeof(sha224_t); i++)
@@ -315,12 +315,12 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
             state->fallback->dw = t;
         }
     }
-    globalFree(fallback_node_name);
+    memoryFree(fallback_node_name);
 }
 
 tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 {
-    trojan_auth_server_state_t *state = globalMalloc(sizeof(trojan_auth_server_state_t));
+    trojan_auth_server_state_t *state = memoryAllocate(sizeof(trojan_auth_server_state_t));
     memset(state, 0, sizeof(trojan_auth_server_state_t));
     state->users    = hmap_users_t_with_capacity(kVecCap);
     cJSON *settings = instance_info->node_settings_json;

@@ -85,25 +85,25 @@ static socket_manager_state_t *state = NULL;
 static pool_item_t *allocTcpResultObjectPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return globalMalloc(sizeof(socket_accept_result_t));
+    return memoryAllocate(sizeof(socket_accept_result_t));
 }
 
 static void destroyTcpResultObjectPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    globalFree(item);
+    memoryFree(item);
 }
 
 static pool_item_t *allocUdpPayloadPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return globalMalloc(sizeof(udp_payload_t));
+    return memoryAllocate(sizeof(udp_payload_t));
 }
 
 static void destroyUdpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    globalFree(item);
+    memoryFree(item);
 }
 
 void destroySocketAcceptResult(socket_accept_result_t *sar)
@@ -262,7 +262,7 @@ static void parseWhiteListOption(socket_filter_option_t *option)
     }
 
     option->white_list_parsed_length = len;
-    option->white_list_parsed        = globalMalloc(sizeof(option->white_list_parsed[0]) * len);
+    option->white_list_parsed        = memoryAllocate(sizeof(option->white_list_parsed[0]) * len);
     for (int i = 0; i < len; i++)
     {
         cur              = option->white_list_raddr[i];
@@ -284,7 +284,7 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
         LOGF("SocketManager: cannot register after accept thread starts");
         exit(1);
     }
-    socket_filter_t *filter   = globalMalloc(sizeof(socket_filter_t));
+    socket_filter_t *filter   = memoryAllocate(sizeof(socket_filter_t));
     unsigned int     pirority = 0;
     if (option.multiport_backend == kMultiportBackendNothing)
     {
@@ -472,7 +472,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
                                                                               : option.balance_group_interval);
                     if (option.no_delay)
                     {
-                        tcp_nodelay(hio_fd(io), 1);
+                        tcpNoDelay(hio_fd(io), 1);
                     }
                     hio_detach(io);
                     distributeSocket(io, target_filter, local_port);
@@ -492,7 +492,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
 
             if (option.no_delay)
             {
-                tcp_nodelay(hio_fd(io), 1);
+                tcpNoDelay(hio_fd(io), 1);
             }
             hio_detach(io);
             distributeSocket(io, filter, local_port);
@@ -509,7 +509,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
 
         if (filter->option.no_delay)
         {
-            tcp_nodelay(hio_fd(io), 1);
+            tcpNoDelay(hio_fd(io), 1);
         }
         distributeSocket(io, filter, local_port);
     }
@@ -521,7 +521,7 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
 
 static void onAcceptTcpSinglePort(hio_t *io)
 {
-    distributeTcpSocket(io, sockaddr_port((sockaddr_u *) hio_localaddr_u(io)));
+    distributeTcpSocket(io, sockAddrPort((sockaddr_u *) hio_localaddr_u(io)));
 }
 
 static void onAcceptTcpMultiPort(hio_t *io)
@@ -610,7 +610,7 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
                                       uint8_t *ports_overlapped, uint16_t port_max)
 {
     const int length           = (port_max - port_min);
-    filter->listen_ios         = (hio_t **) globalMalloc(sizeof(hio_t *) * (length + 1));
+    filter->listen_ios         = (hio_t **) memoryAllocate(sizeof(hio_t *) * (length + 1));
     filter->listen_ios[length] = 0x0;
     int i                      = 0;
     for (uint16_t p = port_min; p < port_max; p++)
@@ -812,7 +812,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
 static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
     udpsock_t *socket     = hevent_userdata(io);
-    uint16_t   local_port = sockaddr_port((sockaddr_u *) hio_localaddr_u(io));
+    uint16_t   local_port = sockAddrPort((sockaddr_u *) hio_localaddr_u(io));
     uint8_t    target_tid = local_port % getWorkersCount();
 
     udp_payload_t item = (udp_payload_t) {.sock           = socket,
@@ -840,7 +840,7 @@ static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
         LOGF("SocketManager: stopping due to null socket handle");
         exit(1);
     }
-    udpsock_t *socket = globalMalloc(sizeof(udpsock_t));
+    udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
     *socket           = (udpsock_t) {.io = filter->listen_io, .table = newIdleTable(loop)};
     hevent_set_userdata(filter->listen_io, socket);
     hio_setcb_read(filter->listen_io, onRecvFrom);
@@ -954,16 +954,16 @@ void startSocketManager(void)
     assert(state != NULL);
     // accept_thread(accept_thread_loop);
 
-    state->accept_thread = hthread_create(accept_thread, NULL);
+    state->accept_thread = createThread(accept_thread, NULL);
 }
 
 socket_manager_state_t *createSocketManager(void)
 {
     assert(state == NULL);
-    state = globalMalloc(sizeof(socket_manager_state_t));
+    state = memoryAllocate(sizeof(socket_manager_state_t));
     memset(state, 0, sizeof(socket_manager_state_t));
 
-    worker_t *worker = globalMalloc(sizeof(worker_t));
+    worker_t *worker = memoryAllocate(sizeof(worker_t));
 
     *worker = (worker_t) {.tid = 255};
 
@@ -983,10 +983,10 @@ socket_manager_state_t *createSocketManager(void)
 
     hmutex_init(&state->mutex);
 
-    state->udp_pools = globalMalloc(sizeof(*state->udp_pools) * getWorkersCount());
+    state->udp_pools = memoryAllocate(sizeof(*state->udp_pools) * getWorkersCount());
     memset(state->udp_pools, 0, sizeof(*state->udp_pools) * getWorkersCount());
 
-    state->tcp_pools = globalMalloc(sizeof(*state->tcp_pools) * getWorkersCount());
+    state->tcp_pools = memoryAllocate(sizeof(*state->tcp_pools) * getWorkersCount());
     memset(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
     master_pool_t *mp_udp = newMasterPoolWithCap(2 * ((8) + RAM_PROFILE));
     master_pool_t *mp_tcp = newMasterPoolWithCap(2 * ((8) + RAM_PROFILE));

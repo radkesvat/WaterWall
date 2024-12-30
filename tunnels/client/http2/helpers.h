@@ -143,7 +143,7 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
                                         "Gecko) Chrome/122.0.0.0 Safari/537.36");
     nvs[nvlen++] = makeNV("Sec-Ch-Ua-Platform", "\"Windows\"");
 
-    http2_client_child_con_state_t *stream = globalMalloc(sizeof(http2_client_child_con_state_t));
+    http2_client_child_con_state_t *stream = memoryAllocate(sizeof(http2_client_child_con_state_t));
     memset(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
     stream->stream_id          = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
@@ -164,14 +164,14 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
     LSTATE_I_DROP(stream->line, stream->tunnel->chain_index);
     destroyBufferStream(stream->grpc_buffer_stream);
     doneLineUpSide(stream->line);
-    globalFree(stream);
+    memoryFree(stream);
 }
 
 static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 {
 
     http2_client_state_t     *state = TSTATE(self);
-    http2_client_con_state_t *con   = globalMalloc(sizeof(http2_client_con_state_t));
+    http2_client_con_state_t *con   = memoryAllocate(sizeof(http2_client_con_state_t));
     *con                            = (http2_client_con_state_t) {.queue        = newContextQueue(),
                                                                   .content_type = state->content_type,
                                                                   .path         = state->path,
@@ -236,7 +236,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     destroyContextQueue(con->queue);
     destroyLine(con->line);
     htimer_del(con->ping_timer);
-    globalFree(con);
+    memoryFree(con);
 }
 
 static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid)

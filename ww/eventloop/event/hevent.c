@@ -5,12 +5,12 @@
 #include "herr.h"
 // todo (invesitage) how a dynamic node can have these?
 uint64_t hloop_next_event_id(void) {
-    static hatomic_t s_id = (0);
+    static atomic_long s_id = (0);
     return ++s_id;
 }
 
 uint32_t hio_next_id(void) {
-    static hatomic_t s_id = (0);
+    static atomic_long s_id = (0);
     return ++s_id;
 }
 
@@ -27,7 +27,7 @@ static void fill_io_type(hio_t* io) {
         default: io->io_type = HIO_TYPE_SOCKET; break;
         }
     }
-    else if (socket_errno() == ENOTSOCK) {
+    else if (socketERRNO() == ENOTSOCK) {
         switch (io->fd) {
         case 0: io->io_type = HIO_TYPE_STDIN; break;
         case 1: io->io_type = HIO_TYPE_STDOUT; break;
@@ -46,7 +46,7 @@ static void hio_socket_init(hio_t* io) {
         blocking(io->fd);
     }
     else {
-        nonblocking(io->fd);
+        nonBlocking(io->fd);
     }
     // fill io->localaddr io->peeraddr
     if (io->localaddr == NULL) {

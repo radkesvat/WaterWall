@@ -12,7 +12,7 @@
 #include <sys/sysctl.h>
 #endif
 
-static inline int get_ncpu(void) {
+static inline int getNCPU(void) {
 #ifdef OS_WIN
     SYSTEM_INFO si;
     GetSystemInfo(&si);
@@ -30,7 +30,7 @@ typedef struct meminfo_s {
     unsigned long free;     // KB
 } meminfo_t;
 
-static inline int get_meminfo(meminfo_t* mem) {
+static inline int getMemInfo(meminfo_t* mem) {
 #ifdef OS_WIN
     MEMORYSTATUSEX memstat;
     memset(&memstat, 0, sizeof(memstat));

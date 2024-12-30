@@ -70,7 +70,7 @@ static void nio_accept(hio_t* io) {
         addrlen = sizeof(sockaddr_u);
         connfd = accept(io->fd, io->peeraddr, &addrlen);
         if (connfd < 0) {
-            err = socket_errno();
+            err = socketERRNO();
             if (err == EAGAIN || err == EINTR) {
                 return;
             }
@@ -92,7 +92,7 @@ static void nio_accept(hio_t* io) {
     return;
 
 accept_error:
-    hloge("listenfd=%d accept error: %s:%d", io->fd, socket_strerror(io->error), io->error);
+    hloge("listenfd=%d accept error: %s:%d", io->fd, socketStrError(io->error), io->error);
     // NOTE: Don't close listen fd automatically anyway.
     // hio_close(io);
 }
@@ -102,7 +102,7 @@ static void nio_connect(hio_t* io) {
     socklen_t addrlen = sizeof(sockaddr_u);
     int ret = getpeername(io->fd, io->peeraddr, &addrlen);
     if (ret < 0) {
-        io->error = socket_errno();
+        io->error = socketERRNO();
         goto connect_error;
     }
     else {
@@ -115,7 +115,7 @@ static void nio_connect(hio_t* io) {
     }
 
 connect_error:
-    hlogw("connfd=%d connect error: %s:%d", io->fd, socket_strerror(io->error), io->error);
+    hlogw("connfd=%d connect error: %s:%d", io->fd, socketStrError(io->error), io->error);
     hio_close(io);
 }
 
@@ -214,7 +214,7 @@ static void nio_read(hio_t* io) {
 
     // printd("read retval=%d\n", nread);
     if (nread < 0) {
-        err = socket_errno();
+        err = socketERRNO();
         if (err == EAGAIN || err == EINTR) {
             // goto read_done;
             reuseBuffer(io->loop->bufpool, buf);
@@ -280,7 +280,7 @@ write:
     nwrite = __nio_write(io, rawBufMut(buf), len);
     // printd("write retval=%d\n", nwrite);
     if (nwrite < 0) {
-        err = socket_errno();
+        err = socketERRNO();
         if (err == EAGAIN || err == EINTR) {
 
             return;
@@ -366,12 +366,12 @@ int hio_accept(hio_t* io) {
 int hio_connect(hio_t* io) {
     int ret = connect(io->fd, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
 #ifdef OS_WIN
-    if (ret < 0 && socket_errno() != WSAEWOULDBLOCK) {
+    if (ret < 0 && socketERRNO() != WSAEWOULDBLOCK) {
 #else
     if (ret < 0 && socket_errno() != EINPROGRESS) {
 #endif
         perror("connect");
-        io->error = socket_errno();
+        io->error = socketERRNO();
         hio_close_async(io);
         return ret;
     }
@@ -411,7 +411,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
         nwrite = __nio_write(io, rawBufMut(buf), len);
         // printd("write retval=%d\n", nwrite);
         if (nwrite < 0) {
-            err = socket_errno();
+            err = socketERRNO();
             if (err == EAGAIN || err == EINTR) {
                 nwrite = 0;
                 hlogd("try_write failed, enqueue!");
@@ -442,7 +442,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
         shiftr(buf, nwrite);
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w != 0){
-        //             remain.base = 0X0; // skips globalFree()
+        //             remain.base = 0X0; // skips memoryFree()
 
         //         }else
         //         {
@@ -496,7 +496,7 @@ disconnect:
 int hio_close(hio_t* io) {
     if (io->closed) return 0;
 
-    // if (io->destroy == 0 && hv_gettid() != io->loop->tid) {
+    // if (io->destroy == 0 && getTID() != io->loop->tid) {
     //     return hio_close_async(io); /*  tid lost its meaning, its now ww tid */
     // }
 

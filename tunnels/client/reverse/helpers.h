@@ -35,7 +35,7 @@ static void onLineResumedD(void *cstate)
 
 static reverse_client_con_state_t *createCstate(tunnel_t *self, tid_t tid)
 {
-    reverse_client_con_state_t *cstate = globalMalloc(sizeof(reverse_client_con_state_t));
+    reverse_client_con_state_t *cstate = memoryAllocate(sizeof(reverse_client_con_state_t));
     line_t                     *up     = newLine(tid);
     line_t                     *dw     = newLine(tid);
     // reserveChainStateIndex(dw); // we always take one from the down line
@@ -57,14 +57,14 @@ static void cleanup(reverse_client_con_state_t *cstate)
     destroyLine(cstate->u);
     destroyLine(cstate->d);
 
-    globalFree(cstate);
+    memoryFree(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t *self = cg->t;
     // reverse_client_state_t     *state  = TSTATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
-    globalFree(cg);
+    memoryFree(cg);
     context_t *hello_data_ctx = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
 
@@ -114,11 +114,11 @@ static void initiateConnect(tunnel_t *self, tid_t tid, bool delay)
     // int tid = 0;
     // if (workers_count > 0)
     // {
-    //     tid = atomic_fetch_add_explicit(&(state->round_index), 1, memory_order_relaxed);
+    //     tid = atomicAddExplicit(&(state->round_index), 1, memory_order_relaxed);
 
     //     if (tid >= workers_count)
     //     {
-    //         atomic_store_explicit(&(state->round_index), 0, memory_order_relaxed);
+    //         atomicStoreExplicit(&(state->round_index), 0, memory_order_relaxed);
     //         tid = 0;
     //     }
     // }
@@ -126,7 +126,7 @@ static void initiateConnect(tunnel_t *self, tid_t tid, bool delay)
     hloop_t *worker_loop = getWorkerLoop(tid);
 
     hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
-    struct connect_arg *cg = globalMalloc(sizeof(struct connect_arg));
+    struct connect_arg *cg = memoryAllocate(sizeof(struct connect_arg));
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;

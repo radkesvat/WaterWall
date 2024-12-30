@@ -28,13 +28,13 @@ static void upStream(tunnel_t *self, context_t *c)
     header_client_con_state_t *cstate = CSTATE(c);
     if (c->init)
     {
-        cstate        = globalMalloc(sizeof(header_client_con_state_t));
+        cstate        = memoryAllocate(sizeof(header_client_con_state_t));
         *cstate       = (header_client_con_state_t) {0};
         CSTATE_MUT(c) = cstate;
     }
     else if (c->fin)
     {
-        globalFree(cstate);
+        memoryFree(cstate);
         CSTATE_DROP(c);
     }
     else if (! cstate->first_packet_received && c->payload != NULL)
@@ -45,7 +45,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
         case kHdvsSourcePort:
             shiftl(c->payload, sizeof(uint16_t));
-            writeUnAlignedUI16(c->payload, sockaddr_port(&(c->line->src_ctx.address)));
+            writeUnAlignedUI16(c->payload, sockAddrPort(&(c->line->src_ctx.address)));
             break;
 
         default:
@@ -61,7 +61,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->fin)
     {
-        globalFree( CSTATE(c));
+        memoryFree( CSTATE(c));
         CSTATE_DROP(c);
     }
 
@@ -71,7 +71,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
 {
 
-    header_client_state_t *state = globalMalloc(sizeof(header_client_state_t));
+    header_client_state_t *state = memoryAllocate(sizeof(header_client_state_t));
     memset(state, 0, sizeof(header_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;

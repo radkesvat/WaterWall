@@ -41,7 +41,7 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
     }
 
     // allocate memory, placing master_pool_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) globalMalloc(memsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 

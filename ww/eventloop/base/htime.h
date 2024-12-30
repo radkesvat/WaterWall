@@ -38,7 +38,7 @@ struct timezone {
 };
 
 #include <sys/timeb.h>
-HV_INLINE int gettimeofday(struct timeval *tv, struct timezone *tz) {
+HV_INLINE int getTimeOfDay(struct timeval *tv, struct timezone *tz) {
     struct _timeb tb;
     _ftime64_s(&tb);
     if (tv) {
@@ -53,25 +53,25 @@ HV_INLINE int gettimeofday(struct timeval *tv, struct timezone *tz) {
 }
 #endif
 
-HV_EXPORT unsigned int gettick_ms(void);
-HV_INLINE unsigned long long gettimeofday_ms(void) {
+HV_EXPORT unsigned int getTickMS(void);
+HV_INLINE unsigned long long getTimeOfDayMS(void) {
     struct timeval tv;
-    gettimeofday(&tv, NULL);
+    getTimeOfDay(&tv, NULL);
     return tv.tv_sec * (unsigned long long)1000 + tv.tv_usec/1000;
 }
-HV_INLINE unsigned long long gettimeofday_us(void) {
+HV_INLINE unsigned long long getTimeOfDayUS(void) {
     struct timeval tv;
-    gettimeofday(&tv, NULL);
+    getTimeOfDay(&tv, NULL);
     return tv.tv_sec * (unsigned long long)1000000 + tv.tv_usec;
 }
-HV_EXPORT unsigned long long gethrtime_us(void);
+HV_EXPORT unsigned long long getHRTimeUs(void);
 
-HV_EXPORT datetime_t datetime_now(void);
-HV_EXPORT datetime_t datetime_localtime(time_t seconds);
-HV_EXPORT time_t     datetime_mktime(datetime_t* dt);
+HV_EXPORT datetime_t dateTimeNow(void);
+HV_EXPORT datetime_t dateTimeLocalTime(time_t seconds);
+HV_EXPORT time_t     dateTimeMkTime(datetime_t* dt);
 
-HV_EXPORT datetime_t* datetime_past(datetime_t* dt, int days DEFAULT(1));
-HV_EXPORT datetime_t* datetime_future(datetime_t* dt, int days DEFAULT(1));
+HV_EXPORT datetime_t* dateTimePast(datetime_t* dt, int days DEFAULT(1));
+HV_EXPORT datetime_t* dateTimeFuture(datetime_t* dt, int days DEFAULT(1));
 
 #define TIME_FMT            "%02d:%02d:%02d"
 #define TIME_FMT_BUFLEN     12
@@ -85,17 +85,17 @@ HV_EXPORT char* datetime_fmt_iso(datetime_t* dt, char* buf);
 
 #define GMTIME_FMT          "%.3s, %02d %.3s %04d %02d:%02d:%02d GMT"
 #define GMTIME_FMT_BUFLEN   30
-HV_EXPORT char* gmtime_fmt(time_t time, char* buf);
+HV_EXPORT char* gmTimeFmt(time_t time, char* buf);
 
-HV_EXPORT int days_of_month(int month, int year);
+HV_EXPORT int daysOfMonth(int month, int year);
 
-HV_EXPORT int month_atoi(const char* month);
-HV_EXPORT const char* month_itoa(int month);
+HV_EXPORT int monthATOI(const char* month);
+HV_EXPORT const char* monthITOA(int month);
 
-HV_EXPORT int weekday_atoi(const char* weekday);
-HV_EXPORT const char* weekday_itoa(int weekday);
+HV_EXPORT int weekdayATOI(const char* weekday);
+HV_EXPORT const char* weekdayITOA(int weekday);
 
-HV_EXPORT datetime_t hv_compile_datetime(void);
+HV_EXPORT datetime_t wwCompileDateTime(void);
 
 /*
  * minute   hour    day     week    month       action
@@ -107,7 +107,7 @@ HV_EXPORT datetime_t hv_compile_datetime(void);
  *  30      1       -1       0      -1          cron.weekly
  *  30      1        1      -1      10          cron.yearly
  */
-HV_EXPORT time_t cron_next_timeout(int minute, int hour, int day, int week, int month);
+HV_EXPORT time_t cronNextTimeout(int minute, int hour, int day, int week, int month);
 
 END_EXTERN_C
 

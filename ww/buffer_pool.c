@@ -285,7 +285,7 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
 
     const unsigned long container_len = bufcount * sizeof(shift_buffer_t *);
 
-    buffer_pool_t *ptr_pool = globalMalloc(sizeof(buffer_pool_t));
+    buffer_pool_t *ptr_pool = memoryAllocate(sizeof(buffer_pool_t));
 
     *ptr_pool = (buffer_pool_t) {
         .cap                        = bufcount,
@@ -296,9 +296,9 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
         .in_use = 0,
 #endif
         .large_buffers_mp = mp_large,
-        .large_buffers    = (shift_buffer_t **) globalMalloc(container_len),
+        .large_buffers    = (shift_buffer_t **) memoryAllocate(container_len),
         .small_buffers_mp = mp_small,
-        .small_buffers    = (shift_buffer_t **) globalMalloc(container_len),
+        .small_buffers    = (shift_buffer_t **) memoryAllocate(container_len),
     };
 
     installMasterPoolAllocCallbacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);

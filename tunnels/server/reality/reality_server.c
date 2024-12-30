@@ -57,7 +57,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     EVP_MD_free(cstate->msg_digest);
     EVP_PKEY_free(cstate->sign_key);
 
-    globalFree(cstate);
+    memoryFree(cstate);
     CSTATE_DROP(c);
 }
 
@@ -187,7 +187,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (c->init)
         {
-            cstate = CSTATE_MUT(c) = globalMalloc(sizeof(reality_server_con_state_t));
+            cstate = CSTATE_MUT(c) = memoryAllocate(sizeof(reality_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(reality_server_con_state_t));
             cstate->auth_state     = kConAuthPending;
             cstate->giveup_counter = state->counter_threshold;
@@ -293,12 +293,12 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 {
-    reality_server_state_t *state = globalMalloc(sizeof(reality_server_state_t));
+    reality_server_state_t *state = memoryAllocate(sizeof(reality_server_state_t));
     memset(state, 0, sizeof(reality_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
-    state->threadlocal_cipher_context = globalMalloc(sizeof(EVP_CIPHER_CTX *) * getWorkersCount());
-    state->threadlocal_sign_context   = globalMalloc(sizeof(EVP_MD_CTX *) * getWorkersCount());
+    state->threadlocal_cipher_context = memoryAllocate(sizeof(EVP_CIPHER_CTX *) * getWorkersCount());
+    state->threadlocal_sign_context   = memoryAllocate(sizeof(EVP_MD_CTX *) * getWorkersCount());
 
     for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
@@ -360,7 +360,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     }
 
     state->dest = next_node->instance;
-    globalFree(dest_node_name);
+    memoryFree(dest_node_name);
 
     tunnel_t *t = newTunnel();
     chainDown(t, state->dest);

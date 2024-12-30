@@ -340,7 +340,7 @@ node_t *getNode(node_manager_config_t *cfg, hash_t hash_node_name)
 
 node_t *newNode(void)
 {
-    node_t *new_node = globalMalloc(sizeof(node_t));
+    node_t *new_node = memoryAllocate(sizeof(node_t));
     memset(new_node, 0, sizeof(node_t));
     return new_node;
 }
@@ -398,7 +398,7 @@ node_manager_t *createNodeManager(void)
 {
     assert(state == NULL);
 
-    state = globalMalloc(sizeof(node_manager_t));
+    state = memoryAllocate(sizeof(node_manager_t));
     memset(state, 0, sizeof(node_manager_t));
 
     state->configs = vec_configs_t_with_capacity(kVecCap);

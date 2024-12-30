@@ -54,7 +54,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newListener(node_instance_context_t *instance_info)
 {
-    listener_state_t *state = globalMalloc(sizeof(listener_state_t));
+    listener_state_t *state = memoryAllocate(sizeof(listener_state_t));
     memset(state, 0, sizeof(listener_state_t));
     cJSON *settings = instance_info->node_settings_json;
 

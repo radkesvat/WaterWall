@@ -46,7 +46,7 @@ A million repetitions of "a"
 
 /* Hash a single 512-bit block. This is the core of the algorithm. */
 
-void HV_SHA1Transform(
+void wwSHA1Transform(
     uint32_t state[5],
     const unsigned char buffer[64]
 )
@@ -174,7 +174,7 @@ void HV_SHA1Transform(
 
 /* HV_SHA1Init - Initialize new context */
 
-void HV_SHA1Init(
+void wwSHA1Init(
     HV_SHA1_CTX * context
 )
 {
@@ -190,7 +190,7 @@ void HV_SHA1Init(
 
 /* Run your data through this. */
 
-void HV_SHA1Update(
+void wwSHA1Update(
     HV_SHA1_CTX * context,
     const unsigned char *data,
     uint32_t len
@@ -208,10 +208,10 @@ void HV_SHA1Update(
     if ((j + len) > 63)
     {
         memcpy(&context->buffer[j], data, (i = 64 - j));
-        HV_SHA1Transform(context->state, context->buffer);
+        wwSHA1Transform(context->state, context->buffer);
         for (; i + 63 < len; i += 64)
         {
-            HV_SHA1Transform(context->state, &data[i]);
+            wwSHA1Transform(context->state, &data[i]);
         }
         j = 0;
     }
@@ -223,7 +223,7 @@ void HV_SHA1Update(
 
 /* Add padding and return the message digest. */
 
-void HV_SHA1Final(
+void wwSHA1Final(
     unsigned char digest[20],
     HV_SHA1_CTX * context
 )
@@ -257,13 +257,13 @@ void HV_SHA1Final(
     }
 #endif
     c = 0200;
-    HV_SHA1Update(context, &c, 1);
+    wwSHA1Update(context, &c, 1);
     while ((context->count[0] & 504) != 448)
     {
         c = 0000;
-        HV_SHA1Update(context, &c, 1);
+        wwSHA1Update(context, &c, 1);
     }
-    HV_SHA1Update(context, finalcount, 8); /* Should cause a HV_SHA1Transform() */
+    wwSHA1Update(context, finalcount, 8); /* Should cause a HV_SHA1Transform() */
     for (i = 0; i < 20; i++)
     {
         digest[i] = (unsigned char)
@@ -274,7 +274,7 @@ void HV_SHA1Final(
     memset(&finalcount, '\0', sizeof(finalcount));
 }
 
-void HV_SHA1(
+void wwSHA1Pointer(
     char *hash_out,
     const char *str,
     uint32_t len)
@@ -282,29 +282,29 @@ void HV_SHA1(
     HV_SHA1_CTX ctx;
     unsigned int ii;
 
-    HV_SHA1Init(&ctx);
+    wwSHA1Init(&ctx);
     for (ii=0; ii<len; ii+=1)
-        HV_SHA1Update(&ctx, (const unsigned char*)str + ii, 1);
-    HV_SHA1Final((unsigned char *)hash_out, &ctx);
+        wwSHA1Update(&ctx, (const unsigned char*)str + ii, 1);
+    wwSHA1Final((unsigned char *)hash_out, &ctx);
     hash_out[20] = '\0';
 }
 
-void hv_sha1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]) {
+void wwSHA1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]) {
     HV_SHA1_CTX ctx;
-    HV_SHA1Init(&ctx);
-    HV_SHA1Update(&ctx, input, inputlen);
-    HV_SHA1Final(digest, &ctx);
+    wwSHA1Init(&ctx);
+    wwSHA1Update(&ctx, input, inputlen);
+    wwSHA1Final(digest, &ctx);
 }
 
 static inline char i2hex(unsigned char i) {
     return i < 10 ? i + '0' : i - 10 + 'a';
 }
 
-void hv_sha1_hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t outputlen) {
+void wwSHA1Hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t outputlen) {
     int i;
     unsigned char digest[20];
     if (outputlen < 40) return;
-    hv_sha1(input, inputlen, digest);
+    wwSHA1(input, inputlen, digest);
     for (i = 0; i < 20; ++i) {
         *output++ = i2hex(digest[i] >> 4);
         *output++ = i2hex(digest[i] & 0x0F);

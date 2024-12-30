@@ -160,7 +160,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
         LOGF("JSON Error: Layer3IpRoutingTable->settings->rules rule parse failed");
     }
     rule.v4 = ipver == 4;
-    globalFree(temp);
+    memoryFree(temp);
     temp = NULL;
 
     if (! getStringFromJsonObject(&(temp), rule_obj, "next"))
@@ -185,7 +185,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
             exit(1);
         }
     }
-    globalFree(temp);
+    memoryFree(temp);
 
     rule.next = node->instance;
 
@@ -194,7 +194,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
 
 tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
 {
-    layer3_ip_overrider_state_t *state = globalMalloc(sizeof(layer3_ip_overrider_state_t));
+    layer3_ip_overrider_state_t *state = memoryAllocate(sizeof(layer3_ip_overrider_state_t));
     memset(state, 0, sizeof(layer3_ip_overrider_state_t));
     cJSON *settings = instance_info->node_settings_json;
 

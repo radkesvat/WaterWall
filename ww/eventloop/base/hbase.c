@@ -5,14 +5,14 @@
 #endif
 
 #include "hatomic.h"
-#include "ww.h"
+#include "managers/memory_manager.h"
 
 #ifndef RAND_MAX
 #define RAND_MAX 2147483647
 #endif
 
-static hatomic_t s_alloc_cnt = (0);
-static hatomic_t s_free_cnt = (0);
+static atomic_long s_alloc_cnt = (0);
+static atomic_long s_free_cnt = (0);
 
 long hv_alloc_cnt(void) {
     return s_alloc_cnt;
@@ -23,8 +23,8 @@ long hv_free_cnt(void) {
 }
 
 void* hv_malloc(size_t size) {
-    hatomic_inc(&s_alloc_cnt);
-    void* ptr = globalMalloc(size);
+    atomicInc(&s_alloc_cnt);
+    void* ptr = memoryAllocate(size);
     if (!ptr) {
         fprintf(stderr, "malloc failed!\n");
         exit(-1);
@@ -33,9 +33,9 @@ void* hv_malloc(size_t size) {
 }
 
 void* hv_realloc(void* oldptr, size_t newsize, size_t oldsize) {
-    hatomic_inc(&s_alloc_cnt);
-    if (oldptr) hatomic_inc(&s_free_cnt);
-    void* ptr = globalRealloc(oldptr, newsize);
+    atomicInc(&s_alloc_cnt);
+    if (oldptr) atomicInc(&s_free_cnt);
+    void* ptr = memoryReAllocate(oldptr, newsize);
     if (!ptr) {
         fprintf(stderr, "realloc failed!\n");
         exit(-1);
@@ -47,8 +47,8 @@ void* hv_realloc(void* oldptr, size_t newsize, size_t oldsize) {
 }
 
 void* hv_calloc(size_t nmemb, size_t size) {
-    hatomic_inc(&s_alloc_cnt);
-    void* ptr = globalMalloc(nmemb* size);
+    atomicInc(&s_alloc_cnt);
+    void* ptr = memoryAllocate(nmemb* size);
     if (!ptr) {
         fprintf(stderr, "calloc failed!\n");
         exit(-1);
@@ -59,8 +59,8 @@ void* hv_calloc(size_t nmemb, size_t size) {
 }
 
 void* hv_zalloc(size_t size) {
-    hatomic_inc(&s_alloc_cnt);
-    void* ptr = globalMalloc(size);
+    atomicInc(&s_alloc_cnt);
+    void* ptr = memoryAllocate(size);
     if (!ptr) {
         fprintf(stderr, "malloc failed!\n");
         exit(-1);
@@ -71,13 +71,13 @@ void* hv_zalloc(size_t size) {
 
 void hv_free(void* ptr) {
     if (ptr) {
-        globalFree(ptr);
+        memoryFree(ptr);
         ptr = NULL;
-        hatomic_inc(&s_free_cnt);
+        atomicInc(&s_free_cnt);
     }
 }
 
-char* hv_strupper(char* str) {
+char* stringUpperCase(char* str) {
     char* p = str;
     while (*p != '\0') {
         if (*p >= 'a' && *p <= 'z') {
@@ -88,7 +88,7 @@ char* hv_strupper(char* str) {
     return str;
 }
 
-char* hv_strlower(char* str) {
+char* stringLowerCase(char* str) {
     char* p = str;
     while (*p != '\0') {
         if (*p >= 'A' && *p <= 'Z') {
@@ -99,7 +99,7 @@ char* hv_strlower(char* str) {
     return str;
 }
 
-char* hv_strreverse(char* str) {
+char* stringReverse(char* str) {
     if (str == NULL) return NULL;
     char* b = str;
     char* e = str;
@@ -119,7 +119,7 @@ char* hv_strreverse(char* str) {
 }
 
 // n = sizeof(dest_buf)
-char* hv_strncpy(char* dest, const char* src, size_t n) {
+char* stringCopyN(char* dest, const char* src, size_t n) {
     assert(dest != NULL && src != NULL);
     char* ret = dest;
     while (*src != '\0' && --n > 0) {
@@ -130,7 +130,7 @@ char* hv_strncpy(char* dest, const char* src, size_t n) {
 }
 
 // n = sizeof(dest_buf)
-char* hv_strncat(char* dest, const char* src, size_t n) {
+char* stringCat(char* dest, const char* src, size_t n) {
     assert(dest != NULL && src != NULL);
     char* ret = dest;
     while (*dest) {
@@ -144,7 +144,7 @@ char* hv_strncat(char* dest, const char* src, size_t n) {
     return ret;
 }
 
-bool hv_strstartswith(const char* str, const char* start) {
+bool stringStartsWith(const char* str, const char* start) {
     assert(str != NULL && start != NULL);
     while (*str && *start && *str == *start) {
         ++str;
@@ -153,7 +153,7 @@ bool hv_strstartswith(const char* str, const char* start) {
     return *start == '\0';
 }
 
-bool hv_strendswith(const char* str, const char* end) {
+bool stringEndsWith(const char* str, const char* end) {
     assert(str != NULL && end != NULL);
     int len1 = 0;
     int len2 = 0;
@@ -176,17 +176,17 @@ bool hv_strendswith(const char* str, const char* end) {
     return true;
 }
 
-bool hv_strcontains(const char* str, const char* sub) {
+bool stringContains(const char* str, const char* sub) {
     assert(str != NULL && sub != NULL);
     return strstr(str, sub) != NULL;
 }
 
-bool hv_wildcard_match(const char* str, const char* pattern) {
+bool stringWildCardMatch(const char* str, const char* pattern) {
     assert(str != NULL && pattern != NULL);
     bool match = false;
     while (*str && *pattern) {
         if (*pattern == '*') {
-            match = hv_strendswith(str, pattern + 1);
+            match = stringEndsWith(str, pattern + 1);
             break;
         }
         else if (*str != *pattern) {
@@ -201,7 +201,7 @@ bool hv_wildcard_match(const char* str, const char* pattern) {
     return match ? match : (*str == '\0' && *pattern == '\0');
 }
 
-char* hv_strnchr(const char* s, char c, size_t n) {
+char* stringChr(const char* s, char c, size_t n) {
     assert(s != NULL);
     const char* p = s;
     while (*p != '\0' && n-- > 0) {
@@ -211,7 +211,7 @@ char* hv_strnchr(const char* s, char c, size_t n) {
     return NULL;
 }
 
-char* hv_strrchr_dir(const char* filepath) {
+char* stringChrDir(const char* filepath) {
     char* p = (char*)filepath;
     while (*p) ++p;
     while (--p >= filepath) {
@@ -225,22 +225,22 @@ char* hv_strrchr_dir(const char* filepath) {
     return NULL;
 }
 
-const char* hv_basename(const char* filepath) {
-    const char* pos = hv_strrchr_dir(filepath);
+const char* filePathBaseName(const char* filepath) {
+    const char* pos = stringChrDir(filepath);
     return pos ? pos + 1 : filepath;
 }
 
-const char* hv_suffixname(const char* filename) {
-    const char* pos = hv_strrchr_dot(filename);
+const char* filePathSuffixName(const char* filename) {
+    const char* pos = stringChrDot(filename);
     return pos ? pos + 1 : "";
 }
 
-int hv_mkdir_p(const char* dir) {
+int createDirIfNotExists(const char* dir) {
     if (access(dir, 0) == 0) {
         return EEXIST;
     }
     char tmp[MAX_PATH] = {0};
-    hv_strncpy(tmp, dir, sizeof(tmp));
+    stringCopyN(tmp, dir, sizeof(tmp));
     char* p = tmp;
     char delim = '/';
     while (*p) {
@@ -262,7 +262,7 @@ int hv_mkdir_p(const char* dir) {
     return 0;
 }
 
-int hv_rmdir_p(const char* dir) {
+int removeDirIfExists(const char* dir) {
     if (access(dir, 0) != 0) {
         return ENOENT;
     }
@@ -270,7 +270,7 @@ int hv_rmdir_p(const char* dir) {
         return EPERM;
     }
     char tmp[MAX_PATH] = {0};
-    hv_strncpy(tmp, dir, sizeof(tmp));
+    stringCopyN(tmp, dir, sizeof(tmp));
     char* p = tmp;
     while (*p) ++p;
     while (--p >= tmp) {
@@ -288,11 +288,11 @@ int hv_rmdir_p(const char* dir) {
     return 0;
 }
 
-bool hv_exists(const char* path) {
+bool dirExists(const char* path) {
     return access(path, 0) == 0;
 }
 
-bool hv_isdir(const char* path) {
+bool isDir(const char* path) {
     if (access(path, 0) != 0) return false;
     struct stat st;
     memset(&st, 0, sizeof(st));
@@ -300,7 +300,7 @@ bool hv_isdir(const char* path) {
     return S_ISDIR(st.st_mode);
 }
 
-bool hv_isfile(const char* path) {
+bool isFile(const char* path) {
     if (access(path, 0) != 0) return false;
     struct stat st;
     memset(&st, 0, sizeof(st));
@@ -308,9 +308,9 @@ bool hv_isfile(const char* path) {
     return S_ISREG(st.st_mode);
 }
 
-bool hv_islink(const char* path) {
+bool isLink(const char* path) {
 #ifdef OS_WIN
-    return hv_isdir(path) && (GetFileAttributes(path) & FILE_ATTRIBUTE_REPARSE_POINT);
+    return isDir(path) && (GetFileAttributes(path) & FILE_ATTRIBUTE_REPARSE_POINT);
 #else
     if (access(path, 0) != 0) return false;
     struct stat st;
@@ -320,14 +320,14 @@ bool hv_islink(const char* path) {
 #endif
 }
 
-size_t hv_filesize(const char* filepath) {
+size_t getFileSize(const char* filepath) {
     struct stat st;
     memset(&st, 0, sizeof(st));
     stat(filepath, &st);
     return st.st_size;
 }
 
-char* get_executable_path(char* buf, int size) {
+char* getExecuteablePath(char* buf, int size) {
 #ifdef OS_WIN
     GetModuleFileName(NULL, buf, size);
 #elif defined(OS_LINUX)
@@ -340,10 +340,10 @@ char* get_executable_path(char* buf, int size) {
     return buf;
 }
 
-char* get_executable_dir(char* buf, int size) {
+char* getExecuteableDir(char* buf, int size) {
     char filepath[MAX_PATH] = {0};
-    get_executable_path(filepath, sizeof(filepath));
-    char* pos = hv_strrchr_dir(filepath);
+    getExecuteablePath(filepath, sizeof(filepath));
+    char* pos = stringChrDir(filepath);
     if (pos) {
         *pos = '\0';
 
@@ -356,10 +356,10 @@ char* get_executable_dir(char* buf, int size) {
     return buf;
 }
 
-char* get_executable_file(char* buf, int size) {
+char* getExecuteableFile(char* buf, int size) {
     char filepath[MAX_PATH] = {0};
-    get_executable_path(filepath, sizeof(filepath));
-    char* pos = hv_strrchr_dir(filepath);
+    getExecuteablePath(filepath, sizeof(filepath));
+    char* pos = stringChrDir(filepath);
     if (pos) {
 
 #if defined(OS_UNIX)
@@ -371,11 +371,11 @@ char* get_executable_file(char* buf, int size) {
     return buf;
 }
 
-char* get_run_dir(char* buf, int size) {
+char* getRunDir(char* buf, int size) {
     return getcwd(buf, size);
 }
 
-int hv_rand(int min, int max) {
+int randomRange(int min, int max) {
     static int s_seed = 0;
     assert(max > min);
 
@@ -389,7 +389,7 @@ int hv_rand(int min, int max) {
     return _rand;
 }
 
-char* hv_random_string(char* buf, int len) {
+char* randomString(char* buf, int len) {
     static char s_characters[] = {
         'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U',
         'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
@@ -397,13 +397,13 @@ char* hv_random_string(char* buf, int len) {
     };
     int i = 0;
     for (; i < len; i++) {
-        buf[i] = s_characters[hv_rand(0, sizeof(s_characters) - 1)];
+        buf[i] = s_characters[randomRange(0, sizeof(s_characters) - 1)];
     }
     buf[i] = '\0';
     return buf;
 }
 
-bool hv_getboolean(const char* str) {
+bool stringRepresenstsTrue(const char* str) {
     if (str == NULL) return false;
     int len = strlen(str);
     if (len == 0) return false;
@@ -417,7 +417,7 @@ bool hv_getboolean(const char* str) {
     }
 }
 
-size_t hv_parse_size(const char* str) {
+size_t stringToSize(const char* str) {
     size_t size = 0;
     uint64_t n = 0;
     const char* p = str;
@@ -446,7 +446,7 @@ size_t hv_parse_size(const char* str) {
     return size + n;
 }
 
-time_t hv_parse_time(const char* str) {
+time_t stringToTime(const char* str) {
     time_t time = 0, n = 0;
     const char* p = str;
     char c;
@@ -471,7 +471,7 @@ time_t hv_parse_time(const char* str) {
     return time + n;
 }
 
-int hv_parse_url(hurl_t* stURL, const char* strURL) {
+int stringToUrl(hurl_t* stURL, const char* strURL) {
     if (stURL == NULL || strURL == NULL) return -1;
     memset(stURL, 0, sizeof(hurl_t));
     const char* begin = strURL;
@@ -491,10 +491,10 @@ int hv_parse_url(hurl_t* stURL, const char* strURL) {
     if (ep == NULL) ep = end;
     const char* user = sp;
     const char* host = sp;
-    const char* pos = hv_strnchr(sp, '@', ep - sp);
+    const char* pos = stringChr(sp, '@', ep - sp);
     if (pos) {
         // user:pswd
-        const char* pswd = hv_strnchr(user, ':', pos - user);
+        const char* pswd = stringChr(user, ':', pos - user);
         if (pswd) {
             stURL->fields[HV_URL_PASSWORD].off = pswd + 1 - begin;
             stURL->fields[HV_URL_PASSWORD].len = pos - pswd - 1;
@@ -508,7 +508,7 @@ int hv_parse_url(hurl_t* stURL, const char* strURL) {
         host = pos + 1;
     }
     // port
-    const char* port = hv_strnchr(host, ':', ep - host);
+    const char* port = stringChr(host, ':', ep - host);
     if (port) {
         stURL->fields[HV_URL_PORT].off = port + 1 - begin;
         stURL->fields[HV_URL_PORT].len = ep - port - 1;

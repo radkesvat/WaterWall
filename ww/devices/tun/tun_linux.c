@@ -81,14 +81,14 @@ static pool_item_t *allocTunMsgPoolHandle(struct master_pool_s *pool, void *user
 {
     (void) userdata;
     (void) pool;
-    return globalMalloc(sizeof(struct msg_event));
+    return memoryAllocate(sizeof(struct msg_event));
 }
 
 static void destroyTunMsgPoolHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
-    globalFree(item);
+    memoryFree(item);
 }
 
 static void localThreadEventReceived(hevent_t *ev)
@@ -123,7 +123,7 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
     shift_buffer_t *buf;
     ssize_t         nread;
 
-    while (atomic_load_explicit(&(tdev->running), memory_order_relaxed))
+    while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
         buf = popSmallBuffer(tdev->reader_buffer_pool);
 
@@ -175,7 +175,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     shift_buffer_t *buf;
     ssize_t         nwrite;
 
-    while (atomic_load_explicit(&(tdev->running), memory_order_relaxed))
+    while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
         if (! hchanRecv(tdev->writer_buffer_channel, &buf))
         {
@@ -275,9 +275,9 @@ bool bringTunDeviceUP(tun_device_t *tdev)
 
     if (tdev->read_event_callback != NULL)
     {
-        tdev->read_thread = hthread_create(tdev->routine_reader, tdev);
+        tdev->read_thread = createThread(tdev->routine_reader, tdev);
     }
-    tdev->write_thread = hthread_create(tdev->routine_writer, tdev);
+    tdev->write_thread = createThread(tdev->routine_writer, tdev);
     return true;
 }
 
@@ -302,9 +302,9 @@ bool bringTunDeviceDown(tun_device_t *tdev)
 
     if (tdev->read_event_callback != NULL)
     {
-        hthread_join(tdev->read_thread);
+        joinThread(tdev->read_thread);
     }
-    hthread_join(tdev->write_thread);
+    joinThread(tdev->write_thread);
 
     shift_buffer_t *buf;
     while (hchanRecv(tdev->writer_buffer_channel, &buf))
@@ -352,7 +352,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     buffer_pool_t  *writer_bpool =
         createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  1);
 
-    tun_device_t *tdev = globalMalloc(sizeof(tun_device_t));
+    tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
     *tdev = (tun_device_t) {.name                     = stringDuplicate(ifr.ifr_name),
                             .running                  = false,

@@ -172,7 +172,7 @@ static void defaultOnChainStart(tunnel_t *t)
 
 tunnel_t *newTunnel(node_t *node, uint16_t tstate_size, uint16_t cstate_size)
 {
-    tunnel_t *ptr = globalMalloc(sizeof(tunnel_t) + tstate_size);
+    tunnel_t *ptr = memoryAllocate(sizeof(tunnel_t) + tstate_size);
 
     *ptr = (tunnel_t){.cstate_size = cstate_size,
                       .fnInitU     = &defaultUpStreamInit,
@@ -201,25 +201,25 @@ tunnel_t *newTunnel(node_t *node, uint16_t tstate_size, uint16_t cstate_size)
 pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return globalMalloc(sizeof(line_t));
+    return memoryAllocate(sizeof(line_t));
 }
 
 void destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    globalFree(item);
+    memoryFree(item);
 }
 
 pool_item_t *allocContextPoolHandle(struct generic_pool_s *pool)
 {
     (void) pool;
-    return globalMalloc(sizeof(context_t));
+    return memoryAllocate(sizeof(context_t));
 }
 
 void destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    globalFree(item);
+    memoryFree(item);
 }
 
 void pipeUpStream(context_t *c)

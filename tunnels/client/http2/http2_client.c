@@ -560,7 +560,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 {
     http2_client_state_t *state =
-        globalMalloc(sizeof(http2_client_state_t) + (getWorkersCount() * sizeof(thread_connection_pool_t)));
+        memoryAllocate(sizeof(http2_client_state_t) + (getWorkersCount() * sizeof(thread_connection_pool_t)));
     memset(state, 0, sizeof(http2_client_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
@@ -594,7 +594,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     if (getStringFromJsonObject(&content_type_buf, settings, "content-type"))
     {
         state->content_type = httpContentTypeEnum(content_type_buf);
-        globalFree(content_type_buf);
+        memoryFree(content_type_buf);
     }
 
     int int_concurrency;

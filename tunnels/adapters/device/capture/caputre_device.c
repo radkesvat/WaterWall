@@ -140,7 +140,7 @@ static void exitHook(void *userdata, int sig)
 
 tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
 {
-    capture_device_state_t *state = globalMalloc(sizeof(capture_device_state_t));
+    capture_device_state_t *state = memoryAllocate(sizeof(capture_device_state_t));
     memset(state, 0, sizeof(capture_device_state_t));
 
     cJSON *settings = instance_info->node_settings_json;
@@ -175,7 +175,7 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
         LOGF("JSON Error: CaptureDevice->settings->ip (string field) : mode is not specified or invalid");
     }
 
-    char     *cmdbuf = globalMalloc(200);
+    char     *cmdbuf = memoryAllocate(200);
     tunnel_t *t      = newTunnel();
 
     if ((int) directoin.status == kDvsIncoming)
@@ -199,7 +199,7 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
         }
     }
 
-    state->thread_lines = globalMalloc(sizeof(line_t *) * WORKERS_COUNT);
+    state->thread_lines = memoryAllocate(sizeof(line_t *) * WORKERS_COUNT);
     for (unsigned int i = 0; i < WORKERS_COUNT; i++)
     {
         state->thread_lines[i] = newLine(i);

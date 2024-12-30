@@ -123,7 +123,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newLayer3IpManipulator(node_instance_context_t *instance_info)
 {
-    layer3_ip_manipulator_state_t *state = globalMalloc(sizeof(layer3_ip_manipulator_state_t));
+    layer3_ip_manipulator_state_t *state = memoryAllocate(sizeof(layer3_ip_manipulator_state_t));
     memset(state, 0, sizeof(layer3_ip_manipulator_state_t));
     cJSON *settings = instance_info->node_settings_json;
 

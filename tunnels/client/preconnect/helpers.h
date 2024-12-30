@@ -33,7 +33,7 @@ static void removeConnection(thread_box_t *box, preconnect_client_con_state_t *c
 
 static preconnect_client_con_state_t *createCstate(tid_t tid)
 {
-    preconnect_client_con_state_t *cstate = globalMalloc(sizeof(preconnect_client_con_state_t));
+    preconnect_client_con_state_t *cstate = memoryAllocate(sizeof(preconnect_client_con_state_t));
     memset(cstate, 0, sizeof(preconnect_client_con_state_t));
     cstate->u = newLine(tid);
     return cstate;
@@ -42,13 +42,13 @@ static preconnect_client_con_state_t *createCstate(tid_t tid)
 static void destroyCstate(preconnect_client_con_state_t *cstate)
 {
     destroyLine(cstate->u);
-    globalFree(cstate);
+    memoryFree(cstate);
 }
 static void doConnect(struct connect_arg *cg)
 {
     tunnel_t                      *self   = cg->t;
     preconnect_client_con_state_t *cstate = createCstate(cg->tid);
-    globalFree(cg);
+    memoryFree(cg);
     LSTATE_MUT(cstate->u) = cstate;
     self->up->upStream(self->up, newInitContext(cstate->u));
 }
@@ -84,11 +84,11 @@ static void initiateConnect(tunnel_t *self, bool delay)
     tid_t tid = 0;
     if (getWorkersCount() > 0)
     {
-        tid = atomic_fetch_add_explicit(&(state->round_index), 1, memory_order_relaxed);
+        tid = atomicAddExplicit(&(state->round_index), 1, memory_order_relaxed);
 
         if (tid >= getWorkersCount())
         {
-            atomic_store_explicit(&(state->round_index), 0, memory_order_relaxed);
+            atomicStoreExplicit(&(state->round_index), 0, memory_order_relaxed);
             tid = 0;
         }
     }
@@ -96,7 +96,7 @@ static void initiateConnect(tunnel_t *self, bool delay)
     hloop_t *worker_loop = getWorkerLoop(tid);
 
     hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
-    struct connect_arg *cg = globalMalloc(sizeof(struct connect_arg));
+    struct connect_arg *cg = memoryAllocate(sizeof(struct connect_arg));
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;

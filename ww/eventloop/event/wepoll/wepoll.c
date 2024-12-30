@@ -963,7 +963,7 @@ static poll_group_t* poll_group__new(port_state_t* port_state) {
   HANDLE iocp_handle = port_get_iocp_handle(port_state);
   queue_t* poll_group_queue = port_get_poll_group_queue(port_state);
 
-  poll_group_t* poll_group = globalMalloc(sizeof *poll_group);
+  poll_group_t* poll_group = memoryAllocate(sizeof *poll_group);
   if (poll_group == NULL)
     return_set_error(NULL, ERROR_NOT_ENOUGH_MEMORY);
 
@@ -974,7 +974,7 @@ static poll_group_t* poll_group__new(port_state_t* port_state) {
 
   if (afd_create_device_handle(iocp_handle, &poll_group->afd_device_handle) <
       0) {
-    globalFree(poll_group);
+    memoryFree(poll_group);
     return NULL;
   }
 
@@ -987,7 +987,7 @@ void poll_group_delete(poll_group_t* poll_group) {
   assert(poll_group->group_size == 0);
   CloseHandle(poll_group->afd_device_handle);
   queue_remove(&poll_group->queue_node);
-  globalFree(poll_group);
+  memoryFree(poll_group);
 }
 
 poll_group_t* poll_group_from_queue_node(queue_node_t* queue_node) {
@@ -1069,7 +1069,7 @@ typedef struct port_state {
 } port_state_t;
 
 static inline port_state_t* port__alloc(void) {
-  port_state_t* port_state = globalMalloc(sizeof *port_state);
+  port_state_t* port_state = memoryAllocate(sizeof *port_state);
   if (port_state == NULL)
     return_set_error(NULL, ERROR_NOT_ENOUGH_MEMORY);
 
@@ -1078,7 +1078,7 @@ static inline port_state_t* port__alloc(void) {
 
 static inline void port__free(port_state_t* port) {
   assert(port != NULL);
-  globalFree(port);
+  memoryFree(port);
 }
 
 static inline HANDLE port__create_iocp(void) {
@@ -1264,7 +1264,7 @@ int port_wait(port_state_t* port_state,
   if ((size_t) maxevents <= array_count(stack_iocp_events)) {
     iocp_events = stack_iocp_events;
   } else if ((iocp_events =
-                  globalMalloc((size_t) maxevents * sizeof *iocp_events)) == NULL) {
+                  memoryAllocate((size_t) maxevents * sizeof *iocp_events)) == NULL) {
     iocp_events = stack_iocp_events;
     maxevents = array_count(stack_iocp_events);
   }
@@ -1313,7 +1313,7 @@ int port_wait(port_state_t* port_state,
   LeaveCriticalSection(&port_state->lock);
 
   if (iocp_events != stack_iocp_events)
-    globalFree(iocp_events);
+    memoryFree(iocp_events);
 
   if (result >= 0)
     return result;
@@ -1616,7 +1616,7 @@ typedef struct sock_state {
 } sock_state_t;
 
 static inline sock_state_t* sock__alloc(void) {
-  sock_state_t* sock_state = globalMalloc(sizeof *sock_state);
+  sock_state_t* sock_state = memoryAllocate(sizeof *sock_state);
   if (sock_state == NULL)
     return_set_error(NULL, ERROR_NOT_ENOUGH_MEMORY);
   return sock_state;
@@ -1624,7 +1624,7 @@ static inline sock_state_t* sock__alloc(void) {
 
 static inline void sock__free(sock_state_t* sock_state) {
   assert(sock_state != NULL);
-  globalFree(sock_state);
+  memoryFree(sock_state);
 }
 
 static inline int sock__cancel_poll(sock_state_t* sock_state) {
@@ -1694,7 +1694,7 @@ static int sock__delete(port_state_t* port_state,
   }
 
   /* If the poll request still needs to complete, the sock_state object can't
-   * be globalFree()d yet. `sock_feed_event()` or `port_close()` will take care
+   * be memoryFree()d yet. `sock_feed_event()` or `port_close()` will take care
    * of this later. */
   if (force || sock_state->poll_status == SOCK__POLL_IDLE) {
     /* Free the sock_state now. */

@@ -11,7 +11,7 @@ static const uint8_t s_days[] = \
 //   1       3       5       7   8       10      12
     {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-unsigned int gettick_ms(void) {
+unsigned int getTickMS(void) {
 #ifdef OS_WIN
     return GetTickCount();
 #elif HAVE_CLOCK_GETTIME
@@ -25,7 +25,7 @@ unsigned int gettick_ms(void) {
 #endif
 }
 
-unsigned long long gethrtime_us(void) {
+unsigned long long getHRTimeUs(void) {
 #ifdef OS_WIN
     static LONGLONG s_freq = 0;
     if (s_freq == 0) {
@@ -52,7 +52,7 @@ unsigned long long gethrtime_us(void) {
 #endif
 }
 
-datetime_t datetime_now(void) {
+datetime_t dateTimeNow(void) {
 #ifdef OS_WIN
     SYSTEMTIME tm;
     GetLocalTime(&tm);
@@ -74,7 +74,7 @@ datetime_t datetime_now(void) {
 #endif
 }
 
-datetime_t datetime_localtime(time_t seconds) {
+datetime_t dateTimeLocalTime(time_t seconds) {
     static _Thread_local  struct tm tm;
 #ifdef OS_UNIX
     localtime_r(&seconds,&tm);
@@ -91,7 +91,7 @@ datetime_t datetime_localtime(time_t seconds) {
     return dt;
 }
 
-time_t datetime_mktime(datetime_t* dt) {
+time_t dateTimeMkTime(datetime_t* dt) {
     struct tm tm;
     time_t ts;
     time(&ts);
@@ -111,7 +111,7 @@ time_t datetime_mktime(datetime_t* dt) {
     return mktime(&tm);
 }
 
-int days_of_month(int month, int year) {
+int daysOfMonth(int month, int year) {
     if (month < 1 || month > 12) {
         return 0;
     }
@@ -119,7 +119,7 @@ int days_of_month(int month, int year) {
     return (month == 2 && IS_LEAP_YEAR(year)) ? ++days : days;
 }
 
-datetime_t* datetime_past(datetime_t* dt, int days) {
+datetime_t* dateTimePast(datetime_t* dt, int days) {
     assert(days >= 0);
     int sub = days;
     while (sub) {
@@ -132,17 +132,17 @@ datetime_t* datetime_past(datetime_t* dt, int days) {
             dt->month = 12;
             --dt->year;
         }
-        dt->day = days_of_month(dt->month, dt->year);
+        dt->day = daysOfMonth(dt->month, dt->year);
     }
     return dt;
 }
 
-datetime_t* datetime_future(datetime_t* dt, int days) {
+datetime_t* dateTimeFuture(datetime_t* dt, int days) {
     assert(days >= 0);
     int sub = days;
     int mdays;
     while (sub) {
-        mdays = days_of_month(dt->month, dt->year);
+        mdays = daysOfMonth(dt->month, dt->year);
         if (dt->day + sub <= mdays) {
             dt->day += sub;
             break;
@@ -182,7 +182,7 @@ char* datetime_fmt_iso(datetime_t* dt, char* buf) {
     return buf;
 }
 
-char* gmtime_fmt(time_t time, char* buf) {
+char* gmTimeFmt(time_t time, char* buf) {
 
 #ifdef OS_UNIX
     struct tm* tm = gmtime(&time);
@@ -200,7 +200,7 @@ char* gmtime_fmt(time_t time, char* buf) {
     return buf;
 }
 
-int month_atoi(const char* month) {
+int monthAtoi(const char* month) {
     for (size_t i = 0; i < 12; ++i) {
         if (strnicmp(month, s_months[i], strlen(month)) == 0)
             return i+1;
@@ -208,12 +208,12 @@ int month_atoi(const char* month) {
     return 0;
 }
 
-const char* month_itoa(int month) {
+const char* monthITOA(int month) {
     assert(month >= 1 && month <= 12);
     return s_months[month-1];
 }
 
-int weekday_atoi(const char* weekday) {
+int weekdayATOI(const char* weekday) {
     for (size_t i = 0; i < 7; ++i) {
         if (strnicmp(weekday, s_weekdays[i], strlen(weekday)) == 0)
             return i;
@@ -221,22 +221,22 @@ int weekday_atoi(const char* weekday) {
     return 0;
 }
 
-const char* weekday_itoa(int weekday) {
+const char* weekdayITOA(int weekday) {
     assert(weekday >= 0 && weekday <= 7);
     if (weekday == 7) weekday = 0;
     return s_weekdays[weekday];
 }
 
-datetime_t hv_compile_datetime(void) {
+datetime_t wwCompileDateTime(void) {
     datetime_t dt;
     char month[32];
     sscanf(__DATE__, "%s %d %d", month, &dt.day, &dt.year);
     sscanf(__TIME__, "%d:%d:%d", &dt.hour, &dt.min, &dt.sec);
-    dt.month = month_atoi(month);
+    dt.month = monthAtoi(month);
     return dt;
 }
 
-time_t cron_next_timeout(int minute, int hour, int day, int week, int month) {
+time_t cronNextTimeout(int minute, int hour, int day, int week, int month) {
     enum {
         MINUTELY,
         HOURLY,

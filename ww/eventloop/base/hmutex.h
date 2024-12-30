@@ -361,16 +361,16 @@ static inline void HybridMutexLock(hybrid_mutex_t* m) {
             if (! atomic_exchange_explicit(&m->flag, true, memory_order_acquire))
                 break;
             size_t n = kYieldProcessorTries;
-            while (atomic_load_explicit(&m->flag, memory_order_relaxed))
+            while (atomicLoadExplicit(&m->flag, memory_order_relaxed))
             {
                 if (--n == 0)
                 {
-                    atomic_fetch_add_explicit(&m->nwait, 1,memory_order_relaxed );
-                    while (atomic_load_explicit(&m->flag, memory_order_relaxed))
+                    atomicAddExplicit(&m->nwait, 1,memory_order_relaxed );
+                    while (atomicLoadExplicit(&m->flag, memory_order_relaxed))
                     {
                       hsem_wait(&m->sema);
                     }
-                    atomic_fetch_sub_explicit(&m->nwait, 1,memory_order_relaxed);
+                    atomicSubExplicit(&m->nwait, 1,memory_order_relaxed);
                 }
                 else
                 {

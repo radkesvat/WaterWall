@@ -35,14 +35,14 @@ static pool_item_t *allocCaptureMsgPoolHandle(struct master_pool_s *pool, void *
 {
     (void) userdata;
     (void) pool;
-    return globalMalloc(sizeof(struct msg_event));
+    return memoryAllocate(sizeof(struct msg_event));
 }
 
 static void destroyCaptureMsgPoolHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
-    globalFree(item);
+    memoryFree(item);
 }
 
 static void localThreadEventReceived(hevent_t *ev)
@@ -287,7 +287,7 @@ static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     shift_buffer_t   *buf;
     ssize_t           nread;
 
-    while (atomic_load_explicit(&(cdev->running), memory_order_relaxed))
+    while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
         buf = popSmallBuffer(cdev->reader_buffer_pool);
 
@@ -328,7 +328,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
     shift_buffer_t   *buf;
     ssize_t           nwrite;
 
-    while (atomic_load_explicit(&(cdev->running), memory_order_relaxed))
+    while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
         if (! hchanRecv(cdev->writer_buffer_channel, &buf))
         {
@@ -391,8 +391,8 @@ bool bringCaptureDeviceUP(capture_device_t *cdev)
 
     LOGD("CaptureDevice: device %s is now up", cdev->name);
 
-    cdev->read_thread  = hthread_create(cdev->routine_reader, cdev);
-    cdev->write_thread = hthread_create(cdev->routine_writer, cdev);
+    cdev->read_thread  = createThread(cdev->routine_reader, cdev);
+    cdev->write_thread = createThread(cdev->routine_writer, cdev);
     return true;
 }
 
@@ -407,8 +407,8 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
 
     LOGD("CaptureDevice: device %s is now down", cdev->name);
 
-    hthread_join(cdev->read_thread);
-    hthread_join(cdev->write_thread);
+    joinThread(cdev->read_thread);
+    joinThread(cdev->write_thread);
 
     shift_buffer_t *buf;
     while (hchanRecv(cdev->writer_buffer_channel, &buf))
@@ -469,7 +469,7 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
     buffer_pool_t *writer_bpool =
         createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 1);
 
-    capture_device_t *cdev = globalMalloc(sizeof(capture_device_t));
+    capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
     *cdev = (capture_device_t) {.name                  = stringDuplicate(name),
                                 .running               = false,

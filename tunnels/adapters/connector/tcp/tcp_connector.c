@@ -42,7 +42,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
     }
     doneLineUpSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
-    globalFree(cstate);
+    memoryFree(cstate);
 }
 
 static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
@@ -209,7 +209,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             tcp_connector_state_t *state = TSTATE(self);
-            CSTATE_MUT(c)                = globalMalloc(sizeof(tcp_connector_con_state_t));
+            CSTATE_MUT(c)                = memoryAllocate(sizeof(tcp_connector_con_state_t));
             cstate                       = CSTATE(c);
 
             *cstate = (tcp_connector_con_state_t) {.buffer_pool  = getContextBufferPool(c),
@@ -287,7 +287,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (state->tcp_no_delay)
             {
-                tcp_nodelay(sockfd, 1);
+                tcpNoDelay(sockfd, 1);
             }
 
             if (state->tcp_fast_open)
@@ -312,7 +312,7 @@ static void upStream(tunnel_t *self, context_t *c)
             hio_t *upstream_io = hio_get(loop, sockfd);
             assert(upstream_io != NULL);
 
-            hio_set_peeraddr(upstream_io, &(dest_ctx->address.sa), (int) sockaddr_len(&(dest_ctx->address)));
+            hio_set_peeraddr(upstream_io, &(dest_ctx->address.sa), (int) sockaddrLen(&(dest_ctx->address)));
             cstate->io = upstream_io;
             hevent_set_userdata(upstream_io, cstate);
             hio_setcb_connect(upstream_io, onOutBoundConnected);
@@ -382,7 +382,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 {
-    tcp_connector_state_t *state = globalMalloc(sizeof(tcp_connector_state_t));
+    tcp_connector_state_t *state = memoryAllocate(sizeof(tcp_connector_state_t));
     memset(state, 0, sizeof(tcp_connector_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -488,7 +488,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
         else
         {
 
-            sockaddr_set_ip(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
+            sockAddrSetIp(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
         }
     }
 

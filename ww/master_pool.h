@@ -82,15 +82,15 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
     // return;
     unsigned int i = 0;
 
-    if (atomic_load_explicit(&(pool->len), memory_order_relaxed) > 0)
+    if (atomicLoadExplicit(&(pool->len), memory_order_relaxed) > 0)
     {
         hmutex_lock(&(pool->mutex));
-        const unsigned int tmp_len  = atomic_load_explicit(&(pool->len), memory_order_relaxed);
+        const unsigned int tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
         const unsigned int consumed = min(tmp_len, count);
 
         if (consumed > 0)
         {
-            atomic_fetch_add_explicit(&(pool->len), -consumed, memory_order_relaxed);
+            atomicAddExplicit(&(pool->len), -consumed, memory_order_relaxed);
             const unsigned int pbase = (tmp_len - consumed);
             for (; i < consumed; i++)
             {
@@ -115,7 +115,7 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
     // }
     // return;
 
-    if (pool->cap == atomic_load_explicit(&(pool->len), memory_order_relaxed))
+    if (pool->cap == atomicLoadExplicit(&(pool->len), memory_order_relaxed))
     {
         for (unsigned int i = 0; i < count; i++)
         {
@@ -128,10 +128,10 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
 
     hmutex_lock(&(pool->mutex));
 
-    const unsigned int tmp_len  = atomic_load_explicit(&(pool->len), memory_order_relaxed);
+    const unsigned int tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
     const unsigned int consumed = min(pool->cap - tmp_len, count);
 
-    atomic_fetch_add_explicit(&(pool->len), consumed, memory_order_relaxed);
+    atomicAddExplicit(&(pool->len), consumed, memory_order_relaxed);
 
     for (; i < consumed; i++)
     {

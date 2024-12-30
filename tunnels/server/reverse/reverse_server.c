@@ -82,7 +82,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         // atomic access here is not for thread safety since it is our own thread,
                         // but regular access would be SEQ_CST
-                        if (atomic_load_explicit(&(this_tb->u_count), memory_order_relaxed) > 0)
+                        if (atomicLoadExplicit(&(this_tb->u_count), memory_order_relaxed) > 0)
                         {
                             reuseBuffer(getContextBufferPool(c), data);
 
@@ -102,7 +102,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             doneLineUpSide(c->line);
                             setupLineUpSide(c->line, onLinePausedD, ucstate, onLineResumedD);
 
-                            globalFree(dcstate);
+                            memoryFree(dcstate);
                             flushWriteQueue(self, ucstate);
 
                             if (! isAlive(c->line))
@@ -124,7 +124,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         {
                             for (unsigned int i = 0; i < getWorkersCount(); i++)
                             {
-                                if (atomic_load_explicit(&(state->threadlocal_pool[i].u_count), memory_order_relaxed) >
+                                if (atomicLoadExplicit(&(state->threadlocal_pool[i].u_count), memory_order_relaxed) >
                                     0)
                                 {
 
@@ -335,7 +335,7 @@ tunnel_t *newReverseServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     reverse_server_state_t *state =
-        globalMalloc(sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
+        memoryAllocate(sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
     memset(state, 0, sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
 
     tunnel_t *t   = newTunnel();

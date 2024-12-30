@@ -37,7 +37,7 @@ typedef struct protobuf_client_con_state_s
 static void cleanup(protobuf_client_con_state_t *cstate)
 {
     destroyBufferStream(cstate->stream_buf);
-    globalFree(cstate);
+    memoryFree(cstate);
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -61,7 +61,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            cstate        = globalMalloc(sizeof(protobuf_client_con_state_t));
+            cstate        = memoryAllocate(sizeof(protobuf_client_con_state_t));
             *cstate       = (protobuf_client_con_state_t) {.stream_buf = newBufferStream(getContextBufferPool(c))};
             CSTATE_MUT(c) = cstate;
         }

@@ -45,7 +45,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
     {
         if (removeIdleItemByHash(cstate->idle_handle->tid, cstate->uio->table, cstate->idle_handle->hash))
         {
-            globalFree(cstate);
+            memoryFree(cstate);
         }
         else
         {
@@ -57,7 +57,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
     }
     else
     {
-        globalFree(cstate);
+        memoryFree(cstate);
     }
 }
 
@@ -134,7 +134,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
     assert(cstate != NULL);
     if (cstate->tunnel == NULL)
     {
-        globalFree(cstate);
+        memoryFree(cstate);
         return;
     }
     LOGD("UdpListener: expired idle udp FD:%x ", hio_fd(cstate->uio->io));
@@ -148,7 +148,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
 static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsock_t *uio, uint16_t real_localport)
 {
     line_t                   *line   = newLine(tid);
-    udp_listener_con_state_t *cstate = globalMalloc(sizeof(udp_listener_con_state_t));
+    udp_listener_con_state_t *cstate = memoryAllocate(sizeof(udp_listener_con_state_t));
     LSTATE_MUT(line)                 = cstate;
     line->src_ctx.address_type       = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     line->src_ctx.address_protocol   = kSapUdp;
@@ -162,13 +162,13 @@ static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsoc
                                           .established       = false,
                                           .first_packet_sent = false};
 
-    sockaddr_set_port(&(line->src_ctx.address), real_localport);
+    sockAddrSetPort(&(line->src_ctx.address), real_localport);
 
     if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
 
         struct sockaddr log_localaddr = *hio_localaddr(cstate->uio->io);
-        sockaddr_set_port((sockaddr_u *) &(log_localaddr), real_localport);
+        sockAddrSetPort((sockaddr_u *) &(log_localaddr), real_localport);
 
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
@@ -281,7 +281,7 @@ static void parsePortSection(udp_listener_state_t *state, const cJSON *settings)
 
 tunnel_t *newUdpListener(node_instance_context_t *instance_info)
 {
-    udp_listener_state_t *state = globalMalloc(sizeof(udp_listener_state_t));
+    udp_listener_state_t *state = memoryAllocate(sizeof(udp_listener_state_t));
     memset(state, 0, sizeof(udp_listener_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -325,7 +325,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
         size_t len = cJSON_GetArraySize(wlist);
         if (len > 0)
         {
-            char **list = (char **) globalMalloc(sizeof(char *) * (len + 1));
+            char **list = (char **) memoryAllocate(sizeof(char *) * (len + 1));
             memset((void *) list, 0, sizeof(char *) * (len + 1));
             list[len]              = 0x0;
             int          i         = 0;

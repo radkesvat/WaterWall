@@ -62,7 +62,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             state->threadlocal_pool[tid].unused_cons_count -= 1;
             initiateConnect(self, tid, false);
-            atomic_fetch_add_explicit(&(state->reverse_cons), 1, memory_order_relaxed);
+            atomicAddExplicit(&(state->reverse_cons), 1, memory_order_relaxed);
 
             if (ucstate->idle_handle)
             {
@@ -108,7 +108,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     state->threadlocal_pool[tid].unused_cons_count -= 1;
                     LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid,
                          state->threadlocal_pool[tid].unused_cons_count,
-                         atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+                         atomicLoadExplicit(&(state->reverse_cons), memory_order_relaxed));
                     initiateConnect(self, tid, false);
                 }
                 else
@@ -128,7 +128,7 @@ static void downStream(tunnel_t *self, context_t *c)
             state->threadlocal_pool[tid].unused_cons_count += 1;
             LOGI("ReverseClient: connected,    tid: %d unused: %u active: %d", tid,
                  state->threadlocal_pool[tid].unused_cons_count,
-                 atomic_load_explicit(&(state->reverse_cons), memory_order_relaxed));
+                 atomicLoadExplicit(&(state->reverse_cons), memory_order_relaxed));
 
             initiateConnect(self, tid, false);
 
@@ -162,7 +162,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     const size_t start_delay_ms = 150;
 
-    reverse_client_state_t *state = globalMalloc(sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * getWorkersCount()));
+    reverse_client_state_t *state = memoryAllocate(sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * getWorkersCount()));
     memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * getWorkersCount()));
     const cJSON *settings = instance_info->node_settings_json;
 

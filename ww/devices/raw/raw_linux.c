@@ -29,14 +29,14 @@ static pool_item_t *allocRawMsgPoolHandle(struct master_pool_s *pool, void *user
 {
     (void) userdata;
     (void) pool;
-    return globalMalloc(sizeof(struct msg_event));
+    return memoryAllocate(sizeof(struct msg_event));
 }
 
 static void destroyRawMsgPoolHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
-    globalFree(item);
+    memoryFree(item);
 }
 
 static void localThreadEventReceived(hevent_t *ev)
@@ -73,7 +73,7 @@ static HTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
     struct sockaddr saddr;
     int             saddr_len = sizeof(saddr);
 
-    while (atomic_load_explicit(&(rdev->running), memory_order_relaxed))
+    while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
         buf = popSmallBuffer(rdev->reader_buffer_pool);
 
@@ -120,7 +120,7 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
     shift_buffer_t *buf;
     ssize_t         nwrite;
 
-    while (atomic_load_explicit(&(rdev->running), memory_order_relaxed))
+    while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
         if (! hchanRecv(rdev->writer_buffer_channel, &buf))
         {
@@ -189,9 +189,9 @@ bool bringRawDeviceUP(raw_device_t *rdev)
 
     if (rdev->read_event_callback != NULL)
     {
-        rdev->read_thread = hthread_create(rdev->routine_reader, rdev);
+        rdev->read_thread = createThread(rdev->routine_reader, rdev);
     }
-    rdev->write_thread = hthread_create(rdev->routine_writer, rdev);
+    rdev->write_thread = createThread(rdev->routine_writer, rdev);
     return true;
 }
 
@@ -208,9 +208,9 @@ bool bringRawDeviceDown(raw_device_t *rdev)
 
     if (rdev->read_event_callback != NULL)
     {
-        hthread_join(rdev->read_thread);
+        joinThread(rdev->read_thread);
     }
-    hthread_join(rdev->write_thread);
+    joinThread(rdev->write_thread);
 
     shift_buffer_t *buf;
     while (hchanRecv(rdev->writer_buffer_channel, &buf))
@@ -240,7 +240,7 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
         }
     }
 
-    raw_device_t *rdev = globalMalloc(sizeof(raw_device_t));
+    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
 
     buffer_pool_t  *reader_bpool        = NULL;
     master_pool_t  *reader_message_pool = NULL;

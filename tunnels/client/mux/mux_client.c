@@ -118,12 +118,12 @@ static void destroyChildConnecton(mux_client_child_con_state_t *child)
     }
     doneLineUpSide(child->line);
     LSTATE_DROP(child->line);
-    globalFree(child);
+    memoryFree(child);
 }
 
 static mux_client_child_con_state_t *createChildConnection(mux_client_con_state_t *parent, line_t *child_line)
 {
-    mux_client_child_con_state_t *child = globalMalloc(sizeof(mux_client_con_state_t));
+    mux_client_child_con_state_t *child = memoryAllocate(sizeof(mux_client_con_state_t));
 
     *child = (mux_client_child_con_state_t) {.tunnel = parent->tunnel,
                                              .line   = child_line,
@@ -167,12 +167,12 @@ static void destroyMainConnecton(mux_client_con_state_t *con)
     destroyBufferStream(con->read_stream);
     doneLineDownSide(con->line);
     LSTATE_DROP(con->line);
-    globalFree(con);
+    memoryFree(con);
 }
 
 static mux_client_con_state_t *createMainConnection(tunnel_t *self, tid_t tid)
 {
-    mux_client_con_state_t *con = globalMalloc(sizeof(mux_client_con_state_t));
+    mux_client_con_state_t *con = memoryAllocate(sizeof(mux_client_con_state_t));
 
     *con = (mux_client_con_state_t) {.tunnel         = self,
                                      .line           = newLine(tid),
@@ -502,7 +502,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newMuxClient(node_instance_context_t *instance_info)
 {
 
-    mux_client_state_t *state = globalMalloc(sizeof(mux_client_state_t));
+    mux_client_state_t *state = memoryAllocate(sizeof(mux_client_state_t));
     memset(state, 0, sizeof(mux_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;

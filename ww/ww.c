@@ -75,7 +75,7 @@ _Noreturn void runMainThread(void)
 
     for (size_t i = 1; i < WORKERS_COUNT; i++)
     {
-        hthread_join(getWorker(i)->thread);
+        joinThread(getWorker(i)->thread);
     }
     LOGF("Unexpected: other loops joined");
     exit(1);
@@ -103,7 +103,7 @@ static void initializeShortCuts(void)
     static const int kShourtcutsCount = 5;
     const int        total_workers    = WORKERS_COUNT;
 
-    void **space = (void **) globalMalloc(sizeof(void *) * kShourtcutsCount * total_workers);
+    void **space = (void **) memoryAllocate(sizeof(void *) * kShourtcutsCount * total_workers);
 
     GSTATE.shortcut_loops              = (hloop_t **) (space + (0ULL * total_workers));
     GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1ULL * total_workers));
@@ -172,7 +172,7 @@ void createWW(const ww_construction_data_t init_data)
             WORKERS_COUNT = (254);
         }
 
-        WORKERS = (worker_t *) globalMalloc(sizeof(worker_t) * (WORKERS_COUNT));
+        WORKERS = (worker_t *) memoryAllocate(sizeof(worker_t) * (WORKERS_COUNT));
 
         initializeShortCuts();
         initializeMasterPools();
@@ -194,7 +194,7 @@ void createWW(const ww_construction_data_t init_data)
         WORKERS[0].thread = (hthread_t) NULL;
         for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
         {
-            WORKERS[i].thread = hthread_create(worker_thread, getWorker(i));
+            WORKERS[i].thread = createThread(worker_thread, getWorker(i));
         }
     }
 }

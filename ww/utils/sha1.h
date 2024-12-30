@@ -20,35 +20,35 @@ typedef struct {
 
 BEGIN_EXTERN_C
 
-HV_EXPORT void HV_SHA1Transform(
+HV_EXPORT void wwSHA1Transform(
     uint32_t state[5],
     const unsigned char buffer[64]
     );
 
-HV_EXPORT void HV_SHA1Init(
+HV_EXPORT void wwSHA1Init(
     HV_SHA1_CTX * context
     );
 
-HV_EXPORT void HV_SHA1Update(
+HV_EXPORT void wwSHA1Update(
     HV_SHA1_CTX * context,
     const unsigned char *data,
     uint32_t len
     );
 
-HV_EXPORT void HV_SHA1Final(
+HV_EXPORT void wwSHA1Final(
     unsigned char digest[20],
     HV_SHA1_CTX * context
     );
 
-HV_EXPORT void HV_SHA1(
+HV_EXPORT void wwSHA1Pointer(
     char *hash_out,
     const char *str,
     uint32_t len);
 
-HV_EXPORT void hv_sha1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]);
+HV_EXPORT void wwSHA1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]);
 
 // NOTE: if outputlen > 40: output[40] = '\0'
-HV_EXPORT void hv_sha1_hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t outputlen);
+HV_EXPORT void wwSHA1Hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t outputlen);
 
 END_EXTERN_C
 

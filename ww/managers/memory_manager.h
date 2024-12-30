@@ -26,30 +26,30 @@ dedicated_memory_t *createWWDedicatedMemory(void);
 #ifdef ALLOCATOR_BYPASS
 #include <stdlib.h>
 
-static inline void *globalMalloc(size_t size)
+static inline void *memoryAllocate(size_t size)
 {
     return malloc(size);
 }
-static inline void *globalRealloc(void *ptr, size_t size)
+static inline void *memoryReAllocate(void *ptr, size_t size)
 {
     return realloc(ptr, size);
 }
-static inline void globalFree(void *ptr)
+static inline void memoryFree(void *ptr)
 {
     free(ptr);
 }
 
-static inline void *dedicatedMalloc(dedicated_memory_t *dm, size_t size)
+static inline void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
 {
     (void) dm;
     return malloc(size);
 }
-static inline void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
+static inline void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 {
     (void) dm;
     return realloc(ptr, size);
 }
-static inline void dedicatedFree(dedicated_memory_t *dm, void *ptr)
+static inline void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
     (void) dm;
     free(ptr);
@@ -57,12 +57,28 @@ static inline void dedicatedFree(dedicated_memory_t *dm, void *ptr)
 
 #else
 
-void *globalMalloc(size_t size);
-void *globalRealloc(void *ptr, size_t size);
-void  globalFree(void *ptr);
+void *memoryAllocate(size_t size);
+void *memoryReAllocate(void *ptr, size_t size);
+void  memoryFree(void *ptr);
 
-void *dedicatedMalloc(dedicated_memory_t *dm, size_t size);
-void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size);
-void  dedicatedFree(dedicated_memory_t *dm, void *ptr);
+void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
+void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
+void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
 #endif
+
+
+
+
+static inline void memoryCopy(void *Dst, void const *Src, size_t Size)
+{
+    memcpy(Dst, Src, Size);
+}
+
+static inline void memoryMove(void *Dst, void const *Src, size_t Size)
+{
+    memmove(Dst, Src, Size);
+}
+
+
+

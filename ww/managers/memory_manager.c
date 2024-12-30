@@ -79,15 +79,15 @@ dedicated_memory_t *createWWDedicatedMemory(void)
     Note: mimalloc has its own thred local heaps, makes no sense if we uses dedicated mem and mutex for it.
 
 */
-void *globalMalloc(size_t size)
+void *memoryAllocate(size_t size)
 {
     return mi_malloc(size);
 }
-void *globalRealloc(void *ptr, size_t size)
+void *memoryReAllocate(void *ptr, size_t size)
 {
     return mi_realloc(ptr, size);
 }
-void globalFree(void *ptr)
+void memoryFree(void *ptr)
 {
     mi_free(ptr);
 }
@@ -99,32 +99,32 @@ void globalFree(void *ptr)
 
 */
 
-void *dedicatedMalloc(dedicated_memory_t *dm, size_t size)
+void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
 {
     (void) dm;
 
-    return globalMalloc(size);
+    return memoryAllocate(size);
     // hmutex_lock(&dm->mut);
     // void *ptr = mi_heap_malloc(dm->mi_heap, size);
     // hmutex_unlock(&dm->mut);
     // return ptr;
 }
-void *dedicatedRealloc(dedicated_memory_t *dm, void *ptr, size_t size)
+void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 {
     (void) dm;
 
-    return globalRealloc(ptr,size);
+    return memoryReAllocate(ptr,size);
 
     // hmutex_lock(&dm->mut);
     // void *newptr = mi_heap_realloc(dm->mi_heap, ptr, size);
     // hmutex_unlock(&dm->mut);
     // return newptr;
 }
-void dedicatedFree(dedicated_memory_t *dm, void *ptr)
+void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
     (void) dm;
 
-    globalFree(ptr);
+    memoryFree(ptr);
 
     // hmutex_lock(&dm->mut);
     // wof_free(dm->mi_heap, ptr);

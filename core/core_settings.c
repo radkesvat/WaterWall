@@ -36,7 +36,7 @@ static void initCoreSettings(void)
 {
     assert(settings == NULL);
 
-    settings = globalMalloc(sizeof(struct core_settings_s));
+    settings = memoryAllocate(sizeof(struct core_settings_s));
     memset(settings, 0, sizeof(struct core_settings_s));
 
     settings->config_paths = vec_config_path_t_with_capacity(2);
@@ -144,7 +144,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
         {
             had_child          = true;
             unsigned long size = strlen(path->valuestring) + 1;
-            char         *buf  = globalMalloc(size);
+            char         *buf  = memoryAllocate(size);
 #if defined(OS_UNIX)
             strcpy(buf, path->valuestring);
 #else
@@ -167,14 +167,14 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
-        if (! getIntFromJsonObjectOrDefault(&(settings->workers_count), misc_obj, "workers", get_ncpu()))
+        if (! getIntFromJsonObjectOrDefault(&(settings->workers_count), misc_obj, "workers", getNCPU()))
         {
             printf("workers unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
         }
         // user could just enter 0 as value
         if (settings->workers_count <= 0)
         {
-            settings->workers_count = get_ncpu();
+            settings->workers_count = getNCPU();
         }
 
         const cJSON *json_ram_profile = cJSON_GetObjectItemCaseSensitive(misc_obj, "ram-profile");
@@ -239,7 +239,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
 
                 exit(1);
             }
-            globalFree(string_ram_profile);
+            memoryFree(string_ram_profile);
         }
         else
         {
@@ -249,7 +249,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     else
     {
         settings->libs_path     = stringDuplicate(DEFAULT_LIBS_PATH);
-        settings->workers_count = get_ncpu();
+        settings->workers_count = getNCPU();
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }
 }

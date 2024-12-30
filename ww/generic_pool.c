@@ -17,7 +17,7 @@ static master_pool_item_t *poolCreateItemHandle(struct master_pool_s *pool, void
     {
         return gpool->create_item_handle(gpool);
     }
-    return globalMalloc(gpool->item_size);
+    return memoryAllocate(gpool->item_size);
 }
 
 static void poolDestroyItemHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
@@ -30,7 +30,7 @@ static void poolDestroyItemHandle(struct master_pool_s *pool, master_pool_item_t
     }
     else
     {
-        globalFree(item);
+        memoryFree(item);
     }
 }
 
@@ -74,7 +74,7 @@ static generic_pool_t *allocateGenericPool(struct master_pool_s *mp, unsigned in
     pool_width = 2 * pool_width;
 
     const unsigned long container_len = pool_width * sizeof(pool_item_t *);
-    generic_pool_t     *pool_ptr      = globalMalloc(sizeof(generic_pool_t) + container_len);
+    generic_pool_t     *pool_ptr      = memoryAllocate(sizeof(generic_pool_t) + container_len);
 #ifdef DEBUG
     memset(pool_ptr, 0xEB, sizeof(generic_pool_t) + container_len);
 #endif
@@ -91,13 +91,13 @@ static generic_pool_t *allocateGenericPool(struct master_pool_s *mp, unsigned in
 
 static pool_item_t *poolDefaultAllocator(struct generic_pool_s *pool)
 {
-    return globalMalloc(pool->item_size);
+    return memoryAllocate(pool->item_size);
 }
 
 static void poolDefaultDeallocator(struct generic_pool_s *pool, pool_item_t *item)
 {
     (void) pool;
-    globalFree(item);
+    memoryFree(item);
 }
 
 generic_pool_t *newGenericPool(struct master_pool_s *mp, PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)

@@ -76,7 +76,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
     doneLineDownSide(cstate->line);
     destroyContextQueue(cstate->data_queue);
     destroyLine(cstate->line);
-    globalFree(cstate);
+    memoryFree(cstate);
 }
 
 static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
@@ -267,7 +267,7 @@ static void onInboundConnected(hevent_t *ev)
 
     tunnel_t                 *self   = data->tunnel;
     line_t                   *line   = newLine(tid);
-    tcp_listener_con_state_t *cstate = globalMalloc(sizeof(tcp_listener_con_state_t));
+    tcp_listener_con_state_t *cstate = memoryAllocate(sizeof(tcp_listener_con_state_t));
 
     LSTATE_MUT(line)               = cstate;
     line->src_ctx.address_protocol = kSapTcp;
@@ -284,7 +284,7 @@ static void onInboundConnected(hevent_t *ev)
 
     setupLineDownSide(line, onLinePaused, cstate, onLineResumed);
 
-    sockaddr_set_port(&(line->src_ctx.address), data->real_localport);
+    sockAddrSetPort(&(line->src_ctx.address), data->real_localport);
     line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     hevent_set_userdata(io, cstate);
 
@@ -294,7 +294,7 @@ static void onInboundConnected(hevent_t *ev)
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
         struct sockaddr log_localaddr = *hio_localaddr(io);
-        sockaddr_set_port((sockaddr_u *) &(log_localaddr), data->real_localport);
+        sockAddrSetPort((sockaddr_u *) &(log_localaddr), data->real_localport);
 
         LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", hio_fd(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
              SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
@@ -367,7 +367,7 @@ static void parsePortSection(tcp_listener_state_t *state, const cJSON *settings)
 
 tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 {
-    tcp_listener_state_t *state = globalMalloc(sizeof(tcp_listener_state_t));
+    tcp_listener_state_t *state = memoryAllocate(sizeof(tcp_listener_state_t));
     memset(state, 0, sizeof(tcp_listener_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -412,7 +412,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         size_t len = cJSON_GetArraySize(wlist);
         if (len > 0)
         {
-            char **list = (char **) globalMalloc(sizeof(char *) * (len + 1));
+            char **list = (char **) memoryAllocate(sizeof(char *) * (len + 1));
             memset((void *) list, 0, sizeof(char *) * (len + 1));
             list[len]              = 0x0;
             int          i         = 0;

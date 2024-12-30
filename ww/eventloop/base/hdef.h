@@ -205,7 +205,7 @@ ASCII:
 #ifndef SAFE_ALLOC
 #define SAFE_ALLOC(p, size)\
     do {\
-        void* ptr = globalMalloc(size);\
+        void* ptr = memoryAllocate(size);\
         if (!ptr) {\
             fprintf(stderr, "malloc failed!\n");\
             exit(-1);\
@@ -216,7 +216,7 @@ ASCII:
 #endif
 
 #ifndef SAFE_FREE
-#define SAFE_FREE(p)    do {if (p) {globalFree(p); (p) = NULL;}} while(0)
+#define SAFE_FREE(p)    do {if (p) {memoryFree(p); (p) = NULL;}} while(0)
 #endif
 
 #ifndef SAFE_DELETE

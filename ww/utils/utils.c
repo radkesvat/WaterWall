@@ -31,11 +31,11 @@ char *readFile(const char *const path)
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
-    char  *string = globalMalloc(fsize + 1);
+    char  *string = memoryAllocate(fsize + 1);
     size_t count  = fread(string, fsize, 1, f);
     if (count == 0)
     {
-        globalFree(string);
+        memoryFree(string);
         return NULL;
     }
     fclose(f);
@@ -66,7 +66,7 @@ bool writeFile(const char *const path, const char *data, size_t len)
 
 char *concat(const char *s1, const char *s2)
 {
-    char *result = globalMalloc(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
+    char *result = memoryAllocate(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
     strcpy(result, s1);
     strcat(result, s2);
     return result;
@@ -100,7 +100,7 @@ char *stringDuplicate(const char *src)
     }
 
     size_t length = strlen(src) + 1;
-    char  *dup    = (char *) globalMalloc(length);
+    char  *dup    = (char *) memoryAllocate(length);
     if (dup == NULL)
     {
         return NULL;
@@ -165,7 +165,7 @@ bool getStringFromJson(char **dest, const cJSON *json_str_node)
     if (cJSON_IsString(json_str_node) && (json_str_node->valuestring != NULL))
     {
 
-        *dest = globalMalloc(strlen(json_str_node->valuestring) + 1);
+        *dest = memoryAllocate(strlen(json_str_node->valuestring) + 1);
         strcpy(*dest, json_str_node->valuestring);
         return true;
     }
@@ -180,7 +180,7 @@ bool getStringFromJsonObject(char **dest, const cJSON *json_obj, const char *key
     if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
     {
 
-        *dest = globalMalloc(strlen(jstr->valuestring) + 1);
+        *dest = memoryAllocate(strlen(jstr->valuestring) + 1);
         strcpy(*dest, jstr->valuestring);
         return true;
     }
@@ -192,7 +192,7 @@ bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const 
     assert(def != NULL);
     if (! getStringFromJsonObject(dest, json_obj, key))
     {
-        *dest = globalMalloc(strlen(def) + 1);
+        *dest = memoryAllocate(strlen(def) + 1);
         strcpy(*dest, def);
         return false;
     }
@@ -328,12 +328,12 @@ void socketContextDomainSet(socket_context_t *restrict scontext, const char *res
     {
         if (scontext->domain_constant)
         {
-            scontext->domain = globalMalloc(256);
+            scontext->domain = memoryAllocate(256);
         }
     }
     else
     {
-        scontext->domain = globalMalloc(256);
+        scontext->domain = memoryAllocate(256);
     }
     scontext->domain_constant = false;
     memcpy(scontext->domain, domain, len);
@@ -345,7 +345,7 @@ void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const c
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
-        globalFree(scontext->domain);
+        memoryFree(scontext->domain);
     }
     scontext->domain_constant = true;
     scontext->domain          = (char *) domain;
@@ -395,11 +395,11 @@ hash_t sockAddrCalcHashWithPort(const sockaddr_u *saddr)
 
 enum socket_address_type getHostAddrType(char *host)
 {
-    if (is_ipv4(host))
+    if (isIpV4(host))
     {
         return kSatIPV4;
     }
-    if (is_ipv6(host))
+    if (isIpV6(host))
     {
         return kSatIPV6;
     }
@@ -470,7 +470,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     {
         return NULL;
     }
-    user_t *user = globalMalloc(sizeof(user_t));
+    user_t *user = memoryAllocate(sizeof(user_t));
     memset(user, 0, sizeof(user_t));
 
     getStringFromJsonObjectOrDefault(&(user->name), user_json, "name", "EMPTY_NAME");
@@ -479,7 +479,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
 
     if (! getStringFromJsonObject(&(user->uid), user_json, "uid"))
     {
-        globalFree(user);
+        memoryFree(user);
         return NULL;
     }
     user->hash_uid = calcHashBytes(user->uid, strlen(user->uid));
@@ -487,7 +487,7 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     bool enable;
     if (! getBoolFromJsonObject(&(enable), user_json, "enable"))
     {
-        globalFree(user);
+        memoryFree(user);
         return NULL;
     }
     user->enable = enable;
@@ -509,7 +509,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
         return false;
     }
     *slash = '\0';
-    if (! is_ipaddr(ipc))
+    if (! isIpAddr(ipc))
     {
         if (logger)
         {
@@ -518,7 +518,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
         return false;
     }
 
-    bool is_v4 = is_ipv4(ipc);
+    bool is_v4 = isIpV4(ipc);
     *slash     = '/';
 
     char *subnet_part   = slash + 1;
@@ -588,7 +588,7 @@ dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const 
 
         va_end(argp);
         result.status    = kDvsConstant;
-        result.value_ptr = globalMalloc(strlen(jstr->valuestring) + 1);
+        result.value_ptr = memoryAllocate(strlen(jstr->valuestring) + 1);
         strcpy(result.value_ptr, jstr->valuestring);
     }
     return result;
@@ -636,7 +636,7 @@ void destroyDynamicValue(const dynamic_value_t dy)
 {
     if (dy.value_ptr)
     {
-        globalFree(dy.value_ptr);
+        memoryFree(dy.value_ptr);
     }
 }
 

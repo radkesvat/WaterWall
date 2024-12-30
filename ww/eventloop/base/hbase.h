@@ -26,7 +26,7 @@ HV_EXPORT void  hv_free(void* ptr);
     do {\
         if (ptr) {\
             hv_free(ptr);\
-            printd("globalFree( %p )\tat [%s:%d:%s]\n", ptr, __FILE__, __LINE__, __FUNCTION__);\
+            printd("memoryFree( %p )\tat [%s:%d:%s]\n", ptr, __FILE__, __LINE__, __FUNCTION__);\
             ptr = NULL;\
         }\
     } while(0)
@@ -56,65 +56,65 @@ HV_INLINE void hv_memcheck(void) {
 #define HV_MEMCHECK    atexit(hv_memcheck);
 
 //--------------------string-------------------------------
-HV_EXPORT char* hv_strupper(char* str);
-HV_EXPORT char* hv_strlower(char* str);
-HV_EXPORT char* hv_strreverse(char* str);
+HV_EXPORT char* stringUpperCase(char* str);
+HV_EXPORT char* stringLowerCase(char* str);
+HV_EXPORT char* stringReverse(char* str);
 
-HV_EXPORT bool hv_strstartswith(const char* str, const char* start);
-HV_EXPORT bool hv_strendswith(const char* str, const char* end);
-HV_EXPORT bool hv_strcontains(const char* str, const char* sub);
-HV_EXPORT bool hv_wildcard_match(const char* str, const char* pattern);
+HV_EXPORT bool stringStartsWith(const char* str, const char* start);
+HV_EXPORT bool stringEndsWith(const char* str, const char* end);
+HV_EXPORT bool stringContains(const char* str, const char* sub);
+HV_EXPORT bool stringWildCardMatch(const char* str, const char* pattern);
 
 // strncpy n = sizeof(dest_buf)-1
-// hv_strncpy n = sizeof(dest_buf)
-HV_EXPORT char* hv_strncpy(char* dest, const char* src, size_t n);
+// stringCopyN n = sizeof(dest_buf)
+HV_EXPORT char* stringCopyN(char* dest, const char* src, size_t n);
 
 // strncat n = sizeof(dest_buf)-1-strlen(dest)
-// hv_strncpy n = sizeof(dest_buf)
-HV_EXPORT char* hv_strncat(char* dest, const char* src, size_t n);
+// stringCopyN n = sizeof(dest_buf)
+HV_EXPORT char* stringCat(char* dest, const char* src, size_t n);
 
 #if !HAVE_STRLCPY
-#define strlcpy hv_strncpy
+#define strlcpy stringCopyN
 #endif
 
 #if !HAVE_STRLCAT
-#define strlcat hv_strncat
+#define strlcat stringCat
 #endif
 
-HV_EXPORT char* hv_strnchr(const char* s, char c, size_t n);
+HV_EXPORT char* stringChr(const char* s, char c, size_t n);
 
-#define hv_strrchr_dot(str) strrchr(str, '.')
-HV_EXPORT char* hv_strrchr_dir(const char* filepath);
+#define stringChrDot(str) strrchr(str, '.')
+HV_EXPORT char* stringChrDir(const char* filepath);
 
 // basename
-HV_EXPORT const char* hv_basename(const char* filepath);
-HV_EXPORT const char* hv_suffixname(const char* filename);
+HV_EXPORT const char* filePathBaseName(const char* filepath);
+HV_EXPORT const char* filePathSuffixName(const char* filename);
 // mkdir -p
-HV_EXPORT int hv_mkdir_p(const char* dir);
+HV_EXPORT int createDirIfNotExists(const char* dir);
 // rmdir -p
-HV_EXPORT int hv_rmdir_p(const char* dir);
+HV_EXPORT int removeDirIfExists(const char* dir);
 // path
-HV_EXPORT bool hv_exists(const char* path);
-HV_EXPORT bool hv_isdir(const char* path);
-HV_EXPORT bool hv_isfile(const char* path);
-HV_EXPORT bool hv_islink(const char* path);
-HV_EXPORT size_t hv_filesize(const char* filepath);
+HV_EXPORT bool dirExists(const char* path);
+HV_EXPORT bool isDir(const char* path);
+HV_EXPORT bool isFile(const char* path);
+HV_EXPORT bool isLink(const char* path);
+HV_EXPORT size_t getFileSize(const char* filepath);
 
-HV_EXPORT char* get_executable_path(char* buf, int size);
-HV_EXPORT char* get_executable_dir(char* buf, int size);
-HV_EXPORT char* get_executable_file(char* buf, int size);
-HV_EXPORT char* get_run_dir(char* buf, int size);
+HV_EXPORT char* getExecuteablePath(char* buf, int size);
+HV_EXPORT char* getExecuteableDir(char* buf, int size);
+HV_EXPORT char* getExecuteableFile(char* buf, int size);
+HV_EXPORT char* getRunDir(char* buf, int size);
 
 // random
-HV_EXPORT int   hv_rand(int min, int max);
-HV_EXPORT char* hv_random_string(char *buf, int len);
+HV_EXPORT int   randomRange(int min, int max);
+HV_EXPORT char* randomString(char *buf, int len);
 
 // 1 y on yes true enable => true
-HV_EXPORT bool   hv_getboolean(const char* str);
+HV_EXPORT bool   stringRepresenstsTrue(const char* str);
 // 1T2G3M4K5B => ?B
-HV_EXPORT size_t hv_parse_size(const char* str);
+HV_EXPORT size_t stringToSize(const char* str);
 // 1w2d3h4m5s => ?s
-HV_EXPORT time_t hv_parse_time(const char* str);
+HV_EXPORT time_t stringToTime(const char* str);
 
 // scheme:[//[user[:password]@]host[:port]][/path][?query][#fragment]
 typedef enum {
@@ -137,7 +137,7 @@ typedef struct hurl_s {
     unsigned short port;
 } hurl_t;
 
-HV_EXPORT int hv_parse_url(hurl_t* stURL, const char* strURL);
+HV_EXPORT int stringToUrl(hurl_t* stURL, const char* strURL);
 
 END_EXTERN_C
 

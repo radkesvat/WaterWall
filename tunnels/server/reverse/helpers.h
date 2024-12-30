@@ -11,7 +11,7 @@ static void addConnectionU(thread_box_t *box, reverse_server_con_state_t *con)
     {
         con->next->prev = con;
     }
-    atomic_fetch_add_explicit(&(box->u_count), 1, memory_order_relaxed);
+    atomicAddExplicit(&(box->u_count), 1, memory_order_relaxed);
 }
 static void removeConnectionU(thread_box_t *box, reverse_server_con_state_t *con)
 {
@@ -20,7 +20,7 @@ static void removeConnectionU(thread_box_t *box, reverse_server_con_state_t *con
     {
         con->next->prev = con->prev;
     }
-    atomic_fetch_add_explicit(&(box->u_count), -1, memory_order_relaxed);
+    atomicAddExplicit(&(box->u_count), -1, memory_order_relaxed);
 }
 
 static void addConnectionD(thread_box_t *box, reverse_server_con_state_t *con)
@@ -80,7 +80,7 @@ static void onLineResumedD(void *userdata)
 
 static reverse_server_con_state_t *createCstateU(line_t *line)
 {
-    reverse_server_con_state_t *cstate = globalMalloc(sizeof(reverse_server_con_state_t));
+    reverse_server_con_state_t *cstate = memoryAllocate(sizeof(reverse_server_con_state_t));
     memset(cstate, 0, sizeof(reverse_server_con_state_t));
     cstate->u      = line;
     cstate->uqueue = newContextQueue();
@@ -90,7 +90,7 @@ static reverse_server_con_state_t *createCstateU(line_t *line)
 
 static reverse_server_con_state_t *createCstateD(line_t *line)
 {
-    reverse_server_con_state_t *cstate = globalMalloc(sizeof(reverse_server_con_state_t));
+    reverse_server_con_state_t *cstate = memoryAllocate(sizeof(reverse_server_con_state_t));
     memset(cstate, 0, sizeof(reverse_server_con_state_t));
     cstate->wait_stream = newBufferStream(getLineBufferPool(line));
     cstate->d           = line;
@@ -120,5 +120,5 @@ static void cleanup(reverse_server_con_state_t *cstate)
         doneLineUpSide(cstate->u);
     }
 
-    globalFree(cstate);
+    memoryFree(cstate);
 }

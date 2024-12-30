@@ -93,12 +93,12 @@ static void destroyChildConnecton(mux_server_child_con_state_t *child)
     }
     doneLineDownSide(child->line);
     LSTATE_DROP(child->line);
-    globalFree(child);
+    memoryFree(child);
 }
 
 static mux_server_child_con_state_t *createChildConnection(mux_server_con_state_t *parent, tid_t tid)
 {
-    mux_server_child_con_state_t *child = globalMalloc(sizeof(mux_server_con_state_t));
+    mux_server_child_con_state_t *child = memoryAllocate(sizeof(mux_server_con_state_t));
 
     *child = (mux_server_child_con_state_t) {.tunnel = parent->tunnel,
                                              .line   = newLine(tid),
@@ -142,12 +142,12 @@ static void destroyMainConnecton(mux_server_con_state_t *con)
     destroyBufferStream(con->read_stream);
     doneLineUpSide(con->line);
     LSTATE_DROP(con->line);
-    globalFree(con);
+    memoryFree(con);
 }
 
 static mux_server_con_state_t *createMainConnection(tunnel_t *self, line_t *main_line)
 {
-    mux_server_con_state_t *con = globalMalloc(sizeof(mux_server_con_state_t));
+    mux_server_con_state_t *con = memoryAllocate(sizeof(mux_server_con_state_t));
 
     *con = (mux_server_con_state_t) {.tunnel        = self,
                                      .line          = main_line,
@@ -384,7 +384,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newMuxServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    mux_server_state_t *state = globalMalloc(sizeof(mux_server_state_t));
+    mux_server_state_t *state = memoryAllocate(sizeof(mux_server_state_t));
     memset(state, 0, sizeof(mux_server_state_t));
 
     tunnel_t *t   = newTunnel();

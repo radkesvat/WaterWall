@@ -83,7 +83,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
 {
-    layer3_ip_overrider_state_t *state = globalMalloc(sizeof(layer3_ip_overrider_state_t));
+    layer3_ip_overrider_state_t *state = memoryAllocate(sizeof(layer3_ip_overrider_state_t));
     memset(state, 0, sizeof(layer3_ip_overrider_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
@@ -110,10 +110,10 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
     {
         state->support4 = true;
         sockaddr_u sa;
-        sockaddr_set_ip(&(sa), ipbuf);
+        sockAddrSetIp(&(sa), ipbuf);
 
         memcpy(&(state->ov_4), &(sa.sin.sin_addr.s_addr), sizeof(sa.sin.sin_addr.s_addr));
-        globalFree(ipbuf);
+        memoryFree(ipbuf);
         ipbuf = NULL;
     }
 
@@ -121,10 +121,10 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
     {
         state->support6 = true;
         sockaddr_u sa;
-        sockaddr_set_ip(&(sa), ipbuf);
+        sockAddrSetIp(&(sa), ipbuf);
 
         memcpy(&(state->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
-        globalFree(ipbuf);
+        memoryFree(ipbuf);
         ipbuf = NULL;
     }
 

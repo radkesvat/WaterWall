@@ -13,7 +13,7 @@ void registerAtExitCallback(SignalHandler handle, void *userdata)
 signal_manager_t *createSignalManager(void)
 {
     assert(state == NULL);
-    state = globalMalloc(sizeof(signal_manager_t));
+    state = memoryAllocate(sizeof(signal_manager_t));
 
     *state = (signal_manager_t) {.handlers_len   = 0,
                                  .started        = false,

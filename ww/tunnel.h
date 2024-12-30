@@ -407,7 +407,7 @@ static inline void internalUnRefLine(line_t *const l)
 
     if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_constant)
     {
-        globalFree(l->dest_ctx.domain);
+        memoryFree(l->dest_ctx.domain);
     }
 
     reusePoolItem(getWorkerLinePool(l->tid), l);

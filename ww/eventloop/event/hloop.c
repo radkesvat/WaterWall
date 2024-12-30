@@ -79,7 +79,7 @@ static int __hloop_process_timers(struct heap* timers, uint64_t timeout) {
             }
             else if (timer->event_type == HEVENT_TYPE_PERIOD) {
                 hperiod_t* period = (hperiod_t*)timer;
-                timer->next_timeout = (uint64_t)cron_next_timeout(period->minute, period->hour, period->day, period->week, period->month) * 1000000;
+                timer->next_timeout = (uint64_t)cronNextTimeout(period->minute, period->hour, period->day, period->week, period->month) * 1000000;
             }
             heap_insert(timers, &timer->node);
         }
@@ -245,7 +245,7 @@ static int hloop_create_eventfds(hloop_t* loop) {
         return -1;
     }
 #else
-    if (Socketpair(AF_INET, SOCK_STREAM, 0, loop->eventfds) != 0) {
+    if (createSocketPair(AF_INET, SOCK_STREAM, 0, loop->eventfds) != 0) {
         hloge("socketpair create failed!");
         return -1;
     }
@@ -320,7 +320,7 @@ static void hloop_init(hloop_t* loop) {
 
     loop->status = HLOOP_STATUS_STOP;
     loop->pid = hv_getpid();
-    // loop->tid = hv_gettid();  tid is taken at hloop_create
+    // loop->tid = getTID();  tid is taken at hloop_create
 
     // idles
     list_init(&loop->idles);
@@ -342,8 +342,8 @@ static void hloop_init(hloop_t* loop) {
     loop->eventfds[0] = loop->eventfds[1] = -1;
 
     // NOTE: init start_time here, because htimer_add use it.
-    loop->start_ms = gettimeofday_ms();
-    loop->start_hrtime = loop->cur_hrtime = gethrtime_us();
+    loop->start_ms = getTimeOfDayMS();
+    loop->start_hrtime = loop->cur_hrtime = getHRTimeUs();
 }
 
 static void hloop_cleanup(hloop_t* loop) {
@@ -434,7 +434,7 @@ int hloop_run(hloop_t* loop) {
 
     loop->status = HLOOP_STATUS_RUNNING;
     loop->pid = hv_getpid();
-    // loop->tid = hv_gettid();  tid is taken at hloop_create
+    // loop->tid = getTID();  tid is taken at hloop_create
     // hlogd("hloop_run tid=%ld", loop->tid);
 
     if (loop->intern_nevents == 0) {
@@ -467,7 +467,7 @@ int hloop_run(hloop_t* loop) {
     }
 
     loop->status = HLOOP_STATUS_STOP;
-    loop->end_hrtime = gethrtime_us();
+    loop->end_hrtime = getHRTimeUs();
 
     if (loop->flags & HLOOP_FLAG_AUTO_FREE) {
         hloop_free(&loop);
@@ -485,8 +485,8 @@ int hloop_wakeup(hloop_t* loop) {
 int hloop_stop(hloop_t* loop) {
     if (loop == NULL) return -1;
     if (loop->status == HLOOP_STATUS_STOP) return -2;
-    hlogd("hloop_stop tid=%ld", hv_gettid());
-    if (hv_gettid() != loop->tid) {
+    hlogd("hloop_stop tid=%ld", getTID());
+    if (getTID() != loop->tid) {
         hloop_wakeup(loop);
     }
     loop->status = HLOOP_STATUS_STOP;
@@ -512,10 +512,10 @@ hloop_status_e hloop_status(hloop_t* loop) {
 }
 
 void hloop_update_time(hloop_t* loop) {
-    loop->cur_hrtime = gethrtime_us();
+    loop->cur_hrtime = getHRTimeUs();
     if ((time_t)hloop_now(loop) != time(NULL)) {
         // systemtime changed, we adjust start_ms
-        loop->start_ms = gettimeofday_ms() - (loop->cur_hrtime - loop->start_hrtime) / 1000;
+        loop->start_ms = getTimeOfDayMS() - (loop->cur_hrtime - loop->start_hrtime) / 1000;
     }
 }
 
@@ -671,7 +671,7 @@ htimer_t* htimer_add_period(hloop_t* loop, htimer_cb cb, int8_t minute, int8_t h
     timer->day = day;
     timer->month = month;
     timer->week = week;
-    timer->next_timeout = (uint64_t)cron_next_timeout(minute, hour, day, week, month) * 1000000;
+    timer->next_timeout = (uint64_t)cronNextTimeout(minute, hour, day, week, month) * 1000000;
     heap_insert(&loop->realtimers, &timer->node);
     EVENT_ADD(loop, timer, cb);
     loop->ntimers++;
@@ -930,7 +930,7 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
     }
 #endif
     if (port >= 0) {
-        ret = sockaddr_set_ipport(&addr, host, port);
+        ret = sockaddrSetIpPort(&addr, host, port);
     }
     if (ret != 0) {
         // fprintf(stderr, "unknown host: %s\n", host);
@@ -948,9 +948,9 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
         // so_reuseport(sockfd, 1);
 #endif
         if (addr.sa.sa_family == AF_INET6) {
-            ip_v6only(sockfd, 0);
+            ipV6Only(sockfd, 0);
         }
-        if (bind(sockfd, &addr.sa, sockaddr_len(&addr)) < 0) {
+        if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0) {
             perror("bind");
             closesocket(sockfd);
             return NULL;
@@ -967,11 +967,11 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
     assert(io != NULL);
     io->io_type = type;
     if (side == HIO_SERVER_SIDE) {
-        hio_set_localaddr(io, &addr.sa, sockaddr_len(&addr));
+        hio_set_localaddr(io, &addr.sa, sockaddrLen(&addr));
         io->priority = HEVENT_HIGH_PRIORITY;
     }
     else {
-        hio_set_peeraddr(io, &addr.sa, sockaddr_len(&addr));
+        hio_set_peeraddr(io, &addr.sa, sockaddrLen(&addr));
     }
     return io;
 }

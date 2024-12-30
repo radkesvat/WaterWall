@@ -39,8 +39,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (this_tb->length > 0)
             {
-                atomic_fetch_add_explicit(&(state->unused_cons), -1, memory_order_relaxed);
-                atomic_fetch_add_explicit(&(state->active_cons), 1, memory_order_relaxed);
+                atomicAddExplicit(&(state->unused_cons), -1, memory_order_relaxed);
+                atomicAddExplicit(&(state->active_cons), 1, memory_order_relaxed);
 
                 preconnect_client_con_state_t *ucon = this_tb->root.next;
                 removeConnection(this_tb, ucon);
@@ -52,7 +52,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                atomic_fetch_add_explicit(&(state->active_cons), 1, memory_order_relaxed);
+                atomicAddExplicit(&(state->active_cons), 1, memory_order_relaxed);
                 preconnect_client_con_state_t *dcon = createCstate(c->line->tid);
                 CSTATE_MUT(c)                       = dcon;
                 dcon->mode                          = kConnectedDirect;
@@ -65,7 +65,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             preconnect_client_con_state_t *dcon = CSTATE(c);
             CSTATE_DROP(c);
-            atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
+            atomicAddExplicit(&(state->active_cons), -1, memory_order_relaxed);
 
             switch (dcon->mode)
             {
@@ -135,7 +135,7 @@ static void downStream(tunnel_t *self, context_t *c)
             switch (ucon->mode)
             {
             case kConnectedDirect:
-                atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
+                atomicAddExplicit(&(state->active_cons), -1, memory_order_relaxed);
                 destroyCstate(ucon);
                 self->dw->downStream(self->dw, c);
                 initiateConnect(self, true);
@@ -143,7 +143,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 break;
 
             case kConnectedPair: {
-                atomic_fetch_add_explicit(&(state->active_cons), -1, memory_order_relaxed);
+                atomicAddExplicit(&(state->active_cons), -1, memory_order_relaxed);
                 line_t *d_line = ucon->d;
                 LSTATE_DROP(ucon->d);
                 destroyCstate(ucon);
@@ -156,7 +156,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (ucon->prev != NULL)
                 {
                     // fin after est
-                    atomic_fetch_add_explicit(&(state->unused_cons), -1, memory_order_relaxed);
+                    atomicAddExplicit(&(state->unused_cons), -1, memory_order_relaxed);
                     removeConnection(this_tb, ucon);
                 }
                 destroyCstate(ucon);
@@ -179,7 +179,7 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 addConnection(this_tb, ucon);
                 destroyContext(c);
-                unsigned int unused = atomic_fetch_add_explicit(&(state->unused_cons), 1, memory_order_relaxed);
+                unsigned int unused = atomicAddExplicit(&(state->unused_cons), 1, memory_order_relaxed);
                 LOGI("PreConnectClient: connected,    unused: %d active: %d", unused + 1, state->active_cons);
                 initiateConnect(self, false);
             }
@@ -213,7 +213,7 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
     const size_t start_delay_ms = 150;
 
     preconnect_client_state_t *state =
-        globalMalloc(sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
+        memoryAllocate(sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
     memset(state, 0, sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
     const cJSON *settings = instance_info->node_settings_json;
 

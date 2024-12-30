@@ -115,7 +115,7 @@ static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_
 
 tunnel_t *newTunDevice(node_instance_context_t *instance_info)
 {
-    tun_device_state_t *state = globalMalloc(sizeof(tun_device_state_t));
+    tun_device_state_t *state = memoryAllocate(sizeof(tun_device_state_t));
     memset(state, 0, sizeof(tun_device_state_t));
 
     cJSON *settings = instance_info->node_settings_json;
@@ -146,7 +146,7 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
     char *subnet_part  = slash + 1;
     state->subnet_mask = atoi(subnet_part);
 
-    state->thread_lines = globalMalloc(sizeof(line_t *) * WORKERS_COUNT);
+    state->thread_lines = memoryAllocate(sizeof(line_t *) * WORKERS_COUNT);
     for (unsigned int i = 0; i < WORKERS_COUNT; i++)
     {
         state->thread_lines[i] = newLine(i);

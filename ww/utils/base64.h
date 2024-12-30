@@ -9,10 +9,10 @@
 BEGIN_EXTERN_C
 
 // @return encoded size
-HV_EXPORT int hv_base64_encode(const unsigned char *in, unsigned int inlen, char *out);
+HV_EXPORT int wwBase64Encode(const unsigned char *in, unsigned int inlen, char *out);
 
 // @return decoded size
-HV_EXPORT int hv_base64_decode(const char *in, unsigned int inlen, unsigned char *out);
+HV_EXPORT int wwBase64Decode(const char *in, unsigned int inlen, unsigned char *out);
 
 END_EXTERN_C
 

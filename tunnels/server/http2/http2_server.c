@@ -499,7 +499,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    http2_server_state_t *state = globalMalloc(sizeof(http2_server_state_t));
+    http2_server_state_t *state = memoryAllocate(sizeof(http2_server_state_t));
     memset(state, 0, sizeof(http2_server_state_t));
 
     nghttp2_session_callbacks_new(&(state->cbs));

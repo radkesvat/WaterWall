@@ -8,7 +8,7 @@
 
 static void cleanup(udp_connector_con_state_t *cstate)
 {
-    globalFree(cstate);
+    memoryFree(cstate);
 }
 static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
 {
@@ -66,7 +66,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             udp_connector_state_t *state = TSTATE(self);
 
-            CSTATE_MUT(c) = globalMalloc(sizeof(udp_connector_con_state_t));
+            CSTATE_MUT(c) = memoryAllocate(sizeof(udp_connector_con_state_t));
             memset(CSTATE(c), 0, sizeof(udp_connector_con_state_t));
             cstate = CSTATE(c);
 
@@ -76,7 +76,7 @@ static void upStream(tunnel_t *self, context_t *c)
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
             hloop_t   *loop      = getWorkerLoop(c->line->tid);
             sockaddr_u host_addr = {0};
-            sockaddr_set_ipport(&host_addr, "0.0.0.0", 0);
+            sockaddrSetIpPort(&host_addr, "0.0.0.0", 0);
 
             int sockfd = socket(host_addr.sa.sa_family, SOCK_DGRAM, 0);
             if (sockfd < 0)
@@ -92,9 +92,9 @@ static void upStream(tunnel_t *self, context_t *c)
 #endif
             sockaddr_u addr;
 
-            sockaddr_set_ipport(&addr, "0.0.0.0", 0);
+            sockaddrSetIpPort(&addr, "0.0.0.0", 0);
 
-            if (bind(sockfd, &addr.sa, sockaddr_len(&addr)) < 0)
+            if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0)
             {
                 LOGE("UDP bind failed;");
                 closesocket(sockfd);
@@ -145,7 +145,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     goto fail;
                 }
             }
-            hio_set_peeraddr(cstate->io, &(dest_ctx->address.sa), (int) sockaddr_len(&(dest_ctx->address)));
+            hio_set_peeraddr(cstate->io, &(dest_ctx->address.sa), (int) sockaddrLen(&(dest_ctx->address)));
 
             destroyContext(c);
         }
@@ -181,7 +181,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
 tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
 {
-    udp_connector_state_t *state = globalMalloc(sizeof(udp_connector_state_t));
+    udp_connector_state_t *state = memoryAllocate(sizeof(udp_connector_state_t));
     memset(state, 0, sizeof(udp_connector_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
@@ -212,7 +212,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
         }
         else
         {
-            sockaddr_set_ip(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
+            sockAddrSetIp(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
         }
     }
 

@@ -159,21 +159,21 @@ static void onTimer(htimer_t *timer)
 
 tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
 {
-    layer3_senderstate_t *state = globalMalloc(sizeof(layer3_senderstate_t));
+    layer3_senderstate_t *state = memoryAllocate(sizeof(layer3_senderstate_t));
     memset(state, 0, sizeof(layer3_senderstate_t));
     cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
         LOGF("JSON Error: Layer3Sender->settings (object field) : The object was empty or invalid");
-        globalFree(state);
+        memoryFree(state);
         return NULL;
     }
 
     if (! getStringFromJsonObject(&(state->device_name), settings, "device"))
     {
         LOGF("JSON Error: Layer3Sender->settings->device (string field) : The string was empty or invalid");
-        globalFree(state);
+        memoryFree(state);
         return NULL;
     }
 
@@ -183,7 +183,7 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
     if (tundevice_node == NULL)
     {
         LOGF("Layer3Sender: could not find tun device node \"%s\"", state->device_name);
-        globalFree(state);
+        memoryFree(state);
         return NULL;
     }
 
@@ -194,7 +194,7 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
 
     if (tundevice_node->instance == NULL)
     {
-        globalFree(state);
+        memoryFree(state);
         return NULL;
     }
 

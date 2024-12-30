@@ -95,7 +95,7 @@ void registerStaticNodeLib(node_t lib)
 {
     if (state == NULL)
     {
-        state = globalMalloc(sizeof(*state));
+        state = memoryAllocate(sizeof(*state));
         memset(state, 0, sizeof(*state));
         state->slibs = vec_static_libs_init();
     }

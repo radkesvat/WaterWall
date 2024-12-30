@@ -95,7 +95,6 @@ target_link_libraries(ww PUBLIC mimalloc-static)
 
 
 # add libhv
-set(WITH_OPENSSL OFF CACHE BOOL "libhv without openssl binding")
 set(WITH_EVPP OFF CACHE BOOL "libhv no c++ eventpool")
 set(WITH_HTTP OFF CACHE BOOL "libhv no http")
 set(WITH_HTTP_SERVER OFF CACHE BOOL "ibhv no http server")

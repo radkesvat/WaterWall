@@ -44,7 +44,7 @@ static void cleanup(trojan_socks_server_con_state_t *cstate)
     {
         destroyBufferStream(cstate->udp_stream);
     }
-    globalFree(cstate);
+    memoryFree(cstate);
 }
 static void encapsulateUdpPacket(context_t *c)
 {
@@ -57,7 +57,7 @@ static void encapsulateUdpPacket(context_t *c)
     shiftl(c->payload, 2); // LEN
     writeUnAlignedUI16(c->payload, htons(packet_len));
 
-    uint16_t port = sockaddr_port(&(c->line->dest_ctx.address));
+    uint16_t port = sockAddrPort(&(c->line->dest_ctx.address));
     shiftl(c->payload, 2); // port
     writeUnAlignedUI16(c->payload, htons(port));
 
@@ -519,7 +519,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            CSTATE_MUT(c) = globalMalloc(sizeof(trojan_socks_server_con_state_t));
+            CSTATE_MUT(c) = memoryAllocate(sizeof(trojan_socks_server_con_state_t));
             memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             destroyContext(c);
         }
@@ -563,7 +563,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    trojan_socks_server_state_t *state = globalMalloc(sizeof(trojan_socks_server_state_t));
+    trojan_socks_server_state_t *state = memoryAllocate(sizeof(trojan_socks_server_state_t));
     memset(state, 0, sizeof(trojan_socks_server_state_t));
 
     tunnel_t *t   = newTunnel();
