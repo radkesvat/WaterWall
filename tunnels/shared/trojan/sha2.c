@@ -623,7 +623,7 @@ void sha224Final(sha224_ctx *ctx, uint8 *digest)
     len_b  = tot_len << 3;
     pm_len = block_nb << 6;
 
-    memset(ctx->block + ctx->len, 0, pm_len - ctx->len);
+    memorySet(ctx->block + ctx->len, 0, pm_len - ctx->len);
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
     *(ctx->block + pm_len - 9) = (uint8)((tot_len >> 61) & 0x07);
@@ -734,7 +734,7 @@ void sha256Final(sha256_ctx *ctx, uint8 *digest)
     len_b  = tot_len << 3;
     pm_len = block_nb << 6;
 
-    memset(ctx->block + ctx->len, 0, pm_len - ctx->len);
+    memorySet(ctx->block + ctx->len, 0, pm_len - ctx->len);
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
     *(ctx->block + pm_len - 9) = (uint8)((tot_len >> 61) & 0x07);
@@ -846,7 +846,7 @@ void sha384Final(sha384_ctx *ctx, uint8 *digest)
     len_b  = tot_len << 3;
     pm_len = block_nb << 7;
 
-    memset(ctx->block + ctx->len, 0, pm_len - ctx->len);
+    memorySet(ctx->block + ctx->len, 0, pm_len - ctx->len);
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
     *(ctx->block + pm_len - 9) = (uint8)((tot_len >> 61) & 0x07);
@@ -956,7 +956,7 @@ void sha512Final(sha512_ctx *ctx, uint8 *digest)
     len_b  = tot_len << 3;
     pm_len = block_nb << 7;
 
-    memset(ctx->block + ctx->len, 0, pm_len - ctx->len);
+    memorySet(ctx->block + ctx->len, 0, pm_len - ctx->len);
     ctx->block[ctx->len] = 0x80;
     UNPACK64(len_b, ctx->block + pm_len - 8);
     *(ctx->block + pm_len - 9) = (uint8)((tot_len >> 61) & 0x07);
@@ -1017,7 +1017,7 @@ static void test_sha224_long_message(uint8 *digest)
     uint8      message[1000];
     int        i;
 
-    memset(message, 'a', sizeof(message));
+    memorySet(message, 'a', sizeof(message));
 
     sha224Init(&ctx);
     for (i = 0; i < 10000000; i++)
@@ -1033,7 +1033,7 @@ static void test_sha256_long_message(uint8 *digest)
     uint8      message[1000];
     int        i;
 
-    memset(message, 'a', sizeof(message));
+    memorySet(message, 'a', sizeof(message));
 
     sha256Init(&ctx);
     for (i = 0; i < 10000000; i++)
@@ -1049,7 +1049,7 @@ static void test_sha384_long_message(uint8 *digest)
     uint8      message[1000];
     int        i;
 
-    memset(message, 'a', sizeof(message));
+    memorySet(message, 'a', sizeof(message));
 
     sha384Init(&ctx);
     for (i = 0; i < 10000000; i++)
@@ -1065,7 +1065,7 @@ static void test_sha512_long_message(uint8 *digest)
     uint8      message[1000];
     int        i;
 
-    memset(message, 'a', sizeof(message));
+    memorySet(message, 'a', sizeof(message));
 
     sha512Init(&ctx);
     for (i = 0; i < 10000000; i++)
@@ -1130,7 +1130,7 @@ int main(void)
         fprintf(stderr, "Can't allocate memory\n");
         return -1;
     }
-    memset(message3, 'a', message3_len);
+    memorySet(message3, 'a', message3_len);
 
     printf("SHA-2 FIPS 180-2 Validation tests\n\n");
     printf("SHA-224 Test vectors\n");

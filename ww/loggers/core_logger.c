@@ -1,4 +1,4 @@
-#include "ww_logger.h"
+#include "internal_logger.h"
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -12,8 +12,8 @@ static void destroyCoreLogger(void)
 {
     if (logger)
     {
-        logger_fsync(logger);
-        logger_destroy(logger);
+        syncLoggerFile(logger);
+        destroyLogger(logger);
         logger = NULL;
     }
 }
@@ -25,19 +25,19 @@ static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len
     case LOG_LEVEL_WARN:
     case LOG_LEVEL_ERROR:
     case LOG_LEVEL_FATAL:
-        stderr_logger(loglevel, buf, len);
+        stderrLogger(loglevel, buf, len);
         break;
     default:
-        stdout_logger(loglevel, buf, len);
+        stdoutLogger(loglevel, buf, len);
         break;
     }
-    logfile_write(logger, buf, len);
+    writeLogFile(logger, buf, len);
 }
 
 static void coreLoggerHandle(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    logfile_write(logger, buf, len);
+    writeLogFile(logger, buf, len);
 }
 
 logger_t *getCoreLogger(void)
@@ -53,15 +53,15 @@ void setCoreLogger(logger_t *newlogger)
 logger_t *createCoreLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
-    logger = logger_create();
-    logger_set_file(logger, log_file);
+    logger = createLogger();
+    setLoggerFile(logger, log_file);
     if (console)
     {
-        logger_set_handler(logger, coreLoggerHandleWithStdStream);
+        setLoggerHandler(logger, coreLoggerHandleWithStdStream);
     }
     else
     {
-        logger_set_handler(logger, coreLoggerHandle);
+        setLoggerHandler(logger, coreLoggerHandle);
     }
 
     atexit(destroyCoreLogger);
@@ -70,5 +70,5 @@ logger_t *createCoreLogger(const char *log_file, bool console)
 
 logger_handler getCoreLoggerHandle(void)
 {
-    return logger_handle(logger);
+    return getLoggerHandle(logger);
 }

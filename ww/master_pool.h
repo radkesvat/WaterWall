@@ -1,8 +1,8 @@
 #pragma once
 
-#include "hmutex.h"
+#include "wmutex.h"
 #include "utils/mathutils.h"
-#include "ww.h"
+#include "worker.h"
 
 /*
     Master Pool
@@ -64,7 +64,7 @@ typedef void (*MasterPoolItemDestroyHandle)(struct master_pool_s *pool, master_p
 typedef struct master_pool_s
 {
     void                       *memptr;
-    hmutex_t              mutex;
+    wmutex_t              mutex;
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;
     atomic_uint                 len;
@@ -84,7 +84,7 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
 
     if (atomicLoadExplicit(&(pool->len), memory_order_relaxed) > 0)
     {
-        hmutex_lock(&(pool->mutex));
+        lockMutex(&(pool->mutex));
         const unsigned int tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
         const unsigned int consumed = min(tmp_len, count);
 
@@ -97,7 +97,7 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
                 iptr[i] = pool->available[pbase + i];
             }
         }
-        hmutex_unlock(&(pool->mutex));
+        unlockMutex(&(pool->mutex));
     }
 
     for (; i < count; i++)
@@ -126,7 +126,7 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
 
     unsigned int i = 0;
 
-    hmutex_lock(&(pool->mutex));
+    lockMutex(&(pool->mutex));
 
     const unsigned int tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
     const unsigned int consumed = min(pool->cap - tmp_len, count);
@@ -138,7 +138,7 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
         pool->available[i + tmp_len] = iptr[i];
     }
 
-    hmutex_unlock(&(pool->mutex));
+    unlockMutex(&(pool->mutex));
 
     for (; i < count; i++)
     {
@@ -149,10 +149,10 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
 static void installMasterPoolAllocCallbacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
                                             MasterPoolItemDestroyHandle destroy_h)
 {
-    hmutex_lock(&(pool->mutex));
+    lockMutex(&(pool->mutex));
     pool->create_item_handle  = create_h;
     pool->destroy_item_handle = destroy_h;
-    hmutex_unlock(&(pool->mutex));
+    unlockMutex(&(pool->mutex));
 }
 
 master_pool_t *newMasterPoolWithCap(unsigned int pool_width);

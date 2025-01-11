@@ -2,7 +2,7 @@
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "utils/jsonutils.h"
-#include "utils/userutils.h"
+#include "utils/objects/user.h"
 
 #define i_type hmap_users_t    // NOLINT
 #define i_key  hash_t          // NOLINT
@@ -258,7 +258,7 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
         {
             total_parsed++;
             trojan_user_t *tuser = memoryAllocate(sizeof(trojan_user_t));
-            memset(tuser, 0, sizeof(trojan_user_t));
+            memorySet(tuser, 0, sizeof(trojan_user_t));
             tuser->user = *user;
             memoryFree(user);
             sha224((uint8_t *) tuser->user.uid, strlen(tuser->user.uid), &(tuser->sha224_of_user_uid[0]));
@@ -321,7 +321,7 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
 tunnel_t *newTrojanAuthServer(node_instance_context_t *instance_info)
 {
     trojan_auth_server_state_t *state = memoryAllocate(sizeof(trojan_auth_server_state_t));
-    memset(state, 0, sizeof(trojan_auth_server_state_t));
+    memorySet(state, 0, sizeof(trojan_auth_server_state_t));
     state->users    = hmap_users_t_with_capacity(kVecCap);
     cJSON *settings = instance_info->node_settings_json;
 

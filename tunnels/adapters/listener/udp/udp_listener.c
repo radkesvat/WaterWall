@@ -164,7 +164,7 @@ static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsoc
 
     sockAddrSetPort(&(line->src_ctx.address), real_localport);
 
-    if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    if (checkLoggerWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
 
         struct sockaddr log_localaddr = *hio_localaddr(cstate->uio->io);
@@ -282,7 +282,7 @@ static void parsePortSection(udp_listener_state_t *state, const cJSON *settings)
 tunnel_t *newUdpListener(node_instance_context_t *instance_info)
 {
     udp_listener_state_t *state = memoryAllocate(sizeof(udp_listener_state_t));
-    memset(state, 0, sizeof(udp_listener_state_t));
+    memorySet(state, 0, sizeof(udp_listener_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
@@ -326,7 +326,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
         if (len > 0)
         {
             char **list = (char **) memoryAllocate(sizeof(char *) * (len + 1));
-            memset((void *) list, 0, sizeof(char *) * (len + 1));
+            memorySet((void *) list, 0, sizeof(char *) * (len + 1));
             list[len]              = 0x0;
             int          i         = 0;
             const cJSON *list_item = NULL;

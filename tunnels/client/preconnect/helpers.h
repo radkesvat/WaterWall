@@ -34,7 +34,7 @@ static void removeConnection(thread_box_t *box, preconnect_client_con_state_t *c
 static preconnect_client_con_state_t *createCstate(tid_t tid)
 {
     preconnect_client_con_state_t *cstate = memoryAllocate(sizeof(preconnect_client_con_state_t));
-    memset(cstate, 0, sizeof(preconnect_client_con_state_t));
+    memorySet(cstate, 0, sizeof(preconnect_client_con_state_t));
     cstate->u = newLine(tid);
     return cstate;
 }

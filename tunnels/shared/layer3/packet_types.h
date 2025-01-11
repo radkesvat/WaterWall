@@ -1,5 +1,5 @@
 
-#include "hsocket.h"
+#include "wsocket.h"
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -201,7 +201,7 @@ static void tcpCheckSum6(struct ipv6header *ip6_header, struct tcpheader *tcp_he
     memcpy(&psd_header.src_addr, &ip6_header->saddr, sizeof(psd_header.src_addr));
     memcpy(&psd_header.dest_addr, &ip6_header->daddr, sizeof(psd_header.dest_addr));
     psd_header.tcp_length = htonl(ntohs(ip6_header->payload_len));
-    memset(psd_header.zero, 0, sizeof(psd_header.zero));
+    memorySet(psd_header.zero, 0, sizeof(psd_header.zero));
     psd_header.next_header = ip6_header->nexthdr;
 
     int  pseudo_header_len = sizeof(psd_header);

@@ -1,6 +1,6 @@
 #include "tcp_manipulator.h"
 #include "frand.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "loggers/network_logger.h"
 #include "packet_types.h"
 #include "utils/jsonutils.h"
@@ -174,7 +174,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newLayer3TcpManipulator(node_instance_context_t *instance_info)
 {
     layer3_tcp_manipulator_state_t *state = memoryAllocate(sizeof(layer3_tcp_manipulator_state_t));
-    memset(state, 0, sizeof(layer3_tcp_manipulator_state_t));
+    memorySet(state, 0, sizeof(layer3_tcp_manipulator_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))

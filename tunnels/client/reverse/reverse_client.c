@@ -163,7 +163,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     const size_t start_delay_ms = 150;
 
     reverse_client_state_t *state = memoryAllocate(sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * getWorkersCount()));
-    memset(state, 0, sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * getWorkersCount()));
+    memorySet(state, 0, sizeof(reverse_client_state_t) + (sizeof(thread_box_t) * getWorkersCount()));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject((int *) &(state->min_unused_cons), settings, "minimum-unused");

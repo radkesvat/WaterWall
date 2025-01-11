@@ -141,7 +141,7 @@ static void exitHook(void *userdata, int sig)
 tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
 {
     capture_device_state_t *state = memoryAllocate(sizeof(capture_device_state_t));
-    memset(state, 0, sizeof(capture_device_state_t));
+    memorySet(state, 0, sizeof(capture_device_state_t));
 
     cJSON *settings = instance_info->node_settings_json;
 

@@ -1,9 +1,9 @@
 #include "node.h"
-#include "ww.h"
+#include "worker.h"
 #include "basic_types.h"
-#include "loggers/ww_logger.h"
-#include "utils/hashutils.h"
-#include "hplatform.h"
+#include "loggers/internal_logger.h"
+#include "utils/whash.h"
+#include "wplatform.h"
 #include "managers/memory_manager.h"
 #include <stdlib.h> 
 #include <string.h>
@@ -96,7 +96,7 @@ void registerStaticNodeLib(node_t lib)
     if (state == NULL)
     {
         state = memoryAllocate(sizeof(*state));
-        memset(state, 0, sizeof(*state));
+        memorySet(state, 0, sizeof(*state));
         state->slibs = vec_static_libs_init();
     }
 

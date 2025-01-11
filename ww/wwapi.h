@@ -5,5 +5,5 @@
 #include "context_queue.h"
 #include "node.h"
 #include "tunnel.h"
-#include "utils/hashutils.h"
-#include "ww.h"
+#include "utils/whash.h"
+#include "worker.h"

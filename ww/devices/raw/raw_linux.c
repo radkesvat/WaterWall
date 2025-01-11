@@ -1,8 +1,8 @@
 #include "generic_pool.h"
-#include "hchan.h"
-#include "loggers/ww_logger.h"
+#include "wchan.h"
+#include "loggers/internal_logger.h"
 #include "raw.h"
-#include "ww.h"
+#include "worker.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <linux/if.h>
@@ -57,7 +57,7 @@ static void distributePacketPayload(raw_device_t *rdev, tid_t target_tid, shift_
     *msg = (struct msg_event) {.rdev = rdev, .buf = buf};
 
     hevent_t ev;
-    memset(&ev, 0, sizeof(ev));
+    memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(target_tid);
     ev.cb   = localThreadEventReceived;
     hevent_set_userdata(&ev, msg);
@@ -122,7 +122,7 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
     while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
-        if (! hchanRecv(rdev->writer_buffer_channel, &buf))
+        if (! chanRecv(rdev->writer_buffer_channel, &buf))
         {
             LOGD("RawDevice: routine write will exit due to channel closed");
             return 0;
@@ -163,7 +163,7 @@ bool writeToRawDevce(raw_device_t *rdev, shift_buffer_t *buf)
     assert(bufLen(buf) > sizeof(struct iphdr));
 
     bool closed = false;
-    if (! hchanTrySend(rdev->writer_buffer_channel, &buf, &closed))
+    if (! chanTrySend(rdev->writer_buffer_channel, &buf, &closed))
     {
         if (closed)
         {
@@ -202,7 +202,7 @@ bool bringRawDeviceDown(raw_device_t *rdev)
     rdev->running = false;
     rdev->up      = false;
 
-    hchanClose(rdev->writer_buffer_channel);
+    chanClose(rdev->writer_buffer_channel);
 
     LOGD("RawDevice: device %s is now down", rdev->name);
 
@@ -213,7 +213,7 @@ bool bringRawDeviceDown(raw_device_t *rdev)
     joinThread(rdev->write_thread);
 
     shift_buffer_t *buf;
-    while (hchanRecv(rdev->writer_buffer_channel, &buf))
+    while (chanRecv(rdev->writer_buffer_channel, &buf))
     {
         reuseBuffer(rdev->reader_buffer_pool, buf);
     }
@@ -267,7 +267,7 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
                             .mark                     = mark,
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
-                            .writer_buffer_channel    = hchanOpen(sizeof(void *), kRawWriteChannelQueueMax),
+                            .writer_buffer_channel    = chanOpen(sizeof(void *), kRawWriteChannelQueueMax),
                             .reader_message_pool      = reader_message_pool,
                             .reader_buffer_pool       = reader_bpool,
                             .writer_buffer_pool       = writer_bpool};

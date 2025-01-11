@@ -155,7 +155,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_MUT(c)                  = memoryAllocate(sizeof(oss_client_con_state_t));
             oss_client_con_state_t *cstate = CSTATE(c);
-            memset(cstate, 0, sizeof(oss_client_con_state_t));
+            memorySet(cstate, 0, sizeof(oss_client_con_state_t));
             cstate->rbio  = BIO_new(BIO_s_mem());
             cstate->wbio  = BIO_new(BIO_s_mem());
             cstate->ssl   = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
@@ -411,12 +411,12 @@ failed: {
 tunnel_t *newOpenSSLClient(node_instance_context_t *instance_info)
 {
     oss_client_state_t *state = memoryAllocate(sizeof(oss_client_state_t));
-    memset(state, 0, sizeof(oss_client_state_t));
+    memorySet(state, 0, sizeof(oss_client_state_t));
 
     state->threadlocal_ssl_context = memoryAllocate(sizeof(ssl_ctx_t) * getWorkersCount());
 
     ssl_ctx_opt_t *ssl_param = memoryAllocate(sizeof(ssl_ctx_opt_t));
-    memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
+    memorySet(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))

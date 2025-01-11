@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ww.h"
+#include "worker.h"
 
 typedef void (*SignalHandler)(void*userdata,int signum);
 

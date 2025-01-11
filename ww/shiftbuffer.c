@@ -1,7 +1,7 @@
 #include "shiftbuffer.h"
 #include "managers/memory_manager.h"
 #include "utils/mathutils.h"
-#include "ww.h"
+#include "worker.h"
 #include <assert.h> // for assert
 #include <math.h>   //cel,log2,pow
 #include <stdint.h>

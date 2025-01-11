@@ -144,7 +144,7 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
     nvs[nvlen++] = makeNV("Sec-Ch-Ua-Platform", "\"Windows\"");
 
     http2_client_child_con_state_t *stream = memoryAllocate(sizeof(http2_client_child_con_state_t));
-    memset(stream, 0, sizeof(http2_client_child_con_state_t));
+    memorySet(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
     stream->stream_id          = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
     stream->grpc_buffer_stream = newBufferStream(getLineBufferPool(con->line));

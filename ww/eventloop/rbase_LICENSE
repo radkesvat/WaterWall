@@ -1,7 +1,7 @@
 some of the code modification i made is taken directly or indirectly from rbase (ckit)
 
 - channels
-- hybridmutex (inside hmutex.h)
+- hybridmutex (inside wmutex.h)
 - and maybe other random snippests
 
 https://github.com/rsms/ckit

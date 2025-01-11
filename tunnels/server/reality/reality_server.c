@@ -188,7 +188,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             cstate = CSTATE_MUT(c) = memoryAllocate(sizeof(reality_server_con_state_t));
-            memset(CSTATE(c), 0, sizeof(reality_server_con_state_t));
+            memorySet(CSTATE(c), 0, sizeof(reality_server_con_state_t));
             cstate->auth_state     = kConAuthPending;
             cstate->giveup_counter = state->counter_threshold;
             cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
@@ -294,7 +294,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 {
     reality_server_state_t *state = memoryAllocate(sizeof(reality_server_state_t));
-    memset(state, 0, sizeof(reality_server_state_t));
+    memorySet(state, 0, sizeof(reality_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     state->threadlocal_cipher_context = memoryAllocate(sizeof(EVP_CIPHER_CTX *) * getWorkersCount());
@@ -325,7 +325,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         LOGF("JSON Error: RealityServer->settings->password (string field) : password is too short");
         return NULL;
     }
-    // memset already made buff 0
+    // memorySet already made buff 0
     memcpy(state->context_password, state->password, state->password_length);
     if (EVP_MAX_MD_SIZE % sizeof(uint64_t) != 0)
     {

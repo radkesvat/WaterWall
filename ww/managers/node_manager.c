@@ -3,12 +3,12 @@
 #include "cJSON.h"
 #include "config_file.h"
 #include "library_loader.h"
-#include "loggers/ww_logger.h"
+#include "loggers/internal_logger.h"
 #include "managers/memory_manager.h"
 #include "node.h"
 #include "stc/common.h"
 #include "tunnel.h"
-#include "utils/hashutils.h"
+#include "utils/whash.h"
 #include "utils/jsonutils.h"
 #include <assert.h>
 #include <stddef.h>
@@ -341,7 +341,7 @@ node_t *getNode(node_manager_config_t *cfg, hash_t hash_node_name)
 node_t *newNode(void)
 {
     node_t *new_node = memoryAllocate(sizeof(node_t));
-    memset(new_node, 0, sizeof(node_t));
+    memorySet(new_node, 0, sizeof(node_t));
     return new_node;
 }
 
@@ -399,7 +399,7 @@ node_manager_t *createNodeManager(void)
     assert(state == NULL);
 
     state = memoryAllocate(sizeof(node_manager_t));
-    memset(state, 0, sizeof(node_manager_t));
+    memorySet(state, 0, sizeof(node_manager_t));
 
     state->configs = vec_configs_t_with_capacity(kVecCap);
 

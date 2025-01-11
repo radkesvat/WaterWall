@@ -1,5 +1,5 @@
-#ifndef HV_SHA1_H_
-#define HV_SHA1_H_
+#ifndef WW_SHA1_H_
+#define WW_SHA1_H_
 
 /*
    SHA-1 in C
@@ -10,46 +10,46 @@
 /* for uint32_t */
 #include <stdint.h>
 
-#include "hexport.h"
+#include "wexport.h"
 
 typedef struct {
     uint32_t state[5];
     uint32_t count[2];
     unsigned char buffer[64];
-} HV_SHA1_CTX;
+} WW_SHA1_CTX;
 
-BEGIN_EXTERN_C
 
-HV_EXPORT void wwSHA1Transform(
+
+WW_EXPORT void wwSHA1Transform(
     uint32_t state[5],
     const unsigned char buffer[64]
     );
 
-HV_EXPORT void wwSHA1Init(
-    HV_SHA1_CTX * context
+WW_EXPORT void wwSHA1Init(
+    WW_SHA1_CTX * context
     );
 
-HV_EXPORT void wwSHA1Update(
-    HV_SHA1_CTX * context,
+WW_EXPORT void wwSHA1Update(
+    WW_SHA1_CTX * context,
     const unsigned char *data,
     uint32_t len
     );
 
-HV_EXPORT void wwSHA1Final(
+WW_EXPORT void wwSHA1Final(
     unsigned char digest[20],
-    HV_SHA1_CTX * context
+    WW_SHA1_CTX * context
     );
 
-HV_EXPORT void wwSHA1Pointer(
+WW_EXPORT void wwSHA1Pointer(
     char *hash_out,
     const char *str,
     uint32_t len);
 
-HV_EXPORT void wwSHA1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]);
+WW_EXPORT void wwSHA1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]);
 
 // NOTE: if outputlen > 40: output[40] = '\0'
-HV_EXPORT void wwSHA1Hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t outputlen);
+WW_EXPORT void wwSHA1Hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t outputlen);
 
-END_EXTERN_C
 
-#endif // HV_SHA1_H_
+
+#endif // WW_SHA1_H_

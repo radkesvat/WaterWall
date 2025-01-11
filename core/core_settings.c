@@ -1,9 +1,9 @@
 #include "core_settings.h"
 #include "cJSON.h"
-#include "hsysinfo.h"
+#include "wsysinfo.h"
 #include "utils/jsonutils.h"
 #include "utils/stringutils.h"
-#include "ww.h"
+#include "worker.h"
 #include <assert.h> // for assert
 #include <stdio.h>
 #include <string.h>
@@ -37,7 +37,7 @@ static void initCoreSettings(void)
     assert(settings == NULL);
 
     settings = memoryAllocate(sizeof(struct core_settings_s));
-    memset(settings, 0, sizeof(struct core_settings_s));
+    memorySet(settings, 0, sizeof(struct core_settings_s));
 
     settings->config_paths = vec_config_path_t_with_capacity(2);
 }

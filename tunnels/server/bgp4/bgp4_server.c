@@ -170,7 +170,7 @@ static void downStream(tunnel_t *self, context_t *c)
         writeUnAlignedUI16(c->payload, blen);
 
         shiftl(c->payload, kMarkerLength);
-        memset(rawBufMut(c->payload), kMarker, kMarkerLength);
+        memorySet(rawBufMut(c->payload), kMarker, kMarkerLength);
     }
     else if (c->fin)
     {
@@ -187,7 +187,7 @@ tunnel_t *newBgp4Server(node_instance_context_t *instance_info)
 {
 
     bgp4_client_state_t *state = memoryAllocate(sizeof(bgp4_client_state_t));
-    memset(state, 0, sizeof(bgp4_client_state_t));
+    memorySet(state, 0, sizeof(bgp4_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;
     char        *buf      = NULL;

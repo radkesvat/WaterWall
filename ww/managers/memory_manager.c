@@ -1,5 +1,5 @@
 #include "memory_manager.h"
-#include "hmutex.h"
+#include "wmutex.h"
 #include "mimalloc.h"
 
 #include <assert.h>
@@ -7,10 +7,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef ALLOCATOR_BYPASS
 
 struct dedicated_memory_s
 {
-    hmutex_t mut;
+    wmutex_t mut;
     mi_heap_t     *mi_heap;
     unsigned int   free_counter;
 };
@@ -20,37 +21,12 @@ enum
     kFreeThreShouldCounter = 64
 };
 
-#ifdef ALLOCATOR_BYPASS
 
 
 void initMemoryManager(void)
 {
     // assert(state == NULL);
-    // state = createWWDedicatedMemory();
-    // return state;
-}
-
-
-void setMemoryManager(dedicated_memory_t *new_state)
-{
-    (void) new_state;
-    
-    // assert(state == NULL);
-    // state = new_state;
-}
-
-dedicated_memory_t *createWWDedicatedMemory(void)
-{
-    return NULL;
-}
-
-#else
-
-
-void initMemoryManager(void)
-{
-    // assert(state == NULL);
-    // state = createWWDedicatedMemory();
+    // state = createGlobalStateDedicatedMemory();
     // return state;
 }
 
@@ -64,13 +40,13 @@ void setMemoryManager(dedicated_memory_t *new_state)
     // state = new_state;
 }
 
-dedicated_memory_t *createWWDedicatedMemory(void)
+dedicated_memory_t *createGlobalStateDedicatedMemory(void)
 {
     return NULL;
 
     // dedicated_memory_t *dm = malloc(sizeof(dedicated_memory_t));
     // *dm                    = (struct dedicated_memory_s) {.free_counter = 0, .mi_heap = mi_heap_new()};
-    // hmutex_init(&dm->mut);
+    // initMutex(&dm->mut);
     // return dm;
 }
 
@@ -104,9 +80,9 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
     (void) dm;
 
     return memoryAllocate(size);
-    // hmutex_lock(&dm->mut);
+    // lockMutex(&dm->mut);
     // void *ptr = mi_heap_malloc(dm->mi_heap, size);
-    // hmutex_unlock(&dm->mut);
+    // unlockMutex(&dm->mut);
     // return ptr;
 }
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
@@ -115,9 +91,9 @@ void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 
     return memoryReAllocate(ptr,size);
 
-    // hmutex_lock(&dm->mut);
+    // lockMutex(&dm->mut);
     // void *newptr = mi_heap_realloc(dm->mi_heap, ptr, size);
-    // hmutex_unlock(&dm->mut);
+    // unlockMutex(&dm->mut);
     // return newptr;
 }
 void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
@@ -126,14 +102,14 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 
     memoryFree(ptr);
 
-    // hmutex_lock(&dm->mut);
+    // lockMutex(&dm->mut);
     // wof_free(dm->mi_heap, ptr);
     // if (dm->free_counter++ > kFreeThreShouldCounter)
     // {
     //     wof_gc(dm->mi_heap);
     //     dm->free_counter = 0;
     // }
-    // hmutex_unlock(&dm->mut);
+    // unlockMutex(&dm->mut);
 }
 
 #endif

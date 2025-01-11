@@ -6,7 +6,7 @@
 #include "tunnel.h"
 #include "types.h"
 #include "frand.h"
-#include "ww.h"
+#include "worker.h"
 
 enum
 {
@@ -336,7 +336,7 @@ tunnel_t *newReverseServer(node_instance_context_t *instance_info)
     (void) instance_info;
     reverse_server_state_t *state =
         memoryAllocate(sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
-    memset(state, 0, sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
+    memorySet(state, 0, sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

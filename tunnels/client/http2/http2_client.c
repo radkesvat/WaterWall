@@ -561,7 +561,7 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
 {
     http2_client_state_t *state =
         memoryAllocate(sizeof(http2_client_state_t) + (getWorkersCount() * sizeof(thread_connection_pool_t)));
-    memset(state, 0, sizeof(http2_client_state_t));
+    memorySet(state, 0, sizeof(http2_client_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
     nghttp2_session_callbacks_new(&(state->cbs));

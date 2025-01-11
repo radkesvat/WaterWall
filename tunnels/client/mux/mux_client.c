@@ -503,7 +503,7 @@ tunnel_t *newMuxClient(node_instance_context_t *instance_info)
 {
 
     mux_client_state_t *state = memoryAllocate(sizeof(mux_client_state_t));
-    memset(state, 0, sizeof(mux_client_state_t));
+    memorySet(state, 0, sizeof(mux_client_state_t));
 
     const cJSON *settings = instance_info->node_settings_json;
     (void) settings;

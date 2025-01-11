@@ -1,5 +1,5 @@
 #include "master_pool.h"
-#include "ww.h"
+#include "worker.h"
 #include "managers/memory_manager.h"
 
 static master_pool_item_t* defaultCreateHandle(struct master_pool_s *pool, void *userdata)
@@ -49,7 +49,7 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
     master_pool_t *pool_ptr = (master_pool_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
 #ifdef DEBUG
-    memset(pool_ptr, 0xEB, sizeof(master_pool_t) + container_len);
+    memorySet(pool_ptr, 0xEB, sizeof(master_pool_t) + container_len);
 #endif
 
     master_pool_t pool = {.memptr              = pool_ptr,
@@ -59,7 +59,7 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
                           .destroy_item_handle = defaultDestroyHandle};
 
     memcpy(pool_ptr, &pool, sizeof(master_pool_t));
-    hmutex_init(&(pool_ptr->mutex));
+    initMutex(&(pool_ptr->mutex));
 
     return pool_ptr;
 }

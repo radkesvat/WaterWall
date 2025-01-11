@@ -1,8 +1,8 @@
 #pragma once
 #include "buffer_pool.h"
 #include "hloop.h"
-#include "hplatform.h"
-#include "hthread.h"
+#include "wplatform.h"
+#include "wthread.h"
 #include "master_pool.h"
 #include <stdint.h>
 
@@ -17,11 +17,11 @@ typedef struct capture_device_s
     uint32_t  queue_number;
     bool      drop_captured_packet;
     void     *userdata;
-    hthread_t read_thread;
-    hthread_t write_thread;
+    wthread_t read_thread;
+    wthread_t write_thread;
 
-    hthread_routine routine_reader;
-    hthread_routine routine_writer;
+    wthread_routine routine_reader;
+    wthread_routine routine_writer;
 
     master_pool_t  *reader_message_pool;
     buffer_pool_t  *reader_buffer_pool;
@@ -29,7 +29,7 @@ typedef struct capture_device_s
 
     CaptureReadEventHandle read_event_callback;
 
-    struct hchan_s *writer_buffer_channel;
+    struct wchan_s *writer_buffer_channel;
     atomic_bool     running;
     atomic_bool     up;
 

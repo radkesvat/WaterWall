@@ -81,7 +81,7 @@ static void onLineResumedD(void *userdata)
 static reverse_server_con_state_t *createCstateU(line_t *line)
 {
     reverse_server_con_state_t *cstate = memoryAllocate(sizeof(reverse_server_con_state_t));
-    memset(cstate, 0, sizeof(reverse_server_con_state_t));
+    memorySet(cstate, 0, sizeof(reverse_server_con_state_t));
     cstate->u      = line;
     cstate->uqueue = newContextQueue();
     setupLineUpSide(line, onLinePausedU, cstate, onLineResumedU);
@@ -91,7 +91,7 @@ static reverse_server_con_state_t *createCstateU(line_t *line)
 static reverse_server_con_state_t *createCstateD(line_t *line)
 {
     reverse_server_con_state_t *cstate = memoryAllocate(sizeof(reverse_server_con_state_t));
-    memset(cstate, 0, sizeof(reverse_server_con_state_t));
+    memorySet(cstate, 0, sizeof(reverse_server_con_state_t));
     cstate->wait_stream = newBufferStream(getLineBufferPool(line));
     cstate->d           = line;
     setupLineUpSide(line, onLinePausedD, cstate, onLineResumedD);

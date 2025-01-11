@@ -129,7 +129,7 @@ static err_t wireguardif_output_to_peer(struct netif *netif, struct pbuf *q, con
 			if (pbuf) {
 				// Note: allocating pbuf from RAM above guarantees that the pbuf is in one section and not chained
 				// - i.e payload points to the contiguous memory region
-				memset(pbuf->payload, 0, pbuf->tot_len);
+				memorySet(pbuf->payload, 0, pbuf->tot_len);
 
 				hdr = (struct message_transport_data *)pbuf->payload;
 
@@ -279,7 +279,7 @@ static void wireguardif_process_data_message(struct wireguard_device *device, st
 			pbuf = pbuf_alloc(PBUF_TRANSPORT, src_len - WIREGUARD_AUTHTAG_LEN, PBUF_RAM);
 			if (pbuf) {
 				// Decrypt the packet
-				memset(pbuf->payload, 0, pbuf->tot_len);
+				memorySet(pbuf->payload, 0, pbuf->tot_len);
 				if (wireguard_decrypt_packet(pbuf->payload, src, src_len, nonce, keypair)) {
 
 					// 3. Since the packet has authenticated correctly, the source IP of the outer UDP/IP packet is used to update the endpoint for peer TrMv...WXX0.
@@ -969,7 +969,7 @@ err_t wireguardif_init(struct netif *netif) {
 
 void wireguardif_peer_init(struct wireguardif_peer *peer) {
 	LWIP_ASSERT("peer != NULL", (peer != NULL));
-	memset(peer, 0, sizeof(struct wireguardif_peer));
+	memorySet(peer, 0, sizeof(struct wireguardif_peer));
 	// Caller must provide 'public_key'
 	peer->public_key = NULL;
 	ip4_addr_set_any(&peer->endpoint_ip);
@@ -977,6 +977,6 @@ void wireguardif_peer_init(struct wireguardif_peer *peer) {
 	peer->keep_alive = WIREGUARDIF_KEEPALIVE_DEFAULT;
 	ip4_addr_set_any(&peer->allowed_ip);
 	ip4_addr_set_any(&peer->allowed_mask);
-	memset(peer->greatest_timestamp, 0, sizeof(peer->greatest_timestamp));
+	memorySet(peer->greatest_timestamp, 0, sizeof(peer->greatest_timestamp));
 	peer->preshared_key = NULL;
 }

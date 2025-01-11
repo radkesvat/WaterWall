@@ -1,5 +1,5 @@
 #include "signal_manager.h"
-#include "hplatform.h"
+#include "wplatform.h"
 
 static signal_manager_t *state = NULL;
 

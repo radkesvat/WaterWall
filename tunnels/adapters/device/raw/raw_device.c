@@ -118,7 +118,7 @@ static void onIPPacketReceived(struct raw_device_s *rdev, void *userdata, shift_
 tunnel_t *newRawDevice(node_instance_context_t *instance_info)
 {
     raw_device_state_t *state = memoryAllocate(sizeof(raw_device_state_t));
-    memset(state, 0, sizeof(raw_device_state_t));
+    memorySet(state, 0, sizeof(raw_device_state_t));
 
     cJSON *settings = instance_info->node_settings_json;
 

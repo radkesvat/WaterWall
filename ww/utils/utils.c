@@ -1,15 +1,15 @@
 #include "basic_types.h"
 #include "cJSON.h"
 #include "fileutils.h"
-#include "hashutils.h"
-#include "hlog.h"
-#include "hplatform.h"
+#include "whash.h"
+#include "wlog.h"
+#include "wplatform.h"
 #include "jsonutils.h"
 #include "managers/memory_manager.h"
 #include "procutils.h"
 #include "sockutils.h"
 #include "stringutils.h"
-#include "userutils.h"
+#include "objects/user.h"
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -464,36 +464,7 @@ int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct 
     return -1;
 }
 
-struct user_s *parseUserFromJsonObject(const cJSON *user_json)
-{
-    if (! cJSON_IsObject(user_json) || user_json->child == NULL)
-    {
-        return NULL;
-    }
-    user_t *user = memoryAllocate(sizeof(user_t));
-    memset(user, 0, sizeof(user_t));
 
-    getStringFromJsonObjectOrDefault(&(user->name), user_json, "name", "EMPTY_NAME");
-    getStringFromJsonObjectOrDefault(&(user->email), user_json, "email", "EMPTY_EMAIL");
-    getStringFromJsonObjectOrDefault(&(user->notes), user_json, "notes", "EMTPY_NOTES");
-
-    if (! getStringFromJsonObject(&(user->uid), user_json, "uid"))
-    {
-        memoryFree(user);
-        return NULL;
-    }
-    user->hash_uid = calcHashBytes(user->uid, strlen(user->uid));
-
-    bool enable;
-    if (! getBoolFromJsonObject(&(enable), user_json, "enable"))
-    {
-        memoryFree(user);
-        return NULL;
-    }
-    user->enable = enable;
-    // TODO (parse user) parse more fields from user like limits/dates/etc..
-    return user;
-}
 
 bool verifyIpCdir(const char *ipc, struct logger_s *logger)
 {
@@ -503,7 +474,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx",
+            printLogger(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx",
                          ipc);
         }
         return false;
@@ -513,7 +484,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            logger_print(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: \"%s\" is not a valid ip address", ipc);
+            printLogger(logger, LOG_LEVEL_ERROR, "verifyIpCdir Error: \"%s\" is not a valid ip address", ipc);
         }
         return false;
     }
@@ -528,7 +499,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            logger_print(
+            printLogger(
                 logger, LOG_LEVEL_ERROR,
                 "verifyIpCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
                 prefix_length);
@@ -539,7 +510,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            logger_print(
+            printLogger(
                 logger, LOG_LEVEL_ERROR,
                 "verifyIpCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128", ipc,
                 prefix_length);
@@ -550,7 +521,7 @@ bool verifyIpCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            logger_print(logger, LOG_LEVEL_WARN,
+            printLogger(logger, LOG_LEVEL_WARN,
                          "verifyIpCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix",
                          ipc);
         }

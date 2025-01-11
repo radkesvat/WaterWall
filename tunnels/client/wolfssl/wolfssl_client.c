@@ -155,7 +155,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_MUT(c)                   = memoryAllocate(sizeof(wssl_client_con_state_t));
             wssl_client_con_state_t *cstate = CSTATE(c);
-            memset(cstate, 0, sizeof(wssl_client_con_state_t));
+            memorySet(cstate, 0, sizeof(wssl_client_con_state_t));
             cstate->rbio  = BIO_new(BIO_s_mem());
             cstate->wbio  = BIO_new(BIO_s_mem());
             cstate->ssl   = SSL_new(state->ssl_context);
@@ -414,10 +414,10 @@ failed: {
 tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
 {
     wssl_client_state_t *state = memoryAllocate(sizeof(wssl_client_state_t));
-    memset(state, 0, sizeof(wssl_client_state_t));
+    memorySet(state, 0, sizeof(wssl_client_state_t));
 
     ssl_ctx_opt_t *ssl_param = memoryAllocate(sizeof(ssl_ctx_opt_t));
-    memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
+    memorySet(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))

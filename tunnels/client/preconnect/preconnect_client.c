@@ -214,7 +214,7 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
 
     preconnect_client_state_t *state =
         memoryAllocate(sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
-    memset(state, 0, sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
+    memorySet(state, 0, sizeof(preconnect_client_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
     const cJSON *settings = instance_info->node_settings_json;
 
     getIntFromJsonObject((int *) &(state->min_unused_cons), settings, "minimum-unused");

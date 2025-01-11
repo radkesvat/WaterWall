@@ -1,6 +1,6 @@
 #include "sync_dns.h"
 #include "basic_types.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "loggers/dns_logger.h"
 
 
@@ -21,7 +21,7 @@ bool resolveContextSync(socket_context_t *sctx)
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
             return false;
         }
-        if (logger_will_write_level(getDnsLogger(), (log_level_e) LOG_LEVEL_INFO))
+        if (checkLoggerWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_INFO))
         {
             char ip[64];
             sockaddrStr(&(sctx->address), ip, 64);

@@ -1,9 +1,9 @@
 #include "generic_pool.h"
-#include "hchan.h"
-#include "loggers/ww_logger.h"
+#include "wchan.h"
+#include "loggers/internal_logger.h"
 #include "tun.h"
 #include "utils/procutils.h"
-#include "ww.h"
+#include "worker.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <linux/if.h>
@@ -109,7 +109,7 @@ static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, shift_
     *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
     hevent_t ev;
-    memset(&ev, 0, sizeof(ev));
+    memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(target_tid);
     ev.cb   = localThreadEventReceived;
     hevent_set_userdata(&ev, msg);
@@ -177,7 +177,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        if (! hchanRecv(tdev->writer_buffer_channel, &buf))
+        if (! chanRecv(tdev->writer_buffer_channel, &buf))
         {
             LOGD("TunDevice: routine write will exit due to channel closed");
             return 0;
@@ -214,7 +214,7 @@ bool writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
     assert(bufLen(buf) > sizeof(struct iphdr));
 
     bool closed = false;
-    if (! hchanTrySend(tdev->writer_buffer_channel, &buf, &closed))
+    if (! chanTrySend(tdev->writer_buffer_channel, &buf, &closed))
     {
         if (closed)
         {
@@ -288,7 +288,7 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     tdev->running = false;
     tdev->up      = false;
 
-    hchanClose(tdev->writer_buffer_channel);
+    chanClose(tdev->writer_buffer_channel);
 
     char command[128];
 
@@ -307,7 +307,7 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     joinThread(tdev->write_thread);
 
     shift_buffer_t *buf;
-    while (hchanRecv(tdev->writer_buffer_channel, &buf))
+    while (chanRecv(tdev->writer_buffer_channel, &buf))
     {
         reuseBuffer(tdev->reader_buffer_pool, buf);
     }
@@ -328,7 +328,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
         return NULL;
     }
 
-    memset(&ifr, 0, sizeof(ifr));
+    memorySet(&ifr, 0, sizeof(ifr));
 
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI; // TUN device, no packet information
     if (*name)
@@ -362,7 +362,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
                             .handle                   = fd,
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
-                            .writer_buffer_channel    = hchanOpen(sizeof(void *), kTunWriteChannelQueueMax),
+                            .writer_buffer_channel    = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
                             .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
                             .reader_buffer_pool       = reader_bpool,
                             .writer_buffer_pool       = writer_bpool

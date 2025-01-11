@@ -167,15 +167,15 @@ void wwSHA1Transform(
     /* Wipe variables */
     a = b = c = d = e = 0;
 #ifdef SHA1HANDSOFF
-    memset(block, '\0', sizeof(block));
+    memorySet(block, '\0', sizeof(block));
 #endif
 }
 
 
-/* HV_SHA1Init - Initialize new context */
+/* WW_SHA1Init - Initialize new context */
 
 void wwSHA1Init(
-    HV_SHA1_CTX * context
+    WW_SHA1_CTX * context
 )
 {
     /* SHA1 initialization constants */
@@ -191,7 +191,7 @@ void wwSHA1Init(
 /* Run your data through this. */
 
 void wwSHA1Update(
-    HV_SHA1_CTX * context,
+    WW_SHA1_CTX * context,
     const unsigned char *data,
     uint32_t len
 )
@@ -225,7 +225,7 @@ void wwSHA1Update(
 
 void wwSHA1Final(
     unsigned char digest[20],
-    HV_SHA1_CTX * context
+    WW_SHA1_CTX * context
 )
 {
     unsigned i;
@@ -263,15 +263,15 @@ void wwSHA1Final(
         c = 0000;
         wwSHA1Update(context, &c, 1);
     }
-    wwSHA1Update(context, finalcount, 8); /* Should cause a HV_SHA1Transform() */
+    wwSHA1Update(context, finalcount, 8); /* Should cause a WW_SHA1Transform() */
     for (i = 0; i < 20; i++)
     {
         digest[i] = (unsigned char)
             ((context->state[i >> 2] >> ((3 - (i & 3)) * 8)) & 255);
     }
     /* Wipe variables */
-    memset(context, '\0', sizeof(*context));
-    memset(&finalcount, '\0', sizeof(finalcount));
+    memorySet(context, '\0', sizeof(*context));
+    memorySet(&finalcount, '\0', sizeof(finalcount));
 }
 
 void wwSHA1Pointer(
@@ -279,7 +279,7 @@ void wwSHA1Pointer(
     const char *str,
     uint32_t len)
 {
-    HV_SHA1_CTX ctx;
+    WW_SHA1_CTX ctx;
     unsigned int ii;
 
     wwSHA1Init(&ctx);
@@ -290,7 +290,7 @@ void wwSHA1Pointer(
 }
 
 void wwSHA1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]) {
-    HV_SHA1_CTX ctx;
+    WW_SHA1_CTX ctx;
     wwSHA1Init(&ctx);
     wwSHA1Update(&ctx, input, inputlen);
     wwSHA1Final(digest, &ctx);

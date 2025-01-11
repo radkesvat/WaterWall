@@ -1,11 +1,11 @@
 #include "generic_pool.h"
 #include "utils/mathutils.h"
 #include "managers/memory_manager.h"
-#include "ww.h"
+#include "worker.h"
 
 
 #ifdef POOL_DEBUG
-#include "loggers/ww_logger.h"
+#include "loggers/internal_logger.h"
 #endif
 #define GENERIC_POOL_DEFAULT_WIDTH ((unsigned long) ((RAM_PROFILE)))
 
@@ -42,7 +42,7 @@ void poolReCharge(generic_pool_t *pool)
 
     pool->len += increase;
 #if defined(DEBUG) && defined(POOL_DEBUG)
-    hlogd("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
+    wlogd("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
 
@@ -55,7 +55,7 @@ void poolShrink(generic_pool_t *pool)
     pool->len -= decrease;
 
 #if defined(DEBUG) && defined(POOL_DEBUG)
-    hlogd("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
+    wlogd("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
 }
 
@@ -76,7 +76,7 @@ static generic_pool_t *allocateGenericPool(struct master_pool_s *mp, unsigned in
     const unsigned long container_len = pool_width * sizeof(pool_item_t *);
     generic_pool_t     *pool_ptr      = memoryAllocate(sizeof(generic_pool_t) + container_len);
 #ifdef DEBUG
-    memset(pool_ptr, 0xEB, sizeof(generic_pool_t) + container_len);
+    memorySet(pool_ptr, 0xEB, sizeof(generic_pool_t) + container_len);
 #endif
     *pool_ptr = (generic_pool_t) {.cap                 = pool_width,
                                   .free_threshold      = max(pool_width / 2, (pool_width * 2) / 3),

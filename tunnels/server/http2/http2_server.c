@@ -500,7 +500,7 @@ tunnel_t *newHttp2Server(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     http2_server_state_t *state = memoryAllocate(sizeof(http2_server_state_t));
-    memset(state, 0, sizeof(http2_server_state_t));
+    memorySet(state, 0, sizeof(http2_server_state_t));
 
     nghttp2_session_callbacks_new(&(state->cbs));
     nghttp2_session_callbacks_set_on_header_callback(state->cbs, onHeaderCallback);

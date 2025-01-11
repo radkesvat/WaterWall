@@ -1,5 +1,5 @@
 #pragma once
-#include "ww.h"
+#include "worker.h"
 
 /*
     Generic random implementations, to be faster or provide other features...

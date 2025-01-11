@@ -1,13 +1,13 @@
 #pragma once
 
-#if (defined(HV_LOG_H_) || defined(hlog)) && ! defined(LOGGER_CHOSEN)
-#error "NetworkLogger must be included before hlog.h"
+#if (defined(WW_LOG_H_) || defined(wlog)) && ! defined(LOGGER_CHOSEN)
+#error "NetworkLogger must be included before wlog.h"
 #elif defined(LOGGER_CHOSEN)
 // previews logger will have the hooks
 #else
 
 #define LOGGER_CHOSEN NetworkLogger
-#define hlog          getNetworkLogger() // NOLINT
+#define wlog          getNetworkLogger() // NOLINT
 
 #endif
 
@@ -17,14 +17,14 @@ struct logger_s;
 typedef struct logger_s logger_t;
 logger_t               *getNetworkLogger(void);
 
-#include "hlog.h"
+#include "wlog.h"
 
 void      setNetworkLogger(logger_t *newlogger);
 logger_t *createNetworkLogger(const char *log_file, bool console);
 
 static inline void setNetworkLoggerLevelByStr(const char *log_level)
 {
-    logger_set_level_by_str(getNetworkLogger(), log_level);
+    setLoggerLevelByStr(getNetworkLogger(), log_level);
 }
 
 logger_handler getNetworkLoggerHandle(void);

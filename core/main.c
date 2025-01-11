@@ -1,6 +1,6 @@
 #include "config_file.h"
 #include "core_settings.h"
-#include "hbase.h"
+#include "eventloop_mem.h"
 #include "loggers/core_logger.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
@@ -8,7 +8,7 @@
 #include "imported_tunnels.h"
 #include "utils/fileutils.h"
 #include "utils/stringutils.h"
-#include "ww.h"
+#include "worker.h"
 
 int main(void)
 {
@@ -16,7 +16,7 @@ int main(void)
     // int test[3] = {0};
     // printf("hello world %d", test[3]);
 
-    initHeap();
+    initWLibc();
 
     static const char *core_file_name    = "core.json";
     char              *core_file_content = readFile(core_file_name);
@@ -50,7 +50,7 @@ int main(void)
     };
 
     // core logger is available after ww setup
-    createWW(runtime_data);
+    createGlobalState(runtime_data);
 
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");

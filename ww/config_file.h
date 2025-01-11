@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hmutex.h"
+#include "wmutex.h"
 #include <stddef.h>
 
 typedef struct config_file_s
@@ -14,7 +14,7 @@ typedef struct config_file_s
     struct cJSON *root;
     struct cJSON *nodes;
     size_t        file_prebuffer_size;
-    hmutex_t      guard;
+    wmutex_t      guard;
 } config_file_t;
 
 // a config is loaded in ram and can be updated continously by other threads forexample when a user

@@ -195,7 +195,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
 tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
 {
     layer3_ip_overrider_state_t *state = memoryAllocate(sizeof(layer3_ip_overrider_state_t));
-    memset(state, 0, sizeof(layer3_ip_overrider_state_t));
+    memorySet(state, 0, sizeof(layer3_ip_overrider_state_t));
     cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))

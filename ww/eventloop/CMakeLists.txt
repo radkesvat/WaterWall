@@ -55,7 +55,7 @@ check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
 
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/hconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/hconfig.h)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
 
 # see Makefile.in
 set(CMAKE_C_STANDARD 11)
@@ -123,30 +123,30 @@ if(WIN32)
     endif()
 endif()
 
-set(LIBHV_SRCDIRS ${CORE_SRCDIRS} util)
-set(LIBHV_HEADERS hv.h hconfig.h hexport.h)
-set(LIBHV_HEADERS ${LIBHV_HEADERS} ${BASE_HEADERS} ${SSL_HEADERS} ${EVENT_HEADERS} ${UTIL_HEADERS})
+set(LIBWW_SRCDIRS ${CORE_SRCDIRS} util)
+set(LIBWW_HEADERS hv.h wconfig.h wexport.h)
+set(LIBWW_HEADERS ${LIBWW_HEADERS} ${BASE_HEADERS} ${SSL_HEADERS} ${EVENT_HEADERS} ${UTIL_HEADERS})
 
 if(WITH_PROTOCOL)
-    set(LIBHV_HEADERS ${LIBHV_HEADERS} ${PROTOCOL_HEADERS})
-    set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} protocol)
+    set(LIBWW_HEADERS ${LIBWW_HEADERS} ${PROTOCOL_HEADERS})
+    set(LIBWW_SRCDIRS ${LIBWW_SRCDIRS} protocol)
 endif()
 
 
 if(WITH_MQTT)
-    set(LIBHV_HEADERS ${LIBHV_HEADERS} ${MQTT_HEADERS})
-    set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} mqtt)
+    set(LIBWW_HEADERS ${LIBWW_HEADERS} ${MQTT_HEADERS})
+    set(LIBWW_SRCDIRS ${LIBWW_SRCDIRS} mqtt)
 endif()
 
-list_source_directories(LIBHV_SRCS ${LIBHV_SRCDIRS})
+list_source_directories(LIBWW_SRCS ${LIBWW_SRCDIRS})
 
-# file(INSTALL ${LIBHV_HEADERS} DESTINATION include/hv)
-# file(INSTALL ${LIBHV_HEADERS} DESTINATION ${PROJECT_SOURCE_DIR}/include/hv)
+# file(INSTALL ${LIBWW_HEADERS} DESTINATION include/hv)
+# file(INSTALL ${LIBWW_HEADERS} DESTINATION ${PROJECT_SOURCE_DIR}/include/hv)
 
 # if(BUILD_SHARED)
-#     add_library(hv SHARED ${LIBHV_SRCS})
-#     target_compile_definitions(hv PRIVATE HV_DYNAMICLIB)
-#     target_include_directories(hv PRIVATE ${LIBHV_SRCDIRS}
+#     add_library(hv SHARED ${LIBWW_SRCS})
+#     target_compile_definitions(hv PRIVATE WW_DYNAMICLIB)
+#     target_include_directories(hv PRIVATE ${LIBWW_SRCDIRS}
 #         INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 #     target_link_libraries(hv ${LIBS})
 #     install(TARGETS hv
@@ -158,9 +158,9 @@ list_source_directories(LIBHV_SRCS ${LIBHV_SRCDIRS})
 # endif()
 
 # if(BUILD_STATIC)
-#     add_library(hv_static STATIC ${LIBHV_SRCS})
-#     target_compile_definitions(hv_static PUBLIC HV_STATICLIB)
-#     target_include_directories(hv_static PRIVATE ${LIBHV_SRCDIRS}
+#     add_library(hv_static STATIC ${LIBWW_SRCS})
+#     target_compile_definitions(hv_static PUBLIC WW_STATICLIB)
+#     target_include_directories(hv_static PRIVATE ${LIBWW_SRCDIRS}
 #         INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 #     target_link_libraries(hv_static ${LIBS})
 #     install(TARGETS hv_static
@@ -169,18 +169,18 @@ list_source_directories(LIBHV_SRCS ${LIBHV_SRCDIRS})
 #     add_custom_target(libhv_static DEPENDS hv_static)
 # endif()
 
-# install(FILES ${LIBHV_HEADERS} DESTINATION include/hv)
+# install(FILES ${LIBWW_HEADERS} DESTINATION include/hv)
 # install(EXPORT libhvConfig DESTINATION lib/cmake/libhv)
 
 # if(BUILD_SHARED)
-#     set(HV_LIBRARIES hv CACHE INTERNAL "link hv libraries")
+#     set(WW_LIBRARIES hv CACHE INTERNAL "link hv libraries")
 # else()
-#     add_definitions(-DHV_STATICLIB)
-#     set(HV_LIBRARIES hv_static ${LIBS} CACHE INTERNAL "link hv libraries")
+#     add_definitions(-DWW_STATICLIB)
+#     set(WW_LIBRARIES hv_static ${LIBS} CACHE INTERNAL "link hv libraries")
 # endif()
 
-target_compile_definitions(ww PUBLIC HV_STATICLIB)
-target_include_directories(ww PUBLIC ${LIBHV_SRCDIRS}
+target_compile_definitions(ww PUBLIC WW_STATICLIB)
+target_include_directories(ww PUBLIC ${LIBWW_SRCDIRS}
         INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_link_libraries(ww PUBLIC ${LIBS})
-target_sources(ww PRIVATE ${LIBHV_SRCS})
+target_sources(ww PRIVATE ${LIBWW_SRCS})

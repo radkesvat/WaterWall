@@ -2,7 +2,7 @@
 #include "loggers/network_logger.h"
 
 #include "cacert.h"
-#include "ww.h"
+#include "worker.h"
 #include <assert.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>

@@ -288,7 +288,7 @@ static void onInboundConnected(hevent_t *ev)
     line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     hevent_set_userdata(io, cstate);
 
-    if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    if (checkLoggerWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
@@ -368,7 +368,7 @@ static void parsePortSection(tcp_listener_state_t *state, const cJSON *settings)
 tunnel_t *newTcpListener(node_instance_context_t *instance_info)
 {
     tcp_listener_state_t *state = memoryAllocate(sizeof(tcp_listener_state_t));
-    memset(state, 0, sizeof(tcp_listener_state_t));
+    memorySet(state, 0, sizeof(tcp_listener_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
@@ -413,7 +413,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
         if (len > 0)
         {
             char **list = (char **) memoryAllocate(sizeof(char *) * (len + 1));
-            memset((void *) list, 0, sizeof(char *) * (len + 1));
+            memorySet((void *) list, 0, sizeof(char *) * (len + 1));
             list[len]              = 0x0;
             int          i         = 0;
             const cJSON *list_item = NULL;

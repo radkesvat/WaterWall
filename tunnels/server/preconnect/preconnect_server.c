@@ -1,6 +1,6 @@
 #include "preconnect_server.h"
 #include "buffer_stream.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "loggers/network_logger.h"
 
 typedef struct preconnect_server_state_s
@@ -77,7 +77,7 @@ tunnel_t *newPreConnectServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     preconnect_server_state_t *state = memoryAllocate(sizeof(preconnect_server_state_t));
-    memset(state, 0, sizeof(preconnect_server_state_t));
+    memorySet(state, 0, sizeof(preconnect_server_state_t));
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

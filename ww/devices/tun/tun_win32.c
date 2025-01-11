@@ -185,7 +185,7 @@ static USHORT IPChecksum(_In_reads_bytes_(Len) BYTE *Buffer, _In_ DWORD Len)
 
 static void MakeICMP(_Out_writes_bytes_all_(28) BYTE Packet[28])
 {
-    memset(Packet, 0, 28);
+    memorySet(Packet, 0, 28);
     Packet[0]               = 0x45;
     *(USHORT *) &Packet[2]  = htons(28);
     Packet[8]               = 255;

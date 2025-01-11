@@ -121,7 +121,7 @@ static http2_server_con_state_t *createHttp2Connection(tunnel_t *self, line_t *l
 {
     http2_server_state_t     *state = TSTATE(self);
     http2_server_con_state_t *con   = memoryAllocate(sizeof(http2_server_con_state_t));
-    memset(con, 0, sizeof(http2_server_con_state_t));
+    memorySet(con, 0, sizeof(http2_server_con_state_t));
     nghttp2_session_server_new2(&con->session, state->cbs, con, state->ngoptions);
     con->tunnel  = self;
     con->line    = line;

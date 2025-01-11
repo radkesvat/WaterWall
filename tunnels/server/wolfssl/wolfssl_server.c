@@ -366,7 +366,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             CSTATE_MUT(c) = memoryAllocate(sizeof(wssl_server_con_state_t));
-            memset(CSTATE(c), 0, sizeof(wssl_server_con_state_t));
+            memorySet(CSTATE(c), 0, sizeof(wssl_server_con_state_t));
             cstate               = CSTATE(c);
             cstate->rbio         = BIO_new(BIO_s_mem());
             cstate->wbio         = BIO_new(BIO_s_mem());
@@ -543,10 +543,10 @@ disconnect: {
 tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 {
     wssl_server_state_t *state = memoryAllocate(sizeof(wssl_server_state_t));
-    memset(state, 0, sizeof(wssl_server_state_t));
+    memorySet(state, 0, sizeof(wssl_server_state_t));
 
     ssl_ctx_opt_t *ssl_param = memoryAllocate(sizeof(ssl_ctx_opt_t));
-    memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
+    memorySet(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
@@ -582,7 +582,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     {
         size_t len   = cJSON_GetArraySize(aplns_array);
         state->alpns = memoryAllocate(len * sizeof(alpn_item_t));
-        memset(state->alpns, 0, len * sizeof(alpn_item_t));
+        memorySet(state->alpns, 0, len * sizeof(alpn_item_t));
 
         int          i = 0;
         const cJSON *alpn_item;

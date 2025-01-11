@@ -1,4 +1,4 @@
-#include "ww_logger.h"
+#include "internal_logger.h"
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -13,8 +13,8 @@ static void destroyNetworkLogger(void)
 {
     if (logger)
     {
-        logger_fsync(logger);
-        logger_destroy(logger);
+        syncLoggerFile(logger);
+        destroyLogger(logger);
         logger = NULL;
     }
 }
@@ -26,19 +26,19 @@ static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int 
     case LOG_LEVEL_WARN:
     case LOG_LEVEL_ERROR:
     case LOG_LEVEL_FATAL:
-        stderr_logger(loglevel, buf, len);
+        stderrLogger(loglevel, buf, len);
         break;
     default:
-        stdout_logger(loglevel, buf, len);
+        stdoutLogger(loglevel, buf, len);
         break;
     }
-    logfile_write(logger, buf, len);
+    writeLogFile(logger, buf, len);
 }
 
 static void networkLoggerHandle(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    logfile_write(logger, buf, len);
+    writeLogFile(logger, buf, len);
 }
 
 logger_t *getNetworkLogger(void)
@@ -54,15 +54,15 @@ void setNetworkLogger(logger_t *newlogger)
 logger_t *createNetworkLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
-    logger = logger_create();
-    logger_set_file(logger, log_file);
+    logger = createLogger();
+    setLoggerFile(logger, log_file);
     if (console)
     {
-        logger_set_handler(logger, networkLoggerHandleWithStdStream);
+        setLoggerHandler(logger, networkLoggerHandleWithStdStream);
     }
     else
     {
-        logger_set_handler(logger, networkLoggerHandle);
+        setLoggerHandler(logger, networkLoggerHandle);
     }
 
     atexit(destroyNetworkLogger);
@@ -71,5 +71,5 @@ logger_t *createNetworkLogger(const char *log_file, bool console)
 
 logger_handler getNetworkLoggerHandle(void)
 {
-    return logger_handle(logger);
+    return getLoggerHandle(logger);
 }

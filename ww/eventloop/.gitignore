@@ -62,7 +62,7 @@ test
 *_test
 build
 config.mk
-hconfig.h
+wconfig.h
 html/uploads
 
 # msvc

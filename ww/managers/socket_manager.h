@@ -2,11 +2,11 @@
 
 #include "basic_types.h"
 #include "hloop.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "idle_table.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
-#include "ww.h"
+#include "worker.h"
 #include <stddef.h>
 #include <stdint.h>
 

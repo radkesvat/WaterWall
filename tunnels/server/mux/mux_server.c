@@ -385,7 +385,7 @@ tunnel_t *newMuxServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     mux_server_state_t *state = memoryAllocate(sizeof(mux_server_state_t));
-    memset(state, 0, sizeof(mux_server_state_t));
+    memorySet(state, 0, sizeof(mux_server_state_t));
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

@@ -3,11 +3,11 @@
 #include "buffer_pool.h"
 #include "generic_pool.h"
 #include "hloop.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "managers/memory_manager.h"
 #include "node.h"
 #include "shiftbuffer.h"
-#include "ww.h"
+#include "worker.h"
 
 /*
     Tunnels basicly encapsulate / decapsulate the packets and pass it to the next tunnel.

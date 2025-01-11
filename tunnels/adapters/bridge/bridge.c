@@ -78,7 +78,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
     }
 
     bridge_state_t *state = memoryAllocate(sizeof(bridge_state_t));
-    memset(state, 0, sizeof(bridge_state_t));
+    memorySet(state, 0, sizeof(bridge_state_t));
 
     hash_t  hash_pairname = calcHashBytes(pair_node_name, strlen(pair_node_name));
     node_t *pair_node     = getNode(instance_info->node_manager_config, hash_pairname);

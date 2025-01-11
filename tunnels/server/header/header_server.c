@@ -1,6 +1,6 @@
 #include "header_server.h"
 #include "buffer_stream.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "loggers/network_logger.h"
 #include "utils/jsonutils.h"
 
@@ -139,7 +139,7 @@ tunnel_t *newHeaderServer(node_instance_context_t *instance_info)
 {
 
     header_server_state_t *state = memoryAllocate(sizeof(header_server_state_t));
-    memset(state, 0, sizeof(header_server_state_t));
+    memorySet(state, 0, sizeof(header_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
     state->data           = parseDynamicNumericValueFromJsonObject(settings, "override", 1, "dest_context->port");
     tunnel_t *t           = newTunnel();

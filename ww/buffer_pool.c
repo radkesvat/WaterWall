@@ -1,12 +1,12 @@
 #include "buffer_pool.h"
-#include "hplatform.h"
+#include "wplatform.h"
 #ifdef DEBUG
-#include "loggers/ww_logger.h"
+#include "loggers/internal_logger.h"
 #endif
 #include "shiftbuffer.h"
 #include "utils/mathutils.h"
 #include "managers/memory_manager.h"
-#include "ww.h"
+#include "worker.h"
 #include <assert.h> // for assert
 #include <stdlib.h>
 #include <string.h>
@@ -305,8 +305,8 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
     installMasterPoolAllocCallbacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
 
 #ifdef DEBUG
-    memset((void *) ptr_pool->large_buffers, 0xFE, container_len);
-    memset((void *) ptr_pool->small_buffers, 0xFE, container_len);
+    memorySet((void *) ptr_pool->large_buffers, 0xFE, container_len);
+    memorySet((void *) ptr_pool->small_buffers, 0xFE, container_len);
 #endif
 
     // firstCharge(ptr_pool);

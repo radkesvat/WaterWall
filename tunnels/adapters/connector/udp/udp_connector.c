@@ -1,5 +1,5 @@
 #include "udp_connector.h"
-#include "hplatform.h"
+#include "wplatform.h"
 #include "loggers/network_logger.h"
 #include "sync_dns.h"
 #include "types.h"
@@ -67,7 +67,7 @@ static void upStream(tunnel_t *self, context_t *c)
             udp_connector_state_t *state = TSTATE(self);
 
             CSTATE_MUT(c) = memoryAllocate(sizeof(udp_connector_con_state_t));
-            memset(CSTATE(c), 0, sizeof(udp_connector_con_state_t));
+            memorySet(CSTATE(c), 0, sizeof(udp_connector_con_state_t));
             cstate = CSTATE(c);
 
             cstate->buffer_pool = getContextBufferPool(c);
@@ -182,7 +182,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
 {
     udp_connector_state_t *state = memoryAllocate(sizeof(udp_connector_state_t));
-    memset(state, 0, sizeof(udp_connector_state_t));
+    memorySet(state, 0, sizeof(udp_connector_state_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))

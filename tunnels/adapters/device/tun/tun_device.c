@@ -116,7 +116,7 @@ static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_
 tunnel_t *newTunDevice(node_instance_context_t *instance_info)
 {
     tun_device_state_t *state = memoryAllocate(sizeof(tun_device_state_t));
-    memset(state, 0, sizeof(tun_device_state_t));
+    memorySet(state, 0, sizeof(tun_device_state_t));
 
     cJSON *settings = instance_info->node_settings_json;
 

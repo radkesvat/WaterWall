@@ -209,8 +209,8 @@ static void wireguard_hmac(uint8_t *digest, const uint8_t *key, size_t key_len, 
 	// ipad is the byte 0x36 repeated BLAKE2S_BLOCK_SIZE times
 	// opad is the byte 0x5c repeated BLAKE2S_BLOCK_SIZE times
 	// and text is the data being protected
-	memset(k_ipad, 0, sizeof(k_ipad));
-	memset(k_opad, 0, sizeof(k_opad));
+	memorySet(k_ipad, 0, sizeof(k_ipad));
+	memorySet(k_opad, 0, sizeof(k_opad));
 	memcpy(k_ipad, key, key_len);
 	memcpy(k_opad, key, key_len);
 
@@ -746,7 +746,7 @@ bool wireguard_create_handshake_initiation(struct wireguard_device *device, stru
 
 	struct wireguard_handshake *handshake = &peer->handshake;
 
-	memset(dst, 0, sizeof(struct message_handshake_initiation));
+	memorySet(dst, 0, sizeof(struct message_handshake_initiation));
 
 	// Ci := Hash(Construction) (precalculated hash)
 	memcpy(handshake->chaining_key, construction_hash, WIREGUARD_HASH_LEN);
@@ -834,7 +834,7 @@ bool wireguard_create_handshake_response(struct wireguard_device *device, struct
 	uint8_t tau[WIREGUARD_HASH_LEN];
 	bool result = false;
 
-	memset(dst, 0, sizeof(struct message_handshake_response));
+	memorySet(dst, 0, sizeof(struct message_handshake_response));
 
 	if (handshake->valid && !handshake->initiator) {
 
@@ -928,7 +928,7 @@ void wireguard_create_cookie_reply(struct wireguard_device *device, struct messa
 
 bool wireguard_peer_init(struct wireguard_device *device, struct wireguard_peer *peer, const uint8_t *public_key, const uint8_t *preshared_key) {
 	// Clear out structure
-	memset(peer, 0, sizeof(struct wireguard_peer));
+	memorySet(peer, 0, sizeof(struct wireguard_peer));
 
 	if (device->valid) {
 		// Copy across the public key into our peer structure
@@ -941,12 +941,12 @@ bool wireguard_peer_init(struct wireguard_device *device, struct wireguard_peer 
 
 		if (wireguard_x25519(peer->public_key_dh, device->private_key, peer->public_key) == 0) {
 			// Zero out handshake
-			memset(&peer->handshake, 0, sizeof(struct wireguard_handshake));
+			memorySet(&peer->handshake, 0, sizeof(struct wireguard_handshake));
 			peer->handshake.valid = false;
 
 			// Zero out any cookie info - we haven't received one yet
 			peer->cookie_millis = 0;
-			memset(&peer->cookie, 0, WIREGUARD_COOKIE_LEN);
+			memorySet(&peer->cookie, 0, WIREGUARD_COOKIE_LEN);
 
 			// Precompute keys to deal with mac1/2 calculation
 			wireguard_mac_key(peer->label_mac1_key, peer->public_key, LABEL_MAC1, sizeof(LABEL_MAC1));

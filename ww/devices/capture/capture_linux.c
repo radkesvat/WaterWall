@@ -1,8 +1,8 @@
 #include "capture.h"
 #include "generic_pool.h"
-#include "hchan.h"
-#include "loggers/ww_logger.h"
-#include "ww.h"
+#include "wchan.h"
+#include "loggers/internal_logger.h"
+#include "worker.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <linux/if_ether.h>
@@ -63,7 +63,7 @@ static void distributePacketPayload(capture_device_t *cdev, tid_t target_tid, sh
     *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
 
     hevent_t ev;
-    memset(&ev, 0, sizeof(ev));
+    memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(target_tid);
     ev.cb   = localThreadEventReceived;
     hevent_set_userdata(&ev, msg);
@@ -78,7 +78,7 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
 {
     size_t  nl_size = NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct nfgenmsg))) + NFA_ALIGN(NFA_LENGTH(size));
     uint8_t buff[nl_size];
-    memset(buff, 0, nl_size);
+    memorySet(buff, 0, nl_size);
     struct nlmsghdr *nl_hdr = (struct nlmsghdr *) buff;
 
     nl_hdr->nlmsg_len   = NLMSG_LENGTH(sizeof(struct nfgenmsg));
@@ -101,7 +101,7 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     memmove(NFA_DATA(nl_attr), msg, size);
 
     struct sockaddr_nl nl_addr;
-    memset(&nl_addr, 0x0, sizeof(nl_addr));
+    memorySet(&nl_addr, 0x0, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
 
     if (sendto(netfilter_socket, buff, sizeof(buff), 0, (struct sockaddr *) &nl_addr, sizeof(nl_addr)) !=
@@ -270,8 +270,8 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, shift_buff
     // Also add a phony ethernet header.
     setLen(buff, nl_data_size);
     // struct ethhdr *eth_header = (struct ethhdr *) buff;
-    // memset(&eth_header->h_dest, 0x0, ETH_ALEN);
-    // memset(&eth_header->h_source, 0x0, ETH_ALEN);
+    // memorySet(&eth_header->h_dest, 0x0, ETH_ALEN);
+    // memorySet(&eth_header->h_source, 0x0, ETH_ALEN);
     // eth_header->h_proto = htons(ETH_P_IP);
 
     struct iphdr *ip_header = (struct iphdr *) rawBufMut(buff);
@@ -330,7 +330,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        if (! hchanRecv(cdev->writer_buffer_channel, &buf))
+        if (! chanRecv(cdev->writer_buffer_channel, &buf))
         {
             LOGD("CaptureDevice: routine write will exit due to channel closed");
             return 0;
@@ -367,7 +367,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 bool writeToCaptureDevce(capture_device_t *cdev, shift_buffer_t *buf)
 {
     bool closed = false;
-    if (! hchanTrySend(cdev->writer_buffer_channel, &buf, &closed))
+    if (! chanTrySend(cdev->writer_buffer_channel, &buf, &closed))
     {
         if (closed)
         {
@@ -403,7 +403,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     cdev->running = false;
     cdev->up      = false;
 
-    hchanClose(cdev->writer_buffer_channel);
+    chanClose(cdev->writer_buffer_channel);
 
     LOGD("CaptureDevice: device %s is now down", cdev->name);
 
@@ -411,7 +411,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     joinThread(cdev->write_thread);
 
     shift_buffer_t *buf;
-    while (hchanRecv(cdev->writer_buffer_channel, &buf))
+    while (chanRecv(cdev->writer_buffer_channel, &buf))
     {
         reuseBuffer(cdev->reader_buffer_pool, buf);
     }
@@ -430,7 +430,7 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
     }
 
     struct sockaddr_nl nl_addr;
-    memset(&nl_addr, 0x0, sizeof(nl_addr));
+    memorySet(&nl_addr, 0x0, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
     nl_addr.nl_pid    = getpid();
 
@@ -480,7 +480,7 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
                                 .queue_number          = queue_number,
                                 .read_event_callback   = cb,
                                 .userdata              = userdata,
-                                .writer_buffer_channel = hchanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
+                                .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
                                 .reader_message_pool   = newMasterPoolWithCap(kMasterMessagePoolCap),
                                 .reader_buffer_pool    = reader_bpool,
                                 .writer_buffer_pool    = writer_bpool};

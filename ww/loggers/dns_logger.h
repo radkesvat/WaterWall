@@ -1,13 +1,13 @@
 #pragma once
 
-#if (defined(HV_LOG_H_) || defined(hlog)) && ! defined(LOGGER_CHOSEN)
-#error "DnsLogger must be included before hlog.h"
+#if (defined(WW_LOG_H_) || defined(wlog)) && ! defined(LOGGER_CHOSEN)
+#error "DnsLogger must be included before wlog.h"
 #elif defined(LOGGER_CHOSEN)
 // previews logger will have the hooks
 #else
 
 #define LOGGER_CHOSEN DnsLogger
-#define hlog          getDnsLogger() // NOLINT
+#define wlog          getDnsLogger() // NOLINT
 
 #endif
 #include <stdbool.h>
@@ -16,14 +16,14 @@ struct logger_s;
 typedef struct logger_s logger_t;
 logger_t               *getDnsLogger(void);
 
-#include "hlog.h"
+#include "wlog.h"
 
 void      setDnsLogger(logger_t *newlogger);
 logger_t *createDnsLogger(const char *log_file, bool console);
 
 static inline void setDnsLoggerLevelByStr(const char *log_level)
 {
-    logger_set_level_by_str(getDnsLogger(), log_level);
+    setLoggerLevelByStr(getDnsLogger(), log_level);
 }
 
 logger_handler getDnsLoggerHandle(void);

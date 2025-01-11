@@ -1,9 +1,9 @@
 #include "tunnel.h"
-#include "loggers/ww_logger.h"
+#include "loggers/internal_logger.h"
 #include "managers/node_manager.h"
 #include "node.h"
 #include "pipe_line.h"
-#include "string.h" // memset
+#include "string.h" // memorySet
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>

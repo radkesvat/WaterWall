@@ -6,7 +6,7 @@
 #include "openssl_globals.h"
 #include "reality_helpers.h"
 #include "tunnel.h"
-#include "utils/hashutils.h"
+#include "utils/whash.h"
 #include "utils/jsonutils.h"
 #include "utils/mathutils.h"
 #include <openssl/bio.h>
@@ -155,7 +155,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             reality_client_con_state_t *cstate = memoryAllocate(sizeof(reality_client_con_state_t));
-            memset(cstate, 0, sizeof(reality_client_con_state_t));
+            memorySet(cstate, 0, sizeof(reality_client_con_state_t));
             CSTATE_MUT(c)          = cstate;
             cstate->rbio           = BIO_new(BIO_s_mem());
             cstate->wbio           = BIO_new(BIO_s_mem());
@@ -419,14 +419,14 @@ failed: {
 tunnel_t *newRealityClient(node_instance_context_t *instance_info)
 {
     reality_client_state_t *state = memoryAllocate(sizeof(reality_client_state_t));
-    memset(state, 0, sizeof(reality_client_state_t));
+    memorySet(state, 0, sizeof(reality_client_state_t));
 
     state->threadlocal_ssl_context    = memoryAllocate(sizeof(ssl_ctx_t) * getWorkersCount());
     state->threadlocal_cipher_context = memoryAllocate(sizeof(EVP_CIPHER_CTX *) * getWorkersCount());
     state->threadlocal_sign_context   = memoryAllocate(sizeof(EVP_MD_CTX *) * getWorkersCount());
 
     ssl_ctx_opt_t *ssl_param = memoryAllocate(sizeof(ssl_ctx_opt_t));
-    memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
+    memorySet(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
@@ -462,7 +462,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
         LOGF("JSON Error: RealityClient->settings->password (string field) : password is too short");
         return NULL;
     }
-    // memset already made buff 0
+    // memorySet already made buff 0
     memcpy(state->context_password, state->password, state->password_length);
 
     if (EVP_MAX_MD_SIZE % sizeof(uint64_t) != 0)

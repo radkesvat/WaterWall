@@ -1,6 +1,6 @@
 #include "trojan_socks_server.h"
 #include "buffer_stream.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
@@ -520,7 +520,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             CSTATE_MUT(c) = memoryAllocate(sizeof(trojan_socks_server_con_state_t));
-            memset(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
+            memorySet(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
             destroyContext(c);
         }
         else if (c->fin)
@@ -564,7 +564,7 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     trojan_socks_server_state_t *state = memoryAllocate(sizeof(trojan_socks_server_state_t));
-    memset(state, 0, sizeof(trojan_socks_server_state_t));
+    memorySet(state, 0, sizeof(trojan_socks_server_state_t));
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

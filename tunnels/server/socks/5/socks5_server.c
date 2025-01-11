@@ -1,7 +1,7 @@
 #include "socks5_server.h"
 #include "basic_types.h"
 #include "buffer_stream.h"
-#include "hsocket.h"
+#include "wsocket.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
@@ -467,7 +467,7 @@ static void upStream(tunnel_t *self, context_t *c)
             memcpy(&(c->line->dest_ctx.address.sin.sin_port), rawBuf(bytes), 2);
             shiftr(bytes, 2);
 
-            if (logger_will_write_level(getNetworkLogger(), LOG_LEVEL_INFO))
+            if (checkLoggerWriteLevel(getNetworkLogger(), LOG_LEVEL_INFO))
             {
                 if (c->line->dest_ctx.address_type == kSatDomainName)
                 {
@@ -519,7 +519,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
                 setLen(respbuf, 32);
                 uint8_t *resp = rawBufMut(respbuf);
-                memset(resp, 0, 32);
+                memorySet(resp, 0, 32);
                 resp[0]               = SOCKS5_VERSION;
                 resp[1]               = kSuccessReply;
                 unsigned int resp_len = 3;
@@ -577,7 +577,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             cstate = memoryAllocate(sizeof(socks5_server_con_state_t));
-            memset(cstate, 0, sizeof(socks5_server_con_state_t));
+            memorySet(cstate, 0, sizeof(socks5_server_con_state_t));
             cstate->need  = 2;
             CSTATE_MUT(c) = cstate;
             destroyContext(c);
@@ -627,7 +627,7 @@ static void downStream(tunnel_t *self, context_t *c)
             shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
             setLen(respbuf, 32);
             uint8_t *resp = rawBufMut(respbuf);
-            memset(resp, 0, 32);
+            memorySet(resp, 0, 32);
             resp[0]               = SOCKS5_VERSION;
             resp[1]               = kHostUnreachable;
             unsigned int resp_len = 3;
@@ -659,7 +659,7 @@ static void downStream(tunnel_t *self, context_t *c)
             shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
             setLen(respbuf, 32);
             uint8_t *resp = rawBufMut(respbuf);
-            memset(resp, 0, 32);
+            memorySet(resp, 0, 32);
             resp[0]               = SOCKS5_VERSION;
             resp[1]               = kSuccessReply;
             unsigned int resp_len = 3;
@@ -715,7 +715,7 @@ tunnel_t *newSocks5Server(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     socks5_server_state_t *state = memoryAllocate(sizeof(socks5_server_state_t));
-    memset(state, 0, sizeof(socks5_server_state_t));
+    memorySet(state, 0, sizeof(socks5_server_state_t));
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

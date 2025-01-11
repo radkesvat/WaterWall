@@ -1,7 +1,7 @@
 #include "pipe_line.h"
 #include "buffer_pool.h"
 #include "generic_pool.h"
-#include "loggers/ww_logger.h"
+#include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
 
@@ -88,7 +88,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
     *evdata = (struct msg_event) {.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
 
     hevent_t ev;
-    memset(&ev, 0, sizeof(ev));
+    memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(tid_to);
     ev.cb   = onMsgReceived;
     hevent_set_userdata(&ev, evdata);

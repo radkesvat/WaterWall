@@ -376,7 +376,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             CSTATE_MUT(c) = memoryAllocate(sizeof(oss_server_con_state_t));
-            memset(CSTATE(c), 0, sizeof(oss_server_con_state_t));
+            memorySet(CSTATE(c), 0, sizeof(oss_server_con_state_t));
             cstate               = CSTATE(c);
             cstate->rbio         = BIO_new(BIO_s_mem());
             cstate->wbio         = BIO_new(BIO_s_mem());
@@ -574,12 +574,12 @@ disconnect: {
 tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
 {
     oss_server_state_t *state = memoryAllocate(sizeof(oss_server_state_t));
-    memset(state, 0, sizeof(oss_server_state_t));
+    memorySet(state, 0, sizeof(oss_server_state_t));
 
     state->threadlocal_ssl_context = memoryAllocate(sizeof(ssl_ctx_t) * getWorkersCount());
 
     ssl_ctx_opt_t *ssl_param = memoryAllocate(sizeof(ssl_ctx_opt_t));
-    memset(ssl_param, 0, sizeof(ssl_ctx_opt_t));
+    memorySet(ssl_param, 0, sizeof(ssl_ctx_opt_t));
     const cJSON *settings = instance_info->node_settings_json;
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
@@ -615,7 +615,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     {
         size_t len   = cJSON_GetArraySize(aplns_array);
         state->alpns = memoryAllocate(len * sizeof(alpn_item_t));
-        memset(state->alpns, 0, len * sizeof(alpn_item_t));
+        memorySet(state->alpns, 0, len * sizeof(alpn_item_t));
 
         int          i = 0;
         const cJSON *alpn_item;

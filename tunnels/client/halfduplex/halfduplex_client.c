@@ -219,7 +219,7 @@ tunnel_t *newHalfDuplexClient(node_instance_context_t *instance_info)
 {
     (void) instance_info;
     halfduplex_state_t *state = memoryAllocate(sizeof(halfduplex_state_t));
-    memset(state, 0, sizeof(halfduplex_state_t));
+    memorySet(state, 0, sizeof(halfduplex_state_t));
 
     tunnel_t *t   = newTunnel();
     t->state      = state;

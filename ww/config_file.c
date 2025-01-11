@@ -1,11 +1,11 @@
 #include "config_file.h"
 #include "cJSON.h"
-#include "ww.h"
-#include "loggers/ww_logger.h" //NOLINT
+#include "worker.h"
+#include "loggers/internal_logger.h" //NOLINT
 #include "utils/fileutils.h"
 #include "utils/jsonutils.h"
 #include "managers/memory_manager.h"
-#include "hmutex.h"
+#include "wmutex.h"
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,19 +26,19 @@ void destroyConfigFile(config_file_t *state)
     {
         memoryFree(state->author);
     }
-    hmutex_destroy(&(state->guard));
+    destroyMutex(&(state->guard));
 
     memoryFree(state);
 }
 
 void acquireUpdateLock(config_file_t *state)
 {
-    hmutex_lock(&(state->guard));
+    lockMutex(&(state->guard));
 }
 
 void releaseUpdateLock(config_file_t *state)
 {
-    hmutex_unlock(&(state->guard));
+    unlockMutex(&(state->guard));
 }
 
 // only use if you acquired lock before
@@ -71,7 +71,7 @@ void commitChangesSoft(config_file_t *state)
 #ifdef OS_WIN
     commitChangesHard(state);
 #else
-    if (hmutex_trylock(&(state->guard)))
+    if (mutexTryLock(&(state->guard)))
     {
         unsafeCommitChanges(state);
         releaseUpdateLock(state);
@@ -83,8 +83,8 @@ void commitChangesSoft(config_file_t *state)
 config_file_t *parseConfigFile(const char *const file_path)
 {
     config_file_t *state = memoryAllocate(sizeof(config_file_t));
-    memset(state, 0, sizeof(config_file_t));
-    hmutex_init(&(state->guard));
+    memorySet(state, 0, sizeof(config_file_t));
+    initMutex(&(state->guard));
 
     state->file_path = memoryAllocate(strlen(file_path) + 1);
     strcpy(state->file_path, file_path);
