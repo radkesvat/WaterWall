@@ -98,7 +98,7 @@ static bool netfilterSendMessage(int netfilter_socket, uint16_t nl_type, int nfa
     nl_attr->nfa_type          = nfa_type;
     nl_attr->nfa_len           = NFA_LENGTH(size);
 
-    memmove(NFA_DATA(nl_attr), msg, size);
+    memoryMove(NFA_DATA(nl_attr), msg, size);
 
     struct sockaddr_nl nl_addr;
     memorySet(&nl_addr, 0x0, sizeof(nl_addr));
@@ -275,7 +275,7 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, shift_buff
     // eth_header->h_proto = htons(ETH_P_IP);
 
     struct iphdr *ip_header = (struct iphdr *) rawBufMut(buff);
-    memmove(ip_header, nl_data, nl_data_size);
+    memoryMove(ip_header, nl_data, nl_data_size);
 
     return (int) (nl_data_size);
 }

@@ -37,12 +37,12 @@ const char* socketStrError(int err) {
 #endif
 }
 
-bool isIpV4(const char* host) {
+bool isIPVer4(const char* host) {
     struct sockaddr_in sin;
     return inet_pton(AF_INET, host, &sin) == 1;
 }
 
-bool isIpV6(const char* host) {
+bool isIPVer6(const char* host) {
     struct sockaddr_in6 sin6;
     return inet_pton(AF_INET6, host, &sin6) == 1;
 }
@@ -173,7 +173,7 @@ static int sockaddrBind(sockaddr_u* localaddr, int type) {
 #endif
     int sockfd = socket(localaddr->sa.sa_family, type, 0);
     if (sockfd < 0) {
-        perror("socket");
+        printError("socket");
         goto error;
     }
 
@@ -187,7 +187,7 @@ static int sockaddrBind(sockaddr_u* localaddr, int type) {
     }
 
     if (bind(sockfd, &localaddr->sa, sockaddrLen(localaddr)) < 0) {
-        perror("bind");
+        printError("bind");
         goto error;
     }
 
@@ -201,7 +201,7 @@ static int sockaddrConnect(sockaddr_u* peeraddr, int nonblock) {
     int ret = 0;
     int connfd = socket(peeraddr->sa.sa_family, SOCK_STREAM, 0);
     if (connfd < 0) {
-        perror("socket");
+        printError("socket");
         goto error;
     }
 
@@ -215,7 +215,7 @@ static int sockaddrConnect(sockaddr_u* peeraddr, int nonblock) {
 #else
     if (ret < 0 && socket_errno() != EINPROGRESS) {
 #endif
-        // perror("connect");
+        // printError("connect");
         goto error;
     }
 
@@ -227,7 +227,7 @@ error:
 static int ListenFD(int sockfd) {
     if (sockfd < 0) return sockfd;
     if (listen(sockfd, SOMAXCONN) < 0) {
-        perror("listen");
+        printError("listen");
         return socketErrnoNegative(sockfd);
     }
     return sockfd;
@@ -246,7 +246,7 @@ static int ConnectFDTimeout(int connfd, int ms) {
 #endif
     int ret = select(connfd + 1, 0, &writefds, 0, &tv);
     if (ret < 0) {
-        perror("select");
+        printError("select");
         goto error;
     }
     if (ret == 0) {
@@ -359,35 +359,35 @@ int createSocketPair(int family, int type, int protocol, int sv[2]) {
     // listener
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0) {
-        perror("socket");
+        printError("socket");
         goto error;
     }
     if (bind(listenfd, (struct sockaddr*)&localaddr, addrlen) < 0) {
-        perror("bind");
+        printError("bind");
         goto error;
     }
     if (listen(listenfd, 1) < 0) {
-        perror("listen");
+        printError("listen");
         goto error;
     }
     if (getsockname(listenfd, (struct sockaddr*)&localaddr, &addrlen) < 0) {
-        perror("getsockname");
+        printError("getsockname");
         goto error;
     }
     // connector
     connfd = socket(AF_INET, SOCK_STREAM, 0);
     if (connfd < 0) {
-        perror("socket");
+        printError("socket");
         goto error;
     }
     if (connect(connfd, (struct sockaddr*)&localaddr, addrlen) < 0) {
-        perror("connect");
+        printError("connect");
         goto error;
     }
     // acceptor
     acceptfd = accept(listenfd, (struct sockaddr*)&localaddr, &addrlen);
     if (acceptfd < 0) {
-        perror("accept");
+        printError("accept");
         goto error;
     }
 

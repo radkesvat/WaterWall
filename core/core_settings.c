@@ -124,16 +124,16 @@ static void parseLogPartOfJson(cJSON *log_obj)
         settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
         settings->dns_log_console     = DEFAULT_DNS_ENABLE_CONSOLE;
     }
-    settings->core_log_file_fullpath    = concat(settings->log_path, settings->core_log_file);
-    settings->network_log_file_fullpath = concat(settings->log_path, settings->network_log_file);
-    settings->dns_log_file_fullpath     = concat(settings->log_path, settings->dns_log_file);
+    settings->core_log_file_fullpath    = stringConcat(settings->log_path, settings->core_log_file);
+    settings->network_log_file_fullpath = stringConcat(settings->log_path, settings->network_log_file);
+    settings->dns_log_file_fullpath     = stringConcat(settings->log_path, settings->dns_log_file);
 }
 
 static void parseConfigPartOfJson(const cJSON *config_array)
 {
     if (! cJSON_IsArray(config_array) || (config_array->child == NULL))
     {
-        fprintf(stderr, "Error: \"configs\" array in core json is empty or invalid \n");
+        printError("Error: \"configs\" array in core json is empty or invalid \n");
         exit(1);
     }
     const cJSON *path      = NULL;
@@ -156,7 +156,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
 
     if (! had_child)
     {
-        fprintf(stderr, "Error: \"configs\" array in core json is empty or invalid \n");
+        printError("Error: \"configs\" array in core json is empty or invalid \n");
         exit(1);
     }
 }
@@ -204,7 +204,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
                 settings->ram_profile = kRamProfileL2Memory;
                 break;
             default:
-                fprintf(stderr, "CoreSettings: ram-profile must be in range [1 - 5]\n");
+                printError("CoreSettings: ram-profile must be in range [1 - 5]\n");
                 exit(1);
                 break;
             }
@@ -213,7 +213,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         {
             char *string_ram_profile = NULL;
             getStringFromJsonObject(&string_ram_profile, misc_obj, "ram-profile");
-            toLowerCase(string_ram_profile);
+            stringLowerCase(string_ram_profile);
 
             if (0 == strcmp(string_ram_profile, "server"))
             {
@@ -234,7 +234,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
 
             if (settings->ram_profile <= 0)
             {
-                fprintf(stderr, "CoreSettings: ram-profile can hold \"server\" or \"client\" "
+                printError("CoreSettings: ram-profile can hold \"server\" or \"client\" "
                                 "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
 
                 exit(1);
@@ -266,7 +266,7 @@ void parseCoreSettings(const char *data_json)
         const char *error_ptr = cJSON_GetErrorPtr();
         if (error_ptr != NULL)
         {
-            fprintf(stderr, "JSON Error before: %s\n", error_ptr);
+            printError("JSON Error before: %s\n", error_ptr);
         }
         exit(1);
     }
@@ -277,12 +277,12 @@ void parseCoreSettings(const char *data_json)
 
     if (settings->workers_count <= 0)
     {
-        fprintf(stderr, "CoreSettings: the workers count is invalid");
+        printError("CoreSettings: the workers count is invalid");
         exit(1);
     }
     if (settings->workers_count > 254)
     {
-        fprintf(stderr, "CoreSettings: workers count is shrinked to maximum supported value -> 254");
+        printError("CoreSettings: workers count is shrinked to maximum supported value -> 254");
         settings->workers_count = 254;
     }
 

@@ -441,7 +441,7 @@ tunnel_t *newPipeTunnel(tunnel_t *t)
     // check for overflow
     if (memsize < (int64_t) sizeof(struct pipe_line_s))
     {
-        fprintf(stderr, "buffer size out of range");
+        printError("buffer size out of range");
         exit(1);
     }
 

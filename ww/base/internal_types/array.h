@@ -13,7 +13,7 @@
 #include <assert.h> // for assert
 #include <stddef.h> // for NULL
 #include <stdlib.h> // for malloc,realloc,free
-#include <string.h> // for memorySet,memmove
+#include <string.h> // for memorySet,memoryMove
 
 #include "eventloop_mem.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
 
@@ -109,7 +109,7 @@ static inline void atype##_add(atype* p, type* elem, int pos) {\
         atype##_double_resize(p);\
     }\
     if ((size_t)pos < p->size) {\
-        memmove(p->ptr + pos+1, p->ptr + pos, sizeof(type) * (p->size - pos));\
+        memoryMove(p->ptr + pos+1, p->ptr + pos, sizeof(type) * (p->size - pos));\
     }\
     p->ptr[pos] = *elem;\
     p->size++;\
@@ -122,7 +122,7 @@ static inline void atype##_del(atype* p, int pos) {\
     assert(pos >= 0 && (size_t)pos < p->size);\
     p->size--;\
     if ((size_t)pos < p->size) {\
-        memmove(p->ptr + pos, p->ptr + pos+1, sizeof(type) * (p->size - pos));\
+        memoryMove(p->ptr + pos, p->ptr + pos+1, sizeof(type) * (p->size - pos));\
     }\
 }\
 \

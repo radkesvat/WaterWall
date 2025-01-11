@@ -103,10 +103,10 @@ typedef union {
 #endif
 } sockaddr_u;
 
-WW_EXPORT bool isIpV4(const char* host);
-WW_EXPORT bool isIpV6(const char* host);
+WW_EXPORT bool isIPVer4(const char* host);
+WW_EXPORT bool isIPVer6(const char* host);
 WW_INLINE bool isIpAddr(const char* host) {
-    return isIpV4(host) || isIpV6(host);
+    return isIPVer4(host) || isIPVer6(host);
 }
 
 // @param host: domain or ip
@@ -287,6 +287,267 @@ WW_INLINE int socketOptionLinger(int sockfd, int timeout DEFAULT(1)) {
 #else
     return 0;
 #endif
+}
+
+
+
+static inline void sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source)
+{
+    if (source->sa.sa_family == AF_INET)
+    {
+        memcpy(&(dest->sin.sin_addr.s_addr), &(source->sin.sin_addr.s_addr), sizeof(source->sin.sin_addr.s_addr));
+        return;
+    }
+    memcpy(&(dest->sin6.sin6_addr.s6_addr), &(source->sin6.sin6_addr.s6_addr), sizeof(source->sin6.sin6_addr.s6_addr));
+}
+
+static inline bool sockAddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
+{
+    return (addr1->sin.sin_addr.s_addr == addr2->sin.sin_addr.s_addr);
+}
+
+static inline bool sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
+{
+    int r = memcmp(addr1->sin6.sin6_addr.s6_addr, addr2->sin6.sin6_addr.s6_addr, sizeof(addr1->sin6.sin6_addr.s6_addr));
+    if (r != 0)
+    {
+        return false;
+    }
+    if (addr1->sin6.sin6_flowinfo != addr2->sin6.sin6_flowinfo)
+    {
+        return false;
+    }
+    if (addr1->sin6.sin6_scope_id != addr2->sin6.sin6_scope_id)
+    {
+        return false;
+    }
+    return true;
+}
+
+static inline bool sockAddrCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
+{
+
+    if (addr1->sa.sa_family != addr2->sa.sa_family)
+    {
+        return false;
+    }
+    if (addr1->sa.sa_family == AF_INET)
+    {
+        return sockAddrCmpIPV4(addr1, addr2);
+    }
+
+    if (addr1->sa.sa_family == AF_INET6)
+    {
+        return sockAddrCmpIPV6(addr1, addr2);
+    }
+
+    assert(! "unknown sa_family");
+
+    return false;
+}
+
+static inline hash_t sockAddrCalcHashNoPort(const sockaddr_u *saddr)
+{
+    hash_t result;
+    if (saddr->sa.sa_family == AF_INET)
+    {
+        result = calcHashBytes(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in));
+    }
+    else if (saddr->sa.sa_family == AF_INET6)
+    {
+        result = calcHashBytes(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6));
+    }
+    else
+    {
+        assert(false);
+        printError("sockAddrCalcHashNoPort");
+        exit(1);
+    }
+    return result;
+}
+
+static inline hash_t sockAddrCalcHashWithPort(const sockaddr_u *saddr)
+{
+    hash_t result;
+    if (saddr->sa.sa_family == AF_INET)
+    {
+        result = calcHashBytesSeed(&(saddr->sin.sin_addr), sizeof(struct sockaddr_in), saddr->sin.sin_port);
+    }
+    else if (saddr->sa.sa_family == AF_INET6)
+    {
+        result = calcHashBytesSeed(&(saddr->sin6.sin6_addr), sizeof(struct sockaddr_in6), saddr->sin6.sin6_port);
+    }
+    else
+    {
+        assert(false);
+        printError("sockAddrCalcHashWithPort");
+        exit(1);
+    }
+    return result;
+}
+
+static inline int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask)
+{
+    char *slash;
+    char *ip_part;
+    char *subnet_part;
+    char  input_copy[strlen(input) + 1];
+    strcpy(input_copy, input);
+
+    slash = strchr(input_copy, '/');
+    if (slash == NULL)
+    {
+        printError("Invalid input format.\n");
+        return -1;
+    }
+
+    *slash      = '\0';
+    ip_part     = input_copy;
+    subnet_part = slash + 1;
+
+    if (inet_pton(AF_INET, ip_part, base_addr) == 1)
+    {
+        // IPv4 address
+        int prefix_length = atoi(subnet_part);
+        if (prefix_length < 0 || prefix_length > 32)
+        {
+            printError("Invalid subnet mask length.\n");
+            return -1;
+        }
+        uint32_t       mask      = prefix_length > 0 ? htonl(~((1 << (32 - prefix_length)) - 1)) : 0;
+        struct in_addr mask_addr = {.s_addr = mask};
+        memcpy(subnet_mask, &mask_addr, 4);
+        return 4;
+    }
+
+    if (inet_pton(AF_INET6, ip_part, base_addr) == 1)
+    {
+        // IPv6 address
+        int prefix_length = atoi(subnet_part);
+        if (prefix_length < 0 || prefix_length > 128)
+        {
+            printError("Invalid subnet mask length.\n");
+            return -1;
+        }
+
+        for (int i = 0; i < 16; i++)
+        {
+            int bits                     = prefix_length >= 8 ? 8 : prefix_length;
+            ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (0xFF << (8 - bits));
+            prefix_length -= bits;
+        }
+
+        return 6;
+    }
+
+    printError("Invalid IP address.\n");
+    return -1;
+}
+
+
+static inline bool verifyIPCdir(const char *ipc, struct logger_s *logger)
+{
+    unsigned int ipc_length = strlen(ipc);
+    char        *slash      = strchr(ipc, '/');
+    if (slash == NULL)
+    {
+        if (logger)
+        {
+            printLogger(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx",
+                         ipc);
+        }
+        return false;
+    }
+    *slash = '\0';
+    if (! isIpAddr(ipc))
+    {
+        if (logger)
+        {
+            printLogger(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: \"%s\" is not a valid ip address", ipc);
+        }
+        return false;
+    }
+
+    bool is_v4 = isIPVer4(ipc);
+    *slash     = '/';
+
+    char *subnet_part   = slash + 1;
+    int   prefix_length = atoi(subnet_part);
+
+    if (is_v4 && (prefix_length < 0 || prefix_length > 32))
+    {
+        if (logger)
+        {
+            printLogger(
+                logger, LOG_LEVEL_ERROR,
+                "verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
+                prefix_length);
+        }
+        return false;
+    }
+    if (! is_v4 && (prefix_length < 0 || prefix_length > 128))
+    {
+        if (logger)
+        {
+            printLogger(
+                logger, LOG_LEVEL_ERROR,
+                "verifyIPCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128", ipc,
+                prefix_length);
+        }
+        return false;
+    }
+    if (prefix_length > 0 && slash + 2 + (int) (log10(prefix_length)) < ipc + ipc_length)
+    {
+        if (logger)
+        {
+            printLogger(logger, LOG_LEVEL_WARN,
+                         "verifyIPCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix",
+                         ipc);
+        }
+    }
+    return true;
+}
+
+
+static inline int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr,
+                                const struct in_addr subnet_mask)
+{
+    if ((test_addr.s_addr & subnet_mask.s_addr) == (base_addr.s_addr & subnet_mask.s_addr))
+    {
+        return 1;
+    }
+    return 0;
+}
+
+static inline int checkIPRange6(const struct in6_addr test_addr, const struct in6_addr base_addr,
+                                const struct in6_addr subnet_mask)
+{
+
+    // uint64_t *test_addr_p   = (uint64_t *) &(test_addr.s6_addr[0]);
+    // uint64_t *base_addr_p   = (uint64_t *) &(base_addr.s6_addr[0]);
+    // uint64_t *subnet_mask_p = (uint64_t *) &(subnet_mask.s6_addr[0]);
+
+    // if ((base_addr_p[0] & subnet_mask_p[0]) != test_addr_p[0] || (base_addr_p[1] & subnet_mask_p[1]) !=
+    // test_addr_p[1])
+    // {
+    //     return 0;
+    // }
+    // return 1;
+
+    struct in6_addr masked_test_addr;
+    struct in6_addr masked_base_addr;
+
+    for (int i = 0; i < 16; i++)
+    {
+        masked_test_addr.s6_addr[i] = test_addr.s6_addr[i] & subnet_mask.s6_addr[i];
+        masked_base_addr.s6_addr[i] = base_addr.s6_addr[i] & subnet_mask.s6_addr[i];
+    }
+
+    if (memcmp(&masked_test_addr, &masked_base_addr, sizeof(struct in6_addr)) == 0)
+    {
+        return 1;
+    }
+    return 0;
 }
 
 

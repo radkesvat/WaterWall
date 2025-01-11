@@ -78,10 +78,10 @@ extern "C" {
 Function prototypes, memory and string functions
 ***********************************************************************/
 void * A_memcpy (void * dest, const void * src, size_t count); // Copy count bytes from src to dest
-void * A_memmove(void * dest, const void * src, size_t count); // Same as memcpy, allows overlap between src and dest
+void * A_memoryMove(void * dest, const void * src, size_t count); // Same as memcpy, allows overlap between src and dest
 void * A_memset (void * dest, int c, size_t count);            // Set count bytes in dest to (char)c
 int    A_memcmp (const void * buf1, const void * buf2, size_t num); // Compares two blocks of memory
-size_t GetMemcpyCacheLimit(void);                              // Data blocks bigger than this will be copied uncached by memcpy and memmove
+size_t GetMemcpyCacheLimit(void);                              // Data blocks bigger than this will be copied uncached by memcpy and memoryMove
 void   SetMemcpyCacheLimit(size_t);                            // Change limit in GetMemcpyCacheLimit
 size_t GetMemsetCacheLimit(void);                              // Data blocks bigger than this will be stored uncached by memset
 void   SetMemsetCacheLimit(size_t);                            // Change limit in GetMemsetCacheLimit

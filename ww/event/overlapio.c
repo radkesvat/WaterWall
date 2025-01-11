@@ -33,7 +33,7 @@ int post_acceptex(hio_t* listenio, hoverlapped_t* hovlp) {
         &dwbytes, &hovlp->ovlp) != TRUE) {
         int err = WSAGetLastError();
         if (err != ERROR_IO_PENDING) {
-            fprintf(stderr, "AcceptEx error: %d\n", err);
+            printError("AcceptEx error: %d\n", err);
             return err;
         }
     }
@@ -76,7 +76,7 @@ int post_recv(hio_t* io, hoverlapped_t* hovlp) {
     if (ret != 0) {
         int err = WSAGetLastError();
         if (err != ERROR_IO_PENDING) {
-            fprintf(stderr, "WSARecv error: %d\n", err);
+            printError("WSARecv error: %d\n", err);
             return err;
         }
     }
@@ -257,7 +257,7 @@ int hio_connect (hio_t* io) {
     localaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     localaddr.sin_port = htons(0);
     if (bind(io->fd, (struct sockaddr*)&localaddr, addrlen) < 0) {
-        perror("bind");
+        printError("bind");
         goto error;
     }
     // ConnectEx
@@ -280,7 +280,7 @@ int hio_connect (hio_t* io) {
     if (ConnectEx(io->fd, io->peeraddr, sizeof(struct sockaddr_in6), NULL, 0, &dwbytes, &hovlp->ovlp) != TRUE) {
         int err = WSAGetLastError();
         if (err != ERROR_IO_PENDING) {
-            fprintf(stderr, "AcceptEx error: %d\n", err);
+            printError("AcceptEx error: %d\n", err);
             goto error;
         }
     }
@@ -318,7 +318,7 @@ try_send:
             goto WSASend;
         }
         else {
-            perror("write");
+            printError("write");
             io->error = socket_errno();
             goto write_error;
         }
@@ -366,7 +366,7 @@ WSASend:
         if (ret != 0) {
             int err = WSAGetLastError();
             if (err != ERROR_IO_PENDING) {
-                fprintf(stderr, "WSASend error: %d\n", err);
+                printError("WSASend error: %d\n", err);
                 return ret;
             }
         }

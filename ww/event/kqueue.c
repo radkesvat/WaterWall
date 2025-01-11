@@ -145,7 +145,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
     }
     int nkqueue = kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, kqueue_ctx->events, kqueue_ctx->nchanges, tp);
     if (nkqueue < 0) {
-        perror("kevent");
+        printError("kevent");
         return nkqueue;
     }
     if (nkqueue == 0) return 0;

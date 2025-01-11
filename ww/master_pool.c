@@ -1,12 +1,12 @@
 #include "master_pool.h"
 #include "worker.h"
-#include "managers/memory_manager.h"
+
 
 static master_pool_item_t* defaultCreateHandle(struct master_pool_s *pool, void *userdata)
 {
     (void) pool;
     (void) userdata;
-    perror("MasterPool Callback is not set. this is a bug");
+    printError("MasterPool Callback is not set. this is a bug");
     exit(1);
 }
 
@@ -15,7 +15,7 @@ static void defaultDestroyHandle(struct master_pool_s *pool, master_pool_item_t 
     (void) pool;
     (void) userdata;
     (void) item;
-    perror("MasterPool Callback is not set. this is a bug");
+    printError("MasterPool Callback is not set. this is a bug");
     exit(1);
 }
 
@@ -36,7 +36,7 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
     // check for overflow
     if (memsize < (int64_t) sizeof(master_pool_t))
     {
-        fprintf(stderr, "buffer size out of range");
+        printError("buffer size out of range");
         exit(1);
     }
 

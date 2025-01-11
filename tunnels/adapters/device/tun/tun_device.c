@@ -137,7 +137,7 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
         LOGF("JSON Error: TunDevice->settings->device-name (string field) : The data was empty or invalid");
         return NULL;
     }
-    verifyIpCdir(state->ip_subnet, getNetworkLogger());
+    verifyIPCdir(state->ip_subnet, getNetworkLogger());
 
     char *slash        = strchr(state->ip_subnet, '/');
     slash[0]           = 0x0;

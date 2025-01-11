@@ -323,7 +323,7 @@ inline static bool chan_send(wchan_t* c, void* srcelemptr, bool* closed) {
     if (UNLIKELY(atomicLoadExplicit(&c->closed, memory_order_relaxed))) {
         chan_unlock(&c->lock);
         if (block) {
-            fprintf(stderr, "send on closed channel");
+            printError("send on closed channel");
             exit(1);
         }
         else {
@@ -551,7 +551,7 @@ wchan_t* chanOpen(size_t elemsize, uint32_t bufcap) {
 
     // check for overflow
     if (memsize < (int64_t)sizeof(wchan_t)) {
-        fprintf(stderr, "buffer size out of range");
+        printError("buffer size out of range");
         exit(1);
     }
 
@@ -582,7 +582,7 @@ void chanClose(wchan_t* c) {
     // dlog_chan("close: channel locked");
 
     if (atomic_exchange_explicit(&c->closed, 1, memory_order_acquire) != 0) {
-        fprintf(stderr, "close of closed channel");
+        printError("close of closed channel");
         exit(1);
     }
     atomic_thread_fence(memory_order_seq_cst);

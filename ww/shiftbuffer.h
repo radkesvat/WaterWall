@@ -247,7 +247,7 @@ static shift_buffer_t *debugBufferWontBeReused(shift_buffer_t *b)
     return nbuf;
 }
 
-#define BUFFER_WONT_BE_REUSED(x) x = debugBufferWontBeReused(x)
+#define BUFFER_WONT_BE_REUSED(x) (x = debugBufferWontBeReused(x))
 
 #else
 

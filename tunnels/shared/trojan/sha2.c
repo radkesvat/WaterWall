@@ -1002,7 +1002,7 @@ void test(const char *vector, uint8 *digest, uint32 digest_size)
     printf("H: %s\n", output);
     if (strcmp(vector, output))
     {
-        fprintf(stderr, "Test failed.\n");
+        printError("Test failed.\n");
         exit(EXIT_FAILURE);
     }
 }
@@ -1127,7 +1127,7 @@ int main(void)
     message3 = memoryAllocate(message3_len);
     if (message3 == NULL)
     {
-        fprintf(stderr, "Can't allocate memory\n");
+        printError("Can't allocate memory\n");
         return -1;
     }
     memorySet(message3, 'a', message3_len);

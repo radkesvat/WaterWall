@@ -4,7 +4,7 @@
 #include "config_file.h"
 #include "library_loader.h"
 #include "loggers/internal_logger.h"
-#include "managers/memory_manager.h"
+
 #include "node.h"
 #include "stc/common.h"
 #include "tunnel.h"

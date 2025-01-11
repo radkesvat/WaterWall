@@ -1,6 +1,6 @@
 #pragma once
+#include "wlibc.h"
 #include "wthread.h"
-#include <stddef.h>
 
 
 typedef uint8_t tid_t;

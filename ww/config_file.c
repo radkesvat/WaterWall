@@ -4,7 +4,7 @@
 #include "loggers/internal_logger.h" //NOLINT
 #include "utils/fileutils.h"
 #include "utils/jsonutils.h"
-#include "managers/memory_manager.h"
+
 #include "wmutex.h"
 #include <stddef.h>
 #include <stdlib.h>

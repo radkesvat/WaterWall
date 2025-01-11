@@ -1,10 +1,10 @@
 #pragma once
-#include "basic_types.h"
+#include "wlibc.h"
 #include "buffer_pool.h"
 #include "generic_pool.h"
 #include "hloop.h"
-#include "wsocket.h"
-#include "managers/memory_manager.h"
+#include "socket_context.h"
+
 #include "node.h"
 #include "shiftbuffer.h"
 #include "worker.h"
@@ -85,54 +85,7 @@ typedef void (*LineFlowSignal)(void *state);
 
 typedef uint32_t line_refc_t;
 
-enum domain_strategy
-{
-    kDsInvalid,
-    kDsPreferIpV4,
-    kDsPreferIpV6,
-    kDsOnlyIpV4,
-    kDsOnlyIpV6
-};
 
-enum dynamic_value_status
-{
-    kDvsEmpty = 0x0,
-    kDvsConstant,
-    kDvsFirstOption,
-};
-
-typedef struct dynamic_value_s
-{
-    enum dynamic_value_status status;
-    size_t                    value;
-    void                     *value_ptr;
-} dynamic_value_t;
-
-enum socket_address_type
-{
-    kSatIPV4       = 0X1,
-    kSatDomainName = 0X3,
-    kSatIPV6       = 0X4,
-};
-
-enum socket_address_protocol
-{
-    kSapTcp = IPPROTO_TCP,
-    kSapUdp = IPPROTO_UDP,
-};
-
-typedef struct socket_context_s
-{
-    char                        *domain;
-    sockaddr_u                   address;
-    enum socket_address_protocol address_protocol;
-    enum socket_address_type     address_type;
-    enum domain_strategy         domain_strategy;
-    unsigned int                 domain_len;
-    bool                         domain_resolved;
-    bool                         domain_constant;
-
-} socket_context_t;
 
 typedef struct pipeline_s
 {

@@ -5,7 +5,7 @@
 #endif
 #include "shiftbuffer.h"
 #include "utils/mathutils.h"
-#include "managers/memory_manager.h"
+
 #include "worker.h"
 #include <assert.h> // for assert
 #include <stdlib.h>

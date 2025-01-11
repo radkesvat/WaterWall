@@ -21,7 +21,7 @@ void memoryFree(void *ptr)
 
 #else
 
-#include "memory_manager.h"
+#include "managers/memory_manager.h"
 
 void initWLibc(void){
     initMemoryManager();
@@ -84,6 +84,7 @@ void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, si
 
 
 
+//--------------------string-------------------------------
 
 
 
@@ -128,6 +129,30 @@ char* stringReverse(char* str) {
     return str;
 }
 
+char *stringConcat(const char *s1, const char *s2)
+{
+    char *result = memoryAllocate(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
+    strcpy(result, s1);
+    strcat(result, s2);
+    return result;
+}
+
+char *stringDuplicate(const char *src)
+{
+    if (src == NULL)
+    {
+        return NULL;
+    }
+
+    size_t length = strlen(src) + 1;
+    char  *dup    = (char *) memoryAllocate(length);
+    if (dup == NULL)
+    {
+        return NULL;
+    }
+    memcpy(dup, src, length);
+    return dup;
+}
 // n = sizeof(dest_buf)
 char* stringCopyN(char* dest, const char* src, size_t n) {
     assert(dest != NULL && src != NULL);
@@ -220,6 +245,57 @@ char* stringChr(const char* s, char c, size_t n) {
     }
     return NULL;
 }
+
+
+
+//--------------------file-------------------------------
+
+char *readFile(const char *const path)
+{
+    FILE *f = fopen(path, "rb");
+
+    if (! f)
+    {
+        return NULL;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET); /* same as rewind(f); */
+
+    char  *string = memoryAllocate(fsize + 1);
+    size_t count  = fread(string, fsize, 1, f);
+    if (count == 0)
+    {
+        memoryFree(string);
+        return NULL;
+    }
+    fclose(f);
+
+    string[fsize] = 0;
+    return string;
+}
+
+bool writeFile(const char *const path, const char *data, size_t len)
+{
+    FILE *f = fopen(path, "wb");
+
+    if (! f)
+    {
+        return false;
+    }
+
+    fseek(f, 0, SEEK_SET);
+
+    if (fwrite(data, len, 1, f) != len)
+    {
+        fclose(f);
+        return false;
+    }
+    fclose(f);
+    return true;
+}
+
 
 char* stringChrDir(const char* filepath) {
     char* p = (char*)filepath;
@@ -562,3 +638,4 @@ int stringToUrl(hurl_t* stURL, const char* strURL) {
     stURL->fields[WW_URL_FRAGMENT].len = ep - sp;
     return 0;
 }
+

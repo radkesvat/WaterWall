@@ -147,7 +147,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
 {
     char *temp = NULL;
 
-    if (! getStringFromJsonObject(&(temp), rule_obj, "ip") || ! verifyIpCdir(temp, getNetworkLogger()))
+    if (! getStringFromJsonObject(&(temp), rule_obj, "ip") || ! verifyIPCdir(temp, getNetworkLogger()))
     {
         LOGF("JSON Error: Layer3IpRoutingTable->settings->rules invalid rule");
         exit(1);

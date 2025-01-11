@@ -23,7 +23,7 @@ int main(void)
 
     if (core_file_content == NULL)
     {
-        fprintf(stderr, "Waterwall version %s\nCould not read core settings file \"%s\" \n",
+        printError("Waterwall version %s\nCould not read core settings file \"%s\" \n",
                 TOSTRING(WATERWALL_VERSION), core_file_name);
         exit(1);
     }

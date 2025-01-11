@@ -7,6 +7,7 @@
 #include "wexport.h"
 #include "wplatform.h"
 #include "wtime.h"
+#include "wfrand.h"
 
 void initWLibc(void);
 
@@ -17,24 +18,31 @@ typedef struct dedicated_memory_s dedicated_memory_t;
 
 void *memoryAllocate(size_t size);
 void *memoryReAllocate(void *ptr, size_t size);
-void memoryFree(void *ptr);
-
+void  memoryFree(void *ptr);
 
 void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
-
-#define memset memorySet
+#define memset  memorySet
 #define memmove memoryMove
-#define memmove 
 
 void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, size_t n);
 
 //--------------------string-------------------------------
+
+#ifndef STRINGIFY
+#define STRINGIFY(x) #x
+#endif
+#define TOSTRING(x) STRINGIFY(x)
+
+
+
 WW_EXPORT char *stringUpperCase(char *str);
 WW_EXPORT char *stringLowerCase(char *str);
 WW_EXPORT char *stringReverse(char *str);
+char *stringDuplicate(const char *src);
+char *stringConcat(const char *s1, const char *s2);
 
 WW_EXPORT bool stringStartsWith(const char *str, const char *start);
 WW_EXPORT bool stringEndsWith(const char *str, const char *end);
@@ -61,6 +69,14 @@ WW_EXPORT char *stringChr(const char *s, char c, size_t n);
 
 #define stringChrDot(str) strrchr(str, '.')
 WW_EXPORT char *stringChrDir(const char *filepath);
+
+//--------------------file-------------------------------
+
+char *readFile(const char *path);
+bool  writeFile(const char *path, const char *data, size_t len);
+
+
+
 
 // basename
 WW_EXPORT const char *filePathBaseName(const char *filepath);
@@ -118,8 +134,8 @@ typedef struct hurl_s
 
 WW_EXPORT int stringToUrl(hurl_t *stURL, const char *strURL);
 
-WW_INLINE void wwMemCheck(void)
-{
-    printf("Memcheck => alloc:%ld free:%ld\n", eventloopAllocCount(), eventloopFreeCount());
-}
-#define WW_MEMCHECK atexit(wwMemCheck);
+
+//-------------------------prints----------------------------------
+#define printError perror
+
+

@@ -6,7 +6,7 @@
 #include "loggers/dns_logger.h"
 #include "loggers/network_logger.h"
 #include "loggers/internal_logger.h"
-#include "managers/memory_manager.h"
+
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"

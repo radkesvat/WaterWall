@@ -1,8 +1,6 @@
 #pragma once
 
 #include "tunnel.h"
-#include <stddef.h>
-#include <stdint.h>
 
 typedef struct api_result_s
 {

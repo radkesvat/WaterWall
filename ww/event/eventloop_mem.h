@@ -55,7 +55,11 @@ WW_EXPORT long eventloopFreeCount(void);
 
 
 
-
+WW_INLINE void wwMemCheck(void)
+{
+    printf("Memcheck => alloc:%ld free:%ld\n", eventloopAllocCount(), eventloopFreeCount());
+}
+#define EV_MEMCHECK atexit(wwMemCheck);
 
 
 #endif // WW_BASE_H_

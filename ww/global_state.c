@@ -63,7 +63,7 @@ void createGlobalState(const ww_construction_data_t init_data)
             GSTATE.core_logger =
                 createCoreLogger(init_data.core_logger_data.log_file_path, init_data.core_logger_data.log_console);
 
-            toUpperCase(init_data.core_logger_data.log_level);
+            stringUpperCase(init_data.core_logger_data.log_level);
             setCoreLoggerLevelByStr(init_data.core_logger_data.log_level);
         }
         if (init_data.network_logger_data.log_file_path)
@@ -71,7 +71,7 @@ void createGlobalState(const ww_construction_data_t init_data)
             GSTATE.network_logger = createNetworkLogger(init_data.network_logger_data.log_file_path,
                                                         init_data.network_logger_data.log_console);
 
-            toUpperCase(init_data.network_logger_data.log_level);
+            stringUpperCase(init_data.network_logger_data.log_level);
             setNetworkLoggerLevelByStr(init_data.network_logger_data.log_level);
 
             // libhv has a separate logger, attach it to the network logger
@@ -83,7 +83,7 @@ void createGlobalState(const ww_construction_data_t init_data)
             GSTATE.dns_logger =
                 createDnsLogger(init_data.dns_logger_data.log_file_path, init_data.dns_logger_data.log_console);
 
-            toUpperCase(init_data.dns_logger_data.log_level);
+            stringUpperCase(init_data.dns_logger_data.log_level);
             setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
         }
     }

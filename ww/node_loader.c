@@ -4,7 +4,7 @@
 #include "loggers/internal_logger.h"
 #include "utils/whash.h"
 #include "wplatform.h"
-#include "managers/memory_manager.h"
+
 #include <stdlib.h> 
 #include <string.h>
 

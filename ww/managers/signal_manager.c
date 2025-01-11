@@ -83,7 +83,7 @@ void startSignalManager(void)
     assert(state != NULL);
     if (state->started)
     {
-        perror("Error double startSignalManager()");
+        printError("Error double startSignalManager()");
         exit(1);
     }
 
@@ -93,7 +93,7 @@ void startSignalManager(void)
     {
         if (signal(SIGINT, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGINT signal handler");
+            printError("Error setting SIGINT signal handler");
             exit(1);
         }
     }
@@ -104,7 +104,7 @@ void startSignalManager(void)
     {
         if (signal(SIGQUIT, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGQUIT signal handler");
+            printError("Error setting SIGQUIT signal handler");
             exit(1);
         }
     }
@@ -112,7 +112,7 @@ void startSignalManager(void)
     {
         if (signal(SIGHUP, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGHUP signal handler");
+            printError("Error setting SIGHUP signal handler");
             exit(1);
         }
     }
@@ -123,7 +123,7 @@ void startSignalManager(void)
     {
         if (signal(SIGILL, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGILL signal handler");
+            printError("Error setting SIGILL signal handler");
             exit(1);
         }
     }
@@ -131,7 +131,7 @@ void startSignalManager(void)
     {
         if (signal(SIGFPE, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGFPE signal handler");
+            printError("Error setting SIGFPE signal handler");
             exit(1);
         }
     }
@@ -139,7 +139,7 @@ void startSignalManager(void)
     {
         if (signal(SIGABRT, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGABRT signal handler");
+            printError("Error setting SIGABRT signal handler");
             exit(1);
         }
     }
@@ -147,7 +147,7 @@ void startSignalManager(void)
     {
         if (signal(SIGSEGV, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGSEGV signal handler");
+            printError("Error setting SIGSEGV signal handler");
             exit(1);
         }
     }
@@ -155,7 +155,7 @@ void startSignalManager(void)
     {
         if (signal(SIGTERM, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGTERM signal handler");
+            printError("Error setting SIGTERM signal handler");
             exit(1);
         }
     }
@@ -166,7 +166,7 @@ void startSignalManager(void)
     {
         if (signal(SIGPIPE, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGPIPE signal handler");
+            printError("Error setting SIGPIPE signal handler");
             exit(1);
         }
     }
@@ -175,7 +175,7 @@ void startSignalManager(void)
     {
         if (signal(SIGALRM, multiplexedSignalHandler) == SIG_ERR)
         {
-            perror("Error setting SIGALRM signal handler");
+            printError("Error setting SIGALRM signal handler");
             exit(1);
         }
     }

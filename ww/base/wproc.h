@@ -34,7 +34,7 @@ static inline int procSpawn(proc_ctx_t* ctx) {
     ctx->start_time = time(NULL);
     pid_t pid = fork();
     if (pid < 0) {
-        perror("fork");
+        printError("fork");
         return -1;
     } else if (pid == 0) {
         // child process
@@ -65,5 +65,52 @@ static inline int procSpawn(proc_ctx_t* ctx) {
     return ctx->pid;
 }
 #endif
+
+
+typedef struct
+{
+    char output[2048]; // if you modify this, update the coed below (fscanf)
+    int  exit_code;
+} cmd_result_t;
+
+// blocking io
+static cmd_result_t execCmd(const char *str)
+{
+    FILE        *fp;
+    cmd_result_t result = (cmd_result_t){{0}, -1};
+    char        *buf    = &(result.output[0]);
+    /* Open the command for reading. */
+#if defined(OS_UNIX)
+    fp = popen(str, "r");
+#else
+    fp               = _popen(str, "r");
+#endif
+
+    if (fp == NULL)
+    {
+        printf("Failed to run command \"%s\"\n", str);
+        return (cmd_result_t){{0}, -1};
+    }
+
+    int read = fscanf(fp, "%2047s", buf);
+    (void) read;
+#if defined(OS_UNIX)
+    result.exit_code = pclose(fp);
+#else
+    result.exit_code = _pclose(fp);
+#endif
+
+    return result;
+    /* close */
+    // return 0 == pclose(fp);
+}
+
+static bool checkCommandAvailable(const char *app)
+{
+    char b[300];
+    sprintf(b, "command -v %299s", app);
+    cmd_result_t result = execCmd(b);
+    return (result.exit_code == 0 && strlen(result.output) > 0);
+}
 
 #endif // WW_PROC_H_

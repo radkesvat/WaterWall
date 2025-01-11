@@ -4,7 +4,7 @@
 #include "hloop.h"
 #include "wmutex.h"
 #include "worker.h"
-#include "managers/memory_manager.h"
+
 
 enum
 {
@@ -45,7 +45,7 @@ idle_table_t *newIdleTable(hloop_t *loop)
     // check for overflow
     if (memsize < (int64_t) sizeof(struct idle_table_s))
     {
-        fprintf(stderr, "buffer size out of range");
+        printError("buffer size out of range");
         exit(1);
     }
 

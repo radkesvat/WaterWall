@@ -75,7 +75,7 @@ static void nio_accept(hio_t* io) {
                 return;
             }
             else {
-                perror("accept");
+                printError("accept");
                 io->error = err;
                 goto accept_error;
             }
@@ -226,7 +226,7 @@ static void nio_read(hio_t* io) {
             return;
         }
         else {
-            // perror("read");
+            // printError("read");
             reuseBuffer(io->loop->bufpool, buf);
             io->error = err;
             goto read_error;
@@ -286,7 +286,7 @@ write:
             return;
         }
         else {
-            // perror("write");
+            // printError("write");
             io->error = err;
             goto write_error;
         }
@@ -370,7 +370,7 @@ int hio_connect(hio_t* io) {
 #else
     if (ret < 0 && socket_errno() != EINPROGRESS) {
 #endif
-        perror("connect");
+        printError("connect");
         io->error = socketERRNO();
         hio_close_async(io);
         return ret;
@@ -418,7 +418,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
                 goto enqueue;
             }
             else {
-                // perror("write");
+                // printError("write");
                 io->error = err;
                 goto write_error;
             }

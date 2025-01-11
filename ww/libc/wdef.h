@@ -207,7 +207,7 @@ ASCII:
     do {\
         void* ptr = memoryAllocate(size);\
         if (!ptr) {\
-            fprintf(stderr, "malloc failed!\n");\
+            printError("malloc failed!\n");\
             exit(-1);\
         }\
         memorySet(ptr, 0, size);\
@@ -263,7 +263,7 @@ ASCII:
 #endif
 
 #ifdef PRINT_ERROR
-#define printe(...) fprintf(stderr, __VA_ARGS__)
+#define printe(...) printError(__VA_ARGS__)
 #else
 #define printe(...)
 #endif
@@ -310,9 +310,6 @@ enum
 
     kCpuLineCacheSizeMin1 = kCpuLineCacheSize - 1
 };
-
-#define memoryCopy memcpy
-#define memoryMove memmove
 
 
 #endif // WW_DEF_H_

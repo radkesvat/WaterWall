@@ -107,7 +107,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
         if (errno == EINTR) {
             return 0;
         }
-        perror("poll");
+        printError("poll");
         return npoll;
     }
     if (npoll == 0) return 0;

@@ -1,5 +1,5 @@
 #pragma once
-#include "worker.h"
+#include "wplatform.h"
 
 /*
     Generic random implementations, to be faster or provide other features...

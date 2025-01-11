@@ -933,12 +933,12 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
         ret = sockaddrSetIpPort(&addr, host, port);
     }
     if (ret != 0) {
-        // fprintf(stderr, "unknown host: %s\n", host);
+        // printError("unknown host: %s\n", host);
         return NULL;
     }
     int sockfd = socket(addr.sa.sa_family, sock_type, 0);
     if (sockfd < 0) {
-        perror("socket");
+        printError("socket");
         return NULL;
     }
     hio_t* io = NULL;
@@ -951,13 +951,13 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
             ipV6Only(sockfd, 0);
         }
         if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0) {
-            perror("bind");
+            printError("bind");
             closesocket(sockfd);
             return NULL;
         }
         if (sock_type == SOCK_STREAM) {
             if (listen(sockfd, SOMAXCONN) < 0) {
-                perror("listen");
+                printError("listen");
                 closesocket(sockfd);
                 return NULL;
             }

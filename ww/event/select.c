@@ -135,7 +135,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
         if (WSAGetLastError() == WSAENOTSOCK) {
 #else
         if (errno == EBADF) {
-            perror("select");
+            printError("select");
 #endif
             remove_bad_fds(loop);
             return -EBADF;

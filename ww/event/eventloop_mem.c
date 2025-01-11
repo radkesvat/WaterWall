@@ -5,7 +5,7 @@
 #endif
 
 #include "watomic.h"
-#include "managers/memory_manager.h"
+
 
 #ifndef RAND_MAX
 #define RAND_MAX 2147483647
@@ -27,7 +27,7 @@ void* eventloopMalloc(size_t size) {
     atomicInc(&s_alloc_cnt);
     void* ptr = memoryAllocate(size);
     if (!ptr) {
-        fprintf(stderr, "malloc failed!\n");
+        printError("malloc failed!\n");
         exit(-1);
     }
     return ptr;
@@ -38,7 +38,7 @@ void* eventloopRealloc(void* oldptr, size_t newsize, size_t oldsize) {
     if (oldptr) atomicInc(&s_free_cnt);
     void* ptr = memoryReAllocate(oldptr, newsize);
     if (!ptr) {
-        fprintf(stderr, "realloc failed!\n");
+        printError("realloc failed!\n");
         exit(-1);
     }
     if (newsize > oldsize) {
@@ -51,7 +51,7 @@ void* eventloopCalloc(size_t nmemb, size_t size) {
     atomicInc(&s_alloc_cnt);
     void* ptr = memoryAllocate(nmemb* size);
     if (!ptr) {
-        fprintf(stderr, "calloc failed!\n");
+        printError("calloc failed!\n");
         exit(-1);
     }
     memorySet(ptr, 0,nmemb* size);
@@ -63,7 +63,7 @@ void* eventloopZalloc(size_t size) {
     atomicInc(&s_alloc_cnt);
     void* ptr = memoryAllocate(size);
     if (!ptr) {
-        fprintf(stderr, "malloc failed!\n");
+        printError("malloc failed!\n");
         exit(-1);
     }
     memorySet(ptr, 0, size);

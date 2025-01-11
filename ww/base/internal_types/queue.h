@@ -11,7 +11,7 @@
 #include <assert.h> // for assert
 #include <stddef.h> // for NULL
 #include <stdlib.h> // for malloc,realloc,free
-#include <string.h> // for memorySet,memmove
+#include <string.h> // for memorySet,memoryMove
 
 #include "eventloop_mem.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
 
@@ -85,7 +85,7 @@ static inline void qtype##_push_back(qtype* p, type* elem) {\
         qtype##_double_resize(p);\
     }\
     else if (p->_offset + p->size == p->maxsize) {\
-        memmove(p->ptr, p->ptr + p->_offset, sizeof(type) * p->size);\
+        memoryMove(p->ptr, p->ptr + p->_offset, sizeof(type) * p->size);\
         p->_offset = 0;\
     }\
     p->ptr[p->_offset + p->size] = *elem;\
