@@ -1,5 +1,5 @@
 #include "node_manager.h"
-#include "basic_types.h"
+
 #include "cJSON.h"
 #include "config_file.h"
 #include "library_loader.h"
@@ -8,7 +8,7 @@
 #include "node.h"
 #include "stc/common.h"
 #include "tunnel.h"
-#include "utils/whash.h"
+
 #include "utils/jsonutils.h"
 #include <assert.h>
 #include <stddef.h>
@@ -168,7 +168,7 @@ static void runNodes(node_manager_config_t *cfg)
 
     for (int wi = 0; wi < getWorkersCount(); wi++)
     {
-        updateBufferPooleAllocationPaddings(getWorkerBufferPool(wi), buffs_sum_lef_pad, buffs_sum_right_pad,
+        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), buffs_sum_lef_pad, buffs_sum_right_pad,
                                             buffs_sum_lef_pad, buffs_sum_right_pad);
     }
 

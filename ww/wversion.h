@@ -1,8 +1,7 @@
 #ifndef WW_VERSION_H_
 #define WW_VERSION_H_
 
-#include "wexport.h"
-#include "wdef.h"
+#include "wlibc.h"
 
 
 

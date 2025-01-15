@@ -1,7 +1,7 @@
 #pragma once
 #include "loggers/network_logger.h"
 #include "types.h"
-#include "utils/mathutils.h"
+
 
 enum
 {
@@ -53,18 +53,18 @@ static void doConnect(struct connect_arg *cg)
     self->up->upStream(self->up, newInitContext(cstate->u));
 }
 
-static void connectTimerFinished(htimer_t *timer)
+static void connectTimerFinished(wtimer_t *timer)
 {
-    doConnect(hevent_userdata(timer));
-    htimer_del(timer);
+    doConnect(weventGetUserdata(timer));
+    wtimerDelete(timer);
 }
-static void beforeConnect(hevent_t *ev)
+static void beforeConnect(wevent_t *ev)
 {
-    struct connect_arg *cg            = hevent_userdata(ev);
-    htimer_t           *connect_timer = htimer_add(getWorkerLoop(cg->tid), connectTimerFinished, cg->delay, 1);
+    struct connect_arg *cg            = weventGetUserdata(ev);
+    wtimer_t           *connect_timer = wtimerAdd(getWorkerLoop(cg->tid), connectTimerFinished, cg->delay, 1);
     if (connect_timer)
     {
-        hevent_set_userdata(connect_timer, cg);
+        weventSetUserData(connect_timer, cg);
     }
     else
     {
@@ -93,14 +93,14 @@ static void initiateConnect(tunnel_t *self, bool delay)
         }
     }
 
-    hloop_t *worker_loop = getWorkerLoop(tid);
+    wloop_t *worker_loop = getWorkerLoop(tid);
 
-    hevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
+    wevent_t            ev = {.loop = worker_loop, .cb = beforeConnect};
     struct connect_arg *cg = memoryAllocate(sizeof(struct connect_arg));
     ev.userdata            = cg;
     cg->t                  = self;
     cg->tid                = tid;
     cg->delay              = delay ? kPreconnectDelayLong : kPreconnectDelayShort;
 
-    hloop_post_event(worker_loop, &ev);
+    wloopPostEvent(worker_loop, &ev);
 }

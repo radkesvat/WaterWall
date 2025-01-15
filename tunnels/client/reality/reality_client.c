@@ -6,9 +6,9 @@
 #include "openssl_globals.h"
 #include "reality_helpers.h"
 #include "tunnel.h"
-#include "utils/whash.h"
+
 #include "utils/jsonutils.h"
-#include "utils/mathutils.h"
+
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -114,39 +114,39 @@ static void upStream(tunnel_t *self, context_t *c)
             return;
         }
         // todo (research) about encapsulation order and safety, CMAC HMAC
-        shift_buffer_t *buf = c->payload;
+        sbuf_t *buf = c->payload;
         c->payload          = NULL;
 
         const unsigned int chunk_size = (kMaxSSLChunkSize - (kSignLen + (2 * kEncryptionBlockSize) + kIVlen));
 
-        if (bufLen(buf) < chunk_size)
+        if (sbufGetBufLength(buf) < chunk_size)
         {
 
             buf = genericEncrypt(buf, cstate->cipher_context, state->context_password, getContextBufferPool(c));
             signMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
             appendTlsHeader(buf);
-            assert(bufLen(buf) % 16 == 5);
+            assert(sbufGetBufLength(buf) % 16 == 5);
             c->payload = buf;
 
             self->up->upStream(self->up, c);
         }
         else
         {
-            while (bufLen(buf) > 0 && isAlive(c->line))
+            while (sbufGetBufLength(buf) > 0 && isAlive(c->line))
             {
-                const uint16_t  remain = (uint16_t) min(bufLen(buf), chunk_size);
-                shift_buffer_t *chunk  = popBuffer(getContextBufferPool(c));
-                chunk = sliceBufferTo( chunk,buf, remain);
+                const uint16_t  remain = (uint16_t) min(sbufGetBufLength(buf), chunk_size);
+                sbuf_t *chunk  = bufferpoolPop(getContextBufferPool(c));
+                chunk = sbufSliceTo( chunk,buf, remain);
 
                 chunk = genericEncrypt(chunk, cstate->cipher_context, state->context_password, getContextBufferPool(c));
                 signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
                 appendTlsHeader(chunk);
                 context_t *cout = newContextFrom(c);
                 cout->payload   = chunk;
-                assert(bufLen(chunk) % 16 == 5);
+                assert(sbufGetBufLength(chunk) % 16 == 5);
                 self->up->upStream(self->up, cout);
             }
-            reuseBuffer(getContextBufferPool(c), buf);
+            bufferpoolResuesbuf(getContextBufferPool(c), buf);
             destroyContext(c);
         }
     }
@@ -186,24 +186,24 @@ static void upStream(tunnel_t *self, context_t *c)
             /* Did SSL request to write bytes? */
             if (status == kSslstatusWantIo)
             {
-                shift_buffer_t *buf   = popBuffer(getContextBufferPool(client_hello_ctx));
-                int             avail = (int) rCapNoPadding(buf);
-                n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                sbuf_t *buf   = bufferpoolPop(getContextBufferPool(client_hello_ctx));
+                int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
                 {
-                    setLen(buf, n);
+                    sbufSetLength(buf, n);
                     client_hello_ctx->payload = buf;
                     self->up->upStream(self->up, client_hello_ctx);
                 }
                 else if (! BIO_should_retry(cstate->rbio))
                 {
                     // If BIO_should_retry() is false then the cause is an error condition.
-                    reuseBuffer(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(client_hello_ctx), buf);
                     goto failed;
                 }
                 else
                 {
-                    reuseBuffer(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(client_hello_ctx), buf);
                 }
             }
             if (status == kSslstatusFail)
@@ -248,19 +248,19 @@ static void downStream(tunnel_t *self, context_t *c)
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
-                    bool            is_tls_applicationdata = ((uint8_t *) rawBuf(buf))[0] == kTLS12ApplicationData;
+                    sbuf_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    bool            is_tls_applicationdata = ((uint8_t *) sbufGetRawPtr(buf))[0] == kTLS12ApplicationData;
                     uint16_t        tls_ver_b;
-                    memcpy(&tls_ver_b, ((uint8_t *) rawBuf(buf)) + 1, sizeof(uint16_t));
+                    memcpy(&tls_ver_b, ((uint8_t *) sbufGetRawPtr(buf)) + 1, sizeof(uint16_t));
                     bool is_tls_33 = tls_ver_b == kTLSVersion12;
 
-                    shiftr(buf, kTLSHeaderlen);
+                    sbufShiftRight(buf, kTLSHeaderlen);
 
                     if (! verifyMessage(buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key) ||
                         ! is_tls_applicationdata || ! is_tls_33)
                     {
                         LOGE("RealityClient: verifyMessage failed");
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         goto failed;
                     }
 
@@ -282,11 +282,11 @@ static void downStream(tunnel_t *self, context_t *c)
         int            n;
         enum sslstatus status;
 
-        int len = (int) bufLen(c->payload);
+        int len = (int) sbufGetBufLength(c->payload);
 
         while (len > 0 && isAlive(c->line))
         {
-            n = BIO_write(cstate->rbio, rawBuf(c->payload), len);
+            n = BIO_write(cstate->rbio, sbufGetRawPtr(c->payload), len);
 
             if (n <= 0)
             {
@@ -295,7 +295,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 goto failed;
             }
 
-            shiftr(c->payload, n);
+            sbufShiftRight(c->payload, n);
             len -= n;
 
             if (! cstate->handshake_completed)
@@ -311,13 +311,13 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     do
                     {
-                        shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        int             avail = (int) rCapNoPadding(buf);
-                        n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                        sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                        int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                        n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
 
                         if (n > 0)
                         {
-                            setLen(buf, n);
+                            sbufSetLength(buf, n);
                             context_t *req_cont = newContextFrom(c);
                             req_cont->payload   = buf;
                             self->up->upStream(self->up, req_cont);
@@ -332,12 +332,12 @@ static void downStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextPayload(c);
-                            reuseBuffer(getContextBufferPool(c), buf);
+                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
                             goto failed;
                         }
                         else
                         {
-                            reuseBuffer(getContextBufferPool(c), buf);
+                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -350,12 +350,12 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
 
                 /* Did SSL request to write bytes? */
-                shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                int             avail = (int) rCapNoPadding(buf);
-                n                     = BIO_read(cstate->wbio, rawBufMut(buf), avail);
+                sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
                 {
-                    setLen(buf, n);
+                    sbufSetLength(buf, n);
                     context_t *data_ctx = newContext(c->line);
                     data_ctx->payload   = buf;
                     self->up->upStream(self->up, data_ctx);
@@ -368,7 +368,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    reuseBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
                 }
 
                 if (SSL_is_init_finished(cstate->ssl))

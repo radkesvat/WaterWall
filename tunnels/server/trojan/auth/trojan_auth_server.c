@@ -47,15 +47,15 @@ static struct timer_eventdata *newTimerData(tunnel_t *self, context_t *c)
     return result;
 }
 
-static void onFallbackTimer(htimer_t *timer)
+static void onFallbackTimer(wtimer_t *timer)
 {
-    struct timer_eventdata     *data  = hevent_userdata(timer);
+    struct timer_eventdata     *data  = weventGetUserdata(timer);
     tunnel_t                   *self  = data->self;
     trojan_auth_server_state_t *state = TSTATE(self);
     context_t                  *c     = data->c;
 
     memoryFree(data);
-    htimer_del(timer);
+    wtimerDelete(timer);
 
     if (! isAlive(c->line))
     {
@@ -92,7 +92,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 // but the client is not supposed to send small segments)
                 // so , if its incomplete we go to fallback!
                 // this is also mentioned in standard trojan docs (first packet also contains part of final payload)
-                size_t len = bufLen(c->payload);
+                size_t len = sbufGetBufLength(c->payload);
                 if (len < (sizeof(sha224_hex_t) + kCRLFLen))
                 {
                     // invalid protocol
@@ -100,14 +100,14 @@ static void upStream(tunnel_t *self, context_t *c)
                     goto failed;
                 }
 
-                if (((unsigned char *) rawBuf(c->payload))[sizeof(sha224_hex_t)] != '\r' ||
-                    ((unsigned char *) rawBuf(c->payload))[sizeof(sha224_hex_t) + 1] != '\n')
+                if (((unsigned char *) sbufGetRawPtr(c->payload))[sizeof(sha224_hex_t)] != '\r' ||
+                    ((unsigned char *) sbufGetRawPtr(c->payload))[sizeof(sha224_hex_t) + 1] != '\n')
                 {
                     LOGW("TrojanAuthServer: detected non trojan protocol, rejected");
                     goto failed;
                 }
 
-                hash_t kh = calcHashBytes(rawBuf(c->payload), sizeof(sha224_hex_t));
+                hash_t kh = calcHashBytes(sbufGetRawPtr(c->payload), sizeof(sha224_hex_t));
 
                 hmap_users_t_iter find_result = hmap_users_t_find(&(state->users), kh);
                 if (find_result.ref == hmap_users_t_end(&(state->users)).ref)
@@ -136,7 +136,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     return;
                 }
 
-                shiftr(c->payload, sizeof(sha224_hex_t) + kCRLFLen);
+                sbufShiftRight(c->payload, sizeof(sha224_hex_t) + kCRLFLen);
                 self->up->upStream(self->up, c);
             }
             // gettimeofday(&tv2, NULL);
@@ -214,8 +214,8 @@ fallback:
     }
     else
     {
-        htimer_t *t = htimer_add(getLineLoop(c->line), onFallbackTimer, state->fallback_delay, 1);
-        hevent_set_userdata(t, newTimerData(self, c));
+        wtimer_t *t = wtimerAdd(getLineLoop(c->line), onFallbackTimer, state->fallback_delay, 1);
+        weventSetUserData(t, newTimerData(self, c));
     }
 }
 

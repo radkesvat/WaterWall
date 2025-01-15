@@ -1,23 +1,16 @@
 
 
 add_library(ww STATIC
-                  ww.c
-                  tunnel.c
-                  shiftbuffer.c
-                  library_loader.c
-                  context_queue.c
-                  buffer_stream.c
-                  config_file.c
-                  buffer_pool.c
-                  generic_pool.c
-                  master_pool.c
-                  http_def.c
-                  cacert.c
-                  sync_dns.c
-                  idle_table.c
-                  frand.c
-                  pipe_line.c
-                  utils/utils.c
+                  libc/wibc.c
+                  libc/wtime.c
+                  libc/werr.c
+                  libc/wfrand.c
+                  instance/global_state.c
+                  instance/worker.c
+                  instance/wversion.c
+                  event/ev_memory.c
+                  event/hevent.c
+              
                   managers/signal_manager.c
                   managers/socket_manager.c
                   managers/node_manager.c
@@ -30,6 +23,7 @@ add_library(ww STATIC
                   loggers/core_logger.c
                   loggers/network_logger.c
                   loggers/dns_logger.c
+                  loggers/internal_logger.c
 
 )
 
@@ -42,7 +36,14 @@ endif()
 
 
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/base)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/bufio)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/event)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/instance)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libc)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor)
+
+
 
 # add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)

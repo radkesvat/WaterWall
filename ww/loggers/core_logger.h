@@ -1,5 +1,7 @@
 #pragma once
 
+#include "wlibc.h"
+
 #if (defined(WW_LOG_H_) || defined(wlog)) && ! defined(LOGGER_CHOSEN)
 #error "CoreLogger must be included before wlog.h"
 #elif defined(LOGGER_CHOSEN)
@@ -10,7 +12,6 @@
 #define wlog          getCoreLogger() // NOLINT
 
 #endif
-#include <stdbool.h>
 
 struct logger_s;
 typedef struct logger_s logger_t;
@@ -23,7 +24,7 @@ logger_t *createCoreLogger(const char *log_file, bool console);
 
 static inline void setCoreLoggerLevelByStr(const char *log_level)
 {
-    setLoggerLevelByStr(getCoreLogger(), log_level);
+    loggerSetLevelByString(getCoreLogger(), log_level);
 }
 
 logger_handler getCoreLoggerHandle(void);

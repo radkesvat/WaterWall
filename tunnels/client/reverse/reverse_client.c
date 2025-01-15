@@ -1,11 +1,11 @@
 #include "reverse_client.h"
 #include "helpers.h"
-#include "idle_table.h"
+#include "widle_table.h"
 #include "loggers/network_logger.h"
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
-#include "utils/mathutils.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -67,7 +67,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (ucstate->idle_handle)
             {
                 ucstate->idle_handle          = NULL;
-                removeIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t)(size_t) (ucstate));
+                idleTableRemoveIdleItemByHash(ucstate->u->tid, state->starved_connections, (hash_t)(size_t) (ucstate));
             }
 
             ucstate->pair_connected = true;
@@ -132,7 +132,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
             initiateConnect(self, tid, false);
 
-            ucstate->idle_handle = newIdleItem(state->starved_connections, (hash_t) (size_t)(ucstate), ucstate,
+            ucstate->idle_handle = idleItemNew(state->starved_connections, (hash_t) (size_t)(ucstate), ucstate,
                                                onStarvedConnectionExpire, c->line->tid,
                                                kConnectionStarvationTimeOut);
 
@@ -146,15 +146,15 @@ static void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-static void startReverseClient(htimer_t *timer)
+static void startReverseClient(wtimer_t *timer)
 {
-    tunnel_t *self = hevent_userdata(timer);
+    tunnel_t *self = weventGetUserdata(timer);
     for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
         initiateConnect(self, i, true);
     }
 
-    htimer_del(timer);
+    wtimerDelete(timer);
 }
 
 tunnel_t *newReverseClient(node_instance_context_t *instance_info)
@@ -170,14 +170,14 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
 
     state->min_unused_cons = min(max((getWorkersCount() * (ssize_t) 8), state->min_unused_cons), 128);
     
-    state->starved_connections = newIdleTable(getWorkerLoop(0));
+    state->starved_connections = idleTableCreate(getWorkerLoop(0));
 
     tunnel_t *t           = newTunnel();
     t->state              = state;
     t->upStream           = &upStream;
     t->downStream         = &downStream;
-    htimer_t *start_timer = htimer_add(getWorkerLoop(0), startReverseClient, start_delay_ms, 1);
-    hevent_set_userdata(start_timer, t);
+    wtimer_t *start_timer = wtimerAdd(getWorkerLoop(0), startReverseClient, start_delay_ms, 1);
+    weventSetUserData(start_timer, t);
 
     return t;
 }

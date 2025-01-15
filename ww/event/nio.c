@@ -1,71 +1,71 @@
 #include "iowatcher.h"
 #include "worker.h"
 #ifndef EVENT_IOCP
-#include "hevent.h"
+#include "wevent.h"
 #include "wsocket.h"
 #include "wlog.h"
 #include "werr.h"
 #include "wthread.h"
 
-static void __connect_timeout_cb(htimer_t* timer) {
-    hio_t* io = (hio_t*)timer->privdata;
+static void __connect_timeout_cb(wtimer_t* timer) {
+    wio_t* io = (wio_t*)timer->privdata;
     if (io) {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
         wlogw("connect timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr), SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;
-        hio_close(io);
+        wioClose(io);
     }
 }
 
-static void __close_timeout_cb(htimer_t* timer) {
-    hio_t* io = (hio_t*)timer->privdata;
+static void __close_timeout_cb(wtimer_t* timer) {
+    wio_t* io = (wio_t*)timer->privdata;
     if (io) {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
         wlogw("close timeout [%s] <=> [%s]", SOCKADDR_STR(io->localaddr, localaddrstr), SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;
-        hio_close(io);
+        wioClose(io);
     }
 }
 
-static void __accept_cb(hio_t* io) {
-    hio_accept_cb(io);
+static void __accept_cb(wio_t* io) {
+    wioAcceptCallBack(io);
 }
 
-static void __connect_cb(hio_t* io) {
-    hio_del_connect_timer(io);
-    hio_connect_cb(io);
+static void __connect_cb(wio_t* io) {
+    wioDelConnectTimer(io);
+    wioConnectCallBack(io);
 }
 
-static void __read_cb(hio_t* io, shift_buffer_t* buf) {
+static void __read_cb(wio_t* io, sbuf_t* buf) {
     // printd("> %.*s\n", readbytes, buf);
     io->last_read_hrtime = io->loop->cur_hrtime;
-    hio_handle_read(io, buf);
+    wioHandleRead(io, buf);
 }
 
-static void __write_cb(hio_t* io) {
+static void __write_cb(wio_t* io) {
     // printd("< %.*s\n", writebytes, buf);
     io->last_write_hrtime = io->loop->cur_hrtime;
-    hio_write_cb(io);
+    wioWriteCallBack(io);
 }
 
-static void __close_cb(hio_t* io) {
+static void __close_cb(wio_t* io) {
     // printd("close fd=%d\n", io->fd);
-    hio_del_connect_timer(io);
-    hio_del_close_timer(io);
-    hio_del_read_timer(io);
-    hio_del_write_timer(io);
-    hio_del_keepalive_timer(io);
-    hio_del_heartbeat_timer(io);
-    hio_close_cb(io);
+    wioDelConnectTimer(io);
+    wioDelCloseTimer(io);
+    wioDelReadTimer(io);
+    wioDelWriteTimer(io);
+    wioDelKeepaliveTimer(io);
+    wioDelHeartBeatTimer(io);
+    wioCloseCallBack(io);
 }
 
-static void nio_accept(hio_t* io) {
+static void nio_accept(wio_t* io) {
     // printd("nio_accept listenfd=%d\n", io->fd);
     int connfd = 0, err = 0, accept_cnt = 0;
     socklen_t addrlen;
-    hio_t* connio = NULL;
+    wio_t* connio = NULL;
     while (accept_cnt++ < 3) {
         addrlen = sizeof(sockaddr_u);
         connfd = accept(io->fd, io->peeraddr, &addrlen);
@@ -82,7 +82,7 @@ static void nio_accept(hio_t* io) {
         }
         addrlen = sizeof(sockaddr_u);
         getsockname(connfd, io->localaddr, &addrlen);
-        connio = hio_get(io->loop, connfd);
+        connio = wioGet(io->loop, connfd);
         // NOTE: inherit from listenio
         connio->accept_cb = io->accept_cb;
         connio->userdata = io->userdata;
@@ -94,10 +94,10 @@ static void nio_accept(hio_t* io) {
 accept_error:
     wloge("listenfd=%d accept error: %s:%d", io->fd, socketStrError(io->error), io->error);
     // NOTE: Don't close listen fd automatically anyway.
-    // hio_close(io);
+    // wioClose(io);
 }
 
-static void nio_connect(hio_t* io) {
+static void nio_connect(wio_t* io) {
     // printd("nio_connect connfd=%d\n", io->fd);
     socklen_t addrlen = sizeof(sockaddr_u);
     int ret = getpeername(io->fd, io->peeraddr, &addrlen);
@@ -116,31 +116,31 @@ static void nio_connect(hio_t* io) {
 
 connect_error:
     wlogw("connfd=%d connect error: %s:%d", io->fd, socketStrError(io->error), io->error);
-    hio_close(io);
+    wioClose(io);
 }
 
-static void nio_connect_event_cb(hevent_t* ev) {
-    hio_t* io = (hio_t*)ev->userdata;
+static void nio_connect_event_cb(wevent_t* ev) {
+    wio_t* io = (wio_t*)ev->userdata;
     uint32_t id = (uintptr_t)ev->privdata;
     if (io->id != id) return;
     nio_connect(io);
 }
 
-static int nio_connect_async(hio_t* io) {
-    hevent_t ev;
+static int nio_connect_async(wio_t* io) {
+    wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.cb = nio_connect_event_cb;
     ev.userdata = io;
     ev.privdata = (void*)(uintptr_t)io->id;
-    hloop_post_event(io->loop, &ev);
+    wloopPostEvent(io->loop, &ev);
     return 0;
 }
 
-static int __nio_read(hio_t* io, void* buf, int len) {
+static int __nio_read(wio_t* io, void* buf, int len) {
     int nread = 0;
     switch (io->io_type) {
 
-    case HIO_TYPE_TCP:
+    case WIO_TYPE_TCP:
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w){
         //             nread = splice(io->fd, NULL,io->pfd_w,0, len, SPLICE_F_NONBLOCK);
@@ -148,8 +148,8 @@ static int __nio_read(hio_t* io, void* buf, int len) {
         // #endif
         nread = recv(io->fd, buf, len, 0);
         break;
-    case HIO_TYPE_UDP:
-    case HIO_TYPE_IP: {
+    case WIO_TYPE_UDP:
+    case WIO_TYPE_IP: {
         socklen_t addrlen = sizeof(sockaddr_u);
         nread = recvfrom(io->fd, buf, len, 0, io->peeraddr, &addrlen);
     } break;
@@ -159,10 +159,10 @@ static int __nio_read(hio_t* io, void* buf, int len) {
     return nread;
 }
 
-static int __nio_write(hio_t* io, const void* buf, int len) {
+static int __nio_write(wio_t* io, const void* buf, int len) {
     int nwrite = 0;
     switch (io->io_type) {
-    case HIO_TYPE_TCP: {
+    case WIO_TYPE_TCP: {
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //     if(io->pfd_r){
         //         nwrite = splice(io->pfd_r, NULL,io->fd,0, len, SPLICE_F_NONBLOCK);
@@ -175,15 +175,15 @@ static int __nio_write(hio_t* io, const void* buf, int len) {
 #endif
         nwrite = send(io->fd, buf, len, flag);
     } break;
-    case HIO_TYPE_UDP:
-    case HIO_TYPE_IP: nwrite = sendto(io->fd, buf, len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr)); break;
+    case WIO_TYPE_UDP:
+    case WIO_TYPE_IP: nwrite = sendto(io->fd, buf, len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr)); break;
     default: nwrite = write(io->fd, buf, len); break;
     }
     // wlogd("write retval=%d", nwrite);
     return nwrite;
 }
 
-static void nio_read(hio_t* io) {
+static void nio_read(wio_t* io) {
     // printd("nio_read fd=%d\n", io->fd);
     int nread = 0, err = 0;
     //  read:;
@@ -193,16 +193,16 @@ static void nio_read(hio_t* io) {
     //         len = (1U << 20); // 1 MB
     //     }else
     // #endif
-    shift_buffer_t* buf;
+    sbuf_t* buf;
 
     switch (io->io_type) {
     default:
-    case HIO_TYPE_TCP: buf = popBuffer(io->loop->bufpool); break;
-    case HIO_TYPE_UDP:
-    case HIO_TYPE_IP: buf = popSmallBuffer(io->loop->bufpool); break;
+    case WIO_TYPE_TCP: buf = bufferpoolPop(io->loop->bufpool); break;
+    case WIO_TYPE_UDP:
+    case WIO_TYPE_IP: buf = bufferpoolPopSmall(io->loop->bufpool); break;
     }
 
-    unsigned int available = rCapNoPadding(buf);
+    unsigned int available = sbufGetRightCapacityNoPadding(buf);
     assert(available >= 1024);
 
     if (available > (1U << 15)) {
@@ -210,30 +210,30 @@ static void nio_read(hio_t* io) {
     }
   
   
-    nread = __nio_read(io, rawBufMut(buf), available);
+    nread = __nio_read(io, sbufGetMutablePtr(buf), available);
 
     // printd("read retval=%d\n", nread);
     if (nread < 0) {
         err = socketERRNO();
         if (err == EAGAIN || err == EINTR) {
             // goto read_done;
-            reuseBuffer(io->loop->bufpool, buf);
+            bufferpoolResuesbuf(io->loop->bufpool, buf);
             return;
         }
         else if (err == EMSGSIZE) {
             // ignore
-            reuseBuffer(io->loop->bufpool, buf);
+            bufferpoolResuesbuf(io->loop->bufpool, buf);
             return;
         }
         else {
             // printError("read");
-            reuseBuffer(io->loop->bufpool, buf);
+            bufferpoolResuesbuf(io->loop->bufpool, buf);
             io->error = err;
             goto read_error;
         }
     }
     if (nread == 0) {
-        reuseBuffer(io->loop->bufpool, buf);
+        bufferpoolResuesbuf(io->loop->bufpool, buf);
         goto disconnect;
     }
     // printf("%d \n",nread);
@@ -250,18 +250,18 @@ static void nio_read(hio_t* io) {
     // }
     // #endif
 
-    setLen(buf, nread);
+    sbufSetLength(buf, nread);
     __read_cb(io, buf);
     // user consumed buffer
     return;
 read_error:
 disconnect:
-    if (io->io_type & HIO_TYPE_SOCK_STREAM) {
-        hio_close(io);
+    if (io->io_type & WIO_TYPE_SOCK_STREAM) {
+        wioClose(io);
     }
 }
 
-static void nio_write(hio_t* io) {
+static void nio_write(wio_t* io) {
     // printd("nio_write fd=%d\n", io->fd);
     int nwrite = 0, err = 0;
     //
@@ -270,14 +270,14 @@ write:
 
         if (io->close) {
             io->close = 0;
-            hio_close(io);
+            wioClose(io);
         }
         return;
     }
-    shift_buffer_t* buf = *write_queue_front(&io->write_queue);
-    int len = (int)bufLen(buf);
+    sbuf_t* buf = *write_queue_front(&io->write_queue);
+    int len = (int)sbufGetBufLength(buf);
     // char* base = pbuf->base;
-    nwrite = __nio_write(io, rawBufMut(buf), len);
+    nwrite = __nio_write(io, sbufGetMutablePtr(buf), len);
     // printd("write retval=%d\n", nwrite);
     if (nwrite < 0) {
         err = socketERRNO();
@@ -294,7 +294,7 @@ write:
     if (nwrite == 0) {
         goto disconnect;
     }
-    shiftr(buf, nwrite);
+    sbufShiftRight(buf, nwrite);
     io->write_bufsize -= nwrite;
     if (nwrite == len) {
         // NOTE: after write_cb, pbuf maybe invalid.
@@ -303,7 +303,7 @@ write:
         //     if(io->pfd_w == 0)
         //         EVENTLOOP_FREE(base);
         // #else
-        reuseBuffer(io->loop->bufpool, buf);
+        bufferpoolResuesbuf(io->loop->bufpool, buf);
         // #endif
         write_queue_pop_front(&io->write_queue);
         __write_cb(io);
@@ -321,12 +321,12 @@ write:
 write_error:
 disconnect:
 
-    if (io->io_type & HIO_TYPE_SOCK_STREAM) {
-        hio_close(io);
+    if (io->io_type & WIO_TYPE_SOCK_STREAM) {
+        wioClose(io);
     }
 }
 
-static void hio_handle_events(hio_t* io) {
+static void wio_handle_events(wio_t* io) {
     if ((io->events & WW_READ) && (io->revents & WW_READ)) {
         if (io->accept) {
             nio_accept(io);
@@ -340,7 +340,7 @@ static void hio_handle_events(hio_t* io) {
         // NOTE: del WW_WRITE, if write_queue empty
         //
         if (write_queue_empty(&io->write_queue)) {
-            hio_del(io, WW_WRITE);
+            wioDel(io, WW_WRITE);
         }
 
         if (io->connect) {
@@ -358,12 +358,12 @@ static void hio_handle_events(hio_t* io) {
     io->revents = 0;
 }
 
-int hio_accept(hio_t* io) {
+int wioAccept(wio_t* io) {
     io->accept = 1;
-    return hio_add(io, hio_handle_events, WW_READ);
+    return wioAdd(io, wio_handle_events, WW_READ);
 }
 
-int hio_connect(hio_t* io) {
+int wioConnect(wio_t* io) {
     int ret = connect(io->fd, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
 #ifdef OS_WIN
     if (ret < 0 && socketERRNO() != WSAEWOULDBLOCK) {
@@ -372,7 +372,7 @@ int hio_connect(hio_t* io) {
 #endif
         printError("connect");
         io->error = socketERRNO();
-        hio_close_async(io);
+        wioCloseAsync(io);
         return ret;
     }
     if (ret == 0) {
@@ -380,35 +380,35 @@ int hio_connect(hio_t* io) {
         nio_connect_async(io);
         return 0;
     }
-    int timeout = io->connect_timeout ? io->connect_timeout : HIO_DEFAULT_CONNECT_TIMEOUT;
-    io->connect_timer = htimer_add(io->loop, __connect_timeout_cb, timeout, 1);
+    int timeout = io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT;
+    io->connect_timer = wtimerAdd(io->loop, __connect_timeout_cb, timeout, 1);
     io->connect_timer->privdata = io;
     io->connect = 1;
-    return hio_add(io, hio_handle_events, WW_WRITE);
+    return wioAdd(io, wio_handle_events, WW_WRITE);
 }
 
-int hio_read(hio_t* io) {
+int wioRead(wio_t* io) {
     if (io->closed) {
-        wloge("hio_read called but fd[%d] already closed!", io->fd);
+        wloge("wioRead called but fd[%d] already closed!", io->fd);
         return -1;
     }
-    hio_add(io, hio_handle_events, WW_READ);
+    wioAdd(io, wio_handle_events, WW_READ);
 
     return 0;
 }
 
-int hio_write(hio_t* io, shift_buffer_t* buf) {
+int wioWrite(wio_t* io, sbuf_t* buf) {
     if (io->closed) {
-        wloge("hio_write called but fd[%d] already closed!", io->fd);
-        reuseBuffer(io->loop->bufpool, buf);
+        wloge("wioWrite called but fd[%d] already closed!", io->fd);
+        bufferpoolResuesbuf(io->loop->bufpool, buf);
         return -1;
     }
     int nwrite = 0, err = 0;
     //
-    int len = (int)bufLen(buf);
+    int len = (int)sbufGetBufLength(buf);
     if (write_queue_empty(&io->write_queue)) {
         //    try_write:
-        nwrite = __nio_write(io, rawBufMut(buf), len);
+        nwrite = __nio_write(io, sbufGetMutablePtr(buf), len);
         // printd("write retval=%d\n", nwrite);
         if (nwrite < 0) {
             err = socketERRNO();
@@ -430,7 +430,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
             goto write_done;
         }
     enqueue:
-        hio_add(io, hio_handle_events, WW_WRITE);
+        wioAdd(io, wio_handle_events, WW_WRITE);
     }
 
     if (nwrite < len) {
@@ -439,7 +439,7 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
             io->error = ERR_OVER_LIMIT;
             goto write_error;
         }
-        shiftr(buf, nwrite);
+        sbufShiftRight(buf, nwrite);
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w != 0){
         //             remain.base = 0X0; // skips memoryFree()
@@ -461,9 +461,9 @@ int hio_write(hio_t* io, shift_buffer_t* buf) {
             write_queue_init(&io->write_queue, 4);
         }
         write_queue_push_back(&io->write_queue, &buf);
-        io->write_bufsize += bufLen(buf);
+        io->write_bufsize += sbufGetBufLength(buf);
         if (io->write_bufsize > WRITE_BUFSIZE_HIGH_WATER) {
-            wlogw("write len=%u enqueue %u, bufsize=%u over high water %u", (unsigned int)len, (unsigned int)(bufLen(buf)), (unsigned int)io->write_bufsize,
+            wlogw("write len=%u enqueue %u, bufsize=%u over high water %u", (unsigned int)len, (unsigned int)(sbufGetBufLength(buf)), (unsigned int)io->write_bufsize,
                   (unsigned int)WRITE_BUFSIZE_HIGH_WATER);
         }
     }
@@ -472,7 +472,7 @@ write_done:
 
     if (nwrite > 0) {
         if (nwrite == len) {
-            reuseBuffer(io->loop->bufpool, buf);
+            bufferpoolResuesbuf(io->loop->bufpool, buf);
         }
         __write_cb(io);
     }
@@ -481,23 +481,23 @@ write_error:
 disconnect:
 
     /* NOTE:
-     * We usually free resources in hclose_cb,
-     * if hio_close_sync, we have to be very careful to avoid using freed resources.
-     * But if hio_close_async, we do not have to worry about this.
+     * We usually free resources in wclose_cb,
+     * if wio_close_sync, we have to be very careful to avoid using freed resources.
+     * But if wioCloseAsync, we do not have to worry about this.
      */
-    reuseBuffer(io->loop->bufpool, buf);
-    if (io->io_type & HIO_TYPE_SOCK_STREAM) {
-        hio_close_async(io);
+    bufferpoolResuesbuf(io->loop->bufpool, buf);
+    if (io->io_type & WIO_TYPE_SOCK_STREAM) {
+        wioCloseAsync(io);
     }
     return nwrite < 0 ? nwrite : -1;
 }
 
 // This must only be called from the same thread that created the loop
-int hio_close(hio_t* io) {
+int wioClose(wio_t* io) {
     if (io->closed) return 0;
 
     // if (io->destroy == 0 && getTID() != io->loop->tid) {
-    //     return hio_close_async(io); /*  tid lost its meaning, its now ww tid */
+    //     return wioCloseAsync(io); /*  tid lost its meaning, its now ww tid */
     // }
 
     if (io->closed) {
@@ -508,17 +508,17 @@ int hio_close(hio_t* io) {
         io->close = 1;
 
         wlogd("write_queue not empty, close later.");
-        int timeout_ms = io->close_timeout ? io->close_timeout : HIO_DEFAULT_CLOSE_TIMEOUT;
-        io->close_timer = htimer_add(io->loop, __close_timeout_cb, timeout_ms, 1);
+        int timeout_ms = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
+        io->close_timer = wtimerAdd(io->loop, __close_timeout_cb, timeout_ms, 1);
         io->close_timer->privdata = io;
         return 0;
     }
     io->closed = 1;
 
-    hio_done(io);
+    wioDone(io);
     __close_cb(io);
     // SAFE_FREE(io->hostname);
-    if (io->io_type & HIO_TYPE_SOCKET) {
+    if (io->io_type & WIO_TYPE_SOCKET) {
         closesocket(io->fd);
     }
     return 0;

@@ -4,7 +4,7 @@
 #include "managers/signal_manager.h"
 #include "packet_types.h"
 #include "utils/jsonutils.h"
-#include "utils/procutils.h"
+
 #include "ww/devices/capture/capture.h"
 
 #define LOG_PACKET_INFO 0
@@ -114,17 +114,17 @@ static void downStream(tunnel_t *self, context_t *c)
     destroyContext(c);
 }
 
-static void onIPPacketReceived(struct capture_device_s *cdev, void *userdata, shift_buffer_t *buf, tid_t tid)
+static void onIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, tid_t tid)
 {
     (void) cdev;
     tunnel_t               *self  = userdata;
     capture_device_state_t *state = TSTATE((tunnel_t *) self);
 
 #if LOG_PACKET_INFO
-    printIPPacketInfo(rawBuf(buf), bufLen(buf));
+    printIPPacketInfo(sbufGetRawPtr(buf), sbufGetBufLength(buf));
 #endif
 
-    // reuseBuffer(getWorkerBufferPool(tid), buf);
+    // bufferpoolResuesbuf(getWorkerBufferPool(tid), buf);
 
     context_t *ctx = newContext(state->thread_lines[tid]);
     ctx->payload   = buf;
@@ -191,7 +191,7 @@ tunnel_t *newCaptureDevice(node_instance_context_t *instance_info)
 
             state->exitcmd = cmdbuf;
             snprintf(cmdbuf, 100, ip_tables_disable_queue_mi, state->ip, (int) state->queue_number);
-            registerAtExitCallback(exitHook, t);
+            registerAtExitCallBack(exitHook, t);
         }
         else
         {

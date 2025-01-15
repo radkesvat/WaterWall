@@ -1,5 +1,5 @@
 #include "wmutex.h"
-#include "wplatform.h"
+#include "wlibc.h"
 
 // This implementation is based on of Jeff Preshing's "lightweight semaphore"
 // https://github.com/preshing/cpp11-on-multicore/blob/master/common/sema.h
@@ -212,7 +212,7 @@ static bool SemaSignal(wsem_t* sp, uint32_t count) {
 //
 #define LSEMA_MAX_SPINS 10000
 
-static bool _waitLightWeightSemaPhorePartialSpin(wlsem_t* s, uint64_t timeout_usecs) {
+static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t* s, uint64_t timeout_usecs) {
     long oldCount;
     int spin = LSEMA_MAX_SPINS;
     while (--spin >= 0) {
@@ -244,20 +244,20 @@ static bool _waitLightWeightSemaPhorePartialSpin(wlsem_t* s, uint64_t timeout_us
     }
 }
 
-bool initLightWeightSemaPhore(wlsem_t* s, uint32_t initcount) {
+bool leightweightsemaphoreInit(wlsem_t* s, uint32_t initcount) {
     s->count = (initcount);
     return SemaInit(&s->sema, initcount);
 }
 
-void destroyLightWeightSemaPhore(wlsem_t* s) {
+void leightweightsemaphoreDestroy(wlsem_t* s) {
     SemaDispose(&s->sema);
 }
 
-bool waitLightWeightSemaPhore(wlsem_t* s) {
-    return tryWaitLightWeightSemaPhore(s) || _waitLightWeightSemaPhorePartialSpin(s, 0);
+bool leightweightsemaphoreWait(wlsem_t* s) {
+    return leightweightsemaphoreTryWait(s) || _leightweightsemaphoreWaitPartialSpin(s, 0);
 }
 
-bool tryWaitLightWeightSemaPhore(wlsem_t* s) {
+bool leightweightsemaphoreTryWait(wlsem_t* s) {
     long oldCount = atomicLoadExplicit(&s->count, memory_order_relaxed);
 
     while (oldCount > 0) {
@@ -268,11 +268,11 @@ bool tryWaitLightWeightSemaPhore(wlsem_t* s) {
     return false;
 }
 
-bool timedWaitLightWeightSemaPhore(wlsem_t* s, uint64_t timeout_usecs) {
-    return tryWaitLightWeightSemaPhore(s) || _waitLightWeightSemaPhorePartialSpin(s, timeout_usecs);
+bool leightweightsemaphoreTimedWait(wlsem_t* s, uint64_t timeout_usecs) {
+    return leightweightsemaphoreTryWait(s) || _leightweightsemaphoreWaitPartialSpin(s, timeout_usecs);
 }
 
-void signalLightWeightSemaPhore(wlsem_t* s, uint32_t count) {
+void leightweightsemaphoreSignal(wlsem_t* s, uint32_t count) {
     assert(count > 0);
 
     long oldCount = atomicAddExplicit(&s->count, (long)count, memory_order_release);
@@ -280,7 +280,7 @@ void signalLightWeightSemaPhore(wlsem_t* s, uint32_t count) {
     if (toRelease > 0) SemaSignal(&s->sema, (uint32_t)toRelease);
 }
 
-size_t approxAvailLeightWaitSemaPhore(wlsem_t* s) {
+size_t leightweightsemaphoreApproxAvail(wlsem_t* s) {
 
 #ifdef OS_UNIX
     ssize_t count = atomicLoadExplicit(&s->count, memory_order_relaxed);

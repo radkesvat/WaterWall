@@ -1,9 +1,8 @@
 #include "signal_manager.h"
-#include "wplatform.h"
 
 static signal_manager_t *state = NULL;
 
-void registerAtExitCallback(SignalHandler handle, void *userdata)
+void registerAtExitCallBack(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
     assert(state->handlers_len < kMaxSigHandles);

@@ -10,7 +10,7 @@ enum
     kPingInterval = 10000
 };
 
-static void onPingTimer(htimer_t *timer);
+static void onPingTimer(wtimer_t *timer);
 
 static nghttp2_nv makeNV(const char *name, const char *value)
 {
@@ -180,13 +180,13 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
                                                                   .scheme       = state->scheme,
                                                                   .method       = state->content_type == kApplicationGrpc ? kHttpPost : kHttpGet,
                                                                   .line         = newLine(tid),
-                                                                  .ping_timer   = htimer_add(getWorkerLoop(tid), onPingTimer, kPingInterval, INFINITE),
+                                                                  .ping_timer   = wtimerAdd(getWorkerLoop(tid), onPingTimer, kPingInterval, INFINITE),
                                                                   .tunnel       = self,
                                                                   .actions      = action_queue_t_with_capacity(16)};
     LSTATE_MUT(con->line)           = con;
     setupLineDownSide(con->line, onH2LinePaused, con, onH2LineResumed);
 
-    hevent_set_userdata(con->ping_timer, con);
+    weventSetUserData(con->ping_timer, con);
     nghttp2_session_client_new2(&con->session, state->cbs, con, state->ngoptions);
     nghttp2_settings_entry settings[] = {{NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, kMaxConcurrentStreams},
                                          {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (1U << 18)},
@@ -224,7 +224,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     {
         if (k.ref->buf)
         {
-            reuseBuffer(getWorkerBufferPool(con->line->tid), k.ref->buf);
+            bufferpoolResuesbuf(getWorkerBufferPool(con->line->tid), k.ref->buf);
         }
         unLockLine(k.ref->stream_line);
     }
@@ -235,7 +235,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     nghttp2_session_del(con->session);
     destroyContextQueue(con->queue);
     destroyLine(con->line);
-    htimer_del(con->ping_timer);
+    wtimerDelete(con->ping_timer);
     memoryFree(con);
 }
 
@@ -278,9 +278,9 @@ static http2_client_con_state_t *takeHttp2Connection(tunnel_t *self, int tid)
     return con;
 }
 
-static void onPingTimer(htimer_t *timer)
+static void onPingTimer(wtimer_t *timer)
 {
-    http2_client_con_state_t *con = hevent_userdata(timer);
+    http2_client_con_state_t *con = weventGetUserdata(timer);
     if (con->no_ping_ack)
     {
         LOGW("Http2Client: closing a session due to no ping reply");
@@ -299,9 +299,9 @@ static void onPingTimer(htimer_t *timer)
         lockLine(h2line);
         while (0 < (len = nghttp2_session_mem_send2(con->session, (const uint8_t **) &data)))
         {
-            shift_buffer_t *send_buf = popBuffer(getLineBufferPool(h2line));
-            setLen(send_buf, len);
-            writeRaw(send_buf, data, len);
+            sbuf_t *send_buf = bufferpoolPop(getLineBufferPool(h2line));
+            sbufSetLength(send_buf, len);
+            sbufWrite(send_buf, data, len);
             context_t *req = newContext(h2line);
             req->payload   = send_buf;
             con->tunnel->up->upStream(con->tunnel->up, req);

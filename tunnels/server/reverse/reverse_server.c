@@ -70,11 +70,11 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (bufferStreamLen(dcstate->wait_stream) >= kHandShakeLength)
                 {
-                    shift_buffer_t *data = bufferStreamRead(dcstate->wait_stream, kHandShakeLength);
+                    sbuf_t *data = bufferStreamRead(dcstate->wait_stream, kHandShakeLength);
 
                     static const uint8_t kHandshakeExpecetd[kHandShakeLength] = {VAL_64X, VAL_32X};
 
-                    dcstate->handshaked = 0 == memcmp(kHandshakeExpecetd, rawBuf(data), kHandShakeLength);
+                    dcstate->handshaked = 0 == memcmp(kHandshakeExpecetd, sbufGetRawPtr(data), kHandShakeLength);
 
                     thread_box_t *this_tb = &(state->threadlocal_pool[c->line->tid]);
 
@@ -84,7 +84,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         // but regular access would be SEQ_CST
                         if (atomicLoadExplicit(&(this_tb->u_count), memory_order_relaxed) > 0)
                         {
-                            reuseBuffer(getContextBufferPool(c), data);
+                            bufferpoolResuesbuf(getContextBufferPool(c), data);
 
                             reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
 
@@ -131,7 +131,7 @@ static void upStream(tunnel_t *self, context_t *c)
                                     c->payload = data;
                                     if (bufferStreamLen(dcstate->wait_stream) > 0)
                                     {
-                                        c->payload = appendBufferMerge(getContextBufferPool(c), c->payload,
+                                        c->payload = sbufAppendMerge(getContextBufferPool(c), c->payload,
                                                                        bufferStreamFullRead(dcstate->wait_stream));
                                     }
                                     cleanup(dcstate);
@@ -140,7 +140,7 @@ static void upStream(tunnel_t *self, context_t *c)
                                     return; // piped to another worker which has waiting connections
                                 }
                             }
-                            reuseBuffer(getContextBufferPool(c), data);
+                            bufferpoolResuesbuf(getContextBufferPool(c), data);
 
                             addConnectionD(this_tb, dcstate);
                             destroyContext(c);

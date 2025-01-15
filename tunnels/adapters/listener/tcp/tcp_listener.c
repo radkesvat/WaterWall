@@ -1,11 +1,11 @@
 #include "tcp_listener.h"
 #include "buffer_pool.h"
-#include "hloop.h"
+#include "wloop.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"
 #include "tunnel.h"
 #include "utils/jsonutils.h"
-#include "utils/sockutils.h"
+
 #include <string.h>
 #include <time.h>
 
@@ -34,10 +34,10 @@ typedef struct tcp_listener_state_s
 
 typedef struct tcp_listener_con_state_s
 {
-    hloop_t         *loop;
+    wloop_t         *loop;
     tunnel_t        *tunnel;
     line_t          *line;
-    hio_t           *io;
+    wio_t           *io;
     context_queue_t *data_queue;
     buffer_pool_t   *buffer_pool;
     bool             write_paused;
@@ -50,7 +50,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
 {
     if (cstate->io)
     {
-        hevent_set_userdata(cstate->io, NULL);
+        weventSetUserData(cstate->io, NULL);
         while (contextQueueLen(cstate->data_queue) > 0)
         {
             // all data must be written before sending fin, event loop will hold them for us
@@ -58,7 +58,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
 
             if (flush_queue)
             {
-                hio_write(cstate->io, cw->payload);
+                wioWrite(cstate->io, cw->payload);
                 dropContexPayload(cw);
             }
             else
@@ -67,7 +67,7 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
             }
             destroyContext(cw);
         }
-        hio_close(cstate->io);
+        wioClose(cstate->io);
     }
     if (cstate->write_paused)
     {
@@ -82,12 +82,12 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
 static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
 {
     context_queue_t *data_queue = (cstate)->data_queue;
-    hio_t           *io         = cstate->io;
+    wio_t           *io         = cstate->io;
     while (contextQueueLen(data_queue) > 0)
     {
         context_t *cw     = contextQueuePop(data_queue);
-        int        bytes  = (int) bufLen(cw->payload);
-        int        nwrite = hio_write(io, cw->payload);
+        int        bytes  = (int) sbufGetBufLength(cw->payload);
+        int        nwrite = wioWrite(io, cw->payload);
         dropContexPayload(cw);
         destroyContext(cw);
         if (nwrite >= 0 && nwrite < bytes)
@@ -99,16 +99,16 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
     return true;
 }
 
-static void onWriteComplete(hio_t *io)
+static void onWriteComplete(wio_t *io)
 {
     // resume the read on other end of the connection
-    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
+    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
         return;
     }
 
-    if (hio_write_is_complete(io))
+    if (wioCheckWriteComplete(io))
     {
 
         context_queue_t *data_queue = cstate->data_queue;
@@ -116,7 +116,7 @@ static void onWriteComplete(hio_t *io)
         {
             return;
         }
-        hio_setcb_write(cstate->io, NULL);
+        wioSetCallBackWrite(cstate->io, NULL);
         cstate->write_paused = false;
         resumeLineUpSide(cstate->line);
     }
@@ -129,7 +129,7 @@ static void onLinePaused(void *userdata)
     if (! cstate->read_paused)
     {
         cstate->read_paused = true;
-        hio_read_stop(cstate->io);
+        wioReadStop(cstate->io);
     }
 }
 
@@ -140,7 +140,7 @@ static void onLineResumed(void *userdata)
     if (cstate->read_paused)
     {
         cstate->read_paused = false;
-        hio_read(cstate->io);
+        wioRead(cstate->io);
     }
 }
 
@@ -191,15 +191,15 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            int bytes  = (int) bufLen(c->payload);
-            int nwrite = hio_write(cstate->io, c->payload);
+            int bytes  = (int) sbufGetBufLength(c->payload);
+            int nwrite = wioWrite(cstate->io, c->payload);
             dropContexPayload(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {
                 pauseLineUpSide(c->line);
                 cstate->write_paused = true;
-                hio_setcb_write(cstate->io, onWriteComplete);
+                wioSetCallBackWrite(cstate->io, onWriteComplete);
             }
             destroyContext(c);
         }
@@ -216,21 +216,21 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             assert(! cstate->established);
             cstate->established = true;
-            hio_set_keepalive_timeout(cstate->io, kEstablishedKeepAliveTimeOutMs);
+            wioSetKeepaliveTimeout(cstate->io, kEstablishedKeepAliveTimeOutMs);
             destroyContext(c);
         }
     }
 }
 
-static void onRecv(hio_t *io, shift_buffer_t *buf)
+static void onRecv(wio_t *io, sbuf_t *buf)
 {
-    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
+    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
+        bufferpoolResuesbuf(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
-    shift_buffer_t *payload = buf;
+    sbuf_t *payload = buf;
     tunnel_t       *self    = (cstate)->tunnel;
     line_t         *line    = (cstate)->line;
 
@@ -239,12 +239,12 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
 
     self->upStream(self, context);
 }
-static void onClose(hio_t *io)
+static void onClose(wio_t *io)
 {
-    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (hevent_userdata(io));
+    tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (weventGetUserdata(io));
     if (cstate != NULL)
     {
-        LOGD("TcpListener: received close for FD:%x ", hio_fd(io));
+        LOGD("TcpListener: received close for FD:%x ", wioGetFD(io));
         tunnel_t  *self    = (cstate)->tunnel;
         line_t    *line    = (cstate)->line;
         context_t *context = newFinContext(line);
@@ -252,18 +252,18 @@ static void onClose(hio_t *io)
     }
     else
     {
-        LOGD("TcpListener: sent close for FD:%x ", hio_fd(io));
+        LOGD("TcpListener: sent close for FD:%x ", wioGetFD(io));
     }
 }
 
-static void onInboundConnected(hevent_t *ev)
+static void onInboundConnected(wevent_t *ev)
 {
-    hloop_t                *loop = ev->loop;
-    socket_accept_result_t *data = (socket_accept_result_t *) hevent_userdata(ev);
-    hio_t                  *io   = data->io;
+    wloop_t                *loop = ev->loop;
+    socket_accept_result_t *data = (socket_accept_result_t *) weventGetUserdata(ev);
+    wio_t                  *io   = data->io;
     size_t                  tid  = data->tid;
-    hio_attach(loop, io);
-    hio_set_keepalive_timeout(io, kDefaultKeepAliveTimeOutMs);
+    wioAttach(loop, io);
+    wioSetKeepaliveTimeout(io, kDefaultKeepAliveTimeOutMs);
 
     tunnel_t                 *self   = data->tunnel;
     line_t                   *line   = newLine(tid);
@@ -271,7 +271,7 @@ static void onInboundConnected(hevent_t *ev)
 
     LSTATE_MUT(line)               = cstate;
     line->src_ctx.address_protocol = kSapTcp;
-    line->src_ctx.address          = *(sockaddr_u *) hio_peeraddr(io);
+    line->src_ctx.address          = *(sockaddr_u *) wioGetPeerAddr(io);
 
     *cstate = (tcp_listener_con_state_t) {.line              = line,
                                           .buffer_pool       = getWorkerBufferPool(tid),
@@ -284,26 +284,26 @@ static void onInboundConnected(hevent_t *ev)
 
     setupLineDownSide(line, onLinePaused, cstate, onLineResumed);
 
-    sockAddrSetPort(&(line->src_ctx.address), data->real_localport);
+    sockaddrSetPort(&(line->src_ctx.address), data->real_localport);
     line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
-    hevent_set_userdata(io, cstate);
+    weventSetUserData(io, cstate);
 
-    if (checkLoggerWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        struct sockaddr log_localaddr = *hio_localaddr(io);
-        sockAddrSetPort((sockaddr_u *) &(log_localaddr), data->real_localport);
+        struct sockaddr log_localaddr = *wioGetLocaladdr(io);
+        sockaddrSetPort((sockaddr_u *) &(log_localaddr), data->real_localport);
 
-        LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", hio_fd(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
-             SOCKADDR_STR(hio_peeraddr(io), peeraddrstr));
+        LOGD("TcpListener: Accepted FD:%x  [%s] <= [%s]", wioGetFD(io), SOCKADDR_STR(&log_localaddr, localaddrstr),
+             SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
     }
 
     destroySocketAcceptResult(data);
 
-    hio_setcb_read(io, onRecv);
-    hio_setcb_close(io, onClose);
+    wioSetCallBackRead(io, onRecv);
+    wioSetCallBackClose(io, onClose);
 
     // send the init packet
     lockLine(line);
@@ -318,7 +318,7 @@ static void onInboundConnected(hevent_t *ev)
         }
     }
     unLockLine(line);
-    hio_read(io);
+    wioRead(io);
 }
 
 static void parsePortSection(tcp_listener_state_t *state, const cJSON *settings)

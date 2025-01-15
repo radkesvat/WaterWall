@@ -20,7 +20,7 @@ typedef struct header_server_state_s
 typedef struct header_server_con_state_s
 {
     bool            init_sent;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
 
 } header_server_con_state_t;
 
@@ -34,18 +34,18 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             if (cstate->buf)
             {
-                c->payload  = appendBufferMerge(getContextBufferPool(c), cstate->buf, c->payload);
+                c->payload  = sbufAppendMerge(getContextBufferPool(c), cstate->buf, c->payload);
                 cstate->buf = NULL;
             }
 
-            shift_buffer_t *buf = c->payload;
+            sbuf_t *buf = c->payload;
 
             switch ((enum header_dynamic_value_status) state->data.status)
             {
             case kHdvsDestPort: {
 
                 uint16_t port = 0;
-                if (bufLen(c->payload) < 2)
+                if (sbufGetBufLength(c->payload) < 2)
                 {
                     cstate->buf = c->payload;
                     dropContexPayload(c);
@@ -53,9 +53,9 @@ static void upStream(tunnel_t *self, context_t *c)
                     return;
                 }
 
-                readUnAlignedUI16(buf, &port);
-                sockAddrSetPort(&(c->line->dest_ctx.address), port);
-                shiftr(c->payload, sizeof(uint16_t));
+                sbufReadUnAlignedUI16(buf, &port);
+                sockaddrSetPort(&(c->line->dest_ctx.address), port);
+                sbufShiftRight(c->payload, sizeof(uint16_t));
                 if (port < 10)
                 {
                     reuseContextPayload(c);
@@ -72,7 +72,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             cstate->init_sent = true;
             self->up->upStream(self->up, newInitContext(c->line));
-            if (bufLen(buf) > 0)
+            if (sbufGetBufLength(buf) > 0)
             {
                 if (! isAlive(c->line))
                 {
@@ -102,7 +102,7 @@ static void upStream(tunnel_t *self, context_t *c)
         bool send_fin = cstate->init_sent;
         if (cstate->buf)
         {
-            reuseBuffer(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesbuf(getContextBufferPool(c), cstate->buf);
         }
         memoryFree(cstate);
         CSTATE_DROP(c);
@@ -125,7 +125,7 @@ static void downStream(tunnel_t *self, context_t *c)
         header_server_con_state_t *cstate = CSTATE(c);
         if (cstate->buf)
         {
-            reuseBuffer(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesbuf(getContextBufferPool(c), cstate->buf);
         }
 
         memoryFree(cstate);

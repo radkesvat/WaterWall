@@ -19,14 +19,14 @@ typedef struct hoverlapped_s {
     WSABUF      buf;
     int         bytes;
     int         error;
-    hio_t*      io;
+    wio_t*      io;
     // for recvfrom
     struct sockaddr* addr;
     int         addrlen;
 } hoverlapped_t;
 
-int post_acceptex(hio_t* listenio, hoverlapped_t* hovlp);
-int post_recv(hio_t* io, hoverlapped_t* hovlp);
+int post_acceptex(wio_t* listenio, hoverlapped_t* hovlp);
+int post_recv(wio_t* io, hoverlapped_t* hovlp);
 
 #endif
 

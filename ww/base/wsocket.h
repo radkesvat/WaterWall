@@ -1,8 +1,8 @@
 #ifndef WW_SOCKET_H_
 #define WW_SOCKET_H_
 
-#include "wexport.h"
-#include "wplatform.h"
+#include "wlibc.h"
+
 
 #ifdef ENABLE_UDS
 #ifdef OS_WIN
@@ -159,10 +159,10 @@ WW_EXPORT int wwListen(int port, const char* host DEFAULT(ANYADDR));
 
 // @return connfd
 // resolveAddr -> socket -> nonblocking -> connect
-WW_EXPORT int Connect(const char* host, int port, int nonblock DEFAULT(0));
-// Connect(host, port, 1)
+WW_EXPORT int wwConnect(const char* host, int port, int nonblock DEFAULT(0));
+// wwConnect(host, port, 1)
 WW_EXPORT int ConnectNonblock(const char* host, int port);
-// Connect(host, port, 1) -> select -> blocking
+// wwConnect(host, port, 1) -> select -> blocking
 #define DEFAULT_CONNECT_TIMEOUT 10000 // ms
 WW_EXPORT int ConnectTimeout(const char* host, int port, int ms DEFAULT(DEFAULT_CONNECT_TIMEOUT));
 
@@ -291,7 +291,7 @@ WW_INLINE int socketOptionLinger(int sockfd, int timeout DEFAULT(1)) {
 
 
 
-static inline void sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source)
+static inline void sockaddrCopy(sockaddr_u *restrict dest, const sockaddr_u *restrict source)
 {
     if (source->sa.sa_family == AF_INET)
     {
@@ -301,12 +301,12 @@ static inline void sockAddrCopy(sockaddr_u *restrict dest, const sockaddr_u *res
     memcpy(&(dest->sin6.sin6_addr.s6_addr), &(source->sin6.sin6_addr.s6_addr), sizeof(source->sin6.sin6_addr.s6_addr));
 }
 
-static inline bool sockAddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
+static inline bool sockaddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
 {
     return (addr1->sin.sin_addr.s_addr == addr2->sin.sin_addr.s_addr);
 }
 
-static inline bool sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
+static inline bool sockaddrCmpIPV6(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
 {
     int r = memcmp(addr1->sin6.sin6_addr.s6_addr, addr2->sin6.sin6_addr.s6_addr, sizeof(addr1->sin6.sin6_addr.s6_addr));
     if (r != 0)
@@ -324,7 +324,7 @@ static inline bool sockAddrCmpIPV6(const sockaddr_u *restrict addr1, const socka
     return true;
 }
 
-static inline bool sockAddrCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
+static inline bool sockaddrCmpIP(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
 {
 
     if (addr1->sa.sa_family != addr2->sa.sa_family)
@@ -333,12 +333,12 @@ static inline bool sockAddrCmpIP(const sockaddr_u *restrict addr1, const sockadd
     }
     if (addr1->sa.sa_family == AF_INET)
     {
-        return sockAddrCmpIPV4(addr1, addr2);
+        return sockaddrCmpIPV4(addr1, addr2);
     }
 
     if (addr1->sa.sa_family == AF_INET6)
     {
-        return sockAddrCmpIPV6(addr1, addr2);
+        return sockaddrCmpIPV6(addr1, addr2);
     }
 
     assert(! "unknown sa_family");
@@ -346,7 +346,7 @@ static inline bool sockAddrCmpIP(const sockaddr_u *restrict addr1, const sockadd
     return false;
 }
 
-static inline hash_t sockAddrCalcHashNoPort(const sockaddr_u *saddr)
+static inline hash_t sockaddrCalcHashNoPort(const sockaddr_u *saddr)
 {
     hash_t result;
     if (saddr->sa.sa_family == AF_INET)
@@ -360,13 +360,13 @@ static inline hash_t sockAddrCalcHashNoPort(const sockaddr_u *saddr)
     else
     {
         assert(false);
-        printError("sockAddrCalcHashNoPort");
+        printError("sockaddrCalcHashNoPort");
         exit(1);
     }
     return result;
 }
 
-static inline hash_t sockAddrCalcHashWithPort(const sockaddr_u *saddr)
+static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
 {
     hash_t result;
     if (saddr->sa.sa_family == AF_INET)
@@ -380,7 +380,7 @@ static inline hash_t sockAddrCalcHashWithPort(const sockaddr_u *saddr)
     else
     {
         assert(false);
-        printError("sockAddrCalcHashWithPort");
+        printError("sockaddrCalcHashWithPort");
         exit(1);
     }
     return result;
@@ -453,7 +453,7 @@ static inline bool verifyIPCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            printLogger(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx",
+            loggerPrint(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx",
                          ipc);
         }
         return false;
@@ -463,7 +463,7 @@ static inline bool verifyIPCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            printLogger(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: \"%s\" is not a valid ip address", ipc);
+            loggerPrint(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: \"%s\" is not a valid ip address", ipc);
         }
         return false;
     }
@@ -478,7 +478,7 @@ static inline bool verifyIPCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            printLogger(
+            loggerPrint(
                 logger, LOG_LEVEL_ERROR,
                 "verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
                 prefix_length);
@@ -489,7 +489,7 @@ static inline bool verifyIPCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            printLogger(
+            loggerPrint(
                 logger, LOG_LEVEL_ERROR,
                 "verifyIPCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128", ipc,
                 prefix_length);
@@ -500,7 +500,7 @@ static inline bool verifyIPCdir(const char *ipc, struct logger_s *logger)
     {
         if (logger)
         {
-            printLogger(logger, LOG_LEVEL_WARN,
+            loggerPrint(logger, LOG_LEVEL_WARN,
                          "verifyIPCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix",
                          ipc);
         }

@@ -1,4 +1,5 @@
 #pragma once
+#include "wlibc.h"
 #include "cJSON.h"
 #include "dynamic_value.h"
 

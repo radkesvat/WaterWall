@@ -3,7 +3,7 @@
 #ifdef EVENT_EPOLL
 #include "wplatform.h"
 #include "wdef.h"
-#include "hevent.h"
+#include "wevent.h"
 
 #ifdef OS_WIN
 #include "wepoll/wepoll.h"
@@ -23,7 +23,7 @@ typedef struct epoll_ctx_s {
     struct events       events;
 } epoll_ctx_t;
 
-int iowatcher_init(hloop_t* loop) {
+int iowatcherInit(wloop_t* loop) {
     if (loop->iowatcher) return 0;
     epoll_ctx_t* epoll_ctx;
     EVENTLOOP_ALLOC_SIZEOF(epoll_ctx);
@@ -33,7 +33,7 @@ int iowatcher_init(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_cleanup(hloop_t* loop) {
+int iowatcherCleanUp(wloop_t* loop) {
     if (loop->iowatcher == NULL) return 0;
     epoll_ctx_t* epoll_ctx = (epoll_ctx_t*)loop->iowatcher;
     epoll_close(epoll_ctx->epfd);
@@ -42,12 +42,12 @@ int iowatcher_cleanup(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_add_event(hloop_t* loop, int fd, int selected_events) {
+int iowatcherAddEvent(wloop_t* loop, int fd, int selected_events) {
     if (loop->iowatcher == NULL) {
-        iowatcher_init(loop);
+        iowatcherInit(loop);
     }
     epoll_ctx_t* epoll_ctx = (epoll_ctx_t*)loop->iowatcher;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
 
     struct epoll_event ee;
     memorySet(&ee, 0, sizeof(ee));
@@ -77,10 +77,10 @@ int iowatcher_add_event(hloop_t* loop, int fd, int selected_events) {
     return 0;
 }
 
-int iowatcher_del_event(hloop_t* loop, int fd, int selected_events) {
+int iowatcherDelEvent(wloop_t* loop, int fd, int selected_events) {
     epoll_ctx_t* epoll_ctx = (epoll_ctx_t*)loop->iowatcher;
     if (epoll_ctx == NULL) return 0;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
 
     struct epoll_event ee;
     memorySet(&ee, 0, sizeof(ee));
@@ -107,7 +107,7 @@ int iowatcher_del_event(hloop_t* loop, int fd, int selected_events) {
     return 0;
 }
 
-int iowatcher_poll_events(hloop_t* loop, int timeout) {
+int iowatcherPollEvents(wloop_t* loop, int timeout) {
     epoll_ctx_t* epoll_ctx = (epoll_ctx_t*)loop->iowatcher;
     if (epoll_ctx == NULL)  return 0;
     if (epoll_ctx->events.size == 0) return 0;
@@ -127,7 +127,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
         uint32_t revents = ee->events;
         if (revents) {
             ++nevents;
-            hio_t* io = loop->ios.ptr[fd];
+            wio_t* io = loop->ios.ptr[fd];
             if (io) {
                 if (revents & (EPOLLIN | EPOLLHUP | EPOLLERR)) {
                     io->revents |= WW_READ;

@@ -6,7 +6,7 @@
 #include "managers/node_manager.h"
 #include "openssl_globals.h"
 #include "utils/jsonutils.h"
-#include "utils/mathutils.h"
+
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -178,7 +178,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (state->fallback != NULL && ! cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, duplicateBufferP(getContextBufferPool(c),c->payload));
+            bufferStreamPush(cstate->fallback_buf, sbufDuplicateByPool(getContextBufferPool(c),c->payload));
         }
 
         if (cstate->fallback_mode)
@@ -190,11 +190,11 @@ static void upStream(tunnel_t *self, context_t *c)
         
         enum sslstatus status;
         int            n;
-        unsigned int   len = bufLen(c->payload);
+        unsigned int   len = sbufGetBufLength(c->payload);
 
         while (len > 0 && isAlive(c->line))
         {
-            n = BIO_write(cstate->rbio, rawBuf(c->payload), (int) len);
+            n = BIO_write(cstate->rbio, sbufGetRawPtr(c->payload), (int) len);
 
             if (n <= 0)
             {
@@ -202,7 +202,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 reuseContextPayload(c);
                 goto disconnect;
             }
-            shiftr(c->payload, n);
+            sbufShiftRight(c->payload, n);
             len -= n;
 
             if (! SSL_is_init_finished(cstate->ssl))
@@ -215,16 +215,16 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     do
                     {
-                        shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                        unsigned int    avail = rCapNoPadding(buf);
-                        n                     = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
-                        // assert(-1 == BIO_read(cstate->wbio, rawBuf(buf), avail));
+                        sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                        unsigned int    avail = sbufGetRightCapacityNoPadding(buf);
+                        n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), (int) avail);
+                        // assert(-1 == BIO_read(cstate->wbio, sbufGetRawPtr(buf), avail));
                         if (n > 0)
                         {
                             // since then, we should not go to fallback
                             cstate->fallback_disabled = true;
 
-                            setLen(buf, n);
+                            sbufSetLength(buf, n);
                             context_t *answer = newContextFrom(c);
                             answer->payload   = buf;
                             self->dw->downStream(self->dw, answer);
@@ -240,12 +240,12 @@ static void upStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextPayload(c);
-                            reuseBuffer(getContextBufferPool(c), buf);
+                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
                             goto disconnect;
                         }
                         else
                         {
-                            reuseBuffer(getContextBufferPool(c), buf);
+                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -281,10 +281,10 @@ static void upStream(tunnel_t *self, context_t *c)
 
             do
             {
-                shift_buffer_t *buf = popBuffer(getContextBufferPool(c));
-                setLen(buf, 0);
-                unsigned int avail = rCapNoPadding(buf);
-                n                  = SSL_read(cstate->ssl, rawBufMut(buf), (int) avail);
+                sbuf_t *buf = bufferpoolPop(getContextBufferPool(c));
+                sbufSetLength(buf, 0);
+                unsigned int avail = sbufGetRightCapacityNoPadding(buf);
+                n                  = SSL_read(cstate->ssl, sbufGetMutablePtr(buf), (int) avail);
 
                 if (n > 0)
                 {
@@ -302,7 +302,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         cstate->init_sent = true;
                     }
 
-                    setLen(buf, n);
+                    sbufSetLength(buf, n);
                     context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload   = buf;
                     self->up->upStream(self->up, data_ctx);
@@ -315,7 +315,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    reuseBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -328,13 +328,13 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 do
                 {
-                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    unsigned int    avail = rCapNoPadding(buf);
+                    sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                    unsigned int    avail = sbufGetRightCapacityNoPadding(buf);
 
-                    n = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
+                    n = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), (int) avail);
                     if (n > 0)
                     {
-                        setLen(buf, n);
+                        sbufSetLength(buf, n);
                         context_t *answer = newContextFrom(c);
                         answer->payload   = buf;
                         self->dw->downStream(self->dw, answer);
@@ -349,13 +349,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -466,7 +466,7 @@ static void downStream(tunnel_t *self, context_t *c)
             LOGF("How it is possible to receive data before sending init to upstream?");
             exit(1);
         }
-        int len = (int) bufLen(c->payload);
+        int len = (int) sbufGetBufLength(c->payload);
         while (len > 0 && isAlive(c->line))
         {
 
@@ -479,31 +479,31 @@ static void downStream(tunnel_t *self, context_t *c)
                 kind of stuff to that data otherwise speedtest app may sometimes give up the test :(
                 forexample speedtest first packet is sometimes 65 bytes total !
             */
-            int consume = len;
+            int sbufConsume = len;
             if ((cstate->reply_sent_tit == 1 && len > 256))
             {
                 cstate->reply_sent_tit++;
-                consume = 128;
+                sbufConsume = 128;
             }
 
-            int n  = SSL_write(cstate->ssl, rawBuf(c->payload), consume);
+            int n  = SSL_write(cstate->ssl, sbufGetRawPtr(c->payload), sbufConsume);
             status = getSslstatus(cstate->ssl, n);
-            assert(n == consume);
+            assert(n == sbufConsume);
 
             if (n > 0)
             {
-                /* consume the waiting bytes that have been used by SSL */
-                shiftr(c->payload, n);
+                /* sbufConsume the waiting bytes that have been used by SSL */
+                sbufShiftRight(c->payload, n);
                 len -= n;
                 /* take the output of the SSL object and queue it for socket write */
                 do
                 {
-                    shift_buffer_t *buf   = popBuffer(getContextBufferPool(c));
-                    unsigned int    avail = rCapNoPadding(buf);
-                    n                     = BIO_read(cstate->wbio, rawBufMut(buf), (int) avail);
+                    sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                    unsigned int    avail = sbufGetRightCapacityNoPadding(buf);
+                    n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), (int) avail);
                     if (n > 0)
                     {
-                        setLen(buf, n);
+                        sbufSetLength(buf, n);
                         context_t *dw_context = newContextFrom(c);
                         dw_context->payload   = buf;
                         self->dw->downStream(self->dw, dw_context);
@@ -518,13 +518,13 @@ static void downStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -540,7 +540,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 break;
             }
         }
-        assert(bufLen(c->payload) == 0);
+        assert(sbufGetBufLength(c->payload) == 0);
         reuseContextPayload(c);
         destroyContext(c);
 

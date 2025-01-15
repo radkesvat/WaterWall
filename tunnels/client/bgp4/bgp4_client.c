@@ -58,8 +58,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
             uint32_t additions = 3 + fastRand() % 8;
 
-            shiftl(c->payload, kBgpOpenPacketHeaderSize + additions);
-            uint8_t *header = rawBufMut(c->payload);
+            sbufShiftLeft(c->payload, kBgpOpenPacketHeaderSize + additions);
+            uint8_t *header = sbufGetMutablePtr(c->payload);
 
             // initialize with defaults
             memcpy(header, kBgpOpenInitialData, sizeof(kBgpOpenInitialData));
@@ -76,15 +76,15 @@ static void upStream(tunnel_t *self, context_t *c)
             bgp_type = 1; // BGP Open
         }
 
-        shiftl(c->payload, 1); // type
-        writeUnAlignedUI8(c->payload, bgp_type);
+        sbufShiftLeft(c->payload, 1); // type
+        sbufWriteUnAlignedUI8(c->payload, bgp_type);
 
-        uint16_t blen = (uint16_t) bufLen(c->payload);
-        shiftl(c->payload, 2); // length
-        writeUnAlignedUI16(c->payload, blen);
+        uint16_t blen = (uint16_t) sbufGetBufLength(c->payload);
+        sbufShiftLeft(c->payload, 2); // length
+        sbufWriteUnAlignedUI16(c->payload, blen);
 
-        shiftl(c->payload, kMarkerLength);
-        memorySet(rawBufMut(c->payload), kMarker, kMarkerLength);
+        sbufShiftLeft(c->payload, kMarkerLength);
+        memorySet(sbufGetMutablePtr(c->payload), kMarker, kMarkerLength);
 
         // todo (obfuscate) payload header should at least kMaxEncryptLen bytes be obsfucated
     }
@@ -128,15 +128,15 @@ static void downStream(tunnel_t *self, context_t *c)
 
             if (bufferStreamLen(cstate->read_stream) >= ((unsigned int) kBgpHeaderLen + required_length))
             {
-                shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kBgpHeaderLen + required_length);
+                sbuf_t *buf = bufferStreamRead(cstate->read_stream, kBgpHeaderLen + required_length);
 
                 static const uint8_t kExpecetd[kMarkerLength] = {VAL_8X, VAL_8X};
 
-                if (0 != memcmp(rawBuf(buf), kExpecetd, kMarkerLength))
+                if (0 != memcmp(sbufGetRawPtr(buf), kExpecetd, kMarkerLength))
                 {
                     LOGE("Bgp4Client: invalid marker");
                     destroyBufferStream(cstate->read_stream);
-                    reuseBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
                     memoryFree(cstate);
                     CSTATE_DROP(c);
                     self->up->upStream(self->up, newFinContextFrom(c));
@@ -144,12 +144,12 @@ static void downStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
-                shiftr(buf, kBgpHeaderLen + 1); // 1 byte is type
+                sbufShiftRight(buf, kBgpHeaderLen + 1); // 1 byte is type
 
-                if (bufLen(buf) <= 0)
+                if (sbufGetBufLength(buf) <= 0)
                 {
                     LOGE("Bgp4Client: message had no payload");
-                    reuseBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
                     goto disconnect;
                 }
                 context_t *data_ctx = newContext(c->line);

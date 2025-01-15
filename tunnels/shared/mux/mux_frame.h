@@ -29,23 +29,23 @@ enum
 
 
 
-static void makeOpenFrame(shift_buffer_t *buf, cid_t cid)
+static void makeOpenFrame(sbuf_t *buf, cid_t cid)
 {
-    shiftl(buf, sizeof(mux_frame_t));
-    mux_frame_t frame = {.length = bufLen(buf) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagOpen};
-    writeRaw(buf, &frame, sizeof(mux_frame_t));
+    sbufShiftLeft(buf, sizeof(mux_frame_t));
+    mux_frame_t frame = {.length = sbufGetBufLength(buf) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagOpen};
+    sbufWrite(buf, &frame, sizeof(mux_frame_t));
 }
 
-static void makeCloseFrame(shift_buffer_t *buf, cid_t cid)
+static void makeCloseFrame(sbuf_t *buf, cid_t cid)
 {
-    shiftl(buf, sizeof(mux_frame_t));
+    sbufShiftLeft(buf, sizeof(mux_frame_t));
     mux_frame_t frame = {.length = sizeof(mux_frame_t) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagClose};
-    writeRaw(buf, &frame, sizeof(mux_frame_t));
+    sbufWrite(buf, &frame, sizeof(mux_frame_t));
 }
 
-static void makeDataFrame(shift_buffer_t *buf, cid_t cid)
+static void makeDataFrame(sbuf_t *buf, cid_t cid)
 {
-    shiftl(buf, sizeof(mux_frame_t));
-    mux_frame_t frame = {.length = bufLen(buf) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagData};
-    writeRaw(buf, &frame, sizeof(mux_frame_t));
+    sbufShiftLeft(buf, sizeof(mux_frame_t));
+    mux_frame_t frame = {.length = sbufGetBufLength(buf) - sizeof(frame.length), .cid = cid, .flags = kMuxFlagData};
+    sbufWrite(buf, &frame, sizeof(mux_frame_t));
 }

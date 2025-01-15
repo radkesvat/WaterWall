@@ -15,14 +15,14 @@
 enum
 {
     kReadPacketSize          = 1500,
-    kMasterMessagePoolCap    = 64,
+    kMasterMessagePoosbufGetLeftCapacity    = 64,
     kRawWriteChannelQueueMax = 256
 };
 
 struct msg_event
 {
     raw_device_t   *rdev;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
 };
 
 static pool_item_t *allocRawMsgPoolHandle(struct master_pool_s *pool, void *userdata)
@@ -39,58 +39,58 @@ static void destroyRawMsgPoolHandle(struct master_pool_s *pool, master_pool_item
     memoryFree(item);
 }
 
-static void localThreadEventReceived(hevent_t *ev)
+static void localThreadEventReceived(wevent_t *ev)
 {
-    struct msg_event *msg = hevent_userdata(ev);
-    tid_t             tid = (tid_t) (hloop_tid(hevent_loop(ev)));
+    struct msg_event *msg = weventGetUserdata(ev);
+    tid_t             tid = (tid_t) (wloopTID(weventGetLoop(ev)));
 
     msg->rdev->read_event_callback(msg->rdev, msg->rdev->userdata, msg->buf, tid);
 
     reuseMasterPoolItems(msg->rdev->reader_message_pool, (void **) &msg, 1, msg->rdev);
 }
 
-static void distributePacketPayload(raw_device_t *rdev, tid_t target_tid, shift_buffer_t *buf)
+static void distributePacketPayload(raw_device_t *rdev, tid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
     popMasterPoolItems(rdev->reader_message_pool, (const void **) &(msg), 1, rdev);
 
     *msg = (struct msg_event) {.rdev = rdev, .buf = buf};
 
-    hevent_t ev;
+    wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(target_tid);
     ev.cb   = localThreadEventReceived;
-    hevent_set_userdata(&ev, msg);
-    hloop_post_event(getWorkerLoop(target_tid), &ev);
+    weventSetUserData(&ev, msg);
+    wloopPostEvent(getWorkerLoop(target_tid), &ev);
 }
 
 static HTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 {
     raw_device_t   *rdev           = userdata;
     tid_t           distribute_tid = 0;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     ssize_t         nread;
     struct sockaddr saddr;
     int             saddr_len = sizeof(saddr);
 
     while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
-        buf = popSmallBuffer(rdev->reader_buffer_pool);
+        buf = bufferpoolPopSmall(rdev->reader_buffer_pool);
 
-        buf = reserveBufSpace(buf, kReadPacketSize);
+        buf = sbufReserveSpace(buf, kReadPacketSize);
 
-        nread = recvfrom(rdev->socket, rawBufMut(buf), kReadPacketSize, 0, &saddr, (socklen_t *) &saddr_len);
+        nread = recvfrom(rdev->socket, sbufGetMutablePtr(buf), kReadPacketSize, 0, &saddr, (socklen_t *) &saddr_len);
 
         if (nread == 0)
         {
-            reuseBuffer(rdev->reader_buffer_pool, buf);
+            bufferpoolResuesbuf(rdev->reader_buffer_pool, buf);
             LOGW("RawDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            reuseBuffer(rdev->reader_buffer_pool, buf);
+            bufferpoolResuesbuf(rdev->reader_buffer_pool, buf);
 
             LOGE("RawDevice: reading a packet from RAW device failed, code: %d", (int) nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
@@ -101,7 +101,7 @@ static HTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
             return 0;
         }
 
-        setLen(buf, nread);
+        sbufSetLength(buf, nread);
 
         distributePacketPayload(rdev, distribute_tid++, buf);
 
@@ -117,7 +117,7 @@ static HTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 {
     raw_device_t   *rdev = userdata;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     ssize_t         nwrite;
 
     while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
@@ -128,15 +128,15 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             return 0;
         }
 
-        assert(bufLen(buf) > sizeof(struct iphdr));
+        assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
 
-        struct iphdr *ip_header = (struct iphdr *) rawBuf(buf);
+        struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
 
         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
-        nwrite = sendto(rdev->socket, ip_header, bufLen(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+        nwrite = sendto(rdev->socket, ip_header, sbufGetBufLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        reuseBuffer(rdev->writer_buffer_pool, buf);
+        bufferpoolResuesbuf(rdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -158,9 +158,9 @@ static HTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
     return 0;
 }
 
-bool writeToRawDevce(raw_device_t *rdev, shift_buffer_t *buf)
+bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf)
 {
-    assert(bufLen(buf) > sizeof(struct iphdr));
+    assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
 
     bool closed = false;
     if (! chanTrySend(rdev->writer_buffer_channel, &buf, &closed))
@@ -189,9 +189,9 @@ bool bringRawDeviceUP(raw_device_t *rdev)
 
     if (rdev->read_event_callback != NULL)
     {
-        rdev->read_thread = createThread(rdev->routine_reader, rdev);
+        rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
     }
-    rdev->write_thread = createThread(rdev->routine_writer, rdev);
+    rdev->write_thread = threadCreate(rdev->routine_writer, rdev);
     return true;
 }
 
@@ -208,14 +208,14 @@ bool bringRawDeviceDown(raw_device_t *rdev)
 
     if (rdev->read_event_callback != NULL)
     {
-        joinThread(rdev->read_thread);
+        threadJoin(rdev->read_thread);
     }
-    joinThread(rdev->write_thread);
+    threadJoin(rdev->write_thread);
 
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     while (chanRecv(rdev->writer_buffer_channel, &buf))
     {
-        reuseBuffer(rdev->reader_buffer_pool, buf);
+        bufferpoolResuesbuf(rdev->reader_buffer_pool, buf);
     }
 
     return true;
@@ -248,14 +248,14 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
     {
         // if the user really wanted to read from raw socket
        
-        reader_bpool   = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+        reader_bpool   = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            GSTATE.ram_profile);
-        reader_message_pool = newMasterPoolWithCap(kMasterMessagePoolCap);
+        reader_message_pool = newMasterPoolWithCap(kMasterMessagePoosbufGetLeftCapacity);
 
-        installMasterPoolAllocCallbacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
+        installMasterPoolAllocCallBacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
     }
 
-    buffer_pool_t  *writer_bpool   = createBufferPool(
+    buffer_pool_t  *writer_bpool   = bufferpoolCreate(
         GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  GSTATE.ram_profile);
 
     *rdev = (raw_device_t) {.name                     = stringDuplicate(name),

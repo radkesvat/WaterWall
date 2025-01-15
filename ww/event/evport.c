@@ -4,7 +4,7 @@
 
 #include "wplatform.h"
 #include "wdef.h"
-#include "hevent.h"
+#include "wevent.h"
 
 #include <port.h>
 
@@ -24,7 +24,7 @@ static void evport_ctx_resize(evport_ctx_t* evport_ctx, int size) {
     evport_ctx->capacity = size;
 }
 
-int iowatcher_init(hloop_t* loop) {
+int iowatcherInit(wloop_t* loop) {
     if (loop->iowatcher) return 0;
     evport_ctx_t* evport_ctx;
     EVENTLOOP_ALLOC_SIZEOF(evport_ctx);
@@ -37,7 +37,7 @@ int iowatcher_init(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_cleanup(hloop_t* loop) {
+int iowatcherCleanUp(wloop_t* loop) {
     if (loop->iowatcher == NULL) return 0;
     evport_ctx_t* evport_ctx = (evport_ctx_t*)loop->iowatcher;
     close(evport_ctx->port);
@@ -46,12 +46,12 @@ int iowatcher_cleanup(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_add_event(hloop_t* loop, int fd, int events) {
+int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
     if (loop->iowatcher == NULL) {
-        iowatcher_init(loop);
+        iowatcherInit(loop);
     }
     evport_ctx_t* evport_ctx = (evport_ctx_t*)loop->iowatcher;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
 
     int evport_events = 0;
     if (io->events & WW_READ) {
@@ -76,10 +76,10 @@ int iowatcher_add_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcher_del_event(hloop_t* loop, int fd, int events) {
+int iowatcherDelEvent(wloop_t* loop, int fd, int events) {
     evport_ctx_t* evport_ctx = (evport_ctx_t*)loop->iowatcher;
     if (evport_ctx == NULL) return 0;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
 
     int evport_events = 0;
     if (io->events & WW_READ) {
@@ -103,7 +103,7 @@ int iowatcher_del_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcher_poll_events(hloop_t* loop, int timeout) {
+int iowatcherPollEvents(wloop_t* loop, int timeout) {
     evport_ctx_t* evport_ctx = (evport_ctx_t*)loop->iowatcher;
     if (evport_ctx == NULL) return 0;
     struct timespec ts, *tp;
@@ -119,7 +119,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
     for (int i = 0; i < nevents; ++i) {
         int fd = evport_ctx->events[i].portev_object;
         int revents = evport_ctx->events[i].portev_events;
-        hio_t* io = loop->ios.ptr[fd];
+        wio_t* io = loop->ios.ptr[fd];
         if (io) {
             if (revents & POLLIN) {
                 io->revents |= WW_READ;
@@ -130,7 +130,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
             EVENT_PENDING(io);
         }
         // Upon retrieval, the event object is no longer associated with the port.
-        iowatcher_add_event(loop, fd, io->events);
+        iowatcherAddEvent(loop, fd, io->events);
     }
     return nevents;
 }

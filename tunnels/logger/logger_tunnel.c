@@ -2,7 +2,7 @@
 #include "buffer_pool.h"
 #include "loggers/network_logger.h"
 #include "tunnel.h"
-#include "utils/mathutils.h"
+
 
 typedef struct logger_tunnel_state_s
 {
@@ -21,7 +21,7 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 
-        LOGD("upstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 200), rawBuf(c->payload));
+        LOGD("upstream: %zu bytes [ %.*s ]", sbufGetBufLength(c->payload), min(sbufGetBufLength(c->payload), 200), sbufGetRawPtr(c->payload));
         if (self->up != NULL)
         {
             self->up->upStream(self->up, c);
@@ -32,11 +32,11 @@ static void upStream(tunnel_t *self, context_t *c)
             // send back something
             {
                 context_t *reply = newContextFrom(c);
-                reply->payload   = popBuffer(getContextBufferPool(c));
+                reply->payload   = bufferpoolPop(getContextBufferPool(c));
                 reuseContextPayload(c);
                 destroyContext(c);
-                sprintf((char *) rawBuf(reply->payload), "%s", "salam");
-                setLen(reply->payload, strlen("salam"));
+                sprintf((char *) sbufGetRawPtr(reply->payload), "%s", "salam");
+                sbufSetLength(reply->payload, strlen("salam"));
                 self->dw->downStream(self->dw, reply);
             }
         }
@@ -79,7 +79,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 
-        LOGD("downstream: %zu bytes [ %.*s ]", bufLen(c->payload), min(bufLen(c->payload), 20), rawBuf(c->payload));
+        LOGD("downstream: %zu bytes [ %.*s ]", sbufGetBufLength(c->payload), min(sbufGetBufLength(c->payload), 20), sbufGetRawPtr(c->payload));
         if (self->dw != NULL)
         {
             self->dw->downStream(self->dw, c);
@@ -90,9 +90,9 @@ static void downStream(tunnel_t *self, context_t *c)
             // send back something
             // {
             //     context_t *reply = newContextFrom(c);
-            //     reply->payload   = popBuffer(getContextBufferPool(c));
-            //     sprintf((char *) rawBuf(reply->payload), "%s", "salam");
-            //     setLen(reply->payload, strlen("salam"));
+            //     reply->payload   = bufferpoolPop(getContextBufferPool(c));
+            //     sprintf((char *) sbufGetRawPtr(reply->payload), "%s", "salam");
+            //     sbufSetLength(reply->payload, strlen("salam"));
             //     self->up->upStream(self->up, reply);
             // }
 

@@ -3,7 +3,7 @@
 #ifdef EVENT_SELECT
 #include "wplatform.h"
 #include "wdef.h"
-#include "hevent.h"
+#include "wevent.h"
 #include "wsocket.h"
 
 typedef struct select_ctx_s {
@@ -14,7 +14,7 @@ typedef struct select_ctx_s {
     int nwrite;
 } select_ctx_t;
 
-int iowatcher_init(hloop_t* loop) {
+int iowatcherInit(wloop_t* loop) {
     if (loop->iowatcher) return 0;
     select_ctx_t* select_ctx;
     EVENTLOOP_ALLOC_SIZEOF(select_ctx);
@@ -27,14 +27,14 @@ int iowatcher_init(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_cleanup(hloop_t* loop) {
+int iowatcherCleanUp(wloop_t* loop) {
     EVENTLOOP_FREE(loop->iowatcher);
     return 0;
 }
 
-int iowatcher_add_event(hloop_t* loop, int fd, int events) {
+int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
     if (loop->iowatcher == NULL) {
-        iowatcher_init(loop);
+        iowatcherInit(loop);
     }
     select_ctx_t* select_ctx = (select_ctx_t*)loop->iowatcher;
     if (fd > select_ctx->max_fd) {
@@ -55,7 +55,7 @@ int iowatcher_add_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcher_del_event(hloop_t* loop, int fd, int events) {
+int iowatcherDelEvent(wloop_t* loop, int fd, int events) {
     select_ctx_t* select_ctx = (select_ctx_t*)loop->iowatcher;
     if (select_ctx == NULL)    return 0;
     if (fd == select_ctx->max_fd) {
@@ -76,8 +76,8 @@ int iowatcher_del_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-static int find_max_active_fd(hloop_t* loop) {
-    hio_t* io = NULL;
+static int find_max_active_fd(wloop_t* loop) {
+    wio_t* io = NULL;
     for (int i = loop->ios.maxsize-1; i >= 0; --i) {
         io = loop->ios.ptr[i];
         if (io && io->active && io->events) return i;
@@ -85,7 +85,7 @@ static int find_max_active_fd(hloop_t* loop) {
     return -1;
 }
 
-static int remove_bad_fds(hloop_t* loop) {
+static int remove_bad_fds(wloop_t* loop) {
     select_ctx_t* select_ctx = (select_ctx_t*)loop->iowatcher;
     if (select_ctx == NULL)    return 0;
     int badfds = 0;
@@ -98,9 +98,9 @@ static int remove_bad_fds(hloop_t* loop) {
             optlen = sizeof(int);
             if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char*)&error, &optlen) < 0 || error != 0) {
                 ++badfds;
-                hio_t* io = loop->ios.ptr[fd];
+                wio_t* io = loop->ios.ptr[fd];
                 if (io) {
-                    hio_del(io, WW_RDWR);
+                    wioDel(io, WW_RDWR);
                 }
             }
         }
@@ -108,7 +108,7 @@ static int remove_bad_fds(hloop_t* loop) {
     return badfds;
 }
 
-int iowatcher_poll_events(hloop_t* loop, int timeout) {
+int iowatcherPollEvents(wloop_t* loop, int timeout) {
     select_ctx_t* select_ctx = (select_ctx_t*)loop->iowatcher;
     if (select_ctx == NULL)    return 0;
     if (select_ctx->nread == 0 && select_ctx->nwrite == 0) {
@@ -156,7 +156,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
             revents |= WW_WRITE;
         }
         if (revents) {
-            hio_t* io = loop->ios.ptr[fd];
+            wio_t* io = loop->ios.ptr[fd];
             if (io) {
                 io->revents = revents;
                 EVENT_PENDING(io);

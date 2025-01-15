@@ -20,7 +20,7 @@ enum
 {
     kReadPacketSize              = 1500,
     kEthDataLen                  = 1500,
-    kMasterMessagePoolCap        = 64,
+    kMasterMessagePoosbufGetLeftCapacity        = 64,
     kQueueLen                    = 512,
     kCaptureWriteChannelQueueMax = 128
 };
@@ -28,7 +28,7 @@ enum
 struct msg_event
 {
     capture_device_t *cdev;
-    shift_buffer_t   *buf;
+    sbuf_t   *buf;
 };
 
 static pool_item_t *allocCaptureMsgPoolHandle(struct master_pool_s *pool, void *userdata)
@@ -45,29 +45,29 @@ static void destroyCaptureMsgPoolHandle(struct master_pool_s *pool, master_pool_
     memoryFree(item);
 }
 
-static void localThreadEventReceived(hevent_t *ev)
+static void localThreadEventReceived(wevent_t *ev)
 {
-    struct msg_event *msg = hevent_userdata(ev);
-    tid_t             tid = (tid_t) (hloop_tid(hevent_loop(ev)));
+    struct msg_event *msg = weventGetUserdata(ev);
+    tid_t             tid = (tid_t) (wloopTID(weventGetLoop(ev)));
 
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
     reuseMasterPoolItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
 }
 
-static void distributePacketPayload(capture_device_t *cdev, tid_t target_tid, shift_buffer_t *buf)
+static void distributePacketPayload(capture_device_t *cdev, tid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
     popMasterPoolItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
     *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
 
-    hevent_t ev;
+    wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(target_tid);
     ev.cb   = localThreadEventReceived;
-    hevent_set_userdata(&ev, msg);
-    hloop_post_event(getWorkerLoop(target_tid), &ev);
+    weventSetUserData(&ev, msg);
+    wloopPostEvent(getWorkerLoop(target_tid), &ev);
 }
 
 /*
@@ -173,7 +173,7 @@ static bool netfilterSetQueueLength(int netfilter_socket, uint16_t qnumber, uint
 /*
  * Get a packet from netfilter.
  */
-static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, shift_buffer_t *buff)
+static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *buff)
 {
     // Read a message from netlink
     char               nl_buff[512 + kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr)];
@@ -268,13 +268,13 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, shift_buff
 
     // Copy the packet's contents to the output buffer.
     // Also add a phony ethernet header.
-    setLen(buff, nl_data_size);
+    sbufSetLength(buff, nl_data_size);
     // struct ethhdr *eth_header = (struct ethhdr *) buff;
     // memorySet(&eth_header->h_dest, 0x0, ETH_ALEN);
     // memorySet(&eth_header->h_source, 0x0, ETH_ALEN);
     // eth_header->h_proto = htons(ETH_P_IP);
 
-    struct iphdr *ip_header = (struct iphdr *) rawBufMut(buff);
+    struct iphdr *ip_header = (struct iphdr *) sbufGetMutablePtr(buff);
     memoryMove(ip_header, nl_data, nl_data_size);
 
     return (int) (nl_data_size);
@@ -284,32 +284,32 @@ static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
     capture_device_t *cdev           = userdata;
     tid_t             distribute_tid = 0;
-    shift_buffer_t   *buf;
+    sbuf_t   *buf;
     ssize_t           nread;
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        buf = popSmallBuffer(cdev->reader_buffer_pool);
+        buf = bufferpoolPopSmall(cdev->reader_buffer_pool);
 
-        buf = reserveBufSpace(buf, kReadPacketSize);
+        buf = sbufReserveSpace(buf, kReadPacketSize);
 
         nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
 
         if (nread == 0)
         {
-            reuseBuffer(cdev->reader_buffer_pool, buf);
+            bufferpoolResuesbuf(cdev->reader_buffer_pool, buf);
             LOGW("CaptureDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            reuseBuffer(cdev->reader_buffer_pool, buf);
+            bufferpoolResuesbuf(cdev->reader_buffer_pool, buf);
             LOGW("CaptureDevice: failed to read a packet from netfilter socket, retrying...");
             continue;
         }
 
-        setLen(buf, nread);
+        sbufSetLength(buf, nread);
 
         distributePacketPayload(cdev, distribute_tid++, buf);
 
@@ -325,7 +325,7 @@ static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 {
     capture_device_t *cdev = userdata;
-    shift_buffer_t   *buf;
+    sbuf_t   *buf;
     ssize_t           nwrite;
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
@@ -336,13 +336,13 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
             return 0;
         }
 
-        struct iphdr *ip_header = (struct iphdr *) rawBuf(buf);
+        struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
 
         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
-        nwrite = sendto(cdev->socket, ip_header, bufLen(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+        nwrite = sendto(cdev->socket, ip_header, sbufGetBufLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        reuseBuffer(cdev->writer_buffer_pool, buf);
+        bufferpoolResuesbuf(cdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -364,7 +364,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
     return 0;
 }
 
-bool writeToCaptureDevce(capture_device_t *cdev, shift_buffer_t *buf)
+bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf)
 {
     bool closed = false;
     if (! chanTrySend(cdev->writer_buffer_channel, &buf, &closed))
@@ -391,8 +391,8 @@ bool bringCaptureDeviceUP(capture_device_t *cdev)
 
     LOGD("CaptureDevice: device %s is now up", cdev->name);
 
-    cdev->read_thread  = createThread(cdev->routine_reader, cdev);
-    cdev->write_thread = createThread(cdev->routine_writer, cdev);
+    cdev->read_thread  = threadCreate(cdev->routine_reader, cdev);
+    cdev->write_thread = threadCreate(cdev->routine_writer, cdev);
     return true;
 }
 
@@ -407,13 +407,13 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
 
     LOGD("CaptureDevice: device %s is now down", cdev->name);
 
-    joinThread(cdev->read_thread);
-    joinThread(cdev->write_thread);
+    threadJoin(cdev->read_thread);
+    threadJoin(cdev->write_thread);
 
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     while (chanRecv(cdev->writer_buffer_channel, &buf))
     {
-        reuseBuffer(cdev->reader_buffer_pool, buf);
+        bufferpoolResuesbuf(cdev->reader_buffer_pool, buf);
     }
 
     return true;
@@ -463,11 +463,11 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
         LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kQueueLen);
     }
 
-    buffer_pool_t *reader_bpool = createBufferPool(GSTATE.masterpool_buffer_pools_large,
+    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small, GSTATE.ram_profile);
 
     buffer_pool_t *writer_bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 1);
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 1);
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
@@ -481,11 +481,11 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
                                 .read_event_callback   = cb,
                                 .userdata              = userdata,
                                 .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
-                                .reader_message_pool   = newMasterPoolWithCap(kMasterMessagePoolCap),
+                                .reader_message_pool   = newMasterPoolWithCap(kMasterMessagePoosbufGetLeftCapacity),
                                 .reader_buffer_pool    = reader_bpool,
                                 .writer_buffer_pool    = writer_bpool};
 
-    installMasterPoolAllocCallbacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
+    installMasterPoolAllocCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 
     return cdev;
 }

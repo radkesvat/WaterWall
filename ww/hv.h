@@ -17,7 +17,7 @@
 #include "wtime.h"  // <time.h>
 #include "wmath.h"  // <math.h>
 
-#include "eventloop_mem.h"
+#include "ev_memory.h"
 #include "wversion.h"
 #include "wsysinfo.h"
 #include "wproc.h"

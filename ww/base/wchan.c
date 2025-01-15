@@ -66,19 +66,19 @@ static void _                             // dlog_chan(const char* fname, const 
 uint32_t seq = atomic_fetch_add_explicitx(&seqnext, 1, memory_order_acquire);
 
 char buf[256];
-const ssize_t bufcap = (ssize_t)sizeof(buf);
+const ssize_t sbufCap = (ssize_t)sizeof(buf);
 ssize_t buflen = 0;
 
-buflen += (ssize_t)snprintf(&buf[buflen], bufcap - buflen, "%04u \x1b[1m%sT%02zu ", seq, tcolor(), thread_id());
+buflen += (ssize_t)snprintf(&buf[buflen], sbufCap - buflen, "%04u \x1b[1m%sT%02zu ", seq, tcolor(), thread_id());
 
 va_list ap;
 va_start(ap, fmt);
-buflen += (ssize_t)vsnprintf(&buf[buflen], bufcap - buflen, fmt, ap);
+buflen += (ssize_t)vsnprintf(&buf[buflen], sbufCap - buflen, fmt, ap);
 va_end(ap);
 
 if (buflen > 0) {
-    buflen += (ssize_t)snprintf(&buf[buflen], bufcap - buflen, "\x1b[0m (%s)\n", fname);
-    if (buflen >= bufcap) {
+    buflen += (ssize_t)snprintf(&buf[buflen], sbufCap - buflen, "\x1b[0m (%s)\n", fname);
+    if (buflen >= sbufCap) {
         // truncated; make sure to end the line
         buf[buflen - 1] = '\n';
     }
@@ -121,36 +121,36 @@ write(STDERR_FILENO, buf, buflen);
 static uint32_t chlock_count = 0;
 
 #define CHAN_LOCK_T wmutex_t
-#define chan_lock_init(lock) initMutex((lock), wmutex_plain)
-#define chan_lock_destroy(lock) destroyMutex(lock)
+#define chan_lock_init(lock) mutexInit((lock), wmutex_plain)
+#define chan_lock_destroy(lock) mutexDestroy(lock)
 
 #define chan_lock(lock)                                     \
     do {                                                    \
         uint32_t n = chlock_count++;                        \
         dlog("CL #%u LOCK %s:%d", n, __FILE__, __LINE__);   \
-        lockMutex(lock);                                  \
+        mutexLock(lock);                                  \
         dlog("CL #%u UNLOCK %s:%d", n, __FILE__, __LINE__); \
     } while (0)
 
 #define chan_unlock(lock)                                \
     do {                                                 \
         /*dlog("CL UNLOCK %s:%d", __FILE__, __LINE__);*/ \
-        unlockMutex(lock);                             \
+        mutexUnlock(lock);                             \
     } while (0)
 #else
 // // wmutex_t
 // #define CHAN_LOCK_T             wmutex_t
-// #define chan_lock_init(lock)    initMutex((lock), wmutex_plain)
-// #define chan_lock_destroy(lock) destroyMutex(lock)
-// #define chan_lock(lock)         lockMutex(lock)
-// #define chan_unlock(lock)       unlockMutex(lock)
+// #define chan_lock_init(lock)    mutexInit((lock), wmutex_plain)
+// #define chan_lock_destroy(lock) mutexDestroy(lock)
+// #define chan_lock(lock)         mutexLock(lock)
+// #define chan_unlock(lock)       mutexUnlock(lock)
 
 // wmutex_
 #define CHAN_LOCK_T wmutex_t
-#define chan_lock_init(lock) initMutex(lock)
-#define chan_lock_destroy(lock) destroyMutex(lock)
-#define chan_lock(lock) lockMutex(lock)
-#define chan_unlock(lock) unlockMutex(lock)
+#define chan_lock_init(lock) mutexInit(lock)
+#define chan_lock_destroy(lock) mutexDestroy(lock)
+#define chan_lock(lock) mutexLock(lock)
+#define chan_unlock(lock) mutexUnlock(lock)
 #endif
 
 // -------------------------------------------------------------------------
@@ -209,7 +209,7 @@ static void thr_init(Thr* t) {
 
     t->id = atomicAddExplicit(&_thread_id_counter, 1, memory_order_relaxed);
     t->init = true;
-    initLightWeightSemaPhore(&t->sema, 0); // TODO: Semadestroy?
+    leightweightsemaphoreInit(&t->sema, 0); // TODO: Semadestroy?
 }
 
 inline static Thr* thr_current(void) {
@@ -221,12 +221,12 @@ inline static Thr* thr_current(void) {
 }
 
 inline static void thr_signal(Thr* t) {
-    signalLightWeightSemaPhore(&t->sema, 1); // wake
+    leightweightsemaphoreSignal(&t->sema, 1); // wake
 }
 
 inline static void thr_wait(Thr* t) {
     // dlog_chan("thr_wait ...");
-    waitLightWeightSemaPhore(&t->sema); // sleep
+    leightweightsemaphoreWait(&t->sema); // sleep
 }
 
 static void wq_enqueue(WaitQ* wq, Thr* t) {
@@ -543,8 +543,8 @@ static bool chan_recv_direct(wchan_t* c, void* dstelemptr, Thr* sendert) {
     return ok;
 }
 
-wchan_t* chanOpen(size_t elemsize, uint32_t bufcap) {
-    int64_t memsize = (int64_t)sizeof(wchan_t) + ((int64_t)bufcap * (int64_t)elemsize);
+wchan_t* chanOpen(size_t elemsize, uint32_t sbufCap) {
+    int64_t memsize = (int64_t)sizeof(wchan_t) + ((int64_t)sbufCap * (int64_t)elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     memsize = ALIGN2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
@@ -564,7 +564,7 @@ wchan_t* chanOpen(size_t elemsize, uint32_t bufcap) {
 
     c->memptr = ptr;
     c->elemsize = elemsize;
-    c->qcap = bufcap;
+    c->qcap = sbufCap;
     chan_lock_init(&c->lock);
 
 // make sure that the thread setting up the channel gets a low thread_id

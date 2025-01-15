@@ -89,7 +89,7 @@ static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_ip_manipulator_state_t *state = TSTATE(self);
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     if (packet->ip4_header.version == 4)
     {

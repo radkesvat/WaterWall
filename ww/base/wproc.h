@@ -1,7 +1,7 @@
 #ifndef WW_PROC_H_
 #define WW_PROC_H_
 
-#include "wplatform.h"
+#include "wlibc.h"
 
 typedef struct proc_ctx_s {
     pid_t           pid; // tid in Windows

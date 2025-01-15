@@ -1,5 +1,8 @@
 #pragma once
 
+#include "wlibc.h"
+
+
 #if (defined(WW_LOG_H_) || defined(wlog)) && ! defined(LOGGER_CHOSEN)
 #error "NetworkLogger must be included before wlog.h"
 #elif defined(LOGGER_CHOSEN)
@@ -11,7 +14,6 @@
 
 #endif
 
-#include <stdbool.h>
 
 struct logger_s;
 typedef struct logger_s logger_t;
@@ -24,7 +26,7 @@ logger_t *createNetworkLogger(const char *log_file, bool console);
 
 static inline void setNetworkLoggerLevelByStr(const char *log_level)
 {
-    setLoggerLevelByStr(getNetworkLogger(), log_level);
+    loggerSetLevelByString(getNetworkLogger(), log_level);
 }
 
 logger_handler getNetworkLoggerHandle(void);

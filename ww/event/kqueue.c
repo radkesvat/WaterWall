@@ -6,7 +6,7 @@
 
 #include <sys/event.h>
 
-#include "hevent.h"
+#include "wevent.h"
 
 #define EVENTS_INIT_SIZE     64
 
@@ -31,7 +31,7 @@ static void kqueue_ctx_resize(kqueue_ctx_t* kqueue_ctx, int size) {
     kqueue_ctx->capacity = size;
 }
 
-int iowatcher_init(hloop_t* loop) {
+int iowatcherInit(wloop_t* loop) {
     if (loop->iowatcher) return 0;
     kqueue_ctx_t* kqueue_ctx;
     EVENTLOOP_ALLOC_SIZEOF(kqueue_ctx);
@@ -45,7 +45,7 @@ int iowatcher_init(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_cleanup(hloop_t* loop) {
+int iowatcherCleanUp(wloop_t* loop) {
     if (loop->iowatcher == NULL) return 0;
     kqueue_ctx_t* kqueue_ctx = (kqueue_ctx_t*)loop->iowatcher;
     close(kqueue_ctx->kqfd);
@@ -55,12 +55,12 @@ int iowatcher_cleanup(hloop_t* loop) {
     return 0;
 }
 
-static int __add_event(hloop_t* loop, int fd, int event) {
+static int __add_event(wloop_t* loop, int fd, int event) {
     if (loop->iowatcher == NULL) {
-        iowatcher_init(loop);
+        iowatcherInit(loop);
     }
     kqueue_ctx_t* kqueue_ctx = (kqueue_ctx_t*)loop->iowatcher;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
     int idx = io->event_index[EVENT_INDEX(event)];
     if (idx < 0) {
         io->event_index[EVENT_INDEX(event)] = idx = kqueue_ctx->nchanges;
@@ -81,7 +81,7 @@ static int __add_event(hloop_t* loop, int fd, int event) {
     return 0;
 }
 
-int iowatcher_add_event(hloop_t* loop, int fd, int events) {
+int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
     if (events & WW_READ) {
         __add_event(loop, fd, EVFILT_READ);
     }
@@ -91,10 +91,10 @@ int iowatcher_add_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-static int __del_event(hloop_t* loop, int fd, int event) {
+static int __del_event(wloop_t* loop, int fd, int event) {
     kqueue_ctx_t* kqueue_ctx = (kqueue_ctx_t*)loop->iowatcher;
     if (kqueue_ctx == NULL) return 0;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
     int idx = io->event_index[EVENT_INDEX(event)];
     if (idx < 0) return 0;
     assert(kqueue_ctx->changes[idx].ident == fd);
@@ -107,7 +107,7 @@ static int __del_event(hloop_t* loop, int fd, int event) {
         tmp = kqueue_ctx->changes[idx];
         kqueue_ctx->changes[idx] = kqueue_ctx->changes[lastidx];
         kqueue_ctx->changes[lastidx] = tmp;
-        hio_t* last = loop->ios.ptr[kqueue_ctx->changes[idx].ident];
+        wio_t* last = loop->ios.ptr[kqueue_ctx->changes[idx].ident];
         if (last) {
             last->event_index[EVENT_INDEX(kqueue_ctx->changes[idx].filter)] = idx;
         }
@@ -120,7 +120,7 @@ static int __del_event(hloop_t* loop, int fd, int event) {
     return 0;
 }
 
-int iowatcher_del_event(hloop_t* loop, int fd, int events) {
+int iowatcherDelEvent(wloop_t* loop, int fd, int events) {
     if (events & WW_READ) {
         __del_event(loop, fd, EVFILT_READ);
     }
@@ -130,7 +130,7 @@ int iowatcher_del_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcher_poll_events(hloop_t* loop, int timeout) {
+int iowatcherPollEvents(wloop_t* loop, int timeout) {
     kqueue_ctx_t* kqueue_ctx = (kqueue_ctx_t*)loop->iowatcher;
     if (kqueue_ctx == NULL) return 0;
     if (kqueue_ctx->nchanges == 0) return 0;
@@ -157,7 +157,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
         ++nevents;
         int fd = kqueue_ctx->events[i].ident;
         int revents = kqueue_ctx->events[i].filter;
-        hio_t* io = loop->ios.ptr[fd];
+        wio_t* io = loop->ios.ptr[fd];
         if (io) {
             if (revents & EVFILT_READ) {
                 io->revents |= WW_READ;

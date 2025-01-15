@@ -4,7 +4,7 @@
 #include "managers/node_manager.h"
 #include "packet_types.h"
 #include "utils/jsonutils.h"
-#include "utils/mathutils.h"
+
 
 typedef struct layer3_senderstate_s
 {
@@ -70,9 +70,9 @@ static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_senderstate_t *state = TSTATE(self);
 
-    // printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
+    // printSendingIPPacketInfo(sbufGetRawPtr(c->payload), sbufGetBufLength(c->payload));
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
     unsigned int ip_header_len;
 
     /* Tcp checksum must be recalculated even if ip header is the only changed part of packet */
@@ -86,7 +86,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (packet->ip4_header.protocol == 6)
         {
-            struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
+            struct tcpheader *tcp_header = (struct tcpheader *) (sbufGetMutablePtr(c->payload) + ip_header_len);
             tcpCheckSum4(&(packet->ip4_header), tcp_header);
         }
     }
@@ -96,7 +96,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (packet->ip6_header.nexthdr == 6)
         {
-            struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
+            struct tcpheader *tcp_header = (struct tcpheader *) (sbufGetMutablePtr(c->payload) + ip_header_len);
             tcpCheckSum6(&(packet->ip6_header), tcp_header);
         }
     }
@@ -123,14 +123,14 @@ static void downStream(tunnel_t *self, context_t *c)
 }
 
 // only for debug and tests
-static void onTimer(htimer_t *timer)
+static void onTimer(wtimer_t *timer)
 {
     LOGD("sending...");
-    tunnel_t             *self  = hevent_userdata(timer);
+    tunnel_t             *self  = weventGetUserdata(timer);
     layer3_senderstate_t *state = TSTATE(self);
     line_t               *l     = newLine(0);
     context_t            *c     = newContext(l);
-    c->payload                  = popBuffer(getContextBufferPool(c));
+    c->payload                  = bufferpoolPop(getContextBufferPool(c));
 
     // unsigned char bpacket[] = {0x45, 0x00, 0x00, 0x2C, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0xC4, 0xC0, 0x00,
     // 0x02,
@@ -142,12 +142,12 @@ static void onTimer(htimer_t *timer)
                                0x02, 0x22, 0xC2, 0x95, 0x43, 0x78, 0x0C, 0x00, 0x50, 0xF4, 0x70, 0x98, 0x8B, 0x00, 0x00,
                                0x00, 0x00, 0x60, 0x02, 0xFF, 0xFF, 0x18, 0xC6, 0x00, 0x00, 0x02, 0x04, 0x05, 0xB4};
 
-    setLen(c->payload, sizeof(bpacket));
-    writeRaw(c->payload, bpacket, sizeof(bpacket));
+    sbufSetLength(c->payload, sizeof(bpacket));
+    sbufWrite(c->payload, bpacket, sizeof(bpacket));
 
-    printSendingIPPacketInfo(rawBuf(c->payload), bufLen(c->payload));
+    printSendingIPPacketInfo(sbufGetRawPtr(c->payload), sbufGetBufLength(c->payload));
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     packet->ip4_header.check = 0x0;
 
@@ -207,8 +207,8 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
     t->downStream = &downStream;
 
     // for testing
-    // htimer_t *tm = htimer_add(getWorkerLoop(0), onTimer, 500, INFINITE);
-    // hevent_set_userdata(tm, t);
+    // wtimer_t *tm = wtimerAdd(getWorkerLoop(0), onTimer, 500, INFINITE);
+    // weventSetUserData(tm, t);
 
     return t;
 }

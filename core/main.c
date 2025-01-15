@@ -1,6 +1,6 @@
 #include "config_file.h"
 #include "core_settings.h"
-#include "eventloop_mem.h"
+#include "ev_memory.h"
 #include "loggers/core_logger.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
@@ -55,7 +55,7 @@ int main(void)
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
     increaseFileLimit();
-    loadStaticTunnelsIntoCore();
+    loadImportedTunnelsIntoCore();
 
     //  [Parse ConfigFiles]
     {

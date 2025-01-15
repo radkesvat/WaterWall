@@ -1,6 +1,6 @@
 #pragma once
 #include "buffer_pool.h"
-#include "hloop.h"
+#include "wloop.h"
 #include "wplatform.h"
 #include "wthread.h"
 #include "master_pool.h"
@@ -16,12 +16,12 @@ typedef void *tun_handle_t; // Windows handle (void* can hold HANDLE)
 
 struct tun_device_s;
 
-typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, shift_buffer_t *buf, tid_t tid);
+typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, tid_t tid);
 
 typedef struct tun_device_s
 {
     char *name;
-    // hio_t       *io; not using fd multiplexer
+    // wio_t       *io; not using fd multiplexer
     tun_handle_t handle;
     void        *userdata;
     wthread_t    read_thread;
@@ -48,4 +48,4 @@ bool bringTunDeviceUP(tun_device_t *tdev);
 bool bringTunDeviceDown(tun_device_t *tdev);
 bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
-bool writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf);
+bool writeToTunDevce(tun_device_t *tdev, sbuf_t *buf);

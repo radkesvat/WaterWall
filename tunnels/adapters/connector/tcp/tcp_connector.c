@@ -1,6 +1,6 @@
 
 #include "tcp_connector.h"
-#include "basic_types.h"
+
 #include "frand.h"
 #include "freebind.h"
 #include "wsocket.h"
@@ -9,14 +9,14 @@
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
-#include "utils/mathutils.h"
-#include "utils/sockutils.h"
+
+
 
 static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
 {
     if (cstate->io)
     {
-        hevent_set_userdata(cstate->io, NULL);
+        weventSetUserData(cstate->io, NULL);
         while (contextQueueLen(cstate->data_queue) > 0)
         {
             // all data must be written before sending fin, event loop will hold them for us
@@ -24,7 +24,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
 
             if (flush_queue)
             {
-                hio_write(cstate->io, cw->payload);
+                wioWrite(cstate->io, cw->payload);
                 dropContexPayload(cw);
             }
             else
@@ -34,7 +34,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
             destroyContext(cw);
         }
 
-        hio_close(cstate->io);
+        wioClose(cstate->io);
     }
     if (cstate->write_paused)
     {
@@ -48,12 +48,12 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
 static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
 {
     context_queue_t *data_queue = (cstate)->data_queue;
-    hio_t           *io         = cstate->io;
+    wio_t           *io         = cstate->io;
     while (contextQueueLen(data_queue) > 0)
     {
         context_t *cw     = contextQueuePop(data_queue);
-        int        bytes  = (int) bufLen(cw->payload);
-        int        nwrite = hio_write(io, cw->payload);
+        int        bytes  = (int) sbufGetBufLength(cw->payload);
+        int        nwrite = wioWrite(io, cw->payload);
         dropContexPayload(cw);
         destroyContext(cw);
         if (nwrite >= 0 && nwrite < bytes)
@@ -65,16 +65,16 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
     return true;
 }
 
-static void onWriteComplete(hio_t *io)
+static void onWriteComplete(wio_t *io)
 {
     // resume the read on other end of the connection
-    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
+    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
         return;
     }
 
-    if (hio_write_is_complete(io))
+    if (wioCheckWriteComplete(io))
     {
 
         context_queue_t *data_queue = cstate->data_queue;
@@ -82,21 +82,21 @@ static void onWriteComplete(hio_t *io)
         {
             return;
         }
-        hio_setcb_write(cstate->io, NULL);
+        wioSetCallBackWrite(cstate->io, NULL);
         cstate->write_paused = false;
         resumeLineDownSide(cstate->line);
     }
 }
 
-static void onRecv(hio_t *io, shift_buffer_t *buf)
+static void onRecv(wio_t *io, sbuf_t *buf)
 {
-    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
+    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
+        bufferpoolResuesbuf(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
-    shift_buffer_t *payload = buf;
+    sbuf_t *payload = buf;
     tunnel_t       *self    = (cstate)->tunnel;
     line_t         *line    = (cstate)->line;
 
@@ -105,12 +105,12 @@ static void onRecv(hio_t *io, shift_buffer_t *buf)
     self->downStream(self, context);
 }
 
-static void onClose(hio_t *io)
+static void onClose(wio_t *io)
 {
-    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (hevent_userdata(io));
+    tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (weventGetUserdata(io));
     if (cstate != NULL)
     {
-        LOGD("TcpConnector: received close for FD:%x ", hio_fd(io));
+        LOGD("TcpConnector: received close for FD:%x ", wioGetFD(io));
         tunnel_t  *self    = (cstate)->tunnel;
         line_t    *line    = (cstate)->line;
         context_t *context = newFinContext(line);
@@ -118,7 +118,7 @@ static void onClose(hio_t *io)
     }
     else
     {
-        LOGD("TcpConnector: sent close for FD:%x ", hio_fd(io));
+        LOGD("TcpConnector: sent close for FD:%x ", wioGetFD(io));
     }
 }
 
@@ -129,7 +129,7 @@ static void onLinePaused(void *userdata)
     if (! cstate->read_paused)
     {
         cstate->read_paused = true;
-        hio_read_stop(cstate->io);
+        wioReadStop(cstate->io);
     }
 }
 
@@ -140,13 +140,13 @@ static void onLineResumed(void *userdata)
     if (cstate->read_paused)
     {
         cstate->read_paused = false;
-        hio_read(cstate->io);
+        wioRead(cstate->io);
     }
 }
 
-static void onOutBoundConnected(hio_t *upstream_io)
+static void onOutBoundConnected(wio_t *upstream_io)
 {
-    tcp_connector_con_state_t *cstate = hevent_userdata(upstream_io);
+    tcp_connector_con_state_t *cstate = weventGetUserdata(upstream_io);
     if (UNLIKELY(cstate == NULL))
     {
         return;
@@ -162,16 +162,16 @@ static void onOutBoundConnected(hio_t *upstream_io)
 
     tunnel_t *self = cstate->tunnel;
     line_t   *line = cstate->line;
-    hio_setcb_read(upstream_io, onRecv);
+    wioSetCallBackRead(upstream_io, onRecv);
 
-    if (checkLoggerWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("TcpConnector: connection succeed FD:%x [%s] => [%s]", hio_fd(upstream_io),
-             SOCKADDR_STR(hio_localaddr(upstream_io), localaddrstr),
-             SOCKADDR_STR(hio_peeraddr(upstream_io), peeraddrstr));
+        LOGD("TcpConnector: connection succeed FD:%x [%s] => [%s]", wioGetFD(upstream_io),
+             SOCKADDR_STR(wioGetLocaladdr(upstream_io), localaddrstr),
+             SOCKADDR_STR(wioGetPeerAddr(upstream_io), peeraddrstr));
     }
 
     setupLineUpSide(line, onLinePaused, cstate, onLineResumed);
@@ -191,15 +191,15 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            int bytes  = (int) bufLen(c->payload);
-            int nwrite = hio_write(cstate->io, c->payload);
+            int bytes  = (int) sbufGetBufLength(c->payload);
+            int nwrite = wioWrite(cstate->io, c->payload);
             dropContexPayload(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {
                 pauseLineDownSide(c->line);
                 cstate->write_paused = true;
-                hio_setcb_write(cstate->io, onWriteComplete);
+                wioSetCallBackWrite(cstate->io, onWriteComplete);
             }
             destroyContext(c);
         }
@@ -274,7 +274,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
-            hloop_t *loop   = getWorkerLoop(c->line->tid);
+            wloop_t *loop   = getWorkerLoop(c->line->tid);
             int      sockfd = socket(dest_ctx->address.sa.sa_family, SOCK_STREAM, 0);
 
             if (sockfd < 0)
@@ -309,15 +309,15 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 #endif
 
-            hio_t *upstream_io = hio_get(loop, sockfd);
+            wio_t *upstream_io = wioGet(loop, sockfd);
             assert(upstream_io != NULL);
 
-            hio_set_peeraddr(upstream_io, &(dest_ctx->address.sa), (int) sockaddrLen(&(dest_ctx->address)));
+            wioSetPeerAddr(upstream_io, &(dest_ctx->address.sa), (int) sockaddrLen(&(dest_ctx->address)));
             cstate->io = upstream_io;
-            hevent_set_userdata(upstream_io, cstate);
-            hio_setcb_connect(upstream_io, onOutBoundConnected);
-            hio_setcb_close(upstream_io, onClose);
-            hio_connect(upstream_io);
+            weventSetUserData(upstream_io, cstate);
+            wioSetCallBackConnect(upstream_io, onOutBoundConnected);
+            wioSetCallBackClose(upstream_io, onClose);
+            wioConnect(upstream_io);
             destroyContext(c);
         }
         else if (c->fin)
@@ -359,7 +359,7 @@ static void downStream(tunnel_t *self, context_t *c)
         if (c->est)
         {
             cstate->established = true;
-            hio_read(cstate->io);
+            wioRead(cstate->io);
             if (resumeWriteQueue(cstate))
             {
                 cstate->write_paused = false;
@@ -367,7 +367,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                hio_setcb_write(cstate->io, onWriteComplete);
+                wioSetCallBackWrite(cstate->io, onWriteComplete);
             }
             self->dw->downStream(self->dw, c);
         }
@@ -488,7 +488,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
         else
         {
 
-            sockAddrSetIp(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
+            sockaddrSetIp(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
         }
     }
 

@@ -8,9 +8,8 @@
  */
 
 /* for uint32_t */
-#include <stdint.h>
+#include "wlibc.h"
 
-#include "wexport.h"
 
 typedef struct {
     uint32_t state[5];

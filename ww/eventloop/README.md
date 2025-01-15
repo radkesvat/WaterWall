@@ -14,8 +14,8 @@ removed ssl parts
 
 removed unpack, kcp, rudp support and other stream control related code
 
-removed thread safety parts of hio_t structure (i mean the writelock), 
-so we can no longer write to a hio_t from multiple threads
+removed thread safety parts of wio_t structure (i mean the writelock), 
+so we can no longer write to a wio_t from multiple threads
 
 small optimization tweaks
 

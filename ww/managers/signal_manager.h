@@ -1,5 +1,6 @@
 #pragma once
 
+#include "wlibc.h"
 #include "worker.h"
 
 typedef void (*SignalHandler)(void*userdata,int signum);
@@ -36,6 +37,6 @@ typedef struct signal_manager_s
 
 signal_manager_t *createSignalManager(void);
 signal_manager_t *getSignalManager(void);
-void              registerAtExitCallback(SignalHandler handle, void *userdata);
+void              registerAtExitCallBack(SignalHandler handle, void *userdata);
 void              setSignalManager(signal_manager_t *sm);
 void              startSignalManager(void);

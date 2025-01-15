@@ -3,7 +3,7 @@
 #include "managers/node_manager.h"
 #include "packet_types.h"
 #include "utils/jsonutils.h"
-#include "utils/sockutils.h"
+
 
 enum mode_dynamic_value_status
 {
@@ -51,7 +51,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     if (packet->ip4_header.version == 4)
     {
@@ -94,7 +94,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     if (packet->ip4_header.version == 4)
     {

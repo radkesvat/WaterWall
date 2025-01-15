@@ -1,6 +1,6 @@
 #pragma once
 
-#include "basic_types.h"
+
 #include "sha2.h"
 
 typedef unsigned char sha224_t[SHA224_DIGEST_SIZE];

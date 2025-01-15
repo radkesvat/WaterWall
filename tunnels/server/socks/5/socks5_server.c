@@ -1,11 +1,11 @@
 #include "socks5_server.h"
-#include "basic_types.h"
+
 #include "buffer_stream.h"
 #include "wsocket.h"
 #include "loggers/network_logger.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
-#include "utils/sockutils.h"
+
 
 #define SOCKS5_VERSION ((uint8_t) 5)
 
@@ -76,7 +76,7 @@ typedef struct socks5_server_con_state_s
     bool            established;
     bool            init_sent;
     socks5_state_e  state;
-    shift_buffer_t *waitbuf;
+    sbuf_t *waitbuf;
     unsigned int    udp_data_offset;
 
     unsigned int need;
@@ -87,45 +87,45 @@ static void cleanup(socks5_server_con_state_t *cstate, buffer_pool_t *reusepool)
 {
     if (cstate->waitbuf)
     {
-        reuseBuffer(reusepool, cstate->waitbuf);
+        bufferpoolResuesbuf(reusepool, cstate->waitbuf);
     }
 }
 static void encapsulateUdpPacket(context_t *c)
 {
-    shift_buffer_t *packet = c->payload;
+    sbuf_t *packet = c->payload;
 
-    uint16_t port = sockAddrPort(&(c->line->dest_ctx.address));
+    uint16_t port = sockaddrPort(&(c->line->dest_ctx.address));
     port          = (port << 8) | (port >> 8);
-    shiftl(packet, 2); // port
-    writeUnAlignedUI16(packet, port);
+    sbufShiftLeft(packet, 2); // port
+    sbufWriteUnAlignedUI16(packet, port);
 
     switch (c->line->dest_ctx.address_type)
     {
     case kSatIPV6:
-        shiftl(packet, 16);
-        writeRaw(packet, &(c->line->dest_ctx.address.sin6.sin6_addr), 16);
-        shiftl(packet, 1);
-        writeUnAlignedUI8(packet, kIPv6Addr);
+        sbufShiftLeft(packet, 16);
+        sbufWrite(packet, &(c->line->dest_ctx.address.sin6.sin6_addr), 16);
+        sbufShiftLeft(packet, 1);
+        sbufWriteUnAlignedUI8(packet, kIPv6Addr);
         break;
 
     case kSatIPV4:
     default:
-        shiftl(packet, 4);
-        writeRaw(packet, &(c->line->dest_ctx.address.sin.sin_addr), 4);
-        shiftl(packet, 1);
-        writeUnAlignedUI8(packet, kIPv4Addr);
+        sbufShiftLeft(packet, 4);
+        sbufWrite(packet, &(c->line->dest_ctx.address.sin.sin_addr), 4);
+        sbufShiftLeft(packet, 1);
+        sbufWriteUnAlignedUI8(packet, kIPv4Addr);
         break;
     }
-    shiftl(packet, 1);
-    writeUnAlignedUI8(packet, 0x0);
-    shiftl(packet, 2);
-    writeUnAlignedUI16(packet, 0x0);
+    sbufShiftLeft(packet, 1);
+    sbufWriteUnAlignedUI8(packet, 0x0);
+    sbufShiftLeft(packet, 2);
+    sbufWriteUnAlignedUI16(packet, 0x0);
 }
 
 #define ATLEAST(x)                                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \
-        if ((int) bufLen(c->payload) < (x))                                                                            \
+        if ((int) sbufGetBufLength(c->payload) < (x))                                                                            \
         {                                                                                                              \
             reuseContextPayload(c);                                                                                    \
             goto disconnect;                                                                                           \
@@ -135,11 +135,11 @@ static void encapsulateUdpPacket(context_t *c)
 static void udpUpStream(tunnel_t *self, context_t *c)
 {
     socks5_server_con_state_t *cstate       = CSTATE(c);
-    shift_buffer_t            *bytes        = c->payload;
+    sbuf_t            *bytes        = c->payload;
     socket_context_t          *dest_context = &(c->line->dest_ctx);
 
     // minimum 10 is important
-    if (bufLen(c->payload) > 8192 || bufLen(c->payload) < 10)
+    if (sbufGetBufLength(c->payload) > 8192 || sbufGetBufLength(c->payload) < 10)
     {
         reuseContextPayload(c);
         goto disconnect;
@@ -148,13 +148,13 @@ static void udpUpStream(tunnel_t *self, context_t *c)
     if (cstate->init_sent)
     {
         // drop fargmented pcakets
-        if (((uint8_t *) rawBuf(bytes))[2] != 0)
+        if (((uint8_t *) sbufGetRawPtr(bytes))[2] != 0)
         {
             reuseContextPayload(c);
             return;
         }
-        const uint8_t satyp = ((uint8_t *) rawBuf(bytes))[3];
-        shiftr(bytes, 4);
+        const uint8_t satyp = ((uint8_t *) sbufGetRawPtr(bytes))[3];
+        sbufShiftRight(bytes, 4);
         int atleast = 0;
         switch ((socks5_addr_type) satyp)
         {
@@ -164,7 +164,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         case kFqdnAddr:
             dest_context->address_type = kSatDomainName;
             // already checked for at least 10 length
-            const uint8_t domain_len = ((uint8_t *) rawBuf(bytes))[0];
+            const uint8_t domain_len = ((uint8_t *) sbufGetRawPtr(bytes))[0];
             atleast                  = 1 + domain_len;
             break;
         case kIPv6Addr:
@@ -175,19 +175,19 @@ static void udpUpStream(tunnel_t *self, context_t *c)
             goto disconnect;
         }
         ATLEAST(atleast);
-        shiftr(bytes, atleast);
+        sbufShiftRight(bytes, atleast);
         self->up->upStream(self->up, c);
     }
     else
     {
-        if (((uint8_t *) rawBuf(bytes))[0] != 0 || ((uint8_t *) rawBuf(bytes))[1] != 0 ||
-            ((uint8_t *) rawBuf(bytes))[2] != 0)
+        if (((uint8_t *) sbufGetRawPtr(bytes))[0] != 0 || ((uint8_t *) sbufGetRawPtr(bytes))[1] != 0 ||
+            ((uint8_t *) sbufGetRawPtr(bytes))[2] != 0)
         {
             reuseContextPayload(c);
             goto disconnect;
         }
-        const uint8_t satyp = ((uint8_t *) rawBuf(bytes))[3];
-        shiftr(bytes, 4);
+        const uint8_t satyp = ((uint8_t *) sbufGetRawPtr(bytes))[3];
+        sbufShiftRight(bytes, 4);
         dest_context->address_protocol = kSapUdp;
 
         switch ((socks5_addr_type) satyp)
@@ -195,32 +195,32 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         case kIPv4Addr:
             dest_context->address_type = kSatIPV4;
             ATLEAST(4);
-            memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 4);
-            shiftr(c->payload, 4);
+            memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 4);
+            sbufShiftRight(c->payload, 4);
             break;
         case kFqdnAddr:
             dest_context->address_type = kSatDomainName;
             // already checked for at least 10 length
-            const uint8_t domain_len = ((uint8_t *) rawBuf(bytes))[0];
+            const uint8_t domain_len = ((uint8_t *) sbufGetRawPtr(bytes))[0];
             ATLEAST(1 + domain_len);
-            LOGD("Socks5Server: udp domain %.*s", domain_len, rawBuf(c->payload));
-            socketContextDomainSet(dest_context, rawBuf(c->payload), domain_len);
-            shiftr(c->payload, domain_len);
+            LOGD("Socks5Server: udp domain %.*s", domain_len, sbufGetRawPtr(c->payload));
+            socketContextDomainSet(dest_context, sbufGetRawPtr(c->payload), domain_len);
+            sbufShiftRight(c->payload, domain_len);
 
             break;
         case kIPv6Addr:
             dest_context->address_type = kSatIPV6;
             ATLEAST(16);
-            memcpy(&(dest_context->address.sin.sin_addr), rawBuf(c->payload), 16);
-            shiftr(c->payload, 16);
+            memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 16);
+            sbufShiftRight(c->payload, 16);
             break;
         default:
             reuseContextPayload(c);
             goto disconnect;
         }
         ATLEAST(2); // port
-        memcpy(&(dest_context->address.sin.sin_port), rawBuf(c->payload), 2);
-        shiftr(c->payload, 2);
+        memcpy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
+        sbufShiftRight(c->payload, 2);
         self->up->upStream(self->up, newInitContext(c->line));
         if (! isAlive(c->line))
         {
@@ -275,12 +275,12 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         if (cstate->waitbuf)
         {
-            c->payload      = appendBufferMerge(getContextBufferPool(c), cstate->waitbuf, c->payload);
+            c->payload      = sbufAppendMerge(getContextBufferPool(c), cstate->waitbuf, c->payload);
             cstate->waitbuf = NULL;
         }
     parsebegin:
 
-        if (bufLen(c->payload) < cstate->need)
+        if (sbufGetBufLength(c->payload) < cstate->need)
         {
             cstate->waitbuf = c->payload;
             dropContexPayload(c);
@@ -288,7 +288,7 @@ static void upStream(tunnel_t *self, context_t *c)
             return;
         }
 
-        shift_buffer_t *bytes = c->payload;
+        sbuf_t *bytes = c->payload;
 
         switch (cstate->state)
         {
@@ -298,11 +298,11 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSAuthMethodsCount: {
             assert(cstate->need == 2);
             uint8_t version = 0;
-            readUnAlignedUI8(bytes, &version);
-            shiftr(bytes, 1);
+            sbufReadUnAlignedUI8(bytes, &version);
+            sbufShiftRight(bytes, 1);
             uint8_t methodscount = 0;
-            readUnAlignedUI8(bytes, &methodscount);
-            shiftr(bytes, 1);
+            sbufReadUnAlignedUI8(bytes, &methodscount);
+            sbufShiftRight(bytes, 1);
             if (version != SOCKS5_VERSION || methodscount == 0)
             {
                 LOGE("Socks5Server: Unsupprted socks version: %d", (int) version);
@@ -318,12 +318,12 @@ static void upStream(tunnel_t *self, context_t *c)
             // TODO(root): check auth methods
             // uint8_t authmethod = kNoAuth;
             // send auth mothod
-            shift_buffer_t *resp = popBuffer(getContextBufferPool(c));
-            shiftl(resp, 1);
-            writeUnAlignedUI8(resp, kNoAuth);
-            shiftl(resp, 1);
-            writeUnAlignedUI8(resp, SOCKS5_VERSION);
-            shiftr(bytes, cstate->need); // we've read and choosed 1 method
+            sbuf_t *resp = bufferpoolPop(getContextBufferPool(c));
+            sbufShiftLeft(resp, 1);
+            sbufWriteUnAlignedUI8(resp, kNoAuth);
+            sbufShiftLeft(resp, 1);
+            sbufWriteUnAlignedUI8(resp, SOCKS5_VERSION);
+            sbufShiftRight(bytes, cstate->need); // we've read and choosed 1 method
             context_t *reply = newContextFrom(c);
             reply->payload   = resp;
             self->dw->downStream(self->dw, reply);
@@ -349,12 +349,12 @@ static void upStream(tunnel_t *self, context_t *c)
             assert(cstate->need == 3);
 
             uint8_t version = 0;
-            readUnAlignedUI8(bytes, &version);
-            shiftr(bytes, 1);
+            sbufReadUnAlignedUI8(bytes, &version);
+            sbufShiftRight(bytes, 1);
 
             uint8_t cmd = 0;
-            readUnAlignedUI8(bytes, &cmd);
-            shiftr(bytes, 1);
+            sbufReadUnAlignedUI8(bytes, &cmd);
+            sbufShiftRight(bytes, 1);
 
             if (version != SOCKS5_VERSION || (cmd != kConnectCommand && cmd != kAssociateCommand))
             {
@@ -374,7 +374,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 reuseContextPayload(c);
                 goto disconnect;
             }
-            shiftr(bytes, 1); // socks5 reserved 0x0
+            sbufShiftRight(bytes, 1); // socks5 reserved 0x0
             cstate->state = kSDstAddrType;
             cstate->need  = 1;
             goto parsebegin;
@@ -383,8 +383,8 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSDstAddrType: {
             assert(cstate->need == 1);
             uint8_t satyp = 0;
-            readUnAlignedUI8(bytes, &satyp);
-            shiftr(bytes, 1);
+            sbufReadUnAlignedUI8(bytes, &satyp);
+            sbufShiftRight(bytes, 1);
 
             switch ((socks5_addr_type) satyp)
             {
@@ -415,8 +415,8 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSDstAddrLen: {
             assert(cstate->need == 1);
             uint8_t addr_len = 0;
-            readUnAlignedUI8(bytes, &addr_len);
-            shiftr(bytes, 1);
+            sbufReadUnAlignedUI8(bytes, &addr_len);
+            sbufShiftRight(bytes, 1);
 
             if (addr_len == 0)
             {
@@ -437,20 +437,20 @@ static void upStream(tunnel_t *self, context_t *c)
             case kSatIPV4:
                 assert(cstate->need == 4);
                 c->line->dest_ctx.address.sa.sa_family = AF_INET;
-                memcpy(&c->line->dest_ctx.address.sin.sin_addr, rawBuf(bytes), 4);
-                shiftr(bytes, 4);
+                memcpy(&c->line->dest_ctx.address.sin.sin_addr, sbufGetRawPtr(bytes), 4);
+                sbufShiftRight(bytes, 4);
 
                 break;
             case kSatDomainName:
-                socketContextDomainSet(&c->line->dest_ctx, rawBuf(bytes), cstate->need);
+                socketContextDomainSet(&c->line->dest_ctx, sbufGetRawPtr(bytes), cstate->need);
                 c->line->dest_ctx.domain_resolved = false;
-                shiftr(bytes, cstate->need);
+                sbufShiftRight(bytes, cstate->need);
                 break;
             case kSatIPV6:
                 assert(cstate->need == 16);
                 c->line->dest_ctx.address.sa.sa_family = AF_INET6;
-                memcpy(&c->line->dest_ctx.address.sin6.sin6_addr, rawBuf(bytes), 16);
-                shiftr(bytes, 16);
+                memcpy(&c->line->dest_ctx.address.sin6.sin6_addr, sbufGetRawPtr(bytes), 16);
+                sbufShiftRight(bytes, 16);
                 break;
             default:
                 reuseContextPayload(c);
@@ -464,10 +464,10 @@ static void upStream(tunnel_t *self, context_t *c)
         break;
         case kSDstPort: {
             assert(cstate->need == 2);
-            memcpy(&(c->line->dest_ctx.address.sin.sin_port), rawBuf(bytes), 2);
-            shiftr(bytes, 2);
+            memcpy(&(c->line->dest_ctx.address.sin.sin_port), sbufGetRawPtr(bytes), 2);
+            sbufShiftRight(bytes, 2);
 
-            if (checkLoggerWriteLevel(getNetworkLogger(), LOG_LEVEL_INFO))
+            if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_INFO))
             {
                 if (c->line->dest_ctx.address_type == kSatDomainName)
                 {
@@ -500,7 +500,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     destroyContext(c);
                     return;
                 }
-                if (bufLen(bytes) > 0)
+                if (sbufGetBufLength(bytes) > 0)
                 {
                     context_t *updata = newContextFrom(c);
                     updata->payload   = bytes;
@@ -516,9 +516,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 reuseContextPayload(c);
                 // todo (ip filter) socks5 standard says this should whitelist the caller ip
                 //  socks5 outbound accepted, udp relay will connect
-                shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
-                setLen(respbuf, 32);
-                uint8_t *resp = rawBufMut(respbuf);
+                sbuf_t *respbuf = bufferpoolPop(getContextBufferPool(c));
+                sbufSetLength(respbuf, 32);
+                uint8_t *resp = sbufGetMutablePtr(respbuf);
                 memorySet(resp, 0, 32);
                 resp[0]               = SOCKS5_VERSION;
                 resp[1]               = kSuccessReply;
@@ -528,7 +528,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                 case AF_INET:
                     resp[resp_len++] = kIPv4Addr;
-                    sockAddrSetPort(&(c->line->dest_ctx.address), sockAddrPort(&(c->line->src_ctx.address)));
+                    sockaddrSetPort(&(c->line->dest_ctx.address), sockaddrPort(&(c->line->src_ctx.address)));
                     memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_addr, 4);
                     resp_len += 4;
                     memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_port, 2);
@@ -546,11 +546,11 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 default:
                     // connects to a ip4 or 6 right? anyways close if thats not the case
-                    reuseBuffer(getContextBufferPool(c), respbuf);
+                    bufferpoolResuesbuf(getContextBufferPool(c), respbuf);
                     goto disconnect;
                     break;
                 }
-                setLen(respbuf, resp_len);
+                sbufSetLength(respbuf, resp_len);
                 context_t *success_reply = newContextFrom(c);
                 success_reply->payload   = respbuf;
                 self->dw->downStream(self->dw, success_reply);
@@ -624,9 +624,9 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             cstate->init_sent = false;
             // socks5 outbound failed
-            shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
-            setLen(respbuf, 32);
-            uint8_t *resp = rawBufMut(respbuf);
+            sbuf_t *respbuf = bufferpoolPop(getContextBufferPool(c));
+            sbufSetLength(respbuf, 32);
+            uint8_t *resp = sbufGetMutablePtr(respbuf);
             memorySet(resp, 0, 32);
             resp[0]               = SOCKS5_VERSION;
             resp[1]               = kHostUnreachable;
@@ -634,7 +634,7 @@ static void downStream(tunnel_t *self, context_t *c)
             // [2] is reserved 0
             resp[resp_len++] = kIPv4Addr;
 
-            setLen(respbuf, resp_len + 6); // ipv4(4) + port(2)
+            sbufSetLength(respbuf, resp_len + 6); // ipv4(4) + port(2)
             context_t *fail_reply = newContextFrom(c);
             fail_reply->payload   = respbuf;
             self->dw->downStream(self->dw, fail_reply);
@@ -656,9 +656,9 @@ static void downStream(tunnel_t *self, context_t *c)
         if (c->line->dest_ctx.address_protocol == kSapTcp)
         {
             // socks5 outbound connected
-            shift_buffer_t *respbuf = popBuffer(getContextBufferPool(c));
-            setLen(respbuf, 32);
-            uint8_t *resp = rawBufMut(respbuf);
+            sbuf_t *respbuf = bufferpoolPop(getContextBufferPool(c));
+            sbufSetLength(respbuf, 32);
+            uint8_t *resp = sbufGetMutablePtr(respbuf);
             memorySet(resp, 0, 32);
             resp[0]               = SOCKS5_VERSION;
             resp[1]               = kSuccessReply;
@@ -688,7 +688,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 cleanup(cstate, getContextBufferPool(c));
                 memoryFree(cstate);
                 CSTATE_DROP(c);
-                reuseBuffer(getContextBufferPool(c), respbuf);
+                bufferpoolResuesbuf(getContextBufferPool(c), respbuf);
                 self->up->upStream(self->dw, newFinContext(c->line));
                 context_t *fc = newFinContextFrom(c);
                 destroyContext(c);
@@ -696,7 +696,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 return;
                 break;
             }
-            setLen(respbuf, resp_len);
+            sbufSetLength(respbuf, resp_len);
             context_t *success_reply = newContextFrom(c);
             success_reply->payload   = respbuf;
             self->dw->downStream(self->dw, success_reply);

@@ -1,9 +1,4 @@
 #include "internal_logger.h"
-#include <assert.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
 
 struct logger_s;
 
@@ -13,8 +8,8 @@ static void destroyNetworkLogger(void)
 {
     if (logger)
     {
-        syncLoggerFile(logger);
-        destroyLogger(logger);
+        loggerSyncFile(logger);
+        loggerDestroy(logger);
         logger = NULL;
     }
 }
@@ -32,13 +27,13 @@ static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int 
         stdoutLogger(loglevel, buf, len);
         break;
     }
-    writeLogFile(logger, buf, len);
+    loggerWrite(logger, buf, len);
 }
 
 static void networkLoggerHandle(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    writeLogFile(logger, buf, len);
+    loggerWrite(logger, buf, len);
 }
 
 logger_t *getNetworkLogger(void)
@@ -54,15 +49,15 @@ void setNetworkLogger(logger_t *newlogger)
 logger_t *createNetworkLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
-    logger = createLogger();
-    setLoggerFile(logger, log_file);
+    logger = loggerCreate();
+    loggerSetFile(logger, log_file);
     if (console)
     {
-        setLoggerHandler(logger, networkLoggerHandleWithStdStream);
+        loggerSetHandler(logger, networkLoggerHandleWithStdStream);
     }
     else
     {
-        setLoggerHandler(logger, networkLoggerHandle);
+        loggerSetHandler(logger, networkLoggerHandle);
     }
 
     atexit(destroyNetworkLogger);
@@ -71,5 +66,5 @@ logger_t *createNetworkLogger(const char *log_file, bool console)
 
 logger_handler getNetworkLoggerHandle(void)
 {
-    return getLoggerHandle(logger);
+    return loggerGetHandle(logger);
 }

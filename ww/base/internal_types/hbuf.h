@@ -2,7 +2,7 @@
 #define WW_BUF_H_
 
 #include "wdef.h"   // for MAX
-#include "eventloop_mem.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
+#include "ev_memory.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
 
 typedef struct hbuf_s {
     char*  base;

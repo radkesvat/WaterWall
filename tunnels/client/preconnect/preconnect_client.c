@@ -191,9 +191,9 @@ static void downStream(tunnel_t *self, context_t *c)
     }
 }
 
-static void startPreconnect(htimer_t *timer)
+static void startPreconnect(wtimer_t *timer)
 {
-    tunnel_t                  *self  = hevent_userdata(timer);
+    tunnel_t                  *self  = weventGetUserdata(timer);
     preconnect_client_state_t *state = TSTATE(self);
 
     for (unsigned int i = 0; i < getWorkersCount(); i++)
@@ -205,7 +205,7 @@ static void startPreconnect(htimer_t *timer)
         }
     }
 
-    htimer_del(timer);
+    wtimerDelete(timer);
 }
 
 tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
@@ -227,8 +227,8 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    htimer_t *start_timer = htimer_add(getWorkerLoop(0), startPreconnect, start_delay_ms, 1);
-    hevent_set_userdata(start_timer, t);
+    wtimer_t *start_timer = wtimerAdd(getWorkerLoop(0), startPreconnect, start_delay_ms, 1);
+    weventSetUserData(start_timer, t);
 
     return t;
 }

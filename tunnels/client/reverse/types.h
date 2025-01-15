@@ -1,6 +1,6 @@
 #pragma once
 #include "api.h"
-#include "idle_table.h"
+#include "widle_table.h"
 
 struct connect_arg
 {
@@ -29,7 +29,7 @@ typedef struct thread_box_s
 
 typedef struct reverse_client_state_s
 {
-    idle_table_t *starved_connections;
+    widle_table_t *starved_connections;
     atomic_uint   reverse_cons;
     atomic_uint   round_index;
     unsigned int  min_unused_cons;

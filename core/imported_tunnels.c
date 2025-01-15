@@ -186,7 +186,7 @@
 #include "tunnels/client/mux/mux_client.h"
 #endif
 
-void loadStaticTunnelsIntoCore(void)
+void loadImportedTunnelsIntoCore(void)
 {
 
 #ifdef INCLUDE_TUNDEVICE

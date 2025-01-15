@@ -1,6 +1,6 @@
 #pragma once
 #include "buffer_pool.h"
-#include "hloop.h"
+#include "wloop.h"
 #include "wplatform.h"
 #include "wthread.h"
 #include "master_pool.h"
@@ -8,7 +8,7 @@
 
 struct raw_device_s;
 
-typedef void (*RawReadEventHandle)(struct raw_device_s *rdev, void *userdata, shift_buffer_t *buf, tid_t tid);
+typedef void (*RawReadEventHandle)(struct raw_device_s *rdev, void *userdata, sbuf_t *buf, tid_t tid);
 
 typedef struct raw_device_s
 {
@@ -39,4 +39,4 @@ bool bringRawDeviceDown(raw_device_t *rdev);
 
 raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb);
 
-bool writeToRawDevce(raw_device_t *rdev, shift_buffer_t *buf);
+bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf);

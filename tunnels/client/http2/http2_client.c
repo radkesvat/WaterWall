@@ -4,14 +4,14 @@
 #include "tunnel.h"
 #include "types.h"
 #include "utils/jsonutils.h"
-#include "utils/mathutils.h"
+
 
 enum
 {
     kDefaultConcurrency = 64 // cons will be muxed into 1
 };
 
-static int onStreamClosedCallback(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *userdata)
+static int onStreamClosedCallBack(nghttp2_session *session, int32_t stream_id, uint32_t error_code, void *userdata)
 {
     (void) error_code;
     (void) userdata;
@@ -55,7 +55,7 @@ static void flushWriteQueue(http2_client_con_state_t *con)
     }
 }
 
-static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen,
+static int onHeaderCallBack(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name, size_t namelen,
                             const uint8_t *value, size_t valuelen, uint8_t flags, void *userdata)
 {
     // (void) name;
@@ -92,7 +92,7 @@ static int onHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame
     return 0;
 }
 
-static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data,
+static int onDataChunkRecvCallBack(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data,
                                    size_t len, void *userdata)
 {
     (void) flags;
@@ -109,9 +109,9 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
         return 0;
     }
 
-    shift_buffer_t *buf = popBuffer(getLineBufferPool(con->line));
-    setLen(buf, len);
-    writeRaw(buf, data, len);
+    sbuf_t *buf = bufferpoolPop(getLineBufferPool(con->line));
+    sbufSetLength(buf, len);
+    sbufWrite(buf, data, len);
     lockLine(stream->line);
 
     action_queue_t_push(
@@ -121,7 +121,7 @@ static int onDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int3
     return 0;
 }
 
-static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata)
+static int onFrameRecvCallBack(nghttp2_session *session, const nghttp2_frame *frame, void *userdata)
 {
     (void) session;
     if (UNLIKELY(userdata == NULL))
@@ -129,7 +129,7 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
         return 0;
     }
 
-    // LOGD("onFrameRecvCallback\n");
+    // LOGD("onFrameRecvCallBack\n");
     printFrameHd(&frame->hd);
     http2_client_con_state_t *con = (http2_client_con_state_t *) userdata;
     // tunnel_t                 *self = con->tunnel;
@@ -190,12 +190,12 @@ static int onFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *fr
     return 0;
 }
 
-static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con_state_t *stream, shift_buffer_t *buf)
+static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con_state_t *stream, sbuf_t *buf)
 {
     http2_flag flags = kHttP2FlagNone;
     if (UNLIKELY(! stream))
     {
-        reuseBuffer(getLineBufferPool(con->line), buf);
+        bufferpoolResuesbuf(getLineBufferPool(con->line), buf);
         return;
     }
 
@@ -203,19 +203,19 @@ static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con
     {
         grpc_message_hd msghd;
         msghd.flags  = 0;
-        msghd.length = bufLen(buf);
+        msghd.length = sbufGetBufLength(buf);
         flags        = kHttP2FlagNone;
-        shiftl(buf, GRPC_MESSAGE_HDLEN);
-        grpcMessageHdPack(&msghd, rawBufMut(buf));
+        sbufShiftLeft(buf, GRPC_MESSAGE_HDLEN);
+        grpcMessageHdPack(&msghd, sbufGetMutablePtr(buf));
     }
 
     http2_frame_hd framehd;
-    framehd.length    = bufLen(buf);
+    framehd.length    = sbufGetBufLength(buf);
     framehd.type      = kHttP2Data;
     framehd.flags     = flags;
     framehd.stream_id = stream->stream_id;
-    shiftl(buf, HTTP2_FRAME_HDLEN);
-    http2FrameHdPack(&framehd, rawBufMut(buf));
+    sbufShiftLeft(buf, HTTP2_FRAME_HDLEN);
+    http2FrameHdPack(&framehd, sbufGetMutablePtr(buf));
     context_t *data                = newContext(con->line);
     data->payload                  = buf;
     line_t *h2_line = data->line;
@@ -238,9 +238,9 @@ static bool sendNgHttp2Data(tunnel_t *self, http2_client_con_state_t *con)
 
     if (len > 0)
     {
-        shift_buffer_t *send_buf = popBuffer(getLineBufferPool(main_line));
-        setLen(send_buf, len);
-        writeRaw(send_buf, buf, len);
+        sbuf_t *send_buf = bufferpoolPop(getLineBufferPool(main_line));
+        sbufSetLength(send_buf, len);
+        sbufWrite(send_buf, buf, len);
         context_t *data = newContext(main_line);
         data->payload   = send_buf;
         self->up->upStream(self->up, data);
@@ -259,7 +259,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
     {
         if (action.buf)
         {
-            reuseBuffer(getLineBufferPool(action.stream_line), action.buf);
+            bufferpoolResuesbuf(getLineBufferPool(action.stream_line), action.buf);
         }
         unLockLine(action.stream_line);
         return;
@@ -289,16 +289,16 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
             {
                 if (stream->grpc_bytes_needed == 0 && bufferStreamLen(stream->grpc_buffer_stream) >= GRPC_MESSAGE_HDLEN)
                 {
-                    shift_buffer_t *gheader_buf = bufferStreamRead(stream->grpc_buffer_stream, GRPC_MESSAGE_HDLEN);
+                    sbuf_t *gheader_buf = bufferStreamRead(stream->grpc_buffer_stream, GRPC_MESSAGE_HDLEN);
                     grpc_message_hd msghd;
-                    grpcMessageHdUnpack(&msghd, rawBuf(gheader_buf));
+                    grpcMessageHdUnpack(&msghd, sbufGetRawPtr(gheader_buf));
                     stream->grpc_bytes_needed = msghd.length;
-                    reuseBuffer(getLineBufferPool(con->line), gheader_buf);
+                    bufferpoolResuesbuf(getLineBufferPool(con->line), gheader_buf);
                 }
                 if (stream->grpc_bytes_needed > 0 &&
                     bufferStreamLen(stream->grpc_buffer_stream) >= stream->grpc_bytes_needed)
                 {
-                    shift_buffer_t *gdata_buf = bufferStreamRead(stream->grpc_buffer_stream, stream->grpc_bytes_needed);
+                    sbuf_t *gdata_buf = bufferStreamRead(stream->grpc_buffer_stream, stream->grpc_bytes_needed);
                     stream->grpc_bytes_needed = 0;
 
                     context_t *stream_data = newContext(stream->line);
@@ -320,7 +320,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
         }
         else
         {
-            shift_buffer_t *buf         = action.buf;
+            sbuf_t *buf         = action.buf;
             context_t      *stream_data = newContext(stream->line);
             stream_data->payload        = buf;
             stream->tunnel->dw->downStream(stream->tunnel->dw, stream_data);
@@ -477,11 +477,11 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         size_t len = 0;
-        while ((len = bufLen(c->payload)) > 0)
+        while ((len = sbufGetBufLength(c->payload)) > 0)
         {
             size_t  consumed = min(1 << 15UL, (ssize_t) len);
-            ssize_t ret      = nghttp2_session_mem_recv2(con->session, (const uint8_t *) rawBuf(c->payload), consumed);
-            shiftr(c->payload, consumed);
+            ssize_t ret      = nghttp2_session_mem_recv2(con->session, (const uint8_t *) sbufGetRawPtr(c->payload), consumed);
+            sbufShiftRight(c->payload, consumed);
 
             if (ret != (ssize_t) consumed)
             {
@@ -565,10 +565,10 @@ tunnel_t *newHttp2Client(node_instance_context_t *instance_info)
     cJSON *settings = instance_info->node_settings_json;
 
     nghttp2_session_callbacks_new(&(state->cbs));
-    nghttp2_session_callbacks_set_on_header_callback(state->cbs, onHeaderCallback);
-    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(state->cbs, onDataChunkRecvCallback);
-    nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, onFrameRecvCallback);
-    nghttp2_session_callbacks_set_on_stream_close_callback(state->cbs, onStreamClosedCallback);
+    nghttp2_session_callbacks_set_on_header_callback(state->cbs, onHeaderCallBack);
+    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(state->cbs, onDataChunkRecvCallBack);
+    nghttp2_session_callbacks_set_on_frame_recv_callback(state->cbs, onFrameRecvCallBack);
+    nghttp2_session_callbacks_set_on_stream_close_callback(state->cbs, onStreamClosedCallBack);
 
     for (size_t i = 0; i < getWorkersCount(); i++)
     {

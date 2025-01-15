@@ -20,7 +20,7 @@ typedef struct http2_action_s
 {
     enum http2_actions action_id;
     line_t            *stream_line;
-    shift_buffer_t    *buf;
+    sbuf_t    *buf;
 
 } http2_action_t;
 
@@ -47,7 +47,7 @@ typedef struct http2_client_con_state_s
     action_queue_t                 actions;
     nghttp2_session               *session;
     context_queue_t               *queue;
-    htimer_t                      *ping_timer;
+    wtimer_t                      *ping_timer;
     tunnel_t                      *tunnel;
     line_t                        *line;
     line_t                        *current_stream_write_line;

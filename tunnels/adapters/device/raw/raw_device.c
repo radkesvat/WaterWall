@@ -98,17 +98,17 @@ static void downStream(tunnel_t *self, context_t *c)
     destroyContext(c);
 }
 
-static void onIPPacketReceived(struct raw_device_s *rdev, void *userdata, shift_buffer_t *buf, tid_t tid)
+static void onIPPacketReceived(struct raw_device_s *rdev, void *userdata, sbuf_t *buf, tid_t tid)
 {
     (void) rdev;
     tunnel_t           *self  = userdata;
     raw_device_state_t *state = TSTATE((tunnel_t *) self);
 
 #if LOG_PACKET_INFO
-    printIPPacketInfo(rawBuf(buf), bufLen(buf));
+    printIPPacketInfo(sbufGetRawPtr(buf), sbufGetBufLength(buf));
 #endif
 
-    // reuseBuffer(getWorkerBufferPool(tid), buf);
+    // bufferpoolResuesbuf(getWorkerBufferPool(tid), buf);
 
     context_t *ctx = newContext(state->thread_lines[tid]);
     ctx->payload   = buf;

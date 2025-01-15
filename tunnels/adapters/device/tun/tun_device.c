@@ -2,7 +2,7 @@
 #include "loggers/network_logger.h"
 #include "packet_types.h"
 #include "utils/jsonutils.h"
-#include "utils/sockutils.h"
+
 #include "ww/devices/tun/tun.h"
 
 #define LOG_PACKET_INFO 0
@@ -96,17 +96,17 @@ static void downStream(tunnel_t *self, context_t *c)
     destroyContext(c);
 }
 
-static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, shift_buffer_t *buf, tid_t tid)
+static void onIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, tid_t tid)
 {
     (void) tdev;
     tunnel_t           *self  = userdata;
     tun_device_state_t *state = TSTATE((tunnel_t *) self);
 
 #if LOG_PACKET_INFO
-    printIPPacketInfo(rawBuf(buf), bufLen(buf));
+    printIPPacketInfo(sbufGetRawPtr(buf), sbufGetBufLength(buf));
 #endif
 
-    // reuseBuffer(getWorkerBufferPool(tid), buf);
+    // bufferpoolResuesbuf(getWorkerBufferPool(tid), buf);
 
     context_t *ctx = newContext(state->thread_lines[tid]);
     ctx->payload   = buf;

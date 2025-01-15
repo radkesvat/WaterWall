@@ -4,4 +4,4 @@
 
 
 
-void loadStaticTunnelsIntoCore(void);
+void loadImportedTunnelsIntoCore(void);

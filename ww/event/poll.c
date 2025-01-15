@@ -3,7 +3,7 @@
 #ifdef EVENT_POLL
 #include "wplatform.h"
 #include "wdef.h"
-#include "hevent.h"
+#include "wevent.h"
 
 #ifdef OS_WIN
 #define poll        WSAPoll
@@ -22,7 +22,7 @@ typedef struct poll_ctx_s {
     struct pollfds fds;
 } poll_ctx_t;
 
-int iowatcher_init(hloop_t* loop) {
+int iowatcherInit(wloop_t* loop) {
     if (loop->iowatcher)   return 0;
     poll_ctx_t* poll_ctx;
     EVENTLOOP_ALLOC_SIZEOF(poll_ctx);
@@ -31,7 +31,7 @@ int iowatcher_init(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_cleanup(hloop_t* loop) {
+int iowatcherCleanUp(wloop_t* loop) {
     if (loop->iowatcher == NULL)   return 0;
     poll_ctx_t* poll_ctx = (poll_ctx_t*)loop->iowatcher;
     pollfds_cleanup(&poll_ctx->fds);
@@ -39,12 +39,12 @@ int iowatcher_cleanup(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_add_event(hloop_t* loop, int fd, int events) {
+int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
     if (loop->iowatcher == NULL) {
-        iowatcher_init(loop);
+        iowatcherInit(loop);
     }
     poll_ctx_t* poll_ctx = (poll_ctx_t*)loop->iowatcher;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
     int idx = io->event_index[0];
     struct pollfd* pfd = NULL;
     if (idx < 0) {
@@ -71,10 +71,10 @@ int iowatcher_add_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcher_del_event(hloop_t* loop, int fd, int events) {
+int iowatcherDelEvent(wloop_t* loop, int fd, int events) {
     poll_ctx_t* poll_ctx = (poll_ctx_t*)loop->iowatcher;
     if (poll_ctx == NULL)  return 0;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
 
     int idx = io->event_index[0];
     if (idx < 0) return 0;
@@ -90,7 +90,7 @@ int iowatcher_del_event(hloop_t* loop, int fd, int events) {
         pollfds_del_nomove(&poll_ctx->fds, idx);
         // NOTE: correct event_index
         if (idx < poll_ctx->fds.size) {
-            hio_t* last = loop->ios.ptr[poll_ctx->fds.ptr[idx].fd];
+            wio_t* last = loop->ios.ptr[poll_ctx->fds.ptr[idx].fd];
             last->event_index[0] = idx;
         }
         io->event_index[0] = -1;
@@ -98,7 +98,7 @@ int iowatcher_del_event(hloop_t* loop, int fd, int events) {
     return 0;
 }
 
-int iowatcher_poll_events(hloop_t* loop, int timeout) {
+int iowatcherPollEvents(wloop_t* loop, int timeout) {
     poll_ctx_t* poll_ctx = (poll_ctx_t*)loop->iowatcher;
     if (poll_ctx == NULL)  return 0;
     if (poll_ctx->fds.size == 0)   return 0;
@@ -117,7 +117,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
         short revents = poll_ctx->fds.ptr[i].revents;
         if (revents) {
             ++nevents;
-            hio_t* io = loop->ios.ptr[fd];
+            wio_t* io = loop->ios.ptr[fd];
             if (io) {
                 if (revents & (POLLIN | POLLHUP | POLLERR)) {
                     io->revents |= WW_READ;

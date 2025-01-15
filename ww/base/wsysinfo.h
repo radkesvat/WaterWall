@@ -1,7 +1,7 @@
 #ifndef WW_SYS_INFO_H_
 #define WW_SYS_INFO_H_
 
-#include "wplatform.h"
+#include "wlibc.h"
 
 #ifdef OS_LINUX
 #include <sys/sysinfo.h>

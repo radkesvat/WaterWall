@@ -97,7 +97,7 @@ static void upStream(tunnel_t *self, context_t *c)
 {
     layer3_tcp_manipulator_state_t *state = TSTATE(self);
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     unsigned int ip_header_len;
 
@@ -105,7 +105,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         ip_header_len = packet->ip4_header.ihl * 4;
 
-        if (UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
+        if (UNLIKELY(sbufGetBufLength(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
             LOGW("TcpManipulator: dropped an ipv4 packet, length is too short for TCP header");
             reuseContextPayload(c);
@@ -124,7 +124,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         ip_header_len = sizeof(struct ipv6header);
 
-        if (UNLIKELY(bufLen(c->payload) < ip_header_len + sizeof(struct tcpheader)))
+        if (UNLIKELY(sbufGetBufLength(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
             LOGW("TcpManipulator: dropped an ipv6 packet, length is too short for TCP header");
             reuseContextPayload(c);
@@ -145,15 +145,15 @@ static void upStream(tunnel_t *self, context_t *c)
         exit(1);
     }
 
-    struct tcpheader *tcp_header = (struct tcpheader *) (rawBufMut(c->payload) + ip_header_len);
+    struct tcpheader *tcp_header = (struct tcpheader *) (sbufGetMutablePtr(c->payload) + ip_header_len);
 
     handleResetBitAction(tcp_header, &(state->reset_bit_action));
 
     handleSourcePortAction(tcp_header, &(state->source_port_action), state->corrupt_password,
-                           ((const char *) rawBufMut(c->payload) + bufLen(c->payload)));
+                           ((const char *) sbufGetMutablePtr(c->payload) + sbufGetBufLength(c->payload)));
 
     handleDestPortAction(tcp_header, &(state->dest_port_action), state->corrupt_password,
-                         ((const char *) rawBufMut(c->payload) + bufLen(c->payload)));
+                         ((const char *) sbufGetMutablePtr(c->payload) + sbufGetBufLength(c->payload)));
 
     self->up->upStream(self->up, c);
 }

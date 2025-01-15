@@ -30,7 +30,7 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     if (state->support4 && packet->ip4_header.version == 4)
     {
@@ -51,7 +51,7 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
 {
     layer3_ip_overrider_state_t *state = TSTATE(self);
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     if (packet->ip4_header.version == 4)
     {
@@ -110,7 +110,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
     {
         state->support4 = true;
         sockaddr_u sa;
-        sockAddrSetIp(&(sa), ipbuf);
+        sockaddrSetIp(&(sa), ipbuf);
 
         memcpy(&(state->ov_4), &(sa.sin.sin_addr.s_addr), sizeof(sa.sin.sin_addr.s_addr));
         memoryFree(ipbuf);
@@ -121,7 +121,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
     {
         state->support6 = true;
         sockaddr_u sa;
-        sockAddrSetIp(&(sa), ipbuf);
+        sockaddrSetIp(&(sa), ipbuf);
 
         memcpy(&(state->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
         memoryFree(ipbuf);

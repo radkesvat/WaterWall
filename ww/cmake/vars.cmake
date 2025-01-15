@@ -7,7 +7,7 @@ set(BASE_HEADERS
     base/werr.h
     base/wtime.h
     base/wmath.h
-    base/eventloop_mem.h
+    base/ev_memory.h
     base/wversion.h
     base/wsysinfo.h
     base/wproc.h
@@ -22,7 +22,7 @@ set(BASE_HEADERS
 
 
 set(EVENT_HEADERS
-    event/hloop.h
+    event/wloop.h
 )
 
 set(UTIL_HEADERS

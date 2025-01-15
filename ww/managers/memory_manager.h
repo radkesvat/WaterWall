@@ -1,7 +1,5 @@
 #pragma once
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+#include "wlibc.h"
 
 // #define ALLOCATOR_BYPASS // switch to stdlib allocators
 

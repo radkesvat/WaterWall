@@ -5,8 +5,8 @@
  * wlog is thread-safe
  */
 
-#include <stdarg.h>
-#include <string.h>
+#include "wlibc.h"
+
 
 #ifdef _WIN32
 #define DIR_SEPARATOR     '\\'
@@ -71,22 +71,22 @@ typedef enum
 typedef void (*logger_handler)(int loglevel, const char *buf, int len);
 typedef struct logger_s logger_t;
 
-WW_EXPORT void writeLogFile(logger_t *logger, const char *buf, int len);
+WW_EXPORT void loggerWrite(logger_t *logger, const char *buf, int len);
 WW_EXPORT void stdoutLogger(int loglevel, const char *buf, int len);
 WW_EXPORT void stderrLogger(int loglevel, const char *buf, int len);
 WW_EXPORT void fileLogger(int loglevel, const char *buf, int len);
 // network_logger implement see event/nlog.h
 // WW_EXPORT void network_logger(int loglevel, const char* buf, int len);
 
-WW_EXPORT logger_t *createLogger(void);
-WW_EXPORT void      destroyLogger(logger_t *logger);
+WW_EXPORT logger_t *loggerCreate(void);
+WW_EXPORT void      loggerDestroy(logger_t *logger);
 
-WW_EXPORT void setLoggerHandler(logger_t *logger, logger_handler fn);
-WW_EXPORT void setLoggerLevel(logger_t *logger, int level);
+WW_EXPORT void loggerSetHandler(logger_t *logger, logger_handler fn);
+WW_EXPORT void loggerSetLevel(logger_t *logger, int level);
 // level = [VERBOSE,DEBUG,INFO,WARN,ERROR,FATAL,SILENT]
-WW_EXPORT void           setLoggerLevelByStr(logger_t *logger, const char *level);
-WW_EXPORT int            checkLoggerWriteLevel(logger_t *logger, log_level_e level);
-WW_EXPORT logger_handler getLoggerHandle(logger_t *logger);
+WW_EXPORT void           loggerSetLevelByString(logger_t *logger, const char *level);
+WW_EXPORT int            loggerCheckWriteLevel(logger_t *logger, log_level_e level);
+WW_EXPORT logger_handler loggerGetHandle(logger_t *logger);
 /*
  * format  = "%y-%m-%d %H:%M:%S.%z %L %s"
  * message = "2020-01-02 03:04:05.067 DEBUG message"
@@ -103,53 +103,41 @@ WW_EXPORT logger_handler getLoggerHandle(logger_t *logger);
  * %s message
  * %% %
  */
-WW_EXPORT void setLoggerFormat(logger_t *logger, const char *format);
-WW_EXPORT void setLoggerMaxBufSIze(logger_t *logger, unsigned int bufsize);
-WW_EXPORT void enableLoggerColor(logger_t *logger, int on);
-WW_EXPORT int  printLoggerVA(logger_t *logger, int level, const char *fmt, va_list ap);
+WW_EXPORT void loggerSetFormat(logger_t *logger, const char *format);
+WW_EXPORT void loggerSetMaxBufSIze(logger_t *logger, unsigned int bufsize);
+WW_EXPORT void loggerEnableColor(logger_t *logger, int on);
+WW_EXPORT int  loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap);
 
-static inline int printLogger(logger_t *logger, int level, const char *fmt, ...)
+static inline int loggerPrint(logger_t *logger, int level, const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
-    int ret = printLoggerVA(logger, level, fmt, myargs);
+    int ret = loggerPrintVA(logger, level, fmt, myargs);
     va_end(myargs);
     return ret;
 }
 
 // below for file logger
-WW_EXPORT void setLoggerFile(logger_t *logger, const char *filepath);
-WW_EXPORT void setLoggerMaxFileSize(logger_t *logger, unsigned long long filesize);
+WW_EXPORT void loggerSetFile(logger_t *logger, const char *filepath);
+WW_EXPORT void loggerSetMaxFileSize(logger_t *logger, unsigned long long filesize);
 // 16, 16M, 16MB
-WW_EXPORT void        setLoggerMaxFileSizeByStr(logger_t *logger, const char *filesize);
-WW_EXPORT void        setLoggerRemainDays(logger_t *logger, int days);
-WW_EXPORT void        enableLoggerFSync(logger_t *logger, int on);
-WW_EXPORT void        syncLoggerFile(logger_t *logger);
-WW_EXPORT const char *setLoggerCurrentFile(logger_t *logger);
+WW_EXPORT void        loggerSetMaxFileSizeByStr(logger_t *logger, const char *filesize);
+WW_EXPORT void        loggerSetRemainDays(logger_t *logger, int days);
+WW_EXPORT void        loggerEnableFileSync(logger_t *logger, int on);
+WW_EXPORT void        loggerSyncFile(logger_t *logger);
+WW_EXPORT const char *loggerSetCurrentFile(logger_t *logger);
 
 // wlog: default logger instance
-WW_EXPORT logger_t *getDefaultWWLogger(void);
-WW_EXPORT void      destroyDefaultWWLogger(void);
+WW_EXPORT logger_t *loggerGetDefaultLogger(void);
+WW_EXPORT void      loggerDestroyDefaultLogger(void);
 
 // macro wlog*
 #ifndef wlog
-#define wlog getDefaultWWLogger()
+#error "wlog is not defined!"
+#define wlog loggerGetDefaultLogger()
 #endif
-#define destroyWLog()                     destroyDefaultWWLogger()
-#define setWLogLevel()                    setLoggerLevel(wlog, LOG_LEVEL_SILENT)
-#define setWLogFile(filepath)             setLoggerFile(wlog, filepath)
-#define setWLogLevel(level)               setLoggerLevel(wlog, level)
-#define setWLogLevelByStr(level)          setLoggerLevelByStr(wlog, level)
-#define setWLogHandler(fn)                setLoggerHandler(wlog, fn)
-#define setWLogFormat(format)             setLoggerFormat(wlog, format)
-#define setWLogMaxFileSize(filesize)      setLoggerMaxFileSize(wlog, filesize)
-#define setWLogMaxFileSizeByStr(filesize) setLoggerMaxFileSizeByStr(wlog, filesize)
-#define setWLogRemainDays(days)           setLoggerRemainDays(wlog, days)
-#define enableWLogFSync()                 enableLoggerFSync(wlog, 1)
-#define enableWLogFSync()                 enableLoggerFSync(wlog, 0)
-#define syncWLogFile()                    syncLoggerFile(wlog)
-#define setWLogCurrentFile()              setLoggerCurrentFile(wlog)
-#define checkWLogWriteLevel(level)        checkLoggerWriteLevel(wlog, level)
+
+#define checkWLogWriteLevel(level)        loggerCheckWriteLevel(wlog, level)
 
 // below for android
 #if defined(ANDROID) || defined(__ANDROID__)
@@ -199,7 +187,7 @@ static inline void wlogd(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
-    printLoggerVA(wlog, LOG_LEVEL_DEBUG, fmt, myargs);
+    loggerPrintVA(wlog, LOG_LEVEL_DEBUG, fmt, myargs);
     va_end(myargs);
 }
 
@@ -207,7 +195,7 @@ static inline void wlogi(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
-    printLoggerVA(wlog, LOG_LEVEL_INFO, fmt, myargs);
+    loggerPrintVA(wlog, LOG_LEVEL_INFO, fmt, myargs);
     va_end(myargs);
 }
 
@@ -215,7 +203,7 @@ static inline void wlogw(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
-    printLoggerVA(wlog, LOG_LEVEL_WARN, fmt, myargs);
+    loggerPrintVA(wlog, LOG_LEVEL_WARN, fmt, myargs);
     va_end(myargs);
 }
 
@@ -223,14 +211,14 @@ static inline void wloge(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
-    printLoggerVA(wlog, LOG_LEVEL_ERROR, fmt, myargs);
+    loggerPrintVA(wlog, LOG_LEVEL_ERROR, fmt, myargs);
     va_end(myargs);
 }
 static inline void wlogf(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
-    printLoggerVA(wlog, LOG_LEVEL_FATAL, fmt, myargs);
+    loggerPrintVA(wlog, LOG_LEVEL_FATAL, fmt, myargs);
     va_end(myargs);
 }
 #endif

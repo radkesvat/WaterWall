@@ -1,13 +1,16 @@
 #pragma once
 
+#include "wplatform.h"
+
 #include "watomic.h"
 #include "wdef.h"
 #include "wendian.h"
 #include "werr.h"
 #include "wexport.h"
-#include "wplatform.h"
-#include "wtime.h"
 #include "wfrand.h"
+#include "whash.h"
+#include "wmath.h"
+#include "wtime.h"
 
 void initWLibc(void);
 
@@ -36,13 +39,11 @@ void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, si
 #endif
 #define TOSTRING(x) STRINGIFY(x)
 
-
-
 WW_EXPORT char *stringUpperCase(char *str);
 WW_EXPORT char *stringLowerCase(char *str);
 WW_EXPORT char *stringReverse(char *str);
-char *stringDuplicate(const char *src);
-char *stringConcat(const char *s1, const char *s2);
+char           *stringDuplicate(const char *src);
+char           *stringConcat(const char *s1, const char *s2);
 
 WW_EXPORT bool stringStartsWith(const char *str, const char *start);
 WW_EXPORT bool stringEndsWith(const char *str, const char *end);
@@ -74,9 +75,6 @@ WW_EXPORT char *stringChrDir(const char *filepath);
 
 char *readFile(const char *path);
 bool  writeFile(const char *path, const char *data, size_t len);
-
-
-
 
 // basename
 WW_EXPORT const char *filePathBaseName(const char *filepath);
@@ -134,8 +132,5 @@ typedef struct hurl_s
 
 WW_EXPORT int stringToUrl(hurl_t *stURL, const char *strURL);
 
-
 //-------------------------prints----------------------------------
 #define printError perror
-
-

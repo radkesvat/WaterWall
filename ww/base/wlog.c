@@ -1,13 +1,6 @@
 #include "wlog.h"
-#include "worker.h"
-
 #include "wmutex.h"
-#include "wplatform.h"
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
+
 
 // #include "wtime.h"
 #define SECONDS_PER_HOUR 3600
@@ -59,13 +52,13 @@ static void initLogger(logger_t *logger)
     logger->max_filesize = DEFAULT_LOG_MAX_FILESIZE;
     logger->remain_days  = DEFAULT_LOG_REMAIN_DAYS;
     logger->enable_fsync = 1;
-    setLoggerFile(logger, DEFAULT_LOG_FILE);
+    loggerSetFile(logger, DEFAULT_LOG_FILE);
     logger->last_logfile_ts = 0;
     logger->can_write_cnt   = -1;
-    initMutex(&logger->mutex_);
+    mutexInit(&logger->mutex_);
 }
 
-logger_t *createLogger(void)
+logger_t *loggerCreate(void)
 {
     // init gmtoff here
     time_t                         ts = time(NULL);
@@ -93,7 +86,7 @@ logger_t *createLogger(void)
     return logger;
 }
 
-void destroyLogger(logger_t *logger)
+void loggerDestroy(logger_t *logger)
 {
     if (logger)
     {
@@ -107,22 +100,22 @@ void destroyLogger(logger_t *logger)
             fclose(logger->fp_);
             logger->fp_ = NULL;
         }
-        destroyMutex(&logger->mutex_);
+        mutexDestroy(&logger->mutex_);
         memoryFree(logger);
     }
 }
 
-void setLoggerHandler(logger_t *logger, logger_handler fn)
+void loggerSetHandler(logger_t *logger, logger_handler fn)
 {
     logger->handler = fn;
 }
 
-void setLoggerLevel(logger_t *logger, int level)
+void loggerSetLevel(logger_t *logger, int level)
 {
     logger->level = level;
 }
 
-void setLoggerLevelByStr(logger_t *logger, const char *szLoglevel)
+void loggerSetLevelByString(logger_t *logger, const char *szLoglevel)
 {
     int loglevel = DEFAULT_LOG_LEVEL;
     if (strcmp(szLoglevel, "VERBOSE") == 0)
@@ -160,17 +153,17 @@ void setLoggerLevelByStr(logger_t *logger, const char *szLoglevel)
     logger->level = loglevel;
 }
 
-int checkLoggerWriteLevel(logger_t *logger, log_level_e level)
+int loggerCheckWriteLevel(logger_t *logger, log_level_e level)
 {
     return (logger->level) <= (int) level;
 }
 
-logger_handler getLoggerHandle(logger_t *logger)
+logger_handler loggerGetHandle(logger_t *logger)
 {
     return logger->handler;
 }
 
-void setLoggerFormat(logger_t *logger, const char *format)
+void loggerSetFormat(logger_t *logger, const char *format)
 {
     if (format)
     {
@@ -186,23 +179,23 @@ void setLoggerFormat(logger_t *logger, const char *format)
     }
 }
 
-void setLoggerRemainDays(logger_t *logger, int days)
+void loggerSetRemainDays(logger_t *logger, int days)
 {
     logger->remain_days = days;
 }
 
-void setLoggerMaxBufSIze(logger_t *logger, unsigned int bufsize)
+void loggerSetMaxBufSIze(logger_t *logger, unsigned int bufsize)
 {
     logger->bufsize = bufsize;
     logger->buf     = (char *) realloc(logger->buf, bufsize);
 }
 
-void enableLoggerColor(logger_t *logger, int on)
+void loggerEnableColor(logger_t *logger, int on)
 {
     logger->enable_color = on;
 }
 
-void setLoggerFile(logger_t *logger, const char *filepath)
+void loggerSetFile(logger_t *logger, const char *filepath)
 {
 #if defined(OS_UNIX)
     strncpy(logger->filepath, filepath, sizeof(logger->filepath) - 1);
@@ -218,12 +211,12 @@ void setLoggerFile(logger_t *logger, const char *filepath)
     }
 }
 
-void setLoggerMaxFileSize(logger_t *logger, unsigned long long filesize)
+void loggerSetMaxFileSize(logger_t *logger, unsigned long long filesize)
 {
     logger->max_filesize = filesize;
 }
 
-void setLoggerMaxFileSizeByStr(logger_t *logger, const char *str)
+void loggerSetMaxFileSizeByStr(logger_t *logger, const char *str)
 {
     int num = atoi(str);
     if (num <= 0)
@@ -259,22 +252,22 @@ void setLoggerMaxFileSizeByStr(logger_t *logger, const char *str)
     logger->max_filesize = filesize;
 }
 
-void enableLoggerFSync(logger_t *logger, int on)
+void loggerEnableFileSync(logger_t *logger, int on)
 {
     logger->enable_fsync = on;
 }
 
-void syncLoggerFile(logger_t *logger)
+void loggerSyncFile(logger_t *logger)
 {
-    lockMutex(&logger->mutex_);
+    mutexLock(&logger->mutex_);
     if (logger->fp_)
     {
         fflush(logger->fp_);
     }
-    unlockMutex(&logger->mutex_);
+    mutexUnlock(&logger->mutex_);
 }
 
-const char *setLoggerCurrentFile(logger_t *logger)
+const char *loggerSetCurrentFile(logger_t *logger)
 {
     return logger->cur_logfile;
 }
@@ -389,7 +382,7 @@ static FILE *shiftLogFile(logger_t *logger)
     return logger->fp_;
 }
 
-void writeLogFile(logger_t *logger, const char *buf, int len)
+void loggerWrite(logger_t *logger, const char *buf, int len)
 {
     FILE *fp = shiftLogFile(logger);
     if (fp)
@@ -419,7 +412,7 @@ static int i2a(int i, char *buf, int len)
     return len;
 }
 
-int printLoggerVA(logger_t *logger, int level, const char *fmt, va_list ap)
+int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 {
     if (level < logger->level)
         return -10;
@@ -465,7 +458,7 @@ int printLoggerVA(logger_t *logger, int level, const char *fmt, va_list ap)
 #undef XXX
 
     // lock logger->buf
-    lockMutex(&logger->mutex_);
+    mutexLock(&logger->mutex_);
 
     char *buf     = logger->buf;
     int   bufsize = logger->bufsize;
@@ -560,30 +553,30 @@ int printLoggerVA(logger_t *logger, int level, const char *fmt, va_list ap)
     }
     else
     {
-        writeLogFile(logger, buf, len);
+        loggerWrite(logger, buf, len);
     }
 
-    unlockMutex(&logger->mutex_);
+    mutexUnlock(&logger->mutex_);
     return len;
 }
 
 static logger_t *s_logger = NULL;
-logger_t        *getDefaultWWLogger(void)
+logger_t        *loggerGetDefaultLogger(void)
 {
     if (s_logger == NULL)
     {
-        s_logger = createLogger();
-        atexit(destroyDefaultWWLogger);
+        s_logger = loggerCreate();
+        atexit(loggerDestroyDefaultLogger);
     }
     return s_logger;
 }
 
-void destroyDefaultWWLogger(void)
+void loggerDestroyDefaultLogger(void)
 {
     if (s_logger)
     {
-        syncLoggerFile(s_logger);
-        destroyLogger(s_logger);
+        loggerSyncFile(s_logger);
+        loggerDestroy(s_logger);
         s_logger = NULL;
     }
 }
@@ -603,5 +596,5 @@ void stderrLogger(int loglevel, const char *buf, int len)
 void fileLogger(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    writeLogFile(getDefaultWWLogger(), buf, len);
+    loggerWrite(loggerGetDefaultLogger(), buf, len);
 }

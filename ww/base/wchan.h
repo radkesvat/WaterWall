@@ -1,7 +1,6 @@
 #pragma once
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
+#include "wlibc.h"
+
 
 // wchan_t is an optionally-buffered messaging channel for CSP-like processing.
 // Example:
@@ -25,8 +24,8 @@
 typedef struct wchan_s wchan_t; // opaque
 
 // chan_open creates and initializes a new channel which holds elements of elemsize byte.
-// If bufcap>0 then a buffered channel with the capacity to hold bufcap elements is created.
-wchan_t* chanOpen(size_t elemsize, uint32_t bufcap);
+// If sbufCap>0 then a buffered channel with the capacity to hold sbufCap elements is created.
+wchan_t* chanOpen(size_t elemsize, uint32_t sbufCap);
 
 // chanClose cancels any waiting senders and receivers.
 // Messages sent before this call are guaranteed to be delivered, assuming there are

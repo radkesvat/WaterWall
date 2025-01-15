@@ -54,11 +54,11 @@ static void upStream(tunnel_t *self, context_t *c)
             uint8_t *cid_bytes = (uint8_t *) &(cids[0]);
 
             context_t *intro_context = newContext(cstate->download_line);
-            intro_context->payload   = popBuffer(getContextBufferPool(c));
+            intro_context->payload   = bufferpoolPop(getContextBufferPool(c));
 
             cid_bytes[0] = cid_bytes[0] | (1 << 7); // kHLFDCmdDownload
-            shiftl(intro_context->payload, sizeof(cids));
-            writeRaw(intro_context->payload, cid_bytes, sizeof(cids));
+            sbufShiftLeft(intro_context->payload, sizeof(cids));
+            sbufWrite(intro_context->payload, cid_bytes, sizeof(cids));
 
             self->up->upStream(self->up, intro_context);
 
@@ -70,8 +70,8 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 
             cid_bytes[0] = cid_bytes[0] & 0x7f; // kHLFDCmdUpload
-            shiftl(c->payload, 8);
-            writeRaw(c->payload, cid_bytes, sizeof(cids));
+            sbufShiftLeft(c->payload, 8);
+            sbufWrite(c->payload, cid_bytes, sizeof(cids));
         }
         self->up->upStream(self->up, switchLine(c, cstate->upload_line));
     }

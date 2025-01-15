@@ -1,7 +1,7 @@
 #ifndef WW_THREAD_H_
 #define WW_THREAD_H_
 
-#include "wplatform.h"
+#include "wlibc.h"
 
 #ifdef OS_WIN
 #define getProcessID (long) GetCurrentProcessId
@@ -40,8 +40,8 @@ HTHREAD_ROUTINE(thread_demo) {
 }
 
 int main() {
-    wthread_t th = createThread(thread_demo, NULL);
-    joinThread(th);
+    wthread_t th = threadCreate(thread_demo, NULL);
+    threadJoin(th);
     return 0;
 }
  */
@@ -51,12 +51,12 @@ typedef HANDLE wthread_t;
 typedef DWORD(WINAPI *wthread_routine)(void *);
 #define HTHREAD_RETTYPE        DWORD
 #define HTHREAD_ROUTINE(fname) DWORD WINAPI fname(void *userdata)
-static inline wthread_t createThread(wthread_routine fn, void *userdata)
+static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
 {
     return CreateThread(NULL, 0, fn, userdata, 0, NULL);
 }
 
-static inline int joinThread(wthread_t th)
+static inline int threadJoin(wthread_t th)
 {
     WaitForSingleObject(th, INFINITE);
     CloseHandle(th);
@@ -69,14 +69,14 @@ typedef pthread_t wthread_t;
 typedef void *(*wthread_routine)(void *);
 #define HTHREAD_RETTYPE        void *
 #define HTHREAD_ROUTINE(fname) void *fname(void *userdata)
-static inline wthread_t createThread(wthread_routine fn, void *userdata)
+static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
 {
     pthread_t th;
     pthread_create(&th, NULL, fn, userdata);
     return th;
 }
 
-static inline int joinThread(wthread_t th)
+static inline int threadJoin(wthread_t th)
 {
     return pthread_join(th, NULL);
 }

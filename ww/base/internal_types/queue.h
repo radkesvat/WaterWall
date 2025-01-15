@@ -13,7 +13,7 @@
 #include <stdlib.h> // for malloc,realloc,free
 #include <string.h> // for memorySet,memoryMove
 
-#include "eventloop_mem.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
+#include "ev_memory.h"  // for EVENTLOOP_ALLOC, EVENTLOOP_FREE
 
 #define QUEUE_INIT_SIZE     16
 

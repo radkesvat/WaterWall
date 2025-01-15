@@ -46,7 +46,7 @@ dedicated_memory_t *createGlobalStateDedicatedMemory(void)
 
     // dedicated_memory_t *dm = malloc(sizeof(dedicated_memory_t));
     // *dm                    = (struct dedicated_memory_s) {.free_counter = 0, .mi_heap = mi_heap_new()};
-    // initMutex(&dm->mut);
+    // mutexInit(&dm->mut);
     // return dm;
 }
 
@@ -80,9 +80,9 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
     (void) dm;
 
     return memoryAllocate(size);
-    // lockMutex(&dm->mut);
+    // mutexLock(&dm->mut);
     // void *ptr = mi_heap_malloc(dm->mi_heap, size);
-    // unlockMutex(&dm->mut);
+    // mutexUnlock(&dm->mut);
     // return ptr;
 }
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
@@ -91,9 +91,9 @@ void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 
     return memoryReAllocate(ptr,size);
 
-    // lockMutex(&dm->mut);
+    // mutexLock(&dm->mut);
     // void *newptr = mi_heap_realloc(dm->mi_heap, ptr, size);
-    // unlockMutex(&dm->mut);
+    // mutexUnlock(&dm->mut);
     // return newptr;
 }
 void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
@@ -102,14 +102,14 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 
     memoryFree(ptr);
 
-    // lockMutex(&dm->mut);
+    // mutexLock(&dm->mut);
     // wof_free(dm->mi_heap, ptr);
     // if (dm->free_counter++ > kFreeThreShouldCounter)
     // {
     //     wof_gc(dm->mi_heap);
     //     dm->free_counter = 0;
     // }
-    // unlockMutex(&dm->mut);
+    // mutexUnlock(&dm->mut);
 }
 
 #endif

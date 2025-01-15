@@ -1,11 +1,11 @@
 #include "udp_listener.h"
 #include "buffer_pool.h"
-#include "idle_table.h"
+#include "widle_table.h"
 #include "loggers/network_logger.h"
 #include "managers/socket_manager.h"
 #include "tunnel.h"
 #include "utils/jsonutils.h"
-#include "utils/sockutils.h"
+
 
 // enable profile to see some time info
 // #define PROFILE 1
@@ -28,7 +28,7 @@ typedef struct udp_listener_state_s
 
 typedef struct udp_listener_con_state_s
 {
-    hloop_t       *loop;
+    wloop_t       *loop;
     tunnel_t      *tunnel;
     udpsock_t     *uio;
     line_t        *line;
@@ -43,7 +43,7 @@ static void cleanup(udp_listener_con_state_t *cstate)
 
     if (cstate->idle_handle != NULL)
     {
-        if (removeIdleItemByHash(cstate->idle_handle->tid, cstate->uio->table, cstate->idle_handle->hash))
+        if (idleTableRemoveIdleItemByHash(cstate->idle_handle->tid, cstate->uio->table, cstate->idle_handle->hash))
         {
             memoryFree(cstate);
         }
@@ -137,7 +137,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
         memoryFree(cstate);
         return;
     }
-    LOGD("UdpListener: expired idle udp FD:%x ", hio_fd(cstate->uio->io));
+    LOGD("UdpListener: expired idle udp FD:%x ", wioGetFD(cstate->uio->io));
     cstate->idle_handle = NULL;
     tunnel_t  *self     = (cstate)->tunnel;
     line_t    *line     = (cstate)->line;
@@ -152,7 +152,7 @@ static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsoc
     LSTATE_MUT(line)                 = cstate;
     line->src_ctx.address_type       = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     line->src_ctx.address_protocol   = kSapUdp;
-    line->src_ctx.address            = *(sockaddr_u *) hio_peeraddr(uio->io);
+    line->src_ctx.address            = *(sockaddr_u *) wioGetPeerAddr(uio->io);
 
     *cstate = (udp_listener_con_state_t) {.loop              = getWorkerLoop(tid),
                                           .line              = line,
@@ -162,19 +162,19 @@ static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsoc
                                           .established       = false,
                                           .first_packet_sent = false};
 
-    sockAddrSetPort(&(line->src_ctx.address), real_localport);
+    sockaddrSetPort(&(line->src_ctx.address), real_localport);
 
-    if (checkLoggerWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
 
-        struct sockaddr log_localaddr = *hio_localaddr(cstate->uio->io);
-        sockAddrSetPort((sockaddr_u *) &(log_localaddr), real_localport);
+        struct sockaddr log_localaddr = *wioGetLocaladdr(cstate->uio->io);
+        sockaddrSetPort((sockaddr_u *) &(log_localaddr), real_localport);
 
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", hio_fd(cstate->uio->io),
-             SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(hio_peeraddr(uio->io), peeraddrstr));
+        LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", wioGetFD(cstate->uio->io),
+             SOCKADDR_STR(&log_localaddr, localaddrstr), SOCKADDR_STR(wioGetPeerAddr(uio->io), peeraddrstr));
     }
 
     // send the init packet
@@ -193,19 +193,19 @@ static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsoc
     return cstate;
 }
 
-static void onFilteredRecv(hevent_t *ev)
+static void onFilteredRecv(wevent_t *ev)
 {
-    udp_payload_t *data          = (udp_payload_t *) hevent_userdata(ev);
-    hash_t         peeraddr_hash = sockAddrCalcHashWithPort((sockaddr_u *) hio_peeraddr(data->sock->io));
+    udp_payload_t *data          = (udp_payload_t *) weventGetUserdata(ev);
+    hash_t         peeraddr_hash = sockaddrCalcHashWithPort((sockaddr_u *) wioGetPeerAddr(data->sock->io));
 
-    idle_item_t *idle = getIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
+    idle_item_t *idle = idleTableGetIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
     if (idle == NULL)
     {
-        idle = newIdleItem(data->sock->table, peeraddr_hash, NULL, onUdpConnectonExpire, data->tid,
+        idle = idleItemNew(data->sock->table, peeraddr_hash, NULL, onUdpConnectonExpire, data->tid,
                            (uint64_t) kUdpInitExpireTime);
         if (! idle)
         {
-            reuseBuffer(getWorkerBufferPool(data->tid), data->buf);
+            bufferpoolResuesbuf(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }
@@ -213,8 +213,8 @@ static void onFilteredRecv(hevent_t *ev)
 
         if (! con)
         {
-            removeIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
-            reuseBuffer(getWorkerBufferPool(data->tid), data->buf);
+            idleTableRemoveIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
+            bufferpoolResuesbuf(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }
@@ -223,7 +223,7 @@ static void onFilteredRecv(hevent_t *ev)
     }
     else
     {
-        keepIdleItemForAtleast(data->sock->table, idle, (uint64_t) kUdpKeepExpireTime);
+        idleTableKeepIdleItemForAtleast(data->sock->table, idle, (uint64_t) kUdpKeepExpireTime);
     }
 
     tunnel_t                 *self    = data->tunnel;

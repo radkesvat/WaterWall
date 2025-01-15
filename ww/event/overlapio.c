@@ -3,11 +3,11 @@
 
 #ifdef EVENT_IOCP
 #include "overlapio.h"
-#include "hevent.h"
+#include "wevent.h"
 
 #define ACCEPTEX_NUM    10
 
-int post_acceptex(hio_t* listenio, hoverlapped_t* hovlp) {
+int post_acceptex(wio_t* listenio, hoverlapped_t* hovlp) {
     LPFN_ACCEPTEX AcceptEx = NULL;
     GUID guidAcceptEx = WSAID_ACCEPTEX;
     DWORD dwbytes = 0;
@@ -40,7 +40,7 @@ int post_acceptex(hio_t* listenio, hoverlapped_t* hovlp) {
     return 0;
 }
 
-int post_recv(hio_t* io, hoverlapped_t* hovlp) {
+int post_recv(wio_t* io, hoverlapped_t* hovlp) {
     if (hovlp == NULL) {
         EVENTLOOP_ALLOC_SIZEOF(hovlp);
     }
@@ -48,7 +48,7 @@ int post_recv(hio_t* io, hoverlapped_t* hovlp) {
     hovlp->event = WW_READ;
     hovlp->io = io;
     hovlp->buf.len = io->readbuf.len;
-    if (io->io_type == HIO_TYPE_UDP || io->io_type == HIO_TYPE_IP) {
+    if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP) {
         EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
     }
     else {
@@ -58,11 +58,11 @@ int post_recv(hio_t* io, hoverlapped_t* hovlp) {
     DWORD dwbytes = 0;
     DWORD flags = 0;
     int ret = 0;
-    if (io->io_type == HIO_TYPE_TCP) {
+    if (io->io_type == WIO_TYPE_TCP) {
         ret = WSARecv(io->fd, &hovlp->buf, 1, &dwbytes, &flags, &hovlp->ovlp, NULL);
     }
-    else if (io->io_type == HIO_TYPE_UDP ||
-            io->io_type == HIO_TYPE_IP) {
+    else if (io->io_type == WIO_TYPE_UDP ||
+            io->io_type == WIO_TYPE_IP) {
         if (hovlp->addr == NULL) {
             hovlp->addrlen = sizeof(struct sockaddr_in6);
             EVENTLOOP_ALLOC(hovlp->addr, sizeof(struct sockaddr_in6));
@@ -83,7 +83,7 @@ int post_recv(hio_t* io, hoverlapped_t* hovlp) {
     return 0;
 }
 
-static void on_acceptex_complete(hio_t* io) {
+static void on_acceptex_complete(wio_t* io) {
     printd("on_acceptex_complete------\n");
     hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
     int listenfd = io->fd;
@@ -107,7 +107,7 @@ static void on_acceptex_complete(hio_t* io) {
     memcpy(io->peeraddr, ppeeraddr, peeraddrlen);
     if (io->accept_cb) {
         setsockopt(connfd, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char*)&listenfd, sizeof(int));
-        hio_t* connio = hio_get(io->loop, connfd);
+        wio_t* connio = wioGet(io->loop, connfd);
         connio->userdata = io->userdata;
         memcpy(connio->localaddr, io->localaddr, localaddrlen);
         memcpy(connio->peeraddr, io->peeraddr, peeraddrlen);
@@ -125,13 +125,13 @@ static void on_acceptex_complete(hio_t* io) {
     post_acceptex(io, hovlp);
 }
 
-static void on_connectex_complete(hio_t* io) {
+static void on_connectex_complete(wio_t* io) {
     printd("on_connectex_complete------\n");
     hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
     io->error = hovlp->error;
     EVENTLOOP_FREE(io->hovlp);
     if (io->error != 0) {
-        hio_close(io);
+        wioClose(io);
         return;
     }
     if (io->connect_cb) {
@@ -153,19 +153,19 @@ static void on_connectex_complete(hio_t* io) {
     }
 }
 
-static void on_wsarecv_complete(hio_t* io) {
+static void on_wsarecv_complete(wio_t* io) {
     printd("on_recv_complete------\n");
     hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
     if (hovlp->bytes == 0) {
         io->error = WSAGetLastError();
-        hio_close(io);
+        wioClose(io);
         return;
     }
 
     if (io->read_cb) {
-        if (io->io_type == HIO_TYPE_UDP || io->io_type == HIO_TYPE_IP) {
+        if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP) {
             if (hovlp->addr && hovlp->addrlen) {
-                hio_set_peeraddr(io, hovlp->addr, hovlp->addrlen);
+                wioSetPeerAddr(io, hovlp->addr, hovlp->addrlen);
             }
         }
         //printd("read_cb------\n");
@@ -173,32 +173,32 @@ static void on_wsarecv_complete(hio_t* io) {
         //printd("read_cb======\n");
     }
 
-    if (io->io_type == HIO_TYPE_TCP) {
+    if (io->io_type == WIO_TYPE_TCP) {
         // reuse hovlp
         if (!io->closed) {
             post_recv(io, hovlp);
         }
     }
-    else if (io->io_type == HIO_TYPE_UDP ||
-            io->io_type == HIO_TYPE_IP) {
+    else if (io->io_type == WIO_TYPE_UDP ||
+            io->io_type == WIO_TYPE_IP) {
         EVENTLOOP_FREE(hovlp->buf.buf);
         EVENTLOOP_FREE(hovlp->addr);
         EVENTLOOP_FREE(io->hovlp);
     }
 }
 
-static void on_wsasend_complete(hio_t* io) {
+static void on_wsasend_complete(wio_t* io) {
     printd("on_send_complete------\n");
     hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
     if (hovlp->bytes == 0) {
         io->error = WSAGetLastError();
-        hio_close(io);
+        wioClose(io);
         goto end;
     }
     if (io->write_cb) {
-        if (io->io_type == HIO_TYPE_UDP || io->io_type == HIO_TYPE_IP) {
+        if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP) {
             if (hovlp->addr) {
-                hio_set_peeraddr(io, hovlp->addr, hovlp->addrlen);
+                wioSetPeerAddr(io, hovlp->addr, hovlp->addrlen);
             }
         }
         //printd("write_cb------\n");
@@ -212,7 +212,7 @@ end:
     }
 }
 
-static void hio_handle_events(hio_t* io) {
+static void wio_handle_events(wio_t* io) {
     if ((io->events & WW_READ) && (io->revents & WW_READ)) {
         if (io->accept) {
             on_acceptex_complete(io);
@@ -225,7 +225,7 @@ static void hio_handle_events(hio_t* io) {
     if ((io->events & WW_WRITE) && (io->revents & WW_WRITE)) {
         // NOTE: WW_WRITE just do once
         // ONESHOT
-        iowatcher_del_event(io->loop, io->fd, WW_WRITE);
+        iowatcherDelEvent(io->loop, io->fd, WW_WRITE);
         io->events &= ~WW_WRITE;
         if (io->connect) {
             io->connect = 0;
@@ -240,15 +240,15 @@ static void hio_handle_events(hio_t* io) {
     io->revents = 0;
 }
 
-int hio_accept (hio_t* io) {
+int wioAccept (wio_t* io) {
     for (int i = 0; i < ACCEPTEX_NUM; ++i) {
         post_acceptex(io, NULL);
     }
     io->accept = 1;
-    return hio_add(io, hio_handle_events, WW_READ);
+    return wioAdd(io, wio_handle_events, WW_READ);
 }
 
-int hio_connect (hio_t* io) {
+int wioConnect (wio_t* io) {
     // NOTE: ConnectEx must call bind
     struct sockaddr_in localaddr;
     socklen_t addrlen = sizeof(localaddr);
@@ -285,27 +285,27 @@ int hio_connect (hio_t* io) {
         }
     }
     io->connect = 1;
-    return hio_add(io, hio_handle_events, WW_WRITE);
+    return wioAdd(io, wio_handle_events, WW_WRITE);
 error:
-    hio_close(io);
+    wioClose(io);
     return 0;
 }
 
-int hio_read (hio_t* io) {
+int wioRead (wio_t* io) {
     post_recv(io, NULL);
-    return hio_add(io, hio_handle_events, WW_READ);
+    return wioAdd(io, wio_handle_events, WW_READ);
 }
 
-int hio_write(hio_t* io, shift_buffer_t* buf) {
+int wioWrite(wio_t* io, sbuf_t* buf) {
     int nwrite = 0;
 try_send:
-    if (io->io_type == HIO_TYPE_TCP) {
-        nwrite = send(io->fd, rawBuf(buf), bufLen(buf), 0);
+    if (io->io_type == WIO_TYPE_TCP) {
+        nwrite = send(io->fd, sbufGetRawPtr(buf), sbufGetBufLength(buf), 0);
     }
-    else if (io->io_type == HIO_TYPE_UDP) {
-        nwrite = sendto(io->fd, rawBuf(buf), bufLen(buf), 0, io->peeraddr, sizeof(struct sockaddr_in6));
+    else if (io->io_type == WIO_TYPE_UDP) {
+        nwrite = sendto(io->fd, sbufGetRawPtr(buf), sbufGetBufLength(buf), 0, io->peeraddr, sizeof(struct sockaddr_in6));
     }
-    else if (io->io_type == HIO_TYPE_IP) {
+    else if (io->io_type == WIO_TYPE_IP) {
         goto WSASend;
     }
     else {
@@ -331,9 +331,9 @@ try_send:
         io->write_cb(io, buf);
         //printd("try_write_cb======\n");
     }
-    if (nwrite == bufLen(buf)) {
+    if (nwrite == sbufGetBufLength(buf)) {
         //goto write_done;
-        reuseBuffer(io->loop->bufpool,buf);
+        bufferpoolResuesbuf(io->loop->bufpool,buf);
         return nwrite;
     }
 WSASend:
@@ -342,21 +342,21 @@ WSASend:
         EVENTLOOP_ALLOC_SIZEOF(hovlp);
         hovlp->fd = io->fd;
         hovlp->event = WW_WRITE;
-        shiftr(buf,nwrite);
-        hovlp->buf.len = bufLen(buf);
+        sbufShiftRight(buf,nwrite);
+        hovlp->buf.len = sbufGetBufLength(buf);
         // NOTE: free on_send_complete
         EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
-        memcpy(hovlp->buf.buf, rawBuf(buf), hovlp->buf.len);
-        reuseBuffer(io->loop->bufpool,buf);
+        memcpy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);
+        bufferpoolResuesbuf(io->loop->bufpool,buf);
         hovlp->io = io;
         DWORD dwbytes = 0;
         DWORD flags = 0;
         int ret = 0;
-        if (io->io_type == HIO_TYPE_TCP) {
+        if (io->io_type == WIO_TYPE_TCP) {
             ret = WSASend(io->fd, &hovlp->buf, 1, &dwbytes, flags, &hovlp->ovlp, NULL);
         }
-        else if (io->io_type == HIO_TYPE_UDP ||
-                 io->io_type == HIO_TYPE_IP) {
+        else if (io->io_type == WIO_TYPE_UDP ||
+                 io->io_type == WIO_TYPE_IP) {
             ret = WSASendTo(io->fd, &hovlp->buf, 1, &dwbytes, flags, io->peeraddr, sizeof(struct sockaddr_in6), &hovlp->ovlp, NULL);
         }
         else {
@@ -370,22 +370,22 @@ WSASend:
                 return ret;
             }
         }
-        return hio_add(io, hio_handle_events, WW_WRITE);
+        return wioAdd(io, wio_handle_events, WW_WRITE);
     }
 write_error:
 disconnect:
-    reuseBuffer(io->loop->bufpool,buf);
-    hio_close(io);
+    bufferpoolResuesbuf(io->loop->bufpool,buf);
+    wioClose(io);
     return 0;
 }
 
-int hio_close (hio_t* io) {
+int wioClose (wio_t* io) {
     if (io->closed) return 0;
     io->closed = 1;
-    hio_done(io);
+    wioDone(io);
     if (io->hovlp) {
         hoverlapped_t* hovlp = (hoverlapped_t*)io->hovlp;
-        // NOTE: hread buf provided by caller
+        // NOTE: wRead buf provided by caller
         if (hovlp->buf.buf != io->readbuf.base) {
             EVENTLOOP_FREE(hovlp->buf.buf);
         }
@@ -397,7 +397,7 @@ int hio_close (hio_t* io) {
         io->close_cb(io);
         //printd("close_cb======\n");
     }
-    if (io->io_type & HIO_TYPE_SOCKET) {
+    if (io->io_type & WIO_TYPE_SOCKET) {
 #ifdef USE_DISCONNECTEX
         // DisconnectEx reuse socket
         if (io->connectex) {

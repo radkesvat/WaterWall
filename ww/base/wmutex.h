@@ -1,56 +1,54 @@
 #ifndef WW_MUTEX_H_
 #define WW_MUTEX_H_
 
-#include "watomic.h"
-#include "wexport.h"
-#include "wplatform.h"
-#include "wtime.h"
+#include "wlibc.h"
 
 
 #ifdef OS_WIN
+
 #define wmutex_t     CRITICAL_SECTION
-#define initMutex    InitializeCriticalSection
-#define destroyMutex DeleteCriticalSection
-#define lockMutex    EnterCriticalSection
-#define unlockMutex  LeaveCriticalSection
+#define mutexInit    InitializeCriticalSection
+#define mutexDestroy DeleteCriticalSection
+#define mutexLock    EnterCriticalSection
+#define mutexUnlock  LeaveCriticalSection
 
 #define wrecursive_mutex_t    CRITICAL_SECTION
-#define initRecursiveMutex    InitializeCriticalSection
-#define destroyRecursiveMutex DeleteCriticalSection
-#define lockRecursiveMutex    EnterCriticalSection
-#define unlockRecursiveMutex  LeaveCriticalSection
+#define recursivemutexInit    InitializeCriticalSection
+#define recursivemutexDestroy DeleteCriticalSection
+#define recursivemutexLock    EnterCriticalSection
+#define recursivemutexUnlock  LeaveCriticalSection
 
 #define WSPINLOCK_COUNT     -1
 #define wspinlock_t         CRITICAL_SECTION
-#define initSpinlock(pspin) InitializeCriticalSectionAndSpinCount(pspin, WSPINLOCK_COUNT)
-#define destroySpinlock     DeleteCriticalSection
-#define lockSpinlock        EnterCriticalSection
-#define unlockSpinlock      LeaveCriticalSection
+#define spinlockInit(pspin) InitializeCriticalSectionAndSpinCount(pspin, WSPINLOCK_COUNT)
+#define spinlockDestroy     DeleteCriticalSection
+#define spinlockLock        EnterCriticalSection
+#define spinlockUnlock      LeaveCriticalSection
 
 #define wrwlock_t  SRWLOCK
-#define initRWLock InitializeSRWLock
-#define destroyRWLock(plock)
-#define lockReadRWLock    AcquireSRWLockShared
-#define unlockReadRWLock  ReleaseSRWLockShared
-#define lockWriteRWLock   AcquireSRWLockExclusive
-#define unlockWriteRWLock ReleaseSRWLockExclusive
+#define rwlockinit InitializeSRWLock
+#define rwlockDestroy(plock)
+#define rwlockReadLock    AcquireSRWLockShared
+#define rwlockReadUnlock  ReleaseSRWLockShared
+#define rwlockWriteLock   AcquireSRWLockExclusive
+#define rwlockWriteUnlock ReleaseSRWLockExclusive
 
 #define wtimed_mutex_t            HANDLE
-#define initTimedMutex(pmutex)    *(pmutex) = CreateMutex(NULL, FALSE, NULL)
-#define destroyTimedMutex(pmutex) CloseHandle(*(pmutex))
-#define lockTimedMutex(pmutex)    WaitForSingleObject(*(pmutex), INFINITE)
-#define unlockTimedMutex(pmutex)  ReleaseMutex(*(pmutex))
+#define timedmutexInit(pmutex)    *(pmutex) = CreateMutex(NULL, FALSE, NULL)
+#define timedmutexDestroy(pmutex) CloseHandle(*(pmutex))
+#define timedmutexLock(pmutex)    WaitForSingleObject(*(pmutex), INFINITE)
+#define timedmutexUnlock(pmutex)  ReleaseMutex(*(pmutex))
 // true:  WAIT_OBJECT_0
 // false: WAIT_OBJECT_TIMEOUT
-#define lockTimedMutexFor(pmutex, ms) (WaitForSingleObject(*(pmutex), ms) == WAIT_OBJECT_0)
+#define timedmutexLockFor(pmutex, ms) (WaitForSingleObject(*(pmutex), ms) == WAIT_OBJECT_0)
 
 #define wcondvar_t  CONDITION_VARIABLE
-#define initCondVar InitializeConditionVariable
-#define destroyCondVar(pcond)
-#define waitCondVar(pcond, pmutex)        SleepConditionVariableCS(pcond, pmutex, INFINITE)
-#define waitCondVarFor(pcond, pmutex, ms) SleepConditionVariableCS(pcond, pmutex, ms)
-#define signalCondVar                     WakeConditionVariable
-#define broadcastCondVar                  WakeAllConditionVariable
+#define condvarInit InitializeConditionVariable
+#define contvarDestroy(pcond)
+#define condvarWait(pcond, pmutex)        SleepConditionVariableCS(pcond, pmutex, INFINITE)
+#define condvarWaitFor(pcond, pmutex, ms) SleepConditionVariableCS(pcond, pmutex, ms)
+#define condvarSignal                     WakeConditionVariable
+#define condvarBroadCast                  WakeAllConditionVariable
 
 #define wonce_t    INIT_ONCE
 #define WONCE_INIT INIT_ONCE_STATIC_INIT
@@ -71,23 +69,23 @@ static inline void wonce(wonce_t *once, wonce_fn fn)
 }
 
 #define wsem_t                     HANDLE
-#define InitSemaPhore(psem, value) (*(psem) = CreateSemaphore(NULL, value, value + 100000, NULL))
-#define destroySemaPhore(psem)     CloseHandle(*(psem))
-#define waitSemaPhore(psem)        WaitForSingleObject(*(psem), INFINITE)
-#define postSemaPhore(psem)        ReleaseSemaphore(*(psem), 1, NULL)
+#define semaphoreInit(psem, value) (*(psem) = CreateSemaphore(NULL, value, value + 100000, NULL))
+#define semaphoreDestroy(psem)     CloseHandle(*(psem))
+#define semaphoreWait(psem)        WaitForSingleObject(*(psem), INFINITE)
+#define semaphorePost(psem)        ReleaseSemaphore(*(psem), 1, NULL)
 // true:  WAIT_OBJECT_0
 // false: WAIT_OBJECT_TIMEOUT
-#define waitSemaPhoreFor(psem, ms) (WaitForSingleObject(*(psem), ms) == WAIT_OBJECT_0)
+#define semaphoreWaitFor(psem, ms) (WaitForSingleObject(*(psem), ms) == WAIT_OBJECT_0)
 
 #else
 #define wmutex_t          pthread_mutex_t
-#define initMutex(pmutex) pthread_mutex_init(pmutex, NULL)
-#define destroyMutex      pthread_mutex_destroy
-#define lockMutex         pthread_mutex_lock
-#define unlockMutex       pthread_mutex_unlock
+#define mutexInit(pmutex) pthread_mutex_init(pmutex, NULL)
+#define mutexDestroy      pthread_mutex_destroy
+#define mutexLock         pthread_mutex_lock
+#define mutexUnlock       pthread_mutex_unlock
 
 #define wrecursive_mutex_t pthread_mutex_t
-#define initRecursiveMutex(pmutex)                                                                                     \
+#define recursivemutexInit(pmutex)                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \
         pthread_mutexattr_t attr;                                                                                      \
@@ -95,37 +93,37 @@ static inline void wonce(wonce_t *once, wonce_fn fn)
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);                                                     \
         pthread_mutex_init(pmutex, &attr);                                                                             \
     } while (0)
-#define destroyRecursiveMutex pthread_mutex_destroy
-#define lockRecursiveMutex    pthread_mutex_lock
-#define unlockRecursiveMutex  pthread_mutex_unlock
+#define recursivemutexDestroy pthread_mutex_destroy
+#define recursivemutexLock    pthread_mutex_lock
+#define recursivemutexUnlock  pthread_mutex_unlock
 
 #if HAVE_PTHREAD_SPIN_LOCK
 #define wspinlock_t         pthread_spinlock_t
-#define initSpinlock(pspin) pthread_spin_init(pspin, PTHREAD_PROCESS_PRIVATE)
-#define destroySpinlock     pthread_spin_destroy
-#define lockSpinlock        pthread_spin_lock
-#define unlockSpinlock      pthread_spin_unlock
+#define spinlockInit(pspin) pthread_spin_init(pspin, PTHREAD_PROCESS_PRIVATE)
+#define spinlockDestroy     pthread_spin_destroy
+#define spinlockLock        pthread_spin_lock
+#define spinlockUnlock      pthread_spin_unlock
 #else
 #define wspinlock_t          pthread_mutex_t
-#define initSpinlock(pmutex) pthread_mutex_init(pmutex, NULL)
-#define destroySpinlock      pthread_mutex_destroy
-#define lockSpinlock         pthread_mutex_lock
-#define unlockSpinlock       pthread_mutex_unlock
+#define spinlockInit(pmutex) pthread_mutex_init(pmutex, NULL)
+#define spinlockDestroy      pthread_mutex_destroy
+#define spinlockLock         pthread_mutex_lock
+#define spinlockUnlock       pthread_mutex_unlock
 #endif // OS_WIN
 
 #define wrwlock_t           pthread_rwlock_t
-#define initRWLock(prwlock) pthread_rwlock_init(prwlock, NULL)
-#define destroyRWLock       pthread_rwlock_destroy
-#define lockReadRWLock      pthread_rwlock_rdlock
-#define unlockReadRWLock    pthread_rwlock_unlock
-#define lockWriteRWLock     pthread_rwlock_wrlock
-#define unlockWriteRWLock   pthread_rwlock_unlock
+#define rwlockinit(prwlock) pthread_rwlock_init(prwlock, NULL)
+#define rwlockDestroy       pthread_rwlock_destroy
+#define rwlockReadLock      pthread_rwlock_rdlock
+#define rwlockReadUnlock    pthread_rwlock_unlock
+#define rwlockWriteLock     pthread_rwlock_wrlock
+#define rwlockWriteUnlock   pthread_rwlock_unlock
 
 #define wtimed_mutex_t         pthread_mutex_t
-#define initTimedMutex(pmutex) pthread_mutex_init(pmutex, NULL)
-#define destroyTimedMutex      pthread_mutex_destroy
-#define lockTimedMutex         pthread_mutex_lock
-#define unlockTimedMutex       pthread_mutex_unlock
+#define timedmutexInit(pmutex) pthread_mutex_init(pmutex, NULL)
+#define timedmutexDestroy      pthread_mutex_destroy
+#define timedmutexLock         pthread_mutex_lock
+#define timedmutexUnlock       pthread_mutex_unlock
 static inline void timespec_after(struct timespec *ts, unsigned int ms)
 {
     struct timeval tv;
@@ -140,7 +138,7 @@ static inline void timespec_after(struct timespec *ts, unsigned int ms)
 }
 // true:  OK
 // false: ETIMEDOUT
-static inline int lockTimedMutexFor(wtimed_mutex_t *mutex, unsigned int ms)
+static inline int timedmutexLockFor(wtimed_mutex_t *mutex, unsigned int ms)
 {
 #if HAVE_PTHREAD_MUTEX_TIMEDLOCK
     struct timespec ts;
@@ -162,14 +160,14 @@ static inline int lockTimedMutexFor(wtimed_mutex_t *mutex, unsigned int ms)
 }
 
 #define wcondvar_t         pthread_cond_t
-#define initCondVar(pcond) pthread_cond_init(pcond, NULL)
-#define destroyCondVar     pthread_cond_destroy
-#define waitCondVar        pthread_cond_wait
-#define signalCondVar      pthread_cond_signal
-#define broadcastCondVar   pthread_cond_broadcast
+#define condvarInit(pcond) pthread_cond_init(pcond, NULL)
+#define contvarDestroy     pthread_cond_destroy
+#define condvarWait        pthread_cond_wait
+#define condvarSignal      pthread_cond_signal
+#define condvarBroadCast   pthread_cond_broadcast
 // true:  OK
 // false: ETIMEDOUT
-static inline int waitCondVarFor(wcondvar_t *cond, wmutex_t *mutex, unsigned int ms)
+static inline int condvarWaitFor(wcondvar_t *cond, wmutex_t *mutex, unsigned int ms)
 {
     struct timespec ts;
     timespec_after(&ts, ms);
@@ -188,11 +186,11 @@ static inline int waitCondVarFor(wcondvar_t *cond, wmutex_t *mutex, unsigned int
 // http://lists.apple.com/archives/darwin-kernel/2009/Apr/msg00010.html
 #include <mach/mach.h>
 #define wsem_t semaphore_t
-#define InitSemaPhore(psem, value)                                                                                     \
+#define semaphoreInit(psem, value)                                                                                     \
     semaphore_create(mach_task_self(), psem, SYNC_POLICY_FIFO, value) // (KERN_SUCCESS == 0 like linux)
-#define destroySemaPhore(psem) semaphore_destroy(mach_task_self(), *psem);
+#define semaphoreDestroy(psem) semaphore_destroy(mach_task_self(), *psem);
 
-static bool waitSemaPhore(wsem_t *sp)
+static bool semaphoreWait(wsem_t *sp)
 {
     semaphore_t s = *sp;
     while (1)
@@ -203,7 +201,7 @@ static bool waitSemaPhore(wsem_t *sp)
     }
 }
 
-static bool postSemaPhore(wsem_t *sp)
+static bool semaphorePost(wsem_t *sp)
 {
     uint32_t      count = 1;
     semaphore_t   s     = *(semaphore_t *) sp;
@@ -220,7 +218,7 @@ static bool postSemaPhore(wsem_t *sp)
 }
 #define USECS_IN_1_SEC         1000000
 #define NSECS_IN_1_SEC         1000000000
-static bool waitSemaPhoreFor(wsem_t *sp, uint64_t timeout_usecs)
+static bool semaphoreWaitFor(wsem_t *sp, uint64_t timeout_usecs)
 {
     mach_timespec_t ts;
     ts.tv_sec  = (uint32_t) (timeout_usecs / USECS_IN_1_SEC);
@@ -248,10 +246,10 @@ static bool waitSemaPhoreFor(wsem_t *sp, uint64_t timeout_usecs)
 
 #include <semaphore.h>
 #define wsem_t                     sem_t
-#define InitSemaPhore(psem, value) sem_init(psem, 0, value)
-#define destroySemaPhore           sem_destroy
+#define semaphoreInit(psem, value) sem_init(psem, 0, value)
+#define semaphoreDestroy           sem_destroy
 
-static bool waitSemaPhore(wsem_t *sp)
+static bool semaphoreWait(wsem_t *sp)
 {
     // http://stackoverflow.com/questions/2013181/gdb-causes-sem-wait-to-fail-with-eintr-error
     int rc;
@@ -262,10 +260,10 @@ static bool waitSemaPhore(wsem_t *sp)
     return rc == 0;
 }
 
-#define postSemaPhore sem_post
+#define semaphorePost sem_post
 // true:  OK
 // false: ETIMEDOUT
-static inline int waitSemaPhoreFor(wsem_t *sem, unsigned int ms)
+static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 {
 #if HAVE_SEM_TIMEDWAIT
     struct timespec ts;
@@ -332,13 +330,13 @@ typedef struct hlsem_s
     wsem_t      sema;
 } wlsem_t;
 
-bool   initLightWeightSemaPhore(wlsem_t *, uint32_t initcount); // returns false if system impl failed (rare)
-void   destroyLightWeightSemaPhore(wlsem_t *);
-bool   waitLightWeightSemaPhore(wlsem_t *);
-bool   tryWaitLightWeightSemaPhore(wlsem_t *);
-bool   timedWaitLightWeightSemaPhore(wlsem_t *, uint64_t timeout_usecs);
-void   signalLightWeightSemaPhore(wlsem_t *, uint32_t count /*must be >0*/);
-size_t approxAvailLeightWaitSemaPhore(wlsem_t *);
+bool   leightweightsemaphoreInit(wlsem_t *, uint32_t initcount); // returns false if system impl failed (rare)
+void   leightweightsemaphoreDestroy(wlsem_t *);
+bool   leightweightsemaphoreWait(wlsem_t *);
+bool   leightweightsemaphoreTryWait(wlsem_t *);
+bool   leightweightsemaphoreTimedWait(wlsem_t *, uint64_t timeout_usecs);
+void   leightweightsemaphoreSignal(wlsem_t *, uint32_t count /*must be >0*/);
+size_t leightweightsemaphoreApproxAvail(wlsem_t *);
 
 #define kYieldProcessorTries 1000
 
@@ -350,24 +348,24 @@ typedef struct
     wsem_t      sema;
 } whybrid_mutex_t;
 
-// static bool initHybridMutex(whybrid_mutex_t* m); // returns false if system failed to init semaphore
-// static void destroyHybridMutex(whybrid_mutex_t* m);
-// static void lockHybridMutex(whybrid_mutex_t* m);
-// static void unLockHybridMutex(whybrid_mutex_t* m);
+// static bool hybridmutexInit(whybrid_mutex_t* m); // returns false if system failed to init semaphore
+// static void hybridmutexDestroy(whybrid_mutex_t* m);
+// static void hybridmutexLock(whybrid_mutex_t* m);
+// static void hybridmutexUnlock(whybrid_mutex_t* m);
 
-static inline bool initHybridMutex(whybrid_mutex_t *m)
+static inline bool hybridmutexInit(whybrid_mutex_t *m)
 {
     m->flag  = false;
     m->nwait = 0;
-    return InitSemaPhore(&m->sema, 0);
+    return semaphoreInit(&m->sema, 0);
 }
 
-static inline void destroyHybridMutex(whybrid_mutex_t *m)
+static inline void hybridmutexDestroy(whybrid_mutex_t *m)
 {
-    destroySemaPhore(&m->sema);
+    semaphoreDestroy(&m->sema);
 }
 
-static inline void lockHybridMutex(whybrid_mutex_t *m)
+static inline void hybridmutexLock(whybrid_mutex_t *m)
 {
     if (atomic_exchange_explicit(&m->flag, true, memory_order_acquire))
     {
@@ -384,7 +382,7 @@ static inline void lockHybridMutex(whybrid_mutex_t *m)
                     atomicAddExplicit(&m->nwait, 1, memory_order_relaxed);
                     while (atomicLoadExplicit(&m->flag, memory_order_relaxed))
                     {
-                        waitSemaPhore(&m->sema);
+                        semaphoreWait(&m->sema);
                     }
                     atomicSubExplicit(&m->nwait, 1, memory_order_relaxed);
                 }
@@ -398,18 +396,18 @@ static inline void lockHybridMutex(whybrid_mutex_t *m)
     }
 }
 
-static inline bool tryLockHybridMutex(whybrid_mutex_t *m)
+static inline bool hybridmutexTryLock(whybrid_mutex_t *m)
 {
     return 0 == atomic_exchange_explicit(&m->flag, true, memory_order_acquire);
 }
 
-static inline void unLockHybridMutex(whybrid_mutex_t *m)
+static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 {
     atomic_exchange(&m->flag, false);
     if (atomic_load(&m->nwait) != 0)
     {
         // at least one thread waiting on a semaphore signal -- wake one thread
-        postSemaPhore(&m->sema); // TODO: should we check the return value?
+        semaphorePost(&m->sema); // TODO: should we check the return value?
     }
 }
 
@@ -421,18 +419,18 @@ static inline void unLockHybridMutex(whybrid_mutex_t *m)
 #ifndef TEST_HELGRIND
 
 #undef wmutex_t
-#undef initMutex
-#undef destroyMutex
-#undef lockMutex
+#undef mutexInit
+#undef mutexDestroy
+#undef mutexLock
 #undef mutexTryLock
-#undef unlockMutex
+#undef mutexUnlock
 
-#define wmutex_t      whybrid_mutex_t
-#define initMutex     initHybridMutex
-#define destroyMutex  destroyHybridMutex
-#define lockMutex     lockHybridMutex
-#define mutexTryLock tryLockHybridMutex
-#define unlockMutex   unLockHybridMutex
+#define wmutex_t     whybrid_mutex_t
+#define mutexInit    hybridmutexInit
+#define mutexDestroy hybridmutexDestroy
+#define mutexLock    hybridmutexLock
+#define mutexTryLock hybridmutexTryLock
+#define mutexUnlock  hybridmutexUnlock
 
 #endif
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "wlibc.h"
+
 #if (defined(WW_LOG_H_) || defined(wlog)) && ! defined(LOGGER_CHOSEN)
 #error "DnsLogger must be included before wlog.h"
 #elif defined(LOGGER_CHOSEN)
@@ -10,7 +12,6 @@
 #define wlog          getDnsLogger() // NOLINT
 
 #endif
-#include <stdbool.h>
 
 struct logger_s;
 typedef struct logger_s logger_t;
@@ -23,7 +24,7 @@ logger_t *createDnsLogger(const char *log_file, bool console);
 
 static inline void setDnsLoggerLevelByStr(const char *log_level)
 {
-    setLoggerLevelByStr(getDnsLogger(), log_level);
+    loggerSetLevelByString(getDnsLogger(), log_level);
 }
 
 logger_handler getDnsLoggerHandle(void);

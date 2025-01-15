@@ -4,21 +4,21 @@
 #include "sync_dns.h"
 #include "types.h"
 #include "utils/jsonutils.h"
-#include "utils/sockutils.h"
+
 
 static void cleanup(udp_connector_con_state_t *cstate)
 {
     memoryFree(cstate);
 }
-static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
+static void onRecvFrom(wio_t *io, sbuf_t *buf)
 {
-    udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (hevent_userdata(io));
+    udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        reuseBuffer(hloop_bufferpool(hevent_loop(io)), buf);
+        bufferpoolResuesbuf(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
-    shift_buffer_t *payload = buf;
+    sbuf_t *payload = buf;
     tunnel_t       *self    = (cstate)->tunnel;
     line_t         *line    = (cstate)->line;
 
@@ -28,7 +28,7 @@ static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
         context_t *est_context = newContext(line);
         est_context->est       = true;
         self->downStream(self, est_context);
-        if (hevent_userdata(io) == NULL)
+        if (weventGetUserdata(io) == NULL)
         {
             return;
         }
@@ -46,7 +46,7 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
 
-        if (hio_is_closed(cstate->io))
+        if (wioIsClosed(cstate->io))
         {
             CSTATE_DROP(c);
             cleanup(cstate);
@@ -54,7 +54,7 @@ static void upStream(tunnel_t *self, context_t *c)
             goto fail;
         }
 
-        size_t nwrite = hio_write(cstate->io, c->payload);
+        size_t nwrite = wioWrite(cstate->io, c->payload);
         dropContexPayload(c);
         (void) nwrite;
         // assert(nwrite <= 0  || nwrite ==  bytes);
@@ -74,7 +74,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->tunnel      = self;
             cstate->line        = c->line;
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
-            hloop_t   *loop      = getWorkerLoop(c->line->tid);
+            wloop_t   *loop      = getWorkerLoop(c->line->tid);
             sockaddr_u host_addr = {0};
             sockaddrSetIpPort(&host_addr, "0.0.0.0", 0);
 
@@ -101,13 +101,13 @@ static void upStream(tunnel_t *self, context_t *c)
                 goto fail;
             }
 
-            hio_t *upstream_io = hio_get(loop, sockfd);
+            wio_t *upstream_io = wioGet(loop, sockfd);
             assert(upstream_io != NULL);
 
             cstate->io = upstream_io;
-            hevent_set_userdata(upstream_io, cstate);
-            hio_setcb_read(upstream_io, onRecvFrom);
-            hio_read(upstream_io);
+            weventSetUserData(upstream_io, cstate);
+            wioSetCallBackRead(upstream_io, onRecvFrom);
+            wioRead(upstream_io);
 
             socket_context_t *dest_ctx = &(c->line->dest_ctx);
             socket_context_t *src_ctx  = &(c->line->src_ctx);
@@ -145,18 +145,18 @@ static void upStream(tunnel_t *self, context_t *c)
                     goto fail;
                 }
             }
-            hio_set_peeraddr(cstate->io, &(dest_ctx->address.sa), (int) sockaddrLen(&(dest_ctx->address)));
+            wioSetPeerAddr(cstate->io, &(dest_ctx->address.sa), (int) sockaddrLen(&(dest_ctx->address)));
 
             destroyContext(c);
         }
         else if (c->fin)
         {
-            hio_t *io = cstate->io;
-            hevent_set_userdata(io, NULL);
+            wio_t *io = cstate->io;
+            weventSetUserData(io, NULL);
             cleanup(CSTATE(c));
             CSTATE_DROP(c);
             destroyContext(c);
-            hio_close(io);
+            wioClose(io);
         }
     }
     return;
@@ -171,8 +171,8 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->fin)
     {
-        hio_t *io = cstate->io;
-        hevent_set_userdata(io, NULL);
+        wio_t *io = cstate->io;
+        weventSetUserData(io, NULL);
         CSTATE_DROP(c);
         cleanup(cstate);
     }
@@ -212,7 +212,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
         }
         else
         {
-            sockAddrSetIp(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
+            sockaddrSetIp(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
         }
     }
 

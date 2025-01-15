@@ -1,14 +1,13 @@
 #pragma once
 
-#include "basic_types.h"
-#include "hloop.h"
+#include "wlibc.h"
+#include "wloop.h"
 #include "wsocket.h"
-#include "idle_table.h"
+#include "widle_table.h"
 #include "shiftbuffer.h"
 #include "tunnel.h"
 #include "worker.h"
-#include <stddef.h>
-#include <stdint.h>
+
 
 typedef enum
 {
@@ -50,14 +49,14 @@ typedef struct socket_filter_option_s
         struct in6_addr mask_bytes_buf;
     } *white_list_parsed;
 
-    idle_table_t *shared_balance_table;
+    widle_table_t *shared_balance_table;
 
 } socket_filter_option_t;
 
 // if you asked for tcp, youll get such struct when somone connects and passed all filters
 typedef struct socket_accept_result_s
 {
-    hio_t                       *io;
+    wio_t                       *io;
     tunnel_t                    *tunnel;
     enum socket_address_protocol protocol;
     uint8_t                      tid;
@@ -65,14 +64,14 @@ typedef struct socket_accept_result_s
 
 } socket_accept_result_t;
 
-typedef void (*onAccept)(hevent_t *ev);
+typedef void (*onAccept)(wevent_t *ev);
 
 void destroySocketAcceptResult(socket_accept_result_t *);
 
 typedef struct udpsock_s
 {
-    hio_t        *io;
-    idle_table_t *table;
+    wio_t        *io;
+    widle_table_t *table;
 
 } udpsock_t;
 
@@ -81,7 +80,7 @@ typedef struct udp_payload_s
 {
     udpsock_t      *sock;
     tunnel_t       *tunnel;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     sockaddr_u      peer_addr;
     uint16_t        real_localport;
     uint8_t         tid;
@@ -95,4 +94,4 @@ struct socket_manager_s *createSocketManager(void);
 void                     setSocketManager(struct socket_manager_s *state);
 void                     startSocketManager(void);
 void                     registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
-void                     postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, shift_buffer_t *buf);
+void                     postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, sbuf_t *buf);

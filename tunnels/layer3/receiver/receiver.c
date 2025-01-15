@@ -35,14 +35,14 @@ static void upStream(tunnel_t *self, context_t *c)
     // layer3_receiver_state_t *state = TSTATE(self);
     (void) (self);
 
-    packet_mask *packet = (packet_mask *) (rawBufMut(c->payload));
+    packet_mask *packet = (packet_mask *) (sbufGetMutablePtr(c->payload));
 
     /*      im not sure these checks are necessary    */
     if (kCheckPackets)
     {
         if (packet->ip4_header.version == 4)
         {
-            if (UNLIKELY(bufLen(c->payload) < sizeof(struct ipv4header)))
+            if (UNLIKELY(sbufGetBufLength(c->payload) < sizeof(struct ipv4header)))
             {
                 LOGW("Layer3Receiver: dropped a ipv4 packet that was too small");
                 reuseContextPayload(c);
@@ -53,7 +53,7 @@ static void upStream(tunnel_t *self, context_t *c)
         else if (packet->ip6_header.version == 6)
         {
 
-            if (UNLIKELY(bufLen(c->payload) < sizeof(struct ipv6header)))
+            if (UNLIKELY(sbufGetBufLength(c->payload) < sizeof(struct ipv6header)))
             {
                 LOGW("Layer3Receiver: dropped a ipv6 packet that was too small");
                 reuseContextPayload(c);

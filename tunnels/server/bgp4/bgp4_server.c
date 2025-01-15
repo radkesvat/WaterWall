@@ -58,29 +58,29 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (bufferStreamLen(cstate->read_stream) >= ((unsigned int) kBgpHeaderLen + required_length))
             {
-                shift_buffer_t *buf = bufferStreamRead(cstate->read_stream, kBgpHeaderLen + required_length);
+                sbuf_t *buf = bufferStreamRead(cstate->read_stream, kBgpHeaderLen + required_length);
 
                 static const uint8_t kExpecetd[kMarkerLength] = {VAL_8X, VAL_8X};
 
-                if (0 != memcmp(rawBuf(buf), kExpecetd, kMarkerLength))
+                if (0 != memcmp(sbufGetRawPtr(buf), kExpecetd, kMarkerLength))
                 {
                     LOGE("Bgp4Server: invalid marker");
-                    reuseBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
                     goto disconnect;
                 }
-                shiftr(buf, kBgpHeaderLen);
+                sbufShiftRight(buf, kBgpHeaderLen);
 
                 if (! cstate->open_received)
                 {
-                    if (bufLen(buf) < kBgpOpenPacketHeaderSize + 1) // +1 for type
+                    if (sbufGetBufLength(buf) < kBgpOpenPacketHeaderSize + 1) // +1 for type
                     {
                         LOGE("Bgp4Server: open packet length is shorter than bgp header");
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         goto disconnect;
                     }
 
                     uint8_t bgp_type;
-                    readUnAlignedUI8(buf, &bgp_type);
+                    sbufReadUnAlignedUI8(buf, &bgp_type);
                     if (bgp_type == 1)
                     {
                         cstate->open_received = true;
@@ -88,32 +88,32 @@ static void upStream(tunnel_t *self, context_t *c)
                     else
                     {
                         LOGE("Bgp4Server: first message type was not bgp_open");
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         goto disconnect;
                     }
 
-                    shiftr(buf, kBgpOpenPacketHeaderSize); // now at index addition
+                    sbufShiftRight(buf, kBgpOpenPacketHeaderSize); // now at index addition
 
                     uint8_t bgp_additions;
-                    readUnAlignedUI8(buf, &bgp_additions);
+                    sbufReadUnAlignedUI8(buf, &bgp_additions);
 
-                    if (bgp_additions > 0 && bufLen(buf) - 1 < bgp_additions)
+                    if (bgp_additions > 0 && sbufGetBufLength(buf) - 1 < bgp_additions)
                     {
                         LOGE("Bgp4Server: open message had extensions more than the length");
-                        reuseBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
                         goto disconnect;
                     }
-                    shiftr(buf, bgp_additions + 1); // pass addition count and items
+                    sbufShiftRight(buf, bgp_additions + 1); // pass addition count and items
                 }
                 else
                 {
-                    shiftr(buf, 1); // pass type
+                    sbufShiftRight(buf, 1); // pass type
                 }
 
-                if (bufLen(buf) <= 0)
+                if (sbufGetBufLength(buf) <= 0)
                 {
                     LOGE("Bgp4Server: message had no payload");
-                    reuseBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
                     goto disconnect;
                 }
 
@@ -162,15 +162,15 @@ static void downStream(tunnel_t *self, context_t *c)
     {
         uint8_t bgp_type = 2 + (fastRand() % kBgpTypes - 1);
 
-        shiftl(c->payload, 1); // type
-        writeUnAlignedUI8(c->payload, bgp_type);
+        sbufShiftLeft(c->payload, 1); // type
+        sbufWriteUnAlignedUI8(c->payload, bgp_type);
 
-        uint16_t blen = (uint16_t) bufLen(c->payload);
-        shiftl(c->payload, 2); // length
-        writeUnAlignedUI16(c->payload, blen);
+        uint16_t blen = (uint16_t) sbufGetBufLength(c->payload);
+        sbufShiftLeft(c->payload, 2); // length
+        sbufWriteUnAlignedUI16(c->payload, blen);
 
-        shiftl(c->payload, kMarkerLength);
-        memorySet(rawBufMut(c->payload), kMarker, kMarkerLength);
+        sbufShiftLeft(c->payload, kMarkerLength);
+        memorySet(sbufGetMutablePtr(c->payload), kMarker, kMarkerLength);
     }
     else if (c->fin)
     {

@@ -31,7 +31,7 @@ typedef struct udp_connector_con_state_s
 
     tunnel_t *     tunnel;
     line_t *       line;
-    hio_t *        io;
+    wio_t *        io;
     buffer_pool_t *buffer_pool;
 
     bool established;

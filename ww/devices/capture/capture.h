@@ -1,6 +1,6 @@
 #pragma once
 #include "buffer_pool.h"
-#include "hloop.h"
+#include "wloop.h"
 #include "wplatform.h"
 #include "wthread.h"
 #include "master_pool.h"
@@ -8,7 +8,7 @@
 
 struct capture_device_s;
 
-typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *userdata, shift_buffer_t *buf, tid_t tid);
+typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, tid_t tid);
 
 typedef struct capture_device_s
 {
@@ -40,4 +40,4 @@ bool bringCaptureDeviceDown(capture_device_t *cdev);
 
 capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, void *userdata,
                                       CaptureReadEventHandle cb);
-bool              writeToCaptureDevce(capture_device_t *cdev, shift_buffer_t *buf);
+bool              writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf);

@@ -1,9 +1,4 @@
 #include "internal_logger.h"
-#include <assert.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
 
 struct logger_s;
 static logger_t *logger = NULL;
@@ -12,8 +7,8 @@ static void destroyInternalLogger(void)
 {
     if (logger)
     {
-        syncLoggerFile(logger);
-        destroyLogger(logger);
+        loggerSyncFile(logger);
+        loggerDestroy(logger);
         logger = NULL;
     }
 }
@@ -31,13 +26,13 @@ static void internalLoggerHandleWithStdStream(int loglevel, const char *buf, int
         stdoutLogger(loglevel, buf, len);
         break;
     }
-    writeLogFile(logger, buf, len);
+    loggerWrite(logger, buf, len);
 }
 
 static void internalLoggerHandle(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    writeLogFile(logger, buf, len);
+    loggerWrite(logger, buf, len);
 }
 
 logger_t *getInternalLogger(void)
@@ -54,15 +49,15 @@ void setInternalLogger(logger_t *newlogger)
 logger_t *createInternalLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
-    logger = createLogger();
-    setLoggerFile(logger, log_file);
+    logger = loggerCreate();
+    loggerSetFile(logger, log_file);
     if (console)
     {
-        setLoggerHandler(logger, internalLoggerHandleWithStdStream);
+        loggerSetHandler(logger, internalLoggerHandleWithStdStream);
     }
     else
     {
-        setLoggerHandler(logger, internalLoggerHandle);
+        loggerSetHandler(logger, internalLoggerHandle);
     }
 
     atexit(destroyInternalLogger);
@@ -71,5 +66,5 @@ logger_t *createInternalLogger(const char *log_file, bool console)
 
 logger_handler getInternalLoggerHandle(void)
 {
-    return getLoggerHandle(logger);
+    return loggerGetHandle(logger);
 }

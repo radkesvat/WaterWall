@@ -2,7 +2,7 @@
 #include "wchan.h"
 #include "loggers/internal_logger.h"
 #include "tun.h"
-#include "utils/procutils.h"
+
 #include "worker.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -19,14 +19,14 @@
 enum
 {
     kReadPacketSize          = 1500,
-    kMasterMessagePoolCap    = 64,
+    kMasterMessagePoosbufGetLeftCapacity    = 64,
     kTunWriteChannelQueueMax = 256
 };
 
 struct msg_event
 {
     tun_device_t   *tdev;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
 };
 
 static void printIPPacketInfo(const char *devname, const unsigned char *buffer)
@@ -91,56 +91,56 @@ static void destroyTunMsgPoolHandle(struct master_pool_s *pool, master_pool_item
     memoryFree(item);
 }
 
-static void localThreadEventReceived(hevent_t *ev)
+static void localThreadEventReceived(wevent_t *ev)
 {
-    struct msg_event *msg = hevent_userdata(ev);
-    tid_t             tid = (tid_t) (hloop_tid(hevent_loop(ev)));
+    struct msg_event *msg = weventGetUserdata(ev);
+    tid_t             tid = (tid_t) (wloopTID(weventGetLoop(ev)));
 
     msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, tid);
 
     reuseMasterPoolItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
 }
 
-static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, shift_buffer_t *buf)
+static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
     popMasterPoolItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
     *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
-    hevent_t ev;
+    wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(target_tid);
     ev.cb   = localThreadEventReceived;
-    hevent_set_userdata(&ev, msg);
-    hloop_post_event(getWorkerLoop(target_tid), &ev);
+    weventSetUserData(&ev, msg);
+    wloopPostEvent(getWorkerLoop(target_tid), &ev);
 }
 
 static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 {
     tun_device_t   *tdev           = userdata;
     tid_t           distribute_tid = 0;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     ssize_t         nread;
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        buf = popSmallBuffer(tdev->reader_buffer_pool);
+        buf = bufferpoolPopSmall(tdev->reader_buffer_pool);
 
-        buf = reserveBufSpace(buf, kReadPacketSize);
+        buf = sbufReserveSpace(buf, kReadPacketSize);
 
-        nread = read(tdev->handle, rawBufMut(buf), kReadPacketSize);
+        nread = read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
 
         if (nread == 0)
         {
-            reuseBuffer(tdev->reader_buffer_pool, buf);
+            bufferpoolResuesbuf(tdev->reader_buffer_pool, buf);
             LOGW("TunDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            reuseBuffer(tdev->reader_buffer_pool, buf);
+            bufferpoolResuesbuf(tdev->reader_buffer_pool, buf);
 
             LOGE("TunDevice: reading a packet from TUN device failed, code: %d", (int) nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
@@ -151,7 +151,7 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
             return 0;
         }
 
-        setLen(buf, nread);
+        sbufSetLength(buf, nread);
 
         if (TUN_LOG_EVERYTHING)
         {
@@ -172,7 +172,7 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 {
     tun_device_t   *tdev = userdata;
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     ssize_t         nwrite;
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
@@ -183,11 +183,11 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
             return 0;
         }
 
-        assert(bufLen(buf) > sizeof(struct iphdr));
+        assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
 
-        nwrite = write(tdev->handle, rawBuf(buf), bufLen(buf));
+        nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetBufLength(buf));
 
-        reuseBuffer(tdev->writer_buffer_pool, buf);
+        bufferpoolResuesbuf(tdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -209,9 +209,9 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
     return 0;
 }
 
-bool writeToTunDevce(tun_device_t *tdev, shift_buffer_t *buf)
+bool writeToTunDevce(tun_device_t *tdev, sbuf_t *buf)
 {
-    assert(bufLen(buf) > sizeof(struct iphdr));
+    assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
 
     bool closed = false;
     if (! chanTrySend(tdev->writer_buffer_channel, &buf, &closed))
@@ -275,9 +275,9 @@ bool bringTunDeviceUP(tun_device_t *tdev)
 
     if (tdev->read_event_callback != NULL)
     {
-        tdev->read_thread = createThread(tdev->routine_reader, tdev);
+        tdev->read_thread = threadCreate(tdev->routine_reader, tdev);
     }
-    tdev->write_thread = createThread(tdev->routine_writer, tdev);
+    tdev->write_thread = threadCreate(tdev->routine_writer, tdev);
     return true;
 }
 
@@ -302,14 +302,14 @@ bool bringTunDeviceDown(tun_device_t *tdev)
 
     if (tdev->read_event_callback != NULL)
     {
-        joinThread(tdev->read_thread);
+        threadJoin(tdev->read_thread);
     }
-    joinThread(tdev->write_thread);
+    threadJoin(tdev->write_thread);
 
-    shift_buffer_t *buf;
+    sbuf_t *buf;
     while (chanRecv(tdev->writer_buffer_channel, &buf))
     {
-        reuseBuffer(tdev->reader_buffer_pool, buf);
+        bufferpoolResuesbuf(tdev->reader_buffer_pool, buf);
     }
 
     return true;
@@ -346,11 +346,11 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     }
 
     buffer_pool_t *reader_bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 
                          (0) + GSTATE.ram_profile);
 
     buffer_pool_t  *writer_bpool =
-        createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  1);
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  1);
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
@@ -363,13 +363,13 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
                             .writer_buffer_channel    = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
-                            .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoolCap),
+                            .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoosbufGetLeftCapacity),
                             .reader_buffer_pool       = reader_bpool,
                             .writer_buffer_pool       = writer_bpool
 
     };
 
-    installMasterPoolAllocCallbacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
+    installMasterPoolAllocCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
     return tdev;
 }

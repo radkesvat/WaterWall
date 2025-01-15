@@ -21,7 +21,7 @@ typedef struct http2_action_s
 {
     enum http2_actions action_id;
     line_t            *stream_line;
-    shift_buffer_t    *buf;
+    sbuf_t    *buf;
 
 } http2_action_t;
 

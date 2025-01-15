@@ -4,14 +4,14 @@
 #include "wplatform.h"
 #include "wdef.h"
 
-#include "hevent.h"
+#include "wevent.h"
 #include "overlapio.h"
 
 typedef struct iocp_ctx_s {
     HANDLE      iocp;
 } iocp_ctx_t;
 
-int iowatcher_init(hloop_t* loop) {
+int iowatcherInit(wloop_t* loop) {
     if (loop->iowatcher)    return 0;
     iocp_ctx_t* iocp_ctx;
     EVENTLOOP_ALLOC_SIZEOF(iocp_ctx);
@@ -20,7 +20,7 @@ int iowatcher_init(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_cleanup(hloop_t* loop) {
+int iowatcherCleanUp(wloop_t* loop) {
     if (loop->iowatcher == NULL) return 0;
     iocp_ctx_t* iocp_ctx = (iocp_ctx_t*)loop->iowatcher;
     CloseHandle(iocp_ctx->iocp);
@@ -28,27 +28,27 @@ int iowatcher_cleanup(hloop_t* loop) {
     return 0;
 }
 
-int iowatcher_add_event(hloop_t* loop, int fd, int events) {
+int iowatcherAddEvent(wloop_t* loop, int fd, int events) {
     if (loop->iowatcher == NULL) {
-        iowatcher_init(loop);
+        iowatcherInit(loop);
     }
     iocp_ctx_t* iocp_ctx = (iocp_ctx_t*)loop->iowatcher;
-    hio_t* io = loop->ios.ptr[fd];
+    wio_t* io = loop->ios.ptr[fd];
     if (io && io->events == 0 && events != 0) {
         CreateIoCompletionPort((HANDLE)fd, iocp_ctx->iocp, 0, 0);
     }
     return 0;
 }
 
-int iowatcher_del_event(hloop_t* loop, int fd, int events) {
-    hio_t* io = loop->ios.ptr[fd];
+int iowatcherDelEvent(wloop_t* loop, int fd, int events) {
+    wio_t* io = loop->ios.ptr[fd];
     if ((io->events & ~events) == 0) {
         CancelIo((HANDLE)fd);
     }
     return 0;
 }
 
-int iowatcher_poll_events(hloop_t* loop, int timeout) {
+int iowatcherPollEvents(wloop_t* loop, int timeout) {
     if (loop->iowatcher == NULL) return 0;
     iocp_ctx_t* iocp_ctx = (iocp_ctx_t*)loop->iowatcher;
     DWORD bytes = 0;
@@ -64,7 +64,7 @@ int iowatcher_poll_events(hloop_t* loop, int timeout) {
         return -err;
     }
     hoverlapped_t* hovlp = (hoverlapped_t*)povlp;
-    hio_t* io = hovlp->io;
+    wio_t* io = hovlp->io;
     if (bRet == FALSE) {
         err = WSAGetLastError();
         printd("iocp ret=%d err=%d bytes=%u\n", bRet, err, bytes);

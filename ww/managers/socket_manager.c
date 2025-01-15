@@ -1,29 +1,29 @@
 #include "socket_manager.h"
-#include "basic_types.h"
+
 #include "frand.h"
 #include "generic_pool.h"
-#include "hloop.h"
+#include "wloop.h"
 #include "wmutex.h"
-#include "idle_table.h"
+#include "widle_table.h"
 #include "loggers/internal_logger.h"
 #include "signal_manager.h"
 #include "stc/common.h"
 #include "tunnel.h"
-#include "utils/whash.h"
-#include "utils/procutils.h"
-#include "utils/sockutils.h"
+
+
+
 
 #define i_type balancegroup_registry_t // NOLINT
 #define i_key  hash_t                  // NOLINT
-#define i_val  idle_table_t *          // NOLINT
+#define i_val  widle_table_t *          // NOLINT
 
 #include "stc/hmap.h"
 
 typedef struct socket_filter_s
 {
     union {
-        hio_t  *listen_io;
-        hio_t **listen_ios;
+        wio_t  *listen_io;
+        wio_t **listen_ios;
     };
     socket_filter_option_t option;
     tunnel_t              *tunnel;
@@ -110,16 +110,16 @@ void destroySocketAcceptResult(socket_accept_result_t *sar)
 {
     const tid_t tid = sar->tid;
 
-    lockMutex(&(state->tcp_pools[tid].mutex));
+    mutexLock(&(state->tcp_pools[tid].mutex));
     reusePoolItem(state->tcp_pools[tid].pool, sar);
-    unlockMutex(&(state->tcp_pools[tid].mutex));
+    mutexUnlock(&(state->tcp_pools[tid].mutex));
 }
 
 static udp_payload_t *newUpdPayload(tid_t tid)
 {
-    lockMutex(&(state->udp_pools[tid].mutex));
+    mutexLock(&(state->udp_pools[tid].mutex));
     udp_payload_t *item = popPoolItem(state->udp_pools[tid].pool);
-    unlockMutex(&(state->udp_pools[tid].mutex));
+    mutexUnlock(&(state->udp_pools[tid].mutex));
     return item;
 }
 
@@ -127,9 +127,9 @@ void destroyUdpPayload(udp_payload_t *upl)
 {
     const tid_t tid = upl->tid;
 
-    lockMutex(&(state->udp_pools[tid].mutex));
+    mutexLock(&(state->udp_pools[tid].mutex));
     reusePoolItem(state->udp_pools[tid].pool, upl);
-    unlockMutex(&(state->udp_pools[tid].mutex));
+    mutexUnlock(&(state->udp_pools[tid].mutex));
 }
 
 static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
@@ -304,14 +304,14 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
     if (option.balance_group_name)
     {
         hash_t        name_hash = calcHashBytes(option.balance_group_name, strlen(option.balance_group_name));
-        idle_table_t *b_table   = NULL;
-        lockMutex(&(state->mutex));
+        widle_table_t *b_table   = NULL;
+        mutexLock(&(state->mutex));
 
         balancegroup_registry_t_iter find_result = balancegroup_registry_t_find(&(state->balance_groups), name_hash);
 
         if (find_result.ref == balancegroup_registry_t_end(&(state->balance_groups)).ref)
         {
-            b_table = newIdleTable(state->worker->loop);
+            b_table = idleTableCreate(state->worker->loop);
             balancegroup_registry_t_insert(&(state->balance_groups), name_hash, b_table);
         }
         else
@@ -319,16 +319,16 @@ void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onA
             b_table = (find_result.ref->second);
         }
 
-        unlockMutex(&(state->mutex));
+        mutexUnlock(&(state->mutex));
 
         option.shared_balance_table = b_table;
     }
 
     *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
-    lockMutex(&(state->mutex));
+    mutexLock(&(state->mutex));
     filters_t_push(&(state->filters[pirority]), filter);
-    unlockMutex(&(state->mutex));
+    mutexUnlock(&(state->mutex));
 }
 
 static inline uint16_t getCurrentDistributeTid(void)
@@ -350,31 +350,31 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
 
     tid_t tid = (uint8_t) getCurrentDistributeTid();
 
-    lockMutex(&(state->tcp_pools[tid].mutex));
+    mutexLock(&(state->tcp_pools[tid].mutex));
     socket_accept_result_t *result = popPoolItem(state->tcp_pools[tid].pool);
-    unlockMutex(&(state->tcp_pools[tid].mutex));
+    mutexUnlock(&(state->tcp_pools[tid].mutex));
 
     result->real_localport = local_port;
 
-    hloop_t *worker_loop = getWorkerLoop(tid);
-    hevent_t ev          = (hevent_t) {.loop = worker_loop, .cb = filter->cb};
+    wloop_t *worker_loop = getWorkerLoop(tid);
+    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
     result->tid          = tid;
     result->io           = io;
     result->tunnel       = filter->tunnel;
     ev.userdata          = result;
     incrementDistributeTid();
 
-    hloop_post_event(worker_loop, &ev);
+    wloopPostEvent(worker_loop, &ev);
 }
 
-static void noTcpSocketConsumerFound(hio_t *io)
+static void noTcpSocketConsumerFound(wio_t *io)
 {
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    LOGE("SocketManager: could not find consumer for Tcp socket FD:%x [%s] <= [%s]", hio_fd(io),
-         SOCKADDR_STR(hio_localaddr_u(io), localaddrstr), SOCKADDR_STR(hio_peeraddr_u(io), peeraddrstr));
-    hio_close(io);
+    LOGE("SocketManager: could not find consumer for Tcp socket FD:%x [%s] <= [%s]", wioGetFD(io),
+         SOCKADDR_STR(wioGetLocaladdrU(io), localaddrstr), SOCKADDR_STR(wioGetPeerAddrU(io), peeraddrstr));
+    wioClose(io);
 }
 
 static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t option)
@@ -418,13 +418,13 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
     return false;
 }
 
-static void distributeTcpSocket(hio_t *io, uint16_t local_port)
+static void distributeTcpSocket(wio_t *io, uint16_t local_port)
 {
-    sockaddr_u *paddr = (sockaddr_u *) hio_peeraddr_u(io);
+    sockaddr_u *paddr = (sockaddr_u *) wioGetPeerAddrU(io);
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
-    idle_table_t           *selected_balance_table           = NULL;
+    widle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
     const uint8_t           this_tid   = state->worker->tid;
@@ -460,21 +460,21 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr_u(io));
+                    src_hash = sockaddrCalcHashNoPort((sockaddr_u *) wioGetPeerAddrU(io));
                 }
-                idle_item_t *idle_item = getIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
+                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
 
                 if (idle_item)
                 {
                     socket_filter_t *target_filter = idle_item->userdata;
-                    keepIdleItemForAtleast(option.shared_balance_table, idle_item,
+                    idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
                                            option.balance_group_interval == 0 ? kDefalultBalanceInterval
                                                                               : option.balance_group_interval);
                     if (option.no_delay)
                     {
-                        tcpNoDelay(hio_fd(io), 1);
+                        tcpNoDelay(wioGetFD(io), 1);
                     }
-                    hio_detach(io);
+                    wioDetach(io);
                     distributeSocket(io, target_filter, local_port);
                     return;
                 }
@@ -492,9 +492,9 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
 
             if (option.no_delay)
             {
-                tcpNoDelay(hio_fd(io), 1);
+                tcpNoDelay(wioGetFD(io), 1);
             }
-            hio_detach(io);
+            wioDetach(io);
             distributeSocket(io, filter, local_port);
             return;
         }
@@ -503,13 +503,13 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        newIdleItem(filter->option.shared_balance_table, src_hash, filter, NULL, this_tid,
+        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_tid,
                     filter->option.balance_group_interval == 0 ? kDefalultBalanceInterval
                                                                : filter->option.balance_group_interval);
 
         if (filter->option.no_delay)
         {
-            tcpNoDelay(hio_fd(io), 1);
+            tcpNoDelay(wioGetFD(io), 1);
         }
         distributeSocket(io, filter, local_port);
     }
@@ -519,28 +519,28 @@ static void distributeTcpSocket(hio_t *io, uint16_t local_port)
     }
 }
 
-static void onAcceptTcpSinglePort(hio_t *io)
+static void onAcceptTcpSinglePort(wio_t *io)
 {
-    distributeTcpSocket(io, sockAddrPort((sockaddr_u *) hio_localaddr_u(io)));
+    distributeTcpSocket(io, sockaddrPort((sockaddr_u *) wioGetLocaladdrU(io)));
 }
 
-static void onAcceptTcpMultiPort(hio_t *io)
+static void onAcceptTcpMultiPort(wio_t *io)
 {
 #ifdef OS_UNIX
 
-    bool          use_v4_strategy = needsV4SocketStrategy((sockaddr_u *) hio_peeraddr_u(io));
+    bool          use_v4_strategy = needsV4SocketStrategy((sockaddr_u *) wioGetPeerAddrU(io));
     unsigned char pbuf[28]        = {0};
     socklen_t     size            = use_v4_strategy ? 16 : 24;
 
     int level = use_v4_strategy ? IPPROTO_IP : IPPROTO_IPV6;
-    if (getsockopt(hio_fd(io), level, kSoOriginalDest, &(pbuf[0]), &size) < 0)
+    if (getsockopt(wioGetFD(io), level, kSoOriginalDest, &(pbuf[0]), &size) < 0)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGE("SocketManger: multiport failure getting origin port FD:%x [%s] <= [%s]", hio_fd(io),
-             SOCKADDR_STR(hio_localaddr_u(io), localaddrstr), SOCKADDR_STR(hio_peeraddr_u(io), peeraddrstr));
-        hio_close(io);
+        LOGE("SocketManger: multiport failure getting origin port FD:%x [%s] <= [%s]", wioGetFD(io),
+             SOCKADDR_STR(wioGetLocaladdrU(io), localaddrstr), SOCKADDR_STR(wioGetPeerAddrU(io), peeraddrstr));
+        wioClose(io);
         return;
     }
 
@@ -559,7 +559,7 @@ static multiport_backend_t getDefaultMultiPortBackend(void)
     return kMultiportBackendSockets;
 }
 
-static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
+static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
                                        uint8_t *ports_overlapped, uint16_t port_max)
 {
     if (! state->iptables_installed)
@@ -584,11 +584,11 @@ static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, c
         {
             if (ports_overlapped[main_port] != 1)
             {
-                filter->listen_io           = hloop_create_tcp_server(loop, host, main_port, onAcceptTcpMultiPort);
+                filter->listen_io           = wloopCreateTcpServer(loop, host, main_port, onAcceptTcpMultiPort);
                 ports_overlapped[main_port] = 1;
                 if (filter->listen_io != NULL)
                 {
-                    filter->v6_dualstack = hio_localaddr(filter->listen_io)->sa_family == AF_INET6;
+                    filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
                     break;
                 }
 
@@ -606,11 +606,11 @@ static void listenTcpMultiPortIptables(hloop_t *loop, socket_filter_t *filter, c
     LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", host, port_min, port_max, main_port, "TCP");
 }
 
-static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
+static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
                                       uint8_t *ports_overlapped, uint16_t port_max)
 {
     const int length           = (port_max - port_min);
-    filter->listen_ios         = (hio_t **) memoryAllocate(sizeof(hio_t *) * (length + 1));
+    filter->listen_ios         = (wio_t **) memoryAllocate(sizeof(wio_t *) * (length + 1));
     filter->listen_ios[length] = 0x0;
     int i                      = 0;
     for (uint16_t p = port_min; p < port_max; p++)
@@ -622,21 +622,21 @@ static void listenTcpMultiPortSockets(hloop_t *loop, socket_filter_t *filter, ch
         }
         ports_overlapped[p] = 1;
 
-        filter->listen_ios[i] = hloop_create_tcp_server(loop, host, p, onAcceptTcpSinglePort);
+        filter->listen_ios[i] = wloopCreateTcpServer(loop, host, p, onAcceptTcpSinglePort);
 
         if (filter->listen_ios[i] == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p, "TCP");
             continue;
         }
-        filter->v6_dualstack = hio_localaddr(filter->listen_io)->sa_family == AF_INET6;
+        filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
 
         i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
     }
 }
 
-static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
                                 uint8_t *ports_overlapped)
 {
     if (ports_overlapped[port] == 1)
@@ -645,17 +645,17 @@ static void listenTcpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
     }
     ports_overlapped[port] = 1;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
-    filter->listen_io = hloop_create_tcp_server(loop, host, port, onAcceptTcpSinglePort);
+    filter->listen_io = wloopCreateTcpServer(loop, host, port, onAcceptTcpSinglePort);
 
     if (filter->listen_io == NULL)
     {
         LOGF("SocketManager: stopping due to null socket handle");
         exit(1);
     }
-    filter->v6_dualstack = hio_localaddr(filter->listen_io)->sa_family == AF_INET6;
+    filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
 }
 
-static void listenTcp(hloop_t *loop, uint8_t *ports_overlapped)
+static void listenTcp(wloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -703,35 +703,35 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
     LOGE("SocketManager: could not find consumer for Udp socket  [%s] <= [%s]",
-         SOCKADDR_STR(hio_localaddr_u(upl.sock->io), localaddrstr),
-         SOCKADDR_STR(hio_peeraddr_u(upl.sock->io), peeraddrstr));
+         SOCKADDR_STR(wioGetLocaladdrU(upl.sock->io), localaddrstr),
+         SOCKADDR_STR(wioGetPeerAddrU(upl.sock->io), peeraddrstr));
 }
 
 static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
 {
 
-    lockMutex(&(state->udp_pools[post_pl.tid].mutex));
+    mutexLock(&(state->udp_pools[post_pl.tid].mutex));
     udp_payload_t *pl = popPoolItem(state->udp_pools[post_pl.tid].pool);
-    unlockMutex(&(state->udp_pools[post_pl.tid].mutex));
+    mutexUnlock(&(state->udp_pools[post_pl.tid].mutex));
     *pl = post_pl;
 
     pl->tunnel           = filter->tunnel;
-    hloop_t *worker_loop = getWorkerLoop(pl->tid);
-    hevent_t ev          = (hevent_t) {.loop = worker_loop, .cb = filter->cb};
+    wloop_t *worker_loop = getWorkerLoop(pl->tid);
+    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
-    hloop_post_event(worker_loop, &ev);
+    wloopPostEvent(worker_loop, &ev);
 }
 
 static void distributeUdpPayload(const udp_payload_t pl)
 {
-    // lockMutex(&(state->mutex)); new socket manager will not lock here
-    sockaddr_u *paddr      = (sockaddr_u *) hio_peeraddr_u(pl.sock->io);
+    // mutexLock(&(state->mutex)); new socket manager will not lock here
+    sockaddr_u *paddr      = (sockaddr_u *) wioGetPeerAddrU(pl.sock->io);
     uint16_t    local_port = pl.real_localport;
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
-    idle_table_t           *selected_balance_table           = NULL;
+    widle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
     const uint8_t           this_tid   = state->worker->tid;
@@ -766,14 +766,14 @@ static void distributeUdpPayload(const udp_payload_t pl)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockAddrCalcHashNoPort((sockaddr_u *) hio_peeraddr_u(pl.sock->io));
+                    src_hash = sockaddrCalcHashNoPort((sockaddr_u *) wioGetPeerAddrU(pl.sock->io));
                 }
-                idle_item_t *idle_item = getIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
+                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
 
                 if (idle_item)
                 {
                     socket_filter_t *target_filter = idle_item->userdata;
-                    keepIdleItemForAtleast(option.shared_balance_table, idle_item,
+                    idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
                                            option.balance_group_interval == 0 ? kDefalultBalanceInterval
                                                                               : option.balance_group_interval);
                     postPayload(pl, target_filter);
@@ -798,7 +798,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        newIdleItem(filter->option.shared_balance_table, src_hash, filter, NULL, this_tid,
+        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_tid,
                     filter->option.balance_group_interval == 0 ? kDefalultBalanceInterval
                                                                : filter->option.balance_group_interval);
         postPayload(pl, filter);
@@ -809,22 +809,22 @@ static void distributeUdpPayload(const udp_payload_t pl)
     }
 }
 
-static void onRecvFrom(hio_t *io, shift_buffer_t *buf)
+static void onRecvFrom(wio_t *io, sbuf_t *buf)
 {
-    udpsock_t *socket     = hevent_userdata(io);
-    uint16_t   local_port = sockAddrPort((sockaddr_u *) hio_localaddr_u(io));
+    udpsock_t *socket     = weventGetUserdata(io);
+    uint16_t   local_port = sockaddrPort((sockaddr_u *) wioGetLocaladdrU(io));
     uint8_t    target_tid = local_port % getWorkersCount();
 
     udp_payload_t item = (udp_payload_t) {.sock           = socket,
                                           .buf            = buf,
                                           .tid            = target_tid,
-                                          .peer_addr      = *(sockaddr_u *) hio_peeraddr_u(io),
+                                          .peer_addr      = *(sockaddr_u *) wioGetPeerAddrU(io),
                                           .real_localport = local_port};
 
     distributeUdpPayload(item);
 }
 
-static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
                                 uint8_t *ports_overlapped)
 {
     if (ports_overlapped[port] == 1)
@@ -833,7 +833,7 @@ static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
     }
     ports_overlapped[port] = 1;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
-    filter->listen_io = hloop_create_udp_server(loop, host, port);
+    filter->listen_io = wloopCreateUdpServer(loop, host, port);
 
     if (filter->listen_io == NULL)
     {
@@ -841,14 +841,14 @@ static void listenUdpSinglePort(hloop_t *loop, socket_filter_t *filter, char *ho
         exit(1);
     }
     udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
-    *socket           = (udpsock_t) {.io = filter->listen_io, .table = newIdleTable(loop)};
-    hevent_set_userdata(filter->listen_io, socket);
-    hio_setcb_read(filter->listen_io, onRecvFrom);
-    hio_read(filter->listen_io);
+    *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
+    weventSetUserData(filter->listen_io, socket);
+    wioSetCallBackRead(filter->listen_io, onRecvFrom);
+    wioRead(filter->listen_io);
 }
 
 // todo (udp manager)
-static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
+static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -892,24 +892,24 @@ static void listenUdp(hloop_t *loop, uint8_t *ports_overlapped)
     }
 }
 
-static void writeUdpThisLoop(hevent_t *ev)
+static void writeUdpThisLoop(wevent_t *ev)
 {
-    udp_payload_t *upl    = hevent_userdata(ev);
-    size_t         nwrite = hio_write(upl->sock->io, upl->buf);
+    udp_payload_t *upl    = weventGetUserdata(ev);
+    size_t         nwrite = wioWrite(upl->sock->io, upl->buf);
     (void) nwrite;
     destroyUdpPayload(upl);
 }
 
-void postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, shift_buffer_t *buf)
+void postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, sbuf_t *buf)
 {
 
     udp_payload_t *item = newUpdPayload(tid_from);
 
     *item = (udp_payload_t) {.sock = socket_io, .buf = buf, .tid = tid_from};
 
-    hevent_t ev = (hevent_t) {.loop = hevent_loop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
+    wevent_t ev = (wevent_t) {.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
 
-    hloop_post_event(hevent_loop(socket_io->io), &ev);
+    wloopPostEvent(weventGetLoop(socket_io->io), &ev);
 }
 
 static HTHREAD_ROUTINE(accept_thread) // NOLINT
@@ -920,7 +920,7 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
     
     frandInit();
 
-    lockMutex(&(state->mutex));
+    mutexLock(&(state->mutex));
 
     {
         uint8_t ports_overlapped[65536] = {0};
@@ -931,9 +931,9 @@ static HTHREAD_ROUTINE(accept_thread) // NOLINT
         listenUdp(state->worker->loop, ports_overlapped);
     }
     state->started = true;
-    unlockMutex(&(state->mutex));
+    mutexUnlock(&(state->mutex));
 
-    hloop_run(state->worker->loop);
+    wloopRun(state->worker->loop);
     LOGW("AcceptThread eventloop finished!");
     return 0;
 }
@@ -954,7 +954,7 @@ void startSocketManager(void)
     assert(state != NULL);
     // accept_thread(accept_thread_loop);
 
-    state->accept_thread = createThread(accept_thread, NULL);
+    state->accept_thread = threadCreate(accept_thread, NULL);
 }
 
 socket_manager_state_t *createSocketManager(void)
@@ -969,10 +969,10 @@ socket_manager_state_t *createSocketManager(void)
 
 
 
-    worker->buffer_pool = createBufferPool(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+    worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            GSTATE.ram_profile);
 
-    worker->loop = hloop_new(HLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->tid);
+    worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->tid);
 
     state->worker = worker;
 
@@ -981,7 +981,7 @@ socket_manager_state_t *createSocketManager(void)
         state->filters[i] = filters_t_init();
     }
 
-    initMutex(&state->mutex);
+    mutexInit(&state->mutex);
 
     state->udp_pools = memoryAllocate(sizeof(*state->udp_pools) * getWorkersCount());
     memorySet(state->udp_pools, 0, sizeof(*state->udp_pools) * getWorkersCount());
@@ -995,11 +995,11 @@ socket_manager_state_t *createSocketManager(void)
 
         state->udp_pools[i].pool =
             newGenericPoolWithCap(mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
-        initMutex(&(state->udp_pools[i].mutex));
+        mutexInit(&(state->udp_pools[i].mutex));
 
         state->tcp_pools[i].pool = newGenericPoolWithCap(mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle,
                                                          destroyTcpResultObjectPoolHandle);
-        initMutex(&(state->tcp_pools[i].mutex));
+        mutexInit(&(state->tcp_pools[i].mutex));
     }
 
 #ifdef OS_UNIX
@@ -1012,7 +1012,7 @@ socket_manager_state_t *createSocketManager(void)
 
 #endif
 
-    registerAtExitCallback(exitHook, NULL);
+    registerAtExitCallBack(exitHook, NULL);
 
     return state;
 }

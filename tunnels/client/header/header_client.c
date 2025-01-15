@@ -44,8 +44,8 @@ static void upStream(tunnel_t *self, context_t *c)
         switch ((enum header_dynamic_value_status) state->data.status)
         {
         case kHdvsSourcePort:
-            shiftl(c->payload, sizeof(uint16_t));
-            writeUnAlignedUI16(c->payload, sockAddrPort(&(c->line->src_ctx.address)));
+            sbufShiftLeft(c->payload, sizeof(uint16_t));
+            sbufWriteUnAlignedUI16(c->payload, sockaddrPort(&(c->line->src_ctx.address)));
             break;
 
         default:

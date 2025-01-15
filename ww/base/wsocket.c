@@ -1,8 +1,7 @@
 #include "wsocket.h"
-#include "wdef.h"
 
 #ifdef OS_WIN
-#include "watomic.h"
+
 static atomic_flag s_wsa_initialized = ATOMIC_FLAG_INIT;
 void WSAInit(void) {
     if (!atomicFlagTestAndSet(&s_wsa_initialized)) {
@@ -282,7 +281,7 @@ int wwListen(int port, const char* host) {
     return ListenFD(sockfd);
 }
 
-int Connect(const char* host, int port, int nonblock) {
+int wwConnect(const char* host, int port, int nonblock) {
 #ifdef OS_WIN
     WSAInit();
 #endif
@@ -296,11 +295,11 @@ int Connect(const char* host, int port, int nonblock) {
 }
 
 int ConnectNonblock(const char* host, int port) {
-    return Connect(host, port, 1);
+    return wwConnect(host, port, 1);
 }
 
 int ConnectTimeout(const char* host, int port, int ms) {
-    int connfd = Connect(host, port, 1);
+    int connfd = wwConnect(host, port, 1);
     if (connfd < 0) return connfd;
     return ConnectFDTimeout(connfd, ms);
 }

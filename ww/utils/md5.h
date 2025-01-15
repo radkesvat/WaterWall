@@ -1,7 +1,7 @@
 #ifndef WW_MD5_H_
 #define WW_MD5_H_
 
-#include "wexport.h"
+#include "wlibc.h"
 
 typedef struct {
     unsigned int    count[2];

@@ -31,4 +31,3 @@ struct user_s *parseUserFromJsonObject(const cJSON *user_json)
     return user;
 }
 
-WW_EXPORT void initWLibc(void);
