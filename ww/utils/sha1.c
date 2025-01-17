@@ -62,7 +62,7 @@ void wwSHA1Transform(
 #ifdef SHA1HANDSOFF
     CHAR64LONG16 block[1];      /* use array to appear as a pointer */
 
-    memcpy(block, buffer, 64);
+    memoryCopy(block, buffer, 64);
 #else
     /* The following had better never be used because it causes the
      * pointer-to-const buffer to be cast into a pointer to non-const.
@@ -207,7 +207,7 @@ void wwSHA1Update(
     j = (j >> 3) & 63;
     if ((j + len) > 63)
     {
-        memcpy(&context->buffer[j], data, (i = 64 - j));
+        memoryCopy(&context->buffer[j], data, (i = 64 - j));
         wwSHA1Transform(context->state, context->buffer);
         for (; i + 63 < len; i += 64)
         {
@@ -217,7 +217,7 @@ void wwSHA1Update(
     }
     else
         i = 0;
-    memcpy(&context->buffer[j], &data[i], len - i);
+    memoryCopy(&context->buffer[j], &data[i], len - i);
 }
 
 

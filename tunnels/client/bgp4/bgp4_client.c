@@ -1,6 +1,6 @@
 #include "bgp4_client.h"
 #include "buffer_stream.h"
-#include "frand.h"
+
 #include "loggers/network_logger.h"
 #include "utils/jsonutils.h"
 
@@ -62,10 +62,10 @@ static void upStream(tunnel_t *self, context_t *c)
             uint8_t *header = sbufGetMutablePtr(c->payload);
 
             // initialize with defaults
-            memcpy(header, kBgpOpenInitialData, sizeof(kBgpOpenInitialData));
+            memoryCopy(header, kBgpOpenInitialData, sizeof(kBgpOpenInitialData));
 
-            memcpy(header + 1, &state->as_number, sizeof(state->as_number));
-            memcpy(header + 1 + 2 + 2, &state->sim_ip, sizeof(state->sim_ip));
+            memoryCopy(header + 1, &state->as_number, sizeof(state->as_number));
+            memoryCopy(header + 1 + 2 + 2, &state->sim_ip, sizeof(state->sim_ip));
 
             header[1 + 2 + 2 + 4] = additions;
             for (uint32_t i = 0; i < additions; i++)
@@ -128,7 +128,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
             if (bufferStreamLen(cstate->read_stream) >= ((unsigned int) kBgpHeaderLen + required_length))
             {
-                sbuf_t *buf = bufferStreamRead(cstate->read_stream, kBgpHeaderLen + required_length);
+                sbuf_t *buf = bufferStreamReadExact(cstate->read_stream, kBgpHeaderLen + required_length);
 
                 static const uint8_t kExpecetd[kMarkerLength] = {VAL_8X, VAL_8X};
 
@@ -136,7 +136,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     LOGE("Bgp4Client: invalid marker");
                     destroyBufferStream(cstate->read_stream);
-                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
                     memoryFree(cstate);
                     CSTATE_DROP(c);
                     self->up->upStream(self->up, newFinContextFrom(c));
@@ -149,7 +149,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (sbufGetBufLength(buf) <= 0)
                 {
                     LOGE("Bgp4Client: message had no payload");
-                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
                     goto disconnect;
                 }
                 context_t *data_ctx = newContext(c->line);

@@ -2,7 +2,7 @@
 // stdlib.h.
 #define _CRT_RAND_S
 #include "freebind.h"
-#include "frand.h"
+
 #include "loggers/network_logger.h"
 #include "tunnel.h"
 
@@ -27,7 +27,7 @@ bool applyFreeBindRandomDestIp(tunnel_t* self,socket_context_t *dest_ctx)
             calc          = calc & ~(state->outbound_ip_range - 1ULL);
             calc          = htonl(calc + large_random);
 
-            memcpy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
+            memoryCopy(&(dest_ctx->address.sin.sin_addr), &calc, sizeof(struct in_addr));
         }
         break;
     case AF_INET6:
@@ -45,7 +45,7 @@ bool applyFreeBindRandomDestIp(tunnel_t* self,socket_context_t *dest_ctx)
             calc          = calc & ~(state->outbound_ip_range - 1ULL);
             calc          = htonll(calc + large_random);
 
-            memcpy(8 + ((char *) &(dest_ctx->address.sin6.sin6_addr)), &calc, sizeof(calc));
+            memoryCopy(8 + ((char *) &(dest_ctx->address.sin6.sin6_addr)), &calc, sizeof(calc));
         }
         break;
 

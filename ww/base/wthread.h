@@ -32,7 +32,7 @@ static inline long getTID(void)
 /*
 #include "wthread.h"
 
-HTHREAD_ROUTINE(thread_demo) {
+WTHREAD_ROUTINE(thread_demo) {
     printf("thread[%ld] start\n", getTID());
     hv_delay(3000);
     printf("thread[%ld] end\n", getTID());
@@ -50,7 +50,7 @@ int main() {
 typedef HANDLE wthread_t;
 typedef DWORD(WINAPI *wthread_routine)(void *);
 #define HTHREAD_RETTYPE        DWORD
-#define HTHREAD_ROUTINE(fname) DWORD WINAPI fname(void *userdata)
+#define WTHREAD_ROUTINE(fname) DWORD WINAPI fname(void *userdata)
 static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
 {
     return CreateThread(NULL, 0, fn, userdata, 0, NULL);
@@ -68,7 +68,7 @@ static inline int threadJoin(wthread_t th)
 typedef pthread_t wthread_t;
 typedef void *(*wthread_routine)(void *);
 #define HTHREAD_RETTYPE        void *
-#define HTHREAD_ROUTINE(fname) void *fname(void *userdata)
+#define WTHREAD_ROUTINE(fname) void *fname(void *userdata)
 static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
 {
     pthread_t th;

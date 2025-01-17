@@ -157,11 +157,11 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             *first_packet_sent = true;
             struct timeval tv1, tv2;
-            gettimeofday(&tv1, NULL);
+            getTimeOfDay(&tv1, NULL);
             {
                 self->up->upStream(self->up, c);
             }
-            gettimeofday(&tv2, NULL);
+            getTimeOfDay(&tv2, NULL);
             double time_spent = (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 + (double) (tv2.tv_sec - tv1.tv_sec);
             LOGD("TcpListener: upstream took %d ms", (int) (time_spent * 1000));
             return;
@@ -227,7 +227,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        bufferpoolResuesbuf(wloopGetBufferPool(weventGetLoop(io)), buf);
+        bufferpoolResuesBuf(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
     sbuf_t *payload = buf;

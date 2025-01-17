@@ -377,7 +377,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         }
                         else
                         {
-                            bufferpoolResuesbuf(getContextBufferPool(c), upload_line_cstate->buffering);
+                            bufferpoolResuesBuf(getContextBufferPool(c), upload_line_cstate->buffering);
                             upload_line_cstate->buffering = NULL;
                         }
                     }
@@ -449,7 +449,7 @@ static void upStream(tunnel_t *self, context_t *c)
             dropContexPayload(c);
             if (sbufGetBufLength(cstate->buffering) >= kMaxBuffering)
             {
-                bufferpoolResuesbuf(getContextBufferPool(c), cstate->buffering);
+                bufferpoolResuesBuf(getContextBufferPool(c), cstate->buffering);
                 cstate->buffering = NULL;
             }
             destroyContext(c);
@@ -495,7 +495,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCsUnkown:
                 if (cstate->buffering)
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), cstate->buffering);
+                    bufferpoolResuesBuf(getContextBufferPool(c), cstate->buffering);
                 }
                 CSTATE_DROP(c);
                 memoryFree(cstate);
@@ -516,7 +516,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 hmap_cons_t_erase_at(&(state->upload_line_map), f_iter);
 
                 mutexUnlock(&(state->upload_line_map_mutex));
-                bufferpoolResuesbuf(getContextBufferPool(c), cstate->buffering);
+                bufferpoolResuesBuf(getContextBufferPool(c), cstate->buffering);
                 CSTATE_DROP(c);
                 memoryFree(cstate);
                 destroyContext(c);

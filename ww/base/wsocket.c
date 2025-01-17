@@ -1,4 +1,5 @@
 #include "wsocket.h"
+#include "loggers/internal_logger.h"
 
 #ifdef OS_WIN
 
@@ -71,7 +72,7 @@ int resolveAddr(const char* host, sockaddr_u* addr) {
         pai = pai->ai_next;
     }
     if (pai == NULL) pai = ais;
-    memcpy(addr, pai->ai_addr, pai->ai_addrlen);
+    memoryCopy(addr, pai->ai_addr, pai->ai_addrlen);
     freeaddrinfo(ais);
     return 0;
 }
@@ -405,4 +406,66 @@ error:
         closesocket(acceptfd);
     }
     return -1;
+}
+
+bool verifyIPCdir(const char *ipc, struct logger_s *logger){
+      unsigned int ipc_length = strlen(ipc);
+    char        *slash      = strchr(ipc, '/');
+    if (slash == NULL)
+    {
+        if (logger)
+        {
+            loggerPrint(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx",
+                         ipc);
+        }
+        return false;
+    }
+    *slash = '\0';
+    if (! isIpAddr(ipc))
+    {
+        if (logger)
+        {
+            loggerPrint(logger, LOG_LEVEL_ERROR, "verifyIPCdir Error: \"%s\" is not a valid ip address", ipc);
+        }
+        return false;
+    }
+
+    bool is_v4 = isIPVer4(ipc);
+    *slash     = '/';
+
+    char *subnet_part   = slash + 1;
+    int   prefix_length = atoi(subnet_part);
+
+    if (is_v4 && (prefix_length < 0 || prefix_length > 32))
+    {
+        if (logger)
+        {
+            loggerPrint(
+                logger, LOG_LEVEL_ERROR,
+                "verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
+                prefix_length);
+        }
+        return false;
+    }
+    if (! is_v4 && (prefix_length < 0 || prefix_length > 128))
+    {
+        if (logger)
+        {
+            loggerPrint(
+                logger, LOG_LEVEL_ERROR,
+                "verifyIPCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128", ipc,
+                prefix_length);
+        }
+        return false;
+    }
+    if (prefix_length > 0 && slash + 2 + (int) (log10(prefix_length)) < ipc + ipc_length)
+    {
+        if (logger)
+        {
+            loggerPrint(logger, LOG_LEVEL_WARN,
+                         "verifyIPCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix",
+                         ipc);
+        }
+    }
+    return true;
 }

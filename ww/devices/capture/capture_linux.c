@@ -280,7 +280,7 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
     return (int) (nl_data_size);
 }
 
-static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
+static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
     capture_device_t *cdev           = userdata;
     tid_t             distribute_tid = 0;
@@ -297,14 +297,14 @@ static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         if (nread == 0)
         {
-            bufferpoolResuesbuf(cdev->reader_buffer_pool, buf);
+            bufferpoolResuesBuf(cdev->reader_buffer_pool, buf);
             LOGW("CaptureDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            bufferpoolResuesbuf(cdev->reader_buffer_pool, buf);
+            bufferpoolResuesBuf(cdev->reader_buffer_pool, buf);
             LOGW("CaptureDevice: failed to read a packet from netfilter socket, retrying...");
             continue;
         }
@@ -322,7 +322,7 @@ static HTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     return 0;
 }
 
-static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
+static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 {
     capture_device_t *cdev = userdata;
     sbuf_t   *buf;
@@ -342,7 +342,7 @@ static HTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         nwrite = sendto(cdev->socket, ip_header, sbufGetBufLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        bufferpoolResuesbuf(cdev->writer_buffer_pool, buf);
+        bufferpoolResuesBuf(cdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -413,7 +413,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     sbuf_t *buf;
     while (chanRecv(cdev->writer_buffer_channel, &buf))
     {
-        bufferpoolResuesbuf(cdev->reader_buffer_pool, buf);
+        bufferpoolResuesBuf(cdev->reader_buffer_pool, buf);
     }
 
     return true;

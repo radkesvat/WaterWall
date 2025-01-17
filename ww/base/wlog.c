@@ -1,7 +1,6 @@
 #include "wlog.h"
 #include "wmutex.h"
 
-
 // #include "wtime.h"
 #define SECONDS_PER_HOUR 3600
 #define SECONDS_PER_DAY  86400  // 24*3600
@@ -431,7 +430,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 #else
     struct timeval                 tv;
     static _Thread_local struct tm tm;
-    gettimeofday(&tv, NULL);
+    getTimeOfDay(&tv, NULL);
     time_t tt = tv.tv_sec;
     localtime_r(&tt, &tm);
     year  = tm.tm_year + 1900;
@@ -563,6 +562,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 static logger_t *s_logger = NULL;
 logger_t        *loggerGetDefaultLogger(void)
 {
+    assert(false); // default logger disabled
     if (s_logger == NULL)
     {
         s_logger = loggerCreate();
@@ -584,13 +584,13 @@ void loggerDestroyDefaultLogger(void)
 void stdoutLogger(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    write(fileno(stdout), len, buf);
+    write(fileno(stdout), buf, len);
 }
 
 void stderrLogger(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    write(fileno(stderr), len, buf);
+    write(fileno(stderr), buf, len);
 }
 
 void fileLogger(int loglevel, const char *buf, int len)

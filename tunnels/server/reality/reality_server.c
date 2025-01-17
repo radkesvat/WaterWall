@@ -84,7 +84,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    sbuf_t *record_buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    sbuf_t *record_buf = bufferStreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
                     sbufShiftRight(record_buf, kTLSHeaderlen);
 
                     if (verifyMessage(record_buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
@@ -96,7 +96,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         self->up->upStream(self->up, newInitContext(c->line));
                         if (! isAlive(c->line))
                         {
-                            bufferpoolResuesbuf(getContextBufferPool(c), record_buf);
+                            bufferpoolResuesBuf(getContextBufferPool(c), record_buf);
                             destroyContext(c);
 
                             return;
@@ -117,7 +117,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                     else
                     {
-                        bufferpoolResuesbuf(getContextBufferPool(c), record_buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), record_buf);
                     }
                 }
                 else
@@ -149,10 +149,10 @@ static void upStream(tunnel_t *self, context_t *c)
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    sbuf_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    sbuf_t *buf = bufferStreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) sbufGetRawPtr(buf))[0] == kTLS12ApplicationData;
                     uint16_t        tls_ver_b;
-                    memcpy(&tls_ver_b, ((uint8_t *) sbufGetRawPtr(buf)) + 1, sizeof(uint16_t));
+                    memoryCopy(&tls_ver_b, ((uint8_t *) sbufGetRawPtr(buf)) + 1, sizeof(uint16_t));
                     bool is_tls_33 = tls_ver_b == kTLSVersion12;
                     sbufShiftRight(buf, kTLSHeaderlen);
 
@@ -160,7 +160,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         ! is_tls_applicationdata || ! is_tls_33)
                     {
                         LOGE("RealityServer: verifyMessage failed");
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         goto failed;
                     }
 
@@ -264,7 +264,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     assert(sbufGetBufLength(chunk) % 16 == 5);
                     self->dw->downStream(self->dw, cout);
                 }
-                bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                bufferpoolResuesBuf(getContextBufferPool(c), buf);
                 destroyContext(c);
             }
         }
@@ -326,7 +326,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
         return NULL;
     }
     // memorySet already made buff 0
-    memcpy(state->context_password, state->password, state->password_length);
+    memoryCopy(state->context_password, state->password, state->password_length);
     if (EVP_MAX_MD_SIZE % sizeof(uint64_t) != 0)
     {
         LOGF("Assert Error: RealityServer-> EVP_MAX_MD_SIZE not a multiple of 8");

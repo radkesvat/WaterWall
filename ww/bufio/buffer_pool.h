@@ -9,7 +9,7 @@
 
     preallocates (n) number of buffers at each call to charge(),
 
-    users should call bufferpoolPop() when they want a buffer, and later call bufferpoolResuesbuf when they are done with
+    users should call bufferpoolPop() when they want a buffer, and later call bufferpoolResuesBuf when they are done with
     the buffer.
 
     recharing is done autmatically and internally.
@@ -32,7 +32,7 @@ sbuf_t *bufferpoolPopSmall(buffer_pool_t *pool);
 sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2);
 sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b);
 
-void bufferpoolResuesbuf(buffer_pool_t *pool, sbuf_t *b);
+void bufferpoolResuesBuf(buffer_pool_t *pool, sbuf_t *b);
 
 void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
                                         uint16_t large_buffer_right_padding, uint16_t small_buffer_left_padding,

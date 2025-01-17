@@ -172,7 +172,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     sbuf_t *buf = arg;
 //     if (pl->left_line == NULL)
 //     {
-//         bufferpoolResuesbuf(getWorkerBufferPool(pl->left_tid), buf);
+//         bufferpoolResuesBuf(getWorkerBufferPool(pl->left_tid), buf);
 //         return;
 //     }
 //     context_t *ctx = newContext(pl->left_line);
@@ -185,7 +185,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     sbuf_t *buf = arg;
 //     if (pl->right_line == NULL)
 //     {
-//         bufferpoolResuesbuf(getWorkerBufferPool(pl->right_tid), buf);
+//         bufferpoolResuesBuf(getWorkerBufferPool(pl->right_tid), buf);
 //         return;
 //     }
 //     context_t *ctx = newContext(pl->right_line);

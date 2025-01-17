@@ -153,7 +153,7 @@ void wioDone(wio_t* io) {
     //
     while (!write_queue_empty(&io->write_queue)) {
         buf = *write_queue_front(&io->write_queue);
-        bufferpoolResuesbuf(io->loop->bufpool, buf);
+        bufferpoolResuesBuf(io->loop->bufpool, buf);
         write_queue_pop_front(&io->write_queue);
     }
     write_queue_cleanup(&io->write_queue);
@@ -339,14 +339,14 @@ void wioSetLocaladdr(wio_t* io, struct sockaddr* addr, int addrlen) {
     if (io->localaddr == NULL) {
         EVENTLOOP_ALLOC(io->localaddr, sizeof(sockaddr_u));
     }
-    memcpy(io->localaddr, addr, addrlen);
+    memoryCopy(io->localaddr, addr, addrlen);
 }
 
 void wioSetPeerAddr(wio_t* io, struct sockaddr* addr, int addrlen) {
     if (io->peeraddr == NULL) {
         EVENTLOOP_ALLOC(io->peeraddr, sizeof(sockaddr_u));
     }
-    memcpy(io->peeraddr, addr, addrlen);
+    memoryCopy(io->peeraddr, addr, addrlen);
 }
 
 void wioDelConnectTimer(wio_t* io) {

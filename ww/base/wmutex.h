@@ -127,7 +127,7 @@ static inline void wonce(wonce_t *once, wonce_fn fn)
 static inline void timespec_after(struct timespec *ts, unsigned int ms)
 {
     struct timeval tv;
-    gettimeofday(&tv, NULL);
+    getTimeOfDay(&tv, NULL);
     ts->tv_sec  = tv.tv_sec + ms / 1000;
     ts->tv_nsec = tv.tv_usec * 1000 + ms % 1000 * 1000000;
     if (ts->tv_nsec >= 1000000000)

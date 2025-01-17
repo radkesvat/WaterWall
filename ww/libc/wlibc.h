@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wplatform.h"
+#include "wtime.h"
 
 #include "watomic.h"
 #include "wdef.h"
@@ -10,7 +11,6 @@
 #include "wfrand.h"
 #include "whash.h"
 #include "wmath.h"
-#include "wtime.h"
 
 void initWLibc(void);
 
@@ -27,10 +27,9 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
-#define memset  memorySet
-#define memmove memoryMove
 
-void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, size_t n);
+
+void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, intmax_t n);
 
 //--------------------string-------------------------------
 
@@ -59,11 +58,11 @@ WW_EXPORT char *stringCopyN(char *dest, const char *src, size_t n);
 WW_EXPORT char *stringCat(char *dest, const char *src, size_t n);
 
 #if ! HAVE_STRLCPY
-#define strlcpy stringCopyN
+#define stringCopyN strlcpy
 #endif
 
 #if ! HAVE_STRLCAT
-#define strlcat stringCat
+#define stringCat strlcat
 #endif
 
 WW_EXPORT char *stringChr(const char *s, char c, size_t n);

@@ -224,7 +224,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     {
         if (k.ref->buf)
         {
-            bufferpoolResuesbuf(getWorkerBufferPool(con->line->tid), k.ref->buf);
+            bufferpoolResuesBuf(getWorkerBufferPool(con->line->tid), k.ref->buf);
         }
         unLockLine(k.ref->stream_line);
     }

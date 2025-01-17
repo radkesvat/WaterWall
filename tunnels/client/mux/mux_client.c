@@ -422,10 +422,10 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (bufferStreamLen(main_con->read_stream) >= length + sizeof(length))
         {
-            sbuf_t *frame_payload = bufferStreamRead(main_con->read_stream, length + sizeof(length));
+            sbuf_t *frame_payload = bufferStreamReadExact(main_con->read_stream, length + sizeof(length));
 
             mux_frame_t frame;
-            memcpy(&frame, sbufGetRawPtr(frame_payload), sizeof(mux_frame_t));
+            memoryCopy(&frame, sbufGetRawPtr(frame_payload), sizeof(mux_frame_t));
             sbufShiftRight(frame_payload, sizeof(mux_frame_t));
 
             mux_client_child_con_state_t *child_con_i;
@@ -437,7 +437,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     switch (frame.flags)
                     {
                     case kMuxFlagClose: {
-                        bufferpoolResuesbuf(getLineBufferPool(c->line), frame_payload);
+                        bufferpoolResuesBuf(getLineBufferPool(c->line), frame_payload);
                         context_t *fin_ctx = newFinContext(child_con_i->line);
                         destroyChildConnecton(child_con_i);
                         self->dw->downStream(self->dw, fin_ctx);
@@ -451,7 +451,7 @@ static void downStream(tunnel_t *self, context_t *c)
                         if (UNLIKELY(sbufGetBufLength(frame_payload) <= 0))
                         {
                             LOGE("MuxClient: payload length <= 0");
-                            bufferpoolResuesbuf(getLineBufferPool(main_con->line), frame_payload);
+                            bufferpoolResuesBuf(getLineBufferPool(main_con->line), frame_payload);
                             destroyMainConnecton(main_con);
                             self->up->upStream(self->up, newFinContext(c->line));
                             destroyContext(c);
@@ -470,7 +470,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     case kMuxFlagOpen:
                     default:
                         LOGE("MuxClient: incorrect frame flag");
-                        bufferpoolResuesbuf(getLineBufferPool(main_con->line), frame_payload);
+                        bufferpoolResuesBuf(getLineBufferPool(main_con->line), frame_payload);
                         destroyMainConnecton(main_con);
                         self->up->upStream(self->up, newFinContext(c->line));
                         destroyContext(c);
@@ -484,7 +484,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (frame_payload != NULL)
             {
                 LOGW("MuxClient: a frame could not find consumer cid: %d", (int) frame.cid);
-                bufferpoolResuesbuf(getLineBufferPool(main_con->line), frame_payload);
+                bufferpoolResuesBuf(getLineBufferPool(main_con->line), frame_payload);
             }
             else if (! isAlive(c->line))
             {

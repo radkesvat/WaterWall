@@ -1,6 +1,5 @@
 #include "wchan.h"
 #include "wmutex.h"
-#include "worker.h"
 
 // DEBUG_CHAN_LOG: define to enable debug logging of send and recv
 // #define DEBUG_CHAN_LOG
@@ -287,7 +286,7 @@ static bool chan_send_direct(wchan_t* c, void* srcelemptr, Thr* recvt) {
     assert(dstelemptr != NULL);
     // dlog_send("direct send of srcelemptr %p to [%zu] (dstelemptr %p)", srcelemptr, recvt->id, dstelemptr);
     //  store to address provided with chan_recv call
-    memcpy(dstelemptr, srcelemptr, c->elemsize);
+    memoryCopy(dstelemptr, srcelemptr, c->elemsize);
     atomicStoreExplicit(&recvt->elemptr, NULL, memory_order_relaxed); // clear pointer (TODO: is this really needed?)
 
     chan_unlock(&c->lock);
@@ -347,7 +346,7 @@ inline static bool chan_send(wchan_t* c, void* srcelemptr, bool* closed) {
         uint32_t i = atomicAddExplicit(&c->sendx, 1, memory_order_relaxed);
         // copy *srcelemptr -> *dstelemptr
         void* dstelemptr = chan_bufptr(c, i);
-        memcpy(dstelemptr, srcelemptr, c->elemsize);
+        memoryCopy(dstelemptr, srcelemptr, c->elemsize);
         // dlog_send("enqueue elemptr %p at buf[%u]", srcelemptr, i);
         if (i == c->qcap - 1) atomicStoreExplicit(&c->sendx, 0, memory_order_relaxed);
         atomicAddExplicit(&c->qlen, 1, memory_order_relaxed);
@@ -442,7 +441,7 @@ inline static bool chan_recv(wchan_t* c, void* dstelemptr, bool* closed) {
 
         // copy *srcelemptr -> *dstelemptr
         void* srcelemptr = chan_bufptr(c, i);
-        memcpy(dstelemptr, srcelemptr, c->elemsize);
+        memoryCopy(dstelemptr, srcelemptr, c->elemsize);
 #ifdef DEBUG
         memorySet(srcelemptr, 0, c->elemsize); // zero buffer memory
 #endif
@@ -506,7 +505,7 @@ static bool chan_recv_direct(wchan_t* c, void* dstelemptr, Thr* sendert) {
         void* srcelemptr = atomicLoadExplicit(&sendert->elemptr, memory_order_consume);
         // dlog_recv("direct recv of srcelemptr %p from [%zu] (dstelemptr %p, buffer empty)", srcelemptr, sendert->id, dstelemptr);
         assert(srcelemptr != NULL);
-        memcpy(dstelemptr, srcelemptr, c->elemsize);
+        memoryCopy(dstelemptr, srcelemptr, c->elemsize);
     }
     else {
         // Queue is full. Take the item at the head of the queue.
@@ -528,13 +527,13 @@ static bool chan_recv_direct(wchan_t* c, void* dstelemptr, Thr* sendert) {
         // copy c->buf[i] -> *dstelemptr
         void* bufelemptr = chan_bufptr(c, i);
         assert(bufelemptr != NULL);
-        memcpy(dstelemptr, bufelemptr, c->elemsize);
+        memoryCopy(dstelemptr, bufelemptr, c->elemsize);
         // dlog_recv("dequeue srcelemptr %p from buf[%u]", bufelemptr, i);
 
         // copy *sendert->elemptr -> c->buf[i]
         void* srcelemptr = atomicLoadExplicit(&sendert->elemptr, memory_order_consume);
         assert(srcelemptr != NULL);
-        memcpy(bufelemptr, srcelemptr, c->elemsize);
+        memoryCopy(bufelemptr, srcelemptr, c->elemsize);
         // dlog_recv("enqueue srcelemptr %p to buf[%u]", srcelemptr, i);
     }
 

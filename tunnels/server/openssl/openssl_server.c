@@ -1,7 +1,7 @@
 #include "openssl_server.h"
 #include "buffer_pool.h"
 #include "buffer_stream.h"
-#include "frand.h"
+
 #include "loggers/network_logger.h"
 #include "managers/node_manager.h"
 #include "openssl_globals.h"
@@ -240,12 +240,12 @@ static void upStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextPayload(c);
-                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
                             goto disconnect;
                         }
                         else
                         {
-                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -315,7 +315,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -349,13 +349,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -518,13 +518,13 @@ static void downStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }

@@ -580,7 +580,7 @@ void sha224Update(sha224_ctx *ctx, const uint8 *message, uint64 len)
     tmp_len = SHA224_BLOCK_SIZE - ctx->len;
     rem_len = len < tmp_len ? len : tmp_len;
 
-    memcpy(&ctx->block[ctx->len], message, rem_len);
+    memoryCopy(&ctx->block[ctx->len], message, rem_len);
 
     if (ctx->len + len < SHA224_BLOCK_SIZE)
     {
@@ -598,7 +598,7 @@ void sha224Update(sha224_ctx *ctx, const uint8 *message, uint64 len)
 
     rem_len = new_len % SHA224_BLOCK_SIZE;
 
-    memcpy(ctx->block, &shifted_message[block_nb << 6], rem_len);
+    memoryCopy(ctx->block, &shifted_message[block_nb << 6], rem_len);
 
     ctx->len = rem_len;
     ctx->tot_len += (block_nb + 1) << 6;
@@ -691,7 +691,7 @@ void sha256Update(sha256_ctx *ctx, const uint8 *message, uint64 len)
     tmp_len = SHA256_BLOCK_SIZE - ctx->len;
     rem_len = len < tmp_len ? len : tmp_len;
 
-    memcpy(&ctx->block[ctx->len], message, rem_len);
+    memoryCopy(&ctx->block[ctx->len], message, rem_len);
 
     if (ctx->len + len < SHA256_BLOCK_SIZE)
     {
@@ -709,7 +709,7 @@ void sha256Update(sha256_ctx *ctx, const uint8 *message, uint64 len)
 
     rem_len = new_len % SHA256_BLOCK_SIZE;
 
-    memcpy(ctx->block, &shifted_message[block_nb << 6], rem_len);
+    memoryCopy(ctx->block, &shifted_message[block_nb << 6], rem_len);
 
     ctx->len = rem_len;
     ctx->tot_len += (block_nb + 1) << 6;
@@ -803,7 +803,7 @@ void sha384Update(sha384_ctx *ctx, const uint8 *message, uint64 len)
     tmp_len = SHA384_BLOCK_SIZE - ctx->len;
     rem_len = len < tmp_len ? len : tmp_len;
 
-    memcpy(&ctx->block[ctx->len], message, rem_len);
+    memoryCopy(&ctx->block[ctx->len], message, rem_len);
 
     if (ctx->len + len < SHA384_BLOCK_SIZE)
     {
@@ -821,7 +821,7 @@ void sha384Update(sha384_ctx *ctx, const uint8 *message, uint64 len)
 
     rem_len = new_len % SHA384_BLOCK_SIZE;
 
-    memcpy(ctx->block, &shifted_message[block_nb << 7], rem_len);
+    memoryCopy(ctx->block, &shifted_message[block_nb << 7], rem_len);
 
     ctx->len = rem_len;
     ctx->tot_len += (block_nb + 1) << 7;
@@ -913,7 +913,7 @@ void sha512Update(sha512_ctx *ctx, const uint8 *message, uint64 len)
     tmp_len = SHA512_BLOCK_SIZE - ctx->len;
     rem_len = len < tmp_len ? len : tmp_len;
 
-    memcpy(&ctx->block[ctx->len], message, rem_len);
+    memoryCopy(&ctx->block[ctx->len], message, rem_len);
 
     if (ctx->len + len < SHA512_BLOCK_SIZE)
     {
@@ -931,7 +931,7 @@ void sha512Update(sha512_ctx *ctx, const uint8 *message, uint64 len)
 
     rem_len = new_len % SHA512_BLOCK_SIZE;
 
-    memcpy(ctx->block, &shifted_message[block_nb << 7], rem_len);
+    memoryCopy(ctx->block, &shifted_message[block_nb << 7], rem_len);
 
     ctx->len = rem_len;
     ctx->tot_len += (block_nb + 1) << 7;

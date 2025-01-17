@@ -1,6 +1,6 @@
 #include "socket_manager.h"
 
-#include "frand.h"
+
 #include "generic_pool.h"
 #include "wloop.h"
 #include "wmutex.h"
@@ -400,7 +400,7 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
     {
         if (needsV4SocketStrategy(addr))
         {
-            memcpy(&ipv4_addr, &(addr->sin6.sin6_addr.s6_addr[12]), sizeof(ipv4_addr));
+            memoryCopy(&ipv4_addr, &(addr->sin6.sin6_addr.s6_addr[12]), sizeof(ipv4_addr));
             goto v4checks;
         }
 
@@ -912,7 +912,7 @@ void postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, sbuf_t *buf)
     wloopPostEvent(weventGetLoop(socket_io->io), &ev);
 }
 
-static HTHREAD_ROUTINE(accept_thread) // NOLINT
+static WTHREAD_ROUTINE(accept_thread) // NOLINT
 {
     (void) userdata;
 

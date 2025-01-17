@@ -3,13 +3,11 @@
 #include "shiftbuffer.h"
 #include "stc/common.h"
 
-
 enum
 {
     kQCap                = 16,
     kConcatMaxThreshould = 4096
 };
-buffer_stream_t *newBufferStream(buffer_pool_t *pool, size_t flat_region);
 
 buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
 {
@@ -24,7 +22,7 @@ void emptyBufferStream(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
-        bufferpoolResuesbuf(self->pool, *i.ref);
+        bufferpoolResuesBuf(self->pool, *i.ref);
     }
     queue_clear(&self->q);
     self->size = 0;
@@ -34,7 +32,7 @@ void destroyBufferStream(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
-        bufferpoolResuesbuf(self->pool, *i.ref);
+        bufferpoolResuesBuf(self->pool, *i.ref);
     }
     queue_drop(&self->q);
     memoryFree(self);
@@ -42,19 +40,24 @@ void destroyBufferStream(buffer_stream_t *self)
 
 void bufferStreamPush(buffer_stream_t *self, sbuf_t *buf)
 {
-    
-    BUFFER_WONT_BE_REUSED(buf);
-    
-    if (self->size > 0 && sbufGetBufLength(buf) <= kConcatMaxThreshould)
-    {
-        sbuf_t *last = queue_pull_back(&self->q);
 
-        if (sbufGetRightCapacityNoPadding(last) >= sbufGetBufLength(buf))
+    BUFFER_WONT_BE_REUSED(buf);
+
+    if (self->size > 0 && queue_size(&self->q) == 1)
+    {
+        sbuf_t  *last       = *queue_front(&self->q);
+        uint32_t write_size = min(sbufGetRightCapacityNoPadding(last), sbufGetBufLength(buf));
+
+        if (write_size > 0)
         {
-            self->size += sbufGetBufLength(buf);
-            sbufConcatNoCheck(last, buf);
-            sbufDestroy(buf);
-            return;
+            self->size += write_size;
+            sbufWrite(last, buf, write_size);
+            if (sbufGetBufLength(buf) == write_size)
+            {
+                sbufDestroy(buf);
+                return;
+            }
+            sbufShiftRight(buf, write_size);
         }
     }
 
@@ -62,7 +65,7 @@ void bufferStreamPush(buffer_stream_t *self, sbuf_t *buf)
     self->size += sbufGetBufLength(buf);
 }
 
-sbuf_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
+sbuf_t *bufferStreamReadExact(buffer_stream_t *self, size_t bytes)
 {
     assert(self->size >= bytes && bytes > 0);
     self->size -= bytes;
@@ -75,7 +78,7 @@ sbuf_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
         if (available > bytes)
         {
             sbuf_t *slice = bufferpoolPop(self->pool);
-            slice = sbufSliceTo(slice, container, bytes);
+            slice         = sbufSliceTo(slice, container, bytes);
             queue_push_front(&self->q, container);
             return slice;
         }
@@ -86,6 +89,26 @@ sbuf_t *bufferStreamRead(buffer_stream_t *self, size_t bytes)
         container = sbufAppendMerge(self->pool, container, queue_pull_front(&self->q));
     }
 }
+
+sbuf_t *bufferStreamReadAtLeast(buffer_stream_t *self, size_t bytes)
+{
+    assert(self->size >= bytes && bytes > 0);
+    self->size -= bytes;
+
+    sbuf_t *container = queue_pull_front(&self->q);
+
+    while (true)
+    {
+        size_t available = sbufGetBufLength(container);
+        if (available >= bytes)
+        {
+            return container;
+        }
+        container = sbufAppendMerge(self->pool, container, queue_pull_front(&self->q));
+    }
+}
+
+
 
 sbuf_t *bufferStreamIdealRead(buffer_stream_t *self)
 {
@@ -103,7 +126,7 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
     c_foreach(i, queue, self->q)
     {
         sbuf_t *b    = *i.ref;
-        size_t          blen = sbufGetBufLength(b);
+        size_t  blen = sbufGetBufLength(b);
 
         if (at < blen)
         {
@@ -125,11 +148,11 @@ void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
     {
 
         sbuf_t *b    = *qi.ref;
-        size_t          blen = sbufGetBufLength(b);
+        size_t  blen = sbufGetBufLength(b);
 
         if (len - buf_i <= blen - bufferstream_i)
         {
-            memcpy(buf + buf_i, ((char *) sbufGetRawPtr(b)) + bufferstream_i, len - buf_i);
+            memoryCopy(buf + buf_i, ((char *) sbufGetRawPtr(b)) + bufferstream_i, len - buf_i);
             return;
         }
 

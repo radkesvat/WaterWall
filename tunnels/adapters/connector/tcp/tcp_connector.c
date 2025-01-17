@@ -1,7 +1,7 @@
 
 #include "tcp_connector.h"
 
-#include "frand.h"
+
 #include "freebind.h"
 #include "wsocket.h"
 #include "loggers/network_logger.h"
@@ -93,7 +93,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        bufferpoolResuesbuf(wloopGetBufferPool(weventGetLoop(io)), buf);
+        bufferpoolResuesBuf(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
     sbuf_t *payload = buf;
@@ -153,7 +153,7 @@ static void onOutBoundConnected(wio_t *upstream_io)
     }
 #ifdef PROFILE
     struct timeval tv2;
-    gettimeofday(&tv2, NULL);
+    getTimeOfDay(&tv2, NULL);
 
     double time_spent = (double) (tv2.tv_usec - (cstate->__profile_conenct).tv_usec) / 1000000 +
                         (double) (tv2.tv_sec - (cstate->__profile_conenct).tv_sec);
@@ -219,7 +219,7 @@ static void upStream(tunnel_t *self, context_t *c)
                                                    .write_paused = true};
 
 #ifdef PROFILE
-            gettimeofday(&(cstate->__profile_conenct), NULL);
+            getTimeOfDay(&(cstate->__profile_conenct), NULL);
 #endif
 
             socket_context_t *dest_ctx = &(c->line->dest_ctx);
@@ -341,11 +341,11 @@ static void downStream(tunnel_t *self, context_t *c)
     {
 #ifdef PROFILE
         struct timeval tv1, tv2;
-        gettimeofday(&tv1, NULL);
+        getTimeOfDay(&tv1, NULL);
         {
             self->dw->downStream(self->dw, c);
         }
-        gettimeofday(&tv2, NULL);
+        getTimeOfDay(&tv2, NULL);
         double time_spent = (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 + (double) (tv2.tv_sec - tv1.tv_sec);
         LOGD("TcpConnector: tcp downstream took %d ms", (int) (time_spent * 1000));
 #else
@@ -447,7 +447,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
                 //     mask = 0;
                 // }
                 // uint32_t calc = ((uint32_t) state->constant_dest_addr.address.sin.sin_addr.s_addr) & mask;
-                // memcpy(&(state->constant_dest_addr.address.sin.sin_addr), &calc, sizeof(struct in_addr));
+                // memoryCopy(&(state->constant_dest_addr.address.sin.sin_addr), &calc, sizeof(struct in_addr));
             }
             else
             {

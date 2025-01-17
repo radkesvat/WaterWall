@@ -71,7 +71,7 @@ static node_manager_t *state;
 //             exit(1);
 //         }
 
-//         memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+//         memoryCopy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
 
 //         chain(n1->instance, n2->instance);
 //     }
@@ -85,7 +85,7 @@ static node_manager_t *state;
 //             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
 //             exit(1);
 //         }
-//         memcpy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
+//         memoryCopy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
 //     }
 // }
 
@@ -131,7 +131,7 @@ static void runNodes(node_manager_config_t *cfg)
     }
 
     tunnel_t *t_array_cpy[kMaxTarraySize];
-    memcpy(t_array_cpy, t_array, sizeof(t_array_cpy));
+    memoryCopy(t_array_cpy, t_array, sizeof(t_array_cpy));
 
     uint16_t buffs_sum_lef_pad   = 0;
     uint16_t buffs_sum_right_pad = 0;

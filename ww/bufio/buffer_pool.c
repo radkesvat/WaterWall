@@ -196,7 +196,7 @@ sbuf_t *bufferpoolPopSmall(buffer_pool_t *pool)
     return pool->small_buffers[pool->small_buffers_container_len];
 }
 
-void bufferpoolResuesbuf(buffer_pool_t *pool, sbuf_t *b)
+void bufferpoolResuesBuf(buffer_pool_t *pool, sbuf_t *b)
 {
 
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
@@ -233,7 +233,7 @@ void bufferpoolResuesbuf(buffer_pool_t *pool, sbuf_t *b)
 sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
 {
     b1 = sbufConcat(b1, b2);
-    bufferpoolResuesbuf(pool, b2);
+    bufferpoolResuesBuf(pool, b2);
     return b1;
 }
 
@@ -273,7 +273,7 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
 static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t bufcount,
                                       uint32_t large_buffer_size, uint32_t small_buffer_size)
 {
-    // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolResuesbuf
+    // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolResuesBuf
     assert(bufcount >= 1);
 
     // half of the pool is used, other half is free at startup

@@ -72,11 +72,11 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             *first_packet_sent = true;
             struct timeval tv1, tv2;
-            gettimeofday(&tv1, NULL);
+            getTimeOfDay(&tv1, NULL);
             {
                 self->up->upStream(self->up, c);
             }
-            gettimeofday(&tv2, NULL);
+            getTimeOfDay(&tv2, NULL);
             double time_spent = (double) (tv2.tv_usec - tv1.tv_usec) / 1000000 + (double) (tv2.tv_sec - tv1.tv_sec);
             LOGD("UdpListener: upstream took %d ms", (int) (time_spent * 1000));
             return;
@@ -205,7 +205,7 @@ static void onFilteredRecv(wevent_t *ev)
                            (uint64_t) kUdpInitExpireTime);
         if (! idle)
         {
-            bufferpoolResuesbuf(getWorkerBufferPool(data->tid), data->buf);
+            bufferpoolResuesBuf(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }
@@ -214,7 +214,7 @@ static void onFilteredRecv(wevent_t *ev)
         if (! con)
         {
             idleTableRemoveIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
-            bufferpoolResuesbuf(getWorkerBufferPool(data->tid), data->buf);
+            bufferpoolResuesBuf(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }

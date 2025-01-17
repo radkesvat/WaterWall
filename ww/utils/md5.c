@@ -63,7 +63,7 @@ void WW_MD5Update(WW_MD5_CTX *ctx,unsigned char *input,unsigned int inputlen) {
     ctx->count[1] += inputlen >> 29;
 
     if(inputlen >= partlen) {
-        memcpy(&ctx->buffer[index],input,partlen);
+        memoryCopy(&ctx->buffer[index],input,partlen);
         WW_MD5Transform(ctx->state,ctx->buffer);
         for(i = partlen;i+64 <= inputlen;i+=64) {
             WW_MD5Transform(ctx->state,&input[i]);
@@ -73,7 +73,7 @@ void WW_MD5Update(WW_MD5_CTX *ctx,unsigned char *input,unsigned int inputlen) {
         i = 0;
     }
 
-    memcpy(&ctx->buffer[index],&input[i],inputlen-i);
+    memoryCopy(&ctx->buffer[index],&input[i],inputlen-i);
 }
 
 void WW_MD5Final(WW_MD5_CTX *ctx,unsigned char digest[16]) {

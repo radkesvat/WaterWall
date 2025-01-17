@@ -79,7 +79,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (data_len > kMaxPacketSize)
             {
                 LOGE("ProtoBufServer: rejected, size too large");
-                bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                 goto disconnect;
             }
 
@@ -88,7 +88,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (flags == 0x1 && data_len == sizeof(uint32_t))
             {
                 uint32_t consumed;
-                memcpy(&consumed, sbufGetRawPtr(full_data), sizeof(uint32_t));
+                memoryCopy(&consumed, sbufGetRawPtr(full_data), sizeof(uint32_t));
                 consumed = ntohl(consumed);
                 sbufShiftRight(full_data, sizeof(uint32_t));
 
@@ -105,7 +105,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                 }
             }
             else if (flags == '\n')
@@ -131,7 +131,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     self->dw->downStream(self->dw, send_flow_ctx);
                     if (! isAlive(c->line))
                     {
-                        bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                        bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                         destroyContext(c);
                         return;
                     }
@@ -148,7 +148,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                 }
                 self->up->upStream(self->up, upstream_ctx);
 
@@ -161,7 +161,7 @@ static void upStream(tunnel_t *self, context_t *c)
             else
             {
                 LOGE("ProtoBufServer: rejected, invalid flag");
-                bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                bufferpoolResuesBuf(getContextBufferPool(c), full_data);
 
                 goto disconnect;
             }

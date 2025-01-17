@@ -15,7 +15,7 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
     udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        bufferpoolResuesbuf(wloopGetBufferPool(weventGetLoop(io)), buf);
+        bufferpoolResuesBuf(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
     sbuf_t *payload = buf;

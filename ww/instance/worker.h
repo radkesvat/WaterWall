@@ -19,5 +19,5 @@ typedef struct worker_s
 } worker_t;
 
 
-static void initalizeWorker(worker_t *worker, tid_t tid)
-static void runWorker(worker_t *worker)
+static void initalizeWorker(worker_t *worker, tid_t tid);
+static void runWorker(worker_t *worker);

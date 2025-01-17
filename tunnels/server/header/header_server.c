@@ -102,7 +102,7 @@ static void upStream(tunnel_t *self, context_t *c)
         bool send_fin = cstate->init_sent;
         if (cstate->buf)
         {
-            bufferpoolResuesbuf(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesBuf(getContextBufferPool(c), cstate->buf);
         }
         memoryFree(cstate);
         CSTATE_DROP(c);
@@ -125,7 +125,7 @@ static void downStream(tunnel_t *self, context_t *c)
         header_server_con_state_t *cstate = CSTATE(c);
         if (cstate->buf)
         {
-            bufferpoolResuesbuf(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesBuf(getContextBufferPool(c), cstate->buf);
         }
 
         memoryFree(cstate);

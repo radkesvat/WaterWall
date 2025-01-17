@@ -211,8 +211,8 @@ static void wireguard_hmac(uint8_t *digest, const uint8_t *key, size_t key_len, 
 	// and text is the data being protected
 	memorySet(k_ipad, 0, sizeof(k_ipad));
 	memorySet(k_opad, 0, sizeof(k_opad));
-	memcpy(k_ipad, key, key_len);
-	memcpy(k_opad, key, key_len);
+	memoryCopy(k_ipad, key, key_len);
+	memoryCopy(k_opad, key, key_len);
 
 	// XOR key with ipad and opad values
 	for (i=0; i < WIREGUARD_BLAKE2S_BLOCK_SIZE; i++) {
@@ -241,7 +241,7 @@ static void wireguard_kdf1(uint8_t *tau1, const uint8_t *chaining_key, const uin
 	// tau1 := Hmac(tau0, 0x1)
 	output[0] = 1;
 	wireguard_hmac(output, tau0, WIREGUARD_HASH_LEN, output, 1);
-	memcpy(tau1, output, WIREGUARD_HASH_LEN);
+	memoryCopy(tau1, output, WIREGUARD_HASH_LEN);
 
 	// Wipe intermediates
 	crypto_zero(tau0, sizeof(tau0));
@@ -257,12 +257,12 @@ static void wireguard_kdf2(uint8_t *tau1, uint8_t *tau2, const uint8_t *chaining
 	// tau1 := Hmac(tau0, 0x1)
 	output[0] = 1;
 	wireguard_hmac(output, tau0, WIREGUARD_HASH_LEN, output, 1);
-	memcpy(tau1, output, WIREGUARD_HASH_LEN);
+	memoryCopy(tau1, output, WIREGUARD_HASH_LEN);
 
 	// tau2 := Hmac(tau0,tau1 || 0x2)
 	output[WIREGUARD_HASH_LEN] = 2;
 	wireguard_hmac(output, tau0, WIREGUARD_HASH_LEN, output, WIREGUARD_HASH_LEN + 1);
-	memcpy(tau2, output, WIREGUARD_HASH_LEN);
+	memoryCopy(tau2, output, WIREGUARD_HASH_LEN);
 
 	// Wipe intermediates
 	crypto_zero(tau0, sizeof(tau0));
@@ -278,17 +278,17 @@ static void wireguard_kdf3(uint8_t *tau1, uint8_t *tau2, uint8_t *tau3, const ui
 	// tau1 := Hmac(tau0, 0x1)
 	output[0] = 1;
 	wireguard_hmac(output, tau0, WIREGUARD_HASH_LEN, output, 1);
-	memcpy(tau1, output, WIREGUARD_HASH_LEN);
+	memoryCopy(tau1, output, WIREGUARD_HASH_LEN);
 
 	// tau2 := Hmac(tau0,tau1 || 0x2)
 	output[WIREGUARD_HASH_LEN] = 2;
 	wireguard_hmac(output, tau0, WIREGUARD_HASH_LEN, output, WIREGUARD_HASH_LEN + 1);
-	memcpy(tau2, output, WIREGUARD_HASH_LEN);
+	memoryCopy(tau2, output, WIREGUARD_HASH_LEN);
 
 	// tau3 := Hmac(tau0,tau1,tau2 || 0x3)
 	output[WIREGUARD_HASH_LEN] = 3;
 	wireguard_hmac(output, tau0, WIREGUARD_HASH_LEN, output, WIREGUARD_HASH_LEN + 1);
-	memcpy(tau3, output, WIREGUARD_HASH_LEN);
+	memoryCopy(tau3, output, WIREGUARD_HASH_LEN);
 
 	// Wipe intermediates
 	crypto_zero(tau0, sizeof(tau0));
@@ -544,10 +544,10 @@ struct wireguard_peer *wireguard_process_initiation_message(struct wireguard_dev
 	// We are the responder, other end is the initiator
 
 	// Ci := Hash(Construction) (precalculated hash)
-	memcpy(chaining_key, construction_hash, WIREGUARD_HASH_LEN);
+	memoryCopy(chaining_key, construction_hash, WIREGUARD_HASH_LEN);
 
 	// Hi := Hash(Ci || Identifier
-	memcpy(hash, identifier_hash, WIREGUARD_HASH_LEN);
+	memoryCopy(hash, identifier_hash, WIREGUARD_HASH_LEN);
 
 	// Hi := Hash(Hi || Spubr)
 	wireguard_mix_hash(hash, device->public_key, WIREGUARD_PUBLIC_KEY_LEN);
@@ -556,7 +556,7 @@ struct wireguard_peer *wireguard_process_initiation_message(struct wireguard_dev
 	wireguard_kdf1(chaining_key, chaining_key, msg->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
 
 	// msg.ephemeral := Epubi
-	memcpy(e, msg->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
+	memoryCopy(e, msg->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
 
 	// Hi := Hash(Hi || msg.ephemeral)
 	wireguard_mix_hash(hash, msg->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
@@ -595,12 +595,12 @@ struct wireguard_peer *wireguard_process_initiation_message(struct wireguard_dev
 						// Success! Copy everything to peer
 						peer->last_initiation_rx = now;
 						if (memcmp(t, peer->greatest_timestamp, WIREGUARD_TAI64N_LEN) > 0) {
-							memcpy(peer->greatest_timestamp, t, WIREGUARD_TAI64N_LEN);
+							memoryCopy(peer->greatest_timestamp, t, WIREGUARD_TAI64N_LEN);
 							// TODO: Need to notify if the higher layers want to persist latest timestamp/nonce somewhere
 						}
-						memcpy(handshake->remote_ephemeral, e, WIREGUARD_PUBLIC_KEY_LEN);
-						memcpy(handshake->hash, hash, WIREGUARD_HASH_LEN);
-						memcpy(handshake->chaining_key, chaining_key, WIREGUARD_HASH_LEN);
+						memoryCopy(handshake->remote_ephemeral, e, WIREGUARD_PUBLIC_KEY_LEN);
+						memoryCopy(handshake->hash, hash, WIREGUARD_HASH_LEN);
+						memoryCopy(handshake->chaining_key, chaining_key, WIREGUARD_HASH_LEN);
 						handshake->remote_index = msg->sender;
 						handshake->valid = true;
 						handshake->initiator = false;
@@ -646,10 +646,10 @@ bool wireguard_process_handshake_response(struct wireguard_device *device, struc
 
 	if (handshake->valid && handshake->initiator) {
 
-		memcpy(hash, handshake->hash, WIREGUARD_HASH_LEN);
-		memcpy(chaining_key, handshake->chaining_key, WIREGUARD_HASH_LEN);
-		memcpy(ephemeral_private, handshake->ephemeral_private, WIREGUARD_PUBLIC_KEY_LEN);
-		memcpy(preshared_key, peer->preshared_key, WIREGUARD_SESSION_KEY_LEN);
+		memoryCopy(hash, handshake->hash, WIREGUARD_HASH_LEN);
+		memoryCopy(chaining_key, handshake->chaining_key, WIREGUARD_HASH_LEN);
+		memoryCopy(ephemeral_private, handshake->ephemeral_private, WIREGUARD_PUBLIC_KEY_LEN);
+		memoryCopy(preshared_key, peer->preshared_key, WIREGUARD_SESSION_KEY_LEN);
 
 		// (Eprivr, Epubr) := DH-Generate()
 		// Not required
@@ -658,7 +658,7 @@ bool wireguard_process_handshake_response(struct wireguard_device *device, struc
 		wireguard_kdf1(chaining_key, chaining_key, src->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
 
 		// msg.ephemeral := Epubr
-		memcpy(e, src->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
+		memoryCopy(e, src->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
 
 		// Hr := Hash(Hr || msg.ephemeral)
 		wireguard_mix_hash(hash, src->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
@@ -687,9 +687,9 @@ bool wireguard_process_handshake_response(struct wireguard_device *device, struc
 					// Not required as discarded
 
 					//Copy details to handshake
-					memcpy(handshake->remote_ephemeral, e, WIREGUARD_HASH_LEN);
-					memcpy(handshake->hash, hash, WIREGUARD_HASH_LEN);
-					memcpy(handshake->chaining_key, chaining_key, WIREGUARD_HASH_LEN);
+					memoryCopy(handshake->remote_ephemeral, e, WIREGUARD_HASH_LEN);
+					memoryCopy(handshake->hash, hash, WIREGUARD_HASH_LEN);
+					memoryCopy(handshake->chaining_key, chaining_key, WIREGUARD_HASH_LEN);
 					handshake->remote_index = src->sender;
 
 					result = true;
@@ -728,7 +728,7 @@ bool wireguard_process_cookie_message(struct wireguard_device *device, struct wi
 		if (result) {
 			// 5.4.7 Under Load: Cookie Reply Message
 			// Upon receiving this message, if it is valid, the only thing the recipient of this message should do is store the cookie along with the time at which it was received
-			memcpy(peer->cookie, cookie, WIREGUARD_COOKIE_LEN);
+			memoryCopy(peer->cookie, cookie, WIREGUARD_COOKIE_LEN);
 			peer->cookie_millis = wireguard_sys_now();
 			peer->handshake_mac1_valid = false;
 		}
@@ -749,10 +749,10 @@ bool wireguard_create_handshake_initiation(struct wireguard_device *device, stru
 	memorySet(dst, 0, sizeof(struct message_handshake_initiation));
 
 	// Ci := Hash(Construction) (precalculated hash)
-	memcpy(handshake->chaining_key, construction_hash, WIREGUARD_HASH_LEN);
+	memoryCopy(handshake->chaining_key, construction_hash, WIREGUARD_HASH_LEN);
 
 	// Hi := Hash(Ci || Identifier)
-	memcpy(handshake->hash, identifier_hash, WIREGUARD_HASH_LEN);
+	memoryCopy(handshake->hash, identifier_hash, WIREGUARD_HASH_LEN);
 
 	// Hi := Hash(Hi || Spubr)
 	wireguard_mix_hash(handshake->hash, peer->public_key, WIREGUARD_PUBLIC_KEY_LEN);
@@ -932,9 +932,9 @@ bool wireguard_peer_init(struct wireguard_device *device, struct wireguard_peer 
 
 	if (device->valid) {
 		// Copy across the public key into our peer structure
-		memcpy(peer->public_key, public_key, WIREGUARD_PUBLIC_KEY_LEN);
+		memoryCopy(peer->public_key, public_key, WIREGUARD_PUBLIC_KEY_LEN);
 		if (preshared_key) {
-			memcpy(peer->preshared_key, preshared_key, WIREGUARD_SESSION_KEY_LEN);
+			memoryCopy(peer->preshared_key, preshared_key, WIREGUARD_SESSION_KEY_LEN);
 		} else {
 			crypto_zero(peer->preshared_key, WIREGUARD_SESSION_KEY_LEN);
 		}
@@ -962,7 +962,7 @@ bool wireguard_peer_init(struct wireguard_device *device, struct wireguard_peer 
 
 bool wireguard_device_init(struct wireguard_device *device, const uint8_t *private_key) {
 	// Set the private key and calculate public key from it
-	memcpy(device->private_key, private_key, WIREGUARD_PRIVATE_KEY_LEN);
+	memoryCopy(device->private_key, private_key, WIREGUARD_PRIVATE_KEY_LEN);
 	// Ensure private key is correctly "clamped"
 	wireguard_clamp_private_key(device->private_key);
 	device->valid = wireguard_generate_public_key(device->public_key, private_key);

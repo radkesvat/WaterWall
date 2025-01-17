@@ -96,4 +96,11 @@
 #cmakedefine WITH_WEPOLL    1
 
 
+#define FNV_HASH 100
+#define KOMI_HASH 200
+#define WHASH_ALG KOMI_HASH
+
+
+#define MEM128_BUF_OPTIMIZE 0
+
 #endif // WW_CONFIG_H_

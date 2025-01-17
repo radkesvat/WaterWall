@@ -217,23 +217,23 @@ static void nio_read(wio_t* io) {
         err = socketERRNO();
         if (err == EAGAIN || err == EINTR) {
             // goto read_done;
-            bufferpoolResuesbuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuf(io->loop->bufpool, buf);
             return;
         }
         else if (err == EMSGSIZE) {
             // ignore
-            bufferpoolResuesbuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuf(io->loop->bufpool, buf);
             return;
         }
         else {
             // printError("read");
-            bufferpoolResuesbuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuf(io->loop->bufpool, buf);
             io->error = err;
             goto read_error;
         }
     }
     if (nread == 0) {
-        bufferpoolResuesbuf(io->loop->bufpool, buf);
+        bufferpoolResuesBuf(io->loop->bufpool, buf);
         goto disconnect;
     }
     // printf("%d \n",nread);
@@ -303,7 +303,7 @@ write:
         //     if(io->pfd_w == 0)
         //         EVENTLOOP_FREE(base);
         // #else
-        bufferpoolResuesbuf(io->loop->bufpool, buf);
+        bufferpoolResuesBuf(io->loop->bufpool, buf);
         // #endif
         write_queue_pop_front(&io->write_queue);
         __write_cb(io);
@@ -400,7 +400,7 @@ int wioRead(wio_t* io) {
 int wioWrite(wio_t* io, sbuf_t* buf) {
     if (io->closed) {
         wloge("wioWrite called but fd[%d] already closed!", io->fd);
-        bufferpoolResuesbuf(io->loop->bufpool, buf);
+        bufferpoolResuesBuf(io->loop->bufpool, buf);
         return -1;
     }
     int nwrite = 0, err = 0;
@@ -448,13 +448,13 @@ int wioWrite(wio_t* io, sbuf_t* buf) {
         //         {
         //             // NOTE: free in nio_write
         //             EVENTLOOP_ALLOC(remain.base, remain.len);
-        //             memcpy(remain.base, ((char*)buf) + nwrite, remain.len);
+        //             memoryCopy(remain.base, ((char*)buf) + nwrite, remain.len);
         //         }
         // #else
         // NOTE: free in nio_write
 
         // EVENTLOOP_ALLOC(remain.base, remain.len);
-        // memcpy(remain.base, ((char*)buf) + nwrite, remain.len);
+        // memoryCopy(remain.base, ((char*)buf) + nwrite, remain.len);
 
         // #endif
         if (io->write_queue.maxsize == 0) {
@@ -472,7 +472,7 @@ write_done:
 
     if (nwrite > 0) {
         if (nwrite == len) {
-            bufferpoolResuesbuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuf(io->loop->bufpool, buf);
         }
         __write_cb(io);
     }
@@ -485,7 +485,7 @@ disconnect:
      * if wio_close_sync, we have to be very careful to avoid using freed resources.
      * But if wioCloseAsync, we do not have to worry about this.
      */
-    bufferpoolResuesbuf(io->loop->bufpool, buf);
+    bufferpoolResuesBuf(io->loop->bufpool, buf);
     if (io->io_type & WIO_TYPE_SOCK_STREAM) {
         wioCloseAsync(io);
     }

@@ -133,7 +133,6 @@ WW_EXPORT void      loggerDestroyDefaultLogger(void);
 
 // macro wlog*
 #ifndef wlog
-#error "wlog is not defined!"
 #define wlog loggerGetDefaultLogger()
 #endif
 

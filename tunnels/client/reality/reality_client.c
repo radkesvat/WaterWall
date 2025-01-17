@@ -146,7 +146,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 assert(sbufGetBufLength(chunk) % 16 == 5);
                 self->up->upStream(self->up, cout);
             }
-            bufferpoolResuesbuf(getContextBufferPool(c), buf);
+            bufferpoolResuesBuf(getContextBufferPool(c), buf);
             destroyContext(c);
         }
     }
@@ -198,12 +198,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 else if (! BIO_should_retry(cstate->rbio))
                 {
                     // If BIO_should_retry() is false then the cause is an error condition.
-                    bufferpoolResuesbuf(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(client_hello_ctx), buf);
                     goto failed;
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(client_hello_ctx), buf);
                 }
             }
             if (status == kSslstatusFail)
@@ -248,10 +248,10 @@ static void downStream(tunnel_t *self, context_t *c)
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
                 if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    sbuf_t *buf = bufferStreamRead(cstate->read_stream, kTLSHeaderlen + length);
+                    sbuf_t *buf = bufferStreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) sbufGetRawPtr(buf))[0] == kTLS12ApplicationData;
                     uint16_t        tls_ver_b;
-                    memcpy(&tls_ver_b, ((uint8_t *) sbufGetRawPtr(buf)) + 1, sizeof(uint16_t));
+                    memoryCopy(&tls_ver_b, ((uint8_t *) sbufGetRawPtr(buf)) + 1, sizeof(uint16_t));
                     bool is_tls_33 = tls_ver_b == kTLSVersion12;
 
                     sbufShiftRight(buf, kTLSHeaderlen);
@@ -260,7 +260,7 @@ static void downStream(tunnel_t *self, context_t *c)
                         ! is_tls_applicationdata || ! is_tls_33)
                     {
                         LOGE("RealityClient: verifyMessage failed");
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         goto failed;
                     }
 
@@ -332,12 +332,12 @@ static void downStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextPayload(c);
-                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
                             goto failed;
                         }
                         else
                         {
-                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -368,7 +368,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
                 }
 
                 if (SSL_is_init_finished(cstate->ssl))
@@ -463,7 +463,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
         return NULL;
     }
     // memorySet already made buff 0
-    memcpy(state->context_password, state->password, state->password_length);
+    memoryCopy(state->context_password, state->password, state->password_length);
 
     if (EVP_MAX_MD_SIZE % sizeof(uint64_t) != 0)
     {
@@ -490,7 +490,7 @@ tunnel_t *newRealityClient(node_instance_context_t *instance_info)
     } *ossl_alpn = memoryAllocate(1 + alpn_len);
 
     ossl_alpn->len = alpn_len;
-    memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
+    memoryCopy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
 
     for (unsigned int i = 0; i < getWorkersCount(); i++)
     {

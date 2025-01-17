@@ -620,7 +620,7 @@ static err_t wireguard_start_handshake(struct netif *netif, struct wireguard_pee
 		pbuf_free(pbuf);
 		peer->send_handshake = false;
 		peer->last_initiation_tx = wireguard_sys_now();
-		memcpy(peer->handshake_mac1, msg.mac1, WIREGUARD_COOKIE_LEN);
+		memoryCopy(peer->handshake_mac1, msg.mac1, WIREGUARD_COOKIE_LEN);
 		peer->handshake_mac1_valid = true;
 	}
 	return result;
@@ -756,7 +756,7 @@ err_t wireguardif_add_peer(struct netif *netif, struct wireguardif_peer *p, u8_t
 						peer->keepalive_interval = p->keep_alive;
 					}
 					peer_add_ip(peer, p->allowed_ip, p->allowed_mask);
-					memcpy(peer->greatest_timestamp, p->greatest_timestamp, sizeof(peer->greatest_timestamp));
+					memoryCopy(peer->greatest_timestamp, p->greatest_timestamp, sizeof(peer->greatest_timestamp));
 
 					result = ERR_OK;
 				} else {

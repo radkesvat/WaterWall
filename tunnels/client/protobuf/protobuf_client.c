@@ -110,7 +110,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (data_len > kMaxPacketSize)
             {
                 LOGE("ProtoBufServer: rejected, size too large");
-                bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                 goto disconnect;
             }
 
@@ -119,7 +119,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (flags == 0x1 && data_len == sizeof(uint32_t))
             {
                 uint32_t consumed;
-                memcpy(&consumed, sbufGetRawPtr(full_data), sizeof(uint32_t));
+                memoryCopy(&consumed, sbufGetRawPtr(full_data), sizeof(uint32_t));
                 consumed = ntohl(consumed);
                 sbufShiftRight(full_data, sizeof(uint32_t));
                 cstate->bytes_sent_nack -= consumed;
@@ -135,7 +135,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                 }
             }
             else if (flags == '\n')
@@ -162,7 +162,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                     if (! isAlive(c->line))
                     {
-                        bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                        bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                         destroyContext(c);
                         return;
                     }
@@ -179,7 +179,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuf(getContextBufferPool(c), full_data);
                 }
 
                 self->dw->downStream(self->dw, downstream_ctx);

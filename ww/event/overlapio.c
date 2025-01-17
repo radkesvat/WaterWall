@@ -103,14 +103,14 @@ static void on_acceptex_complete(wio_t* io) {
     socklen_t peeraddrlen;
     GetAcceptExSockaddrs(hovlp->buf.buf, 0, sizeof(struct sockaddr_in6), sizeof(struct sockaddr_in6),
         &plocaladdr, &localaddrlen, &ppeeraddr, &peeraddrlen);
-    memcpy(io->localaddr, plocaladdr, localaddrlen);
-    memcpy(io->peeraddr, ppeeraddr, peeraddrlen);
+    memoryCopy(io->localaddr, plocaladdr, localaddrlen);
+    memoryCopy(io->peeraddr, ppeeraddr, peeraddrlen);
     if (io->accept_cb) {
         setsockopt(connfd, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (const char*)&listenfd, sizeof(int));
         wio_t* connio = wioGet(io->loop, connfd);
         connio->userdata = io->userdata;
-        memcpy(connio->localaddr, io->localaddr, localaddrlen);
-        memcpy(connio->peeraddr, io->peeraddr, peeraddrlen);
+        memoryCopy(connio->localaddr, io->localaddr, localaddrlen);
+        memoryCopy(connio->peeraddr, io->peeraddr, peeraddrlen);
         /*
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
@@ -333,7 +333,7 @@ try_send:
     }
     if (nwrite == sbufGetBufLength(buf)) {
         //goto write_done;
-        bufferpoolResuesbuf(io->loop->bufpool,buf);
+        bufferpoolResuesBuf(io->loop->bufpool,buf);
         return nwrite;
     }
 WSASend:
@@ -346,8 +346,8 @@ WSASend:
         hovlp->buf.len = sbufGetBufLength(buf);
         // NOTE: free on_send_complete
         EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
-        memcpy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);
-        bufferpoolResuesbuf(io->loop->bufpool,buf);
+        memoryCopy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);
+        bufferpoolResuesBuf(io->loop->bufpool,buf);
         hovlp->io = io;
         DWORD dwbytes = 0;
         DWORD flags = 0;
@@ -374,7 +374,7 @@ WSASend:
     }
 write_error:
 disconnect:
-    bufferpoolResuesbuf(io->loop->bufpool,buf);
+    bufferpoolResuesBuf(io->loop->bufpool,buf);
     wioClose(io);
     return 0;
 }

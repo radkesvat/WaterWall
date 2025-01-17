@@ -33,7 +33,7 @@ void initWLibc(void){
 #if defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 
 #include <x86intrin.h>
-void memoryCopy128(void *dest, const void *src, long int n)
+void memoryCopy128(void *dest, const void *src, intmax_t n)
 {
     __m256i       *d_vec = (__m256i *) (dest);
     const __m256i *s_vec = (const __m256i *) (src);
@@ -71,17 +71,17 @@ void memoryCopy128(void *dest, const void *src, long int n)
 
 #else
 
-void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, size_t n)
+void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, intmax_t  n)
 {
     while (n > 0)
     {
-        memcpy(_dest, _src, 128);
+        memoryCopy(_dest, _src, 128);
         n -= 128;
         _dest += 128;
         _src += 128;
     }
 }
-
+#endif
 
 
 //--------------------string-------------------------------
@@ -150,7 +150,7 @@ char *stringDuplicate(const char *src)
     {
         return NULL;
     }
-    memcpy(dup, src, length);
+    memoryCopy(dup, src, length);
     return dup;
 }
 // n = sizeof(dest_buf)

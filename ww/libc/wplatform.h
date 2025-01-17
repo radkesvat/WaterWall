@@ -318,7 +318,7 @@ typedef void (*procedure_t)(void* userdata);
 #endif
 
 #if HAVE_SYS_TIME_H
-#include <sys/time.h>   // for gettimeofday
+#include <sys/time.h>   // for getTimeOfDay
 #endif
 
 #if HAVE_FCNTL_H

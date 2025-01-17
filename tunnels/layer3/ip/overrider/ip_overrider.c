@@ -112,7 +112,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
         sockaddr_u sa;
         sockaddrSetIp(&(sa), ipbuf);
 
-        memcpy(&(state->ov_4), &(sa.sin.sin_addr.s_addr), sizeof(sa.sin.sin_addr.s_addr));
+        memoryCopy(&(state->ov_4), &(sa.sin.sin_addr.s_addr), sizeof(sa.sin.sin_addr.s_addr));
         memoryFree(ipbuf);
         ipbuf = NULL;
     }
@@ -123,7 +123,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
         sockaddr_u sa;
         sockaddrSetIp(&(sa), ipbuf);
 
-        memcpy(&(state->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
+        memoryCopy(&(state->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
         memoryFree(ipbuf);
         ipbuf = NULL;
     }

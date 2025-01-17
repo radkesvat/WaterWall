@@ -82,7 +82,7 @@ static inline void socketContextAddrCopy(socket_context_t *dest, const socket_co
 
     case kSatIPV6:
         dest->address.sa.sa_family = AF_INET6;
-        memcpy(&(dest->address.sin6.sin6_addr), &(source->address.sin6.sin6_addr), sizeof(struct in6_addr));
+        memoryCopy(&(dest->address.sin6.sin6_addr), &(source->address.sin6.sin6_addr), sizeof(struct in6_addr));
 
         break;
     }
@@ -128,7 +128,7 @@ static inline void socketContextDomainSet(socket_context_t *restrict scontext, c
         scontext->domain = memoryAllocate(256);
     }
     scontext->domain_constant = false;
-    memcpy(scontext->domain, domain, len);
+    memoryCopy(scontext->domain, domain, len);
     scontext->domain[len] = 0x0;
     scontext->domain_len  = len;
 }

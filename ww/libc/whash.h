@@ -10,7 +10,6 @@
     todo (siphash) add sip hash
 */
 
-
 typedef uint64_t hash_t;
 
 // zero as seed provides more performance
@@ -22,6 +21,8 @@ enum
 #define K_FNV_SEED 0xCBF29CE484222325
 
 // Flower–Noll–Vo
+#if WHASH_ALG == FNV_HASH
+
 static inline uint64_t hashFnv1a64(const uint8_t *buf, size_t len, uint64_t seed)
 {
     const uint64_t prime = 0x100000001B3; // pow(2,40) + pow(2,8) + 0xb3
@@ -37,6 +38,8 @@ static inline hash_t calcHashBytesSeed(const void *data, size_t len, uint64_t se
 {
     return hashFnv1a64(data, len, seed);
 }
+
+#elif WHASH_ALG == KOMI_HASH
 
 // Komi-Hash
 
@@ -54,3 +57,7 @@ static inline hash_t calcHashBytes(const void *data, size_t len)
 {
     return calcHashBytesSeed(data, len, kKomihashSeed);
 }
+
+#else
+#error "select hash algorithm"
+#endif

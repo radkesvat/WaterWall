@@ -177,8 +177,8 @@ static void tcpCheckSum4(struct ipv4header *ip_header, struct tcpheader *tcp_hea
     char tcp_buf[4096];
     assert(sizeof(psd_header) + tcp_total_length < 4096);
 
-    memcpy(tcp_buf, &psd_header, sizeof(struct pseudo_header_s));
-    memcpy(tcp_buf + sizeof(struct pseudo_header_s), tcp_header, tcp_total_length);
+    memoryCopy(tcp_buf, &psd_header, sizeof(struct pseudo_header_s));
+    memoryCopy(tcp_buf + sizeof(struct pseudo_header_s), tcp_header, tcp_total_length);
 
     tcp_header->check = 0;
     // Calculate the checksum
@@ -198,8 +198,8 @@ static void tcpCheckSum6(struct ipv6header *ip6_header, struct tcpheader *tcp_he
 {
     tcp_header->check = 0;
     struct pseudo_header6_s psd_header;
-    memcpy(&psd_header.src_addr, &ip6_header->saddr, sizeof(psd_header.src_addr));
-    memcpy(&psd_header.dest_addr, &ip6_header->daddr, sizeof(psd_header.dest_addr));
+    memoryCopy(&psd_header.src_addr, &ip6_header->saddr, sizeof(psd_header.src_addr));
+    memoryCopy(&psd_header.dest_addr, &ip6_header->daddr, sizeof(psd_header.dest_addr));
     psd_header.tcp_length = htonl(ntohs(ip6_header->payload_len));
     memorySet(psd_header.zero, 0, sizeof(psd_header.zero));
     psd_header.next_header = ip6_header->nexthdr;
@@ -207,9 +207,9 @@ static void tcpCheckSum6(struct ipv6header *ip6_header, struct tcpheader *tcp_he
     int  pseudo_header_len = sizeof(psd_header);
     long tcp_total_length  = ntohl(psd_header.tcp_length);
     char tcp_buf[4096];
-    memcpy(tcp_buf, &psd_header, pseudo_header_len);
+    memoryCopy(tcp_buf, &psd_header, pseudo_header_len);
     assert(pseudo_header_len + tcp_total_length < 4096);
-    memcpy(tcp_buf + pseudo_header_len, tcp_header, tcp_total_length);
+    memoryCopy(tcp_buf + pseudo_header_len, tcp_header, tcp_total_length);
 
     tcp_header->check = standardCheckSum((uint8_t *) tcp_buf, (int) (pseudo_header_len + tcp_total_length));
 }

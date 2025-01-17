@@ -1,4 +1,5 @@
 #include "wtime.h"
+#include "wdef.h"
 #define __STDC_WANT_LIB_EXT1__ 1
 #include <time.h>
 
@@ -101,7 +102,7 @@ time_t datetimeMkTime(datetime_t* dt) {
 #else
     localtime_s(&ptm,&ts);
 #endif
-    memcpy(&tm, &ptm, sizeof(struct tm));
+    memoryCopy(&tm, &ptm, sizeof(struct tm));
     tm.tm_year = dt->year  - 1900;
     tm.tm_mon  = dt->month - 1;
     tm.tm_mday = dt->day;
@@ -200,7 +201,7 @@ char* gmTimeFmt(time_t time, char* buf) {
     return buf;
 }
 
-int monthAtoi(const char* month) {
+int monthATOI(const char* month) {
     for (size_t i = 0; i < 12; ++i) {
         if (strnicmp(month, s_months[i], strlen(month)) == 0)
             return i+1;
@@ -232,7 +233,7 @@ datetime_t wwCompileDateTime(void) {
     char month[32];
     sscanf(__DATE__, "%s %d %d", month, &dt.day, &dt.year);
     sscanf(__TIME__, "%d:%d:%d", &dt.hour, &dt.min, &dt.sec);
-    dt.month = monthAtoi(month);
+    dt.month = monthATOI(month);
     return dt;
 }
 

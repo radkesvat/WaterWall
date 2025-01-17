@@ -1,6 +1,6 @@
 #include "halfduplex_client.h"
 #include "buffer_pool.h"
-#include "frand.h"
+
 #include "shiftbuffer.h"
 #include "tunnel.h"
 

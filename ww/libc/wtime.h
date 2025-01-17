@@ -51,6 +51,8 @@ WW_INLINE int getTimeOfDay(struct timeval *tv, struct timezone *tz) {
     }
     return 0;
 }
+#else
+#define getTimeOfDay gettimeofday
 #endif
 
 WW_EXPORT unsigned int getTickMS(void);

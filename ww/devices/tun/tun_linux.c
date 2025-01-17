@@ -116,7 +116,7 @@ static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, sbuf_t
     wloopPostEvent(getWorkerLoop(target_tid), &ev);
 }
 
-static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
+static WTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 {
     tun_device_t   *tdev           = userdata;
     tid_t           distribute_tid = 0;
@@ -133,14 +133,14 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 
         if (nread == 0)
         {
-            bufferpoolResuesbuf(tdev->reader_buffer_pool, buf);
+            bufferpoolResuesBuf(tdev->reader_buffer_pool, buf);
             LOGW("TunDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            bufferpoolResuesbuf(tdev->reader_buffer_pool, buf);
+            bufferpoolResuesBuf(tdev->reader_buffer_pool, buf);
 
             LOGE("TunDevice: reading a packet from TUN device failed, code: %d", (int) nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
@@ -169,7 +169,7 @@ static HTHREAD_ROUTINE(routineReadFromTun) // NOLINT
     return 0;
 }
 
-static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
+static WTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 {
     tun_device_t   *tdev = userdata;
     sbuf_t *buf;
@@ -187,7 +187,7 @@ static HTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 
         nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetBufLength(buf));
 
-        bufferpoolResuesbuf(tdev->writer_buffer_pool, buf);
+        bufferpoolResuesBuf(tdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -309,7 +309,7 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     sbuf_t *buf;
     while (chanRecv(tdev->writer_buffer_channel, &buf))
     {
-        bufferpoolResuesbuf(tdev->reader_buffer_pool, buf);
+        bufferpoolResuesBuf(tdev->reader_buffer_pool, buf);
     }
 
     return true;

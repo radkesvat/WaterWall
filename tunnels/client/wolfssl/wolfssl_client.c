@@ -122,13 +122,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto failed;
                     }
                     else
                     {
-                        bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -190,12 +190,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 else if (! BIO_should_retry(cstate->rbio))
                 {
                     // If BIO_should_retry() is false then the cause is an error condition.
-                    bufferpoolResuesbuf(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(client_hello_ctx), buf);
                     goto failed;
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(client_hello_ctx), buf);
                 }
             }
             if (status == kSslstatusFail)
@@ -279,12 +279,12 @@ static void downStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextPayload(c);
-                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
                             goto failed;
                         }
                         else
                         {
-                            bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -309,7 +309,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
                 }
 
                 if (! SSL_is_init_finished(cstate->ssl))
@@ -367,7 +367,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesbuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -461,7 +461,7 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
         char    alpn_data[];
     } *ossl_alpn   = memoryAllocate(1 + alpn_len);
     ossl_alpn->len = alpn_len;
-    memcpy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
+    memoryCopy(&(ossl_alpn->alpn_data[0]), state->alpn, alpn_len);
     SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *) ossl_alpn, 1 + alpn_len);
     memoryFree(ossl_alpn);
 

@@ -1,6 +1,6 @@
 #pragma once
 #include "buffer_pool.h"
-#include "frand.h"
+
 #include "openssl_globals.h" /* These helpers depened on openssl */
 #include "shiftbuffer.h"
 #include <assert.h>
@@ -30,7 +30,7 @@ static bool verifyMessage(sbuf_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sign_cont
     }
     int     rc = EVP_DigestSignInit(sign_context, NULL, msg_digest, NULL, sign_key);
     uint8_t expect[EVP_MAX_MD_SIZE];
-    memcpy(expect, sbufGetRawPtr(buf), kSignLen);
+    memoryCopy(expect, sbufGetRawPtr(buf), kSignLen);
     sbufShiftRight(buf, kSignLen);
     if (rc != 1)
     {
@@ -111,7 +111,7 @@ static sbuf_t *genericDecrypt(sbuf_t *in, EVP_CIPHER_CTX *decryption_context, ch
     {
         printSSLErrorAndAbort();
     }
-    bufferpoolResuesbuf(pool, in);
+    bufferpoolResuesBuf(pool, in);
 
     sbufSetLength(out, sbufGetBufLength(out) + out_len);
     return out;
@@ -153,11 +153,11 @@ static sbuf_t *genericEncrypt(sbuf_t *in, EVP_CIPHER_CTX *encryption_context, ch
     {
         printSSLErrorAndAbort();
     }
-    bufferpoolResuesbuf(pool, in);
+    bufferpoolResuesBuf(pool, in);
     sbufSetLength(out, sbufGetBufLength(out) + out_len);
 
     sbufShiftLeft(out, kIVlen);
-    memcpy(sbufGetMutablePtr(out), iv, kIVlen);
+    memoryCopy(sbufGetMutablePtr(out), iv, kIVlen);
     return out;
 }
 

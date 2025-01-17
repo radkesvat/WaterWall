@@ -236,7 +236,7 @@ void insertTunnelToChainInfo(tunnel_chain_info_t *tci, tunnel_t *t);
 
 static inline void setTunnelState(tunnel_t *self, void *state)
 {
-    memcpy(&(self->state[0]), state, self->tstate_size);
+    memoryCopy(&(self->state[0]), state, self->tstate_size);
 }
 
 // pool handles, instead of malloc / free for the generic pool
@@ -498,7 +498,7 @@ static inline void dropContexPayload(context_t *const c)
 static inline void reuseContextPayload(context_t *const c)
 {
     assert(c->payload != NULL);
-    bufferpoolResuesbuf(getContextBufferPool(c), c->payload);
+    bufferpoolResuesBuf(getContextBufferPool(c), c->payload);
     dropContexPayload(c);
 }
 

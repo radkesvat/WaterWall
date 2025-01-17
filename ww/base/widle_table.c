@@ -3,7 +3,7 @@
 #include "wdef.h"
 #include "wloop.h"
 #include "wmutex.h"
-#include "worker.h"
+#include "global_state.h"
 
 
 enum

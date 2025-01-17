@@ -192,7 +192,7 @@ static void sendStreamResposnseData(http2_server_con_state_t *con, http2_server_
     http2_flag flags = kHttP2FlagNone;
     if (UNLIKELY(! stream))
     {
-        bufferpoolResuesbuf(getLineBufferPool(con->line), buf);
+        bufferpoolResuesBuf(getLineBufferPool(con->line), buf);
         return;
     }
 
@@ -246,7 +246,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
     {
         if (action.buf)
         {
-            bufferpoolResuesbuf(getLineBufferPool(action.stream_line), action.buf);
+            bufferpoolResuesBuf(getLineBufferPool(action.stream_line), action.buf);
         }
         unLockLine(action.stream_line);
         return;
@@ -274,16 +274,16 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
             {
                 if (stream->grpc_bytes_needed == 0 && bufferStreamLen(stream->grpc_buffer_stream) >= GRPC_MESSAGE_HDLEN)
                 {
-                    sbuf_t *gheader_buf = bufferStreamRead(stream->grpc_buffer_stream, GRPC_MESSAGE_HDLEN);
+                    sbuf_t *gheader_buf = bufferStreamReadExact(stream->grpc_buffer_stream, GRPC_MESSAGE_HDLEN);
                     grpc_message_hd msghd;
                     grpcMessageHdUnpack(&msghd, sbufGetRawPtr(gheader_buf));
                     stream->grpc_bytes_needed = msghd.length;
-                    bufferpoolResuesbuf(getLineBufferPool(con->line), gheader_buf);
+                    bufferpoolResuesBuf(getLineBufferPool(con->line), gheader_buf);
                 }
                 if (stream->grpc_bytes_needed > 0 &&
                     bufferStreamLen(stream->grpc_buffer_stream) >= stream->grpc_bytes_needed)
                 {
-                    sbuf_t *gdata_buf = bufferStreamRead(stream->grpc_buffer_stream, stream->grpc_bytes_needed);
+                    sbuf_t *gdata_buf = bufferStreamReadExact(stream->grpc_buffer_stream, stream->grpc_bytes_needed);
                     stream->grpc_bytes_needed = 0;
 
                     context_t *stream_data = newContext(stream->line);

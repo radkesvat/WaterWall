@@ -5,7 +5,7 @@
 #include "shiftbuffer.h"
 #include "tunnel.h"
 #include "types.h"
-#include "frand.h"
+
 #include "worker.h"
 
 enum
@@ -70,7 +70,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (bufferStreamLen(dcstate->wait_stream) >= kHandShakeLength)
                 {
-                    sbuf_t *data = bufferStreamRead(dcstate->wait_stream, kHandShakeLength);
+                    sbuf_t *data = bufferStreamReadExact(dcstate->wait_stream, kHandShakeLength);
 
                     static const uint8_t kHandshakeExpecetd[kHandShakeLength] = {VAL_64X, VAL_32X};
 
@@ -84,7 +84,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         // but regular access would be SEQ_CST
                         if (atomicLoadExplicit(&(this_tb->u_count), memory_order_relaxed) > 0)
                         {
-                            bufferpoolResuesbuf(getContextBufferPool(c), data);
+                            bufferpoolResuesBuf(getContextBufferPool(c), data);
 
                             reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
 
@@ -140,7 +140,7 @@ static void upStream(tunnel_t *self, context_t *c)
                                     return; // piped to another worker which has waiting connections
                                 }
                             }
-                            bufferpoolResuesbuf(getContextBufferPool(c), data);
+                            bufferpoolResuesBuf(getContextBufferPool(c), data);
 
                             addConnectionD(this_tb, dcstate);
                             destroyContext(c);

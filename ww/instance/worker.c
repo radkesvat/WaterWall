@@ -1,5 +1,5 @@
 #include "worker.h"
-#include "frand.h"
+
 #include "wloop.h"
 #include "wthread.h"
 #include "loggers/core_logger.h"
@@ -47,7 +47,7 @@ static void runWorker(worker_t *worker)
 
 
 
-static HTHREAD_ROUTINE(worker_thread) // NOLINT
+static WTHREAD_ROUTINE(worker_thread) // NOLINT
 {
     worker_t *worker = userdata;
 

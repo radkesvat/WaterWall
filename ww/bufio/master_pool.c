@@ -57,7 +57,7 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
                           .create_item_handle  = defaultCreateHandle,
                           .destroy_item_handle = defaultDestroyHandle};
 
-    memcpy(pool_ptr, &pool, sizeof(master_pool_t));
+    memoryCopy(pool_ptr, &pool, sizeof(master_pool_t));
     mutexInit(&(pool_ptr->mutex));
 
     return pool_ptr;

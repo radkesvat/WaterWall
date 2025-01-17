@@ -87,7 +87,7 @@ static void cleanup(socks5_server_con_state_t *cstate, buffer_pool_t *reusepool)
 {
     if (cstate->waitbuf)
     {
-        bufferpoolResuesbuf(reusepool, cstate->waitbuf);
+        bufferpoolResuesBuf(reusepool, cstate->waitbuf);
     }
 }
 static void encapsulateUdpPacket(context_t *c)
@@ -195,7 +195,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         case kIPv4Addr:
             dest_context->address_type = kSatIPV4;
             ATLEAST(4);
-            memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 4);
+            memoryCopy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 4);
             sbufShiftRight(c->payload, 4);
             break;
         case kFqdnAddr:
@@ -211,7 +211,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         case kIPv6Addr:
             dest_context->address_type = kSatIPV6;
             ATLEAST(16);
-            memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 16);
+            memoryCopy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 16);
             sbufShiftRight(c->payload, 16);
             break;
         default:
@@ -219,7 +219,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
             goto disconnect;
         }
         ATLEAST(2); // port
-        memcpy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
+        memoryCopy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
         sbufShiftRight(c->payload, 2);
         self->up->upStream(self->up, newInitContext(c->line));
         if (! isAlive(c->line))
@@ -437,7 +437,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kSatIPV4:
                 assert(cstate->need == 4);
                 c->line->dest_ctx.address.sa.sa_family = AF_INET;
-                memcpy(&c->line->dest_ctx.address.sin.sin_addr, sbufGetRawPtr(bytes), 4);
+                memoryCopy(&c->line->dest_ctx.address.sin.sin_addr, sbufGetRawPtr(bytes), 4);
                 sbufShiftRight(bytes, 4);
 
                 break;
@@ -449,7 +449,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kSatIPV6:
                 assert(cstate->need == 16);
                 c->line->dest_ctx.address.sa.sa_family = AF_INET6;
-                memcpy(&c->line->dest_ctx.address.sin6.sin6_addr, sbufGetRawPtr(bytes), 16);
+                memoryCopy(&c->line->dest_ctx.address.sin6.sin6_addr, sbufGetRawPtr(bytes), 16);
                 sbufShiftRight(bytes, 16);
                 break;
             default:
@@ -464,7 +464,7 @@ static void upStream(tunnel_t *self, context_t *c)
         break;
         case kSDstPort: {
             assert(cstate->need == 2);
-            memcpy(&(c->line->dest_ctx.address.sin.sin_port), sbufGetRawPtr(bytes), 2);
+            memoryCopy(&(c->line->dest_ctx.address.sin.sin_port), sbufGetRawPtr(bytes), 2);
             sbufShiftRight(bytes, 2);
 
             if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_INFO))
@@ -529,24 +529,24 @@ static void upStream(tunnel_t *self, context_t *c)
                 case AF_INET:
                     resp[resp_len++] = kIPv4Addr;
                     sockaddrSetPort(&(c->line->dest_ctx.address), sockaddrPort(&(c->line->src_ctx.address)));
-                    memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_addr, 4);
+                    memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_addr, 4);
                     resp_len += 4;
-                    memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_port, 2);
+                    memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_port, 2);
                     resp_len += 2;
 
                     break;
 
                 case AF_INET6:
                     resp[resp_len++] = kIPv6Addr;
-                    memcpy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_addr, 16);
+                    memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_addr, 16);
                     resp_len += 16;
-                    memcpy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_port, 2);
+                    memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_port, 2);
                     resp_len += 2;
                     break;
 
                 default:
                     // connects to a ip4 or 6 right? anyways close if thats not the case
-                    bufferpoolResuesbuf(getContextBufferPool(c), respbuf);
+                    bufferpoolResuesBuf(getContextBufferPool(c), respbuf);
                     goto disconnect;
                     break;
                 }
@@ -668,18 +668,18 @@ static void downStream(tunnel_t *self, context_t *c)
             {
             case AF_INET:
                 resp[resp_len++] = kIPv4Addr;
-                memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_addr, 4);
+                memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_addr, 4);
                 resp_len += 4;
-                memcpy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_port, 2);
+                memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin.sin_port, 2);
                 resp_len += 2;
 
                 break;
 
             case AF_INET6:
                 resp[resp_len++] = kIPv6Addr;
-                memcpy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_addr, 16);
+                memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_addr, 16);
                 resp_len += 16;
-                memcpy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_port, 2);
+                memoryCopy(resp + resp_len, &c->line->dest_ctx.address.sin6.sin6_port, 2);
                 resp_len += 2;
                 break;
 
@@ -688,7 +688,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 cleanup(cstate, getContextBufferPool(c));
                 memoryFree(cstate);
                 CSTATE_DROP(c);
-                bufferpoolResuesbuf(getContextBufferPool(c), respbuf);
+                bufferpoolResuesBuf(getContextBufferPool(c), respbuf);
                 self->up->upStream(self->dw, newFinContext(c->line));
                 context_t *fc = newFinContextFrom(c);
                 destroyContext(c);

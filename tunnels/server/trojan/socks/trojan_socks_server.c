@@ -104,7 +104,7 @@ static bool parseAddress(context_t *c)
                 return false;
             }
             dest_context->address.sa.sa_family = AF_INET;
-            memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 4);
+            memoryCopy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 4);
             sbufShiftRight(c->payload, 4);
             LOGD("TrojanSocksServer: tcp connect ipv4");
             break;
@@ -129,7 +129,7 @@ static bool parseAddress(context_t *c)
                 return false;
             }
             dest_context->address.sa.sa_family = AF_INET6;
-            memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 16);
+            memoryCopy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 16);
             sbufShiftRight(c->payload, 16);
             LOGD("TrojanSocksServer: tcp connect ipv6");
             break;
@@ -196,7 +196,7 @@ static bool parseAddress(context_t *c)
     {
         return false;
     }
-    memcpy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
+    memoryCopy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
     sbufShiftRight(c->payload, 2 + kCrlfLen);
     return true;
 }
@@ -295,7 +295,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
     context_t        *c            = newContext(line);
     socket_context_t *dest_context = &(c->line->dest_ctx);
-    c->payload                     = bufferStreamRead(bstream, full_len);
+    c->payload                     = bufferStreamReadExact(bstream, full_len);
 
     if (cstate->init_sent)
     {
@@ -316,7 +316,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     case kTrojanatypIpV4:
         dest_context->address.sa.sa_family = AF_INET;
         dest_context->address_type         = kSatIPV4;
-        memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 4);
+        memoryCopy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 4);
         sbufShiftRight(c->payload, 4);
         if (! cstate->udp_logged)
         {
@@ -342,7 +342,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     case kTrojanatypIpV6:
         dest_context->address_type         = kSatIPV6;
         dest_context->address.sa.sa_family = AF_INET6;
-        memcpy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 16);
+        memoryCopy(&(dest_context->address.sin.sin_addr), sbufGetRawPtr(c->payload), 16);
         sbufShiftRight(c->payload, 16);
         if (! cstate->udp_logged)
         {
@@ -363,7 +363,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     {
         return false;
     }
-    memcpy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
+    memoryCopy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
 
     // port 2 length 2 crlf 2
     sbufShiftRight(c->payload, 2 + 2 + kCrlfLen);
