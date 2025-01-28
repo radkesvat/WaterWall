@@ -1,14 +1,16 @@
 #include "global_state.h"
-
-
-
-
-
-
+#include "buffer_pool.h"
+#include "loggers/core_logger.h"
+#include "loggers/dns_logger.h"
+#include "loggers/internal_logger.h"
+#include "loggers/network_logger.h"
+#include "managers/node_manager.h"
+#include "managers/signal_manager.h"
+#include "managers/socket_manager.h"
 
 ww_global_state_t global_ww_state = {0};
 
-void setWW(struct ww_global_state_s *state)
+void setGlobalState(struct ww_global_state_s *state)
 {
     assert(! GSTATE.initialized && state->initialized);
     GSTATE = *state;
@@ -21,7 +23,6 @@ void setWW(struct ww_global_state_s *state)
     setSocketManager(GSTATE.socekt_manager);
     setNodeManager(GSTATE.node_manager);
 }
-
 
 static void initializeShortCuts(void)
 {
@@ -37,6 +38,16 @@ static void initializeShortCuts(void)
     GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (2ULL * total_workers));
     GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (3ULL * total_workers));
     GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (4ULL * total_workers));
+
+    for (unsigned int tid = 0; tid < GSTATE.workers_count; tid++)
+    {
+
+        GSTATE.shortcut_context_pools[tid]      = WORKERS[tid].context_pool;
+        GSTATE.shortcut_line_pools[tid]         = WORKERS[tid].line_pool;
+        GSTATE.shortcut_pipeline_msg_pools[tid] = WORKERS[tid].pipeline_msg_pool;
+        GSTATE.shortcut_buffer_pools[tid]       = WORKERS[tid].buffer_pool;
+        GSTATE.shortcut_loops[tid]              = WORKERS[tid].loop;
+    }
 }
 
 static void initializeMasterPools(void)
@@ -56,36 +67,27 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // [Section] loggers
     {
-        GSTATE.ww_logger = createInternalLogger(NULL, true);
+        GSTATE.ww_logger = createInternalLogger(init_data.internal_logger_data.log_file_path,
+                                                init_data.internal_logger_data.log_console);
+        setInternalLoggerLevelByStr(init_data.internal_logger_data.log_level);
 
-        if (init_data.core_logger_data.log_file_path)
-        {
-            GSTATE.core_logger =
-                createCoreLogger(init_data.core_logger_data.log_file_path, init_data.core_logger_data.log_console);
+        GSTATE.core_logger =
+            createCoreLogger(init_data.core_logger_data.log_file_path, init_data.core_logger_data.log_console);
 
-            stringUpperCase(init_data.core_logger_data.log_level);
-            setCoreLoggerLevelByStr(init_data.core_logger_data.log_level);
-        }
-        if (init_data.network_logger_data.log_file_path)
-        {
-            GSTATE.network_logger = createNetworkLogger(init_data.network_logger_data.log_file_path,
-                                                        init_data.network_logger_data.log_console);
+        stringUpperCase(init_data.core_logger_data.log_level);
+        setCoreLoggerLevelByStr(init_data.core_logger_data.log_level);
 
-            stringUpperCase(init_data.network_logger_data.log_level);
-            setNetworkLoggerLevelByStr(init_data.network_logger_data.log_level);
+        GSTATE.network_logger =
+            createNetworkLogger(init_data.network_logger_data.log_file_path, init_data.network_logger_data.log_console);
 
-            // libhv has a separate logger, attach it to the network logger
-            loggerSetLevelByString(hv_default_logger(), init_data.network_logger_data.log_level);
-            loggerSetHandler(hv_default_logger(), getNetworkLoggerHandle());
-        }
-        if (init_data.dns_logger_data.log_file_path)
-        {
-            GSTATE.dns_logger =
-                createDnsLogger(init_data.dns_logger_data.log_file_path, init_data.dns_logger_data.log_console);
+        stringUpperCase(init_data.network_logger_data.log_level);
+        setNetworkLoggerLevelByStr(init_data.network_logger_data.log_level);
 
-            stringUpperCase(init_data.dns_logger_data.log_level);
-            setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
-        }
+        GSTATE.dns_logger =
+            createDnsLogger(init_data.dns_logger_data.log_file_path, init_data.dns_logger_data.log_console);
+
+        stringUpperCase(init_data.dns_logger_data.log_level);
+        setDnsLoggerLevelByStr(init_data.dns_logger_data.log_level);
     }
 
     // workers and pools creation
@@ -101,13 +103,14 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         WORKERS = (worker_t *) memoryAllocate(sizeof(worker_t) * (WORKERS_COUNT));
 
-        initializeShortCuts();
         initializeMasterPools();
 
         for (unsigned int i = 0; i < WORKERS_COUNT; ++i)
         {
             initalizeWorker(getWorker(i), i);
         }
+
+        initializeShortCuts();
     }
 
     GSTATE.signal_manager = createSignalManager();
@@ -118,19 +121,18 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // Spawn all workers except main worker which is current thread
     {
-        WORKERS[0].thread = (wthread_t) NULL;
         for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
         {
-            WORKERS[i].thread = threadCreate(worker_thread, getWorker(i));
+            runWorkerNewThread(&WORKERS[i]);
         }
     }
 }
 
-
-_Noreturn void runMainThread(void)
+void runMainThread(void)
 {
     assert(GSTATE.initialized);
-
+    
+    WORKERS[0].thread = (wthread_t) NULL;
     runWorker(getWorker(0));
 
     LOGF("Unexpected: main loop joined");

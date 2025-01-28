@@ -84,7 +84,7 @@ static void signMessage(sbuf_t *buf, EVP_MD *msg_digest, EVP_MD_CTX *sign_contex
 static sbuf_t *genericDecrypt(sbuf_t *in, EVP_CIPHER_CTX *decryption_context, char *password,
                                       buffer_pool_t *pool)
 {
-    sbuf_t *out = bufferpoolPop(pool);
+    sbuf_t *out = bufferpoolGetLargeBuffer(pool);
 
     EVP_DecryptInit_ex(decryption_context, EVP_aes_128_cbc(), NULL, (const uint8_t *) password,
                        (const uint8_t *) sbufGetRawPtr(in));
@@ -111,7 +111,7 @@ static sbuf_t *genericDecrypt(sbuf_t *in, EVP_CIPHER_CTX *decryption_context, ch
     {
         printSSLErrorAndAbort();
     }
-    bufferpoolResuesBuf(pool, in);
+    bufferpoolResuesBuffer(pool, in);
 
     sbufSetLength(out, sbufGetBufLength(out) + out_len);
     return out;
@@ -119,7 +119,7 @@ static sbuf_t *genericDecrypt(sbuf_t *in, EVP_CIPHER_CTX *decryption_context, ch
 static sbuf_t *genericEncrypt(sbuf_t *in, EVP_CIPHER_CTX *encryption_context, char *password,
                                       buffer_pool_t *pool)
 {
-    sbuf_t *out          = bufferpoolPop(pool);
+    sbuf_t *out          = bufferpoolGetLargeBuffer(pool);
     int             input_length = (int) sbufGetBufLength(in);
 
     uint32_t iv[kIVlen / sizeof(uint32_t)]; // uint32_t because we need 32 mem alignment
@@ -153,7 +153,7 @@ static sbuf_t *genericEncrypt(sbuf_t *in, EVP_CIPHER_CTX *encryption_context, ch
     {
         printSSLErrorAndAbort();
     }
-    bufferpoolResuesBuf(pool, in);
+    bufferpoolResuesBuffer(pool, in);
     sbufSetLength(out, sbufGetBufLength(out) + out_len);
 
     sbufShiftLeft(out, kIVlen);

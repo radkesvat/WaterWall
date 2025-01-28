@@ -65,19 +65,19 @@ static void _                             // dlog_chan(const char* fname, const 
 uint32_t seq = atomic_fetch_add_explicitx(&seqnext, 1, memory_order_acquire);
 
 char buf[256];
-const ssize_t sbufCap = (ssize_t)sizeof(buf);
+const ssize_t sbufGetTotalCapacity = (ssize_t)sizeof(buf);
 ssize_t buflen = 0;
 
-buflen += (ssize_t)snprintf(&buf[buflen], sbufCap - buflen, "%04u \x1b[1m%sT%02zu ", seq, tcolor(), thread_id());
+buflen += (ssize_t)snprintf(&buf[buflen], sbufGetTotalCapacity - buflen, "%04u \x1b[1m%sT%02zu ", seq, tcolor(), thread_id());
 
 va_list ap;
 va_start(ap, fmt);
-buflen += (ssize_t)vsnprintf(&buf[buflen], sbufCap - buflen, fmt, ap);
+buflen += (ssize_t)vsnprintf(&buf[buflen], sbufGetTotalCapacity - buflen, fmt, ap);
 va_end(ap);
 
 if (buflen > 0) {
-    buflen += (ssize_t)snprintf(&buf[buflen], sbufCap - buflen, "\x1b[0m (%s)\n", fname);
-    if (buflen >= sbufCap) {
+    buflen += (ssize_t)snprintf(&buf[buflen], sbufGetTotalCapacity - buflen, "\x1b[0m (%s)\n", fname);
+    if (buflen >= sbufGetTotalCapacity) {
         // truncated; make sure to end the line
         buf[buflen - 1] = '\n';
     }
@@ -542,8 +542,8 @@ static bool chan_recv_direct(wchan_t* c, void* dstelemptr, Thr* sendert) {
     return ok;
 }
 
-wchan_t* chanOpen(size_t elemsize, uint32_t sbufCap) {
-    int64_t memsize = (int64_t)sizeof(wchan_t) + ((int64_t)sbufCap * (int64_t)elemsize);
+wchan_t* chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity) {
+    int64_t memsize = (int64_t)sizeof(wchan_t) + ((int64_t)sbufGetTotalCapacity * (int64_t)elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     memsize = ALIGN2(memsize + ((LINE_CACHE_SIZE + 1) / 2), LINE_CACHE_SIZE);
@@ -563,7 +563,7 @@ wchan_t* chanOpen(size_t elemsize, uint32_t sbufCap) {
 
     c->memptr = ptr;
     c->elemsize = elemsize;
-    c->qcap = sbufCap;
+    c->qcap = sbufGetTotalCapacity;
     chan_lock_init(&c->lock);
 
 // make sure that the thread setting up the channel gets a low thread_id

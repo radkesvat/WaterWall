@@ -566,7 +566,7 @@ tunnel_t *newTrojanSocksServer(node_instance_context_t *instance_info)
     trojan_socks_server_state_t *state = memoryAllocate(sizeof(trojan_socks_server_state_t));
     memorySet(state, 0, sizeof(trojan_socks_server_state_t));
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

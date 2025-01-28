@@ -172,7 +172,7 @@ tunnel_t *newReverseClient(node_instance_context_t *instance_info)
     
     state->starved_connections = idleTableCreate(getWorkerLoop(0));
 
-    tunnel_t *t           = newTunnel();
+    tunnel_t *t           = tunnelCreate();
     t->state              = state;
     t->upStream           = &upStream;
     t->downStream         = &downStream;

@@ -21,13 +21,13 @@ struct msg_event
 
 typedef void (*MsgTargetFunction)(pipe_line_t *pl, void *arg);
 
-pool_item_t *allocPipeLineMsgPoolHandle(struct generic_pool_s *pool)
+pool_item_t *allocPipeLineMsgPoolHandle(generic_pool_t *pool)
 {
     (void) pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
-void destroyPipeLineMsgPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+void destroyPipeLineMsgPoolHandle(generic_pool_t *pool, pool_item_t *item)
 {
     (void) pool;
     memoryFree(item);
@@ -172,7 +172,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     sbuf_t *buf = arg;
 //     if (pl->left_line == NULL)
 //     {
-//         bufferpoolResuesBuf(getWorkerBufferPool(pl->left_tid), buf);
+//         bufferpoolResuesBuffer(getWorkerBufferPool(pl->left_tid), buf);
 //         return;
 //     }
 //     context_t *ctx = newContext(pl->left_line);
@@ -185,7 +185,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     sbuf_t *buf = arg;
 //     if (pl->right_line == NULL)
 //     {
-//         bufferpoolResuesBuf(getWorkerBufferPool(pl->right_tid), buf);
+//         bufferpoolResuesBuffer(getWorkerBufferPool(pl->right_tid), buf);
 //         return;
 //     }
 //     context_t *ctx = newContext(pl->right_line);
@@ -424,10 +424,10 @@ void pipeTo(tunnel_t *t, line_t *l, tid_t tid)
 tunnel_t *newPipeTunnel(tunnel_t *t)
 {
     size_t tstate_size = sizeof(tunnel_t) + t->tstate_size;
-    size_t cstate_size = sizeof(pipe_line_cstate_t) + t->cstate_size;
+    size_t lstate_size = sizeof(pipe_line_cstate_t) + t->lstate_size;
     // dont forget cstate offset
 
-    tunnel_t *encapsulated_tunnel = newTunnel(state_size, cstate_size);
+    tunnel_t *encapsulated_tunnel = tunnelCreate(state_size, lstate_size);
 
     setTunnelState(encapsulated_tunnel, t);
 

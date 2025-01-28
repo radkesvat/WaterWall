@@ -82,7 +82,7 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
     registerNode(instance_info->node_manager_config,udp_inbound_node, settings);
 
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &firstUpStream;
     t->downStream = &downStream;

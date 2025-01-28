@@ -22,14 +22,13 @@
 // #define POOL_DEBUG
 // #define BYPASS_GENERIC_POOL
 
-struct generic_pool_s;
 typedef struct generic_pool_s generic_pool_t;
 
 // struct pool_item_s; // void
 typedef void pool_item_t;
 
-typedef pool_item_t *(*PoolItemCreateHandle)(struct generic_pool_s *pool);
-typedef void (*PoolItemDestroyHandle)(struct generic_pool_s *pool, pool_item_t *item);
+typedef pool_item_t *(*PoolItemCreateHandle)(generic_pool_t *pool);
+typedef void (*PoolItemDestroyHandle)(generic_pool_t *pool, pool_item_t *item);
 
 #if defined(DEBUG) && defined(POOL_DEBUG)
 #define GENERIC_POOL_FIELDS                                                                                            \

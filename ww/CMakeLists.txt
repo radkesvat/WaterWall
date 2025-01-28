@@ -1,5 +1,9 @@
 
 
+set(WW_VERSION_MAJOR    1)
+set(WW_VERSION_MINOR    1)
+set(WW_VERSION_PATCH    0)
+
 add_library(ww STATIC
                   libc/wlibc.c
                   libc/wtime.c

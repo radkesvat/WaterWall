@@ -550,10 +550,10 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     {
         logger->handler(level, buf, len);
     }
-    else
-    {
-        loggerWrite(logger, buf, len);
-    }
+    // else
+    // {
+    //     loggerWrite(logger, buf, len);
+    // }
 
     mutexUnlock(&logger->mutex_);
     return len;

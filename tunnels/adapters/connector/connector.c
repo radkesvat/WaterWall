@@ -62,13 +62,13 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     state->tcp_connector = tcp_outbound_node->instance;
     state->udp_connector = udp_outbound_node->instance;
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    chainDown(t, state->tcp_connector);
-    chainDown(t, state->udp_connector);
+    tunnelChainDown(t, state->tcp_connector);
+    tunnelChainDown(t, state->udp_connector);
 
     return t;
 }

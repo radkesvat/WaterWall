@@ -1,58 +1,39 @@
 #include "buffer_pool.h"
 #include "wplatform.h"
-#ifdef DEBUG
 #include "loggers/internal_logger.h"
-#endif
 #include "shiftbuffer.h"
 
-
-
-// #define BYPASS_BUFFERPOOL
-
-#define MEMORY_PROFILE_SMALL    (RAM_PROFILE >= kRamProfileM1Memory ? kRamProfileM1Memory : RAM_PROFILE)
-#define MEMORY_PROFILE_SELECTED RAM_PROFILE
-
-#define SMALL_BUFFER_SIZE              1500
-#define BUFFERPOOL_SMALL_CONTAINER_LEN ((unsigned long) ((MEMORY_PROFILE_SMALL)))
-#define BUFFERPOOL_CONTAINER_LEN       ((unsigned long) ((MEMORY_PROFILE_SELECTED)))
-
-#define LARGE_BUFFER_SIZE                                                                                              \
-    (RAM_PROFILE >= kRamProfileS2Memory ? (1U << 15) : (1U << 12)) // 32k (same as nginx file streaming)
-
-struct buffer_pool_s
+buffer_pool_t
 {
 
     uint16_t cap;
     uint16_t free_threshold;
-
     uint32_t large_buffers_container_len;
-    uint32_t large_buffers_default_size;
+    uint32_t large_buffers_size;
     uint16_t large_buffer_left_padding;
-    uint16_t large_buffer_right_padding;
 
     uint32_t small_buffers_container_len;
-    uint32_t small_buffers_default_size;
+    uint32_t small_buffers_size;
     uint16_t small_buffer_left_padding;
-    uint16_t small_buffer_right_padding;
 
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     atomic_size_t in_use;
 #endif
 
-    master_pool_t   *large_buffers_mp;
-    sbuf_t **large_buffers;
-    master_pool_t   *small_buffers_mp;
-    sbuf_t **small_buffers;
+    master_pool_t *large_buffers_mp;
+    sbuf_t       **large_buffers;
+    master_pool_t *small_buffers_mp;
+    sbuf_t       **small_buffers;
 };
 
-uint32_t bufferpoolGetLargeBufferDefaultSize(void)
+uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
 {
-    return LARGE_BUFFER_SIZE;
+    return pool->large_buffers_size;
 }
 
-uint32_t bufferpoolGetSmallBufferDefaultSize(void)
+uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool)
 {
-    return SMALL_BUFFER_SIZE;
+    return pool->small_buffers_size;
 }
 
 static master_pool_item_t *createLargeBufHandle(struct master_pool_s *pool, void *userdata)
@@ -60,16 +41,14 @@ static master_pool_item_t *createLargeBufHandle(struct master_pool_s *pool, void
     (void) pool;
 
     buffer_pool_t *bpool = userdata;
-    return sbufNewWithPad(bpool->large_buffers_default_size, bpool->large_buffer_left_padding,
-                                 bpool->large_buffer_right_padding);
+    return sbufNewWithPadding(bpool->large_buffers_size, bpool->large_buffer_left_padding);
 }
 
 static master_pool_item_t *createSmallBufHandle(struct master_pool_s *pool, void *userdata)
 {
     (void) pool;
     buffer_pool_t *bpool = userdata;
-    return sbufNewWithPad(bpool->small_buffers_default_size, bpool->small_buffer_left_padding,
-                                 bpool->small_buffer_right_padding);
+    return sbufNewWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
 }
 
 static void destroyLargeBufHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
@@ -154,11 +133,10 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 #endif
 }
 
-sbuf_t *bufferpoolPop(buffer_pool_t *pool)
+sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return sbufNewWithPad(pool->large_buffers_default_size, pool->large_buffer_left_padding,
-                                 pool->large_buffer_right_padding);
+    return sbufNewWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -175,11 +153,10 @@ sbuf_t *bufferpoolPop(buffer_pool_t *pool)
     return pool->large_buffers[pool->large_buffers_container_len];
 }
 
-sbuf_t *bufferpoolPopSmall(buffer_pool_t *pool)
+sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return sbufNewWithPad(pool->small_buffers_default_size, pool->small_buffer_left_padding,
-                                 pool->small_buffer_right_padding);
+    return sbufNewWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -196,7 +173,7 @@ sbuf_t *bufferpoolPopSmall(buffer_pool_t *pool)
     return pool->small_buffers[pool->small_buffers_container_len];
 }
 
-void bufferpoolResuesBuf(buffer_pool_t *pool, sbuf_t *b)
+void bufferpoolResuesBuffer(buffer_pool_t *pool, sbuf_t *b)
 {
 
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
@@ -208,7 +185,7 @@ void bufferpoolResuesBuf(buffer_pool_t *pool, sbuf_t *b)
     pool->in_use -= 1;
 #endif
 
-    if (sbufCapNoPadding(b) == pool->large_buffers_default_size)
+    if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size)
     {
         if (UNLIKELY(pool->large_buffers_container_len > pool->free_threshold))
         {
@@ -216,7 +193,7 @@ void bufferpoolResuesBuf(buffer_pool_t *pool, sbuf_t *b)
         }
         pool->large_buffers[(pool->large_buffers_container_len)++] = b;
     }
-    else if (sbufCapNoPadding(b) == pool->small_buffers_default_size)
+    else if (sbufGetTotalCapacityNoPadding(b) == pool->small_buffers_size)
     {
         if (UNLIKELY(pool->small_buffers_container_len > pool->free_threshold))
         {
@@ -233,20 +210,27 @@ void bufferpoolResuesBuf(buffer_pool_t *pool, sbuf_t *b)
 sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
 {
     b1 = sbufConcat(b1, b2);
-    bufferpoolResuesBuf(pool, b2);
+    bufferpoolResuesBuffer(pool, b2);
+    return b1;
+}
+
+sbuf_t *sbufAppendMergeNoPadding(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
+{
+    b1 = sbufConcat(b1, b2);
+    bufferpoolResuesBuffer(pool, b2);
     return b1;
 }
 
 sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 {
     sbuf_t *bnew;
-    if (sbufCapNoPadding(b) == pool->large_buffers_default_size)
+    if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size)
     {
-        bnew = bufferpoolPop(pool);
+        bnew = bufferpoolGetLargeBuffer(pool);
     }
-    else if (sbufCapNoPadding(b) == pool->small_buffers_default_size)
+    else if (sbufGetTotalCapacityNoPadding(b) == pool->small_buffers_size)
     {
-        bnew = bufferpoolPopSmall(pool);
+        bnew = bufferpoolGetSmallBuffer(pool);
     }
     else
     {
@@ -258,43 +242,37 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 }
 
 void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
-                                        uint16_t large_buffer_right_padding, uint16_t small_buffer_left_padding,
-                                        uint16_t small_buffer_right_padding)
+                                        uint16_t small_buffer_left_padding)
 {
     assert(pool->small_buffers_container_len == 0 && pool->large_buffers_container_len == 0);
-    
 
-    pool->large_buffer_left_padding  = max(pool->large_buffer_left_padding,large_buffer_left_padding);
-    pool->large_buffer_right_padding = max(pool->large_buffer_right_padding,large_buffer_right_padding);
-    pool->small_buffer_left_padding  = max(pool->small_buffer_left_padding,small_buffer_left_padding);
-    pool->small_buffer_right_padding = max(pool->small_buffer_right_padding,small_buffer_right_padding);
+    pool->large_buffer_left_padding = max(pool->large_buffer_left_padding, large_buffer_left_padding);
+    pool->small_buffer_left_padding = max(pool->small_buffer_left_padding, small_buffer_left_padding);
 }
 
-static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t bufcount,
-                                      uint32_t large_buffer_size, uint32_t small_buffer_size)
+buffer_pool_t *bufferpoolCreate(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t bufcount,
+                                uint32_t large_buffer_size, uint32_t small_buffer_size)
 {
-    // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolResuesBuf
+    // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolResuesBuffer
     assert(bufcount >= 1);
 
-    // half of the pool is used, other half is free at startup
     bufcount = 2 * bufcount;
 
     const unsigned long container_len = bufcount * sizeof(sbuf_t *);
 
     buffer_pool_t *ptr_pool = memoryAllocate(sizeof(buffer_pool_t));
 
-    *ptr_pool = (buffer_pool_t) {
-        .cap                        = bufcount,
-        .large_buffers_default_size = large_buffer_size,
-        .small_buffers_default_size = small_buffer_size,
-        .free_threshold             = max(bufcount / 2, (bufcount * 2) / 3),
+    *ptr_pool = (buffer_pool_t)
+    {
+        .cap = bufcount, .large_buffers_size = large_buffer_size,
+        .small_buffers_size = small_buffer_size, .free_threshold = max(bufcount / 2, (bufcount * 2) / 3),
+
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
         .in_use = 0,
 #endif
-        .large_buffers_mp = mp_large,
-        .large_buffers    = (sbuf_t **) memoryAllocate(container_len),
-        .small_buffers_mp = mp_small,
-        .small_buffers    = (sbuf_t **) memoryAllocate(container_len),
+
+        .large_buffers_mp = mp_large, .large_buffers = (sbuf_t **) memoryAllocate(container_len),
+        .small_buffers_mp = mp_small, .small_buffers = (sbuf_t **) memoryAllocate(container_len),
     };
 
     installMasterPoolAllocCallBacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
@@ -307,9 +285,4 @@ static buffer_pool_t *allocBufferPool(struct master_pool_s *mp_large, struct mas
 
     // firstCharge(ptr_pool);
     return ptr_pool;
-}
-
-buffer_pool_t *bufferpoolCreate(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t pool_width)
-{
-    return allocBufferPool(mp_large, mp_small, pool_width, LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE);
 }

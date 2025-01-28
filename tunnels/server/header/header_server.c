@@ -102,7 +102,7 @@ static void upStream(tunnel_t *self, context_t *c)
         bool send_fin = cstate->init_sent;
         if (cstate->buf)
         {
-            bufferpoolResuesBuf(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buf);
         }
         memoryFree(cstate);
         CSTATE_DROP(c);
@@ -125,7 +125,7 @@ static void downStream(tunnel_t *self, context_t *c)
         header_server_con_state_t *cstate = CSTATE(c);
         if (cstate->buf)
         {
-            bufferpoolResuesBuf(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buf);
         }
 
         memoryFree(cstate);
@@ -142,7 +142,7 @@ tunnel_t *newHeaderServer(node_instance_context_t *instance_info)
     memorySet(state, 0, sizeof(header_server_state_t));
     const cJSON *settings = instance_info->node_settings_json;
     state->data           = parseDynamicNumericValueFromJsonObject(settings, "override", 1, "dest_context->port");
-    tunnel_t *t           = newTunnel();
+    tunnel_t *t           = tunnelCreate();
     t->state              = state;
     t->upStream           = &upStream;
     t->downStream         = &downStream;

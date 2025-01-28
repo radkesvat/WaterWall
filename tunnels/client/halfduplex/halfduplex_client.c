@@ -54,7 +54,7 @@ static void upStream(tunnel_t *self, context_t *c)
             uint8_t *cid_bytes = (uint8_t *) &(cids[0]);
 
             context_t *intro_context = newContext(cstate->download_line);
-            intro_context->payload   = bufferpoolPop(getContextBufferPool(c));
+            intro_context->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
 
             cid_bytes[0] = cid_bytes[0] | (1 << 7); // kHLFDCmdDownload
             sbufShiftLeft(intro_context->payload, sizeof(cids));
@@ -221,7 +221,7 @@ tunnel_t *newHalfDuplexClient(node_instance_context_t *instance_info)
     halfduplex_state_t *state = memoryAllocate(sizeof(halfduplex_state_t));
     memorySet(state, 0, sizeof(halfduplex_state_t));
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

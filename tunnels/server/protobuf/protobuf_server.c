@@ -79,7 +79,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (data_len > kMaxPacketSize)
             {
                 LOGE("ProtoBufServer: rejected, size too large");
-                bufferpoolResuesBuf(getContextBufferPool(c), full_data);
+                bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
                 goto disconnect;
             }
 
@@ -105,7 +105,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesBuf(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
                 }
             }
             else if (flags == '\n')
@@ -115,7 +115,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (cstate->bytes_received_nack >= kMaxRecvBeforeAck)
                 {
 
-                    sbuf_t *flowctl_buf = bufferpoolPop(getContextBufferPool(c));
+                    sbuf_t *flowctl_buf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                     sbufSetLength(flowctl_buf, sizeof(uint32_t));
                     sbufWriteUnAlignedUI32(flowctl_buf, htonl(cstate->bytes_received_nack));
                     cstate->bytes_received_nack = 0;
@@ -131,16 +131,16 @@ static void upStream(tunnel_t *self, context_t *c)
                     self->dw->downStream(self->dw, send_flow_ctx);
                     if (! isAlive(c->line))
                     {
-                        bufferpoolResuesBuf(getContextBufferPool(c), full_data);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
                         destroyContext(c);
                         return;
                     }
                 }
 
                 context_t *upstream_ctx = newContextFrom(c);
-                upstream_ctx->payload   = bufferpoolPop(getContextBufferPool(c));
+                upstream_ctx->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
 
-                upstream_ctx->payload = sbufSliceTo(upstream_ctx->payload, full_data, data_len);
+                upstream_ctx->payload = sbufMoveTo(upstream_ctx->payload, full_data, data_len);
 
                 if (sbufGetBufLength(full_data) > 0)
                 {
@@ -148,7 +148,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesBuf(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
                 }
                 self->up->upStream(self->up, upstream_ctx);
 
@@ -161,7 +161,7 @@ static void upStream(tunnel_t *self, context_t *c)
             else
             {
                 LOGE("ProtoBufServer: rejected, invalid flag");
-                bufferpoolResuesBuf(getContextBufferPool(c), full_data);
+                bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
 
                 goto disconnect;
             }
@@ -224,7 +224,7 @@ tunnel_t *newProtoBufServer(node_instance_context_t *instance_info)
 {
 
     (void) instance_info;
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->upStream   = &upStream;
     t->downStream = &downStream;
 

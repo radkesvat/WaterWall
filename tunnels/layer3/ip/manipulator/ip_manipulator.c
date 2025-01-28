@@ -146,7 +146,7 @@ tunnel_t *newLayer3IpManipulator(node_instance_context_t *instance_info)
         state->protocol_action.value = map_array[state->protocol_action.status - kDvsFirstOption];
     }
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
 
     t->state      = state;
     t->upStream   = &upStream;

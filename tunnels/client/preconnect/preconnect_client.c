@@ -222,7 +222,7 @@ tunnel_t *newPreConnectClient(node_instance_context_t *instance_info)
     state->min_unused_cons       = min(max((getWorkersCount() * (ssize_t) 4), state->min_unused_cons), 128);
     state->connection_per_thread = min(4, state->min_unused_cons / getWorkersCount());
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

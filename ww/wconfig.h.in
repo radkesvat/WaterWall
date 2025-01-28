@@ -1,6 +1,12 @@
 #ifndef WW_CONFIG_H_
 #define WW_CONFIG_H_
 
+
+#define WW_VERSION_MAJOR    1
+#define WW_VERSION_MINOR    3
+#define WW_VERSION_PATCH    2
+
+
 #ifndef HAVE_STDBOOL_H
 #define HAVE_STDBOOL_H @HAVE_STDBOOL_H@
 #endif
@@ -102,5 +108,19 @@
 
 
 #define MEM128_BUF_OPTIMIZE 0
+
+
+enum ram_profiles_e
+{
+    kRamProfileInvalid  = 0,
+    kRamProfileS1Memory = 1,
+    kRamProfileS2Memory = 8,
+    kRamProfileM1Memory = 16 * 8 * 1,
+    kRamProfileM2Memory = 16 * 8 * 2,
+    kRamProfileL1Memory = 16 * 8 * 3,
+    kRamProfileL2Memory = 16 * 8 * 4
+};
+
+
 
 #endif // WW_CONFIG_H_

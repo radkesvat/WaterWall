@@ -20,31 +20,30 @@ struct sbuf_s
     uint32_t len;
     uint32_t capacity;
     uint16_t l_pad;
-    uint16_t r_pad;
-    //----------- 16 -----------
-    uint8_t buf[];
+
+    uint8_t buf[] __attribute__((aligned(16)));
 };
 
 typedef struct sbuf_s sbuf_t;
 
 void    sbufDestroy(sbuf_t *b);
-sbuf_t *sbufNewWithPad(uint32_t minimum_capacity, uint16_t pad_left, uint16_t pad_right);
+sbuf_t *sbufNewWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 sbuf_t *sbufNew(uint32_t minimum_capacity);
 sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict buf);
-sbuf_t *sbufSliceTo(sbuf_t *restrict dest, sbuf_t *restrict source, uint32_t bytes);
+sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, uint32_t bytes);
 sbuf_t *sbufSlice(sbuf_t *b, uint32_t bytes);
 sbuf_t *sbufDuplicate(sbuf_t *b);
 
-static inline uint32_t sbufCap(sbuf_t *const b)
+static inline uint32_t sbufGetTotalCapacity(sbuf_t *const b)
 {
     return b->capacity;
 }
 
-static inline uint32_t sbufCapNoPadding(sbuf_t *const b)
+static inline uint32_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
 {
-    assert(((uint32_t) b->l_pad + (uint32_t) b->r_pad) >= b->capacity);
+    assert(((uint32_t) b->l_pad) >= b->capacity);
 
-    return b->capacity - ((uint32_t) b->l_pad + (uint32_t) b->r_pad);
+    return b->capacity - ((uint32_t) b->l_pad);
 }
 
 // caps mean how much memory we own to be able to shift left/right
@@ -53,7 +52,7 @@ static inline uint32_t sbufGetLeftCapacity(const sbuf_t *const b)
     return b->curpos;
 }
 
-static inline uint32_t sbufGetLeftCapacityNoPadding(sbuf_t *const b)
+static inline uint32_t sbufGetLeftCapacityNoPadding(const sbuf_t *const b)
 {
     return b->curpos - b->l_pad;
 }
@@ -61,11 +60,6 @@ static inline uint32_t sbufGetLeftCapacityNoPadding(sbuf_t *const b)
 static inline uint32_t sbufGetRightCapacity(const sbuf_t *const b)
 {
     return (b->capacity - b->curpos);
-}
-
-static inline uint32_t sbufGetRightCapacityNoPadding(sbuf_t *const b)
-{
-    return b->capacity - (b->r_pad + b->curpos);
 }
 
 static inline void sbufShiftLeft(sbuf_t *const b, const uint32_t bytes)
@@ -122,28 +116,19 @@ static inline void sbufWrite(sbuf_t *restrict const b, const void *restrict cons
     memoryCopy(sbufGetMutablePtr(b), buffer, len);
 }
 
-
-
-
 static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict const from, uint32_t length)
 {
     assert(sbufGetRightCapacity(to) >= length);
 
-    if (sbufGetRightCapacity(to) - length >= 128 && sbufGetRightCapacity(from) >= 128)
-    {
-        memoryCopy128(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
-    }
-    else
-    {
-        memoryCopy(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
-    }
+    memoryCopy128(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
+
 }
 
 static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
 {
     if (sbufGetRightCapacity(b) < bytes)
     {
-        sbuf_t *bigger_buf = sbufNewWithPad(sbufGetBufLength(b) + bytes,b->l_pad,b->r_pad);
+        sbuf_t *bigger_buf = sbufNewWithPadding(sbufGetBufLength(b) + bytes, b->l_pad);
         sbufSetLength(bigger_buf, sbufGetBufLength(b));
         sbufWriteBuf(bigger_buf, b, sbufGetBufLength(b));
         sbufDestroy(b);
@@ -152,18 +137,6 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
     return b;
 }
 
-static inline sbuf_t *sbufReserveSpaceNoPadding(sbuf_t *const b, const uint32_t bytes)
-{
-    if (sbufGetRightCapacityNoPadding(b) < bytes)
-    {
-        sbuf_t *bigger_buf = sbufNewWithPad(sbufGetBufLength(b) + bytes,b->l_pad,b->r_pad);
-        sbufSetLength(bigger_buf, sbufGetBufLength(b));
-        sbufWriteBuf(bigger_buf, b, sbufGetBufLength(b));
-        sbufDestroy(b);
-        return bigger_buf;
-    }
-    return b;
-}
 
 static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restrict buf)
 {
@@ -172,13 +145,6 @@ static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restri
     sbufSetLength(root, root_length + append_length);
     memoryCopy(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
 }
-
-
-
-
-
-
-
 
 // UnAligned
 
@@ -269,7 +235,7 @@ static sbuf_t *debugBufferWontBeReused(sbuf_t *b)
     return nbuf;
 }
 
-#define BUFFER_WONT_BE_REUSED(x) (x = debugBufferWontBeReused(x))
+#define BUFFER_WONT_BE_REUSED(x) ((x) = debugBufferWontBeReused(x))
 
 #else
 

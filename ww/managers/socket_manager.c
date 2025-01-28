@@ -82,25 +82,25 @@ typedef struct socket_manager_s
 
 static socket_manager_state_t *state = NULL;
 
-static pool_item_t *allocTcpResultObjectPoolHandle(struct generic_pool_s *pool)
+static pool_item_t *allocTcpResultObjectPoolHandle(generic_pool_t *pool)
 {
     (void) pool;
     return memoryAllocate(sizeof(socket_accept_result_t));
 }
 
-static void destroyTcpResultObjectPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+static void destroyTcpResultObjectPoolHandle(generic_pool_t *pool, pool_item_t *item)
 {
     (void) pool;
     memoryFree(item);
 }
 
-static pool_item_t *allocUdpPayloadPoolHandle(struct generic_pool_s *pool)
+static pool_item_t *allocUdpPayloadPoolHandle(generic_pool_t *pool)
 {
     (void) pool;
     return memoryAllocate(sizeof(udp_payload_t));
 }
 
-static void destroyUdpPayloadPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+static void destroyUdpPayloadPoolHandle(generic_pool_t *pool, pool_item_t *item)
 {
     (void) pool;
     memoryFree(item);

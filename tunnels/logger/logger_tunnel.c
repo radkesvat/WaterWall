@@ -32,7 +32,7 @@ static void upStream(tunnel_t *self, context_t *c)
             // send back something
             {
                 context_t *reply = newContextFrom(c);
-                reply->payload   = bufferpoolPop(getContextBufferPool(c));
+                reply->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                 reuseContextPayload(c);
                 destroyContext(c);
                 sprintf((char *) sbufGetRawPtr(reply->payload), "%s", "salam");
@@ -90,7 +90,7 @@ static void downStream(tunnel_t *self, context_t *c)
             // send back something
             // {
             //     context_t *reply = newContextFrom(c);
-            //     reply->payload   = bufferpoolPop(getContextBufferPool(c));
+            //     reply->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
             //     sprintf((char *) sbufGetRawPtr(reply->payload), "%s", "salam");
             //     sbufSetLength(reply->payload, strlen("salam"));
             //     self->up->upStream(self->up, reply);
@@ -147,7 +147,7 @@ static void downStream(tunnel_t *self, context_t *c)
 tunnel_t *newLoggerTunnel(node_instance_context_t *instance_info)
 {
     (void) instance_info;
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->upStream   = &upStream;
     t->downStream = &downStream;
     return t;

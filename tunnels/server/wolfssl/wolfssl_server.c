@@ -193,7 +193,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     do
                     {
-                        sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                        sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                         int             avail = (int) sbufGetRightCapacityNoPadding(buf);
                         n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                         // assert(-1 == BIO_read(cstate->wbio, sbufGetRawPtr(buf), avail));
@@ -218,12 +218,12 @@ static void upStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextPayload(c);
-                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                             goto disconnect;
                         }
                         else
                         {
-                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -258,7 +258,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             do
             {
-                sbuf_t *buf = bufferpoolPop(getContextBufferPool(c));
+                sbuf_t *buf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
 
                 sbufSetLength(buf, 0);
                 int avail = (int) sbufGetRightCapacityNoPadding(buf);
@@ -305,7 +305,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -318,7 +318,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 do
                 {
-                    sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                    sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                     int             avail = (int) sbufGetRightCapacityNoPadding(buf);
 
                     n = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
@@ -339,13 +339,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -466,7 +466,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 do
                 {
 
-                    sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                    sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                     int             avail = (int) sbufGetRightCapacityNoPadding(buf);
                     n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                     if (n > 0)
@@ -486,13 +486,13 @@ static void downStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -656,11 +656,11 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
     SSL_CTX_set_alpn_select_cb(state->ssl_context, onAlpnSelect, NULL);
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
     t->state    = state;
     if (state->fallback != NULL)
     {
-        chainDown(t, state->fallback);
+        tunnelChainDown(t, state->fallback);
     }
     t->upStream   = &upStream;
     t->downStream = &downStream;

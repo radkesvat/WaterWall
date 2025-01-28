@@ -300,8 +300,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
         while (sbufGetBufLength(c->payload) > kMuxMaxFrameLength)
         {
-            sbuf_t *chunk = bufferpoolPop(getContextBufferPool(c));
-            chunk = sbufSliceTo(chunk, c->payload, kMuxMaxFrameLength);
+            sbuf_t *chunk = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+            chunk = sbufMoveTo(chunk, c->payload, kMuxMaxFrameLength);
 
             if (! child_con->first_sent)
             {
@@ -364,7 +364,7 @@ static void upStream(tunnel_t *self, context_t *c)
             mux_client_con_state_t *main_con = LSTATE(child_con->parent);
 
             context_t *data_fin_ctx = newContext(child_con->parent);
-            data_fin_ctx->payload   = bufferpoolPop(getLineBufferPool(child_con->parent));
+            data_fin_ctx->payload   = bufferpoolGetLargeBuffer(getLineBufferPool(child_con->parent));
             makeCloseFrame(data_fin_ctx->payload, child_con->cid);
             destroyChildConnecton(child_con);
             lockLine(main_con->line);
@@ -437,7 +437,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     switch (frame.flags)
                     {
                     case kMuxFlagClose: {
-                        bufferpoolResuesBuf(getLineBufferPool(c->line), frame_payload);
+                        bufferpoolResuesBuffer(getLineBufferPool(c->line), frame_payload);
                         context_t *fin_ctx = newFinContext(child_con_i->line);
                         destroyChildConnecton(child_con_i);
                         self->dw->downStream(self->dw, fin_ctx);
@@ -451,7 +451,7 @@ static void downStream(tunnel_t *self, context_t *c)
                         if (UNLIKELY(sbufGetBufLength(frame_payload) <= 0))
                         {
                             LOGE("MuxClient: payload length <= 0");
-                            bufferpoolResuesBuf(getLineBufferPool(main_con->line), frame_payload);
+                            bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
                             destroyMainConnecton(main_con);
                             self->up->upStream(self->up, newFinContext(c->line));
                             destroyContext(c);
@@ -470,7 +470,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     case kMuxFlagOpen:
                     default:
                         LOGE("MuxClient: incorrect frame flag");
-                        bufferpoolResuesBuf(getLineBufferPool(main_con->line), frame_payload);
+                        bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
                         destroyMainConnecton(main_con);
                         self->up->upStream(self->up, newFinContext(c->line));
                         destroyContext(c);
@@ -484,7 +484,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (frame_payload != NULL)
             {
                 LOGW("MuxClient: a frame could not find consumer cid: %d", (int) frame.cid);
-                bufferpoolResuesBuf(getLineBufferPool(main_con->line), frame_payload);
+                bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
             }
             else if (! isAlive(c->line))
             {
@@ -508,7 +508,7 @@ tunnel_t *newMuxClient(node_instance_context_t *instance_info)
     const cJSON *settings = instance_info->node_settings_json;
     (void) settings;
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

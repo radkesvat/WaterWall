@@ -87,12 +87,12 @@ static generic_pool_t *allocateGenericPool(struct master_pool_s *mp, unsigned in
     return pool_ptr;
 }
 
-static pool_item_t *poolDefaultAllocator(struct generic_pool_s *pool)
+static pool_item_t *poolDefaultAllocator(generic_pool_t *pool)
 {
     return memoryAllocate(pool->item_size);
 }
 
-static void poolDefaultDeallocator(struct generic_pool_s *pool, pool_item_t *item)
+static void poolDefaultDeallocator(generic_pool_t *pool, pool_item_t *item)
 {
     (void) pool;
     memoryFree(item);

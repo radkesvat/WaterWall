@@ -130,7 +130,7 @@ static void onTimer(wtimer_t *timer)
     layer3_senderstate_t *state = TSTATE(self);
     line_t               *l     = newLine(0);
     context_t            *c     = newContext(l);
-    c->payload                  = bufferpoolPop(getContextBufferPool(c));
+    c->payload                  = bufferpoolGetLargeBuffer(getContextBufferPool(c));
 
     // unsigned char bpacket[] = {0x45, 0x00, 0x00, 0x2C, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0xC4, 0xC0, 0x00,
     // 0x02,
@@ -200,7 +200,7 @@ tunnel_t *newLayer3Sender(node_instance_context_t *instance_info)
 
     state->device_tunnel = tundevice_node->instance;
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
 
     t->state      = state;
     t->upStream   = &upStream;

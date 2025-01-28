@@ -103,7 +103,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 /* take the output of the SSL object and queue it for socket write */
                 do
                 {
-                    sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                    sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                     int             avail = (int) sbufGetRightCapacityNoPadding(buf);
                     n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                     if (n > 0)
@@ -122,13 +122,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                         reuseContextPayload(c);
                         goto failed;
                     }
                     else
                     {
-                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
@@ -178,7 +178,7 @@ static void upStream(tunnel_t *self, context_t *c)
             /* Did SSL request to write bytes? */
             if (status == kSslstatusWantIo)
             {
-                sbuf_t *buf   = bufferpoolPop(getContextBufferPool(client_hello_ctx));
+                sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(client_hello_ctx));
                 int             avail = (int) sbufGetRightCapacityNoPadding(buf);
                 n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
@@ -190,12 +190,12 @@ static void upStream(tunnel_t *self, context_t *c)
                 else if (! BIO_should_retry(cstate->rbio))
                 {
                     // If BIO_should_retry() is false then the cause is an error condition.
-                    bufferpoolResuesBuf(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesBuffer(getContextBufferPool(client_hello_ctx), buf);
                     goto failed;
                 }
                 else
                 {
-                    bufferpoolResuesBuf(getContextBufferPool(client_hello_ctx), buf);
+                    bufferpoolResuesBuffer(getContextBufferPool(client_hello_ctx), buf);
                 }
             }
             if (status == kSslstatusFail)
@@ -258,7 +258,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     do
                     {
-                        sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                        sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                         int             avail = (int) sbufGetRightCapacityNoPadding(buf);
                         n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
 
@@ -279,12 +279,12 @@ static void downStream(tunnel_t *self, context_t *c)
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
                             reuseContextPayload(c);
-                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                             goto failed;
                         }
                         else
                         {
-                            bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
@@ -297,7 +297,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
 
                 /* Did SSL request to write bytes? */
-                sbuf_t *buf   = bufferpoolPop(getContextBufferPool(c));
+                sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                 int             avail = (int) sbufGetRightCapacityNoPadding(buf);
                 n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
@@ -309,7 +309,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                 }
 
                 if (! SSL_is_init_finished(cstate->ssl))
@@ -346,7 +346,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
             do
             {
-                sbuf_t *buf = bufferpoolPop(getContextBufferPool(c));
+                sbuf_t *buf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
 
                 sbufSetLength(buf, 0);
                 int avail = (int) sbufGetRightCapacityNoPadding(buf);
@@ -367,7 +367,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -465,7 +465,7 @@ tunnel_t *newWolfSSLClient(node_instance_context_t *instance_info)
     SSL_CTX_set_alpn_protos(state->ssl_context, (const unsigned char *) ossl_alpn, 1 + alpn_len);
     memoryFree(ossl_alpn);
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

@@ -84,7 +84,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         // but regular access would be SEQ_CST
                         if (atomicLoadExplicit(&(this_tb->u_count), memory_order_relaxed) > 0)
                         {
-                            bufferpoolResuesBuf(getContextBufferPool(c), data);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), data);
 
                             reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
 
@@ -140,7 +140,7 @@ static void upStream(tunnel_t *self, context_t *c)
                                     return; // piped to another worker which has waiting connections
                                 }
                             }
-                            bufferpoolResuesBuf(getContextBufferPool(c), data);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), data);
 
                             addConnectionD(this_tb, dcstate);
                             destroyContext(c);
@@ -338,7 +338,7 @@ tunnel_t *newReverseServer(node_instance_context_t *instance_info)
         memoryAllocate(sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
     memorySet(state, 0, sizeof(reverse_server_state_t) + (getWorkersCount() * sizeof(thread_box_t)));
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

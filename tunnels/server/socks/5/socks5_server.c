@@ -87,7 +87,7 @@ static void cleanup(socks5_server_con_state_t *cstate, buffer_pool_t *reusepool)
 {
     if (cstate->waitbuf)
     {
-        bufferpoolResuesBuf(reusepool, cstate->waitbuf);
+        bufferpoolResuesBuffer(reusepool, cstate->waitbuf);
     }
 }
 static void encapsulateUdpPacket(context_t *c)
@@ -318,7 +318,7 @@ static void upStream(tunnel_t *self, context_t *c)
             // TODO(root): check auth methods
             // uint8_t authmethod = kNoAuth;
             // send auth mothod
-            sbuf_t *resp = bufferpoolPop(getContextBufferPool(c));
+            sbuf_t *resp = bufferpoolGetLargeBuffer(getContextBufferPool(c));
             sbufShiftLeft(resp, 1);
             sbufWriteUnAlignedUI8(resp, kNoAuth);
             sbufShiftLeft(resp, 1);
@@ -516,7 +516,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 reuseContextPayload(c);
                 // todo (ip filter) socks5 standard says this should whitelist the caller ip
                 //  socks5 outbound accepted, udp relay will connect
-                sbuf_t *respbuf = bufferpoolPop(getContextBufferPool(c));
+                sbuf_t *respbuf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
                 sbufSetLength(respbuf, 32);
                 uint8_t *resp = sbufGetMutablePtr(respbuf);
                 memorySet(resp, 0, 32);
@@ -546,7 +546,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 default:
                     // connects to a ip4 or 6 right? anyways close if thats not the case
-                    bufferpoolResuesBuf(getContextBufferPool(c), respbuf);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), respbuf);
                     goto disconnect;
                     break;
                 }
@@ -624,7 +624,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             cstate->init_sent = false;
             // socks5 outbound failed
-            sbuf_t *respbuf = bufferpoolPop(getContextBufferPool(c));
+            sbuf_t *respbuf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
             sbufSetLength(respbuf, 32);
             uint8_t *resp = sbufGetMutablePtr(respbuf);
             memorySet(resp, 0, 32);
@@ -656,7 +656,7 @@ static void downStream(tunnel_t *self, context_t *c)
         if (c->line->dest_ctx.address_protocol == kSapTcp)
         {
             // socks5 outbound connected
-            sbuf_t *respbuf = bufferpoolPop(getContextBufferPool(c));
+            sbuf_t *respbuf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
             sbufSetLength(respbuf, 32);
             uint8_t *resp = sbufGetMutablePtr(respbuf);
             memorySet(resp, 0, 32);
@@ -688,7 +688,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 cleanup(cstate, getContextBufferPool(c));
                 memoryFree(cstate);
                 CSTATE_DROP(c);
-                bufferpoolResuesBuf(getContextBufferPool(c), respbuf);
+                bufferpoolResuesBuffer(getContextBufferPool(c), respbuf);
                 self->up->upStream(self->dw, newFinContext(c->line));
                 context_t *fc = newFinContextFrom(c);
                 destroyContext(c);
@@ -717,7 +717,7 @@ tunnel_t *newSocks5Server(node_instance_context_t *instance_info)
     socks5_server_state_t *state = memoryAllocate(sizeof(socks5_server_state_t));
     memorySet(state, 0, sizeof(socks5_server_state_t));
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

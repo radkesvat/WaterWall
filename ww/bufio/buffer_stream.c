@@ -9,7 +9,7 @@ enum
     kConcatMaxThreshould = 4096
 };
 
-buffer_stream_t *newBufferStream(struct buffer_pool_s *pool)
+buffer_stream_t *newBufferStream(buffer_pool_t *pool)
 {
     buffer_stream_t *bs = memoryAllocate(sizeof(buffer_stream_t));
     bs->q               = queue_with_capacity(kQCap);
@@ -22,7 +22,7 @@ void emptyBufferStream(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
-        bufferpoolResuesBuf(self->pool, *i.ref);
+        bufferpoolResuesBuffer(self->pool, *i.ref);
     }
     queue_clear(&self->q);
     self->size = 0;
@@ -32,7 +32,7 @@ void destroyBufferStream(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
-        bufferpoolResuesBuf(self->pool, *i.ref);
+        bufferpoolResuesBuffer(self->pool, *i.ref);
     }
     queue_drop(&self->q);
     memoryFree(self);
@@ -77,8 +77,8 @@ sbuf_t *bufferStreamReadExact(buffer_stream_t *self, size_t bytes)
         size_t available = sbufGetBufLength(container);
         if (available > bytes)
         {
-            sbuf_t *slice = bufferpoolPop(self->pool);
-            slice         = sbufSliceTo(slice, container, bytes);
+            sbuf_t *slice = bufferpoolGetLargeBuffer(self->pool);
+            slice         = sbufMoveTo(slice, container, bytes);
             queue_push_front(&self->q, container);
             return slice;
         }
@@ -86,7 +86,7 @@ sbuf_t *bufferStreamReadExact(buffer_stream_t *self, size_t bytes)
         {
             return container;
         }
-        container = sbufAppendMerge(self->pool, container, queue_pull_front(&self->q));
+        container = sbufAppendMergeNoPadding(self->pool, container, queue_pull_front(&self->q));
     }
 }
 

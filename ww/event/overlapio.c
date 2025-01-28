@@ -333,7 +333,7 @@ try_send:
     }
     if (nwrite == sbufGetBufLength(buf)) {
         //goto write_done;
-        bufferpoolResuesBuf(io->loop->bufpool,buf);
+        bufferpoolResuesBuffer(io->loop->bufpool,buf);
         return nwrite;
     }
 WSASend:
@@ -347,7 +347,7 @@ WSASend:
         // NOTE: free on_send_complete
         EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
         memoryCopy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);
-        bufferpoolResuesBuf(io->loop->bufpool,buf);
+        bufferpoolResuesBuffer(io->loop->bufpool,buf);
         hovlp->io = io;
         DWORD dwbytes = 0;
         DWORD flags = 0;
@@ -374,7 +374,7 @@ WSASend:
     }
 write_error:
 disconnect:
-    bufferpoolResuesBuf(io->loop->bufpool,buf);
+    bufferpoolResuesBuffer(io->loop->bufpool,buf);
     wioClose(io);
     return 0;
 }

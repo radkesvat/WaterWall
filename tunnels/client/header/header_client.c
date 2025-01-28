@@ -77,7 +77,7 @@ tunnel_t *newHeaderClient(node_instance_context_t *instance_info)
     const cJSON *settings = instance_info->node_settings_json;
     state->data           = parseDynamicNumericValueFromJsonObject(settings, "data", 1, "src_context->port");
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

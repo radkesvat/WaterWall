@@ -73,7 +73,7 @@ static void doConnect(struct connect_arg *cg)
         destroyContext(hello_data_ctx);
         return;
     }
-    hello_data_ctx->payload = bufferpoolPop(getContextBufferPool(hello_data_ctx));
+    hello_data_ctx->payload = bufferpoolGetLargeBuffer(getContextBufferPool(hello_data_ctx));
     sbufSetLength(hello_data_ctx->payload, kHandShakeLength);
     memorySet(sbufGetMutablePtr(hello_data_ctx->payload), kHandShakeByte, kHandShakeLength);
     self->up->upStream(self->up, hello_data_ctx);

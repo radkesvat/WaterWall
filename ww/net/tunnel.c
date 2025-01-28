@@ -8,32 +8,15 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-void insertTunnelToArray(tunnel_array_t *tc, tunnel_t *t)
-{
-    if (t->chain_index == kMaxChainLen)
-    {
-        LOGF("insertTunnelToArray overflow!");
-        exit(1);
-    }
-
-    tc->tuns[tc->len++] = t;
-}
-
-void insertTunnelToChainInfo(tunnel_chain_info_t *tci, tunnel_t *t)
-{
-    insertTunnelToArray(&(tci->tunnels), t);
-    tci->sum_padding_left += t->node->metadata.required_padding_left;
-    tci->sum_padding_right += t->node->metadata.required_padding_right;
-}
 
 // `from` upstreams to `to`
-void chainUp(tunnel_t *from, tunnel_t *to)
+void tunnelChainUp(tunnel_t *from, tunnel_t *to)
 {
     from->up = to;
 }
 
 // `to` downstreams to `from`
-void chainDown(tunnel_t *from, tunnel_t *to)
+void tunnelChainDown(tunnel_t *from, tunnel_t *to)
 {
     // assert(to->dw == NULL); // 2 nodes cannot chain to 1 exact node
     // such chains are possible by a generic listener adapter
@@ -42,10 +25,10 @@ void chainDown(tunnel_t *from, tunnel_t *to)
 }
 
 // `from` <-> `to`
-void chain(tunnel_t *from, tunnel_t *to)
+void tunnelChain(tunnel_t *from, tunnel_t *to)
 {
-    chainUp(from, to);
-    chainDown(from, to);
+    tunnelChainUp(from, to);
+    tunnelChainDown(from, to);
 }
 
 static void defaultUpStreamInit(tunnel_t *self, line_t *line)
@@ -120,10 +103,10 @@ static void defaultDownStreamResume(tunnel_t *self, line_t *line)
     self->up->fnResumeD(self->up, line);
 }
 
-static void defaultOnChain(tunnel_t *t, tunnel_chain_info_t *info)
+static void defaultOnChain(tunnel_t *t, tunnel_chain_t *info)
 {
     node_t *node = t->node;
-    insertTunnelToChainInfo(info, t);
+    tunnelchainInestert(info, t);
 
     if (node->hash_next == 0x0)
     {
@@ -141,25 +124,25 @@ static void defaultOnChain(tunnel_t *t, tunnel_chain_info_t *info)
     assert(next->instance); // every node in node map is created byfore chaining
 
     tunnel_t *tnext = next->instance;
-    chain(t, tnext);
+    tunnelChain(t, tnext);
     tnext->onChain(tnext, info);
 }
 
 static void defaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t index, uint16_t mem_offset)
 {
-    insertTunnelToArray(arr, t);
+    tunnelarrayInesert(arr, t);
     t->chain_index   = index;
     t->cstate_offset = mem_offset;
 
     if (t->up)
     {
-        t->up->onIndex(t->up, arr, index + 1, mem_offset + t->cstate_size);
+        t->up->onIndex(t->up, arr, index + 1, mem_offset + t->lstate_size);
     }
 }
 
 static void defaultOnChainingComplete(tunnel_t *t)
 {
-    (void)t;
+    (void) t;
 }
 
 static void defaultOnChainStart(tunnel_t *t)
@@ -170,11 +153,29 @@ static void defaultOnChainStart(tunnel_t *t)
     }
 }
 
-tunnel_t *newTunnel(node_t *node, uint16_t tstate_size, uint16_t cstate_size)
+enum
 {
-    tunnel_t *ptr = memoryAllocate(sizeof(tunnel_t) + tstate_size);
+    kTunnelsMemSize = 16 * 200
+};
 
-    *ptr = (tunnel_t){.cstate_size = cstate_size,
+static uint8_t tunnel_alloc_pool[kTunnelsMemSize] = {0};
+static size_t  tunnel_alloc_index                 = 0;
+
+tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
+{
+    size_t tsize = sizeof(tunnel_t) + tstate_size;
+
+    if (tunnel_alloc_index + tsize > kTunnelsMemSize)
+    {
+        LOGF("maximum size for tunnels buffer reached");
+        exit(1);
+    }
+
+    tunnel_t *ptr = (tunnel_t *) (&tunnel_alloc_pool[tunnel_alloc_index]);
+
+    memorySet(ptr, 0, tsize);
+
+    *ptr = (tunnel_t){.lstate_size = lstate_size,
                       .fnInitU     = &defaultUpStreamInit,
                       .fnInitD     = &defaultdownStreamInit,
                       .fnPayloadU  = &defaultUpStreamPayload,
@@ -198,25 +199,13 @@ tunnel_t *newTunnel(node_t *node, uint16_t tstate_size, uint16_t cstate_size)
     return ptr;
 }
 
-pool_item_t *allocLinePoolHandle(struct generic_pool_s *pool)
-{
-    (void) pool;
-    return memoryAllocate(sizeof(line_t));
-}
-
-void destroyLinePoolHandle(struct generic_pool_s *pool, pool_item_t *item)
-{
-    (void) pool;
-    memoryFree(item);
-}
-
-pool_item_t *allocContextPoolHandle(struct generic_pool_s *pool)
+pool_item_t *allocContextPoolHandle(generic_pool_t *pool)
 {
     (void) pool;
     return memoryAllocate(sizeof(context_t));
 }
 
-void destroyContextPoolHandle(struct generic_pool_s *pool, pool_item_t *item)
+void destroyContextPoolHandle(generic_pool_t *pool, pool_item_t *item)
 {
     (void) pool;
     memoryFree(item);

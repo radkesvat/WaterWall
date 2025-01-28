@@ -91,7 +91,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
 
     state->pair_node   = pair_node;
     state->mode_upside = instance_info->node->next == NULL;
-    tunnel_t *t        = newTunnel();
+    tunnel_t *t        = tunnelCreate();
 
     if (pair_node->instance)
     {

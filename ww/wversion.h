@@ -16,11 +16,11 @@
 #define WW_VERSION_NUMBER   ((WW_VERSION_MAJOR << 16) | (WW_VERSION_MINOR << 8) | WW_VERSION_PATCH)
 
 
-WW_INLINE const char* wwVersion(void) {
+WW_INLINE const char* wwGetVersion(void) {
     return WW_VERSION_STRING;
 }
 
-WW_EXPORT const char* wwCompileVersion(void);
+WW_EXPORT const char* wwGetCompileVersion(void);
 
 // 1.2.3.4 => 0x01020304
 WW_EXPORT int versionATOI(const char* str);

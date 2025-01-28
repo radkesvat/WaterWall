@@ -30,58 +30,6 @@ void initWLibc(void){
 
 #endif
 
-#if defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
-
-#include <x86intrin.h>
-void memoryCopy128(void *dest, const void *src, intmax_t n)
-{
-    __m256i       *d_vec = (__m256i *) (dest);
-    const __m256i *s_vec = (const __m256i *) (src);
-
-    if ((uintptr_t) dest % 128 != 0 || (uintptr_t) src % 128 != 0)
-    {
-
-        while (n > 0)
-        {
-            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
-            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
-            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
-            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
-
-            n -= 128;
-            d_vec += 4;
-            s_vec += 4;
-        }
-
-        return;
-    }
-
-    while (n > 0)
-    {
-        _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
-        _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
-        _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
-        _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
-
-        n -= 128;
-        d_vec += 4;
-        s_vec += 4;
-    }
-}
-
-#else
-
-void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, intmax_t  n)
-{
-    while (n > 0)
-    {
-        memoryCopy(_dest, _src, 128);
-        n -= 128;
-        _dest += 128;
-        _src += 128;
-    }
-}
-#endif
 
 
 //--------------------string-------------------------------

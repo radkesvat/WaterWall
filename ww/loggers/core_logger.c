@@ -1,4 +1,4 @@
-#include "internal_logger.h"
+#include "core_logger.h"
 
 
 struct logger_s;

@@ -96,7 +96,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         self->up->upStream(self->up, newInitContext(c->line));
                         if (! isAlive(c->line))
                         {
-                            bufferpoolResuesBuf(getContextBufferPool(c), record_buf);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), record_buf);
                             destroyContext(c);
 
                             return;
@@ -117,7 +117,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                     else
                     {
-                        bufferpoolResuesBuf(getContextBufferPool(c), record_buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), record_buf);
                     }
                 }
                 else
@@ -160,7 +160,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         ! is_tls_applicationdata || ! is_tls_33)
                     {
                         LOGE("RealityServer: verifyMessage failed");
-                        bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                         goto failed;
                     }
 
@@ -253,8 +253,8 @@ static void downStream(tunnel_t *self, context_t *c)
                 while (sbufGetBufLength(buf) > 0 && isAlive(c->line))
                 {
                     const uint16_t  remain = (uint16_t) min(sbufGetBufLength(buf), chunk_size);
-                    sbuf_t *chunk  = bufferpoolPop(getContextBufferPool(c));
-                    chunk = sbufSliceTo(chunk, buf, remain);
+                    sbuf_t *chunk  = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                    chunk = sbufMoveTo(chunk, buf, remain);
                     chunk =
                         genericEncrypt(chunk, cstate->cipher_context, state->context_password, getContextBufferPool(c));
                     signMessage(chunk, cstate->msg_digest, cstate->sign_context, cstate->sign_key);
@@ -264,7 +264,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     assert(sbufGetBufLength(chunk) % 16 == 5);
                     self->dw->downStream(self->dw, cout);
                 }
-                bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                 destroyContext(c);
             }
         }
@@ -362,8 +362,8 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     state->dest = next_node->instance;
     memoryFree(dest_node_name);
 
-    tunnel_t *t = newTunnel();
-    chainDown(t, state->dest);
+    tunnel_t *t = tunnelCreate();
+    tunnelChainDown(t, state->dest);
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

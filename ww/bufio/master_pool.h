@@ -64,7 +64,7 @@ typedef void (*MasterPoolItemDestroyHandle)(struct master_pool_s *pool, master_p
 typedef struct master_pool_s
 {
     void                       *memptr;
-    wmutex_t              mutex;
+    wmutex_t                    mutex;
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;
     atomic_uint                 len;
@@ -156,4 +156,4 @@ static void installMasterPoolAllocCallBacks(master_pool_t *pool, MasterPoolItemC
 }
 
 master_pool_t *newMasterPoolWithCap(unsigned int pool_width);
-void destroyMasterPool(master_pool_t * pool);
+void           destroyMasterPool(master_pool_t *pool);

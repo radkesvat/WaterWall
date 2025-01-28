@@ -22,7 +22,6 @@ typedef struct tunnel_metadata_s
     int32_t         version;
     enum node_flags flags;
     uint16_t        required_padding_left;
-    uint16_t        required_padding_right;
 } tunnel_metadata_t;
 
 typedef struct node_s node_t;
@@ -51,6 +50,6 @@ struct node_s
     uint32_t          refrenced;
 };
 
-node_t loadNodeLibrary(const char *name);
+node_t loadNodeLibraryByName(const char *name);
 node_t loadNodeLibraryByHash(hash_t hname);
 void   registerStaticNodeLib(node_t lib);

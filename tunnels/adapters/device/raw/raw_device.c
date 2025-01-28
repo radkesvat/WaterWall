@@ -108,7 +108,7 @@ static void onIPPacketReceived(struct raw_device_s *rdev, void *userdata, sbuf_t
     printIPPacketInfo(sbufGetRawPtr(buf), sbufGetBufLength(buf));
 #endif
 
-    // bufferpoolResuesBuf(getWorkerBufferPool(tid), buf);
+    // bufferpoolResuesBuffer(getWorkerBufferPool(tid), buf);
 
     context_t *ctx = newContext(state->thread_lines[tid]);
     ctx->payload   = buf;
@@ -146,7 +146,7 @@ tunnel_t *newRawDevice(node_instance_context_t *instance_info)
         state->thread_lines[i] = newLine(i);
     }
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
 
     if ((int) mode.status == kDvsWatcher || (int) mode.status == kDvsBoth)
     {

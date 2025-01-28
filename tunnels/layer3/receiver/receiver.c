@@ -136,13 +136,13 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
 
     state->device_tunnel = tundevice_node->instance;
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
 
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    chain(tundevice_node->instance, t);
+    tunnelChain(tundevice_node->instance, t);
 
     return t;
 }

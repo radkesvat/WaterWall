@@ -224,7 +224,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     {
         if (k.ref->buf)
         {
-            bufferpoolResuesBuf(getWorkerBufferPool(con->line->tid), k.ref->buf);
+            bufferpoolResuesBuffer(getWorkerBufferPool(con->line->tid), k.ref->buf);
         }
         unLockLine(k.ref->stream_line);
     }
@@ -299,7 +299,7 @@ static void onPingTimer(wtimer_t *timer)
         lockLine(h2line);
         while (0 < (len = nghttp2_session_mem_send2(con->session, (const uint8_t **) &data)))
         {
-            sbuf_t *send_buf = bufferpoolPop(getLineBufferPool(h2line));
+            sbuf_t *send_buf = bufferpoolGetLargeBuffer(getLineBufferPool(h2line));
             sbufSetLength(send_buf, len);
             sbufWrite(send_buf, data, len);
             context_t *req = newContext(h2line);

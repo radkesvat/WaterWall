@@ -1,16 +1,16 @@
 #pragma once
-#include "wlibc.h"
 #include "generic_pool.h"
 #include "master_pool.h"
 #include "shiftbuffer.h"
+#include "wlibc.h"
 
 /*
-    A growable pool, very simple.
+    A growable pool
 
     preallocates (n) number of buffers at each call to charge(),
 
-    users should call bufferpoolPop() when they want a buffer, and later call bufferpoolResuesBuf when they are done with
-    the buffer.
+    users should call bufferpoolGetLargeBuffer() when they want a buffer, and later call bufferpoolResuesBuffer when
+   they are done with the buffer.
 
     recharing is done autmatically and internally.
 
@@ -26,19 +26,19 @@
 
 typedef struct buffer_pool_s buffer_pool_t;
 
-buffer_pool_t  *bufferpoolCreate(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t pool_width);
-sbuf_t *bufferpoolPop(buffer_pool_t *pool);
-sbuf_t *bufferpoolPopSmall(buffer_pool_t *pool);
-sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2);
-sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b);
-
-void bufferpoolResuesBuf(buffer_pool_t *pool, sbuf_t *b);
+buffer_pool_t *bufferpoolCreate(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t bufcount,
+                                uint32_t large_buffer_size, uint32_t small_buffer_size);
+sbuf_t        *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
+sbuf_t        *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
+void           bufferpoolResuesBuffer(buffer_pool_t *pool, sbuf_t *b);
 
 void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
-                                        uint16_t large_buffer_right_padding, uint16_t small_buffer_left_padding,
-                                        uint16_t small_buffer_right_padding);
+                                        uint16_t small_buffer_left_padding);
 
-// void            reuseBufferThreadSafe(sbuf_t *buf);
-uint32_t bufferpoolGetLargeBufferDefaultSize(void);
-uint32_t bufferpoolGetSmallBufferDefaultSize(void);
+uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
+uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool);
 bool     bufferpoolCheckIskLargeBuffer(sbuf_t *buf);
+
+sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2);
+sbuf_t *sbufAppendMergeNoPadding(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2);
+sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b);

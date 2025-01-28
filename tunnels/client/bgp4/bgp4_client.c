@@ -136,7 +136,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     LOGE("Bgp4Client: invalid marker");
                     destroyBufferStream(cstate->read_stream);
-                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                     memoryFree(cstate);
                     CSTATE_DROP(c);
                     self->up->upStream(self->up, newFinContextFrom(c));
@@ -149,7 +149,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (sbufGetBufLength(buf) <= 0)
                 {
                     LOGE("Bgp4Client: message had no payload");
-                    bufferpoolResuesBuf(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
                     goto disconnect;
                 }
                 context_t *data_ctx = newContext(c->line);
@@ -200,7 +200,7 @@ tunnel_t *newBgp4Client(node_instance_context_t *instance_info)
     state->as_number = (uint16_t) fastRand();
     state->sim_ip    = (fastRand() * 3);
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

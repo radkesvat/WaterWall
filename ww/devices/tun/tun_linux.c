@@ -125,7 +125,7 @@ static WTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        buf = bufferpoolPopSmall(tdev->reader_buffer_pool);
+        buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
 
         buf = sbufReserveSpace(buf, kReadPacketSize);
 
@@ -133,14 +133,14 @@ static WTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 
         if (nread == 0)
         {
-            bufferpoolResuesBuf(tdev->reader_buffer_pool, buf);
+            bufferpoolResuesBuffer(tdev->reader_buffer_pool, buf);
             LOGW("TunDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            bufferpoolResuesBuf(tdev->reader_buffer_pool, buf);
+            bufferpoolResuesBuffer(tdev->reader_buffer_pool, buf);
 
             LOGE("TunDevice: reading a packet from TUN device failed, code: %d", (int) nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
@@ -187,7 +187,7 @@ static WTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 
         nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetBufLength(buf));
 
-        bufferpoolResuesBuf(tdev->writer_buffer_pool, buf);
+        bufferpoolResuesBuffer(tdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -309,7 +309,7 @@ bool bringTunDeviceDown(tun_device_t *tdev)
     sbuf_t *buf;
     while (chanRecv(tdev->writer_buffer_channel, &buf))
     {
-        bufferpoolResuesBuf(tdev->reader_buffer_pool, buf);
+        bufferpoolResuesBuffer(tdev->reader_buffer_pool, buf);
     }
 
     return true;

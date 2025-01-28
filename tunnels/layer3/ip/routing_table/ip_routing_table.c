@@ -255,7 +255,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
     }
     state->routes_len = i;
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
 
     t->state      = state;
     t->upStream   = ((int) mode_dv.status == kDvsDestMode) ? &upStreamDestMode : &upStreamSrcMode;

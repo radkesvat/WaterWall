@@ -377,7 +377,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         }
                         else
                         {
-                            bufferpoolResuesBuf(getContextBufferPool(c), upload_line_cstate->buffering);
+                            bufferpoolResuesBuffer(getContextBufferPool(c), upload_line_cstate->buffering);
                             upload_line_cstate->buffering = NULL;
                         }
                     }
@@ -449,7 +449,7 @@ static void upStream(tunnel_t *self, context_t *c)
             dropContexPayload(c);
             if (sbufGetBufLength(cstate->buffering) >= kMaxBuffering)
             {
-                bufferpoolResuesBuf(getContextBufferPool(c), cstate->buffering);
+                bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buffering);
                 cstate->buffering = NULL;
             }
             destroyContext(c);
@@ -495,7 +495,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCsUnkown:
                 if (cstate->buffering)
                 {
-                    bufferpoolResuesBuf(getContextBufferPool(c), cstate->buffering);
+                    bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buffering);
                 }
                 CSTATE_DROP(c);
                 memoryFree(cstate);
@@ -516,7 +516,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 hmap_cons_t_erase_at(&(state->upload_line_map), f_iter);
 
                 mutexUnlock(&(state->upload_line_map_mutex));
-                bufferpoolResuesBuf(getContextBufferPool(c), cstate->buffering);
+                bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buffering);
                 CSTATE_DROP(c);
                 memoryFree(cstate);
                 destroyContext(c);
@@ -730,7 +730,7 @@ tunnel_t *newHalfDuplexServer(node_instance_context_t *instance_info)
     state->download_line_map = hmap_cons_t_with_capacity(kHmapCap);
     state->upload_line_map   = hmap_cons_t_with_capacity(kHmapCap);
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

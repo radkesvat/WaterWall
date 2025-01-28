@@ -15,7 +15,7 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
     udp_connector_con_state_t *cstate = (udp_connector_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        bufferpoolResuesBuf(wloopGetBufferPool(weventGetLoop(io)), buf);
+        bufferpoolResuesBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
     sbuf_t *payload = buf;
@@ -228,7 +228,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
     {
         socketContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

@@ -73,7 +73,7 @@ static node_manager_t *state;
 
 //         memoryCopy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
 
-//         chain(n1->instance, n2->instance);
+//         tunnelChain(n1->instance, n2->instance);
 //     }
 //     else
 //     {
@@ -134,7 +134,6 @@ static void runNodes(node_manager_config_t *cfg)
     memoryCopy(t_array_cpy, t_array, sizeof(t_array_cpy));
 
     uint16_t buffs_sum_lef_pad   = 0;
-    uint16_t buffs_sum_right_pad = 0;
 
     {
         for (int i = 0; i < tunnels_count; i++)
@@ -146,11 +145,10 @@ static void runNodes(node_manager_config_t *cfg)
                 continue;
             }
 
-            tunnel_chain_info_t tci = {0};
+            tunnel_chain_t tci = {0};
             tunnel->onChain(tunnel, &tci);
 
             buffs_sum_lef_pad   = max(buffs_sum_lef_pad, tci.sum_padding_left);
-            buffs_sum_right_pad = max(buffs_sum_right_pad, tci.sum_padding_right);
 
             for (int cti = 0; cti < tci.tunnels.len; cti++)
             {
@@ -168,8 +166,8 @@ static void runNodes(node_manager_config_t *cfg)
 
     for (int wi = 0; wi < getWorkersCount(); wi++)
     {
-        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), buffs_sum_lef_pad, buffs_sum_right_pad,
-                                            buffs_sum_lef_pad, buffs_sum_right_pad);
+        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), buffs_sum_lef_pad,
+                                            buffs_sum_lef_pad);
     }
 
     {

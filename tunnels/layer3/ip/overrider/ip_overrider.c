@@ -128,7 +128,7 @@ tunnel_t *newLayer3IpOverrider(node_instance_context_t *instance_info)
         ipbuf = NULL;
     }
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
 
     t->state      = state;
     t->upStream   = ((int) mode_dv.status == kDvsDestMode) ? &upStreamDestMode : &upStreamSrcMode;

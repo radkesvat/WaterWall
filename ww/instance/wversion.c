@@ -1,7 +1,7 @@
 #include "wversion.h"
 #include "wtime.h"
 
-const char* wwCompileVersion(void) {
+const char* wwGetCompileVersion(void) {
     static char s_version[16] = {0};
     datetime_t dt = wwCompileDateTime();
     snprintf(s_version, sizeof(s_version), "%d.%d.%d.%d",

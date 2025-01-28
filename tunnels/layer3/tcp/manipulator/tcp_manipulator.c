@@ -195,7 +195,7 @@ tunnel_t *newLayer3TcpManipulator(node_instance_context_t *instance_info)
         state->corrupt_password = state->corrupt_password % 29;
     }
 
-    tunnel_t *t = newTunnel();
+    tunnel_t *t = tunnelCreate();
 
     t->state      = state;
     t->upStream   = &upStream;

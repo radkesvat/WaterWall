@@ -79,7 +79,7 @@ tunnel_t *newPreConnectServer(node_instance_context_t *instance_info)
     preconnect_server_state_t *state = memoryAllocate(sizeof(preconnect_server_state_t));
     memorySet(state, 0, sizeof(preconnect_server_state_t));
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

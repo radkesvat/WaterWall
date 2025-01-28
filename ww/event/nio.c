@@ -197,9 +197,9 @@ static void nio_read(wio_t* io) {
 
     switch (io->io_type) {
     default:
-    case WIO_TYPE_TCP: buf = bufferpoolPop(io->loop->bufpool); break;
+    case WIO_TYPE_TCP: buf = bufferpoolGetLargeBuffer(io->loop->bufpool); break;
     case WIO_TYPE_UDP:
-    case WIO_TYPE_IP: buf = bufferpoolPopSmall(io->loop->bufpool); break;
+    case WIO_TYPE_IP: buf = bufferpoolGetSmallBuffer(io->loop->bufpool); break;
     }
 
     unsigned int available = sbufGetRightCapacityNoPadding(buf);
@@ -217,23 +217,23 @@ static void nio_read(wio_t* io) {
         err = socketERRNO();
         if (err == EAGAIN || err == EINTR) {
             // goto read_done;
-            bufferpoolResuesBuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuffer(io->loop->bufpool, buf);
             return;
         }
         else if (err == EMSGSIZE) {
             // ignore
-            bufferpoolResuesBuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuffer(io->loop->bufpool, buf);
             return;
         }
         else {
             // printError("read");
-            bufferpoolResuesBuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuffer(io->loop->bufpool, buf);
             io->error = err;
             goto read_error;
         }
     }
     if (nread == 0) {
-        bufferpoolResuesBuf(io->loop->bufpool, buf);
+        bufferpoolResuesBuffer(io->loop->bufpool, buf);
         goto disconnect;
     }
     // printf("%d \n",nread);
@@ -303,7 +303,7 @@ write:
         //     if(io->pfd_w == 0)
         //         EVENTLOOP_FREE(base);
         // #else
-        bufferpoolResuesBuf(io->loop->bufpool, buf);
+        bufferpoolResuesBuffer(io->loop->bufpool, buf);
         // #endif
         write_queue_pop_front(&io->write_queue);
         __write_cb(io);
@@ -400,7 +400,7 @@ int wioRead(wio_t* io) {
 int wioWrite(wio_t* io, sbuf_t* buf) {
     if (io->closed) {
         wloge("wioWrite called but fd[%d] already closed!", io->fd);
-        bufferpoolResuesBuf(io->loop->bufpool, buf);
+        bufferpoolResuesBuffer(io->loop->bufpool, buf);
         return -1;
     }
     int nwrite = 0, err = 0;
@@ -472,7 +472,7 @@ write_done:
 
     if (nwrite > 0) {
         if (nwrite == len) {
-            bufferpoolResuesBuf(io->loop->bufpool, buf);
+            bufferpoolResuesBuffer(io->loop->bufpool, buf);
         }
         __write_cb(io);
     }
@@ -485,7 +485,7 @@ disconnect:
      * if wio_close_sync, we have to be very careful to avoid using freed resources.
      * But if wioCloseAsync, we do not have to worry about this.
      */
-    bufferpoolResuesBuf(io->loop->bufpool, buf);
+    bufferpoolResuesBuffer(io->loop->bufpool, buf);
     if (io->io_type & WIO_TYPE_SOCK_STREAM) {
         wioCloseAsync(io);
     }

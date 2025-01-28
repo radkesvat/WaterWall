@@ -93,7 +93,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcp_connector_con_state_t *cstate = (tcp_connector_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        bufferpoolResuesBuf(wloopGetBufferPool(weventGetLoop(io)), buf);
+        bufferpoolResuesBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
     sbuf_t *payload = buf;
@@ -508,7 +508,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

@@ -112,11 +112,11 @@ static void defaultPipeTunnelOnChainStart(tunnel_t *self)
     (void) self;
 }
 
-tunnel_t *newTunnel(uint16_t tstate_size, uint16_t cstate_size)
+tunnel_t *tunnelCreate(uint16_t tstate_size, uint16_t lstate_size)
 {
     tunnel_t *ptr = memoryAllocate(sizeof(tunnel_t) + tstate_size);
 
-    *ptr = (tunnel_t) {.cstate_size        = cstate_size,
+    *ptr = (tunnel_t) {.lstate_size        = lstate_size,
                        .fnInitU            = &defaultPipeTunnelUpStreamInit,
                        .fnInitD            = &defaultPipeTunneldownStreamInit,
                        .fnPayloadU         = &defaultPipeTunnelUpStreamPayload,

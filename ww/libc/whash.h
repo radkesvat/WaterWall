@@ -1,5 +1,5 @@
 #pragma once
-
+#include "wlibc.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -59,5 +59,5 @@ static inline hash_t calcHashBytes(const void *data, size_t len)
 }
 
 #else
-#error "select hash algorithm"
+#error "hash alg not selecetd!"
 #endif

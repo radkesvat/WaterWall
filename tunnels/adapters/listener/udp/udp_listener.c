@@ -205,7 +205,7 @@ static void onFilteredRecv(wevent_t *ev)
                            (uint64_t) kUdpInitExpireTime);
         if (! idle)
         {
-            bufferpoolResuesBuf(getWorkerBufferPool(data->tid), data->buf);
+            bufferpoolResuesBuffer(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }
@@ -214,7 +214,7 @@ static void onFilteredRecv(wevent_t *ev)
         if (! con)
         {
             idleTableRemoveIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
-            bufferpoolResuesBuf(getWorkerBufferPool(data->tid), data->buf);
+            bufferpoolResuesBuffer(getWorkerBufferPool(data->tid), data->buf);
             destroyUdpPayload(data);
             return;
         }
@@ -353,7 +353,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
     filter_opt.protocol         = kSapUdp;
     filter_opt.black_list_raddr = NULL;
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

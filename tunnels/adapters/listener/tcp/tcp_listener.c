@@ -227,7 +227,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcp_listener_con_state_t *cstate = (tcp_listener_con_state_t *) (weventGetUserdata(io));
     if (UNLIKELY(cstate == NULL))
     {
-        bufferpoolResuesBuf(wloopGetBufferPool(weventGetLoop(io)), buf);
+        bufferpoolResuesBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
     sbuf_t *payload = buf;
@@ -440,7 +440,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     filter_opt.protocol         = kSapTcp;
     filter_opt.black_list_raddr = NULL;
 
-    tunnel_t *t   = newTunnel();
+    tunnel_t *t   = tunnelCreate();
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

@@ -86,7 +86,7 @@ node_t loadNodeLibraryByHash(hash_t hname)
     return dynLoadNodeLib(hname);
 }
 
-node_t loadNodeLibrary(const char *name)
+node_t loadNodeLibraryByName(const char *name)
 {
     hash_t hname = calcHashBytes(name, strlen(name));
     return loadNodeLibraryByHash(hname);
