@@ -77,14 +77,14 @@ static void printIPPacketInfo(const char *devname, const unsigned char *buffer)
     LOGD(logbuf);
 }
 
-static pool_item_t *allocTunMsgPoolHandle(struct master_pool_s *pool, void *userdata)
+static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
     (void) userdata;
     (void) pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
-static void destroyTunMsgPoolHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
+static void destroyTunMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
@@ -98,13 +98,13 @@ static void localThreadEventReceived(wevent_t *ev)
 
     msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, tid);
 
-    reuseMasterPoolItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
+    masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
 }
 
 static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
-    popMasterPoolItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
+    masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
     *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
@@ -363,13 +363,13 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
                             .read_event_callback      = cb,
                             .userdata                 = userdata,
                             .writer_buffer_channel    = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
-                            .reader_message_pool      = newMasterPoolWithCap(kMasterMessagePoosbufGetLeftCapacity),
+                            .reader_message_pool      = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
                             .reader_buffer_pool       = reader_bpool,
                             .writer_buffer_pool       = writer_bpool
 
     };
 
-    installMasterPoolAllocCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
+    masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
     return tdev;
 }

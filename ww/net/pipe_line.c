@@ -71,7 +71,7 @@ static void onMsgReceived(wevent_t *ev)
     struct msg_event *msg_ev = weventGetUserdata(ev);
     pipe_line_t      *pl     = msg_ev->pl;
     (*(MsgTargetFunction *) (&(msg_ev->function)))(pl, msg_ev->arg);
-    reusePoolItem(getWorkerPipeLineMsgPool(msg_ev->target_tid), msg_ev);
+    genericpoolReuseItem(getWorkerPipeLineMsgPool(msg_ev->target_tid), msg_ev);
     unlock(pl);
 }
 
@@ -84,7 +84,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
         return;
     }
     lock(pl);
-    struct msg_event *evdata = popPoolItem(getWorkerPipeLineMsgPool(tid_from));
+    struct msg_event *evdata = genericpoolGetItem(getWorkerPipeLineMsgPool(tid_from));
     *evdata = (struct msg_event) {.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
 
     wevent_t ev;
@@ -217,7 +217,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     }
 //     context_t *fctx = newFinContext(pl->right_line);
 //     doneLineDownSide(pl->right_line);
-//     destroyLine(pl->right_line);
+//     lineDestroy(pl->right_line);
 //     pl->right_line = NULL;
 //     pl->local_up_stream(pl->self, fctx, pl);
 //     unlock(pl);
@@ -362,7 +362,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     if (c->fin)
 //     {
 //         doneLineDownSide(pl->right_line);
-//         destroyLine(pl->right_line);
+//         lineDestroy(pl->right_line);
 //         pl->right_line = NULL;
 
 //         bool expected = false;

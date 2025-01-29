@@ -83,7 +83,7 @@ static reverse_server_con_state_t *createCstateU(line_t *line)
     reverse_server_con_state_t *cstate = memoryAllocate(sizeof(reverse_server_con_state_t));
     memorySet(cstate, 0, sizeof(reverse_server_con_state_t));
     cstate->u      = line;
-    cstate->uqueue = newContextQueue();
+    cstate->uqueue = contextqueueCreate();
     setupLineUpSide(line, onLinePausedU, cstate, onLineResumedU);
     return cstate;
 }
@@ -92,7 +92,7 @@ static reverse_server_con_state_t *createCstateD(line_t *line)
 {
     reverse_server_con_state_t *cstate = memoryAllocate(sizeof(reverse_server_con_state_t));
     memorySet(cstate, 0, sizeof(reverse_server_con_state_t));
-    cstate->wait_stream = newBufferStream(getLineBufferPool(line));
+    cstate->wait_stream = bufferstreamCreate(lineGetBufferPool(line));
     cstate->d           = line;
     setupLineUpSide(line, onLinePausedD, cstate, onLineResumedD);
 
@@ -105,11 +105,11 @@ static void cleanup(reverse_server_con_state_t *cstate)
     // so protect everything with if
     if (cstate->uqueue)
     {
-        destroyContextQueue(cstate->uqueue);
+        contextqueueDestory(cstate->uqueue);
     }
     if (cstate->wait_stream)
     {
-        destroyBufferStream(cstate->wait_stream);
+        bufferstreamDestroy(cstate->wait_stream);
     }
     if (cstate->d)
     {

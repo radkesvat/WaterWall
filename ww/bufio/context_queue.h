@@ -11,8 +11,8 @@
 
 typedef struct context_queue_s context_queue_t;
 
-context_queue_t *newContextQueue(void);
-void             destroyContextQueue(context_queue_t *self);
-void             contextQueuePush(context_queue_t *self, context_t *context);
-context_t       *contextQueuePop(context_queue_t *self);
-size_t           contextQueueLen(context_queue_t *self);
+context_queue_t *contextqueueCreate(void);
+void             contextqueueDestory(context_queue_t *self);
+void             contextqueuePush(context_queue_t *self, context_t *context);
+context_t       *contextqueuePop(context_queue_t *self);
+size_t           contextqueueLen(context_queue_t *self);

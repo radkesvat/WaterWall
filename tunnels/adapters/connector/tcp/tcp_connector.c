@@ -17,10 +17,10 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
     if (cstate->io)
     {
         weventSetUserData(cstate->io, NULL);
-        while (contextQueueLen(cstate->data_queue) > 0)
+        while (contextqueueLen(cstate->data_queue) > 0)
         {
             // all data must be written before sending fin, event loop will hold them for us
-            context_t *cw = contextQueuePop(cstate->data_queue);
+            context_t *cw = contextqueuePop(cstate->data_queue);
 
             if (flush_queue)
             {
@@ -41,7 +41,7 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
         resumeLineDownSide(cstate->line);
     }
     doneLineUpSide(cstate->line);
-    destroyContextQueue(cstate->data_queue);
+    contextqueueDestory(cstate->data_queue);
     memoryFree(cstate);
 }
 
@@ -49,9 +49,9 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
 {
     context_queue_t *data_queue = (cstate)->data_queue;
     wio_t           *io         = cstate->io;
-    while (contextQueueLen(data_queue) > 0)
+    while (contextqueueLen(data_queue) > 0)
     {
-        context_t *cw     = contextQueuePop(data_queue);
+        context_t *cw     = contextqueuePop(data_queue);
         int        bytes  = (int) sbufGetBufLength(cw->payload);
         int        nwrite = wioWrite(io, cw->payload);
         dropContexPayload(cw);
@@ -78,7 +78,7 @@ static void onWriteComplete(wio_t *io)
     {
 
         context_queue_t *data_queue = cstate->data_queue;
-        if (contextQueueLen(data_queue) > 0 && ! resumeWriteQueue(cstate))
+        if (contextqueueLen(data_queue) > 0 && ! resumeWriteQueue(cstate))
         {
             return;
         }
@@ -187,7 +187,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (cstate->write_paused)
         {
             pauseLineDownSide(c->line);
-            contextQueuePush(cstate->data_queue, c);
+            contextqueuePush(cstate->data_queue, c);
         }
         else
         {
@@ -215,7 +215,7 @@ static void upStream(tunnel_t *self, context_t *c)
             *cstate = (tcp_connector_con_state_t) {.buffer_pool  = getContextBufferPool(c),
                                                    .tunnel       = self,
                                                    .line         = c->line,
-                                                   .data_queue   = newContextQueue(),
+                                                   .data_queue   = contextqueueCreate(),
                                                    .write_paused = true};
 
 #ifdef PROFILE

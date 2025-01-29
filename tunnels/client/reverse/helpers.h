@@ -54,8 +54,8 @@ static void cleanup(reverse_client_con_state_t *cstate)
     }
     doneLineDownSide(cstate->u);
     doneLineDownSide(cstate->d);
-    destroyLine(cstate->u);
-    destroyLine(cstate->d);
+    lineDestroy(cstate->u);
+    lineDestroy(cstate->d);
 
     memoryFree(cstate);
 }
@@ -68,7 +68,7 @@ static void doConnect(struct connect_arg *cg)
     context_t *hello_data_ctx = newContext(cstate->u);
     self->up->upStream(self->up, newInitContext(cstate->u));
 
-    if (! isAlive(cstate->u))
+    if (! lineIsAlive(cstate->u))
     {
         destroyContext(hello_data_ctx);
         return;

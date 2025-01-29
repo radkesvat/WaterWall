@@ -19,6 +19,6 @@ typedef struct worker_s
 
 } worker_t;
 
-void initalizeWorker(worker_t *worker, tid_t tid);
-void runWorker(worker_t *worker);
-void runWorkerNewThread(worker_t *worker);
+void workerInit(worker_t *worker, tid_t tid);
+void workerRun(worker_t *worker);
+void workerRunNewThread(worker_t *worker);

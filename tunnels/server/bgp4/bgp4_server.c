@@ -45,10 +45,10 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         bufferStreamPushContextPayload(cstate->read_stream, c);
-        while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) > kBgpHeaderLen)
+        while (lineIsAlive(c->line) && bufferstreamLen(cstate->read_stream) > kBgpHeaderLen)
         {
             uint16_t required_length = 0;
-            bufferStreamViewBytesAt(cstate->read_stream, kMarkerLength, (uint8_t *) &required_length,
+            bufferstreamViewBytesAt(cstate->read_stream, kMarkerLength, (uint8_t *) &required_length,
                                     sizeof(required_length));
             if (required_length <= 1)
             {
@@ -56,9 +56,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 goto disconnect;
             }
 
-            if (bufferStreamLen(cstate->read_stream) >= ((unsigned int) kBgpHeaderLen + required_length))
+            if (bufferstreamLen(cstate->read_stream) >= ((unsigned int) kBgpHeaderLen + required_length))
             {
-                sbuf_t *buf = bufferStreamReadExact(cstate->read_stream, kBgpHeaderLen + required_length);
+                sbuf_t *buf = bufferstreamReadExact(cstate->read_stream, kBgpHeaderLen + required_length);
 
                 static const uint8_t kExpecetd[kMarkerLength] = {VAL_8X, VAL_8X};
 
@@ -133,12 +133,12 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->init)
     {
         cstate        = memoryAllocate(sizeof(bgp4_client_con_state_t));
-        *cstate       = (bgp4_client_con_state_t){.read_stream = newBufferStream(getContextBufferPool(c))};
+        *cstate       = (bgp4_client_con_state_t){.read_stream = bufferstreamCreate(getContextBufferPool(c))};
         CSTATE_MUT(c) = cstate;
     }
     else if (c->fin)
     {
-        destroyBufferStream(cstate->read_stream);
+        bufferstreamDestroy(cstate->read_stream);
         memoryFree(cstate);
         CSTATE_DROP(c);
     }
@@ -147,7 +147,7 @@ static void upStream(tunnel_t *self, context_t *c)
     return;
 
 disconnect:
-    destroyBufferStream(cstate->read_stream);
+    bufferstreamDestroy(cstate->read_stream);
     memoryFree(cstate);
     CSTATE_DROP(c);
     self->up->upStream(self->up, newFinContextFrom(c));
@@ -175,7 +175,7 @@ static void downStream(tunnel_t *self, context_t *c)
     else if (c->fin)
     {
         bgp4_client_con_state_t *cstate = CSTATE(c);
-        destroyBufferStream(cstate->read_stream);
+        bufferstreamDestroy(cstate->read_stream);
         memoryFree(cstate);
         CSTATE_DROP(c);
     }

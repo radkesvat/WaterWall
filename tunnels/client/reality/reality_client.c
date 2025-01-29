@@ -76,7 +76,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     reality_client_con_state_t *cstate = CSTATE(c);
     if (cstate->handshake_completed)
     {
-        destroyBufferStream(cstate->read_stream);
+        bufferstreamDestroy(cstate->read_stream);
     }
     // EVP_CIPHER_CTX_free(cstate->cipher_context);
     // EVP_MD_CTX_free(cstate->sign_context);
@@ -84,7 +84,7 @@ static void cleanup(tunnel_t *self, context_t *c)
     EVP_PKEY_free(cstate->sign_key);
 
     SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
-    destroyContextQueue(cstate->queue);
+    contextqueueDestory(cstate->queue);
 
     memoryFree(cstate);
     CSTATE_DROP(c);
@@ -94,9 +94,9 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
     reality_client_con_state_t *cstate = CSTATE(c);
 
-    while (isAlive(c->line) && contextQueueLen(cstate->queue) > 0)
+    while (lineIsAlive(c->line) && contextqueueLen(cstate->queue) > 0)
     {
-        self->upStream(self, contextQueuePop(cstate->queue));
+        self->upStream(self, contextqueuePop(cstate->queue));
     }
 }
 
@@ -110,7 +110,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            contextQueuePush(cstate->queue, c);
+            contextqueuePush(cstate->queue, c);
             return;
         }
         // todo (research) about encapsulation order and safety, CMAC HMAC
@@ -132,7 +132,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            while (sbufGetBufLength(buf) > 0 && isAlive(c->line))
+            while (sbufGetBufLength(buf) > 0 && lineIsAlive(c->line))
             {
                 const uint16_t  remain = (uint16_t) min(sbufGetBufLength(buf), chunk_size);
                 sbuf_t *chunk  = bufferpoolGetLargeBuffer(getContextBufferPool(c));
@@ -162,7 +162,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->ssl            = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
             cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
             cstate->sign_context   = state->threadlocal_sign_context[c->line->tid];
-            cstate->queue          = newContextQueue();
+            cstate->queue          = contextqueueCreate();
             cstate->msg_digest     = (EVP_MD *) EVP_get_digestbynid(MSG_DIGEST_ALG);
             int sk_size            = EVP_MD_size(cstate->msg_digest);
             cstate->sign_key       = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
@@ -173,7 +173,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             context_t *client_hello_ctx = newContextFrom(c);
             self->up->upStream(self->up, c);
-            if (! isAlive(client_hello_ctx->line))
+            if (! lineIsAlive(client_hello_ctx->line))
             {
                 destroyContext(client_hello_ctx);
                 return;
@@ -187,7 +187,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (status == kSslstatusWantIo)
             {
                 sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(client_hello_ctx));
-                int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                int             avail = (int) sbufGetRightCapacity(buf);
                 n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
                 {
@@ -242,13 +242,13 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             bufferStreamPushContextPayload(cstate->read_stream, c);
             uint8_t tls_header[1 + 2 + 2];
-            while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
+            while (lineIsAlive(c->line) && bufferstreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
-                bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
+                bufferstreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
-                if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                if ((int) bufferstreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    sbuf_t *buf = bufferStreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
+                    sbuf_t *buf = bufferstreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) sbufGetRawPtr(buf))[0] == kTLS12ApplicationData;
                     uint16_t        tls_ver_b;
                     memoryCopy(&tls_ver_b, ((uint8_t *) sbufGetRawPtr(buf)) + 1, sizeof(uint16_t));
@@ -284,7 +284,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         int len = (int) sbufGetBufLength(c->payload);
 
-        while (len > 0 && isAlive(c->line))
+        while (len > 0 && lineIsAlive(c->line))
         {
             n = BIO_write(cstate->rbio, sbufGetRawPtr(c->payload), len);
 
@@ -312,7 +312,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     do
                     {
                         sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                        int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                        int             avail = (int) sbufGetRightCapacity(buf);
                         n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
 
                         if (n > 0)
@@ -321,7 +321,7 @@ static void downStream(tunnel_t *self, context_t *c)
                             context_t *req_cont = newContextFrom(c);
                             req_cont->payload   = buf;
                             self->up->upStream(self->up, req_cont);
-                            if (! isAlive(c->line))
+                            if (! lineIsAlive(c->line))
                             {
                                 reuseContextPayload(c);
                                 destroyContext(c);
@@ -351,7 +351,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 /* Did SSL request to write bytes? */
                 sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                int             avail = (int) sbufGetRightCapacity(buf);
                 n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
                 {
@@ -359,7 +359,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     context_t *data_ctx = newContext(c->line);
                     data_ctx->payload   = buf;
                     self->up->upStream(self->up, data_ctx);
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         reuseContextPayload(c);
                         destroyContext(c);
@@ -376,7 +376,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     LOGD("RealityClient: Tls handshake complete");
 
                     cstate->handshake_completed = true;
-                    cstate->read_stream         = newBufferStream(getContextBufferPool(c));
+                    cstate->read_stream         = bufferstreamCreate(getContextBufferPool(c));
 
                     flushWriteQueue(self, c);
 

@@ -222,7 +222,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         memoryCopy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
         sbufShiftRight(c->payload, 2);
         self->up->upStream(self->up, newInitContext(c->line));
-        if (! isAlive(c->line))
+        if (! lineIsAlive(c->line))
         {
             LOGW("Socks5Server: udp next node instantly closed the init with fin");
             reuseContextPayload(c);
@@ -327,7 +327,7 @@ static void upStream(tunnel_t *self, context_t *c)
             context_t *reply = newContextFrom(c);
             reply->payload   = resp;
             self->dw->downStream(self->dw, reply);
-            if (! isAlive(c->line))
+            if (! lineIsAlive(c->line))
             {
                 reuseContextPayload(c);
                 destroyContext(c);
@@ -494,7 +494,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 cstate->init_sent = true;
                 self->up->upStream(self->up, newInitContext(c->line));
-                if (! isAlive(c->line))
+                if (! lineIsAlive(c->line))
                 {
                     reuseContextPayload(c);
                     destroyContext(c);
@@ -554,7 +554,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 context_t *success_reply = newContextFrom(c);
                 success_reply->payload   = respbuf;
                 self->dw->downStream(self->dw, success_reply);
-                if (! isAlive(c->line))
+                if (! lineIsAlive(c->line))
                 {
                     destroyContext(c);
                     return;
@@ -638,7 +638,7 @@ static void downStream(tunnel_t *self, context_t *c)
             context_t *fail_reply = newContextFrom(c);
             fail_reply->payload   = respbuf;
             self->dw->downStream(self->dw, fail_reply);
-            if (! isAlive(c->line))
+            if (! lineIsAlive(c->line))
             {
                 destroyContext(c);
                 return;
@@ -700,7 +700,7 @@ static void downStream(tunnel_t *self, context_t *c)
             context_t *success_reply = newContextFrom(c);
             success_reply->payload   = respbuf;
             self->dw->downStream(self->dw, success_reply);
-            if (! isAlive(c->line))
+            if (! lineIsAlive(c->line))
             {
                 destroyContext(c);
                 return;

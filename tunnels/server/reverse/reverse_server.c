@@ -24,18 +24,18 @@ enum
 
 static void flushWriteQueue(tunnel_t *self, reverse_server_con_state_t *cstate)
 {
-    if (contextQueueLen(cstate->uqueue) > 0)
+    if (contextqueueLen(cstate->uqueue) > 0)
     {
         line_t *down_line = cstate->d;
-        while (isAlive(down_line) && contextQueueLen(cstate->uqueue) > 0)
+        while (lineIsAlive(down_line) && contextqueueLen(cstate->uqueue) > 0)
         {
             if (isDownPiped(down_line))
             {
-                pipeDownStream(switchLine(contextQueuePop(cstate->uqueue), down_line));
+                pipeDownStream(switchLine(contextqueuePop(cstate->uqueue), down_line));
             }
             else
             {
-                self->dw->downStream(self->dw, switchLine(contextQueuePop(cstate->uqueue), down_line));
+                self->dw->downStream(self->dw, switchLine(contextqueuePop(cstate->uqueue), down_line));
             }
         }
     }
@@ -68,9 +68,9 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                if (bufferStreamLen(dcstate->wait_stream) >= kHandShakeLength)
+                if (bufferstreamLen(dcstate->wait_stream) >= kHandShakeLength)
                 {
-                    sbuf_t *data = bufferStreamReadExact(dcstate->wait_stream, kHandShakeLength);
+                    sbuf_t *data = bufferstreamReadExact(dcstate->wait_stream, kHandShakeLength);
 
                     static const uint8_t kHandshakeExpecetd[kHandShakeLength] = {VAL_64X, VAL_32X};
 
@@ -105,14 +105,14 @@ static void upStream(tunnel_t *self, context_t *c)
                             memoryFree(dcstate);
                             flushWriteQueue(self, ucstate);
 
-                            if (! isAlive(c->line))
+                            if (! lineIsAlive(c->line))
                             {
                                 destroyContext(c);
                                 return;
                             }
-                            if (bufferStreamLen(ucstate->wait_stream) > 0)
+                            if (bufferstreamLen(ucstate->wait_stream) > 0)
                             {
-                                c->payload = bufferStreamFullRead(ucstate->wait_stream);
+                                c->payload = bufferstreamFullRead(ucstate->wait_stream);
                                 self->up->upStream(self->up, switchLine(c, ucstate->u));
                             }
                             else
@@ -129,10 +129,10 @@ static void upStream(tunnel_t *self, context_t *c)
                                 {
 
                                     c->payload = data;
-                                    if (bufferStreamLen(dcstate->wait_stream) > 0)
+                                    if (bufferstreamLen(dcstate->wait_stream) > 0)
                                     {
                                         c->payload = sbufAppendMerge(getContextBufferPool(c), c->payload,
-                                                                       bufferStreamFullRead(dcstate->wait_stream));
+                                                                       bufferstreamFullRead(dcstate->wait_stream));
                                     }
                                     cleanup(dcstate);
                                     pipeTo(self, c->line, i);
@@ -233,18 +233,18 @@ static void downStream(tunnel_t *self, context_t *c)
                 dcstate->paired = true;
                 setupLineUpSide(dcstate->u, onLinePausedU, dcstate, onLineResumedU);
 
-                if (! isAlive(c->line))
+                if (! lineIsAlive(c->line))
                 {
                     reuseContextPayload(c);
                     destroyContext(c);
                     return;
                 }
-                if (bufferStreamLen(dcstate->wait_stream) > 0)
+                if (bufferstreamLen(dcstate->wait_stream) > 0)
                 {
                     bufferStreamPushContextPayload(dcstate->wait_stream, c);
 
                     context_t *data_waiting_ctx = newContext(c->line);
-                    data_waiting_ctx->payload   = bufferStreamFullRead(dcstate->wait_stream);
+                    data_waiting_ctx->payload   = bufferstreamFullRead(dcstate->wait_stream);
                     self->up->upStream(self->up, data_waiting_ctx);
                 }
                 else
@@ -264,7 +264,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 LOGW("reverseServer: no peer left, waiting tid: %d", c->line->tid);
                 ucstate = createCstateU(c->line);
                 addConnectionU(this_tb, ucstate);
-                contextQueuePush(ucstate->uqueue, c);
+                contextqueuePush(ucstate->uqueue, c);
             }
         }
         else
@@ -282,7 +282,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                contextQueuePush(ucstate->uqueue, c);
+                contextqueuePush(ucstate->uqueue, c);
             }
         }
     }

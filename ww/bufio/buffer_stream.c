@@ -9,7 +9,12 @@ enum
     kConcatMaxThreshould = 4096
 };
 
-buffer_stream_t *newBufferStream(buffer_pool_t *pool)
+/**
+ * Creates a new buffer stream.
+ * @param pool The buffer pool.
+ * @return A pointer to the created buffer stream.
+ */
+buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool)
 {
     buffer_stream_t *bs = memoryAllocate(sizeof(buffer_stream_t));
     bs->q               = queue_with_capacity(kQCap);
@@ -18,7 +23,11 @@ buffer_stream_t *newBufferStream(buffer_pool_t *pool)
     return bs;
 }
 
-void emptyBufferStream(buffer_stream_t *self)
+/**
+ * Empties the buffer stream, returning all buffers to the pool.
+ * @param self The buffer stream to empty.
+ */
+void bufferstreamEmpty(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
@@ -28,7 +37,11 @@ void emptyBufferStream(buffer_stream_t *self)
     self->size = 0;
 }
 
-void destroyBufferStream(buffer_stream_t *self)
+/**
+ * Destroys the buffer stream and frees its resources.
+ * @param self The buffer stream to destroy.
+ */
+void bufferstreamDestroy(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
@@ -38,7 +51,12 @@ void destroyBufferStream(buffer_stream_t *self)
     memoryFree(self);
 }
 
-void bufferStreamPush(buffer_stream_t *self, sbuf_t *buf)
+/**
+ * Pushes a buffer into the buffer stream.
+ * @param self The buffer stream.
+ * @param buf The buffer to push.
+ */
+void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 {
 
     BUFFER_WONT_BE_REUSED(buf);
@@ -46,7 +64,7 @@ void bufferStreamPush(buffer_stream_t *self, sbuf_t *buf)
     if (self->size > 0 && queue_size(&self->q) == 1)
     {
         sbuf_t  *last       = *queue_front(&self->q);
-        uint32_t write_size = min(sbufGetRightCapacityNoPadding(last), sbufGetBufLength(buf));
+        uint32_t write_size = min(sbufGetRightCapacity(last), sbufGetBufLength(buf));
 
         if (write_size > 0)
         {
@@ -65,7 +83,13 @@ void bufferStreamPush(buffer_stream_t *self, sbuf_t *buf)
     self->size += sbufGetBufLength(buf);
 }
 
-sbuf_t *bufferStreamReadExact(buffer_stream_t *self, size_t bytes)
+/**
+ * Reads an exact number of bytes from the buffer stream.
+ * @param self The buffer stream.
+ * @param bytes The number of bytes to read.
+ * @return A pointer to the buffer containing the read data.
+ */
+sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
 {
     assert(self->size >= bytes && bytes > 0);
     self->size -= bytes;
@@ -86,11 +110,17 @@ sbuf_t *bufferStreamReadExact(buffer_stream_t *self, size_t bytes)
         {
             return container;
         }
-        container = sbufAppendMergeNoPadding(self->pool, container, queue_pull_front(&self->q));
+        container = sbufAppendMerge(self->pool, container, queue_pull_front(&self->q));
     }
 }
 
-sbuf_t *bufferStreamReadAtLeast(buffer_stream_t *self, size_t bytes)
+/**
+ * Reads at least a specified number of bytes from the buffer stream.
+ * @param self The buffer stream.
+ * @param bytes The minimum number of bytes to read.
+ * @return A pointer to the buffer containing the read data.
+ */
+sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
 {
     assert(self->size >= bytes && bytes > 0);
     self->size -= bytes;
@@ -108,9 +138,12 @@ sbuf_t *bufferStreamReadAtLeast(buffer_stream_t *self, size_t bytes)
     }
 }
 
-
-
-sbuf_t *bufferStreamIdealRead(buffer_stream_t *self)
+/**
+ * Reads the ideal amount of data from the buffer stream.
+ * @param self The buffer stream.
+ * @return A pointer to the buffer containing the read data.
+ */
+sbuf_t *bufferstreamIdealRead(buffer_stream_t *self)
 {
     assert(self->size > 0);
     sbuf_t *container = queue_pull_front(&self->q);
@@ -118,7 +151,13 @@ sbuf_t *bufferStreamIdealRead(buffer_stream_t *self)
     return container;
 }
 
-uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
+/**
+ * Views a byte at a specific position in the buffer stream.
+ * @param self The buffer stream.
+ * @param at The position to view the byte.
+ * @return The byte at the specified position.
+ */
+uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
 {
     assert(self->size > at && self->size != 0);
 
@@ -139,11 +178,18 @@ uint8_t bufferStreamViewByteAt(buffer_stream_t *self, size_t at)
     return 0;
 }
 
-void bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)
+/**
+ * Views a sequence of bytes at a specific position in the buffer stream.
+ * @param self The buffer stream.
+ * @param at The position to start viewing the bytes.
+ * @param buf The buffer to store the viewed bytes.
+ * @param len The number of bytes to view.
+ */
+void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)
 {
     size_t bufferstream_i = at;
     assert(self->size >= (bufferstream_i + len) && self->size != 0);
-    unsigned int buf_i = 0;
+    uint32_t buf_i = 0;
     c_foreach(qi, queue, self->q)
     {
 

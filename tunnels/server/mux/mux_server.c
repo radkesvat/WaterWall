@@ -55,7 +55,7 @@ static void onMainLinePaused(void *arg)
     tunnel_t               *self = con->tunnel;
 
     line_t *wline = con->current_writing_line;
-    if (wline && isAlive(wline))
+    if (wline && lineIsAlive(wline))
     {
         mux_server_child_con_state_t *child_con = LSTATE(wline);
         child_con->paused                       = true;
@@ -139,7 +139,7 @@ static void destroyMainConnecton(mux_server_con_state_t *con)
         dest->upStream(dest, fin_ctx);
         child_con_i = next;
     }
-    destroyBufferStream(con->read_stream);
+    bufferstreamDestroy(con->read_stream);
     doneLineUpSide(con->line);
     LSTATE_DROP(con->line);
     memoryFree(con);
@@ -152,7 +152,7 @@ static mux_server_con_state_t *createMainConnection(tunnel_t *self, line_t *main
     *con = (mux_server_con_state_t) {.tunnel        = self,
                                      .line          = main_line,
                                      .children_root = {0},
-                                     .read_stream   = newBufferStream(getLineBufferPool(main_line))};
+                                     .read_stream   = bufferstreamCreate(lineGetBufferPool(main_line))};
 
     setupLineDownSide(con->line, onMainLinePaused, con, onMainLineResumed);
 
@@ -166,10 +166,10 @@ static void upStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         bufferStreamPushContextPayload(main_con->read_stream, c);
-        while (bufferStreamLen(main_con->read_stream) > sizeof(mux_frame_t))
+        while (bufferstreamLen(main_con->read_stream) > sizeof(mux_frame_t))
         {
             mux_length_t length;
-            bufferStreamViewBytesAt(main_con->read_stream, 0, (uint8_t *) &length, 2);
+            bufferstreamViewBytesAt(main_con->read_stream, 0, (uint8_t *) &length, 2);
             if (UNLIKELY(length < kMuxMinFrameLength))
             {
                 LOGE("MuxServer: payload length < kMuxMinFrameLength");
@@ -180,9 +180,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 return;
             }
 
-            if (bufferStreamLen(main_con->read_stream) >= length + sizeof(length))
+            if (bufferstreamLen(main_con->read_stream) >= length + sizeof(length))
             {
-                sbuf_t *frame_payload = bufferStreamReadExact(main_con->read_stream, length + sizeof(length));
+                sbuf_t *frame_payload = bufferstreamReadExact(main_con->read_stream, length + sizeof(length));
 
                 mux_frame_t frame;
                 memoryCopy(&frame, sbufGetRawPtr(frame_payload), sizeof(mux_frame_t));
@@ -193,7 +193,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (UNLIKELY(sbufGetBufLength(frame_payload) <= 0))
                     {
                         LOGE("MuxServer: payload length <= 0");
-                        bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
+                        bufferpoolResuesBuffer(lineGetBufferPool(main_con->line), frame_payload);
                         destroyMainConnecton(main_con);
                         self->dw->downStream(self->dw, newFinContext(c->line));
                         destroyContext(c);
@@ -202,23 +202,23 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     mux_server_child_con_state_t *child      = createChildConnection(main_con, c->line->tid);
                     line_t                       *child_line = child->line;
-                    lockLine(child_line);
+                    lineLock(child_line);
 
                     self->up->upStream(self->up, newInitContext(child->line));
 
-                    if (! isAlive(child_line))
+                    if (! lineIsAlive(child_line))
                     {
-                        unLockLine(child_line);
-                        bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
+                        lineUnlock(child_line);
+                        bufferpoolResuesBuffer(lineGetBufferPool(main_con->line), frame_payload);
                         continue;
                     }
-                    unLockLine(child_line);
+                    lineUnlock(child_line);
 
                     context_t *data_ctx = newContext(child_line);
                     data_ctx->payload   = frame_payload;
                     self->up->upStream(self->up, data_ctx);
 
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         destroyContext(c);
                         return;
@@ -235,7 +235,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         switch (frame.flags)
                         {
                         case kMuxFlagClose: {
-                            bufferpoolResuesBuffer(getLineBufferPool(c->line), frame_payload);
+                            bufferpoolResuesBuffer(lineGetBufferPool(c->line), frame_payload);
                             context_t *fin_ctx = newFinContext(child_con_i->line);
                             destroyChildConnecton(child_con_i);
                             self->dw->downStream(self->dw, fin_ctx);
@@ -248,7 +248,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             if (UNLIKELY(sbufGetBufLength(frame_payload) <= 0))
                             {
                                 LOGE("MuxServer: payload length <= 0");
-                                bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
+                                bufferpoolResuesBuffer(lineGetBufferPool(main_con->line), frame_payload);
                                 destroyMainConnecton(main_con);
                                 self->dw->downStream(self->dw, newFinContext(c->line));
                                 destroyContext(c);
@@ -267,7 +267,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             LOGE("MuxServer: kMuxFlagFlow not implemented"); // fall through
                         default:
                             LOGE("MuxServer: incorrect frame flag");
-                            bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
+                            bufferpoolResuesBuffer(lineGetBufferPool(main_con->line), frame_payload);
                             destroyMainConnecton(main_con);
                             self->dw->downStream(self->dw, newFinContext(c->line));
                             destroyContext(c);
@@ -281,9 +281,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (frame_payload != NULL)
                 {
                     LOGW("MuxServer: a frame could not find consumer cid: %d", (int) frame.cid);
-                    bufferpoolResuesBuffer(getLineBufferPool(main_con->line), frame_payload);
+                    bufferpoolResuesBuffer(lineGetBufferPool(main_con->line), frame_payload);
                 }
-                else if (! isAlive(c->line))
+                else if (! lineIsAlive(c->line))
                 {
                     destroyContext(c);
                     return;
@@ -325,8 +325,8 @@ static void downStream(tunnel_t *self, context_t *c)
 
         switchLine(c, main_line);
 
-        lockLine(main_line);
-        lockLine(current_writing_line);
+        lineLock(main_line);
+        lineLock(current_writing_line);
         main_con->current_writing_line = current_writing_line;
 
         while (sbufGetBufLength(c->payload) > kMuxMaxFrameLength)
@@ -339,10 +339,10 @@ static void downStream(tunnel_t *self, context_t *c)
             data_chunk_ctx->payload   = chunk;
             self->dw->downStream(self->dw, data_chunk_ctx);
 
-            if (! isAlive(main_line))
+            if (! lineIsAlive(main_line))
             {
-                unLockLine(main_line);
-                unLockLine(current_writing_line);
+                lineUnlock(main_line);
+                lineUnlock(current_writing_line);
 
                 reuseContextPayload(c);
                 destroyContext(c);
@@ -354,20 +354,20 @@ static void downStream(tunnel_t *self, context_t *c)
 
         self->up->upStream(self->up, c);
 
-        if (isAlive(main_line))
+        if (lineIsAlive(main_line))
         {
             main_con->current_writing_line = NULL;
         }
 
-        unLockLine(main_line);
-        unLockLine(current_writing_line);
+        lineUnlock(main_line);
+        lineUnlock(current_writing_line);
     }
     else
     {
         if (c->fin)
         {
             context_t *data_fin_ctx = newContext(child_con->parent);
-            data_fin_ctx->payload   = bufferpoolGetLargeBuffer(getLineBufferPool(child_con->parent));
+            data_fin_ctx->payload   = bufferpoolGetLargeBuffer(lineGetBufferPool(child_con->parent));
             makeCloseFrame(data_fin_ctx->payload, child_con->cid);
             destroyChildConnecton(child_con);
             self->dw->downStream(self->dw, data_fin_ctx);

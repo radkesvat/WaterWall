@@ -51,7 +51,7 @@ static void cleanup(tunnel_t *self, context_t *c)
 {
     reality_server_con_state_t *cstate = CSTATE(c);
 
-    destroyBufferStream(cstate->read_stream);
+    bufferstreamDestroy(cstate->read_stream);
     // EVP_CIPHER_CTX_free(cstate->cipher_context);
     // EVP_MD_CTX_free(cstate->sign_context);
     EVP_MD_free(cstate->msg_digest);
@@ -77,14 +77,14 @@ static void upStream(tunnel_t *self, context_t *c)
 
             uint8_t tls_header[1 + 2 + 2];
 
-            while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
+            while (lineIsAlive(c->line) && bufferstreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
-                bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
+                bufferstreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
 
-                if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                if ((int) bufferstreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    sbuf_t *record_buf = bufferStreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
+                    sbuf_t *record_buf = bufferstreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
                     sbufShiftRight(record_buf, kTLSHeaderlen);
 
                     if (verifyMessage(record_buf, cstate->msg_digest, cstate->sign_context, cstate->sign_key))
@@ -94,7 +94,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         state->dest->upStream(state->dest, newFinContextFrom(c));
                         self->up->upStream(self->up, newInitContext(c->line));
-                        if (! isAlive(c->line))
+                        if (! lineIsAlive(c->line))
                         {
                             bufferpoolResuesBuffer(getContextBufferPool(c), record_buf);
                             destroyContext(c);
@@ -108,7 +108,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         plain_data_ctx->payload   = record_buf;
                         self->up->upStream(self->up, plain_data_ctx);
 
-                        if (! isAlive(c->line))
+                        if (! lineIsAlive(c->line))
                         {
                             destroyContext(c);
                             return;
@@ -129,7 +129,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->giveup_counter -= 0;
             if (cstate->giveup_counter == 0)
             {
-                emptyBufferStream(cstate->read_stream);
+                bufferstreamEmpty(cstate->read_stream);
                 cstate->auth_state = kConUnAuthorized;
             }
         }
@@ -143,13 +143,13 @@ static void upStream(tunnel_t *self, context_t *c)
             bufferStreamPushContextPayload(cstate->read_stream, c);
         authorized: {
             uint8_t tls_header[1 + 2 + 2];
-            while (isAlive(c->line) && bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen)
+            while (lineIsAlive(c->line) && bufferstreamLen(cstate->read_stream) >= kTLSHeaderlen)
             {
-                bufferStreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
+                bufferstreamViewBytesAt(cstate->read_stream, 0, tls_header, kTLSHeaderlen);
                 uint16_t length = ntohs(*(uint16_t *) (tls_header + 3));
-                if ((int) bufferStreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
+                if ((int) bufferstreamLen(cstate->read_stream) >= kTLSHeaderlen + length)
                 {
-                    sbuf_t *buf = bufferStreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
+                    sbuf_t *buf = bufferstreamReadExact(cstate->read_stream, kTLSHeaderlen + length);
                     bool            is_tls_applicationdata = ((uint8_t *) sbufGetRawPtr(buf))[0] == kTLS12ApplicationData;
                     uint16_t        tls_ver_b;
                     memoryCopy(&tls_ver_b, ((uint8_t *) sbufGetRawPtr(buf)) + 1, sizeof(uint16_t));
@@ -193,7 +193,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->giveup_counter = state->counter_threshold;
             cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
             cstate->sign_context   = state->threadlocal_sign_context[c->line->tid];
-            cstate->read_stream    = newBufferStream(getContextBufferPool(c));
+            cstate->read_stream    = bufferstreamCreate(getContextBufferPool(c));
             cstate->msg_digest     = (EVP_MD *) EVP_get_digestbynid(MSG_DIGEST_ALG);
             int sk_size            = EVP_MD_size(cstate->msg_digest);
             cstate->sign_key       = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, state->hashes, sk_size);
@@ -250,7 +250,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                while (sbufGetBufLength(buf) > 0 && isAlive(c->line))
+                while (sbufGetBufLength(buf) > 0 && lineIsAlive(c->line))
                 {
                     const uint16_t  remain = (uint16_t) min(sbufGetBufLength(buf), chunk_size);
                     sbuf_t *chunk  = bufferpoolGetLargeBuffer(getContextBufferPool(c));
@@ -347,7 +347,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     }
 
     hash_t  hash_next = calcHashBytes(dest_node_name, strlen(dest_node_name));
-    node_t *next_node = getNode(instance_info->node_manager_config, hash_next);
+    node_t *next_node = nodemanagerGetNode(instance_info->node_manager_config, hash_next);
     if (next_node == NULL)
     {
         LOGF("RealityServer: destination node not found");
@@ -356,14 +356,14 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
 
     if (next_node->instance == NULL)
     {
-        runNode(instance_info->node_manager_config, next_node, instance_info->chain_index + 1);
+        nodemanagerRunNode(instance_info->node_manager_config, next_node, instance_info->chain_index + 1);
     }
 
     state->dest = next_node->instance;
     memoryFree(dest_node_name);
 
     tunnel_t *t = tunnelCreate();
-    tunnelChainDown(t, state->dest);
+    tunnelBindDown(t, state->dest);
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;

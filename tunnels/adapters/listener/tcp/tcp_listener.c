@@ -51,10 +51,10 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
     if (cstate->io)
     {
         weventSetUserData(cstate->io, NULL);
-        while (contextQueueLen(cstate->data_queue) > 0)
+        while (contextqueueLen(cstate->data_queue) > 0)
         {
             // all data must be written before sending fin, event loop will hold them for us
-            context_t *cw = contextQueuePop(cstate->data_queue);
+            context_t *cw = contextqueuePop(cstate->data_queue);
 
             if (flush_queue)
             {
@@ -74,8 +74,8 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
         resumeLineUpSide(cstate->line);
     }
     doneLineDownSide(cstate->line);
-    destroyContextQueue(cstate->data_queue);
-    destroyLine(cstate->line);
+    contextqueueDestory(cstate->data_queue);
+    lineDestroy(cstate->line);
     memoryFree(cstate);
 }
 
@@ -83,9 +83,9 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
 {
     context_queue_t *data_queue = (cstate)->data_queue;
     wio_t           *io         = cstate->io;
-    while (contextQueueLen(data_queue) > 0)
+    while (contextqueueLen(data_queue) > 0)
     {
-        context_t *cw     = contextQueuePop(data_queue);
+        context_t *cw     = contextqueuePop(data_queue);
         int        bytes  = (int) sbufGetBufLength(cw->payload);
         int        nwrite = wioWrite(io, cw->payload);
         dropContexPayload(cw);
@@ -112,7 +112,7 @@ static void onWriteComplete(wio_t *io)
     {
 
         context_queue_t *data_queue = cstate->data_queue;
-        if (contextQueueLen(data_queue) > 0 && ! resumeWriteQueue(cstate))
+        if (contextqueueLen(data_queue) > 0 && ! resumeWriteQueue(cstate))
         {
             return;
         }
@@ -187,7 +187,7 @@ static void downStream(tunnel_t *self, context_t *c)
         if (cstate->write_paused)
         {
             pauseLineUpSide(c->line);
-            contextQueuePush(cstate->data_queue, c);
+            contextqueuePush(cstate->data_queue, c);
         }
         else
         {
@@ -275,7 +275,7 @@ static void onInboundConnected(wevent_t *ev)
 
     *cstate = (tcp_listener_con_state_t) {.line              = line,
                                           .buffer_pool       = getWorkerBufferPool(tid),
-                                          .data_queue        = newContextQueue(),
+                                          .data_queue        = contextqueueCreate(),
                                           .io                = io,
                                           .tunnel            = self,
                                           .write_paused      = false,
@@ -300,24 +300,24 @@ static void onInboundConnected(wevent_t *ev)
              SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
     }
 
-    destroySocketAcceptResult(data);
+    socketacceptresultDestroy(data);
 
     wioSetCallBackRead(io, onRecv);
     wioSetCallBackClose(io, onClose);
 
     // send the init packet
-    lockLine(line);
+    lineLock(line);
     {
         context_t *context = newInitContext(line);
         self->upStream(self, context);
-        if (! isAlive(line))
+        if (! lineIsAlive(line))
         {
             LOGW("TcpListener: socket just got closed by upstream before anything happend");
-            unLockLine(line);
+            lineUnlock(line);
             return;
         }
     }
-    unLockLine(line);
+    lineUnlock(line);
     wioRead(io);
 }
 
@@ -444,7 +444,7 @@ tunnel_t *newTcpListener(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    registerSocketAcceptor(t, filter_opt, onInboundConnected);
+    socketacceptorRegister(t, filter_opt, onInboundConnected);
 
     return t;
 }

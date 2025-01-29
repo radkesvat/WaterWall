@@ -169,7 +169,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
         exit(1);
     }
     hash_t  hash_node_name = calcHashBytes(temp, strlen(temp));
-    node_t *node           = getNode(cfg, hash_node_name);
+    node_t *node           = nodemanagerGetNode(cfg, hash_node_name);
 
     if (node == NULL)
     {
@@ -179,7 +179,7 @@ static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int 
 
     if (node->instance == NULL)
     {
-        runNode(cfg, node, chain_index + 1);
+        nodemanagerRunNode(cfg, node, chain_index + 1);
         if (node->instance == NULL)
         {
             exit(1);

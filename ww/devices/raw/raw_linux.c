@@ -25,14 +25,14 @@ struct msg_event
     sbuf_t *buf;
 };
 
-static pool_item_t *allocRawMsgPoolHandle(struct master_pool_s *pool, void *userdata)
+static pool_item_t *allocRawMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
     (void) userdata;
     (void) pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
-static void destroyRawMsgPoolHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
+static void destroyRawMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
@@ -46,13 +46,13 @@ static void localThreadEventReceived(wevent_t *ev)
 
     msg->rdev->read_event_callback(msg->rdev, msg->rdev->userdata, msg->buf, tid);
 
-    reuseMasterPoolItems(msg->rdev->reader_message_pool, (void **) &msg, 1, msg->rdev);
+    masterpoolReuseItems(msg->rdev->reader_message_pool, (void **) &msg, 1, msg->rdev);
 }
 
 static void distributePacketPayload(raw_device_t *rdev, tid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
-    popMasterPoolItems(rdev->reader_message_pool, (const void **) &(msg), 1, rdev);
+    masterpoolGetItems(rdev->reader_message_pool, (const void **) &(msg), 1, rdev);
 
     *msg = (struct msg_event) {.rdev = rdev, .buf = buf};
 
@@ -250,9 +250,9 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
        
         reader_bpool   = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            GSTATE.ram_profile);
-        reader_message_pool = newMasterPoolWithCap(kMasterMessagePoosbufGetLeftCapacity);
+        reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity);
 
-        installMasterPoolAllocCallBacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
+        masterpoolInstallCallBacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
     }
 
     buffer_pool_t  *writer_bpool   = bufferpoolCreate(

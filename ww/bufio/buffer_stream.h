@@ -1,7 +1,9 @@
 #pragma once
+#include "wlibc.h"
+
+
 #include "buffer_pool.h"
 #include "shiftbuffer.h"
-#include "wlibc.h"
 
 /*
 
@@ -26,29 +28,89 @@ struct buffer_stream_s
 
 typedef struct buffer_stream_s buffer_stream_t;
 
-buffer_stream_t *newBufferStream(buffer_pool_t *pool);
-void             emptyBufferStream(buffer_stream_t *self);
-void             destroyBufferStream(buffer_stream_t *self);
-void             bufferStreamPush(buffer_stream_t *self, sbuf_t *buf);
-sbuf_t          *bufferStreamReadExact(buffer_stream_t *self, size_t bytes);
-sbuf_t          *bufferStreamReadAtLeast(buffer_stream_t *self, size_t bytes); // faster
-sbuf_t          *bufferStreamIdealRead(buffer_stream_t *self);
-uint8_t          bufferStreamViewByteAt(buffer_stream_t *self, size_t at);
-void             bufferStreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len);
+/**
+ * Creates a new buffer stream.
+ * @param pool The buffer pool.
+ * @return A pointer to the created buffer stream.
+ */
+buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool);
 
-static inline size_t bufferStreamLen(buffer_stream_t *self)
+/**
+ * Empties the buffer stream, returning all buffers to the pool.
+ * @param self The buffer stream to empty.
+ */
+void bufferstreamEmpty(buffer_stream_t *self);
+
+/**
+ * Destroys the buffer stream and frees its resources.
+ * @param self The buffer stream to destroy.
+ */
+void bufferstreamDestroy(buffer_stream_t *self);
+
+/**
+ * Pushes a buffer into the buffer stream.
+ * @param self The buffer stream.
+ * @param buf The buffer to push.
+ */
+void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf);
+
+/**
+ * Reads an exact number of bytes from the buffer stream.
+ * @param self The buffer stream.
+ * @param bytes The number of bytes to read.
+ * @return A pointer to the buffer containing the read data.
+ */
+sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes);
+
+/**
+ * Reads at least a specified number of bytes from the buffer stream.
+ * @param self The buffer stream.
+ * @param bytes The minimum number of bytes to read.
+ * @return A pointer to the buffer containing the read data.
+ */
+sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes);
+
+/**
+ * Reads the ideal amount of data from the buffer stream.
+ * @param self The buffer stream.
+ * @return A pointer to the buffer containing the read data.
+ */
+sbuf_t *bufferstreamIdealRead(buffer_stream_t *self);
+
+/**
+ * Views a byte at a specific position in the buffer stream.
+ * @param self The buffer stream.
+ * @param at The position to view the byte.
+ * @return The byte at the specified position.
+ */
+uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at);
+
+/**
+ * Views a sequence of bytes at a specific position in the buffer stream.
+ * @param self The buffer stream.
+ * @param at The position to start viewing the bytes.
+ * @param buf The buffer to store the viewed bytes.
+ * @param len The number of bytes to view.
+ */
+void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len);
+
+/**
+ * Gets the length of the buffer stream.
+ * @param self The buffer stream.
+ * @return The length of the buffer stream.
+ */
+static inline size_t bufferstreamLen(buffer_stream_t *self)
 {
     return self->size;
 }
 
-static inline sbuf_t *bufferStreamFullRead(buffer_stream_t *self)
+/**
+ * Reads the full length of the buffer stream.
+ * @param self The buffer stream.
+ * @return A pointer to the buffer containing the read data.
+ */
+static inline sbuf_t *bufferstreamFullRead(buffer_stream_t *self)
 {
-    return bufferStreamReadExact(self, bufferStreamLen(self));
+    return bufferstreamReadExact(self, bufferstreamLen(self));
 }
 
-static inline void bufferStreamPushContextPayload(buffer_stream_t *self, context_t *c)
-{
-    assert(c->payload);
-    bufferStreamPush(self, c->payload);
-    dropContexPayload(c);
-}

@@ -1,14 +1,6 @@
 #include "config_file.h"
-#include "cJSON.h"
-#include "worker.h"
-#include "loggers/internal_logger.h" //NOLINT
-#include "utils/fileutils.h"
-#include "utils/jsonutils.h"
-
-#include "wmutex.h"
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
+#include "utils/json_helpers.h"
+#include "loggers/internal_logger.h"
 
 void destroyConfigFile(config_file_t *state)
 {

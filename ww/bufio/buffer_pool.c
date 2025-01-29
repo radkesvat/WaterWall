@@ -3,7 +3,7 @@
 #include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
 
-buffer_pool_t
+struct buffer_pool_s
 {
 
     uint16_t cap;
@@ -26,17 +26,33 @@ buffer_pool_t
     sbuf_t       **small_buffers;
 };
 
+/**
+ * Gets the size of large buffers in the buffer pool.
+ * @param pool The buffer pool.
+ * @return The size of large buffers.
+ */
 uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
 {
     return pool->large_buffers_size;
 }
 
+/**
+ * Gets the size of small buffers in the buffer pool.
+ * @param pool The buffer pool.
+ * @return The size of small buffers.
+ */
 uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool)
 {
     return pool->small_buffers_size;
 }
 
-static master_pool_item_t *createLargeBufHandle(struct master_pool_s *pool, void *userdata)
+/**
+ * Creates a large buffer using the provided create handler.
+ * @param pool The master pool.
+ * @param userdata User data passed to the create handler.
+ * @return A pointer to the created large buffer.
+ */
+static master_pool_item_t *createLargeBufHandle(master_pool_t *pool, void *userdata)
 {
     (void) pool;
 
@@ -44,32 +60,54 @@ static master_pool_item_t *createLargeBufHandle(struct master_pool_s *pool, void
     return sbufNewWithPadding(bpool->large_buffers_size, bpool->large_buffer_left_padding);
 }
 
-static master_pool_item_t *createSmallBufHandle(struct master_pool_s *pool, void *userdata)
+/**
+ * Creates a small buffer using the provided create handler.
+ * @param pool The master pool.
+ * @param userdata User data passed to the create handler.
+ * @return A pointer to the created small buffer.
+ */
+static master_pool_item_t *createSmallBufHandle(master_pool_t *pool, void *userdata)
 {
     (void) pool;
     buffer_pool_t *bpool = userdata;
     return sbufNewWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
 }
 
-static void destroyLargeBufHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
+/**
+ * Destroys a large buffer using the provided destroy handler.
+ * @param pool The master pool.
+ * @param item The large buffer to destroy.
+ * @param userdata User data passed to the destroy handler.
+ */
+static void destroyLargeBufHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
     sbufDestroy(item);
 }
 
-static void destroySmallBufHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
+/**
+ * Destroys a small buffer using the provided destroy handler.
+ * @param pool The master pool.
+ * @param item The small buffer to destroy.
+ * @param userdata User data passed to the destroy handler.
+ */
+static void destroySmallBufHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
     sbufDestroy(item);
 }
 
+/**
+ * Recharges the large buffers in the buffer pool by preallocating a number of buffers.
+ * @param pool The buffer pool.
+ */
 static void reChargeLargeBuffers(buffer_pool_t *pool)
 {
     const size_t increase = min((pool->cap - pool->large_buffers_container_len), pool->cap / 2);
 
-    popMasterPoolItems(pool->large_buffers_mp,
+    masterpoolGetItems(pool->large_buffers_mp,
                        (void const **) &(pool->large_buffers[pool->large_buffers_container_len]), increase, pool);
 
     pool->large_buffers_container_len += increase;
@@ -78,11 +116,15 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
 #endif
 }
 
+/**
+ * Recharges the small buffers in the buffer pool by preallocating a number of buffers.
+ * @param pool The buffer pool.
+ */
 static void reChargeSmallBuffers(buffer_pool_t *pool)
 {
     const size_t increase = min((pool->cap - pool->small_buffers_container_len), pool->cap / 2);
 
-    popMasterPoolItems(pool->small_buffers_mp,
+    masterpoolGetItems(pool->small_buffers_mp,
                        (void const **) &(pool->small_buffers[pool->small_buffers_container_len]), increase, pool);
 
     pool->small_buffers_container_len += increase;
@@ -91,6 +133,10 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
 #endif
 }
 
+/**
+ * Performs the initial charge of the buffer pool.
+ * @param pool The buffer pool.
+ */
 static void firstCharge(buffer_pool_t *pool)
 {
     if (pool->large_buffers_mp)
@@ -103,11 +149,15 @@ static void firstCharge(buffer_pool_t *pool)
     }
 }
 
+/**
+ * Shrinks the large buffers in the buffer pool by releasing a number of buffers.
+ * @param pool The buffer pool.
+ */
 static void shrinkLargeBuffers(buffer_pool_t *pool)
 {
     const size_t decrease = min(pool->large_buffers_container_len, pool->cap / 2);
 
-    reuseMasterPoolItems(pool->large_buffers_mp,
+    masterpoolReuseItems(pool->large_buffers_mp,
                          (void **) &(pool->large_buffers[pool->large_buffers_container_len - decrease]), decrease,
                          pool);
 
@@ -118,11 +168,15 @@ static void shrinkLargeBuffers(buffer_pool_t *pool)
 #endif
 }
 
+/**
+ * Shrinks the small buffers in the buffer pool by releasing a number of buffers.
+ * @param pool The buffer pool.
+ */
 static void shrinkSmallBuffers(buffer_pool_t *pool)
 {
     const size_t decrease = min(pool->small_buffers_container_len, pool->cap / 2);
 
-    reuseMasterPoolItems(pool->small_buffers_mp,
+    masterpoolReuseItems(pool->small_buffers_mp,
                          (void **) &(pool->small_buffers[pool->small_buffers_container_len - decrease]), decrease,
                          pool);
 
@@ -133,6 +187,11 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 #endif
 }
 
+/**
+ * Retrieves a large buffer from the buffer pool.
+ * @param pool The buffer pool.
+ * @return A pointer to the retrieved large buffer.
+ */
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
@@ -153,6 +212,11 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
     return pool->large_buffers[pool->large_buffers_container_len];
 }
 
+/**
+ * Retrieves a small buffer from the buffer pool.
+ * @param pool The buffer pool.
+ * @return A pointer to the retrieved small buffer.
+ */
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
@@ -173,6 +237,11 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
     return pool->small_buffers[pool->small_buffers_container_len];
 }
 
+/**
+ * Reuses a buffer by returning it to the buffer pool.
+ * @param pool The buffer pool.
+ * @param b The buffer to reuse.
+ */
 void bufferpoolResuesBuffer(buffer_pool_t *pool, sbuf_t *b)
 {
 
@@ -207,6 +276,13 @@ void bufferpoolResuesBuffer(buffer_pool_t *pool, sbuf_t *b)
     }
 }
 
+/**
+ * Appends and merges two buffers.
+ * @param pool The buffer pool.
+ * @param b1 The first buffer.
+ * @param b2 The second buffer.
+ * @return A pointer to the merged buffer.
+ */
 sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
 {
     b1 = sbufConcat(b1, b2);
@@ -214,13 +290,12 @@ sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restri
     return b1;
 }
 
-sbuf_t *sbufAppendMergeNoPadding(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
-{
-    b1 = sbufConcat(b1, b2);
-    bufferpoolResuesBuffer(pool, b2);
-    return b1;
-}
-
+/**
+ * Duplicates a buffer using the buffer pool.
+ * @param pool The buffer pool.
+ * @param b The buffer to duplicate.
+ * @return A pointer to the duplicated buffer.
+ */
 sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 {
     sbuf_t *bnew;
@@ -241,6 +316,12 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
     return bnew;
 }
 
+/**
+ * Updates the allocation paddings for the buffer pool.
+ * @param pool The buffer pool.
+ * @param large_buffer_left_padding The left padding for large buffers.
+ * @param small_buffer_left_padding The left padding for small buffers.
+ */
 void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
                                         uint16_t small_buffer_left_padding)
 {
@@ -250,7 +331,16 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
     pool->small_buffer_left_padding = max(pool->small_buffer_left_padding, small_buffer_left_padding);
 }
 
-buffer_pool_t *bufferpoolCreate(struct master_pool_s *mp_large, struct master_pool_s *mp_small, uint32_t bufcount,
+/**
+ * Creates a buffer pool with specified parameters.
+ * @param mp_large The master pool for large buffers.
+ * @param mp_small The master pool for small buffers.
+ * @param bufcount The number of buffers to preallocate.
+ * @param large_buffer_size The size of each large buffer.
+ * @param small_buffer_size The size of each small buffer.
+ * @return A pointer to the created buffer pool.
+ */
+buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, uint32_t bufcount,
                                 uint32_t large_buffer_size, uint32_t small_buffer_size)
 {
     // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolResuesBuffer
@@ -275,8 +365,8 @@ buffer_pool_t *bufferpoolCreate(struct master_pool_s *mp_large, struct master_po
         .small_buffers_mp = mp_small, .small_buffers = (sbuf_t **) memoryAllocate(container_len),
     };
 
-    installMasterPoolAllocCallBacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
-    installMasterPoolAllocCallBacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
+    masterpoolInstallCallBacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
+    masterpoolInstallCallBacks(ptr_pool->small_buffers_mp, createSmallBufHandle, destroySmallBufHandle);
 
 #ifdef DEBUG
     memorySet((void *) ptr_pool->large_buffers, 0xFE, container_len);

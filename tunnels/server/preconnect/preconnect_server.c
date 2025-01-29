@@ -26,7 +26,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->first_packet_sent = true;
             cstate->init_sent         = true;
             self->up->upStream(self->up, newInitContext(c->line));
-            if (! isAlive(c->line))
+            if (! lineIsAlive(c->line))
             {
                 reuseContextPayload(c);
                 destroyContext(c);

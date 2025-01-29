@@ -106,29 +106,29 @@ static void destroyUdpPayloadPoolHandle(generic_pool_t *pool, pool_item_t *item)
     memoryFree(item);
 }
 
-void destroySocketAcceptResult(socket_accept_result_t *sar)
+void socketacceptresultDestroy(socket_accept_result_t *sar)
 {
     const tid_t tid = sar->tid;
 
     mutexLock(&(state->tcp_pools[tid].mutex));
-    reusePoolItem(state->tcp_pools[tid].pool, sar);
+    genericpoolReuseItem(state->tcp_pools[tid].pool, sar);
     mutexUnlock(&(state->tcp_pools[tid].mutex));
 }
 
 static udp_payload_t *newUpdPayload(tid_t tid)
 {
     mutexLock(&(state->udp_pools[tid].mutex));
-    udp_payload_t *item = popPoolItem(state->udp_pools[tid].pool);
+    udp_payload_t *item = genericpoolGetItem(state->udp_pools[tid].pool);
     mutexUnlock(&(state->udp_pools[tid].mutex));
     return item;
 }
 
-void destroyUdpPayload(udp_payload_t *upl)
+void udppayloadDestroy(udp_payload_t *upl)
 {
     const tid_t tid = upl->tid;
 
     mutexLock(&(state->udp_pools[tid].mutex));
-    reusePoolItem(state->udp_pools[tid].pool, upl);
+    genericpoolReuseItem(state->udp_pools[tid].pool, upl);
     mutexUnlock(&(state->udp_pools[tid].mutex));
 }
 
@@ -277,7 +277,7 @@ static void parseWhiteListOption(socket_filter_option_t *option)
     }
 }
 
-void registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
+void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
     if (state->started)
     {
@@ -351,7 +351,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     tid_t tid = (uint8_t) getCurrentDistributeTid();
 
     mutexLock(&(state->tcp_pools[tid].mutex));
-    socket_accept_result_t *result = popPoolItem(state->tcp_pools[tid].pool);
+    socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[tid].pool);
     mutexUnlock(&(state->tcp_pools[tid].mutex));
 
     result->real_localport = local_port;
@@ -711,7 +711,7 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
 {
 
     mutexLock(&(state->udp_pools[post_pl.tid].mutex));
-    udp_payload_t *pl = popPoolItem(state->udp_pools[post_pl.tid].pool);
+    udp_payload_t *pl = genericpoolGetItem(state->udp_pools[post_pl.tid].pool);
     mutexUnlock(&(state->udp_pools[post_pl.tid].mutex));
     *pl = post_pl;
 
@@ -897,7 +897,7 @@ static void writeUdpThisLoop(wevent_t *ev)
     udp_payload_t *upl    = weventGetUserdata(ev);
     size_t         nwrite = wioWrite(upl->sock->io, upl->buf);
     (void) nwrite;
-    destroyUdpPayload(upl);
+    udppayloadDestroy(upl);
 }
 
 void postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, sbuf_t *buf)
@@ -938,18 +938,18 @@ static WTHREAD_ROUTINE(accept_thread) // NOLINT
     return 0;
 }
 
-struct socket_manager_s *getSocketManager(void)
+struct socket_manager_s *socketmanagerGet(void)
 {
     return state;
 }
 
-void setSocketManager(struct socket_manager_s *new_state)
+void socketmanagerSet(struct socket_manager_s *new_state)
 {
     assert(state == NULL);
     state = new_state;
 }
 
-void startSocketManager(void)
+void socketmanagerStart(void)
 {
     assert(state != NULL);
     // accept_thread(accept_thread_loop);
@@ -957,7 +957,7 @@ void startSocketManager(void)
     state->accept_thread = threadCreate(accept_thread, NULL);
 }
 
-socket_manager_state_t *createSocketManager(void)
+socket_manager_state_t *socketmanagerCreate(void)
 {
     assert(state == NULL);
     state = memoryAllocate(sizeof(socket_manager_state_t));
@@ -988,16 +988,16 @@ socket_manager_state_t *createSocketManager(void)
 
     state->tcp_pools = memoryAllocate(sizeof(*state->tcp_pools) * getWorkersCount());
     memorySet(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
-    master_pool_t *mp_udp = newMasterPoolWithCap(2 * ((8) + RAM_PROFILE));
-    master_pool_t *mp_tcp = newMasterPoolWithCap(2 * ((8) + RAM_PROFILE));
+    master_pool_t *mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    master_pool_t *mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
 
         state->udp_pools[i].pool =
-            newGenericPoolWithCap(mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
+            genericpoolCreateWithCapacity(mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
         mutexInit(&(state->udp_pools[i].mutex));
 
-        state->tcp_pools[i].pool = newGenericPoolWithCap(mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle,
+        state->tcp_pools[i].pool = genericpoolCreateWithCapacity(mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle,
                                                          destroyTcpResultObjectPoolHandle);
         mutexInit(&(state->tcp_pools[i].mutex));
     }

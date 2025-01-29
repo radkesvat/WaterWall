@@ -1,20 +1,5 @@
 #include "node_manager.h"
-
-#include "cJSON.h"
-#include "config_file.h"
-#include "library_loader.h"
-#include "loggers/internal_logger.h"
-
-#include "node.h"
-#include "stc/common.h"
-#include "tunnel.h"
-
-#include "utils/jsonutils.h"
-#include <assert.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
-
+#include "chain.h"
 
 enum
 {
@@ -45,7 +30,7 @@ typedef struct node_manager_s
 
 static node_manager_t *state;
 
-// void runNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index)
+// void nodemanagerRunNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index)
 // {
 //     if (n1 == NULL)
 //     {
@@ -55,11 +40,11 @@ static node_manager_t *state;
 
 //     if (n1->hash_next != 0)
 //     {
-//         node_t *n2 = getNode(cfg, n1->hash_next);
+//         node_t *n2 = nodemanagerGetNode(cfg, n1->hash_next);
 
 //         if (n2->instance == NULL)
 //         {
-//             runNode(cfg, n2, chain_index + 1);
+//             nodemanagerRunNode(cfg, n2, chain_index + 1);
 //         }
 
 //         LOGD("NodeManager: starting node \"%s\"", n1->name);
@@ -73,7 +58,7 @@ static node_manager_t *state;
 
 //         memoryCopy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
 
-//         tunnelChain(n1->instance, n2->instance);
+//         tunnelBind(n1->instance, n2->instance);
 //     }
 //     else
 //     {
@@ -113,6 +98,7 @@ static void runNodes(node_manager_config_t *cfg)
             if ((n1->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
             {
                 t_starters_array[index_starters++] = n1->instance;
+                n1->instance->chain_head           = true;
             }
             if (index == kMaxTarraySize + 1)
             {
@@ -133,48 +119,32 @@ static void runNodes(node_manager_config_t *cfg)
     tunnel_t *t_array_cpy[kMaxTarraySize];
     memoryCopy(t_array_cpy, t_array, sizeof(t_array_cpy));
 
-    uint16_t buffs_sum_lef_pad   = 0;
-
     {
         for (int i = 0; i < tunnels_count; i++)
         {
             tunnel_t *tunnel = t_array[i];
 
-            if (tunnel == NULL)
+            if (tunnel == NULL || ! tunnel->chain_head)
             {
                 continue;
             }
 
-            tunnel_chain_t tci = {0};
-            tunnel->onChain(tunnel, &tci);
+            tunnel_chain_t *tc = tunnelchainCreate();
+            tunnel->onChain(tunnel, tc);
 
-            buffs_sum_lef_pad   = max(buffs_sum_lef_pad, tci.sum_padding_left);
+            tunnelchainFinalize(tc);
 
-            for (int cti = 0; cti < tci.tunnels.len; cti++)
+            for (int cti = 0; cti < tc->tunnels.len; cti++)
             {
                 for (int ti = 0; ti < tunnels_count; ti++)
                 {
-                    if (t_array[ti] == tci.tunnels.tuns[cti])
+                    if (t_array[ti] == tc->tunnels.tuns[cti])
                     {
                         t_array[ti] = NULL;
                         break;
                     }
                 }
             }
-        }
-    }
-
-    for (int wi = 0; wi < getWorkersCount(); wi++)
-    {
-        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), buffs_sum_lef_pad,
-                                            buffs_sum_lef_pad);
-    }
-
-    {
-        for (int i = 0; i < tunnels_count; i++)
-        {
-            assert(t_array_cpy[i] != NULL);
-            t_array_cpy[i]->onChainingComplete(t_array_cpy[i]);
         }
     }
 
@@ -190,8 +160,10 @@ static void runNodes(node_manager_config_t *cfg)
 
             tunnel->chain_head = true;
 
-            tunnel_array_t tc = {0};
-            tunnel->onIndex(tunnel, &tc, 0, 0);
+            tunnel_array_t tc         = {0};
+            uint16_t       index      = 0;
+            uint16_t       mem_offset = 0;
+            tunnel->onIndex(tunnel, &tc, &index, &mem_offset);
 
             for (int cti = 0; cti < tc.len; cti++)
             {
@@ -210,10 +182,17 @@ static void runNodes(node_manager_config_t *cfg)
         for (int i = 0; i < tunnels_count; i++)
         {
             assert(t_array_cpy[i] != NULL);
+            t_array_cpy[i]->onPrepair(t_array_cpy[i]);
+        }
+    }
+    {
+        for (int i = 0; i < tunnels_count; i++)
+        {
+            assert(t_array_cpy[i] != NULL);
             tunnel_t *tunnel = t_array_cpy[i];
             if (tunnel->chain_head)
             {
-                tunnel->onChainStart(tunnel);
+                tunnel->onStart(tunnel);
             }
         }
     }
@@ -234,7 +213,7 @@ static void pathWalk(node_manager_config_t *cfg)
                 break;
             }
             c++;
-            node_t *n2 = getNode(cfg, n1->hash_next);
+            node_t *n2 = nodemanagerGetNode(cfg, n1->hash_next);
             n1         = n2;
             if (c > 200)
             {
@@ -286,7 +265,7 @@ static void cycleProcess(node_manager_config_t *cfg)
     }
 }
 
-void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *settings)
+void nodemanagerRegisterNode(node_manager_config_t *cfg, node_t *new_node, cJSON *settings)
 {
     new_node->hash_name = calcHashBytes(new_node->name, strlen(new_node->name));
     new_node->hash_type = calcHashBytes(new_node->type, strlen(new_node->type));
@@ -295,7 +274,7 @@ void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *settings)
         new_node->hash_next = calcHashBytes(new_node->next, strlen(new_node->next));
     }
     // load lib
-    node_t lib = loadNodeLibraryByHash(new_node->hash_type);
+    node_t lib = nodelibraryLoadByHash(new_node->hash_type);
     if (lib.hash_name == 0)
     {
         LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
@@ -326,7 +305,7 @@ void registerNode(node_manager_config_t *cfg, node_t *new_node, cJSON *settings)
     map_node_t_insert(map, new_node->hash_name, new_node);
 }
 
-node_t *getNode(node_manager_config_t *cfg, hash_t hash_node_name)
+node_t *nodemanagerGetNode(node_manager_config_t *cfg, hash_t hash_node_name)
 {
     map_node_t_iter iter = map_node_t_find(&(cfg->node_map), hash_node_name);
     if (iter.ref == map_node_t_end(&(cfg->node_map)).ref)
@@ -336,7 +315,7 @@ node_t *getNode(node_manager_config_t *cfg, hash_t hash_node_name)
     return (iter.ref->second);
 }
 
-node_t *newNode(void)
+node_t *nodemanagerNewNode(void)
 {
     node_t *new_node = memoryAllocate(sizeof(node_t));
     memorySet(new_node, 0, sizeof(node_t));
@@ -349,7 +328,7 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
     cJSON *node_json  = NULL;
     cJSON_ArrayForEach(node_json, nodes_json)
     {
-        node_t *new_node = newNode();
+        node_t *new_node = nodemanagerNewNode();
         if (! getStringFromJsonObject(&(new_node->name), node_json, "name"))
         {
             LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
@@ -365,7 +344,7 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
         }
         getStringFromJsonObject(&(new_node->next), node_json, "next");
         getIntFromJsonObjectOrDefault((int *) &(new_node->version), node_json, "version", 0);
-        registerNode(cfg, new_node, node_json);
+        nodemanagerRegisterNode(cfg, new_node, node_json);
     }
 
     cycleProcess(cfg);
@@ -373,18 +352,18 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
     runNodes(cfg);
 }
 
-struct node_manager_s *getNodeManager(void)
+struct node_manager_s *nodemanagerGetState(void)
 {
     return state;
 }
 
-void setNodeManager(struct node_manager_s *new_state)
+void nodemanagerSetState(struct node_manager_s *new_state)
 {
     assert(state == NULL);
     state = new_state;
 }
 
-void runConfigFile(config_file_t *config_file)
+void nodemanagerRunConfigFile(config_file_t *config_file)
 {
 
     node_manager_config_t cfg = {.config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap)};
@@ -392,7 +371,7 @@ void runConfigFile(config_file_t *config_file)
     vec_configs_t_push(&(state->configs), cfg);
 }
 
-node_manager_t *createNodeManager(void)
+node_manager_t *nodemanagerCreate(void)
 {
     assert(state == NULL);
 

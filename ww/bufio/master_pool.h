@@ -68,30 +68,37 @@ typedef struct master_pool_s
     MasterPoolItemCreateHandle  create_item_handle;
     MasterPoolItemDestroyHandle destroy_item_handle;
     atomic_uint                 len;
-    const unsigned int          cap;
+    const uint32_t              cap;
     void                       *available[];
 } ATTR_ALIGNED_LINE_CACHE master_pool_t;
 
-static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
-                                      const unsigned int count, void *userdata)
+/**
+ * Retrieves a specified number of items from the master pool.
+ * @param pool The master pool.
+ * @param iptr Pointer to the array where the items will be stored.
+ * @param count The number of items to retrieve.
+ * @param userdata User data passed to the create handler.
+ */
+static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_item_t const **const iptr,
+                                      const uint32_t count, void *userdata)
 {
-    // for (unsigned int i = 0; i < count; i++)
+    // for (uint32_t i = 0; i < count; i++)
     // {
     //     iptr[i] = pool->create_item_handle(pool, userdata);
     // }
     // return;
-    unsigned int i = 0;
+    uint32_t i = 0;
 
     if (atomicLoadExplicit(&(pool->len), memory_order_relaxed) > 0)
     {
         mutexLock(&(pool->mutex));
-        const unsigned int tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
-        const unsigned int consumed = min(tmp_len, count);
+        const uint32_t tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
+        const uint32_t consumed = min(tmp_len, count);
 
         if (consumed > 0)
         {
             atomicAddExplicit(&(pool->len), -consumed, memory_order_relaxed);
-            const unsigned int pbase = (tmp_len - consumed);
+            const uint32_t pbase = (tmp_len - consumed);
             for (; i < consumed; i++)
             {
                 iptr[i] = pool->available[pbase + i];
@@ -106,10 +113,17 @@ static inline void popMasterPoolItems(master_pool_t *const pool, master_pool_ite
     }
 }
 
-static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_item_t **const iptr,
-                                        const unsigned int count, void *userdata)
+/**
+ * Reuses a specified number of items by returning them to the master pool.
+ * @param pool The master pool.
+ * @param iptr Pointer to the array of items to be reused.
+ * @param count The number of items to reuse.
+ * @param userdata User data passed to the destroy handler.
+ */
+static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_item_t **const iptr,
+                                        const uint32_t count, void *userdata)
 {
-    // for (unsigned int i = 0; i < count; i++)
+    // for (uint32_t i = 0; i < count; i++)
     // {
     //     pool->destroy_item_handle(pool, iptr[i], userdata);
     // }
@@ -117,19 +131,19 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
 
     if (pool->cap == atomicLoadExplicit(&(pool->len), memory_order_relaxed))
     {
-        for (unsigned int i = 0; i < count; i++)
+        for (uint32_t i = 0; i < count; i++)
         {
             pool->destroy_item_handle(pool, iptr[i], userdata);
         }
         return;
     }
 
-    unsigned int i = 0;
+    uint32_t i = 0;
 
     mutexLock(&(pool->mutex));
 
-    const unsigned int tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
-    const unsigned int consumed = min(pool->cap - tmp_len, count);
+    const uint32_t tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
+    const uint32_t consumed = min(pool->cap - tmp_len, count);
 
     atomicAddExplicit(&(pool->len), consumed, memory_order_relaxed);
 
@@ -146,14 +160,24 @@ static inline void reuseMasterPoolItems(master_pool_t *const pool, master_pool_i
     }
 }
 
-static void installMasterPoolAllocCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
-                                            MasterPoolItemDestroyHandle destroy_h)
-{
-    mutexLock(&(pool->mutex));
-    pool->create_item_handle  = create_h;
-    pool->destroy_item_handle = destroy_h;
-    mutexUnlock(&(pool->mutex));
-}
+/**
+ * Installs create and destroy callbacks for the master pool.
+ * @param pool The master pool.
+ * @param create_h The handler to create pool items.
+ * @param destroy_h The handler to destroy pool items.
+ */
+void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
+                                MasterPoolItemDestroyHandle destroy_h);
 
-master_pool_t *newMasterPoolWithCap(unsigned int pool_width);
-void           destroyMasterPool(master_pool_t *pool);
+/**
+ * Creates a master pool with a specified capacity.
+ * @param pool_width The width of the pool.
+ * @return A pointer to the created master pool.
+ */
+master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width);
+
+/**
+ * Destroys the master pool and frees its resources.
+ * @param pool The master pool to destroy.
+ */
+void masterpoolDestroy(master_pool_t *pool);

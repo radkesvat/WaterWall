@@ -27,7 +27,22 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
+#ifdef DEBUG
+static inline void debugAssertZeroBuf(void *buf, size_t size)
+{
+    for (size_t i = 0; i < size; i++)
+    {
+        assert(((uint8_t *) buf)[i] == 0);
+    }
+}
+#else
+static inline void debugAssertZeroBuf(void *buf, size_t size)
+{
+    (void) buf;
+    (void) size;
+}
 
+#endif
 
 #ifndef MEM128_BUF_OPTIMIZE
 #error "MEM128_BUF_OPTIMIZE must be defined to either 0 or 1
@@ -78,9 +93,9 @@ static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
 
 #else
 
-static inline void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, intmax_t  n)
+static inline void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, intmax_t n)
 {
-    
+
     while (n > 0)
     {
         memoryCopy(_dest, _src, 128);
@@ -91,7 +106,6 @@ static inline void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__res
 }
 
 #endif
-
 
 //--------------------string-------------------------------
 

@@ -5,11 +5,10 @@
 #include "wlibc.h"
 #include "wloop.h"
 
-
-#include "node.h"
 #include "chain.h"
-#include "line.h"
 #include "context.h"
+#include "line.h"
+#include "node.h"
 #include "shiftbuffer.h"
 #include "worker.h"
 
@@ -39,7 +38,6 @@
     so we created everything threadlocal, such as buffer pools, eventloops, etc...
 
 */
-
 
 // get the state object of each tunnel
 #define TSTATE(x) ((void *) ((x)->state))
@@ -81,21 +79,15 @@
 // mutate the state of the line of context to NULL
 #define CSTATE_DROP(x) LSTATE_DROP((x)->line)
 
-
-
-
+typedef struct node_s         node_t;
+typedef struct tunnel_s       tunnel_t;
+typedef struct tunnel_chain_s tunnel_chain_t;
+typedef struct tunnel_array_s tunnel_array_t;
 
 typedef void (*LineFlowSignal)(void *state);
-
-
-typedef struct 
-node_s node_t;
-typedef struct tunnel_s tunnel_t;
-
-
 typedef void (*TunnelStatusCb)(tunnel_t *);
 typedef void (*TunnelChainFn)(tunnel_t *, tunnel_chain_t *info);
-typedef void (*TunnelIndexFn)(tunnel_t *, tunnel_array_t *arr, uint16_t index, uint16_t mem_offset);
+typedef void (*TunnelIndexFn)(tunnel_t *, tunnel_array_t *arr, uint16_t* index, uint16_t* mem_offset);
 typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, sbuf_t *payload);
 typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
@@ -103,9 +95,6 @@ typedef void (*TunnelFlowRoutineFin)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePause)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineResume)(tunnel_t *, line_t *line);
 typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line, int pipe_fd, size_t len);
-
-
-
 
 typedef struct pipeline_s
 {
@@ -115,10 +104,6 @@ typedef struct pipeline_s
     struct line_s *up;
     struct line_s *dw;
 } pipe_line_t;
-
-
-
-
 
 /*
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
@@ -149,8 +134,8 @@ struct tunnel_s
 
     TunnelChainFn  onChain;
     TunnelIndexFn  onIndex;
-    TunnelStatusCb onChainingComplete;
-    TunnelStatusCb onChainStart;
+    TunnelStatusCb onPrepair;
+    TunnelStatusCb onStart;
 
     uint16_t tstate_size;
     uint16_t lstate_size;
@@ -158,8 +143,8 @@ struct tunnel_s
     uint16_t cstate_offset;
     uint16_t chain_index;
 
-    node_t *node;
-    tunnel_chain_t* chain;
+    node_t         *node;
+    tunnel_chain_t *chain;
 
     bool chain_head;
 
@@ -169,13 +154,19 @@ struct tunnel_s
 tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size);
 void      tunnelDestroy(tunnel_t *self);
 
-
 static inline void setTunnelState(tunnel_t *self, void *state)
 {
     memoryCopy(&(self->state[0]), state, self->tstate_size);
 }
 
+void tunnelBind(tunnel_t *from, tunnel_t *to);
+void tunnelBindDown(tunnel_t *from, tunnel_t *to);
+void tunnelBindUp(tunnel_t *from, tunnel_t *to);
 
+static tunnel_chain_t* tunnelGetChain(tunnel_t *self)
+{
+    return self->chain;
+}
 
 /*
     Once the up state is setup, it will receive pasue/resume events from down end of the line, with the `state` as
@@ -246,6 +237,3 @@ static inline void setTunnelState(tunnel_t *self, void *state)
 //         l->dw_resume_cb(l->dw_state);
 //     }
 // }
-
-
-

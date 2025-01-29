@@ -24,7 +24,7 @@ struct balance_group_s;
     which ports (single? range?)
     which balance option?
 
-    the acceptor wants, they fill the information and register it by calling registerSocketAcceptor
+    the acceptor wants, they fill the information and register it by calling socketacceptorRegister
 
 */
 typedef struct socket_filter_option_s
@@ -66,7 +66,7 @@ typedef struct socket_accept_result_s
 
 typedef void (*onAccept)(wevent_t *ev);
 
-void destroySocketAcceptResult(socket_accept_result_t *);
+void socketacceptresultDestroy(socket_accept_result_t *);
 
 typedef struct udpsock_s
 {
@@ -87,11 +87,11 @@ typedef struct udp_payload_s
 
 } udp_payload_t;
 
-void destroyUdpPayload(udp_payload_t *);
+void udppayloadDestroy(udp_payload_t *);
 
-struct socket_manager_s *getSocketManager(void);
-struct socket_manager_s *createSocketManager(void);
-void                     setSocketManager(struct socket_manager_s *state);
-void                     startSocketManager(void);
-void                     registerSocketAcceptor(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
+struct socket_manager_s *socketmanagerGet(void);
+struct socket_manager_s *socketmanagerCreate(void);
+void                     socketmanagerSet(struct socket_manager_s *state);
+void                     socketmanagerStart(void);
+void                     socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
 void                     postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, sbuf_t *buf);

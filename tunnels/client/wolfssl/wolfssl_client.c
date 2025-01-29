@@ -58,7 +58,7 @@ static void cleanup(tunnel_t *self, context_t *c)
 {
     wssl_client_con_state_t *cstate = CSTATE(c);
     SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
-    destroyContextQueue(cstate->queue);
+    contextqueueDestory(cstate->queue);
     memoryFree(cstate);
     CSTATE_DROP(c);
 }
@@ -67,9 +67,9 @@ static void flushWriteQueue(tunnel_t *self, context_t *c)
 {
     wssl_client_con_state_t *cstate = CSTATE(c);
 
-    while (isAlive(c->line) && contextQueueLen(cstate->queue) > 0)
+    while (lineIsAlive(c->line) && contextqueueLen(cstate->queue) > 0)
     {
-        self->upStream(self, contextQueuePop(cstate->queue));
+        self->upStream(self, contextqueuePop(cstate->queue));
     }
 }
 
@@ -83,14 +83,14 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            contextQueuePush(cstate->queue, c);
+            contextqueuePush(cstate->queue, c);
             return;
         }
 
         enum sslstatus status;
         int            len = (int) sbufGetBufLength(c->payload);
 
-        while (len > 0 && isAlive(c->line))
+        while (len > 0 && lineIsAlive(c->line))
         {
             int n  = SSL_write(cstate->ssl, sbufGetRawPtr(c->payload), len);
             status = getSslStatus(cstate->ssl, n);
@@ -104,7 +104,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 do
                 {
                     sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                    int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                    int             avail = (int) sbufGetRightCapacity(buf);
                     n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                     if (n > 0)
                     {
@@ -112,7 +112,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         context_t *send_context = newContextFrom(c);
                         send_context->payload   = buf;
                         self->up->upStream(self->up, send_context);
-                        if (! isAlive(c->line))
+                        if (! lineIsAlive(c->line))
                         {
                             reuseContextPayload(c);
                             destroyContext(c);
@@ -159,13 +159,13 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->rbio  = BIO_new(BIO_s_mem());
             cstate->wbio  = BIO_new(BIO_s_mem());
             cstate->ssl   = SSL_new(state->ssl_context);
-            cstate->queue = newContextQueue();
+            cstate->queue = contextqueueCreate();
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             SSL_set_tlsext_host_name(cstate->ssl, state->sni);
             context_t *client_hello_ctx = newContextFrom(c);
             self->up->upStream(self->up, c);
-            if (! isAlive(client_hello_ctx->line))
+            if (! lineIsAlive(client_hello_ctx->line))
             {
                 destroyContext(client_hello_ctx);
                 return;
@@ -179,7 +179,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (status == kSslstatusWantIo)
             {
                 sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(client_hello_ctx));
-                int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                int             avail = (int) sbufGetRightCapacity(buf);
                 n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
                 {
@@ -233,7 +233,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         int len = (int) sbufGetBufLength(c->payload);
 
-        while (len > 0 && isAlive(c->line))
+        while (len > 0 && lineIsAlive(c->line))
         {
             n = BIO_write(cstate->rbio, sbufGetRawPtr(c->payload), len);
 
@@ -259,7 +259,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     do
                     {
                         sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                        int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                        int             avail = (int) sbufGetRightCapacity(buf);
                         n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
 
                         if (n > 0)
@@ -268,7 +268,7 @@ static void downStream(tunnel_t *self, context_t *c)
                             context_t *req_cont = newContextFrom(c);
                             req_cont->payload   = buf;
                             self->up->upStream(self->up, req_cont);
-                            if (! isAlive(c->line))
+                            if (! lineIsAlive(c->line))
                             {
                                 reuseContextPayload(c);
                                 destroyContext(c);
@@ -298,7 +298,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 /* Did SSL request to write bytes? */
                 sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                int             avail = (int) sbufGetRightCapacity(buf);
                 n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                 if (n > 0)
                 {
@@ -325,7 +325,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     context_t *dw_est_ctx       = newContextFrom(c);
                     dw_est_ctx->est             = true;
                     self->dw->downStream(self->dw, dw_est_ctx);
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         LOGW("WolfsslClient: prev node instantly closed the est with fin");
                         reuseContextPayload(c);
@@ -349,7 +349,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 sbuf_t *buf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
 
                 sbufSetLength(buf, 0);
-                int avail = (int) sbufGetRightCapacityNoPadding(buf);
+                int avail = (int) sbufGetRightCapacity(buf);
                 n         = SSL_read(cstate->ssl, sbufGetMutablePtr(buf), avail);
 
                 if (n > 0)
@@ -358,7 +358,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     context_t *data_ctx = newContextFrom(c);
                     data_ctx->payload   = buf;
                     self->dw->downStream(self->dw, data_ctx);
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         reuseContextPayload(c);
                         destroyContext(c);

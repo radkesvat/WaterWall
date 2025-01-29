@@ -255,18 +255,18 @@ static void upStream(tunnel_t *self, context_t *c)
                         download_line_cstate->main_line = main_line;
                         cstate->main_line               = main_line;
                         setupLineDownSide(main_line, onMainLinePaused, download_line_cstate, onMainLineResumed);
-                        lockLine(main_line);
+                        lineLock(main_line);
                         self->up->upStream(self->up, newInitContext(main_line));
 
-                        if (! isAlive(main_line))
+                        if (! lineIsAlive(main_line))
                         {
-                            unLockLine(main_line);
+                            lineUnlock(main_line);
                             reuseContextPayload(c);
                             destroyContext(c);
                             return;
                         }
 
-                        unLockLine(main_line);
+                        lineUnlock(main_line);
                         sbufShiftRight(c->payload, sizeof(uint64_t));
                         if (sbufGetBufLength(buf) > 0)
                         {
@@ -354,16 +354,16 @@ static void upStream(tunnel_t *self, context_t *c)
                         upload_line_cstate->main_line = main_line;
                         cstate->main_line             = main_line;
                         setupLineDownSide(main_line, onMainLinePaused, cstate, onMainLineResumed);
-                        lockLine(main_line);
+                        lineLock(main_line);
                         self->up->upStream(self->up, newInitContext(main_line));
 
-                        if (! isAlive(main_line))
+                        if (! lineIsAlive(main_line))
                         {
-                            unLockLine(main_line);
+                            lineUnlock(main_line);
                             destroyContext(c);
                             return;
                         }
-                        unLockLine(main_line);
+                        lineUnlock(main_line);
 
                         assert(upload_line_cstate->buffering);
 
@@ -553,7 +553,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     doneLineDownSide(cstate_download->main_line);
                     self->up->upStream(self->up, newFinContext(cstate_download->main_line));
-                    destroyLine(cstate_download->main_line);
+                    lineDestroy(cstate_download->main_line);
                     cstate_download->main_line = NULL;
                 }
 
@@ -596,7 +596,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     doneLineDownSide(cstate_upload->main_line);
                     self->up->upStream(self->up, newFinContext(cstate_upload->main_line));
-                    destroyLine(cstate_upload->main_line);
+                    lineDestroy(cstate_upload->main_line);
                     cstate_upload->main_line = NULL;
                 }
 
@@ -663,7 +663,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 doneLineUpSide(cstate->upload_line);
                 doneLineUpSide(cstate->download_line);
                 doneLineDownSide(cstate->main_line);
-                destroyLine(cstate->main_line);
+                lineDestroy(cstate->main_line);
 
                 halfduplex_server_con_state_t *upload_line_cstate = LSTATE(cstate->upload_line);
                 upload_line_cstate->download_line                 = NULL;

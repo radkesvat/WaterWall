@@ -47,7 +47,7 @@ static void onH2LinePaused(void *arg)
     tunnel_t                 *self = con->tunnel;
 
     line_t *stream_line = con->current_stream_write_line;
-    if (stream_line && isAlive(stream_line))
+    if (stream_line && lineIsAlive(stream_line))
     {
         http2_client_child_con_state_t *stream = LSTATE(stream_line);
         stream->paused                         = true;
@@ -147,7 +147,7 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
     memorySet(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
     stream->stream_id          = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
-    stream->grpc_buffer_stream = newBufferStream(getLineBufferPool(con->line));
+    stream->grpc_buffer_stream = bufferstreamCreate(lineGetBufferPool(con->line));
     stream->parent             = con->line;
     stream->line               = child_line;
     stream->tunnel             = con->tunnel;
@@ -162,7 +162,7 @@ static void deleteHttp2Stream(http2_client_child_con_state_t *stream)
 {
 
     LSTATE_I_DROP(stream->line, stream->tunnel->chain_index);
-    destroyBufferStream(stream->grpc_buffer_stream);
+    bufferstreamDestroy(stream->grpc_buffer_stream);
     doneLineUpSide(stream->line);
     memoryFree(stream);
 }
@@ -172,7 +172,7 @@ static http2_client_con_state_t *createHttp2Connection(tunnel_t *self, int tid)
 
     http2_client_state_t     *state = TSTATE(self);
     http2_client_con_state_t *con   = memoryAllocate(sizeof(http2_client_con_state_t));
-    *con                            = (http2_client_con_state_t) {.queue        = newContextQueue(),
+    *con                            = (http2_client_con_state_t) {.queue        = contextqueueCreate(),
                                                                   .content_type = state->content_type,
                                                                   .path         = state->path,
                                                                   .host         = state->host,
@@ -226,15 +226,15 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
         {
             bufferpoolResuesBuffer(getWorkerBufferPool(con->line->tid), k.ref->buf);
         }
-        unLockLine(k.ref->stream_line);
+        lineUnlock(k.ref->stream_line);
     }
 
     action_queue_t_drop(&con->actions);
     doneLineDownSide(con->line);
     LSTATE_DROP(con->line);
     nghttp2_session_del(con->session);
-    destroyContextQueue(con->queue);
-    destroyLine(con->line);
+    contextqueueDestory(con->queue);
+    lineDestroy(con->line);
     wtimerDelete(con->ping_timer);
     memoryFree(con);
 }
@@ -296,21 +296,21 @@ static void onPingTimer(wtimer_t *timer)
         char   *data = NULL;
         size_t  len;
         line_t *h2line = con->line;
-        lockLine(h2line);
+        lineLock(h2line);
         while (0 < (len = nghttp2_session_mem_send2(con->session, (const uint8_t **) &data)))
         {
-            sbuf_t *send_buf = bufferpoolGetLargeBuffer(getLineBufferPool(h2line));
+            sbuf_t *send_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(h2line));
             sbufSetLength(send_buf, len);
             sbufWrite(send_buf, data, len);
             context_t *req = newContext(h2line);
             req->payload   = send_buf;
             con->tunnel->up->upStream(con->tunnel->up, req);
-            if (! isAlive(h2line))
+            if (! lineIsAlive(h2line))
             {
-                unLockLine(h2line);
+                lineUnlock(h2line);
                 return;
             }
         }
-        unLockLine(h2line);
+        lineUnlock(h2line);
     }
 }

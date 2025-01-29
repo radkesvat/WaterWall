@@ -202,7 +202,7 @@ static void nio_read(wio_t* io) {
     case WIO_TYPE_IP: buf = bufferpoolGetSmallBuffer(io->loop->bufpool); break;
     }
 
-    unsigned int available = sbufGetRightCapacityNoPadding(buf);
+    unsigned int available = sbufGetRightCapacity(buf);
     assert(available >= 1024);
 
     if (available > (1U << 15)) {

@@ -1,19 +1,28 @@
 #include "memory_manager.h"
-#include "wmutex.h"
 #include "mimalloc.h"
+#include "wmutex.h"
+
 
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+void memorymanagerInit(void)
+{
+    // assert(state == NULL);
+    // state = memorymanagerCreateDedicatedMemory();
+    // return state;
+}
+
 #ifndef ALLOCATOR_BYPASS
 
 struct dedicated_memory_s
 {
-    wmutex_t mut;
-    mi_heap_t     *mi_heap;
-    unsigned int   free_counter;
+    wmutex_t     mut;
+    mi_heap_t   *mi_heap;
+    unsigned int free_counter;
 };
 
 enum
@@ -21,26 +30,15 @@ enum
     kFreeThreShouldCounter = 64
 };
 
-
-
-void initMemoryManager(void)
-{
-    // assert(state == NULL);
-    // state = createGlobalStateDedicatedMemory();
-    // return state;
-}
-
-
-
-void setMemoryManager(dedicated_memory_t *new_state)
+void memorymanagerSetState(dedicated_memory_t *new_state)
 {
     (void) new_state;
-    
+
     // assert(state == NULL);
     // state = new_state;
 }
 
-dedicated_memory_t *createGlobalStateDedicatedMemory(void)
+dedicated_memory_t *memorymanagerCreateDedicatedMemory(void)
 {
     return NULL;
 
@@ -68,7 +66,6 @@ void memoryFree(void *ptr)
     mi_free(ptr);
 }
 
-
 /*
 
     Note: temporarily map to default allocators since mimalloc has no api for dedicated memory pools
@@ -89,7 +86,7 @@ void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 {
     (void) dm;
 
-    return memoryReAllocate(ptr,size);
+    return memoryReAllocate(ptr, size);
 
     // mutexLock(&dm->mut);
     // void *newptr = mi_heap_realloc(dm->mi_heap, ptr, size);
@@ -110,6 +107,48 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
     //     dm->free_counter = 0;
     // }
     // mutexUnlock(&dm->mut);
+}
+
+#else
+
+void *memoryAllocate(size_t size)
+{
+    return malloc(size);
+}
+
+void *memoryReAllocate(void *ptr, size_t size)
+{
+    return realloc(ptr, size);
+}
+
+void memoryFree(void *ptr)
+{
+    free(ptr);
+}
+
+dedicated_memory_t *memorymanagerCreateDedicatedMemory(void){
+    return NULL;
+}
+
+void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
+{
+    (void) dm;
+
+    return memoryAllocate(size);
+}
+
+void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
+{
+    (void) dm;
+
+    return memoryReAllocate(ptr, size);
+}
+
+void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
+{
+    (void) dm;
+
+    memoryFree(ptr);
 }
 
 #endif

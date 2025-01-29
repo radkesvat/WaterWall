@@ -70,11 +70,11 @@ int main(void)
             */
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
-            runConfigFile(cfile);
+            nodemanagerRunConfigFile(cfile);
         }
     }
 
     LOGD("Core: starting workers ...");
-    startSocketManager();
+    socketmanagerStart();
     runMainThread();
 }

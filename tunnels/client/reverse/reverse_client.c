@@ -71,16 +71,16 @@ static void downStream(tunnel_t *self, context_t *c)
             }
 
             ucstate->pair_connected = true;
-            lockLine(ucstate->d);
+            lineLock(ucstate->d);
             self->dw->downStream(self->dw, newInitContext(ucstate->d));
-            if (! isAlive(ucstate->d))
+            if (! lineIsAlive(ucstate->d))
             {
-                unLockLine(ucstate->d);
+                lineUnlock(ucstate->d);
                 reuseContextPayload(c);
                 destroyContext(c);
                 return;
             }
-            unLockLine(ucstate->d);
+            lineUnlock(ucstate->d);
             self->dw->downStream(self->dw, switchLine(c, ucstate->d));
         }
     }

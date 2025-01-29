@@ -1,7 +1,10 @@
 #pragma once
 #include "wlibc.h"
 
-#include "tunnel.h"
+#include "worker.h'
+#include "generic_pool.h"
+
+typedef struct tunnel_s tunnel_t;
 
 enum
 {
@@ -14,9 +17,10 @@ typedef enum
     kSCRequiredBytes,
     kSCSuccessNoData,
     kSCSuccess
+
 } splice_retcode_t;
 
-typedef struct tunnel_array_t
+typedef struct tunnel_array_s
 {
     uint16_t  len;
     tunnel_t *tuns[kMaxChainLen];
@@ -25,20 +29,19 @@ typedef struct tunnel_array_t
 
 typedef struct tunnel_chain_s
 {
-    generic_pool_t *line_pool;
-
-    uint16_t sum_padding_left;
-    uint16_t sum_line_state_size;
-
-    tunnel_array_t tunnels;
+    tunnel_array_t  tunnels;
+    uint16_t        sum_padding_left;
+    uint32_t        sum_line_state_size;
+    tid_t           workers_count;
+    master_pool_t  *masterpool_line_pool;
+    generic_pool_t *line_pools[];
 
 } tunnel_chain_t;
 
-tunnel_chain_t* tunnelChainCreate(void);
-
-void tunnelChain(tunnel_t *from, tunnel_t *to);
-void tunnelChainDown(tunnel_t *from, tunnel_t *to);
-void tunnelChainUp(tunnel_t *from, tunnel_t *to);
+tunnel_chain_t *tunnelchainCreate(void);
+void            tunnelchainFinalize(tunnel_chain_t *tc);
+void            tunnelchainDestroy(tunnel_chain_t *tc);
+generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, uint32_t tid);
 
 void tunnelarrayInesert(tunnel_array_t *tc, tunnel_t *t);
-void tunnelchainInestert(tunnel_chain_t *tci, tunnel_t *t);
+void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t);

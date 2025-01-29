@@ -42,7 +42,7 @@ static void cleanup(trojan_socks_server_con_state_t *cstate)
 {
     if (cstate->udp_stream)
     {
-        destroyBufferStream(cstate->udp_stream);
+        bufferstreamDestroy(cstate->udp_stream);
     }
     memoryFree(cstate);
 }
@@ -204,12 +204,12 @@ static bool parseAddress(context_t *c)
 static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, line_t *line)
 {
     buffer_stream_t *bstream = cstate->udp_stream;
-    if (bufferStreamLen(bstream) <= 0)
+    if (bufferstreamLen(bstream) <= 0)
     {
         return true;
     }
 
-    uint8_t  address_type = bufferStreamViewByteAt(bstream, 0);
+    uint8_t  address_type = bufferstreamViewByteAt(bstream, 0);
     uint16_t packet_size  = 0;
     uint16_t full_len     = 0;
     uint8_t  domain_len   = 0;
@@ -219,14 +219,14 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         // address_type | DST.ADDR | DST.PORT | Length |  CRLF   | Payload
         //       1      |    4     |    2     |   2    |    2
 
-        if (bufferStreamLen(bstream) < 1 + 4 + 2 + 2 + 2)
+        if (bufferstreamLen(bstream) < 1 + 4 + 2 + 2 + 2)
         {
             return true;
         }
 
         {
-            uint8_t packet_size_h = bufferStreamViewByteAt(bstream, 1 + 4 + 2);
-            uint8_t packet_size_l = bufferStreamViewByteAt(bstream, 1 + 4 + 2 + 1);
+            uint8_t packet_size_h = bufferstreamViewByteAt(bstream, 1 + 4 + 2);
+            uint8_t packet_size_l = bufferstreamViewByteAt(bstream, 1 + 4 + 2 + 1);
             packet_size           = (packet_size_h << 8) | packet_size_l;
             if (packet_size > 8192)
             {
@@ -239,19 +239,19 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     case kTrojanatypDomainName:
         // address_type | DST.ADDR | DST.PORT | Length |  CRLF   | Payload
         //      1       | x(1) + x |    2     |   2    |    2
-        if (bufferStreamLen(bstream) < 1 + 1 + 2 + 2 + 2)
+        if (bufferstreamLen(bstream) < 1 + 1 + 2 + 2 + 2)
         {
             return true;
         }
-        domain_len = bufferStreamViewByteAt(bstream, 1);
+        domain_len = bufferstreamViewByteAt(bstream, 1);
 
-        if ((int) bufferStreamLen(bstream) < 1 + 1 + domain_len + 2 + 2 + 2)
+        if ((int) bufferstreamLen(bstream) < 1 + 1 + domain_len + 2 + 2 + 2)
         {
             return true;
         }
         {
-            uint8_t packet_size_h = bufferStreamViewByteAt(bstream, 1 + 1 + domain_len + 2);
-            uint8_t packet_size_l = bufferStreamViewByteAt(bstream, 1 + 1 + domain_len + 2 + 1);
+            uint8_t packet_size_h = bufferstreamViewByteAt(bstream, 1 + 1 + domain_len + 2);
+            uint8_t packet_size_l = bufferstreamViewByteAt(bstream, 1 + 1 + domain_len + 2 + 1);
             packet_size           = (packet_size_h << 8) | packet_size_l;
             if (packet_size > 8192)
             {
@@ -265,14 +265,14 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         // address_type | DST.ADDR | DST.PORT | Length |  CRLF   | Payload
         //      1       |   16     |    2     |   2    |    2
 
-        if (bufferStreamLen(bstream) < 1 + 16 + 2 + 2 + 2)
+        if (bufferstreamLen(bstream) < 1 + 16 + 2 + 2 + 2)
         {
             return true;
         }
         {
 
-            uint8_t packet_size_h = bufferStreamViewByteAt(bstream, 1 + 16 + 2);
-            uint8_t packet_size_l = bufferStreamViewByteAt(bstream, 1 + 16 + 2 + 1);
+            uint8_t packet_size_h = bufferstreamViewByteAt(bstream, 1 + 16 + 2);
+            uint8_t packet_size_l = bufferstreamViewByteAt(bstream, 1 + 16 + 2 + 1);
             packet_size           = (packet_size_h << 8) | packet_size_l;
             if (packet_size > 8192)
             {
@@ -288,20 +288,20 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return false;
         break;
     }
-    if (bufferStreamLen(bstream) < full_len)
+    if (bufferstreamLen(bstream) < full_len)
     {
         return true;
     }
 
     context_t        *c            = newContext(line);
     socket_context_t *dest_context = &(c->line->dest_ctx);
-    c->payload                     = bufferStreamReadExact(bstream, full_len);
+    c->payload                     = bufferstreamReadExact(bstream, full_len);
 
     if (cstate->init_sent)
     {
         sbufShiftRight(c->payload, full_len - packet_size);
         self->up->upStream(self->up, c);
-        if (! isAlive(line))
+        if (! lineIsAlive(line))
         {
             return true;
         }
@@ -375,7 +375,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         context_t *up_init_ctx = newContextFrom(c);
         up_init_ctx->init      = true;
         self->up->upStream(self->up, up_init_ctx);
-        if (! isAlive(c->line))
+        if (! lineIsAlive(c->line))
         {
             LOGW("TrojanSocksServer: next node instantly closed the init with fin");
             reuseContextPayload(c);
@@ -387,7 +387,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
 
     self->up->upStream(self->up, c);
 
-    if (! isAlive(line))
+    if (! lineIsAlive(line))
     {
         return true;
     }
@@ -412,7 +412,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     context_t *up_init_ctx = newContextFrom(c);
                     up_init_ctx->init      = true;
                     self->up->upStream(self->up, up_init_ctx);
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         LOGW("TrojanSocksServer: next node instantly closed the init with fin");
                         reuseContextPayload(c);
@@ -424,7 +424,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 else if (dest_context->address_protocol == kSapUdp)
                 {
                     // udp will not call init here since no dest_context addr is available right now
-                    cstate->udp_stream = newBufferStream(getContextBufferPool(c));
+                    cstate->udp_stream = bufferstreamCreate(getContextBufferPool(c));
                 }
 
                 if (sbufGetBufLength(c->payload) <= 0)
@@ -495,7 +495,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                     if (cstate->udp_stream)
                     {
-                        destroyBufferStream(cstate->udp_stream);
+                        bufferstreamDestroy(cstate->udp_stream);
                         cstate->udp_stream = NULL;
                     }
                     cleanup(cstate);

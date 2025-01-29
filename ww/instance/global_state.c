@@ -10,7 +10,13 @@
 
 ww_global_state_t global_ww_state = {0};
 
-void setGlobalState(struct ww_global_state_s *state)
+ww_global_state_t *globalStateGet(void)
+{
+    return &GSTATE;
+}
+
+
+void globalStateSet(struct ww_global_state_s *state)
 {
     assert(! GSTATE.initialized && state->initialized);
     GSTATE = *state;
@@ -20,8 +26,8 @@ void setGlobalState(struct ww_global_state_s *state)
     setDnsLogger(GSTATE.dns_logger);
     setInternalLogger(GSTATE.ww_logger);
     setSignalManager(GSTATE.signal_manager);
-    setSocketManager(GSTATE.socekt_manager);
-    setNodeManager(GSTATE.node_manager);
+    socketmanagerSet(GSTATE.socekt_manager);
+    nodemanagerSetState(GSTATE.node_manager);
 }
 
 static void initializeShortCuts(void)
@@ -36,14 +42,12 @@ static void initializeShortCuts(void)
     GSTATE.shortcut_loops              = (wloop_t **) (space + (0ULL * total_workers));
     GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1ULL * total_workers));
     GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (2ULL * total_workers));
-    GSTATE.shortcut_line_pools         = (generic_pool_t **) (space + (3ULL * total_workers));
-    GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (4ULL * total_workers));
+    GSTATE.shortcut_pipeline_msg_pools = (generic_pool_t **) (space + (3ULL * total_workers));
 
     for (unsigned int tid = 0; tid < GSTATE.workers_count; tid++)
     {
 
         GSTATE.shortcut_context_pools[tid]      = WORKERS[tid].context_pool;
-        GSTATE.shortcut_line_pools[tid]         = WORKERS[tid].line_pool;
         GSTATE.shortcut_pipeline_msg_pools[tid] = WORKERS[tid].pipeline_msg_pool;
         GSTATE.shortcut_buffer_pools[tid]       = WORKERS[tid].buffer_pool;
         GSTATE.shortcut_loops[tid]              = WORKERS[tid].loop;
@@ -54,11 +58,10 @@ static void initializeMasterPools(void)
 {
     assert(GSTATE.initialized);
 
-    GSTATE.masterpool_buffer_pools_large = newMasterPoolWithCap(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_buffer_pools_small = newMasterPoolWithCap(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_context_pools      = newMasterPoolWithCap(2 * ((16) + GSTATE.ram_profile));
-    GSTATE.masterpool_line_pools         = newMasterPoolWithCap(2 * ((8) + GSTATE.ram_profile));
-    GSTATE.masterpool_pipeline_msg_pools = newMasterPoolWithCap(2 * ((8) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_large = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_small = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_context_pools      = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
+    GSTATE.masterpool_pipeline_msg_pools = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
 }
 
 void createGlobalState(const ww_construction_data_t init_data)
@@ -107,7 +110,7 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         for (unsigned int i = 0; i < WORKERS_COUNT; ++i)
         {
-            initalizeWorker(getWorker(i), i);
+            workerInit(getWorker(i), i);
         }
 
         initializeShortCuts();
@@ -116,14 +119,14 @@ void createGlobalState(const ww_construction_data_t init_data)
     GSTATE.signal_manager = createSignalManager();
     startSignalManager();
 
-    GSTATE.socekt_manager = createSocketManager();
-    GSTATE.node_manager   = createNodeManager();
+    GSTATE.socekt_manager = socketmanagerCreate();
+    GSTATE.node_manager   = nodemanagerCreate();
 
     // Spawn all workers except main worker which is current thread
     {
         for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
         {
-            runWorkerNewThread(&WORKERS[i]);
+            workerRunNewThread(&WORKERS[i]);
         }
     }
 }
@@ -131,9 +134,9 @@ void createGlobalState(const ww_construction_data_t init_data)
 void runMainThread(void)
 {
     assert(GSTATE.initialized);
-    
+
     WORKERS[0].thread = (wthread_t) NULL;
-    runWorker(getWorker(0));
+    workerRun(getWorker(0));
 
     LOGF("Unexpected: main loop joined");
 

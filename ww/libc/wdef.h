@@ -312,9 +312,10 @@ enum
 };
 
 
-#define memorySet  memset
-#define memoryMove memmove
-#define memoryCopy memcpy
+#define memorySet     memset
+#define memoryMove    memmove
+#define memoryCopy    memcpy
+#define memoryCompare memcmp
 
 
 #endif // WW_DEF_H_

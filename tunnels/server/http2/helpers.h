@@ -90,7 +90,7 @@ static http2_server_child_con_state_t *createHttp2Stream(http2_server_con_state_
 
     if (con->content_type == kApplicationGrpc)
     {
-        stream->grpc_buffer_stream = newBufferStream(getLineBufferPool(this_line));
+        stream->grpc_buffer_stream = bufferstreamCreate(lineGetBufferPool(this_line));
     }
 
     LSTATE_MUT(stream->line) = stream;
@@ -105,11 +105,11 @@ static void deleteHttp2Stream(http2_server_child_con_state_t *stream)
 
     if (stream->grpc_buffer_stream)
     {
-        destroyBufferStream(stream->grpc_buffer_stream);
+        bufferstreamDestroy(stream->grpc_buffer_stream);
     }
 
     doneLineDownSide(stream->line);
-    destroyLine(stream->line);
+    lineDestroy(stream->line);
     if (stream->request_path)
     {
         memoryFree(stream->request_path);
@@ -158,7 +158,7 @@ static void deleteHttp2Connection(http2_server_con_state_t *con)
         {
             bufferpoolResuesBuffer(getWorkerBufferPool(con->line->tid), k.ref->buf);
         }
-        unLockLine(k.ref->stream_line);
+        lineUnlock(k.ref->stream_line);
     }
     action_queue_t_drop(&con->actions);
 

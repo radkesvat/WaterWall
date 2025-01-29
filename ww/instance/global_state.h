@@ -1,6 +1,10 @@
 #pragma once
 
 #include "wlibc.h"
+
+#include "buffer_pool.h"
+#include "generic_pool.h"
+#include "wloop.h"
 #include "worker.h"
 
 /*
@@ -21,17 +25,15 @@ typedef struct
 
 typedef struct ww_global_state_s
 {
-    struct wloop_s         **shortcut_loops;
-    buffer_pool_t   **shortcut_buffer_pools;
-    generic_pool_t  **shortcut_context_pools;
-    generic_pool_t  **shortcut_line_pools;
-    generic_pool_t  **shortcut_pipeline_msg_pools;
-    struct master_pool_s    *masterpool_buffer_pools_large;
-    struct master_pool_s    *masterpool_buffer_pools_small;
-    struct master_pool_s    *masterpool_context_pools;
-    struct master_pool_s    *masterpool_line_pools;
-    struct master_pool_s    *masterpool_pipeline_msg_pools;
-    struct worker_s         *workers;
+    wloop_t                **shortcut_loops;
+    buffer_pool_t          **shortcut_buffer_pools;
+    generic_pool_t         **shortcut_context_pools;
+    generic_pool_t         **shortcut_pipeline_msg_pools;
+    master_pool_t           *masterpool_buffer_pools_large;
+    master_pool_t           *masterpool_buffer_pools_small;
+    master_pool_t           *masterpool_context_pools;
+    master_pool_t           *masterpool_pipeline_msg_pools;
+    worker_t                *workers;
     struct signal_manager_s *signal_manager;
     struct socket_manager_s *socekt_manager;
     struct node_manager_s   *node_manager;
@@ -39,8 +41,8 @@ typedef struct ww_global_state_s
     struct logger_s         *network_logger;
     struct logger_s         *dns_logger;
     struct logger_s         *ww_logger;
-    unsigned int             workers_count;
-    unsigned int             ram_profile;
+    uint32_t                 workers_count;
+    uint32_t                 ram_profile;
     bool                     initialized;
 
 } ww_global_state_t;
@@ -78,10 +80,6 @@ static inline buffer_pool_t *getWorkerBufferPool(tid_t tid)
     return GSTATE.shortcut_buffer_pools[tid];
 }
 
-static inline generic_pool_t *getWorkerLinePool(tid_t tid)
-{
-    return GSTATE.shortcut_line_pools[tid];
-}
 
 static inline generic_pool_t *getWorkerContextPool(tid_t tid)
 {
@@ -100,11 +98,6 @@ static inline struct wloop_s *getWorkerLoop(tid_t tid)
 
 WW_EXPORT void runMainThread(void);
 
-WW_EXPORT void createGlobalState(ww_construction_data_t data);
-
-WW_EXPORT struct ww_global_state_s *getGlobalState(void)
-{
-    return &(GSTATE);
-}
-
-WW_EXPORT void setGlobalState(struct ww_global_state_s *state);
+WW_EXPORT void               createGlobalState(ww_construction_data_t data);
+WW_EXPORT ww_global_state_t *globalStateGet(void);
+WW_EXPORT void               globalStateSet(ww_global_state_t *state);

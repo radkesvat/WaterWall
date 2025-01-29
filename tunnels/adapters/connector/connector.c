@@ -47,18 +47,18 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
         LOGF("JSON Error: Connector->settings (object field) : The object was empty or invalid");
         return NULL;
     }
-    node_t *tcp_outbound_node  = newNode();
-    node_t *udp_outbound_node  = newNode();
+    node_t *tcp_outbound_node  = nodemanagerNewNode();
+    node_t *udp_outbound_node  = nodemanagerNewNode();
     tcp_outbound_node->name    = stringConcat(instance_info->node->name, "_tcp_outbound");
     tcp_outbound_node->type    = stringDuplicate("TcpConnector");
     tcp_outbound_node->version = instance_info->node->version;
     udp_outbound_node->name    = stringConcat(instance_info->node->name, "_udp_outbound");
     udp_outbound_node->type    = stringDuplicate("UdpConnector");
     udp_outbound_node->version = instance_info->node->version;
-    registerNode(instance_info->node_manager_config, tcp_outbound_node, settings);
-    registerNode(instance_info->node_manager_config, udp_outbound_node, settings);
-    runNode(instance_info->node_manager_config, tcp_outbound_node, instance_info->chain_index);
-    runNode(instance_info->node_manager_config, udp_outbound_node, instance_info->chain_index);
+    nodemanagerRegisterNode(instance_info->node_manager_config, tcp_outbound_node, settings);
+    nodemanagerRegisterNode(instance_info->node_manager_config, udp_outbound_node, settings);
+    nodemanagerRunNode(instance_info->node_manager_config, tcp_outbound_node, instance_info->chain_index);
+    nodemanagerRunNode(instance_info->node_manager_config, udp_outbound_node, instance_info->chain_index);
     state->tcp_connector = tcp_outbound_node->instance;
     state->udp_connector = udp_outbound_node->instance;
 
@@ -67,8 +67,8 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    tunnelChainDown(t, state->tcp_connector);
-    tunnelChainDown(t, state->udp_connector);
+    tunnelBindDown(t, state->tcp_connector);
+    tunnelBindDown(t, state->udp_connector);
 
     return t;
 }

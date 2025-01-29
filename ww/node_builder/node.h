@@ -50,6 +50,6 @@ struct node_s
     uint32_t          refrenced;
 };
 
-node_t loadNodeLibraryByName(const char *name);
-node_t loadNodeLibraryByHash(hash_t hname);
-void   registerStaticNodeLib(node_t lib);
+node_t nodelibraryLoadByName(const char *name);
+node_t nodelibraryLoadByHash(hash_t hname);
+void   nodelibraryRegister(node_t lib);

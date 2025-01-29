@@ -7,24 +7,12 @@ struct dedicated_memory_s;
 typedef struct dedicated_memory_s dedicated_memory_t;
 
 /// opens global memory manager (call this once before first usage of global functions below)
-void initMemoryManager(void);
-
+void memorymanagerInit(void);
 
 /// set the memory manager global state
-void setMemoryManager(dedicated_memory_t *new_state);
+void memorymanagerSetState(dedicated_memory_t *new_state);
 
-dedicated_memory_t *createGlobalStateDedicatedMemory(void);
-
-/// malloc, free and realloc (thread-safe).
-
-void *memoryAllocate(size_t size);
-void *memoryReAllocate(void *ptr, size_t size);
-void  memoryFree(void *ptr);
-
-void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
-void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
-void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
-
+dedicated_memory_t *memorymanagerCreateDedicatedMemory(void);
 
 
 

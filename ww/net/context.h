@@ -4,7 +4,7 @@
 #include "generic_pool.h"
 #include "global_state.h"
 #include "line.h"
-
+#include "buffer_stream.h"
 
 
 /*
@@ -40,22 +40,22 @@ static inline void destroyContext(context_t *c)
 {
     assert(c->payload == NULL);
     const tid_t tid = c->line->tid;
-    unLockLine(c->line);
-    reusePoolItem(getWorkerContextPool(tid), c);
+    lineUnlock(c->line);
+    genericpoolReuseItem(getWorkerContextPool(tid), c);
 }
 
 static inline context_t *newContext(line_t *const line)
 {
-    context_t *new_ctx = popPoolItem(getWorkerContextPool(line->tid));
+    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(line->tid));
     *new_ctx           = (context_t){.line = line};
-    lockLine(line);
+    lineLock(line);
     return new_ctx;
 }
 
 static inline context_t *newContextFrom(const context_t *const source)
 {
-    lockLine(source->line);
-    context_t *new_ctx = popPoolItem(getWorkerContextPool(source->line->tid));
+    lineLock(source->line);
+    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(source->line->tid));
     *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
 }
@@ -90,8 +90,8 @@ static inline context_t *newInitContext(line_t *const line)
 
 static inline context_t *switchLine(context_t *const c, line_t *const line)
 {
-    lockLine(line);
-    unLockLine(c->line);
+    lineLock(line);
+    lineUnlock(c->line);
     c->line = line;
     return c;
 }
@@ -119,9 +119,19 @@ static inline void reuseContextPayload(context_t *const c)
 }
 
 
+static inline void bufferStreamPushContextPayload(buffer_stream_t *self, context_t *c)
+{
+    assert(c->payload);
+    bufferstreamPush(self, c->payload);
+    dropContexPayload(c);
+}
 
 
 
+static inline buffer_pool_t *getContextBufferPool(const context_t *const c)
+{
+    return getWorkerBufferPool(c->line->tid);
+}
 
 
 

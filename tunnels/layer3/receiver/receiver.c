@@ -107,7 +107,7 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
     }
 
     hash_t  hash_tdev_name = calcHashBytes(state->device_name, strlen(state->device_name));
-    node_t *tundevice_node = getNode(instance_info->node_manager_config, hash_tdev_name);
+    node_t *tundevice_node = nodemanagerGetNode(instance_info->node_manager_config, hash_tdev_name);
     
     if (tundevice_node == NULL)
     {
@@ -118,7 +118,7 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
 
     if (tundevice_node->instance == NULL)
     {
-        runNode(instance_info->node_manager_config, tundevice_node, 0);
+        nodemanagerRunNode(instance_info->node_manager_config, tundevice_node, 0);
     }
 
     if (tundevice_node->instance == NULL)
@@ -142,7 +142,7 @@ tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)
     t->upStream   = &upStream;
     t->downStream = &downStream;
 
-    tunnelChain(tundevice_node->instance, t);
+    tunnelBind(tundevice_node->instance, t);
 
     return t;
 }

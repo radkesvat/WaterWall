@@ -57,7 +57,7 @@ static void onFallbackTimer(wtimer_t *timer)
     memoryFree(data);
     wtimerDelete(timer);
 
-    if (! isAlive(c->line))
+    if (! lineIsAlive(c->line))
     {
         if (c->payload != NULL)
         {
@@ -126,10 +126,10 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 LOGD("TrojanAuthServer: user \"%s\" accepted", tuser->user.name);
                 cstate->authenticated = true;
-                markAuthenticated(c->line);
+                lineAuthenticate(c->line);
                 cstate->init_sent = true;
                 self->up->upStream(self->up, newInitContext(c->line));
-                if (! isAlive(c->line))
+                if (! lineIsAlive(c->line))
                 {
                     reuseContextPayload(c);
                     destroyContext(c);
@@ -201,7 +201,7 @@ fallback:
     {
         cstate->init_sent = true;
         state->fallback->upStream(state->fallback, newInitContext(c->line));
-        if (! isAlive(c->line))
+        if (! lineIsAlive(c->line))
         {
             reuseContextPayload(c);
             destroyContext(c);
@@ -214,7 +214,7 @@ fallback:
     }
     else
     {
-        wtimer_t *t = wtimerAdd(getLineLoop(c->line), onFallbackTimer, state->fallback_delay, 1);
+        wtimer_t *t = wtimerAdd(lineGetEventLoop(c->line), onFallbackTimer, state->fallback_delay, 1);
         weventSetUserData(t, newTimerData(self, c));
     }
 }
@@ -298,7 +298,7 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
         }
 
         hash_t  hash_next     = calcHashBytes(fallback_node_name, strlen(fallback_node_name));
-        node_t *fallback_node = getNode(instance_info->node_manager_config, hash_next);
+        node_t *fallback_node = nodemanagerGetNode(instance_info->node_manager_config, hash_next);
         if (fallback_node == NULL)
         {
             LOGF("TrojanAuthServer: fallback node not found");
@@ -306,7 +306,7 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
         }
         if (fallback_node->instance == NULL)
         {
-            runNode(instance_info->node_manager_config, fallback_node, instance_info->chain_index + 1);
+            nodemanagerRunNode(instance_info->node_manager_config, fallback_node, instance_info->chain_index + 1);
         }
         state->fallback = fallback_node->instance;
 

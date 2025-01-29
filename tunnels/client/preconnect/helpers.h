@@ -41,7 +41,7 @@ static preconnect_client_con_state_t *createCstate(tid_t tid)
 
 static void destroyCstate(preconnect_client_con_state_t *cstate)
 {
-    destroyLine(cstate->u);
+    lineDestroy(cstate->u);
     memoryFree(cstate);
 }
 static void doConnect(struct connect_arg *cg)

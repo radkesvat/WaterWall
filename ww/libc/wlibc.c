@@ -1,34 +1,12 @@
 #include "wlibc.h"
 
-#ifdef ALLOCATOR_BYPASS // fallback to stdlib allocators, otherwise they are defined elsewhere (memory_manager.c)
-
-void initWLibc(void){}
-
-void *memoryAllocate(size_t size)
-{
-    return malloc(size);
-}
-
-void *memoryReAllocate(void *ptr, size_t size)
-{
-    return realloc(ptr, size);
-}
-
-void memoryFree(void *ptr)
-{
-    free(ptr);
-}
-
-#else
 
 #include "managers/memory_manager.h"
 
 void initWLibc(void){
-    initMemoryManager();
+    memorymanagerInit();
 }
 
-
-#endif
 
 
 

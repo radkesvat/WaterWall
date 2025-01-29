@@ -31,14 +31,14 @@ struct msg_event
     sbuf_t   *buf;
 };
 
-static pool_item_t *allocCaptureMsgPoolHandle(struct master_pool_s *pool, void *userdata)
+static pool_item_t *allocCaptureMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
     (void) userdata;
     (void) pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
-static void destroyCaptureMsgPoolHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
+static void destroyCaptureMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
@@ -52,13 +52,13 @@ static void localThreadEventReceived(wevent_t *ev)
 
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
-    reuseMasterPoolItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
+    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
 }
 
 static void distributePacketPayload(capture_device_t *cdev, tid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
-    popMasterPoolItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
+    masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
     *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
 
@@ -481,11 +481,11 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
                                 .read_event_callback   = cb,
                                 .userdata              = userdata,
                                 .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
-                                .reader_message_pool   = newMasterPoolWithCap(kMasterMessagePoosbufGetLeftCapacity),
+                                .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
                                 .reader_buffer_pool    = reader_bpool,
                                 .writer_buffer_pool    = writer_bpool};
 
-    installMasterPoolAllocCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
+    masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 
     return cdev;
 }

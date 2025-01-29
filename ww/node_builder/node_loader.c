@@ -70,7 +70,7 @@ static node_t dynLoadNodeLib(hash_t hname)
     return (node_t){0};
 }
 
-node_t loadNodeLibraryByHash(hash_t hname)
+node_t nodelibraryLoadByHash(hash_t hname)
 {
 
     if (state != NULL)
@@ -86,14 +86,14 @@ node_t loadNodeLibraryByHash(hash_t hname)
     return dynLoadNodeLib(hname);
 }
 
-node_t loadNodeLibraryByName(const char *name)
+node_t nodelibraryLoadByName(const char *name)
 {
     hash_t hname = calcHashBytes(name, strlen(name));
-    return loadNodeLibraryByHash(hname);
+    return nodelibraryLoadByHash(hname);
 }
 
 
-void registerStaticNodeLib(node_t lib)
+void nodelibraryRegister(node_t lib)
 {
     if (state == NULL)
     {

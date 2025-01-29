@@ -44,7 +44,7 @@ void opensslGlobalInit(void)
         // #else
         //         OPENSSL_init_ssl(OPENSSL_INIT_SSL_DEFAULT, NULL);
         // #endif
-        openssl_dedicated_memory_manager = createGlobalStateDedicatedMemory();
+        openssl_dedicated_memory_manager = memorymanagerCreateDedicatedMemory();
         if (0 == CRYPTO_set_mem_functions(opennsl_dedicated_malloc, opennsl_dedicated_realloc, opennsl_dedicated_free))
         {
             LOGF("OpenSSl Global: could not swap openssl allocators (almost always because allocations have already "

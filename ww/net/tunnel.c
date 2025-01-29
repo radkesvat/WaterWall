@@ -8,15 +8,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-
 // `from` upstreams to `to`
-void tunnelChainUp(tunnel_t *from, tunnel_t *to)
+void tunnelBindUp(tunnel_t *from, tunnel_t *to)
 {
     from->up = to;
 }
 
 // `to` downstreams to `from`
-void tunnelChainDown(tunnel_t *from, tunnel_t *to)
+void tunnelBindDown(tunnel_t *from, tunnel_t *to)
 {
     // assert(to->dw == NULL); // 2 nodes cannot chain to 1 exact node
     // such chains are possible by a generic listener adapter
@@ -25,10 +24,10 @@ void tunnelChainDown(tunnel_t *from, tunnel_t *to)
 }
 
 // `from` <-> `to`
-void tunnelChain(tunnel_t *from, tunnel_t *to)
+void tunnelBind(tunnel_t *from, tunnel_t *to)
 {
-    tunnelChainUp(from, to);
-    tunnelChainDown(from, to);
+    tunnelBindUp(from, to);
+    tunnelBindDown(from, to);
 }
 
 static void defaultUpStreamInit(tunnel_t *self, line_t *line)
@@ -103,17 +102,17 @@ static void defaultDownStreamResume(tunnel_t *self, line_t *line)
     self->up->fnResumeD(self->up, line);
 }
 
-static void defaultOnChain(tunnel_t *t, tunnel_chain_t *info)
+static void defaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 {
     node_t *node = t->node;
-    tunnelchainInestert(info, t);
 
     if (node->hash_next == 0x0)
     {
+        tunnelchainInsert(tc, t);
         return;
     }
 
-    node_t *next = getNode(node->node_manager_config, node->hash_next);
+    node_t *next = nodemanagerGetNode(node->node_manager_config, node->hash_next);
 
     if (next == NULL)
     {
@@ -124,15 +123,18 @@ static void defaultOnChain(tunnel_t *t, tunnel_chain_t *info)
     assert(next->instance); // every node in node map is created byfore chaining
 
     tunnel_t *tnext = next->instance;
-    tunnelChain(t, tnext);
-    tnext->onChain(tnext, info);
+    tunnelBind(t, tnext);
+
+    assert(tnext->chain == NULL);
+    tunnelchainInsert(tc, t);
+    tnext->onChain(tnext, tc);
 }
 
-static void defaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t index, uint16_t mem_offset)
+static void defaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t* mem_offset)
 {
     tunnelarrayInesert(arr, t);
-    t->chain_index   = index;
-    t->cstate_offset = mem_offset;
+    t->chain_index   = *index;
+    t->cstate_offset = *mem_offset;
 
     if (t->up)
     {
@@ -145,7 +147,7 @@ static void defaultOnChainingComplete(tunnel_t *t)
     (void) t;
 }
 
-static void defaultOnChainStart(tunnel_t *t)
+static void defaultOnStart(tunnel_t *t)
 {
     if (t->up)
     {
@@ -158,20 +160,11 @@ enum
     kTunnelsMemSize = 16 * 200
 };
 
-static uint8_t tunnel_alloc_pool[kTunnelsMemSize] = {0};
-static size_t  tunnel_alloc_index                 = 0;
-
 tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
 {
     size_t tsize = sizeof(tunnel_t) + tstate_size;
 
-    if (tunnel_alloc_index + tsize > kTunnelsMemSize)
-    {
-        LOGF("maximum size for tunnels buffer reached");
-        exit(1);
-    }
-
-    tunnel_t *ptr = (tunnel_t *) (&tunnel_alloc_pool[tunnel_alloc_index]);
+    tunnel_t *ptr = memoryAllocate(sizeof(tunnel_t));
 
     memorySet(ptr, 0, tsize);
 
@@ -192,23 +185,16 @@ tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
                       .onChain            = &defaultOnChain,
                       .onIndex            = &defaultOnIndex,
                       .onChainingComplete = &defaultOnChainingComplete,
-                      .onChainStart       = &defaultOnChainStart,
+                      .onStart            = &defaultOnStart,
 
                       .node = node};
 
     return ptr;
 }
 
-pool_item_t *allocContextPoolHandle(generic_pool_t *pool)
+void tunnelDestroy(tunnel_t *self)
 {
-    (void) pool;
-    return memoryAllocate(sizeof(context_t));
-}
-
-void destroyContextPoolHandle(generic_pool_t *pool, pool_item_t *item)
-{
-    (void) pool;
-    memoryFree(item);
+    memoryFree(self);
 }
 
 void pipeUpStream(context_t *c)

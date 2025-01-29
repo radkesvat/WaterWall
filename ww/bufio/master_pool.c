@@ -1,7 +1,12 @@
 #include "master_pool.h"
 
-
-static master_pool_item_t* defaultCreateHandle(struct master_pool_s *pool, void *userdata)
+/**
+ * Default create handler for the master pool.
+ * @param pool The master pool.
+ * @param userdata User data passed to the create handler.
+ * @return A pointer to the created pool item.
+ */
+static master_pool_item_t *defaultCreateHandle(master_pool_t *pool, void *userdata)
 {
     (void) pool;
     (void) userdata;
@@ -9,7 +14,13 @@ static master_pool_item_t* defaultCreateHandle(struct master_pool_s *pool, void 
     exit(1);
 }
 
-static void defaultDestroyHandle(struct master_pool_s *pool, master_pool_item_t *item, void *userdata)
+/**
+ * Default destroy handler for the master pool.
+ * @param pool The master pool.
+ * @param item The pool item to destroy.
+ * @param userdata User data passed to the destroy handler.
+ */
+static void defaultDestroyHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
     (void) pool;
     (void) userdata;
@@ -18,7 +29,12 @@ static void defaultDestroyHandle(struct master_pool_s *pool, master_pool_item_t 
     exit(1);
 }
 
-master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
+/**
+ * Creates a master pool with a specified capacity.
+ * @param pool_width The width of the pool.
+ * @return A pointer to the created master pool.
+ */
+master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 {
 
     pool_width = max(1, pool_width);
@@ -63,10 +79,27 @@ master_pool_t *newMasterPoolWithCap(unsigned int pool_width)
     return pool_ptr;
 }
 
-void destroyMasterPool(master_pool_t * pool){
+/**
+ * Installs create and destroy callbacks for the master pool.
+ * @param pool The master pool.
+ * @param create_h The handler to create pool items.
+ * @param destroy_h The handler to destroy pool items.
+ */
+void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
+                                     MasterPoolItemDestroyHandle destroy_h)
+{
+    mutexLock(&(pool->mutex));
+    pool->create_item_handle  = create_h;
+    pool->destroy_item_handle = destroy_h;
+    mutexUnlock(&(pool->mutex));
+}
+
+/**
+ * Destroys the master pool and frees its resources.
+ * @param pool The master pool to destroy.
+ */
+void masterpoolDestroy(master_pool_t *pool)
+{
 
     memoryFree(pool->memptr);
-
-
-
 }

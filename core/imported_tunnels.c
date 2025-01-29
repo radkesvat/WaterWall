@@ -7,7 +7,7 @@
     do                                                                                                                 \
     {                                                                                                                  \
         hash_t h = calcHashBytes(#x, strlen(#x));                                                                    \
-        registerStaticNodeLib((node_lib_t) {                                                                             \
+        nodelibraryRegister((node_lib_t) {                                                                             \
             .hash_name         = h,                                                                                    \
             .createHandle      = new##x,                                                                               \
             .destroyHandle     = destroy##x,                                                                           \

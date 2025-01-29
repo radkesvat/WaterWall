@@ -91,7 +91,7 @@ static void upStream(tunnel_t *self, context_t *c)
             udp_listener_con_state_t *cstate = CSTATE(c);
             cleanup(cstate);
             CSTATE_DROP(c);
-            destroyLine(c->line);
+            lineDestroy(c->line);
         }
     }
 
@@ -121,7 +121,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             CSTATE_DROP(c);
             cleanup(cstate);
-            destroyLine(c->line);
+            lineDestroy(c->line);
             destroyContext(c);
             return;
         }
@@ -178,18 +178,18 @@ static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsoc
     }
 
     // send the init packet
-    lockLine(line);
+    lineLock(line);
     {
         context_t *context = newInitContext(line);
         self->upStream(self, context);
-        if (! isAlive(line))
+        if (! lineIsAlive(line))
         {
             LOGW("UdpListener: socket just got closed by upstream before anything happend");
-            unLockLine(line);
+            lineUnlock(line);
             return NULL;
         }
     }
-    unLockLine(line);
+    lineUnlock(line);
     return cstate;
 }
 
@@ -206,7 +206,7 @@ static void onFilteredRecv(wevent_t *ev)
         if (! idle)
         {
             bufferpoolResuesBuffer(getWorkerBufferPool(data->tid), data->buf);
-            destroyUdpPayload(data);
+            udppayloadDestroy(data);
             return;
         }
         udp_listener_con_state_t *con = newConnection(data->tid, data->tunnel, data->sock, data->real_localport);
@@ -215,7 +215,7 @@ static void onFilteredRecv(wevent_t *ev)
         {
             idleTableRemoveIdleItemByHash(data->tid, data->sock->table, peeraddr_hash);
             bufferpoolResuesBuffer(getWorkerBufferPool(data->tid), data->buf);
-            destroyUdpPayload(data);
+            udppayloadDestroy(data);
             return;
         }
         idle->userdata   = con;
@@ -232,7 +232,7 @@ static void onFilteredRecv(wevent_t *ev)
     context->payload                  = data->buf;
 
     self->upStream(self, context);
-    destroyUdpPayload(data);
+    udppayloadDestroy(data);
 }
 
 static void parsePortSection(udp_listener_state_t *state, const cJSON *settings)
@@ -357,7 +357,7 @@ tunnel_t *newUdpListener(node_instance_context_t *instance_info)
     t->state      = state;
     t->upStream   = &upStream;
     t->downStream = &downStream;
-    registerSocketAcceptor(t, filter_opt, onFilteredRecv);
+    socketacceptorRegister(t, filter_opt, onFilteredRecv);
 
     return t;
 }

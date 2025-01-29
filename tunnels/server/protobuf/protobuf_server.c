@@ -38,7 +38,7 @@ typedef struct protobuf_server_con_state_s
 
 static void cleanup(protobuf_server_con_state_t *cstate)
 {
-    destroyBufferStream(cstate->stream_buf);
+    bufferstreamDestroy(cstate->stream_buf);
     memoryFree(cstate);
 }
 
@@ -53,12 +53,12 @@ static void upStream(tunnel_t *self, context_t *c)
 
         while (true)
         {
-            if (bufferStreamLen(bstream) < 2)
+            if (bufferstreamLen(bstream) < 2)
             {
                 destroyContext(c);
                 return;
             }
-            sbuf_t *full_data = bufferStreamFullRead(bstream);
+            sbuf_t *full_data = bufferstreamFullRead(bstream);
             uint8_t         flags;
             sbufReadUnAlignedUI8(full_data, &flags);
             sbufShiftRight(full_data, 1); // first byte is  (protobuf flag)
@@ -71,7 +71,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 sbufShiftLeft(full_data, 1); // bring the data back to its original form
 
-                bufferStreamPush(bstream, full_data);
+                bufferstreamPush(bstream, full_data);
                 destroyContext(c);
                 return;
             }
@@ -101,7 +101,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (sbufGetBufLength(full_data) > 0)
                 {
-                    bufferStreamPush(bstream, full_data);
+                    bufferstreamPush(bstream, full_data);
                 }
                 else
                 {
@@ -129,7 +129,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     context_t *send_flow_ctx = newContextFrom(c);
                     send_flow_ctx->payload   = flowctl_buf;
                     self->dw->downStream(self->dw, send_flow_ctx);
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
                         destroyContext(c);
@@ -144,7 +144,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (sbufGetBufLength(full_data) > 0)
                 {
-                    bufferStreamPush(bstream, full_data);
+                    bufferstreamPush(bstream, full_data);
                 }
                 else
                 {
@@ -152,7 +152,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 self->up->upStream(self->up, upstream_ctx);
 
-                if (! isAlive(c->line))
+                if (! lineIsAlive(c->line))
                 {
                     destroyContext(c);
                     return;
@@ -172,7 +172,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             cstate        = memoryAllocate(sizeof(protobuf_server_con_state_t));
-            *cstate       = (protobuf_server_con_state_t) {.stream_buf = newBufferStream(getContextBufferPool(c))};
+            *cstate       = (protobuf_server_con_state_t) {.stream_buf = bufferstreamCreate(getContextBufferPool(c))};
             CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)

@@ -16,14 +16,14 @@ struct context_queue_s
     queue          q;
 };
 
-context_queue_t *newContextQueue(void)
+context_queue_t *contextqueueCreate(void)
 {
     context_queue_t *cb = memoryAllocate(sizeof(context_queue_t));
     cb->q               = queue_with_capacity(kQCap);
     return cb;
 }
 
-void destroyContextQueue(context_queue_t *self)
+void contextqueueDestory(context_queue_t *self)
 {
     c_foreach(i, queue, self->q)
     {
@@ -38,18 +38,18 @@ void destroyContextQueue(context_queue_t *self)
     memoryFree(self);
 }
 
-void contextQueuePush(context_queue_t *self, context_t *context)
+void contextqueuePush(context_queue_t *self, context_t *context)
 {
     queue_push_back(&self->q, context);
 }
 
-context_t *contextQueuePop(context_queue_t *self)
+context_t *contextqueuePop(context_queue_t *self)
 {
     context_t *context = queue_pull_front(&self->q);
     return context;
 }
 
-size_t contextQueueLen(context_queue_t *self)
+size_t contextqueueLen(context_queue_t *self)
 {
     return queue_size(&self->q);
 }

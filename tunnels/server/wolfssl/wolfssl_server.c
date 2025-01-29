@@ -107,7 +107,7 @@ static enum sslstatus getSslstatus(SSL *ssl, int n)
 static void cleanup(tunnel_t *self, context_t *c)
 {
     wssl_server_con_state_t *cstate = CSTATE(c);
-    destroyBufferStream(cstate->fallback_buf);
+    bufferstreamDestroy(cstate->fallback_buf);
     SSL_free(cstate->ssl); /* free the SSL object and its BIO's */
     memoryFree(cstate);
     CSTATE_DROP(c);
@@ -115,7 +115,7 @@ static void cleanup(tunnel_t *self, context_t *c)
 
 static void fallbackWrite(tunnel_t *self, context_t *c)
 {
-    if (! isAlive(c->line))
+    if (! lineIsAlive(c->line))
     {
         destroyContext(c);
         return;
@@ -130,19 +130,19 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
 
         cstate->init_sent = true;
         state->fallback->upStream(state->fallback, newInitContext(c->line));
-        if (! isAlive(c->line))
+        if (! lineIsAlive(c->line))
         {
             destroyContext(c);
             return;
         }
     }
-    size_t record_len = bufferStreamLen(cstate->fallback_buf);
+    size_t record_len = bufferstreamLen(cstate->fallback_buf);
     if (record_len == 0)
     {
         return;
     }
 
-    c->payload = bufferStreamIdealRead(cstate->fallback_buf);
+    c->payload = bufferstreamIdealRead(cstate->fallback_buf);
     state->fallback->upStream(state->fallback, c);
 }
 
@@ -156,7 +156,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            bufferStreamPush(cstate->fallback_buf, sbufDuplicateByPool(getContextBufferPool(c),c->payload));
+            bufferstreamPush(cstate->fallback_buf, sbufDuplicateByPool(getContextBufferPool(c),c->payload));
         }
         if (cstate->fallback_mode)
         {
@@ -170,7 +170,7 @@ static void upStream(tunnel_t *self, context_t *c)
         int            n;
         int            len = (int) sbufGetBufLength(c->payload);
 
-        while (len > 0 && isAlive(c->line))
+        while (len > 0 && lineIsAlive(c->line))
         {
             n = BIO_write(cstate->rbio, sbufGetRawPtr(c->payload), len);
 
@@ -194,7 +194,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     do
                     {
                         sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                        int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                        int             avail = (int) sbufGetRightCapacity(buf);
                         n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                         // assert(-1 == BIO_read(cstate->wbio, sbufGetRawPtr(buf), avail));
                         if (n > 0)
@@ -207,7 +207,7 @@ static void upStream(tunnel_t *self, context_t *c)
                             answer->payload   = buf;
                             self->dw->downStream(self->dw, answer);
 
-                            if (! isAlive(c->line))
+                            if (! lineIsAlive(c->line))
                             {
                                 reuseContextPayload(c);
                                 destroyContext(c);
@@ -261,7 +261,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 sbuf_t *buf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
 
                 sbufSetLength(buf, 0);
-                int avail = (int) sbufGetRightCapacityNoPadding(buf);
+                int avail = (int) sbufGetRightCapacity(buf);
                 n         = SSL_read(cstate->ssl, sbufGetMutablePtr(buf), avail);
 
                 if (n > 0)
@@ -269,7 +269,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (UNLIKELY(! cstate->init_sent))
                     {
                         self->up->upStream(self->up, newInitContext(c->line));
-                        if (! isAlive(c->line))
+                        if (! lineIsAlive(c->line))
                         {
                             LOGW("WolfsslServer: next node instantly closed the init with fin");
                             reuseContextPayload(c);
@@ -281,7 +281,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
 
                     self->up->upStream(self->up, newInitContext(c->line));
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         LOGW("WolfsslServer: next node instantly closed the init with fin");
                         reuseContextPayload(c);
@@ -296,7 +296,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     data_ctx->payload   = buf;
 
                     self->up->upStream(self->up, data_ctx);
-                    if (! isAlive(c->line))
+                    if (! lineIsAlive(c->line))
                     {
                         reuseContextPayload(c);
                         destroyContext(c);
@@ -319,7 +319,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 do
                 {
                     sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                    int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                    int             avail = (int) sbufGetRightCapacity(buf);
 
                     n = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                     if (n > 0)
@@ -328,7 +328,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         context_t *answer = newContextFrom(c);
                         answer->payload   = buf;
                         self->dw->downStream(self->dw, answer);
-                        if (! isAlive(c->line))
+                        if (! lineIsAlive(c->line))
                         {
                             reuseContextPayload(c);
                             destroyContext(c);
@@ -371,7 +371,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->rbio         = BIO_new(BIO_s_mem());
             cstate->wbio         = BIO_new(BIO_s_mem());
             cstate->ssl          = SSL_new(state->ssl_context);
-            cstate->fallback_buf = newBufferStream(getContextBufferPool(c));
+            cstate->fallback_buf = bufferstreamCreate(getContextBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             // if (state->anti_tit)
@@ -433,7 +433,7 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         // not supported by wolfssl
-        // if (state->anti_tit && isAuthenticated(c->line))
+        // if (state->anti_tit && lineIsAuthenticated(c->line))
         // {
         //     cstate->reply_sent_tit += 1;
         // }
@@ -452,7 +452,7 @@ static void downStream(tunnel_t *self, context_t *c)
             exit(1);
         }
         int len = (int) sbufGetBufLength(c->payload);
-        while (len && isAlive(c->line))
+        while (len && lineIsAlive(c->line))
         {
             int n  = SSL_write(cstate->ssl, sbufGetRawPtr(c->payload), len);
             status = getSslstatus(cstate->ssl, n);
@@ -467,7 +467,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
 
                     sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                    int             avail = (int) sbufGetRightCapacityNoPadding(buf);
+                    int             avail = (int) sbufGetRightCapacity(buf);
                     n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                     if (n > 0)
                     {
@@ -475,7 +475,7 @@ static void downStream(tunnel_t *self, context_t *c)
                         context_t *dw_context = newContextFrom(c);
                         dw_context->payload   = buf;
                         self->dw->downStream(self->dw, dw_context);
-                        if (! isAlive(c->line))
+                        if (! lineIsAlive(c->line))
                         {
                             reuseContextPayload(c);
                             destroyContext(c);
@@ -615,7 +615,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     {
 
         hash_t  hash_next = calcHashBytes(fallback_node, strlen(fallback_node));
-        node_t *next_node = getNode(instance_info->node_manager_config, hash_next);
+        node_t *next_node = nodemanagerGetNode(instance_info->node_manager_config, hash_next);
         if (next_node == NULL)
         {
             LOGF("WolfsslServer: fallback node not found");
@@ -624,7 +624,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
 
         if (next_node->instance == NULL)
         {
-            runNode(instance_info->node_manager_config, next_node, instance_info->chain_index + 1);
+            nodemanagerRunNode(instance_info->node_manager_config, next_node, instance_info->chain_index + 1);
         }
 
         state->fallback = next_node->instance;
@@ -660,7 +660,7 @@ tunnel_t *newWolfSSLServer(node_instance_context_t *instance_info)
     t->state    = state;
     if (state->fallback != NULL)
     {
-        tunnelChainDown(t, state->fallback);
+        tunnelBindDown(t, state->fallback);
     }
     t->upStream   = &upStream;
     t->downStream = &downStream;

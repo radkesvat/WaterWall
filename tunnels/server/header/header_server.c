@@ -74,7 +74,7 @@ static void upStream(tunnel_t *self, context_t *c)
             self->up->upStream(self->up, newInitContext(c->line));
             if (sbufGetBufLength(buf) > 0)
             {
-                if (! isAlive(c->line))
+                if (! lineIsAlive(c->line))
                 {
                     reuseContextPayload(c);
                     destroyContext(c);

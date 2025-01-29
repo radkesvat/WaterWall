@@ -63,8 +63,8 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
         LOGF("JSON Error: Listener->settings (object field) : The object was empty or invalid");
         return NULL;
     }
-    node_t *tcp_inbound_node  = newNode();
-    node_t *udp_inbound_node  = newNode();
+    node_t *tcp_inbound_node  = nodemanagerNewNode();
+    node_t *udp_inbound_node  = nodemanagerNewNode();
     tcp_inbound_node->name    = stringConcat(instance_info->node->name, "_tcp_inbound");
     tcp_inbound_node->type    = stringDuplicate("TcpListener");
     tcp_inbound_node->version = instance_info->node->version;
@@ -78,8 +78,8 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
     state->tcp_inbound_node = tcp_inbound_node;
     state->udp_inbound_node = udp_inbound_node;
     // this is enough, node map will run these and perform chaining
-    registerNode(instance_info->node_manager_config,tcp_inbound_node, settings);
-    registerNode(instance_info->node_manager_config,udp_inbound_node, settings);
+    nodemanagerRegisterNode(instance_info->node_manager_config,tcp_inbound_node, settings);
+    nodemanagerRegisterNode(instance_info->node_manager_config,udp_inbound_node, settings);
 
 
     tunnel_t *t   = tunnelCreate();
