@@ -13,6 +13,19 @@ A simple core for tunneling and even direct user-server connections. based on hi
 
 To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (The documents are currently only in Persian language.)
 
+# Plan
+
+- [ ] Restructure the project into a much cleaner design  
+- [ ] Remove OpenSSL/WolfSSL client, create a TLS client using curl-impersonate  
+- [ ] Rework OpenSSL server, configure options to match Nginx identically  
+- [ ] Focus on HTTP/1 or HTTP/2, make every option configurable via JSON  
+- [ ] Redesign Layer 3 nodes with a different architecture  
+- [ ] Add support for WireGuard  
+- [ ] Add support for Router  
+- [ ] Implement more transports like HTTP/3 or a stream control node  
+
+
+
 # Donation
 
 Those who are willing to donate can send to this TRX wallet
