@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tunnel.h"
+#include "context.h"
 #include "wlibc.h"
 
 

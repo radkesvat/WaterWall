@@ -9,6 +9,7 @@
 #include "signal_manager.h"
 #include "stc/common.h"
 #include "tunnel.h"
+#include "wproc.h"
 
 
 
@@ -32,8 +33,8 @@ typedef struct socket_filter_s
 
 } socket_filter_t;
 
-#define i_key     socket_filter_t * // NOLINT
 #define i_type    filters_t         // NOLINT
+#define i_key     socket_filter_t * // NOLINT
 #define i_use_cmp                   // NOLINT
 #include "stc/vec.h"
 

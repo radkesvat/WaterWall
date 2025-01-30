@@ -1,9 +1,7 @@
 #ifndef WW_BASE_H_
 #define WW_BASE_H_
 
-#include "wexport.h"
-#include "wplatform.h" // for bool
-#include "wdef.h" // for printd
+#include "wlibc.h"
 
 
 //--------------------alloc/free---------------------------

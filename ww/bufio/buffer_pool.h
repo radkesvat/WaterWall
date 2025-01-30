@@ -1,6 +1,6 @@
 #pragma once
-#include "generic_pool.h"
 #include "master_pool.h"
+#include "generic_pool.h"
 #include "shiftbuffer.h"
 #include "wlibc.h"
 

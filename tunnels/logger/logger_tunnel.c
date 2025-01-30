@@ -31,10 +31,10 @@ static void upStream(tunnel_t *self, context_t *c)
 
             // send back something
             {
-                context_t *reply = newContextFrom(c);
-                reply->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
-                reuseContextPayload(c);
-                destroyContext(c);
+                context_t *reply = contextCreateFrom(c);
+                reply->payload   = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
+                contextReusePayload(c);
+                contextDestroy(c);
                 sprintf((char *) sbufGetRawPtr(reply->payload), "%s", "salam");
                 sbufSetLength(reply->payload, strlen("salam"));
                 self->dw->downStream(self->dw, reply);
@@ -52,8 +52,8 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                context_t *est_reply = newContextFrom(c);
-                destroyContext(c);
+                context_t *est_reply = contextCreateFrom(c);
+                contextDestroy(c);
                 est_reply->est = true;
                 self->dw->downStream(self->dw, est_reply);
             }
@@ -67,7 +67,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }
@@ -89,15 +89,15 @@ static void downStream(tunnel_t *self, context_t *c)
 
             // send back something
             // {
-            //     context_t *reply = newContextFrom(c);
-            //     reply->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+            //     context_t *reply = contextCreateFrom(c);
+            //     reply->payload   = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
             //     sprintf((char *) sbufGetRawPtr(reply->payload), "%s", "salam");
             //     sbufSetLength(reply->payload, strlen("salam"));
             //     self->up->upStream(self->up, reply);
             // }
 
-            reuseContextPayload(c);
-            destroyContext(c);
+            contextReusePayload(c);
+            contextDestroy(c);
         }
     }
     else
@@ -111,9 +111,9 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                context_t *reply = newContextFrom(c);
+                context_t *reply = contextCreateFrom(c);
                 reply->est       = true;
-                destroyContext(c);
+                contextDestroy(c);
                 self->up->upStream(self->up, reply);
             }
         }
@@ -126,7 +126,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
         else if (c->est)
@@ -138,7 +138,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }

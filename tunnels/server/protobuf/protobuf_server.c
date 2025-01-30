@@ -55,7 +55,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             if (bufferstreamLen(bstream) < 2)
             {
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
             sbuf_t *full_data = bufferstreamFullRead(bstream);
@@ -72,14 +72,14 @@ static void upStream(tunnel_t *self, context_t *c)
                 sbufShiftLeft(full_data, 1); // bring the data back to its original form
 
                 bufferstreamPush(bstream, full_data);
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
 
             if (data_len > kMaxPacketSize)
             {
                 LOGE("ProtoBufServer: rejected, size too large");
-                bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
+                bufferpoolResuesBuffer(contextGetBufferPool(c), full_data);
                 goto disconnect;
             }
 
@@ -105,7 +105,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), full_data);
                 }
             }
             else if (flags == '\n')
@@ -115,7 +115,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (cstate->bytes_received_nack >= kMaxRecvBeforeAck)
                 {
 
-                    sbuf_t *flowctl_buf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                    sbuf_t *flowctl_buf = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
                     sbufSetLength(flowctl_buf, sizeof(uint32_t));
                     sbufWriteUnAlignedUI32(flowctl_buf, htonl(cstate->bytes_received_nack));
                     cstate->bytes_received_nack = 0;
@@ -126,19 +126,19 @@ static void upStream(tunnel_t *self, context_t *c)
                     writeUleb128(sbufGetMutablePtr(flowctl_buf) + 1, blen);
                     sbufWriteUnAlignedUI8(flowctl_buf, 0x1);
 
-                    context_t *send_flow_ctx = newContextFrom(c);
+                    context_t *send_flow_ctx = contextCreateFrom(c);
                     send_flow_ctx->payload   = flowctl_buf;
                     self->dw->downStream(self->dw, send_flow_ctx);
                     if (! lineIsAlive(c->line))
                     {
-                        bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
-                        destroyContext(c);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), full_data);
+                        contextDestroy(c);
                         return;
                     }
                 }
 
-                context_t *upstream_ctx = newContextFrom(c);
-                upstream_ctx->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                context_t *upstream_ctx = contextCreateFrom(c);
+                upstream_ctx->payload   = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
 
                 upstream_ctx->payload = sbufMoveTo(upstream_ctx->payload, full_data, data_len);
 
@@ -148,20 +148,20 @@ static void upStream(tunnel_t *self, context_t *c)
                 }
                 else
                 {
-                    bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), full_data);
                 }
                 self->up->upStream(self->up, upstream_ctx);
 
                 if (! lineIsAlive(c->line))
                 {
-                    destroyContext(c);
+                    contextDestroy(c);
                     return;
                 }
             }
             else
             {
                 LOGE("ProtoBufServer: rejected, invalid flag");
-                bufferpoolResuesBuffer(getContextBufferPool(c), full_data);
+                bufferpoolResuesBuffer(contextGetBufferPool(c), full_data);
 
                 goto disconnect;
             }
@@ -172,7 +172,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             cstate        = memoryAllocate(sizeof(protobuf_server_con_state_t));
-            *cstate       = (protobuf_server_con_state_t) {.stream_buf = bufferstreamCreate(getContextBufferPool(c))};
+            *cstate       = (protobuf_server_con_state_t) {.stream_buf = bufferstreamCreate(contextGetBufferPool(c))};
             CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)
@@ -187,9 +187,9 @@ static void upStream(tunnel_t *self, context_t *c)
 disconnect:
     cleanup(cstate);
     CSTATE_DROP(c);
-    self->up->upStream(self->up, newFinContext(c->line));
-    self->dw->downStream(self->dw, newFinContext(c->line));
-    destroyContext(c);
+    self->up->upStream(self->up, contextCreateFin(c->line));
+    self->dw->downStream(self->dw, contextCreateFin(c->line));
+    contextDestroy(c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)

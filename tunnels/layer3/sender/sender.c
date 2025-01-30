@@ -117,9 +117,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        reuseContextPayload(c);
+        contextReusePayload(c);
     }
-    destroyContext(c);
+    contextDestroy(c);
 }
 
 // only for debug and tests
@@ -129,8 +129,8 @@ static void onTimer(wtimer_t *timer)
     tunnel_t             *self  = weventGetUserdata(timer);
     layer3_senderstate_t *state = TSTATE(self);
     line_t               *l     = newLine(0);
-    context_t            *c     = newContext(l);
-    c->payload                  = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+    context_t            *c     = contextCreate(l);
+    c->payload                  = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
 
     // unsigned char bpacket[] = {0x45, 0x00, 0x00, 0x2C, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x00, 0xC4, 0xC0, 0x00,
     // 0x02,

@@ -81,8 +81,8 @@ static void upStreamSrcMode(tunnel_t *self, context_t *c)
     if (state->default_drop)
     {
         LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
-        reuseContextPayload(c);
-        destroyContext(c);
+        contextReusePayload(c);
+        contextDestroy(c);
     }
     else
     {
@@ -121,8 +121,8 @@ static void upStreamDestMode(tunnel_t *self, context_t *c)
     if (state->default_drop)
     {
         LOGD("Layer3IpRoutingTable: dropped a packet that did not match any rule");
-        reuseContextPayload(c);
-        destroyContext(c);
+        contextReusePayload(c);
+        contextDestroy(c);
     }
     else
     {
@@ -138,9 +138,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        reuseContextPayload(c);
+        contextReusePayload(c);
     }
-    destroyContext(c);
+    contextDestroy(c);
 }
 
 static routing_rule_t parseRule(struct node_manager_config_s *cfg, unsigned int chain_index, const cJSON *rule_obj)
@@ -215,7 +215,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
     {
         state->default_drop = true;
     }
-    destroyDynamicValue(def_action);
+    dynamicvalueDestroy(def_action);
 
     dynamic_value_t mode_dv = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
 
@@ -226,7 +226,7 @@ tunnel_t *newLayer3IpRoutingTable(node_instance_context_t *instance_info)
              "want to filter based on source ip or dest ip?");
         exit(1);
     }
-    destroyDynamicValue(mode_dv);
+    dynamicvalueDestroy(mode_dv);
 
 
     const cJSON *rules = cJSON_GetObjectItemCaseSensitive(settings, "rules");

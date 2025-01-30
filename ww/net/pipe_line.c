@@ -175,7 +175,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //         bufferpoolResuesBuffer(getWorkerBufferPool(pl->left_tid), buf);
 //         return;
 //     }
-//     context_t *ctx = newContext(pl->left_line);
+//     context_t *ctx = contextCreate(pl->left_line);
 //     ctx->payload   = buf;
 //     pl->local_down_stream(pl->self, ctx, pl);
 // }
@@ -188,7 +188,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //         bufferpoolResuesBuffer(getWorkerBufferPool(pl->right_tid), buf);
 //         return;
 //     }
-//     context_t *ctx = newContext(pl->right_line);
+//     context_t *ctx = contextCreate(pl->right_line);
 //     ctx->payload   = buf;
 //     pl->local_up_stream(pl->self, ctx, pl);
 // }
@@ -201,7 +201,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     {
 //         return;
 //     }
-//     context_t *fctx = newFinContext(pl->left_line);
+//     context_t *fctx = contextCreateFin(pl->left_line);
 //     doneLineUpSide(pl->left_line);
 //     pl->left_line = NULL;
 //     pl->local_down_stream(pl->self, fctx, pl);
@@ -215,7 +215,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     {
 //         return;
 //     }
-//     context_t *fctx = newFinContext(pl->right_line);
+//     context_t *fctx = contextCreateFin(pl->right_line);
 //     doneLineDownSide(pl->right_line);
 //     lineDestroy(pl->right_line);
 //     pl->right_line = NULL;
@@ -307,7 +307,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 // {
 //     if (UNLIKELY(c->est))
 //     {
-//         destroyContext(c);
+//         contextDestroy(c);
 //         return true;
 //     }
 //     // other flags are not supposed to come to pipe line
@@ -325,7 +325,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //                                                     memory_order_relaxed))
 //         {
 //             // we managed to close the channel
-//             destroyContext(c);
+//             contextDestroy(c);
 //             sendMessage(pl, finishRightSide, NULL, pl->left_tid, pl->right_tid);
 //             return true;
 //         }
@@ -340,8 +340,8 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     assert(c->payload != NULL);
 
 //     sendMessage(pl, writeBufferToRightSide, c->payload, pl->left_tid, pl->right_tid);
-//     dropContexPayload(c);
-//     destroyContext(c);
+//     contextDropPayload(c);
+//     contextDestroy(c);
 
 //     return true;
 // }
@@ -351,7 +351,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     // est context is ignored, only fin or data makes sense
 //     if (UNLIKELY(c->est))
 //     {
-//         destroyContext(c);
+//         contextDestroy(c);
 //         return true;
 //     }
 
@@ -371,7 +371,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //                                                     memory_order_relaxed))
 //         {
 //             // we managed to close the channel
-//             destroyContext(c);
+//             contextDestroy(c);
 //             sendMessage(pl, finishLeftSide, NULL, pl->right_tid, pl->left_tid);
 //             return true;
 //         }
@@ -386,8 +386,8 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     assert(c->payload != NULL);
 
 //     sendMessage(pl, writeBufferToLeftSide, c->payload, pl->right_tid, pl->left_tid);
-//     dropContexPayload(c);
-//     destroyContext(c);
+//     contextDropPayload(c);
+//     contextDestroy(c);
 
 //     return true;
 // }
@@ -398,7 +398,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     pl->right_line           = newLine(pl->right_tid);
 //     pl->right_line->dw_piped = true;
 //     setupLineDownSide(pl->right_line, pipeOnUpLinePaused, pl, pipeOnUpLineResumed);
-//     context_t *context = newInitContext(pl->right_line);
+//     context_t *context = contextCreateInit(pl->right_line);
 //     pl->local_up_stream(pl->self, context, pl);
 // }
 
@@ -429,7 +429,7 @@ tunnel_t *newPipeTunnel(tunnel_t *t)
 
     tunnel_t *encapsulated_tunnel = tunnelCreate(state_size, lstate_size);
 
-    setTunnelState(encapsulated_tunnel, t);
+    tunnelSetState(encapsulated_tunnel, t);
 
     assert(sizeof(struct pipe_line_s) <= kCpuLineCacheSize);
 

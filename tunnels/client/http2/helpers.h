@@ -213,7 +213,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     for (stream_i = con->root.next; stream_i;)
     {
         http2_client_child_con_state_t *next    = stream_i->next;
-        context_t                      *fin_ctx = newFinContext(stream_i->line);
+        context_t                      *fin_ctx = contextCreateFin(stream_i->line);
         tunnel_t                       *dest    = stream_i->tunnel->dw;
         deleteHttp2Stream(stream_i);
         dest->downStream(dest, fin_ctx);
@@ -284,7 +284,7 @@ static void onPingTimer(wtimer_t *timer)
     if (con->no_ping_ack)
     {
         LOGW("Http2Client: closing a session due to no ping reply");
-        context_t *con_fc   = newFinContext(con->line);
+        context_t *con_fc   = contextCreateFin(con->line);
         tunnel_t  *con_dest = con->tunnel->up;
         deleteHttp2Connection(con);
         con_dest->upStream(con_dest, con_fc);
@@ -302,7 +302,7 @@ static void onPingTimer(wtimer_t *timer)
             sbuf_t *send_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(h2line));
             sbufSetLength(send_buf, len);
             sbufWrite(send_buf, data, len);
-            context_t *req = newContext(h2line);
+            context_t *req = contextCreate(h2line);
             req->payload   = send_buf;
             con->tunnel->up->upStream(con->tunnel->up, req);
             if (! lineIsAlive(h2line))

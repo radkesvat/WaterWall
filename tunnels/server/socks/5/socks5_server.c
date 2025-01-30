@@ -127,7 +127,7 @@ static void encapsulateUdpPacket(context_t *c)
     {                                                                                                                  \
         if ((int) sbufGetBufLength(c->payload) < (x))                                                                            \
         {                                                                                                              \
-            reuseContextPayload(c);                                                                                    \
+            contextReusePayload(c);                                                                                    \
             goto disconnect;                                                                                           \
         }                                                                                                              \
     } while (0);
@@ -136,12 +136,12 @@ static void udpUpStream(tunnel_t *self, context_t *c)
 {
     socks5_server_con_state_t *cstate       = CSTATE(c);
     sbuf_t            *bytes        = c->payload;
-    socket_context_t          *dest_context = &(c->line->dest_ctx);
+    connection_context_t          *dest_context = &(c->line->dest_ctx);
 
     // minimum 10 is important
     if (sbufGetBufLength(c->payload) > 8192 || sbufGetBufLength(c->payload) < 10)
     {
-        reuseContextPayload(c);
+        contextReusePayload(c);
         goto disconnect;
     }
 
@@ -150,7 +150,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         // drop fargmented pcakets
         if (((uint8_t *) sbufGetRawPtr(bytes))[2] != 0)
         {
-            reuseContextPayload(c);
+            contextReusePayload(c);
             return;
         }
         const uint8_t satyp = ((uint8_t *) sbufGetRawPtr(bytes))[3];
@@ -171,7 +171,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
             atleast = 16;
             break;
         default:
-            reuseContextPayload(c);
+            contextReusePayload(c);
             goto disconnect;
         }
         ATLEAST(atleast);
@@ -183,7 +183,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
         if (((uint8_t *) sbufGetRawPtr(bytes))[0] != 0 || ((uint8_t *) sbufGetRawPtr(bytes))[1] != 0 ||
             ((uint8_t *) sbufGetRawPtr(bytes))[2] != 0)
         {
-            reuseContextPayload(c);
+            contextReusePayload(c);
             goto disconnect;
         }
         const uint8_t satyp = ((uint8_t *) sbufGetRawPtr(bytes))[3];
@@ -204,7 +204,7 @@ static void udpUpStream(tunnel_t *self, context_t *c)
             const uint8_t domain_len = ((uint8_t *) sbufGetRawPtr(bytes))[0];
             ATLEAST(1 + domain_len);
             LOGD("Socks5Server: udp domain %.*s", domain_len, sbufGetRawPtr(c->payload));
-            socketContextDomainSet(dest_context, sbufGetRawPtr(c->payload), domain_len);
+            connectionContextDomainSet(dest_context, sbufGetRawPtr(c->payload), domain_len);
             sbufShiftRight(c->payload, domain_len);
 
             break;
@@ -215,17 +215,17 @@ static void udpUpStream(tunnel_t *self, context_t *c)
             sbufShiftRight(c->payload, 16);
             break;
         default:
-            reuseContextPayload(c);
+            contextReusePayload(c);
             goto disconnect;
         }
         ATLEAST(2); // port
         memoryCopy(&(dest_context->address.sin.sin_port), sbufGetRawPtr(c->payload), 2);
         sbufShiftRight(c->payload, 2);
-        self->up->upStream(self->up, newInitContext(c->line));
+        self->up->upStream(self->up, contextCreateInit(c->line));
         if (! lineIsAlive(c->line))
         {
             LOGW("Socks5Server: udp next node instantly closed the init with fin");
-            reuseContextPayload(c);
+            contextReusePayload(c);
             goto disconnect;
         }
         cstate->init_sent = true;
@@ -237,13 +237,13 @@ static void udpUpStream(tunnel_t *self, context_t *c)
 disconnect:
     if (cstate->init_sent)
     {
-        self->up->upStream(self->up, newFinContext(c->line));
+        self->up->upStream(self->up, contextCreateFin(c->line));
     }
-    cleanup(cstate, getContextBufferPool(c));
+    cleanup(cstate, contextGetBufferPool(c));
     memoryFree(cstate);
     CSTATE_DROP(c);
-    context_t *fc = newFinContextFrom(c);
-    destroyContext(c);
+    context_t *fc = contextCreateFinFrom(c);
+    contextDestroy(c);
     self->dw->downStream(self->dw, fc);
 }
 static void upStream(tunnel_t *self, context_t *c)
@@ -261,8 +261,8 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             if (c->line->dest_ctx.address_protocol == kSapUdp)
             {
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 LOGE("Socks5Server: client is not supposed to send data anymore");
             }
             else if (c->line->dest_ctx.address_protocol == kSapTcp)
@@ -275,7 +275,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         if (cstate->waitbuf)
         {
-            c->payload      = sbufAppendMerge(getContextBufferPool(c), cstate->waitbuf, c->payload);
+            c->payload      = sbufAppendMerge(contextGetBufferPool(c), cstate->waitbuf, c->payload);
             cstate->waitbuf = NULL;
         }
     parsebegin:
@@ -283,8 +283,8 @@ static void upStream(tunnel_t *self, context_t *c)
         if (sbufGetBufLength(c->payload) < cstate->need)
         {
             cstate->waitbuf = c->payload;
-            dropContexPayload(c);
-            destroyContext(c);
+            contextDropPayload(c);
+            contextDestroy(c);
             return;
         }
 
@@ -306,7 +306,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (version != SOCKS5_VERSION || methodscount == 0)
             {
                 LOGE("Socks5Server: Unsupprted socks version: %d", (int) version);
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
             }
             cstate->state = kSAuthMethods;
@@ -318,19 +318,19 @@ static void upStream(tunnel_t *self, context_t *c)
             // TODO(root): check auth methods
             // uint8_t authmethod = kNoAuth;
             // send auth mothod
-            sbuf_t *resp = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+            sbuf_t *resp = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
             sbufShiftLeft(resp, 1);
             sbufWriteUnAlignedUI8(resp, kNoAuth);
             sbufShiftLeft(resp, 1);
             sbufWriteUnAlignedUI8(resp, SOCKS5_VERSION);
             sbufShiftRight(bytes, cstate->need); // we've read and choosed 1 method
-            context_t *reply = newContextFrom(c);
+            context_t *reply = contextCreateFrom(c);
             reply->payload   = resp;
             self->dw->downStream(self->dw, reply);
             if (! lineIsAlive(c->line))
             {
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
             cstate->state = kSRequest;
@@ -342,7 +342,7 @@ static void upStream(tunnel_t *self, context_t *c)
         case kSAuthUsername:
         case kSAuthPasswordLen:
         case kSAuthPassword:
-            reuseContextPayload(c);
+            contextReusePayload(c);
             goto disconnect;
             break;
         case kSRequest: {
@@ -359,7 +359,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (version != SOCKS5_VERSION || (cmd != kConnectCommand && cmd != kAssociateCommand))
             {
                 LOGE("Socks5Server: Unsupprted command: %d", (int) cmd);
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
             }
             switch (cmd)
@@ -371,7 +371,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 c->line->dest_ctx.address_protocol = kSapUdp;
                 break;
             default:
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
             }
             sbufShiftRight(bytes, 1); // socks5 reserved 0x0
@@ -407,7 +407,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 goto parsebegin;
                 break;
             default:
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
             }
         }
@@ -421,7 +421,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (addr_len == 0)
             {
                 LOGE("Socks5Server: incorrect domain length");
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
                 return;
             }
@@ -442,7 +442,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 break;
             case kSatDomainName:
-                socketContextDomainSet(&c->line->dest_ctx, sbufGetRawPtr(bytes), cstate->need);
+                connectionContextDomainSet(&c->line->dest_ctx, sbufGetRawPtr(bytes), cstate->need);
                 c->line->dest_ctx.domain_resolved = false;
                 sbufShiftRight(bytes, cstate->need);
                 break;
@@ -453,7 +453,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 sbufShiftRight(bytes, 16);
                 break;
             default:
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
                 break;
             }
@@ -493,30 +493,30 @@ static void upStream(tunnel_t *self, context_t *c)
             if (c->line->dest_ctx.address_protocol == kSapTcp)
             {
                 cstate->init_sent = true;
-                self->up->upStream(self->up, newInitContext(c->line));
+                self->up->upStream(self->up, contextCreateInit(c->line));
                 if (! lineIsAlive(c->line))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
                 if (sbufGetBufLength(bytes) > 0)
                 {
-                    context_t *updata = newContextFrom(c);
+                    context_t *updata = contextCreateFrom(c);
                     updata->payload   = bytes;
                     self->up->upStream(self->up, updata);
                 }
                 else
                 {
-                    reuseContextPayload(c);
+                    contextReusePayload(c);
                 }
             }
             else
             {
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 // todo (ip filter) socks5 standard says this should whitelist the caller ip
                 //  socks5 outbound accepted, udp relay will connect
-                sbuf_t *respbuf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                sbuf_t *respbuf = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
                 sbufSetLength(respbuf, 32);
                 uint8_t *resp = sbufGetMutablePtr(respbuf);
                 memorySet(resp, 0, 32);
@@ -546,28 +546,28 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 default:
                     // connects to a ip4 or 6 right? anyways close if thats not the case
-                    bufferpoolResuesBuffer(getContextBufferPool(c), respbuf);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), respbuf);
                     goto disconnect;
                     break;
                 }
                 sbufSetLength(respbuf, resp_len);
-                context_t *success_reply = newContextFrom(c);
+                context_t *success_reply = contextCreateFrom(c);
                 success_reply->payload   = respbuf;
                 self->dw->downStream(self->dw, success_reply);
                 if (! lineIsAlive(c->line))
                 {
-                    destroyContext(c);
+                    contextDestroy(c);
                     return;
                 }
             }
 
-            destroyContext(c);
+            contextDestroy(c);
             return;
         }
         break;
 
         default:
-            reuseContextPayload(c);
+            contextReusePayload(c);
             goto disconnect;
             break;
         }
@@ -580,12 +580,12 @@ static void upStream(tunnel_t *self, context_t *c)
             memorySet(cstate, 0, sizeof(socks5_server_con_state_t));
             cstate->need  = 2;
             CSTATE_MUT(c) = cstate;
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
             bool init_sent = cstate->init_sent;
-            cleanup(cstate, getContextBufferPool(c));
+            cleanup(cstate, contextGetBufferPool(c));
             memoryFree(cstate);
             CSTATE_DROP(c);
             if (init_sent)
@@ -594,17 +594,17 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }
     return;
 disconnect:
-    cleanup(cstate, getContextBufferPool(c));
+    cleanup(cstate, contextGetBufferPool(c));
     memoryFree(cstate);
     CSTATE_DROP(c);
-    context_t *fc = newFinContextFrom(c);
-    destroyContext(c);
+    context_t *fc = contextCreateFinFrom(c);
+    contextDestroy(c);
     self->dw->downStream(self->dw, fc);
 }
 
@@ -624,7 +624,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             cstate->init_sent = false;
             // socks5 outbound failed
-            sbuf_t *respbuf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+            sbuf_t *respbuf = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
             sbufSetLength(respbuf, 32);
             uint8_t *resp = sbufGetMutablePtr(respbuf);
             memorySet(resp, 0, 32);
@@ -635,17 +635,17 @@ static void downStream(tunnel_t *self, context_t *c)
             resp[resp_len++] = kIPv4Addr;
 
             sbufSetLength(respbuf, resp_len + 6); // ipv4(4) + port(2)
-            context_t *fail_reply = newContextFrom(c);
+            context_t *fail_reply = contextCreateFrom(c);
             fail_reply->payload   = respbuf;
             self->dw->downStream(self->dw, fail_reply);
             if (! lineIsAlive(c->line))
             {
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
         }
 
-        cleanup(cstate, getContextBufferPool(c));
+        cleanup(cstate, contextGetBufferPool(c));
         memoryFree(cstate);
         CSTATE_DROP(c);
     }
@@ -656,7 +656,7 @@ static void downStream(tunnel_t *self, context_t *c)
         if (c->line->dest_ctx.address_protocol == kSapTcp)
         {
             // socks5 outbound connected
-            sbuf_t *respbuf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+            sbuf_t *respbuf = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
             sbufSetLength(respbuf, 32);
             uint8_t *resp = sbufGetMutablePtr(respbuf);
             memorySet(resp, 0, 32);
@@ -685,24 +685,24 @@ static void downStream(tunnel_t *self, context_t *c)
 
             default:
                 // connects to a ip4 or 6 right? anyways close if thats not the case
-                cleanup(cstate, getContextBufferPool(c));
+                cleanup(cstate, contextGetBufferPool(c));
                 memoryFree(cstate);
                 CSTATE_DROP(c);
-                bufferpoolResuesBuffer(getContextBufferPool(c), respbuf);
-                self->up->upStream(self->dw, newFinContext(c->line));
-                context_t *fc = newFinContextFrom(c);
-                destroyContext(c);
+                bufferpoolResuesBuffer(contextGetBufferPool(c), respbuf);
+                self->up->upStream(self->dw, contextCreateFin(c->line));
+                context_t *fc = contextCreateFinFrom(c);
+                contextDestroy(c);
                 self->dw->downStream(self->dw, fc);
                 return;
                 break;
             }
             sbufSetLength(respbuf, resp_len);
-            context_t *success_reply = newContextFrom(c);
+            context_t *success_reply = contextCreateFrom(c);
             success_reply->payload   = respbuf;
             self->dw->downStream(self->dw, success_reply);
             if (! lineIsAlive(c->line))
             {
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
         }

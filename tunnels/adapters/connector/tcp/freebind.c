@@ -6,7 +6,7 @@
 #include "loggers/network_logger.h"
 #include "tunnel.h"
 
-bool applyFreeBindRandomDestIp(tunnel_t* self,socket_context_t *dest_ctx)
+bool applyFreeBindRandomDestIp(tunnel_t* self,connection_context_t *dest_ctx)
 {
 
     tcp_connector_state_t* state = TSTATE(self);

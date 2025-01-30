@@ -26,7 +26,7 @@ static inline long getTID(void)
 #elif HAVE_PTHREAD_H
 #define getTID (long) pthread_self
 #else
-#define getTID hv_getpid
+#define getTID getProcessID
 #endif
 
 /*

@@ -4,9 +4,6 @@
 #include "node.h"
 #include "pipe_line.h"
 #include "string.h" // memorySet
-#include <assert.h>
-#include <stdint.h>
-#include <stdlib.h>
 
 // `from` upstreams to `to`
 void tunnelBindUp(tunnel_t *from, tunnel_t *to)
@@ -30,81 +27,81 @@ void tunnelBind(tunnel_t *from, tunnel_t *to)
     tunnelBindDown(from, to);
 }
 
-static void defaultUpStreamInit(tunnel_t *self, line_t *line)
+void tunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
 {
     assert(self->up != NULL);
     self->up->fnInitU(self->up, line);
 }
 
-static void defaultUpStreamEst(tunnel_t *self, line_t *line)
+void tunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 {
     assert(self->up != NULL);
     self->up->fnEstU(self->up, line);
 }
 
-static void defaultUpStreamFin(tunnel_t *self, line_t *line)
+void tunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
 {
     assert(self->up != NULL);
     self->up->fnFinU(self->up, line);
 }
 
-static void defaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
+void tunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     assert(self->up != NULL);
     self->up->fnPayloadU(self->up, line, payload);
 }
 
-static void defaultUpStreamPause(tunnel_t *self, line_t *line)
+void tunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
 {
     assert(self->up != NULL);
     self->up->fnPauseU(self->up, line);
 }
 
-static void defaultUpStreamResume(tunnel_t *self, line_t *line)
+void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 {
     assert(self->up != NULL);
     self->up->fnResumeU(self->up, line);
 }
 
-static void defaultdownStreamInit(tunnel_t *self, line_t *line)
+void tunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 {
     assert(self->dw != NULL);
     self->up->fnInitD(self->up, line);
 }
 
-static void defaultdownStreamEst(tunnel_t *self, line_t *line)
+void tunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
     assert(self->dw != NULL);
     self->up->fnEstD(self->up, line);
 }
 
-static void defaultdownStreamFin(tunnel_t *self, line_t *line)
+void tunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
 {
     assert(self->dw != NULL);
     self->up->fnFinD(self->up, line);
 }
 
-static void defaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
+void tunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     assert(self->dw != NULL);
     self->up->fnPayloadD(self->up, line, payload);
 }
 
-static void defaultDownStreamPause(tunnel_t *self, line_t *line)
+void tunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
 {
     assert(self->dw != NULL);
     self->up->fnPauseD(self->up, line);
 }
 
-static void defaultDownStreamResume(tunnel_t *self, line_t *line)
+void tunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
 {
     assert(self->dw != NULL);
     self->up->fnResumeD(self->up, line);
 }
 
-static void defaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
+void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 {
-    node_t *node = t->node;
+    node_t *node = tunnelGetNode(t);
 
     if (node->hash_next == 0x0)
     {
@@ -130,28 +127,29 @@ static void defaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     tnext->onChain(tnext, tc);
 }
 
-static void defaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t* mem_offset)
+void tunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
 {
     tunnelarrayInesert(arr, t);
     t->chain_index   = *index;
     t->cstate_offset = *mem_offset;
-
+    (*index)++;
+    *mem_offset += t->lstate_size;
     if (t->up)
     {
-        t->up->onIndex(t->up, arr, index + 1, mem_offset + t->lstate_size);
+        t->up->onIndex(t->up, arr, index, mem_offset);
     }
 }
 
-static void defaultOnChainingComplete(tunnel_t *t)
+void tunnelDefaultOnPrepair(tunnel_t *t)
 {
     (void) t;
 }
 
-static void defaultOnStart(tunnel_t *t)
+void tunnelDefaultOnStart(tunnel_t *t)
 {
     if (t->up)
     {
-        t->up->onChainStart(t->up);
+        t->up->onStart(t->up);
     }
 }
 
@@ -169,25 +167,23 @@ tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
     memorySet(ptr, 0, tsize);
 
     *ptr = (tunnel_t){.lstate_size = lstate_size,
-                      .fnInitU     = &defaultUpStreamInit,
-                      .fnInitD     = &defaultdownStreamInit,
-                      .fnPayloadU  = &defaultUpStreamPayload,
-                      .fnPayloadD  = &defaultdownStreamPayload,
-                      .fnEstU      = &defaultUpStreamEst,
-                      .fnEstD      = &defaultdownStreamEst,
-                      .fnFinU      = &defaultUpStreamFin,
-                      .fnFinD      = &defaultdownStreamFin,
-                      .fnPauseU    = &defaultUpStreamPause,
-                      .fnPauseD    = &defaultDownStreamPause,
-                      .fnResumeU   = &defaultUpStreamResume,
-                      .fnResumeD   = &defaultDownStreamResume,
-
-                      .onChain            = &defaultOnChain,
-                      .onIndex            = &defaultOnIndex,
-                      .onChainingComplete = &defaultOnChainingComplete,
-                      .onStart            = &defaultOnStart,
-
-                      .node = node};
+                      .fnInitU     = &tunnelDefaultUpStreamInit,
+                      .fnInitD     = &tunnelDefaultdownStreamInit,
+                      .fnPayloadU  = &tunnelDefaultUpStreamPayload,
+                      .fnPayloadD  = &tunnelDefaultdownStreamPayload,
+                      .fnEstU      = &tunnelDefaultUpStreamEst,
+                      .fnEstD      = &tunnelDefaultdownStreamEst,
+                      .fnFinU      = &tunnelDefaultUpStreamFin,
+                      .fnFinD      = &tunnelDefaultdownStreamFin,
+                      .fnPauseU    = &tunnelDefaultUpStreamPause,
+                      .fnPauseD    = &tunnelDefaultDownStreamPause,
+                      .fnResumeU   = &tunnelDefaultUpStreamResume,
+                      .fnResumeD   = &tunnelDefaultDownStreamResume,
+                      .onChain     = &tunnelDefaultOnChain,
+                      .onIndex     = &tunnelDefaultOnIndex,
+                      .onPrepair   = &tunnelDefaultOnPrepair,
+                      .onStart     = &tunnelDefaultOnStart,
+                      .node        = node};
 
     return ptr;
 }
@@ -203,9 +199,9 @@ void pipeUpStream(context_t *c)
     {
         if (c->payload)
         {
-            reuseContextPayload(c);
+            contextReusePayload(c);
         }
-        destroyContext(c);
+        contextDestroy(c);
     }
 }
 
@@ -215,9 +211,9 @@ void pipeDownStream(context_t *c)
     {
         if (c->payload)
         {
-            reuseContextPayload(c);
+            contextReusePayload(c);
         }
-        destroyContext(c);
+        contextDestroy(c);
     }
 }
 

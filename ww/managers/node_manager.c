@@ -1,5 +1,7 @@
 #include "node_manager.h"
 #include "chain.h"
+#include "utils/json_helpers.h"
+#include "loggers/internal_logger.h"
 
 enum
 {
@@ -95,10 +97,9 @@ static void runNodes(node_manager_config_t *cfg)
             assert(n1 != NULL && n1->instance == NULL);
             t_array[index++] = n1->instance = n1->createHandle(n1);
 
-            if ((n1->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
+            if (nodeHasFlagChainHead(n1))
             {
                 t_starters_array[index_starters++] = n1->instance;
-                n1->instance->chain_head           = true;
             }
             if (index == kMaxTarraySize + 1)
             {
@@ -124,7 +125,7 @@ static void runNodes(node_manager_config_t *cfg)
         {
             tunnel_t *tunnel = t_array[i];
 
-            if (tunnel == NULL || ! tunnel->chain_head)
+            if (tunnel == NULL || nodeHasFlagChainHead(tunnelGetNode(tunnel)))
             {
                 continue;
             }
@@ -158,18 +159,17 @@ static void runNodes(node_manager_config_t *cfg)
                 continue;
             }
 
-            tunnel->chain_head = true;
-
-            tunnel_array_t tc         = {0};
+            tunnel_array_t ta         = {0};
             uint16_t       index      = 0;
             uint16_t       mem_offset = 0;
-            tunnel->onIndex(tunnel, &tc, &index, &mem_offset);
+            tunnel->onIndex(tunnel, &ta, &index, &mem_offset);
+            tunnelGetChain(tunnel)->tunnels = ta;
 
-            for (int cti = 0; cti < tc.len; cti++)
+            for (int cti = 0; cti < ta.len; cti++)
             {
                 for (int ti = 0; ti < starter_tunnels_count; ti++)
                 {
-                    if (t_starters_array[ti] == tc.tuns[cti])
+                    if (t_starters_array[ti] == ta.tuns[cti])
                     {
                         t_starters_array[ti] = NULL;
                         break;
@@ -190,7 +190,7 @@ static void runNodes(node_manager_config_t *cfg)
         {
             assert(t_array_cpy[i] != NULL);
             tunnel_t *tunnel = t_array_cpy[i];
-            if (tunnel->chain_head)
+            if (nodeHasFlagChainHead(tunnelGetNode(tunnel)))
             {
                 tunnel->onStart(tunnel);
             }

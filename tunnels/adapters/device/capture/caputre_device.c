@@ -92,13 +92,13 @@ static void upStream(tunnel_t *self, context_t *c)
     capture_device_t *cdev = state->cdev;
     if (! writeToCaptureDevce(cdev, c->payload))
     {
-        reuseContextPayload(c);
+        contextReusePayload(c);
     }
     else
     {
-        dropContexPayload(c);
+        contextDropPayload(c);
     }
-    destroyContext(c);
+    contextDestroy(c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -109,9 +109,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        dropContexPayload(c);
+        contextDropPayload(c);
     }
-    destroyContext(c);
+    contextDestroy(c);
 }
 
 static void onIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, tid_t tid)
@@ -126,7 +126,7 @@ static void onIPPacketReceived(struct capture_device_s *cdev, void *userdata, sb
 
     // bufferpoolResuesBuffer(getWorkerBufferPool(tid), buf);
 
-    context_t *ctx = newContext(state->thread_lines[tid]);
+    context_t *ctx = contextCreate(state->thread_lines[tid]);
     ctx->payload   = buf;
     self->up->upStream(self->up, ctx);
 }

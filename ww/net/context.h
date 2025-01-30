@@ -1,11 +1,10 @@
 #pragma once
-#include "wlibc.h"
-#include "shiftbuffer.h"
+#include "buffer_stream.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "line.h"
-#include "buffer_stream.h"
-
+#include "shiftbuffer.h"
+#include "wlibc.h"
 
 /*
     Context carries information, it belongs to the line it refrenses and prevent line destruction
@@ -18,25 +17,13 @@
 typedef struct context_s
 {
     sbuf_t *payload;
-    line_t         *line;
-    bool            init;
-    bool            est;
-    bool            fin;
+    line_t *line;
+    bool    init;
+    bool    est;
+    bool    fin;
 } context_t;
 
-
-
-
-
-
-
-
-
-// pool handles, instead of malloc / free  for the generic pool
-pool_item_t *allocContextPoolHandle(generic_pool_t *pool);
-void         destroyContextPoolHandle(generic_pool_t *pool, pool_item_t *item);
-
-static inline void destroyContext(context_t *c)
+static inline void contextDestroy(context_t *c)
 {
     assert(c->payload == NULL);
     const tid_t tid = c->line->tid;
@@ -44,7 +31,7 @@ static inline void destroyContext(context_t *c)
     genericpoolReuseItem(getWorkerContextPool(tid), c);
 }
 
-static inline context_t *newContext(line_t *const line)
+static inline context_t *contextCreate(line_t *const line)
 {
     context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(line->tid));
     *new_ctx           = (context_t){.line = line};
@@ -52,7 +39,7 @@ static inline context_t *newContext(line_t *const line)
     return new_ctx;
 }
 
-static inline context_t *newContextFrom(const context_t *const source)
+static inline context_t *contextCreateFrom(const context_t *const source)
 {
     lineLock(source->line);
     context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(source->line->tid));
@@ -60,35 +47,35 @@ static inline context_t *newContextFrom(const context_t *const source)
     return new_ctx;
 }
 
-static inline context_t *newEstContext(line_t *const line)
+static inline context_t *contextCreateEst(line_t *const line)
 {
-    context_t *c = newContext(line);
+    context_t *c = contextCreate(line);
     c->est       = true;
     return c;
 }
 
-static inline context_t *newFinContext(line_t *const l)
+static inline context_t *contextCreateFin(line_t *const l)
 {
-    context_t *c = newContext(l);
+    context_t *c = contextCreate(l);
     c->fin       = true;
     return c;
 }
 
-static inline context_t *newFinContextFrom(context_t *const source)
+static inline context_t *contextCreateFinFrom(context_t *const source)
 {
-    context_t *c = newContextFrom(source);
+    context_t *c = contextCreateFrom(source);
     c->fin       = true;
     return c;
 }
 
-static inline context_t *newInitContext(line_t *const line)
+static inline context_t *contextCreateInit(line_t *const line)
 {
-    context_t *c = newContext(line);
+    context_t *c = contextCreate(line);
     c->init      = true;
     return c;
 }
 
-static inline context_t *switchLine(context_t *const c, line_t *const line)
+static inline context_t *contextSwitchLine(context_t *const c, line_t *const line)
 {
     lineLock(line);
     lineUnlock(c->line);
@@ -101,7 +88,7 @@ static inline context_t *switchLine(context_t *const c, line_t *const line)
     build
 */
 
-static inline void dropContexPayload(context_t *const c)
+static inline void contextDropPayload(context_t *const c)
 {
 #if defined(RELEASE)
     (void) (c);
@@ -111,30 +98,21 @@ static inline void dropContexPayload(context_t *const c)
 #endif
 }
 
-static inline void reuseContextPayload(context_t *const c)
+static inline buffer_pool_t *contextGetBufferPool(const context_t *const c)
 {
-    assert(c->payload != NULL);
-    bufferpoolResuesBuffer(getContextBufferPool(c), c->payload);
-    dropContexPayload(c);
+    return getWorkerBufferPool(c->line->tid);
 }
 
+static inline void contextReusePayload(context_t *const c)
+{
+    assert(c->payload != NULL);
+    bufferpoolResuesBuffer(contextGetBufferPool(c), c->payload);
+    contextDropPayload(c);
+}
 
 static inline void bufferStreamPushContextPayload(buffer_stream_t *self, context_t *c)
 {
     assert(c->payload);
     bufferstreamPush(self, c->payload);
-    dropContexPayload(c);
+    contextDropPayload(c);
 }
-
-
-
-static inline buffer_pool_t *getContextBufferPool(const context_t *const c)
-{
-    return getWorkerBufferPool(c->line->tid);
-}
-
-
-
-
-
-

@@ -25,13 +25,13 @@ static void cleanup(tcp_connector_con_state_t *cstate, bool flush_queue)
             if (flush_queue)
             {
                 wioWrite(cstate->io, cw->payload);
-                dropContexPayload(cw);
+                contextDropPayload(cw);
             }
             else
             {
-                reuseContextPayload(cw);
+                contextReusePayload(cw);
             }
-            destroyContext(cw);
+            contextDestroy(cw);
         }
 
         wioClose(cstate->io);
@@ -54,8 +54,8 @@ static bool resumeWriteQueue(tcp_connector_con_state_t *cstate)
         context_t *cw     = contextqueuePop(data_queue);
         int        bytes  = (int) sbufGetBufLength(cw->payload);
         int        nwrite = wioWrite(io, cw->payload);
-        dropContexPayload(cw);
-        destroyContext(cw);
+        contextDropPayload(cw);
+        contextDestroy(cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
             return false; // write pending
@@ -100,7 +100,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tunnel_t       *self    = (cstate)->tunnel;
     line_t         *line    = (cstate)->line;
 
-    context_t *context = newContext(line);
+    context_t *context = contextCreate(line);
     context->payload   = payload;
     self->downStream(self, context);
 }
@@ -113,7 +113,7 @@ static void onClose(wio_t *io)
         LOGD("TcpConnector: received close for FD:%x ", wioGetFD(io));
         tunnel_t  *self    = (cstate)->tunnel;
         line_t    *line    = (cstate)->line;
-        context_t *context = newFinContext(line);
+        context_t *context = contextCreateFin(line);
         self->downStream(self, context);
     }
     else
@@ -175,7 +175,7 @@ static void onOutBoundConnected(wio_t *upstream_io)
     }
 
     setupLineUpSide(line, onLinePaused, cstate, onLineResumed);
-    self->downStream(self, newEstContext(line));
+    self->downStream(self, contextCreateEst(line));
 }
 
 static void upStream(tunnel_t *self, context_t *c)
@@ -193,7 +193,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             int bytes  = (int) sbufGetBufLength(c->payload);
             int nwrite = wioWrite(cstate->io, c->payload);
-            dropContexPayload(c);
+            contextDropPayload(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {
@@ -201,7 +201,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 cstate->write_paused = true;
                 wioSetCallBackWrite(cstate->io, onWriteComplete);
             }
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
     else
@@ -212,7 +212,7 @@ static void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c)                = memoryAllocate(sizeof(tcp_connector_con_state_t));
             cstate                       = CSTATE(c);
 
-            *cstate = (tcp_connector_con_state_t) {.buffer_pool  = getContextBufferPool(c),
+            *cstate = (tcp_connector_con_state_t) {.buffer_pool  = contextGetBufferPool(c),
                                                    .tunnel       = self,
                                                    .line         = c->line,
                                                    .data_queue   = contextqueueCreate(),
@@ -222,15 +222,15 @@ static void upStream(tunnel_t *self, context_t *c)
             getTimeOfDay(&(cstate->__profile_conenct), NULL);
 #endif
 
-            socket_context_t *dest_ctx = &(c->line->dest_ctx);
-            socket_context_t *src_ctx  = &(c->line->src_ctx);
+            connection_context_t *dest_ctx = &(c->line->dest_ctx);
+            connection_context_t *src_ctx  = &(c->line->src_ctx);
             switch ((enum tcp_connector_dynamic_value_status) state->dest_addr_selected.status)
             {
             case kCdvsFromSource:
-                socketContextAddrCopy(dest_ctx, src_ctx);
+                connectionContextAddrCopy(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                socketContextAddrCopy(dest_ctx, &(state->constant_dest_addr));
+                connectionContextAddrCopy(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -239,10 +239,10 @@ static void upStream(tunnel_t *self, context_t *c)
             switch ((enum tcp_connector_dynamic_value_status) state->dest_port_selected.status)
             {
             case kCdvsFromSource:
-                socketContextPortCopy(dest_ctx, src_ctx);
+                connectionContextPortCopy(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                socketContextPortCopy(dest_ctx, &(state->constant_dest_addr));
+                connectionContextPortCopy(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -318,19 +318,19 @@ static void upStream(tunnel_t *self, context_t *c)
             wioSetCallBackConnect(upstream_io, onOutBoundConnected);
             wioSetCallBackClose(upstream_io, onClose);
             wioConnect(upstream_io);
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
             CSTATE_DROP(c);
             cleanup(cstate, true);
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
     return;
 fail:
-    self->dw->downStream(self->dw, newFinContextFrom(c));
-    destroyContext(c);
+    self->dw->downStream(self->dw, contextCreateFinFrom(c));
+    contextDestroy(c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -482,7 +482,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
         if (state->constant_dest_addr.address_type == kSatDomainName)
         {
-            socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+            connectionContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
                                            strlen(state->dest_addr_selected.value_ptr));
         }
         else
@@ -503,7 +503,7 @@ tunnel_t *newTcpConnector(node_instance_context_t *instance_info)
 
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        socketContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
+        connectionContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);

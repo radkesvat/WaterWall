@@ -105,8 +105,8 @@ static void downStream(tunnel_t *self, context_t *c)
     if (c->payload != NULL)
     {
         postUdpWrite(cstate->uio, c->line->tid, c->payload);
-        dropContexPayload(c);
-        destroyContext(c);
+        contextDropPayload(c);
+        contextDestroy(c);
     }
     else
     {
@@ -114,7 +114,7 @@ static void downStream(tunnel_t *self, context_t *c)
         if (c->est)
         {
             cstate->established = true;
-            destroyContext(c);
+            contextDestroy(c);
             return;
         }
         if (c->fin)
@@ -122,7 +122,7 @@ static void downStream(tunnel_t *self, context_t *c)
             CSTATE_DROP(c);
             cleanup(cstate);
             lineDestroy(c->line);
-            destroyContext(c);
+            contextDestroy(c);
             return;
         }
     }
@@ -141,7 +141,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
     cstate->idle_handle = NULL;
     tunnel_t  *self     = (cstate)->tunnel;
     line_t    *line     = (cstate)->line;
-    context_t *context  = newFinContext(line);
+    context_t *context  = contextCreateFin(line);
     self->upStream(self, context);
 }
 
@@ -180,7 +180,7 @@ static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsoc
     // send the init packet
     lineLock(line);
     {
-        context_t *context = newInitContext(line);
+        context_t *context = contextCreateInit(line);
         self->upStream(self, context);
         if (! lineIsAlive(line))
         {
@@ -228,7 +228,7 @@ static void onFilteredRecv(wevent_t *ev)
 
     tunnel_t                 *self    = data->tunnel;
     udp_listener_con_state_t *con     = idle->userdata;
-    context_t                *context = newContext(con->line);
+    context_t                *context = contextCreate(con->line);
     context->payload                  = data->buf;
 
     self->upStream(self, context);

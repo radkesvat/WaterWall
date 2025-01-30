@@ -1,7 +1,7 @@
 #pragma once
 #include "wlibc.h"
 #include "cJSON.h"
-#include "dynamic_value.h"
+#include "objects/dynamic_value.h"
 
 static inline bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
 {

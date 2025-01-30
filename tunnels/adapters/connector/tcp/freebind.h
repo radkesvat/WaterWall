@@ -3,7 +3,7 @@
 #include "types.h"
 
 
-bool applyFreeBindRandomDestIp(tunnel_t* self,socket_context_t *dest_ctx);
+bool applyFreeBindRandomDestIp(tunnel_t* self,connection_context_t *dest_ctx);
 
 
 

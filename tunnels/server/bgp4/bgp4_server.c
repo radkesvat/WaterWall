@@ -65,7 +65,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (0 != memcmp(sbufGetRawPtr(buf), kExpecetd, kMarkerLength))
                 {
                     LOGE("Bgp4Server: invalid marker");
-                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                     goto disconnect;
                 }
                 sbufShiftRight(buf, kBgpHeaderLen);
@@ -75,7 +75,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (sbufGetBufLength(buf) < kBgpOpenPacketHeaderSize + 1) // +1 for type
                     {
                         LOGE("Bgp4Server: open packet length is shorter than bgp header");
-                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                         goto disconnect;
                     }
 
@@ -88,7 +88,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     else
                     {
                         LOGE("Bgp4Server: first message type was not bgp_open");
-                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                         goto disconnect;
                     }
 
@@ -100,7 +100,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     if (bgp_additions > 0 && sbufGetBufLength(buf) - 1 < bgp_additions)
                     {
                         LOGE("Bgp4Server: open message had extensions more than the length");
-                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                         goto disconnect;
                     }
                     sbufShiftRight(buf, bgp_additions + 1); // pass addition count and items
@@ -113,11 +113,11 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (sbufGetBufLength(buf) <= 0)
                 {
                     LOGE("Bgp4Server: message had no payload");
-                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                     goto disconnect;
                 }
 
-                context_t *data_ctx = newContext(c->line);
+                context_t *data_ctx = contextCreate(c->line);
                 data_ctx->payload   = buf;
                 self->up->upStream(self->up, data_ctx);
             }
@@ -126,14 +126,14 @@ static void upStream(tunnel_t *self, context_t *c)
                 break;
             }
         }
-        destroyContext(c);
+        contextDestroy(c);
         return;
     }
 
     if (c->init)
     {
         cstate        = memoryAllocate(sizeof(bgp4_client_con_state_t));
-        *cstate       = (bgp4_client_con_state_t){.read_stream = bufferstreamCreate(getContextBufferPool(c))};
+        *cstate       = (bgp4_client_con_state_t){.read_stream = bufferstreamCreate(contextGetBufferPool(c))};
         CSTATE_MUT(c) = cstate;
     }
     else if (c->fin)
@@ -150,9 +150,9 @@ disconnect:
     bufferstreamDestroy(cstate->read_stream);
     memoryFree(cstate);
     CSTATE_DROP(c);
-    self->up->upStream(self->up, newFinContextFrom(c));
-    self->dw->downStream(self->dw, newFinContextFrom(c));
-    destroyContext(c);
+    self->up->upStream(self->up, contextCreateFinFrom(c));
+    self->dw->downStream(self->dw, contextCreateFinFrom(c));
+    contextDestroy(c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)

@@ -53,8 +53,8 @@ static void upStream(tunnel_t *self, context_t *c)
             uint32_t cids[2]   = {fastRand(), fastRand()};
             uint8_t *cid_bytes = (uint8_t *) &(cids[0]);
 
-            context_t *intro_context = newContext(cstate->download_line);
-            intro_context->payload   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+            context_t *intro_context = contextCreate(cstate->download_line);
+            intro_context->payload   = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
 
             cid_bytes[0] = cid_bytes[0] | (1 << 7); // kHLFDCmdDownload
             sbufShiftLeft(intro_context->payload, sizeof(cids));
@@ -64,8 +64,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (! lineIsAlive(c->line))
             {
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
 
@@ -73,7 +73,7 @@ static void upStream(tunnel_t *self, context_t *c)
             sbufShiftLeft(c->payload, 8);
             sbufWrite(c->payload, cid_bytes, sizeof(cids));
         }
-        self->up->upStream(self->up, switchLine(c, cstate->upload_line));
+        self->up->upStream(self->up, contextSwitchLine(c, cstate->upload_line));
     }
     else
     {
@@ -89,11 +89,11 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->upload_line             = newLine(c->line->tid);
             LSTATE_MUT(cstate->upload_line) = cstate;
             lineLock(cstate->upload_line);
-            self->up->upStream(self->up, newInitContext(cstate->upload_line));
+            self->up->upStream(self->up, contextCreateInit(cstate->upload_line));
             if (! lineIsAlive(cstate->upload_line))
             {
                 lineUnlock(cstate->upload_line);
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
             lineUnlock(cstate->upload_line);
@@ -101,12 +101,12 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->download_line             = newLine(c->line->tid);
             LSTATE_MUT(cstate->download_line) = cstate;
             lineLock(cstate->download_line);
-            self->up->upStream(self->up, newInitContext(cstate->download_line));
+            self->up->upStream(self->up, contextCreateInit(cstate->download_line));
 
             if (! lineIsAlive(cstate->download_line))
             {
                 lineUnlock(cstate->download_line);
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
             lineUnlock(cstate->download_line);
@@ -114,14 +114,14 @@ static void upStream(tunnel_t *self, context_t *c)
             setupLineUpSide(cstate->main_line, onMainLinePaused, cstate, onMainLineResumed);
             setupLineDownSide(cstate->upload_line, onUDLinePaused, cstate, onUDLineResumed);
             setupLineDownSide(cstate->download_line, onUDLinePaused, cstate, onUDLineResumed);
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
             LSTATE_DROP(cstate->main_line);
             doneLineUpSide(cstate->main_line);
             cstate->main_line = NULL;
-            destroyContext(c);
+            contextDestroy(c);
 
             line_t *upload_line   = cstate->upload_line;
             line_t *download_line = cstate->download_line;
@@ -131,7 +131,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->upload_line = NULL;
             doneLineDownSide(upload_line);
             LSTATE_DROP(upload_line);
-            self->up->upStream(self->up, newFinContext(upload_line));
+            self->up->upStream(self->up, contextCreateFin(upload_line));
             lineDestroy(upload_line);
 
             if (! lineIsAlive(download_line))
@@ -144,7 +144,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->download_line = NULL;
             doneLineDownSide(download_line);
             LSTATE_DROP(download_line);
-            self->up->upStream(self->up, newFinContext(download_line));
+            self->up->upStream(self->up, contextCreateFin(download_line));
             lineDestroy(download_line);
 
             memoryFree(cstate);
@@ -157,7 +157,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        self->dw->downStream(self->dw, switchLine(c, cstate->main_line));
+        self->dw->downStream(self->dw, contextSwitchLine(c, cstate->main_line));
     }
     else
     {
@@ -173,7 +173,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     LSTATE_DROP(cstate->upload_line);
                     doneLineDownSide(cstate->upload_line);
-                    self->up->upStream(self->up, newFinContext(cstate->upload_line));
+                    self->up->upStream(self->up, contextCreateFin(cstate->upload_line));
                     lineDestroy(cstate->upload_line);
                 }
             }
@@ -187,7 +187,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     LSTATE_DROP(cstate->download_line);
                     doneLineDownSide(cstate->download_line);
-                    self->up->upStream(self->up, newFinContext(cstate->download_line));
+                    self->up->upStream(self->up, contextCreateFin(cstate->download_line));
                     lineDestroy(cstate->download_line);
                 }
             }
@@ -195,21 +195,21 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 LSTATE_DROP(cstate->main_line);
                 doneLineUpSide(cstate->main_line);
-                self->dw->downStream(self->dw, newFinContext(cstate->main_line));
+                self->dw->downStream(self->dw, contextCreateFin(cstate->main_line));
             }
 
             memoryFree(cstate);
-            destroyContext(c);
+            contextDestroy(c);
         }
         else
         {
             if (c->line == cstate->download_line)
             {
-                self->dw->downStream(self->dw, switchLine(c, cstate->main_line));
+                self->dw->downStream(self->dw, contextSwitchLine(c, cstate->main_line));
             }
             else
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }

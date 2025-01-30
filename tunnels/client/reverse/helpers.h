@@ -65,15 +65,15 @@ static void doConnect(struct connect_arg *cg)
     // reverse_client_state_t     *state  = TSTATE(self);
     reverse_client_con_state_t *cstate = createCstate(self, cg->tid);
     memoryFree(cg);
-    context_t *hello_data_ctx = newContext(cstate->u);
-    self->up->upStream(self->up, newInitContext(cstate->u));
+    context_t *hello_data_ctx = contextCreate(cstate->u);
+    self->up->upStream(self->up, contextCreateInit(cstate->u));
 
     if (! lineIsAlive(cstate->u))
     {
-        destroyContext(hello_data_ctx);
+        contextDestroy(hello_data_ctx);
         return;
     }
-    hello_data_ctx->payload = bufferpoolGetLargeBuffer(getContextBufferPool(hello_data_ctx));
+    hello_data_ctx->payload = bufferpoolGetLargeBuffer(contextGetBufferPool(hello_data_ctx));
     sbufSetLength(hello_data_ctx->payload, kHandShakeLength);
     memorySet(sbufGetMutablePtr(hello_data_ctx->payload), kHandShakeByte, kHandShakeLength);
     self->up->upStream(self->up, hello_data_ctx);
@@ -157,7 +157,7 @@ static void onStarvedConnectionExpire(idle_item_t *idle_con)
     cstate->idle_handle = NULL;
     initiateConnect(self, cstate->u->tid, false);
 
-    context_t *fc = newFinContext(cstate->u);
+    context_t *fc = contextCreateFin(cstate->u);
     cleanup(cstate);
     self->up->upStream(self->up, fc);
 }

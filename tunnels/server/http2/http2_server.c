@@ -213,7 +213,7 @@ static void sendStreamResposnseData(http2_server_con_state_t *con, http2_server_
     framehd.stream_id = stream->stream_id;
     sbufShiftLeft(buf, HTTP2_FRAME_HDLEN);
     http2FrameHdPack(&framehd, sbufGetMutablePtr(buf));
-    context_t *response_data = newContext(con->line);
+    context_t *response_data = contextCreate(con->line);
     response_data->payload   = buf;
     con->tunnel->dw->downStream(con->tunnel->dw, response_data);
 }
@@ -229,7 +229,7 @@ static bool sendNgHttp2Data(tunnel_t *self, http2_server_con_state_t *con)
         sbuf_t *send_buf = sbufReserveSpace(bufferpoolGetLargeBuffer(lineGetBufferPool(main_line)),len);
         sbufSetLength(send_buf, len);
         sbufWrite(send_buf, data, len);
-        context_t *response_data = newContext(main_line);
+        context_t *response_data = contextCreate(main_line);
         response_data->payload   = send_buf;
         self->dw->downStream(self->dw, response_data);
         return true;
@@ -260,7 +260,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
 
     case kActionStreamInit: {
 
-        stream->tunnel->up->upStream(stream->tunnel->up, newInitContext(stream->line));
+        stream->tunnel->up->upStream(stream->tunnel->up, contextCreateInit(stream->line));
     }
 
     break;
@@ -286,7 +286,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
                     sbuf_t *gdata_buf = bufferstreamReadExact(stream->grpc_buffer_stream, stream->grpc_bytes_needed);
                     stream->grpc_bytes_needed = 0;
 
-                    context_t *stream_data = newContext(stream->line);
+                    context_t *stream_data = contextCreate(stream->line);
                     stream_data->payload   = gdata_buf;
                     stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
 
@@ -304,7 +304,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
         else
         {
             sbuf_t *buf         = action.buf;
-            context_t      *stream_data = newContext(stream->line);
+            context_t      *stream_data = contextCreate(stream->line);
 
             stream_data->payload = buf;
             stream->tunnel->up->upStream(stream->tunnel->up, stream_data);
@@ -320,7 +320,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
     break;
 
     case kActionStreamFinish: {
-        context_t *fc   = newFinContext(stream->line);
+        context_t *fc   = contextCreateFin(stream->line);
         tunnel_t  *dest = stream->tunnel->up;
         nghttp2_session_set_stream_user_data(con->session, stream->stream_id, NULL);
         removeStream(con, stream);
@@ -356,9 +356,9 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 // assert(false);
                 deleteHttp2Connection(con);
-                self->dw->downStream(self->dw, newFinContext(c->line));
-                reuseContextPayload(c);
-                destroyContext(c);
+                self->dw->downStream(self->dw, contextCreateFin(c->line));
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
 
@@ -366,8 +366,8 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (! lineIsAlive(c->line))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
             }
@@ -378,8 +378,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 doHttp2Action(action, con);
                 if (! lineIsAlive(c->line))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
             }
@@ -388,39 +388,39 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 if (! lineIsAlive(c->line))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
             }
 
             if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
             {
-                context_t *fin_ctx = newFinContext(con->line);
+                context_t *fin_ctx = contextCreateFin(con->line);
                 deleteHttp2Connection(con);
                 self->dw->downStream(self->dw, fin_ctx);
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
         }
 
-        reuseContextPayload(c);
-        destroyContext(c);
+        contextReusePayload(c);
+        contextDestroy(c);
     }
     else
     {
         if (c->init)
         {
             CSTATE_MUT(c) = createHttp2Connection(self, c->line);
-            self->dw->downStream(self->dw, newEstContext(c->line));
+            self->dw->downStream(self->dw, contextCreateEst(c->line));
 
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
             deleteHttp2Connection(CSTATE(c));
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
 }
@@ -438,16 +438,16 @@ static void downStream(tunnel_t *self, context_t *c)
             if (! lineIsAlive(con->line))
             {
                 lineUnlock(con->line);
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
         }
         lineUnlock(con->line);
 
         sendStreamResposnseData(con, stream, c->payload);
-        dropContexPayload(c);
-        destroyContext(c);
+        contextDropPayload(c);
+        contextDestroy(c);
     }
     else
     {
@@ -474,7 +474,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (! lineIsAlive(con->line))
                 {
                     lineUnlock(con->line);
-                    destroyContext(c);
+                    contextDestroy(c);
                     return;
                 }
             }
@@ -482,16 +482,16 @@ static void downStream(tunnel_t *self, context_t *c)
 
             if (nghttp2_session_want_read(con->session) == 0 && nghttp2_session_want_write(con->session) == 0)
             {
-                context_t *fin_ctx = newFinContext(con->line);
+                context_t *fin_ctx = contextCreateFin(con->line);
                 deleteHttp2Connection(con);
                 self->dw->downStream(self->dw, fin_ctx);
             }
 
-            destroyContext(c);
+            contextDestroy(c);
         }
         else
         {
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
 }

@@ -45,8 +45,8 @@ static void upStream(tunnel_t *self, context_t *c)
             if (UNLIKELY(sbufGetBufLength(c->payload) < sizeof(struct ipv4header)))
             {
                 LOGW("Layer3Receiver: dropped a ipv4 packet that was too small");
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
         }
@@ -56,16 +56,16 @@ static void upStream(tunnel_t *self, context_t *c)
             if (UNLIKELY(sbufGetBufLength(c->payload) < sizeof(struct ipv6header)))
             {
                 LOGW("Layer3Receiver: dropped a ipv6 packet that was too small");
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
         }
         else
         {
             LOGW("Layer3Receiver: dropped a non ip protocol packet");
-            reuseContextPayload(c);
-            destroyContext(c);
+            contextReusePayload(c);
+            contextDestroy(c);
             return;
         }
     }
@@ -81,9 +81,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        reuseContextPayload(c);
+        contextReusePayload(c);
     }
-    destroyContext(c);
+    contextDestroy(c);
 }
 
 tunnel_t *newLayer3Receiver(node_instance_context_t *instance_info)

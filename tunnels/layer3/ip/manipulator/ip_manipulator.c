@@ -116,9 +116,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        reuseContextPayload(c);
+        contextReusePayload(c);
     }
-    destroyContext(c);
+    contextDestroy(c);
 }
 
 tunnel_t *newLayer3IpManipulator(node_instance_context_t *instance_info)

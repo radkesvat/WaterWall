@@ -50,7 +50,7 @@ static void wioSocketInit(wio_t* io) {
     }
     // fill io->localaddr io->peeraddr
     if (io->localaddr == NULL) {
-        EVENTLOOP_ALLOC(io->localaddr, sizeof(sockaddr_u))4;
+        EVENTLOOP_ALLOC(io->localaddr, sizeof(sockaddr_u));
     }
     if (io->peeraddr == NULL) {
         EVENTLOOP_ALLOC(io->peeraddr, sizeof(sockaddr_u));

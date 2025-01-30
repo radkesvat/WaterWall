@@ -12,14 +12,6 @@ enum domain_strategy
     kDsOnlyIpV6
 };
 
-enum dynamic_value_status
-{
-    kDvsEmpty = 0x0,
-    kDvsConstant,
-    kDvsFirstOption,
-};
-
-
 enum socket_address_type
 {
     kSatIPV4       = 0X1,
@@ -33,7 +25,7 @@ enum socket_address_protocol
     kSapUdp = IPPROTO_UDP,
 };
 
-typedef struct socket_context_s
+typedef struct connection_context_s
 {
     char                        *domain;
     sockaddr_u                   address;
@@ -44,51 +36,10 @@ typedef struct socket_context_s
     bool                         domain_resolved;
     bool                         domain_constant;
 
-} socket_context_t;
+} connection_context_t;
 
-static inline void socketContextAddrCopy(socket_context_t *dest, const socket_context_t *const source)
-{
-    dest->address_protocol = source->address_protocol;
-    dest->address_type     = source->address_type;
-    switch (dest->address_type)
-    {
-    case kSatIPV4:
-        dest->address.sa.sa_family = AF_INET;
-        dest->address.sin.sin_addr = source->address.sin.sin_addr;
 
-        break;
-
-    case kSatDomainName:
-        dest->address.sa.sa_family = AF_INET;
-        if (source->domain != NULL)
-        {
-            if (source->domain_constant)
-            {
-                socketContextDomainSetConstMem(dest, source->domain, source->domain_len);
-            }
-            else
-            {
-                socketContextDomainSet(dest, source->domain, source->domain_len);
-            }
-            dest->domain_resolved = source->domain_resolved;
-            if (source->domain_resolved)
-            {
-                dest->domain_resolved = true;
-                sockaddrCopy(&(dest->address), &(source->address));
-            }
-        }
-
-        break;
-
-    case kSatIPV6:
-        dest->address.sa.sa_family = AF_INET6;
-        memoryCopy(&(dest->address.sin6.sin6_addr), &(source->address.sin6.sin6_addr), sizeof(struct in6_addr));
-
-        break;
-    }
-}
-
-static inline void socketContextPortCopy(socket_context_t *dest, socket_context_t *source)
+static inline void connectionContextPortCopy(connection_context_t *dest, connection_context_t *source)
 {
     // this is supposed to work for both ipv4/6
     dest->address.sin.sin_port = source->address.sin.sin_port;
@@ -109,12 +60,12 @@ static inline void socketContextPortCopy(socket_context_t *dest, socket_context_
     // }
 }
 
-static inline void socketContextPortSet(socket_context_t *dest, uint16_t port)
+static inline void connectionContextPortSet(connection_context_t *dest, uint16_t port)
 {
     dest->address.sin.sin_port = htons(port);
 }
 
-static inline void socketContextDomainSet(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len)
+static inline void connectionContextDomainSet(connection_context_t *restrict scontext, const char *restrict domain, uint8_t len)
 {
     if (scontext->domain != NULL)
     {
@@ -133,7 +84,7 @@ static inline void socketContextDomainSet(socket_context_t *restrict scontext, c
     scontext->domain_len  = len;
 }
 
-static inline void socketContextDomainSetConstMem(socket_context_t *restrict scontext, const char *restrict domain, uint8_t len)
+static inline void connectionContextDomainSetConstMem(connection_context_t *restrict scontext, const char *restrict domain, uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
@@ -146,6 +97,47 @@ static inline void socketContextDomainSetConstMem(socket_context_t *restrict sco
 }
 
 
+static inline void connectionContextAddrCopy(connection_context_t *dest, const connection_context_t *const source)
+{
+    dest->address_protocol = source->address_protocol;
+    dest->address_type     = source->address_type;
+    switch (dest->address_type)
+    {
+    case kSatIPV4:
+        dest->address.sa.sa_family = AF_INET;
+        dest->address.sin.sin_addr = source->address.sin.sin_addr;
+
+        break;
+
+    case kSatDomainName:
+        dest->address.sa.sa_family = AF_INET;
+        if (source->domain != NULL)
+        {
+            if (source->domain_constant)
+            {
+                connectionContextDomainSetConstMem(dest, source->domain, source->domain_len);
+            }
+            else
+            {
+                connectionContextDomainSet(dest, source->domain, source->domain_len);
+            }
+            dest->domain_resolved = source->domain_resolved;
+            if (source->domain_resolved)
+            {
+                dest->domain_resolved = true;
+                sockaddrCopy(&(dest->address), &(source->address));
+            }
+        }
+
+        break;
+
+    case kSatIPV6:
+        dest->address.sa.sa_family = AF_INET6;
+        memoryCopy(&(dest->address.sin6.sin6_addr), &(source->address.sin6.sin6_addr), sizeof(struct in6_addr));
+
+        break;
+    }
+}
 
 static inline enum socket_address_type getHostAddrType(char *host)
 {

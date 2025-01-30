@@ -31,11 +31,11 @@ static void flushWriteQueue(tunnel_t *self, reverse_server_con_state_t *cstate)
         {
             if (isDownPiped(down_line))
             {
-                pipeDownStream(switchLine(contextqueuePop(cstate->uqueue), down_line));
+                pipeDownStream(contextSwitchLine(contextqueuePop(cstate->uqueue), down_line));
             }
             else
             {
-                self->dw->downStream(self->dw, switchLine(contextqueuePop(cstate->uqueue), down_line));
+                self->dw->downStream(self->dw, contextSwitchLine(contextqueuePop(cstate->uqueue), down_line));
             }
         }
     }
@@ -56,7 +56,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (dcstate->paired)
         {
-            self->up->upStream(self->up, switchLine(c, dcstate->u));
+            self->up->upStream(self->up, contextSwitchLine(c, dcstate->u));
         }
         else
         {
@@ -64,7 +64,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (dcstate->handshaked)
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
             else
             {
@@ -84,7 +84,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         // but regular access would be SEQ_CST
                         if (atomicLoadExplicit(&(this_tb->u_count), memory_order_relaxed) > 0)
                         {
-                            bufferpoolResuesBuffer(getContextBufferPool(c), data);
+                            bufferpoolResuesBuffer(contextGetBufferPool(c), data);
 
                             reverse_server_con_state_t *ucstate = this_tb->u_cons_root.next;
 
@@ -107,17 +107,17 @@ static void upStream(tunnel_t *self, context_t *c)
 
                             if (! lineIsAlive(c->line))
                             {
-                                destroyContext(c);
+                                contextDestroy(c);
                                 return;
                             }
                             if (bufferstreamLen(ucstate->wait_stream) > 0)
                             {
                                 c->payload = bufferstreamFullRead(ucstate->wait_stream);
-                                self->up->upStream(self->up, switchLine(c, ucstate->u));
+                                self->up->upStream(self->up, contextSwitchLine(c, ucstate->u));
                             }
                             else
                             {
-                                destroyContext(c);
+                                contextDestroy(c);
                             }
                         }
                         else
@@ -131,7 +131,7 @@ static void upStream(tunnel_t *self, context_t *c)
                                     c->payload = data;
                                     if (bufferstreamLen(dcstate->wait_stream) > 0)
                                     {
-                                        c->payload = sbufAppendMerge(getContextBufferPool(c), c->payload,
+                                        c->payload = sbufAppendMerge(contextGetBufferPool(c), c->payload,
                                                                        bufferstreamFullRead(dcstate->wait_stream));
                                     }
                                     cleanup(dcstate);
@@ -140,10 +140,10 @@ static void upStream(tunnel_t *self, context_t *c)
                                     return; // piped to another worker which has waiting connections
                                 }
                             }
-                            bufferpoolResuesBuffer(getContextBufferPool(c), data);
+                            bufferpoolResuesBuffer(contextGetBufferPool(c), data);
 
                             addConnectionD(this_tb, dcstate);
-                            destroyContext(c);
+                            contextDestroy(c);
                         }
                     }
                     else
@@ -151,19 +151,19 @@ static void upStream(tunnel_t *self, context_t *c)
                         cleanup(dcstate);
                         if (isDownPiped(c->line))
                         {
-                            pipeDownStream(newFinContextFrom(c));
+                            pipeDownStream(contextCreateFinFrom(c));
                         }
                         else
                         {
-                            self->dw->downStream(self->dw, newFinContextFrom(c));
+                            self->dw->downStream(self->dw, contextCreateFinFrom(c));
                         }
-                        destroyContext(c);
+                        contextDestroy(c);
                         return;
                     }
                 }
                 else
                 {
-                    destroyContext(c);
+                    contextDestroy(c);
                 }
             }
 
@@ -183,9 +183,9 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                self->dw->downStream(self->dw, newEstContext(c->line));
+                self->dw->downStream(self->dw, contextCreateEst(c->line));
             }
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
@@ -194,7 +194,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 line_t *u_line = dcstate->u;
                 cleanup(dcstate);
-                self->up->upStream(self->up, switchLine(c, u_line));
+                self->up->upStream(self->up, contextSwitchLine(c, u_line));
             }
             else
             {
@@ -204,7 +204,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     removeConnectionD(this_tb, dcstate);
                 }
                 cleanup(dcstate);
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }
@@ -235,15 +235,15 @@ static void downStream(tunnel_t *self, context_t *c)
 
                 if (! lineIsAlive(c->line))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
                 if (bufferstreamLen(dcstate->wait_stream) > 0)
                 {
                     bufferStreamPushContextPayload(dcstate->wait_stream, c);
 
-                    context_t *data_waiting_ctx = newContext(c->line);
+                    context_t *data_waiting_ctx = contextCreate(c->line);
                     data_waiting_ctx->payload   = bufferstreamFullRead(dcstate->wait_stream);
                     self->up->upStream(self->up, data_waiting_ctx);
                 }
@@ -251,11 +251,11 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     if (isDownPiped(dcstate->d))
                     {
-                        pipeDownStream(switchLine(c, dcstate->d));
+                        pipeDownStream(contextSwitchLine(c, dcstate->d));
                     }
                     else
                     {
-                        self->dw->downStream(self->dw, switchLine(c, dcstate->d));
+                        self->dw->downStream(self->dw, contextSwitchLine(c, dcstate->d));
                     }
                 }
             }
@@ -273,11 +273,11 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 if (isDownPiped(ucstate->d))
                 {
-                    pipeDownStream(switchLine(c, ucstate->d));
+                    pipeDownStream(contextSwitchLine(c, ucstate->d));
                 }
                 else
                 {
-                    self->dw->downStream(self->dw, switchLine(c, ucstate->d));
+                    self->dw->downStream(self->dw, contextSwitchLine(c, ucstate->d));
                 }
             }
             else
@@ -292,15 +292,15 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             assert(c->line->up_state == NULL);
 
-            self->up->upStream(self->up, newEstContext(c->line));
+            self->up->upStream(self->up, contextCreateEst(c->line));
 
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
             if (ucstate == NULL)
             {
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
 
@@ -308,7 +308,7 @@ static void downStream(tunnel_t *self, context_t *c)
             {
                 line_t *downline = ucstate->d;
                 cleanup(ucstate);
-                c = switchLine(c, downline);
+                c = contextSwitchLine(c, downline);
 
                 if (isDownPiped(c->line))
                 {
@@ -325,7 +325,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
                 removeConnectionU(this_tb, ucstate);
                 cleanup(ucstate);
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }

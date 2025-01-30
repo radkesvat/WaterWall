@@ -61,9 +61,9 @@ static void onFallbackTimer(wtimer_t *timer)
     {
         if (c->payload != NULL)
         {
-            reuseContextPayload(c);
+            contextReusePayload(c);
         }
-        destroyContext(c);
+        contextDestroy(c);
         return;
     }
     state->fallback->upStream(state->fallback, c);
@@ -128,11 +128,11 @@ static void upStream(tunnel_t *self, context_t *c)
                 cstate->authenticated = true;
                 lineAuthenticate(c->line);
                 cstate->init_sent = true;
-                self->up->upStream(self->up, newInitContext(c->line));
+                self->up->upStream(self->up, contextCreateInit(c->line));
                 if (! lineIsAlive(c->line))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
 
@@ -155,7 +155,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate        = memoryAllocate(sizeof(trojan_auth_server_con_state_t));
             *cstate       = (trojan_auth_server_con_state_t) {0};
             CSTATE_MUT(c) = cstate;
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
@@ -176,7 +176,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }
@@ -189,22 +189,22 @@ failed:
     }
 
     // disconnect:
-    reuseContextPayload(c);
+    contextReusePayload(c);
     memoryFree(CSTATE(c));
     CSTATE_DROP(c);
-    context_t *reply = newFinContextFrom(c);
-    destroyContext(c);
+    context_t *reply = contextCreateFinFrom(c);
+    contextDestroy(c);
     self->dw->downStream(self->dw, reply);
     return;
 fallback:
     if (! cstate->init_sent)
     {
         cstate->init_sent = true;
-        state->fallback->upStream(state->fallback, newInitContext(c->line));
+        state->fallback->upStream(state->fallback, contextCreateInit(c->line));
         if (! lineIsAlive(c->line))
         {
-            reuseContextPayload(c);
-            destroyContext(c);
+            contextReusePayload(c);
+            contextDestroy(c);
             return;
         }
     }

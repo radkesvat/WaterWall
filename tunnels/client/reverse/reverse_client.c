@@ -17,14 +17,14 @@ static void upStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        self->up->upStream(self->up, switchLine(c, dcstate->u));
+        self->up->upStream(self->up, contextSwitchLine(c, dcstate->u));
     }
     else
     {
         if (c->fin)
         {
             const unsigned int tid = c->line->tid;
-            context_t         *fc  = switchLine(c, dcstate->u);
+            context_t         *fc  = contextSwitchLine(c, dcstate->u);
             cleanup(dcstate);
             state->reverse_cons -= 1;
             LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid,
@@ -36,7 +36,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else if (c->est)
         {
-            destroyContext(c);
+            contextDestroy(c);
         }
         else
         {
@@ -56,7 +56,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
         if (ucstate->pair_connected)
         {
-            self->dw->downStream(self->dw, switchLine(c, ucstate->d));
+            self->dw->downStream(self->dw, contextSwitchLine(c, ucstate->d));
         }
         else
         {
@@ -72,16 +72,16 @@ static void downStream(tunnel_t *self, context_t *c)
 
             ucstate->pair_connected = true;
             lineLock(ucstate->d);
-            self->dw->downStream(self->dw, newInitContext(ucstate->d));
+            self->dw->downStream(self->dw, contextCreateInit(ucstate->d));
             if (! lineIsAlive(ucstate->d))
             {
                 lineUnlock(ucstate->d);
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
             lineUnlock(ucstate->d);
-            self->dw->downStream(self->dw, switchLine(c, ucstate->d));
+            self->dw->downStream(self->dw, contextSwitchLine(c, ucstate->d));
         }
     }
     else
@@ -95,7 +95,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 state->reverse_cons -= 1;
                 LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", tid,
                      state->threadlocal_pool[tid].unused_cons_count, state->reverse_cons);
-                context_t *fc = switchLine(c, ucstate->d);
+                context_t *fc = contextSwitchLine(c, ucstate->d);
                 cleanup(ucstate);
                 self->dw->downStream(self->dw, fc);
 
@@ -118,7 +118,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 }
 
                 cleanup(ucstate);
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
         else if (c->est)
@@ -136,12 +136,12 @@ static void downStream(tunnel_t *self, context_t *c)
                                                onStarvedConnectionExpire, c->line->tid,
                                                kConnectionStarvationTimeOut);
 
-            destroyContext(c);
+            contextDestroy(c);
         }
         else
         {
             // unreachable
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
 }

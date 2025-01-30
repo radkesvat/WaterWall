@@ -45,7 +45,7 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 #endif
 
 #ifndef MEM128_BUF_OPTIMIZE
-#error "MEM128_BUF_OPTIMIZE must be defined to either 0 or 1
+#error "MEM128_BUF_OPTIMIZE must be defined to either 0 or 1"
 #endif
 
 #if MEM128_BUF_OPTIMIZE == 0

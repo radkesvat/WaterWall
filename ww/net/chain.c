@@ -17,7 +17,7 @@ void tunnelarrayInesert(tunnel_array_t *tc, tunnel_t *t)
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
 {
     tunnelarrayInesert(&(tci->tunnels), t);
-    tci->sum_padding_left += t->node->metadata.required_padding_left;
+    tci->sum_padding_left += tunnelGetNode(t)->metadata.required_padding_left;
     tci->sum_line_state_size += t->lstate_size;
     t->chain = tci;
     

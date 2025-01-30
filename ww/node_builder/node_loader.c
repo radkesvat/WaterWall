@@ -10,8 +10,8 @@
 #include <stdlib.h> 
 #include <string.h>
 
-#define i_key  node_t    // NOLINT
 #define i_type vec_static_libs // NOLINT
+#define i_key  node_t    // NOLINT
 #include "stc/vec.h"
 
 static struct
@@ -103,4 +103,8 @@ void nodelibraryRegister(node_t lib)
     }
 
     vec_static_libs_push(&(state->slibs), lib);
+}
+
+bool nodeHasFlagChainHead(node_t* node){
+    return (node->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead;
 }

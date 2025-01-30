@@ -139,7 +139,7 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
 
             if (upload_line_cstate->buffering)
             {
-                context_t *bctx = newContext(upload_line_cstate->upload_line);
+                context_t *bctx = contextCreate(upload_line_cstate->upload_line);
                 bctx->payload   = upload_line_cstate->buffering;
                 pipeUpStream(bctx);
             }
@@ -152,11 +152,11 @@ static void notifyDownloadLineIsReadyForBind(hash_t hash, tunnel_t *self, uint8_
             LSTATE_DROP(upload_line_cstate->upload_line);
             if (isDownPiped(upload_line_cstate->upload_line))
             {
-                pipeDownStream(newFinContext(upload_line_cstate->upload_line));
+                pipeDownStream(contextCreateFin(upload_line_cstate->upload_line));
             }
             else
             {
-                self->dw->downStream(self->dw, newFinContext(upload_line_cstate->upload_line));
+                self->dw->downStream(self->dw, contextCreateFin(upload_line_cstate->upload_line));
             }
             memoryFree(upload_line_cstate);
         }
@@ -200,7 +200,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             if (cstate->buffering)
             {
-                c->payload        = sbufAppendMerge(getContextBufferPool(c), c->payload, cstate->buffering);
+                c->payload        = sbufAppendMerge(contextGetBufferPool(c), c->payload, cstate->buffering);
                 cstate->buffering = NULL;
             }
 
@@ -208,7 +208,7 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 cstate->buffering = c->payload;
                 c->payload        = NULL;
-                destroyContext(c);
+                contextDestroy(c);
                 return;
             }
             const bool is_upload                   = (((uint8_t *) sbufGetRawPtr(c->payload))[0] & 0x80) == 0x0;
@@ -256,13 +256,13 @@ static void upStream(tunnel_t *self, context_t *c)
                         cstate->main_line               = main_line;
                         setupLineDownSide(main_line, onMainLinePaused, download_line_cstate, onMainLineResumed);
                         lineLock(main_line);
-                        self->up->upStream(self->up, newInitContext(main_line));
+                        self->up->upStream(self->up, contextCreateInit(main_line));
 
                         if (! lineIsAlive(main_line))
                         {
                             lineUnlock(main_line);
-                            reuseContextPayload(c);
-                            destroyContext(c);
+                            contextReusePayload(c);
+                            contextDestroy(c);
                             return;
                         }
 
@@ -270,10 +270,10 @@ static void upStream(tunnel_t *self, context_t *c)
                         sbufShiftRight(c->payload, sizeof(uint64_t));
                         if (sbufGetBufLength(buf) > 0)
                         {
-                            self->up->upStream(self->up, switchLine(c, main_line));
+                            self->up->upStream(self->up, contextSwitchLine(c, main_line));
                             return;
                         }
-                        reuseContextPayload(c);
+                        contextReusePayload(c);
                     }
                     else
                     {
@@ -300,17 +300,17 @@ static void upStream(tunnel_t *self, context_t *c)
                     {
                         LOGW("HalfDuplexServer: duplicate upload connection closed");
                         CSTATE_DROP(c);
-                        reuseContextPayload(c);
+                        contextReusePayload(c);
                         memoryFree(cstate);
                         if (isDownPiped(c->line))
                         {
-                            pipeDownStream(newFinContextFrom(c));
+                            pipeDownStream(contextCreateFinFrom(c));
                         }
                         else
                         {
-                            self->dw->downStream(self->dw, newFinContextFrom(c));
+                            self->dw->downStream(self->dw, contextCreateFinFrom(c));
                         }
-                        destroyContext(c);
+                        contextDestroy(c);
                         return;
                     }
 
@@ -321,7 +321,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 cstate->download_line = c->line;
 
                 mutexLock(&(state->upload_line_map_mutex));
@@ -355,12 +355,12 @@ static void upStream(tunnel_t *self, context_t *c)
                         cstate->main_line             = main_line;
                         setupLineDownSide(main_line, onMainLinePaused, cstate, onMainLineResumed);
                         lineLock(main_line);
-                        self->up->upStream(self->up, newInitContext(main_line));
+                        self->up->upStream(self->up, contextCreateInit(main_line));
 
                         if (! lineIsAlive(main_line))
                         {
                             lineUnlock(main_line);
-                            destroyContext(c);
+                            contextDestroy(c);
                             return;
                         }
                         lineUnlock(main_line);
@@ -369,7 +369,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         if (sbufGetBufLength(upload_line_cstate->buffering) > 0)
                         {
-                            context_t *buf_ctx            = newContext(main_line);
+                            context_t *buf_ctx            = contextCreate(main_line);
                             buf_ctx->payload              = upload_line_cstate->buffering;
                             upload_line_cstate->buffering = NULL;
                             sbufShiftRight(buf_ctx->payload, sizeof(uint64_t));
@@ -377,7 +377,7 @@ static void upStream(tunnel_t *self, context_t *c)
                         }
                         else
                         {
-                            bufferpoolResuesBuffer(getContextBufferPool(c), upload_line_cstate->buffering);
+                            bufferpoolResuesBuffer(contextGetBufferPool(c), upload_line_cstate->buffering);
                             upload_line_cstate->buffering = NULL;
                         }
                     }
@@ -395,8 +395,8 @@ static void upStream(tunnel_t *self, context_t *c)
                             LOGW("HalfDuplexServer: duplicate download connection closed");
                             CSTATE_DROP(c);
                             memoryFree(cstate);
-                            self->dw->downStream(self->dw, newFinContextFrom(c));
-                            destroyContext(c);
+                            self->dw->downStream(self->dw, contextCreateFinFrom(c));
+                            contextDestroy(c);
                             return;
                         }
 
@@ -425,13 +425,13 @@ static void upStream(tunnel_t *self, context_t *c)
                         LOGW("HalfDuplexServer: duplicate download connection closed");
                         CSTATE_DROP(c);
                         memoryFree(cstate);
-                        self->dw->downStream(self->dw, newFinContextFrom(c));
-                        destroyContext(c);
+                        self->dw->downStream(self->dw, contextCreateFinFrom(c));
+                        contextDestroy(c);
                         return;
                     }
                 }
             }
-            destroyContext(c);
+            contextDestroy(c);
 
             break;
         }
@@ -440,29 +440,29 @@ static void upStream(tunnel_t *self, context_t *c)
         case kCsUploadInTable:
             if (cstate->buffering)
             {
-                cstate->buffering = sbufAppendMerge(getContextBufferPool(c), cstate->buffering, c->payload);
+                cstate->buffering = sbufAppendMerge(contextGetBufferPool(c), cstate->buffering, c->payload);
             }
             else
             {
                 cstate->buffering = c->payload;
             }
-            dropContexPayload(c);
+            contextDropPayload(c);
             if (sbufGetBufLength(cstate->buffering) >= kMaxBuffering)
             {
-                bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buffering);
+                bufferpoolResuesBuffer(contextGetBufferPool(c), cstate->buffering);
                 cstate->buffering = NULL;
             }
-            destroyContext(c);
+            contextDestroy(c);
             break;
 
         case kCsUploadDirect:
-            self->up->upStream(self->up, switchLine(c, cstate->main_line));
+            self->up->upStream(self->up, contextSwitchLine(c, cstate->main_line));
             break;
 
         case kCsDownloadDirect:
         case kCsDownloadInTable:
-            reuseContextPayload(c);
-            destroyContext(c);
+            contextReusePayload(c);
+            contextDestroy(c);
             break;
         }
     }
@@ -481,9 +481,9 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                self->dw->downStream(self->dw, newEstContext(c->line));
+                self->dw->downStream(self->dw, contextCreateEst(c->line));
             }
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
@@ -495,11 +495,11 @@ static void upStream(tunnel_t *self, context_t *c)
             case kCsUnkown:
                 if (cstate->buffering)
                 {
-                    bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buffering);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), cstate->buffering);
                 }
                 CSTATE_DROP(c);
                 memoryFree(cstate);
-                destroyContext(c);
+                contextDestroy(c);
                 break;
 
             case kCsUploadInTable: {
@@ -516,10 +516,10 @@ static void upStream(tunnel_t *self, context_t *c)
                 hmap_cons_t_erase_at(&(state->upload_line_map), f_iter);
 
                 mutexUnlock(&(state->upload_line_map_mutex));
-                bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buffering);
+                bufferpoolResuesBuffer(contextGetBufferPool(c), cstate->buffering);
                 CSTATE_DROP(c);
                 memoryFree(cstate);
-                destroyContext(c);
+                contextDestroy(c);
             }
             break;
 
@@ -538,7 +538,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 mutexUnlock(&(state->download_line_map_mutex));
                 CSTATE_DROP(c);
                 memoryFree(cstate);
-                destroyContext(c);
+                contextDestroy(c);
             }
             break;
 
@@ -552,7 +552,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (cstate_download->main_line)
                 {
                     doneLineDownSide(cstate_download->main_line);
-                    self->up->upStream(self->up, newFinContext(cstate_download->main_line));
+                    self->up->upStream(self->up, contextCreateFin(cstate_download->main_line));
                     lineDestroy(cstate_download->main_line);
                     cstate_download->main_line = NULL;
                 }
@@ -570,18 +570,18 @@ static void upStream(tunnel_t *self, context_t *c)
                     assert(cstate_upload->state == kCsUploadDirect);
                     if (isDownPiped(cstate_download->upload_line))
                     {
-                        pipeDownStream(newFinContext(cstate_download->upload_line));
+                        pipeDownStream(contextCreateFin(cstate_download->upload_line));
                     }
                     else
                     {
-                        self->dw->downStream(self->dw, newFinContext(cstate_download->upload_line));
+                        self->dw->downStream(self->dw, contextCreateFin(cstate_download->upload_line));
                     }
                     cstate_download->upload_line = NULL;
                     memoryFree(cstate_upload);
                 }
 
                 memoryFree(cstate_download);
-                destroyContext(c);
+                contextDestroy(c);
             }
             break;
 
@@ -595,7 +595,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (cstate_upload->main_line)
                 {
                     doneLineDownSide(cstate_upload->main_line);
-                    self->up->upStream(self->up, newFinContext(cstate_upload->main_line));
+                    self->up->upStream(self->up, contextCreateFin(cstate_upload->main_line));
                     lineDestroy(cstate_upload->main_line);
                     cstate_upload->main_line = NULL;
                 }
@@ -610,13 +610,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     cstate_download->download_line                 = NULL;
                     cstate_download->upload_line                   = NULL;
 
-                    self->dw->downStream(self->dw, newFinContext(cstate_upload->download_line));
+                    self->dw->downStream(self->dw, contextCreateFin(cstate_upload->download_line));
                     cstate_upload->download_line = NULL;
                     memoryFree(cstate_download);
                 }
 
                 memoryFree(cstate_upload);
-                destroyContext(c);
+                contextDestroy(c);
             }
             break;
 
@@ -631,7 +631,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
 static void downStream(tunnel_t *self, context_t *c)
 {
-    switchLine(c, ((halfduplex_server_con_state_t *) (c->line->dw_state))->download_line);
+    contextSwitchLine(c, ((halfduplex_server_con_state_t *) (c->line->dw_state))->download_line);
     halfduplex_server_con_state_t *cstate = CSTATE(c);
     if (c->payload != NULL)
     {
@@ -673,7 +673,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 cstate->download_line             = NULL;
                 cstate->main_line                 = NULL;
 
-                self->dw->downStream(self->dw, newFinContext(c->line));
+                self->dw->downStream(self->dw, contextCreateFin(c->line));
 
                 upload_line_cstate = cstate->upload_line == NULL ? NULL : LSTATE(cstate->upload_line);
                 if (upload_line_cstate)
@@ -687,17 +687,17 @@ static void downStream(tunnel_t *self, context_t *c)
 
                     if (isDownPiped(upload_line))
                     {
-                        pipeDownStream(newFinContext(upload_line));
+                        pipeDownStream(contextCreateFin(upload_line));
                     }
                     else
                     {
-                        self->dw->downStream(self->dw, newFinContext(upload_line));
+                        self->dw->downStream(self->dw, contextCreateFin(upload_line));
                     }
                     memoryFree(upload_line_cstate);
                 }
 
                 memoryFree(cstate);
-                destroyContext(c);
+                contextDestroy(c);
 
                 break;
 
@@ -713,7 +713,7 @@ static void downStream(tunnel_t *self, context_t *c)
         }
         else if (c->est)
         {
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
 }

@@ -25,11 +25,11 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             cstate->first_packet_sent = true;
             cstate->init_sent         = true;
-            self->up->upStream(self->up, newInitContext(c->line));
+            self->up->upStream(self->up, contextCreateInit(c->line));
             if (! lineIsAlive(c->line))
             {
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
         }
@@ -40,7 +40,7 @@ static void upStream(tunnel_t *self, context_t *c)
         cstate        = memoryAllocate(sizeof(preconnect_server_con_state_t));
         *cstate       = (preconnect_server_con_state_t) {.init_sent = false, .first_packet_sent = false};
         CSTATE_MUT(c) = cstate;
-        destroyContext(c);
+        contextDestroy(c);
         return;
     }
     else if (c->fin)
@@ -54,7 +54,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            destroyContext(c);
+            contextDestroy(c);
         }
 
         return;

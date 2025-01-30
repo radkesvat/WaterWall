@@ -25,7 +25,7 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
     if (! cstate->established)
     {
         cstate->established    = true;
-        context_t *est_context = newContext(line);
+        context_t *est_context = contextCreate(line);
         est_context->est       = true;
         self->downStream(self, est_context);
         if (weventGetUserdata(io) == NULL)
@@ -34,7 +34,7 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
         }
     }
 
-    context_t *context = newContext(line);
+    context_t *context = contextCreate(line);
     context->payload   = payload;
     self->downStream(self, context);
 }
@@ -50,15 +50,15 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_DROP(c);
             cleanup(cstate);
-            reuseContextPayload(c);
+            contextReusePayload(c);
             goto fail;
         }
 
         size_t nwrite = wioWrite(cstate->io, c->payload);
-        dropContexPayload(c);
+        contextDropPayload(c);
         (void) nwrite;
         // assert(nwrite <= 0  || nwrite ==  bytes);
-        destroyContext(c);
+        contextDestroy(c);
     }
     else
     {
@@ -70,7 +70,7 @@ static void upStream(tunnel_t *self, context_t *c)
             memorySet(CSTATE(c), 0, sizeof(udp_connector_con_state_t));
             cstate = CSTATE(c);
 
-            cstate->buffer_pool = getContextBufferPool(c);
+            cstate->buffer_pool = contextGetBufferPool(c);
             cstate->tunnel      = self;
             cstate->line        = c->line;
             // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
@@ -109,15 +109,15 @@ static void upStream(tunnel_t *self, context_t *c)
             wioSetCallBackRead(upstream_io, onRecvFrom);
             wioRead(upstream_io);
 
-            socket_context_t *dest_ctx = &(c->line->dest_ctx);
-            socket_context_t *src_ctx  = &(c->line->src_ctx);
+            connection_context_t *dest_ctx = &(c->line->dest_ctx);
+            connection_context_t *src_ctx  = &(c->line->src_ctx);
             switch ((enum udp_connector_dynamic_value_status) state->dest_addr_selected.status)
             {
             case kCdvsFromSource:
-                socketContextAddrCopy(dest_ctx, src_ctx);
+                connectionContextAddrCopy(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                socketContextAddrCopy(dest_ctx, &(state->constant_dest_addr));
+                connectionContextAddrCopy(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -126,10 +126,10 @@ static void upStream(tunnel_t *self, context_t *c)
             switch ((enum udp_connector_dynamic_value_status) state->dest_port_selected.status)
             {
             case kCdvsFromSource:
-                socketContextPortCopy(dest_ctx, src_ctx);
+                connectionContextPortCopy(dest_ctx, src_ctx);
                 break;
             case kCdvsConstant:
-                socketContextPortCopy(dest_ctx, &(state->constant_dest_addr));
+                connectionContextPortCopy(dest_ctx, &(state->constant_dest_addr));
                 break;
             default:
             case kCdvsFromDest:
@@ -147,7 +147,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             wioSetPeerAddr(cstate->io, &(dest_ctx->address.sa), (int) sockaddrLen(&(dest_ctx->address)));
 
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
@@ -155,14 +155,14 @@ static void upStream(tunnel_t *self, context_t *c)
             weventSetUserData(io, NULL);
             cleanup(CSTATE(c));
             CSTATE_DROP(c);
-            destroyContext(c);
+            contextDestroy(c);
             wioClose(io);
         }
     }
     return;
 fail:
-    self->dw->downStream(self->dw, newFinContext(c->line));
-    destroyContext(c);
+    self->dw->downStream(self->dw, contextCreateFin(c->line));
+    contextDestroy(c);
 }
 
 static void downStream(tunnel_t *self, context_t *c)
@@ -207,7 +207,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
 
         if (state->constant_dest_addr.address_type == kSatDomainName)
         {
-            socketContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+            connectionContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
                                            strlen(state->dest_addr_selected.value_ptr));
         }
         else
@@ -226,7 +226,7 @@ tunnel_t *newUdpConnector(node_instance_context_t *instance_info)
     }
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        socketContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
+        connectionContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
     tunnel_t *t   = tunnelCreate();
     t->state      = state;

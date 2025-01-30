@@ -1,7 +1,7 @@
 #pragma once
 #include "buffer_pool.h"
 #include "generic_pool.h"
-#include "socket_context.h"
+#include "connection_context.h"
 #include "wlibc.h"
 #include "wloop.h"
 
@@ -146,7 +146,6 @@ struct tunnel_s
     node_t         *node;
     tunnel_chain_t *chain;
 
-    bool chain_head;
 
     uint8_t state[] __attribute__((aligned(sizeof(void *))));
 };
@@ -154,7 +153,7 @@ struct tunnel_s
 tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size);
 void      tunnelDestroy(tunnel_t *self);
 
-static inline void setTunnelState(tunnel_t *self, void *state)
+static inline void tunnelSetState(tunnel_t *self, void *state)
 {
     memoryCopy(&(self->state[0]), state, self->tstate_size);
 }
@@ -162,11 +161,48 @@ static inline void setTunnelState(tunnel_t *self, void *state)
 void tunnelBind(tunnel_t *from, tunnel_t *to);
 void tunnelBindDown(tunnel_t *from, tunnel_t *to);
 void tunnelBindUp(tunnel_t *from, tunnel_t *to);
+void tunnelDefaultUpStreamInit(tunnel_t *self, line_t *line);
+void tunnelDefaultUpStreamEst(tunnel_t *self, line_t *line);
+void tunnelDefaultUpStreamFin(tunnel_t *self, line_t *line);
+void tunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
+void tunnelDefaultUpStreamPause(tunnel_t *self, line_t *line);
+void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line);
+void tunnelDefaultdownStreamInit(tunnel_t *self, line_t *line);
+void tunnelDefaultdownStreamEst(tunnel_t *self, line_t *line);
+void tunnelDefaultdownStreamFin(tunnel_t *self, line_t *line);
+void tunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
+void tunnelDefaultDownStreamPause(tunnel_t *self, line_t *line);
+void tunnelDefaultDownStreamResume(tunnel_t *self, line_t *line);
+void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc);
+void tunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void tunnelDefaultOnPrepair(tunnel_t *t);
+void tunnelDefaultOnStart(tunnel_t *t);
+
+// void pipeUpStream(context_t *c);
+// void pipeDownStream(context_t *c);
 
 static tunnel_chain_t* tunnelGetChain(tunnel_t *self)
 {
     return self->chain;
 }
+
+static node_t* tunnelGetNode(tunnel_t *self)
+{
+    return self->node;
+}
+
+static uint16_t tunnelGetLocalStateSize(tunnel_t *self)
+{
+    return self->tstate_size;
+}
+
+static uint16_t tunnelGetLineStateSize(tunnel_t *self)
+{
+    return self->tstate_size;
+}
+
+
+
 
 /*
     Once the up state is setup, it will receive pasue/resume events from down end of the line, with the `state` as

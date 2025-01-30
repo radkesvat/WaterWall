@@ -319,7 +319,7 @@ static void wloopInit(wloop_t* loop) {
 #endif
 
     loop->status = WLOOP_STATUS_STOP;
-    loop->pid = hv_getpid();
+    loop->pid = getTID();
     // loop->tid = getTID();  tid is taken at wloop_create
 
     // idles
@@ -433,7 +433,7 @@ int wloopRun(wloop_t* loop) {
     if (loop->status == WLOOP_STATUS_RUNNING) return -2;
 
     loop->status = WLOOP_STATUS_RUNNING;
-    loop->pid = hv_getpid();
+    loop->pid = getTID();
     // loop->tid = getTID();  tid is taken at wloop_create
     // wlogd("wloopRun tid=%ld", loop->tid);
 

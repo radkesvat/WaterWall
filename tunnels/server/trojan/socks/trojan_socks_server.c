@@ -86,7 +86,7 @@ static bool parseAddress(context_t *c)
     {
         return false;
     }
-    socket_context_t *dest_context = &(c->line->dest_ctx);
+    connection_context_t *dest_context = &(c->line->dest_ctx);
     enum trojan_cmd   command      = ((unsigned char *) sbufGetRawPtr(c->payload))[0];
     enum trojan_atyp  address_type = ((unsigned char *) sbufGetRawPtr(c->payload))[1];
     dest_context->address_type     = (enum socket_address_type)(address_type);
@@ -120,7 +120,7 @@ static bool parseAddress(context_t *c)
                 return false;
             }
             LOGD("TrojanSocksServer: tcp connect domain %.*s", addr_len, sbufGetRawPtr(c->payload));
-            socketContextDomainSet(dest_context, sbufGetRawPtr(c->payload), addr_len);
+            connectionContextDomainSet(dest_context, sbufGetRawPtr(c->payload), addr_len);
             sbufShiftRight(c->payload, addr_len);
             break;
         case kTrojanatypIpV6:
@@ -293,8 +293,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         return true;
     }
 
-    context_t        *c            = newContext(line);
-    socket_context_t *dest_context = &(c->line->dest_ctx);
+    context_t        *c            = contextCreate(line);
+    connection_context_t *dest_context = &(c->line->dest_ctx);
     c->payload                     = bufferstreamReadExact(bstream, full_len);
 
     if (cstate->init_sent)
@@ -335,7 +335,7 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
             LOGD("TrojanSocksServer: udp domain %.*s", domain_len, sbufGetRawPtr(c->payload));
         }
 
-        socketContextDomainSet(dest_context, sbufGetRawPtr(c->payload), domain_len);
+        connectionContextDomainSet(dest_context, sbufGetRawPtr(c->payload), domain_len);
         sbufShiftRight(c->payload, domain_len);
 
         break;
@@ -352,8 +352,8 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
         break;
 
     default:
-        reuseContextPayload(c);
-        destroyContext(c);
+        contextReusePayload(c);
+        contextDestroy(c);
         return false;
         break;
     }
@@ -372,14 +372,14 @@ static bool processUdp(tunnel_t *self, trojan_socks_server_con_state_t *cstate, 
     // send init ctx
     if (! cstate->init_sent)
     {
-        context_t *up_init_ctx = newContextFrom(c);
+        context_t *up_init_ctx = contextCreateFrom(c);
         up_init_ctx->init      = true;
         self->up->upStream(self->up, up_init_ctx);
         if (! lineIsAlive(c->line))
         {
             LOGW("TrojanSocksServer: next node instantly closed the init with fin");
-            reuseContextPayload(c);
-            destroyContext(c);
+            contextReusePayload(c);
+            contextDestroy(c);
             return true;
         }
         cstate->init_sent = true;
@@ -405,18 +405,18 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->first_packet_received = true;
             if (parseAddress(c))
             {
-                socket_context_t *dest_context = &(c->line->dest_ctx);
+                connection_context_t *dest_context = &(c->line->dest_ctx);
 
                 if (dest_context->address_protocol == kSapTcp)
                 {
-                    context_t *up_init_ctx = newContextFrom(c);
+                    context_t *up_init_ctx = contextCreateFrom(c);
                     up_init_ctx->init      = true;
                     self->up->upStream(self->up, up_init_ctx);
                     if (! lineIsAlive(c->line))
                     {
                         LOGW("TrojanSocksServer: next node instantly closed the init with fin");
-                        reuseContextPayload(c);
-                        destroyContext(c);
+                        contextReusePayload(c);
+                        contextDestroy(c);
                         return;
                     }
                     cstate->init_sent = true;
@@ -424,13 +424,13 @@ static void upStream(tunnel_t *self, context_t *c)
                 else if (dest_context->address_protocol == kSapUdp)
                 {
                     // udp will not call init here since no dest_context addr is available right now
-                    cstate->udp_stream = bufferstreamCreate(getContextBufferPool(c));
+                    cstate->udp_stream = bufferstreamCreate(contextGetBufferPool(c));
                 }
 
                 if (sbufGetBufLength(c->payload) <= 0)
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
                 if (dest_context->address_protocol == kSapTcp)
@@ -448,18 +448,18 @@ static void upStream(tunnel_t *self, context_t *c)
 
                         if (cstate->init_sent)
                         {
-                            self->up->upStream(self->up, newFinContext(c->line));
+                            self->up->upStream(self->up, contextCreateFin(c->line));
                         }
 
                         cleanup(cstate);
                         CSTATE_DROP(c);
-                        context_t *fin_dw = newFinContextFrom(c);
-                        destroyContext(c);
+                        context_t *fin_dw = contextCreateFinFrom(c);
+                        contextDestroy(c);
                         self->dw->downStream(self->dw, fin_dw);
                     }
                     else
                     {
-                        destroyContext(c);
+                        contextDestroy(c);
                     }
                 }
                 else
@@ -470,11 +470,11 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 cleanup(cstate);
                 CSTATE_DROP(c);
-                context_t *reply = newFinContextFrom(c);
-                destroyContext(c);
+                context_t *reply = contextCreateFinFrom(c);
+                contextDestroy(c);
                 self->dw->downStream(self->dw, reply);
             }
         }
@@ -491,7 +491,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     if (cstate->init_sent)
                     {
-                        self->up->upStream(self->up, newFinContext(c->line));
+                        self->up->upStream(self->up, contextCreateFin(c->line));
                     }
                     if (cstate->udp_stream)
                     {
@@ -500,13 +500,13 @@ static void upStream(tunnel_t *self, context_t *c)
                     }
                     cleanup(cstate);
                     CSTATE_DROP(c);
-                    context_t *fin_dw = newFinContextFrom(c);
-                    destroyContext(c);
+                    context_t *fin_dw = contextCreateFinFrom(c);
+                    contextDestroy(c);
                     self->dw->downStream(self->dw, fin_dw);
                 }
                 else
                 {
-                    destroyContext(c);
+                    contextDestroy(c);
                 }
             }
             else
@@ -521,7 +521,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             CSTATE_MUT(c) = memoryAllocate(sizeof(trojan_socks_server_con_state_t));
             memorySet(CSTATE(c), 0, sizeof(trojan_socks_server_con_state_t));
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
@@ -535,7 +535,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }

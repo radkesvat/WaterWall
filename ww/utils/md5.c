@@ -32,9 +32,9 @@
         a += b; \
     }
 
-static void WW_MD5Transform(unsigned int state[4],unsigned char block[64]);
-static void WW_MD5Encode(unsigned char *output,unsigned int *input,unsigned int len);
-static void WW_MD5Decode(unsigned int *output,unsigned char *input,unsigned int len);
+static void wwMD5Transform(unsigned int state[4],unsigned char block[64]);
+static void wwMD5Encode(unsigned char *output,unsigned int *input,unsigned int len);
+static void wwMD5Decode(unsigned int *output,unsigned char *input,unsigned int len);
 
 static unsigned char PADDING[] = {
     0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -43,7 +43,7 @@ static unsigned char PADDING[] = {
     0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
 
-void WW_MD5Init(WW_MD5_CTX *ctx) {
+void wwMD5Init(ww_md5_ctx_t *ctx) {
     ctx->count[0] = 0;
     ctx->count[1] = 0;
     ctx->state[0] = 0x67452301;
@@ -52,7 +52,7 @@ void WW_MD5Init(WW_MD5_CTX *ctx) {
     ctx->state[3] = 0x10325476;
 }
 
-void WW_MD5Update(WW_MD5_CTX *ctx,unsigned char *input,unsigned int inputlen) {
+void wwMD5Update(ww_md5_ctx_t *ctx,unsigned char *input,unsigned int inputlen) {
     unsigned int i = 0,index = 0,partlen = 0;
     index = (ctx->count[0] >> 3) & 0x3F;
     partlen = 64 - index;
@@ -64,9 +64,9 @@ void WW_MD5Update(WW_MD5_CTX *ctx,unsigned char *input,unsigned int inputlen) {
 
     if(inputlen >= partlen) {
         memoryCopy(&ctx->buffer[index],input,partlen);
-        WW_MD5Transform(ctx->state,ctx->buffer);
+        wwMD5Transform(ctx->state,ctx->buffer);
         for(i = partlen;i+64 <= inputlen;i+=64) {
-            WW_MD5Transform(ctx->state,&input[i]);
+            wwMD5Transform(ctx->state,&input[i]);
         }
         index = 0;
     } else {
@@ -76,18 +76,18 @@ void WW_MD5Update(WW_MD5_CTX *ctx,unsigned char *input,unsigned int inputlen) {
     memoryCopy(&ctx->buffer[index],&input[i],inputlen-i);
 }
 
-void WW_MD5Final(WW_MD5_CTX *ctx,unsigned char digest[16]) {
+void wwMD5Final(ww_md5_ctx_t *ctx,unsigned char digest[16]) {
     unsigned int index = 0,padlen = 0;
     unsigned char bits[8];
     index = (ctx->count[0] >> 3) & 0x3F;
     padlen = (index < 56)?(56-index):(120-index);
-    WW_MD5Encode(bits,ctx->count,8);
-    WW_MD5Update(ctx,PADDING,padlen);
-    WW_MD5Update(ctx,bits,8);
-    WW_MD5Encode(digest,ctx->state,16);
+    wwMD5Encode(bits,ctx->count,8);
+    wwMD5Update(ctx,PADDING,padlen);
+    wwMD5Update(ctx,bits,8);
+    wwMD5Encode(digest,ctx->state,16);
 }
 
-void WW_MD5Encode(unsigned char *output,unsigned int *input,unsigned int len) {
+void wwMD5Encode(unsigned char *output,unsigned int *input,unsigned int len) {
     unsigned int i = 0,j = 0;
     while(j < len) {
         output[j] = input[i] & 0xFF;
@@ -99,7 +99,7 @@ void WW_MD5Encode(unsigned char *output,unsigned int *input,unsigned int len) {
     }
 }
 
-void WW_MD5Decode(unsigned int *output,unsigned char *input,unsigned int len) {
+void wwMD5Decode(unsigned int *output,unsigned char *input,unsigned int len) {
     unsigned int i = 0,j = 0;
     while(j < len) {
         output[i] = (input[j]) | (input[j+1] << 8) | (input[j+2] << 16) | (input[j+3] << 24);
@@ -108,14 +108,14 @@ void WW_MD5Decode(unsigned int *output,unsigned char *input,unsigned int len) {
     }
 }
 
-void WW_MD5Transform(unsigned int state[4],unsigned char block[64]) {
+void wwMD5Transform(unsigned int state[4],unsigned char block[64]) {
     unsigned int a = state[0];
     unsigned int b = state[1];
     unsigned int c = state[2];
     unsigned int d = state[3];
     unsigned int x[64];
 
-    WW_MD5Decode(x,block,64);
+    wwMD5Decode(x,block,64);
 
     FF(a, b, c, d, x[ 0], 7, 0xd76aa478);
     FF(d, a, b, c, x[ 1], 12, 0xe8c7b756);
@@ -191,22 +191,22 @@ void WW_MD5Transform(unsigned int state[4],unsigned char block[64]) {
     state[3] += d;
 }
 
-void hv_md5(unsigned char* input, unsigned int inputlen, unsigned char digest[16]) {
-    WW_MD5_CTX ctx;
-    WW_MD5Init(&ctx);
-    WW_MD5Update(&ctx, input, inputlen);
-    WW_MD5Final(&ctx, digest);
+void wwMD5(unsigned char* input, unsigned int inputlen, unsigned char digest[16]) {
+    ww_md5_ctx_t ctx;
+    wwMD5Init(&ctx);
+    wwMD5Update(&ctx, input, inputlen);
+    wwMD5Final(&ctx, digest);
 }
 
 static inline char i2hex(unsigned char i) {
     return i < 10 ? i + '0' : i - 10 + 'a';
 }
 
-void hv_md5_hex(unsigned char* input, unsigned int inputlen, char* output, unsigned int outputlen) {
+void wwMD5Hex(unsigned char* input, unsigned int inputlen, char* output, unsigned int outputlen) {
     int i;
     unsigned char digest[16];
     if (outputlen < 32) return;
-    hv_md5(input, inputlen, digest);
+    wwMD5(input, inputlen, digest);
     for (i = 0; i < 16; ++i) {
         *output++ = i2hex(digest[i] >> 4);
         *output++ = i2hex(digest[i] & 0x0F);

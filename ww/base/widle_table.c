@@ -1,34 +1,34 @@
 #include "widle_table.h"
 
+#include "global_state.h"
 #include "wdef.h"
 #include "wloop.h"
 #include "wmutex.h"
-#include "global_state.h"
-
 
 enum
 {
     kVecCap = 32
 };
 
-#define i_TYPE                    heapq_idles_t, struct widle_item_s *
+#define i_type                    heapq_idles_t
+#define i_key                     struct widle_item_s *
 #define i_cmp                     -c_default_cmp                                // NOLINT
 #define idletable_less_func(x, y) ((*(x))->expire_at_ms < (*(y))->expire_at_ms) // NOLINT
 #define i_less                    idletable_less_func                           // NOLINT
 #include "stc/pque.h"
 
-#define i_TYPE hmap_idles_t, uint64_t, struct widle_item_s *
+#define i_type hmap_idles_t, uint64_t, struct widle_item_s *
 #include "stc/hmap.h"
 
 struct widle_table_s
 {
-    wloop_t       *loop;
-    wtimer_t      *idle_handle;
-    heapq_idles_t  hqueue;
-    hmap_idles_t   hmap;
-    wmutex_t mutex;
-    uint64_t       last_update_ms;
-    uintptr_t      memptr;
+    wloop_t      *loop;
+    wtimer_t     *idle_handle;
+    heapq_idles_t hqueue;
+    hmap_idles_t  hmap;
+    wmutex_t      mutex;
+    uint64_t      last_update_ms;
+    uintptr_t     memptr;
 
 } ATTR_ALIGNED_LINE_CACHE;
 
@@ -58,19 +58,18 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     widle_table_t *newtable = (widle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
     *newtable = (widle_table_t){.memptr         = ptr,
-                               .loop           = loop,
-                               .idle_handle    = wtimerAdd(loop, idleCallBack, 1000, INFINITE),
-                               .hqueue         = heapq_idles_t_with_capacity(kVecCap),
-                               .hmap           = hmap_idles_t_with_capacity(kVecCap),
-                               .last_update_ms = wloopNowMS(loop)};
+                                .loop           = loop,
+                                .idle_handle    = wtimerAdd(loop, idleCallBack, 1000, INFINITE),
+                                .hqueue         = heapq_idles_t_with_capacity(kVecCap),
+                                .hmap           = hmap_idles_t_with_capacity(kVecCap),
+                                .last_update_ms = wloopNowMS(loop)};
 
     mutexInit(&(newtable->mutex));
     weventSetUserData(newtable->idle_handle, newtable);
     return newtable;
 }
 
-idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, tid_t tid,
-                         uint64_t age_ms)
+idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, tid_t tid, uint64_t age_ms)
 {
     assert(self);
     idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
@@ -159,7 +158,7 @@ static void beforeCloseCallBack(wevent_t *ev)
         {
             item->cb(item);
         }
-        
+
         if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > wloopNowMS(getWorkerLoop(item->tid)))
         {
             mutexLock(&(item->table->mutex));
@@ -182,7 +181,7 @@ static void beforeCloseCallBack(wevent_t *ev)
 
 void idleCallBack(wtimer_t *timer)
 {
-    widle_table_t  *self  = weventGetUserdata(timer);
+    widle_table_t *self  = weventGetUserdata(timer);
     const uint64_t now   = wloopNowMS(self->loop);
     self->last_update_ms = now;
     mutexLock(&(self->mutex));

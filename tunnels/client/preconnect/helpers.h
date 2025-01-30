@@ -50,7 +50,7 @@ static void doConnect(struct connect_arg *cg)
     preconnect_client_con_state_t *cstate = createCstate(cg->tid);
     memoryFree(cg);
     LSTATE_MUT(cstate->u) = cstate;
-    self->up->upStream(self->up, newInitContext(cstate->u));
+    self->up->upStream(self->up, contextCreateInit(cstate->u));
 }
 
 static void connectTimerFinished(wtimer_t *timer)

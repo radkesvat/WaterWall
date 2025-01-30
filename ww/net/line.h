@@ -3,7 +3,7 @@
 
 #include "generic_pool.h"
 #include "global_state.h"
-#include "socket_context.h"
+#include "connection_context.h"
 #include "worker.h"
 
 typedef uint32_t line_refc_t;
@@ -30,8 +30,8 @@ typedef struct line_s
     bool             alive;
     uint8_t          auth_cur;
     
-    socket_context_t src_ctx;
-    socket_context_t dest_ctx;
+    connection_context_t src_ctx;
+    connection_context_t dest_ctx;
     generic_pool_t  *pool;
     // pipe_line_t     *pipe;
 
@@ -49,8 +49,8 @@ static inline line_t *newLine(generic_pool_t *pool, tid_t tid)
                   .alive    = true,
                   .pool     = pool,
                   // to set a port we need to know the AF family, default v4
-                  .dest_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
-                  .src_ctx = (socket_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}};
+                  .dest_ctx = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+                  .src_ctx = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}};
 
     memorySet(&l->tunnels_line_state[0], 0, genericpoolGetItemSize(l->pool) - sizeof(line_t));
 

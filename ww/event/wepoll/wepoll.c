@@ -33,8 +33,7 @@
 #define WEPOLL_EXPORT
 #endif
 
-#include <stdint.h>
-
+#include "wlibc.h"
 
 enum EPOLL_EVENTS {
   EPOLLIN      = (int) (1U <<  0),
@@ -824,8 +823,12 @@ int err_check_handle(HANDLE handle) {
 
 #define array_count(a) (sizeof(a) / (sizeof((a)[0])))
 
+#ifndef container_of
+
 #define container_of(ptr, type, member) \
   ((type*) ((uintptr_t) (ptr) - offsetof(type, member)))
+  
+#endif
 
 #define unused_var(v) ((void) (v))
 

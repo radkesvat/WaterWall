@@ -3,7 +3,6 @@
 #include "tunnel.h"
 #include "wlibc.h"
 
-
 typedef struct api_result_s
 {
     char  *result;
@@ -53,3 +52,4 @@ struct node_s
 node_t nodelibraryLoadByName(const char *name);
 node_t nodelibraryLoadByHash(hash_t hname);
 void   nodelibraryRegister(node_t lib);
+bool   nodeHasFlagChainHead(node_t *node);

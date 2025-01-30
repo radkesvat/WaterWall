@@ -100,6 +100,5 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
  */
 void masterpoolDestroy(master_pool_t *pool)
 {
-
     memoryFree(pool->memptr);
 }

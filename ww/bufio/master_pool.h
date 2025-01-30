@@ -2,7 +2,6 @@
 
 #include "wlibc.h"
 #include "wmutex.h"
-#include "worker.h"
 
 /*
     Master Pool

@@ -34,7 +34,7 @@ static void upStream(tunnel_t *self, context_t *c)
         {
             if (cstate->buf)
             {
-                c->payload  = sbufAppendMerge(getContextBufferPool(c), cstate->buf, c->payload);
+                c->payload  = sbufAppendMerge(contextGetBufferPool(c), cstate->buf, c->payload);
                 cstate->buf = NULL;
             }
 
@@ -48,8 +48,8 @@ static void upStream(tunnel_t *self, context_t *c)
                 if (sbufGetBufLength(c->payload) < 2)
                 {
                     cstate->buf = c->payload;
-                    dropContexPayload(c);
-                    destroyContext(c);
+                    contextDropPayload(c);
+                    contextDestroy(c);
                     return;
                 }
 
@@ -58,9 +58,9 @@ static void upStream(tunnel_t *self, context_t *c)
                 sbufShiftRight(c->payload, sizeof(uint16_t));
                 if (port < 10)
                 {
-                    reuseContextPayload(c);
-                    self->dw->downStream(self->dw, newFinContext(c->line));
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    self->dw->downStream(self->dw, contextCreateFin(c->line));
+                    contextDestroy(c);
                     return;
                 }
             }
@@ -71,20 +71,20 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 
             cstate->init_sent = true;
-            self->up->upStream(self->up, newInitContext(c->line));
+            self->up->upStream(self->up, contextCreateInit(c->line));
             if (sbufGetBufLength(buf) > 0)
             {
                 if (! lineIsAlive(c->line))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
             }
             else
             {
-                reuseContextPayload(c);
-                destroyContext(c);
+                contextReusePayload(c);
+                contextDestroy(c);
                 return;
             }
         }
@@ -95,14 +95,14 @@ static void upStream(tunnel_t *self, context_t *c)
         cstate        = memoryAllocate(sizeof(header_server_con_state_t));
         *cstate       = (header_server_con_state_t) {0};
         CSTATE_MUT(c) = cstate;
-        destroyContext(c);
+        contextDestroy(c);
     }
     else if (c->fin)
     {
         bool send_fin = cstate->init_sent;
         if (cstate->buf)
         {
-            bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesBuffer(contextGetBufferPool(c), cstate->buf);
         }
         memoryFree(cstate);
         CSTATE_DROP(c);
@@ -112,7 +112,7 @@ static void upStream(tunnel_t *self, context_t *c)
         }
         else
         {
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
 }
@@ -125,7 +125,7 @@ static void downStream(tunnel_t *self, context_t *c)
         header_server_con_state_t *cstate = CSTATE(c);
         if (cstate->buf)
         {
-            bufferpoolResuesBuffer(getContextBufferPool(c), cstate->buf);
+            bufferpoolResuesBuffer(contextGetBufferPool(c), cstate->buf);
         }
 
         memoryFree(cstate);

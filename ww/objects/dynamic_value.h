@@ -3,8 +3,15 @@
 
 /*
     This object is supposed to be kept on stack, but in can have allocated pointer,
-    therefore it is required to call destroyDynamicValue 
+    therefore it is required to call dynamicvalueDestroy 
 */
+
+enum dynamic_value_status
+{
+    kDvsEmpty = 0x0,
+    kDvsConstant,
+    kDvsFirstOption,
+};
 
 typedef struct dynamic_value_s
 {
@@ -16,7 +23,7 @@ typedef struct dynamic_value_s
 
 
 
-void destroyDynamicValue(const dynamic_value_t dy)
+static void dynamicvalueDestroy(const dynamic_value_t dy)
 {
     if (dy.value_ptr)
     {

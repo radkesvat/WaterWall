@@ -117,7 +117,7 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
 {
     if (! lineIsAlive(c->line))
     {
-        destroyContext(c);
+        contextDestroy(c);
         return;
     }
     assert(c->payload == NULL); // payload must be consumed
@@ -129,10 +129,10 @@ static void fallbackWrite(tunnel_t *self, context_t *c)
         cstate->fallback_init_sent = true;
 
         cstate->init_sent = true;
-        state->fallback->upStream(state->fallback, newInitContext(c->line));
+        state->fallback->upStream(state->fallback, contextCreateInit(c->line));
         if (! lineIsAlive(c->line))
         {
-            destroyContext(c);
+            contextDestroy(c);
             return;
         }
     }
@@ -156,11 +156,11 @@ static void upStream(tunnel_t *self, context_t *c)
 
         if (! cstate->handshake_completed)
         {
-            bufferstreamPush(cstate->fallback_buf, sbufDuplicateByPool(getContextBufferPool(c),c->payload));
+            bufferstreamPush(cstate->fallback_buf, sbufDuplicateByPool(contextGetBufferPool(c),c->payload));
         }
         if (cstate->fallback_mode)
         {
-            reuseContextPayload(c);
+            contextReusePayload(c);
 
             fallbackWrite(self, c);
 
@@ -177,7 +177,7 @@ static void upStream(tunnel_t *self, context_t *c)
             if (n <= 0)
             {
                 /* if BIO write fails, assume unrecoverable */
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
             }
             sbufShiftRight(c->payload, n);
@@ -193,7 +193,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     do
                     {
-                        sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                        sbuf_t *buf   = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
                         int             avail = (int) sbufGetRightCapacity(buf);
                         n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                         // assert(-1 == BIO_read(cstate->wbio, sbufGetRawPtr(buf), avail));
@@ -203,34 +203,34 @@ static void upStream(tunnel_t *self, context_t *c)
                             cstate->fallback_disabled = true;
 
                             sbufSetLength(buf, n);
-                            context_t *answer = newContextFrom(c);
+                            context_t *answer = contextCreateFrom(c);
                             answer->payload   = buf;
                             self->dw->downStream(self->dw, answer);
 
                             if (! lineIsAlive(c->line))
                             {
-                                reuseContextPayload(c);
-                                destroyContext(c);
+                                contextReusePayload(c);
+                                contextDestroy(c);
                                 return;
                             }
                         }
                         else if (! BIO_should_retry(cstate->wbio))
                         {
                             // If BIO_should_retry() is false then the cause is an error condition.
-                            reuseContextPayload(c);
-                            bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                            contextReusePayload(c);
+                            bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                             goto disconnect;
                         }
                         else
                         {
-                            bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                            bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                         }
                     } while (n > 0);
                 }
 
                 if (status == kSslstatusFail)
                 {
-                    reuseContextPayload(c); // payload already buffered
+                    contextReusePayload(c); // payload already buffered
                     printSSLError();
                     if (state->fallback != NULL && ! cstate->fallback_disabled)
                     {
@@ -244,8 +244,8 @@ static void upStream(tunnel_t *self, context_t *c)
 
                 if (! SSL_is_init_finished(cstate->ssl))
                 {
-                    reuseContextPayload(c);
-                    destroyContext(c);
+                    contextReusePayload(c);
+                    contextDestroy(c);
                     return;
                 }
 
@@ -258,7 +258,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             do
             {
-                sbuf_t *buf = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                sbuf_t *buf = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
 
                 sbufSetLength(buf, 0);
                 int avail = (int) sbufGetRightCapacity(buf);
@@ -268,44 +268,44 @@ static void upStream(tunnel_t *self, context_t *c)
                 {
                     if (UNLIKELY(! cstate->init_sent))
                     {
-                        self->up->upStream(self->up, newInitContext(c->line));
+                        self->up->upStream(self->up, contextCreateInit(c->line));
                         if (! lineIsAlive(c->line))
                         {
                             LOGW("WolfsslServer: next node instantly closed the init with fin");
-                            reuseContextPayload(c);
-                            destroyContext(c);
+                            contextReusePayload(c);
+                            contextDestroy(c);
 
                             return;
                         }
                         cstate->init_sent = true;
                     }
 
-                    self->up->upStream(self->up, newInitContext(c->line));
+                    self->up->upStream(self->up, contextCreateInit(c->line));
                     if (! lineIsAlive(c->line))
                     {
                         LOGW("WolfsslServer: next node instantly closed the init with fin");
-                        reuseContextPayload(c);
-                        destroyContext(c);
+                        contextReusePayload(c);
+                        contextDestroy(c);
 
                         return;
                     }
                     cstate->init_sent = true;
 
                     sbufSetLength(buf, n);
-                    context_t *data_ctx = newContextFrom(c);
+                    context_t *data_ctx = contextCreateFrom(c);
                     data_ctx->payload   = buf;
 
                     self->up->upStream(self->up, data_ctx);
                     if (! lineIsAlive(c->line))
                     {
-                        reuseContextPayload(c);
-                        destroyContext(c);
+                        contextReusePayload(c);
+                        contextDestroy(c);
                         return;
                     }
                 }
                 else
                 {
-                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                 }
 
             } while (n > 0);
@@ -318,20 +318,20 @@ static void upStream(tunnel_t *self, context_t *c)
             {
                 do
                 {
-                    sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                    sbuf_t *buf   = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
                     int             avail = (int) sbufGetRightCapacity(buf);
 
                     n = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                     if (n > 0)
                     {
                         sbufSetLength(buf, n);
-                        context_t *answer = newContextFrom(c);
+                        context_t *answer = contextCreateFrom(c);
                         answer->payload   = buf;
                         self->dw->downStream(self->dw, answer);
                         if (! lineIsAlive(c->line))
                         {
-                            reuseContextPayload(c);
-                            destroyContext(c);
+                            contextReusePayload(c);
+                            contextDestroy(c);
 
                             return;
                         }
@@ -339,26 +339,26 @@ static void upStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
-                        reuseContextPayload(c);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
+                        contextReusePayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
 
             if (status == kSslstatusFail)
             {
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
             }
         }
         // done with socket data
-        reuseContextPayload(c);
-        destroyContext(c);
+        contextReusePayload(c);
+        contextDestroy(c);
     }
     else
     {
@@ -371,7 +371,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate->rbio         = BIO_new(BIO_s_mem());
             cstate->wbio         = BIO_new(BIO_s_mem());
             cstate->ssl          = SSL_new(state->ssl_context);
-            cstate->fallback_buf = bufferstreamCreate(getContextBufferPool(c));
+            cstate->fallback_buf = bufferstreamCreate(contextGetBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);
             // if (state->anti_tit)
@@ -382,7 +382,7 @@ static void upStream(tunnel_t *self, context_t *c)
             //     }
             //     SSL_set_record_padding_callback_arg(cstate->ssl, cstate);
             // }
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
@@ -397,7 +397,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 else
                 {
                     cleanup(self, c);
-                    destroyContext(c);
+                    contextDestroy(c);
                 }
             }
             else if (cstate->init_sent)
@@ -408,7 +408,7 @@ static void upStream(tunnel_t *self, context_t *c)
             else
             {
                 cleanup(self, c);
-                destroyContext(c);
+                contextDestroy(c);
             }
         }
     }
@@ -418,11 +418,11 @@ static void upStream(tunnel_t *self, context_t *c)
 disconnect:
     if (cstate->init_sent)
     {
-        self->up->upStream(self->up, newFinContextFrom(c));
+        self->up->upStream(self->up, contextCreateFinFrom(c));
     }
-    context_t *fail_context = newFinContextFrom(c);
+    context_t *fail_context = contextCreateFinFrom(c);
     cleanup(self, c);
-    destroyContext(c);
+    contextDestroy(c);
     self->dw->downStream(self->dw, fail_context);
 }
 
@@ -466,19 +466,19 @@ static void downStream(tunnel_t *self, context_t *c)
                 do
                 {
 
-                    sbuf_t *buf   = bufferpoolGetLargeBuffer(getContextBufferPool(c));
+                    sbuf_t *buf   = bufferpoolGetLargeBuffer(contextGetBufferPool(c));
                     int             avail = (int) sbufGetRightCapacity(buf);
                     n                     = BIO_read(cstate->wbio, sbufGetMutablePtr(buf), avail);
                     if (n > 0)
                     {
                         sbufSetLength(buf, n);
-                        context_t *dw_context = newContextFrom(c);
+                        context_t *dw_context = contextCreateFrom(c);
                         dw_context->payload   = buf;
                         self->dw->downStream(self->dw, dw_context);
                         if (! lineIsAlive(c->line))
                         {
-                            reuseContextPayload(c);
-                            destroyContext(c);
+                            contextReusePayload(c);
+                            contextDestroy(c);
 
                             return;
                         }
@@ -486,20 +486,20 @@ static void downStream(tunnel_t *self, context_t *c)
                     else if (! BIO_should_retry(cstate->wbio))
                     {
                         // If BIO_should_retry() is false then the cause is an error condition.
-                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
-                        reuseContextPayload(c);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
+                        contextReusePayload(c);
                         goto disconnect;
                     }
                     else
                     {
-                        bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                        bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                     }
                 } while (n > 0);
             }
 
             if (status == kSslstatusFail)
             {
-                reuseContextPayload(c);
+                contextReusePayload(c);
                 goto disconnect;
             }
 
@@ -509,8 +509,8 @@ static void downStream(tunnel_t *self, context_t *c)
             }
         }
         assert(sbufGetBufLength(c->payload) == 0);
-        reuseContextPayload(c);
-        destroyContext(c);
+        contextReusePayload(c);
+        contextDestroy(c);
 
         return;
     }
@@ -530,12 +530,12 @@ static void downStream(tunnel_t *self, context_t *c)
 
 disconnect: {
 
-    context_t *fail_context_up = newFinContextFrom(c);
+    context_t *fail_context_up = contextCreateFinFrom(c);
     self->up->upStream(self->up, fail_context_up);
 
-    context_t *fail_context = newFinContextFrom(c);
+    context_t *fail_context = contextCreateFinFrom(c);
     cleanup(self, c);
-    destroyContext(c);
+    contextDestroy(c);
     self->dw->downStream(self->dw, fail_context);
 }
 }

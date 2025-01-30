@@ -94,7 +94,7 @@ static void upStream(tunnel_t *self, context_t *c)
         if (c->init)
         {
             cstate        = memoryAllocate(sizeof(bgp4_client_con_state_t));
-            *cstate       = (bgp4_client_con_state_t) {.read_stream = bufferstreamCreate(getContextBufferPool(c))};
+            *cstate       = (bgp4_client_con_state_t) {.read_stream = bufferstreamCreate(contextGetBufferPool(c))};
             CSTATE_MUT(c) = cstate;
         }
         else if (c->fin)
@@ -136,12 +136,12 @@ static void downStream(tunnel_t *self, context_t *c)
                 {
                     LOGE("Bgp4Client: invalid marker");
                     bufferstreamDestroy(cstate->read_stream);
-                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                     memoryFree(cstate);
                     CSTATE_DROP(c);
-                    self->up->upStream(self->up, newFinContextFrom(c));
-                    self->dw->downStream(self->dw, newFinContextFrom(c));
-                    destroyContext(c);
+                    self->up->upStream(self->up, contextCreateFinFrom(c));
+                    self->dw->downStream(self->dw, contextCreateFinFrom(c));
+                    contextDestroy(c);
                     return;
                 }
                 sbufShiftRight(buf, kBgpHeaderLen + 1); // 1 byte is type
@@ -149,10 +149,10 @@ static void downStream(tunnel_t *self, context_t *c)
                 if (sbufGetBufLength(buf) <= 0)
                 {
                     LOGE("Bgp4Client: message had no payload");
-                    bufferpoolResuesBuffer(getContextBufferPool(c), buf);
+                    bufferpoolResuesBuffer(contextGetBufferPool(c), buf);
                     goto disconnect;
                 }
-                context_t *data_ctx = newContext(c->line);
+                context_t *data_ctx = contextCreate(c->line);
                 data_ctx->payload   = buf;
                 self->dw->downStream(self->dw, data_ctx);
             }
@@ -161,7 +161,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 break;
             }
         }
-        destroyContext(c);
+        contextDestroy(c);
         return;
     }
 
@@ -179,9 +179,9 @@ disconnect:
     bufferstreamDestroy(cstate->read_stream);
     memoryFree(cstate);
     CSTATE_DROP(c);
-    self->up->upStream(self->up, newFinContextFrom(c));
-    self->dw->downStream(self->dw, newFinContextFrom(c));
-    destroyContext(c);
+    self->up->upStream(self->up, contextCreateFinFrom(c));
+    self->dw->downStream(self->dw, contextCreateFinFrom(c));
+    contextDestroy(c);
 }
 
 tunnel_t *newBgp4Client(node_instance_context_t *instance_info)

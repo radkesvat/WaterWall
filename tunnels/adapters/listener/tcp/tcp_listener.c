@@ -59,13 +59,13 @@ static void cleanup(tcp_listener_con_state_t *cstate, bool flush_queue)
             if (flush_queue)
             {
                 wioWrite(cstate->io, cw->payload);
-                dropContexPayload(cw);
+                contextDropPayload(cw);
             }
             else
             {
-                reuseContextPayload(cw);
+                contextReusePayload(cw);
             }
-            destroyContext(cw);
+            contextDestroy(cw);
         }
         wioClose(cstate->io);
     }
@@ -88,8 +88,8 @@ static bool resumeWriteQueue(tcp_listener_con_state_t *cstate)
         context_t *cw     = contextqueuePop(data_queue);
         int        bytes  = (int) sbufGetBufLength(cw->payload);
         int        nwrite = wioWrite(io, cw->payload);
-        dropContexPayload(cw);
-        destroyContext(cw);
+        contextDropPayload(cw);
+        contextDestroy(cw);
         if (nwrite >= 0 && nwrite < bytes)
         {
             return false; // write pending
@@ -193,7 +193,7 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             int bytes  = (int) sbufGetBufLength(c->payload);
             int nwrite = wioWrite(cstate->io, c->payload);
-            dropContexPayload(c);
+            contextDropPayload(c);
 
             if (nwrite >= 0 && nwrite < bytes)
             {
@@ -201,7 +201,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 cstate->write_paused = true;
                 wioSetCallBackWrite(cstate->io, onWriteComplete);
             }
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
     else
@@ -210,14 +210,14 @@ static void downStream(tunnel_t *self, context_t *c)
         {
             CSTATE_DROP(c);
             cleanup(cstate, true);
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->est)
         {
             assert(! cstate->established);
             cstate->established = true;
             wioSetKeepaliveTimeout(cstate->io, kEstablishedKeepAliveTimeOutMs);
-            destroyContext(c);
+            contextDestroy(c);
         }
     }
 }
@@ -234,7 +234,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tunnel_t       *self    = (cstate)->tunnel;
     line_t         *line    = (cstate)->line;
 
-    context_t *context = newContext(line);
+    context_t *context = contextCreate(line);
     context->payload   = payload;
 
     self->upStream(self, context);
@@ -247,7 +247,7 @@ static void onClose(wio_t *io)
         LOGD("TcpListener: received close for FD:%x ", wioGetFD(io));
         tunnel_t  *self    = (cstate)->tunnel;
         line_t    *line    = (cstate)->line;
-        context_t *context = newFinContext(line);
+        context_t *context = contextCreateFin(line);
         self->upStream(self, context);
     }
     else
@@ -308,7 +308,7 @@ static void onInboundConnected(wevent_t *ev)
     // send the init packet
     lineLock(line);
     {
-        context_t *context = newInitContext(line);
+        context_t *context = contextCreateInit(line);
         self->upStream(self, context);
         if (! lineIsAlive(line))
         {

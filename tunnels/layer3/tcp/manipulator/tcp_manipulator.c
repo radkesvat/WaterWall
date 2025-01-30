@@ -108,8 +108,8 @@ static void upStream(tunnel_t *self, context_t *c)
         if (UNLIKELY(sbufGetBufLength(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
             LOGW("TcpManipulator: dropped an ipv4 packet, length is too short for TCP header");
-            reuseContextPayload(c);
-            destroyContext(c);
+            contextReusePayload(c);
+            contextDestroy(c);
             return;
         }
 
@@ -127,8 +127,8 @@ static void upStream(tunnel_t *self, context_t *c)
         if (UNLIKELY(sbufGetBufLength(c->payload) < ip_header_len + sizeof(struct tcpheader)))
         {
             LOGW("TcpManipulator: dropped an ipv6 packet, length is too short for TCP header");
-            reuseContextPayload(c);
-            destroyContext(c);
+            contextReusePayload(c);
+            contextDestroy(c);
             return;
         }
 
@@ -166,9 +166,9 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload)
     {
-        reuseContextPayload(c);
+        contextReusePayload(c);
     }
-    destroyContext(c);
+    contextDestroy(c);
 }
 
 tunnel_t *newLayer3TcpManipulator(node_instance_context_t *instance_info)

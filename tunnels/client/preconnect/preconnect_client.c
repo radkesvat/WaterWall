@@ -20,7 +20,7 @@ static void upStream(tunnel_t *self, context_t *c)
             break;
 
         case kConnectedPair:
-            self->up->upStream(self->up, switchLine(c, cstate->u));
+            self->up->upStream(self->up, contextSwitchLine(c, cstate->u));
             break;
         case kNotconnected:
         default:
@@ -47,7 +47,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 ucon->d       = c->line;
                 ucon->mode    = kConnectedPair;
                 CSTATE_MUT(c) = ucon;
-                self->dw->downStream(self->dw, newEstContext(c->line));
+                self->dw->downStream(self->dw, contextCreateEst(c->line));
                 initiateConnect(self, false);
             }
             else
@@ -59,7 +59,7 @@ static void upStream(tunnel_t *self, context_t *c)
                 self->up->upStream(self->up, c);
                 return;
             }
-            destroyContext(c);
+            contextDestroy(c);
         }
         else if (c->fin)
         {
@@ -77,7 +77,7 @@ static void upStream(tunnel_t *self, context_t *c)
             case kConnectedPair: {
                 line_t *u_line = dcon->u;
                 LSTATE_DROP(dcon->u);
-                context_t *fctx = switchLine(c, u_line); // created here to prevent destruction of line
+                context_t *fctx = contextSwitchLine(c, u_line); // created here to prevent destruction of line
                 destroyCstate(dcon);
                 self->up->upStream(self->up, fctx);
             }
@@ -109,7 +109,7 @@ static void downStream(tunnel_t *self, context_t *c)
             break;
 
         case kConnectedPair:
-            self->dw->downStream(self->dw, switchLine(c, cstate->d));
+            self->dw->downStream(self->dw, contextSwitchLine(c, cstate->d));
             break;
 
         case kNotconnected:
@@ -147,7 +147,7 @@ static void downStream(tunnel_t *self, context_t *c)
                 line_t *d_line = ucon->d;
                 LSTATE_DROP(ucon->d);
                 destroyCstate(ucon);
-                self->dw->downStream(self->dw, switchLine(c, d_line));
+                self->dw->downStream(self->dw, contextSwitchLine(c, d_line));
                 initiateConnect(self, false);
             }
             break;
@@ -160,7 +160,7 @@ static void downStream(tunnel_t *self, context_t *c)
                     removeConnection(this_tb, ucon);
                 }
                 destroyCstate(ucon);
-                destroyContext(c);
+                contextDestroy(c);
                 initiateConnect(self, true);
 
                 break;
@@ -178,7 +178,7 @@ static void downStream(tunnel_t *self, context_t *c)
             if (ucon->mode == kNotconnected)
             {
                 addConnection(this_tb, ucon);
-                destroyContext(c);
+                contextDestroy(c);
                 unsigned int unused = atomicAddExplicit(&(state->unused_cons), 1, memory_order_relaxed);
                 LOGI("PreConnectClient: connected,    unused: %d active: %d", unused + 1, state->active_cons);
                 initiateConnect(self, false);
