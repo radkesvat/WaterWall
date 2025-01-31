@@ -1,9 +1,8 @@
 #pragma once
-
-#include "cJSON.h"
-#include "config_file.h"
-#include "node.h"
 #include "wlibc.h"
+#include "cJSON.h"
+#include "node_builder/config_file.h"
+#include "node_builder/node.h"
 
 
 //  configFile:

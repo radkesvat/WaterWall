@@ -14,7 +14,6 @@
 
 */
 
-
 typedef struct context_s
 {
     sbuf_t *payload;
@@ -100,15 +99,10 @@ static inline void contextDropPayload(context_t *const c)
 #endif
 }
 
-static inline buffer_pool_t *contextGetBufferPool(const context_t *const c)
-{
-    return getWorkerBufferPool(getWID());
-}
-
 static inline void contextReusePayload(context_t *const c)
 {
     assert(c->payload != NULL);
-    bufferpoolResuesBuffer(contextGetBufferPool(c), c->payload);
+    bufferpoolResuesBuffer(getWorkerBufferPool(getWID()), c->payload);
     contextDropPayload(c);
 }
 

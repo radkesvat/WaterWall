@@ -4,10 +4,7 @@
 #include "connection_context.h"
 #include "wlibc.h"
 #include "wloop.h"
-
 #include "chain.h"
-#include "context.h"
-#include "node.h"
 #include "shiftbuffer.h"
 #include "worker.h"
 

@@ -1,22 +1,19 @@
 #include "socket_manager.h"
 
-
 #include "generic_pool.h"
-#include "wloop.h"
-#include "wmutex.h"
-#include "widle_table.h"
+#include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "signal_manager.h"
 #include "stc/common.h"
 #include "tunnel.h"
+#include "widle_table.h"
+#include "wloop.h"
+#include "wmutex.h"
 #include "wproc.h"
-
-
-
 
 #define i_type balancegroup_registry_t // NOLINT
 #define i_key  hash_t                  // NOLINT
-#define i_val  widle_table_t *          // NOLINT
+#define i_val  widle_table_t *         // NOLINT
 
 #include "stc/hmap.h"
 
@@ -55,18 +52,18 @@ typedef struct socket_manager_s
     struct
     {
         generic_pool_t *pool; /* holds udp_payload_t */
-        wmutex_t  mutex;
+        wmutex_t        mutex;
 
     } *udp_pools;
 
     struct
     {
         generic_pool_t *pool; /* holds socket_accept_result_t */
-        wmutex_t  mutex;
+        wmutex_t        mutex;
 
     } *tcp_pools;
 
-    wmutex_t          mutex;
+    wmutex_t                mutex;
     balancegroup_registry_t balance_groups;
     wthread_t               accept_thread;
     worker_t               *worker;
@@ -304,7 +301,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
 
     if (option.balance_group_name)
     {
-        hash_t        name_hash = calcHashBytes(option.balance_group_name, strlen(option.balance_group_name));
+        hash_t         name_hash = calcHashBytes(option.balance_group_name, strlen(option.balance_group_name));
         widle_table_t *b_table   = NULL;
         mutexLock(&(state->mutex));
 
@@ -325,7 +322,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         option.shared_balance_table = b_table;
     }
 
-    *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
+    *filter = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
     mutexLock(&(state->mutex));
     filters_t_push(&(state->filters[pirority]), filter);
@@ -358,7 +355,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     result->real_localport = local_port;
 
     wloop_t *worker_loop = getWorkerLoop(tid);
-    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
+    wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
     result->tid          = tid;
     result->io           = io;
     result->tunnel       = filter->tunnel;
@@ -425,7 +422,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
-    widle_table_t           *selected_balance_table           = NULL;
+    widle_table_t          *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
     const uint8_t           this_tid   = state->worker->wid;
@@ -469,8 +466,8 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
                 {
                     socket_filter_t *target_filter = idle_item->userdata;
                     idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
-                                           option.balance_group_interval == 0 ? kDefalultBalanceInterval
-                                                                              : option.balance_group_interval);
+                                                    option.balance_group_interval == 0 ? kDefalultBalanceInterval
+                                                                                       : option.balance_group_interval);
                     if (option.no_delay)
                     {
                         tcpNoDelay(wioGetFD(io), 1);
@@ -718,7 +715,7 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
 
     pl->tunnel           = filter->tunnel;
     wloop_t *worker_loop = getWorkerLoop(pl->tid);
-    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
+    wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
     wloopPostEvent(worker_loop, &ev);
@@ -732,7 +729,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
-    widle_table_t           *selected_balance_table           = NULL;
+    widle_table_t          *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
     const uint8_t           this_tid   = state->worker->wid;
@@ -775,8 +772,8 @@ static void distributeUdpPayload(const udp_payload_t pl)
                 {
                     socket_filter_t *target_filter = idle_item->userdata;
                     idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
-                                           option.balance_group_interval == 0 ? kDefalultBalanceInterval
-                                                                              : option.balance_group_interval);
+                                                    option.balance_group_interval == 0 ? kDefalultBalanceInterval
+                                                                                       : option.balance_group_interval);
                     postPayload(pl, target_filter);
                     return;
                 }
@@ -816,11 +813,11 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
     uint16_t   local_port = sockaddrPort((sockaddr_u *) wioGetLocaladdrU(io));
     uint8_t    target_tid = local_port % getWorkersCount();
 
-    udp_payload_t item = (udp_payload_t) {.sock           = socket,
-                                          .buf            = buf,
-                                          .tid            = target_tid,
-                                          .peer_addr      = *(sockaddr_u *) wioGetPeerAddrU(io),
-                                          .real_localport = local_port};
+    udp_payload_t item = (udp_payload_t){.sock           = socket,
+                                         .buf            = buf,
+                                         .tid            = target_tid,
+                                         .peer_addr      = *(sockaddr_u *) wioGetPeerAddrU(io),
+                                         .real_localport = local_port};
 
     distributeUdpPayload(item);
 }
@@ -842,7 +839,7 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         exit(1);
     }
     udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
-    *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
+    *socket           = (udpsock_t){.io = filter->listen_io, .table = idleTableCreate(loop)};
     weventSetUserData(filter->listen_io, socket);
     wioSetCallBackRead(filter->listen_io, onRecvFrom);
     wioRead(filter->listen_io);
@@ -906,9 +903,9 @@ void postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, sbuf_t *buf)
 
     udp_payload_t *item = newUpdPayload(tid_from);
 
-    *item = (udp_payload_t) {.sock = socket_io, .buf = buf, .tid = tid_from};
+    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .tid = tid_from};
 
-    wevent_t ev = (wevent_t) {.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
+    wevent_t ev = (wevent_t){.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
 
     wloopPostEvent(weventGetLoop(socket_io->io), &ev);
 }
@@ -918,7 +915,7 @@ static WTHREAD_ROUTINE(accept_thread) // NOLINT
     (void) userdata;
 
     assert(state && state->worker->loop && ! state->started);
-    
+
     frandInit();
 
     mutexLock(&(state->mutex));
@@ -966,12 +963,10 @@ socket_manager_state_t *socketmanagerCreate(void)
 
     worker_t *worker = memoryAllocate(sizeof(worker_t));
 
-    *worker = (worker_t) {.wid = 255};
-
-
+    *worker = (worker_t){.wid = 255};
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           GSTATE.ram_profile);
+                                           GSTATE.ram_profile,SMALL_BUFFER_SIZE,LARGE_BUFFER_SIZE);
 
     worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->wid);
 
@@ -994,12 +989,12 @@ socket_manager_state_t *socketmanagerCreate(void)
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
 
-        state->udp_pools[i].pool =
-            genericpoolCreateWithCapacity(mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
+        state->udp_pools[i].pool = genericpoolCreateWithCapacity(mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle,
+                                                                 destroyUdpPayloadPoolHandle);
         mutexInit(&(state->udp_pools[i].mutex));
 
-        state->tcp_pools[i].pool = genericpoolCreateWithCapacity(mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle,
-                                                         destroyTcpResultObjectPoolHandle);
+        state->tcp_pools[i].pool = genericpoolCreateWithCapacity(
+            mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
         mutexInit(&(state->tcp_pools[i].mutex));
     }
 

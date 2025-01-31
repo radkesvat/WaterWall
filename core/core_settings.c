@@ -1,12 +1,6 @@
 #include "core_settings.h"
-#include "cJSON.h"
-#include "wsysinfo.h"
-#include "utils/jsonutils.h"
-#include "utils/stringutils.h"
-#include "worker.h"
-#include <assert.h> // for assert
-#include <stdio.h>
-#include <string.h>
+#include "wwapi.h"
+
 
 #define DEFAULT_CORE_LOG_LEVEL         "INFO"
 #define DEFAULT_CORE_LOG_FILE          "core.json"

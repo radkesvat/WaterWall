@@ -110,6 +110,7 @@ add_executable(Waterwall
                   core/main.c
                   core/core_settings.c
                   core/imported_tunnels.c
+                  core/os_helpers.c
                   # core/tests/bench_memcpy.c
 )
 

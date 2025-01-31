@@ -17,7 +17,9 @@ enum
 #define i_less                    idletable_less_func                           // NOLINT
 #include "stc/pque.h"
 
-#define i_type hmap_idles_t, uint64_t, struct widle_item_s *
+#define i_type hmap_idles_t
+#define i_key uint64_t
+#define i_val struct widle_item_s *
 #include "stc/hmap.h"
 
 struct widle_table_s

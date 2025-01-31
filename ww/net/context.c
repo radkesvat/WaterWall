@@ -1,20 +1,67 @@
 #include "context.h"
 
+void contextApplyOnTunnelU(context_t *c, tunnel_t *t)
+{
+    if (c->init)
+    {
+        t->fnInitU(t, c->line);
+        return;
+    }
 
-void contextApplyOnTunnelU(context_t *c,tunnel_t* t){
-    t->fnInitU(t,c->line);
-    t->fnEstU(t,c->line);
-    t->fnFinU(t,c->line);
-    t->fnPayloadU(t,c->line,c->payload);
-    t->fnPauseU(t,c->line);
-    t->fnResumeU(t,c->line);
+    if (c->fin)
+    {
+        t->fnFinU(t, c->line);
+        return;
+    }
+
+    if (c->est)
+    {
+        t->fnEstU(t, c->line);
+        return;
+    }
+
+    if (c->pause)
+    {
+        t->fnPauseU(t, c->line);
+        return;
+    }
+
+    if (c->resume)
+    {
+        t->fnResumeU(t, c->line);
+        return;
+    }
 }
 
-void contextApplyOnTunnelD(context_t *c, tunnel_t *t){
-    t->fnInitD(t,c->line);
-    t->fnEstD(t,c->line);
-    t->fnFinD(t,c->line);
-    t->fnPayloadD(t,c->line,c->payload);
-    t->fnPauseD(t,c->line);
-    t->fnResumeD(t,c->line);
+void contextApplyOnTunnelD(context_t *c, tunnel_t *t)
+{
+    if (c->init)
+    {
+        t->fnInitD(t, c->line);
+        return;
+    }
+
+    if (c->fin)
+    {
+        t->fnFinD(t, c->line);
+        return;
+    }
+
+    if (c->est)
+    {
+        t->fnEstD(t, c->line);
+        return;
+    }
+
+    if (c->pause)
+    {
+        t->fnPauseD(t, c->line);
+        return;
+    }
+
+    if (c->resume)
+    {
+        t->fnResumeD(t, c->line);
+        return;
+    }
 }

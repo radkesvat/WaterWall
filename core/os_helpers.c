@@ -1,4 +1,3 @@
-#pragma once
 #include "os_helpers.h"
 #include "wplatform.h"
 #include "loggers/core_logger.h"

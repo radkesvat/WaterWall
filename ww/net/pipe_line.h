@@ -1,6 +1,8 @@
 #pragma once
 
 #include "tunnel.h"
+#include "line.h"
+#include "context.h"
 
 /*
 

@@ -51,6 +51,8 @@ add_library(ww STATIC
                   net/pipe_tunnel.c
                   net/sync_dns.c
                   net/tunnel.c
+                  net/chain.c
+                  net/context.c
 
                   node_builder/config_file.c
                   node_builder/node_loader.c
@@ -88,6 +90,7 @@ if(WIN32)
       target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)
       target_sources(ww PRIVATE event/wepoll/wepoll.c)
     endif()
+    target_link_libraries(ww PUBLIC ws2_32)
 endif()
 
 

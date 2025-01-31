@@ -1,14 +1,9 @@
-#include "config_file.h"
 #include "core_settings.h"
-#include "ev_memory.h"
+
 #include "loggers/core_logger.h"
-#include "managers/node_manager.h"
-#include "managers/socket_manager.h"
+#include "wwapi.h"
 #include "os_helpers.h"
 #include "imported_tunnels.h"
-#include "utils/fileutils.h"
-#include "utils/stringutils.h"
-#include "worker.h"
 
 int main(void)
 {

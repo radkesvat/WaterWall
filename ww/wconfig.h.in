@@ -121,6 +121,9 @@ enum ram_profiles_e
     kRamProfileL2Memory = 16 * 8 * 4
 };
 
+#define SMALL_BUFFER_SIZE 1500
+#define LARGE_BUFFER_SIZE (GSTATE.ram_profile >= kRamProfileS2Memory ? (1U << 15) : (1U << 12))
+
 
 
 #endif // WW_CONFIG_H_

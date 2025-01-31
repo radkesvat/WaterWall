@@ -208,4 +208,12 @@ typedef struct hurl_s
 WW_EXPORT int stringToUrl(hurl_t *stURL, const char *strURL);
 
 //-------------------------prints----------------------------------
-#define printError perror
+// #define printError perror
+
+
+static void printError(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+}

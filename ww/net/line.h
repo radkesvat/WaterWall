@@ -135,18 +135,15 @@ static inline bool lineIsAuthenticated(line_t *const line)
 
 static inline void *lineGetState(tunnel_t *t, line_t *l)
 {
-    return l->tunnels_line_state[t->lstate_offset];
+    return ((uint8_t *) l->tunnels_line_state) + t->lstate_offset;
 }
 
-static inline void lineClearState(void* state, size_t size)
+static inline void lineClearState(void *state, size_t size)
 {
 #ifdef DEBUG
     memorySet(state, 0, size);
 #endif
-
-
 }
-
 
 // static inline bool isUpPiped(const line_t *const l)
 // {

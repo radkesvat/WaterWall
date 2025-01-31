@@ -7,8 +7,6 @@
 #include "wthread.h"
 
 
-#define SMALL_BUFFER_SIZE 1500
-#define LARGE_BUFFER_SIZE (GSTATE.ram_profile >= kRamProfileS2Memory ? (1U << 15) : (1U << 12))
 
 _Thread_local wid_t tl_wid;
 
