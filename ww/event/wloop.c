@@ -192,7 +192,7 @@ process_timers:
 static void wloopStatTimerCallBack(wtimer_t* timer) {
     wloop_t* loop = timer->loop;
     // wlog_set_level(LOG_LEVEL_DEBUG);
-    wlogd("[loop] pid=%ld tid=%ld uptime=%lluus cnt=%llu nactives=%u nios=%u ntimers=%u nidles=%u", loop->pid, loop->tid,
+    wlogd("[loop] pid=%ld tid=%ld uptime=%lluus cnt=%llu nactives=%u nios=%u ntimers=%u nidles=%u", loop->pid, loop->wid,
           (unsigned long long)loop->cur_hrtime - loop->start_hrtime, (unsigned long long)loop->loop_cnt, loop->nactives, loop->nios, loop->ntimers,
           loop->nidles);
 }
@@ -401,13 +401,13 @@ static void wloopCleanup(wloop_t* loop) {
     mutexDestroy(&loop->custom_events_mutex);
 }
 
-wloop_t* wloopCreate(int flags, buffer_pool_t* swimmingpool, long tid) {
+wloop_t* wloopCreate(int flags, buffer_pool_t* swimmingpool, long wid) {
     wloop_t* loop;
     EVENTLOOP_ALLOC_SIZEOF(loop);
     wloopInit(loop);
     loop->flags |= flags;
     loop->bufpool = swimmingpool;
-    loop->tid = tid;
+    loop->wid = wid;
     // wlogd("wloopCreate tid=%ld", loop->tid);
     return loop;
 }
@@ -417,7 +417,7 @@ void wloopDestroy(wloop_t** pp) {
     wloop_t* loop = *pp;
     if (loop->status == WLOOP_STATUS_DESTROY) return;
     loop->status = WLOOP_STATUS_DESTROY;
-    wlogd("wloopDestroy tid=%ld", loop->tid);
+    wlogd("wloopDestroy tid=%ld", loop->wid);
     wloopCleanup(loop);
     EVENTLOOP_FREE(loop);
     *pp = NULL;
@@ -486,7 +486,7 @@ int wloopStop(wloop_t* loop) {
     if (loop == NULL) return -1;
     if (loop->status == WLOOP_STATUS_STOP) return -2;
     wlogd("wloopStop tid=%ld", getTID());
-    if (getTID() != loop->tid) {
+    if (getTID() != loop->pid) {
         wloopWakeup(loop);
     }
     loop->status = WLOOP_STATUS_STOP;
@@ -550,7 +550,7 @@ long wloopPID(wloop_t* loop) {
 }
 
 long wloopTID(wloop_t* loop) {
-    return loop->tid;
+    return loop->wid;
 }
 
 uint64_t wloopCount(wloop_t* loop) {
@@ -575,6 +575,10 @@ uint32_t wloopNActives(wloop_t* loop) {
 
 buffer_pool_t* wloopGetBufferPool(wloop_t* loop) {
     return loop->bufpool;
+}
+
+long wloopGetWID(wloop_t* loop) {
+    return loop->wid;
 }
 
 void wloopSetUserData(wloop_t* loop, void* userdata) {

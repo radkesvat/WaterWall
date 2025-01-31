@@ -123,7 +123,7 @@ typedef enum {
 #define WLOOP_FLAG_RUN_ONCE 0x00000001
 #define WLOOP_FLAG_AUTO_FREE 0x00000002
 #define WLOOP_FLAG_QUIT_WHEN_NO_ACTIVE_EVENTS 0x00000004
-WW_EXPORT wloop_t* wloopCreate(int flags DEFAULT(WLOOP_FLAG_AUTO_FREE),buffer_pool_t* swimmingpool, long tid);
+WW_EXPORT wloop_t* wloopCreate(int flags DEFAULT(WLOOP_FLAG_AUTO_FREE),buffer_pool_t* swimmingpool, long wid);
 
 // WARN: Forbid to call wloopDestroy if WLOOP_FLAG_AUTO_FREE set.
 WW_EXPORT void wloopDestroy(wloop_t** pp);
@@ -166,6 +166,8 @@ WW_EXPORT uint32_t wloopNActives(wloop_t* loop);
 // @return the loop threadlocal buffer pool
 WW_EXPORT buffer_pool_t* wloopGetBufferPool(wloop_t* loop);
 
+// @return the loop thread id
+WW_EXPORT long wloopGetWID(wloop_t* loop);
 
 // userdata
 WW_EXPORT void wloopSetUserData(wloop_t* loop, void* userdata);

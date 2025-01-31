@@ -158,7 +158,7 @@ static void upStream(tunnel_t *self, context_t *c)
             memorySet(cstate, 0, sizeof(oss_client_con_state_t));
             cstate->rbio  = BIO_new(BIO_s_mem());
             cstate->wbio  = BIO_new(BIO_s_mem());
-            cstate->ssl   = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
+            cstate->ssl   = SSL_new(state->threadlocal_ssl_context[getWID()]);
             cstate->queue = contextqueueCreate();
             SSL_set_connect_state(cstate->ssl); /* sets ssl to work in client mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);

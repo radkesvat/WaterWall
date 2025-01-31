@@ -1,11 +1,12 @@
 #pragma once
 #include "tunnel.h"
+#include "shiftbuffer.h"
 
 
 
-void pipetunnelBind(tunnel_t *from, tunnel_t *to);
-void pipetunnelBindDown(tunnel_t *from, tunnel_t *to);
-void pipetunnelBindUp(tunnel_t *from, tunnel_t *to);
+
+size_t pipeLineGetMesageSize(void);
+
 void pipetunnelDefaultUpStreamInit(tunnel_t *self, line_t *line);
 void pipetunnelDefaultUpStreamEst(tunnel_t *self, line_t *line);
 void pipetunnelDefaultUpStreamFin(tunnel_t *self, line_t *line);
@@ -23,8 +24,7 @@ void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index,
 void pipetunnelDefaultOnPrepair(tunnel_t *t);
 void pipetunnelDefaultOnStart(tunnel_t *t);
 
-tunnel_t *pipetunnelCreate(tunnel_t* t);
-void      pipetunnelDestroy(tunnel_t *self);
+tunnel_t *pipetunnelCreate(tunnel_t *child);
+void      pipetunnelDestroy(tunnel_t *t);
 
-
-
+void pipeTo(tunnel_t *t, line_t* l,wid_t wid_to);

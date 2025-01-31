@@ -147,7 +147,7 @@ static http2_client_child_con_state_t *createHttp2Stream(http2_client_con_state_
     memorySet(stream, 0, sizeof(http2_client_child_con_state_t));
     // stream->stream_id = nghttp2_submit_request2(con->session, NULL,  &nvs[0], nvlen, NULL,stream);
     stream->stream_id          = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, stream);
-    stream->grpc_buffer_stream = bufferstreamCreate(lineGetBufferPool(con->line));
+    stream->grpc_buffer_stream = bufferstreamCreate(getWorkerBufferPool(con->line));
     stream->parent             = con->line;
     stream->line               = child_line;
     stream->tunnel             = con->tunnel;
@@ -202,7 +202,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     tunnel_t             *self  = con->tunnel;
     http2_client_state_t *state = TSTATE(self);
 
-    vec_cons     *vector = &(state->thread_cpool[con->line->tid].cons);
+    vec_cons     *vector = &(state->thread_cpool[getWID()].cons);
     vec_cons_iter it     = vec_cons_find(vector, con);
     if (it.ref != vec_cons_end(vector).ref)
     {
@@ -224,7 +224,7 @@ static void deleteHttp2Connection(http2_client_con_state_t *con)
     {
         if (k.ref->buf)
         {
-            bufferpoolResuesBuffer(getWorkerBufferPool(con->line->tid), k.ref->buf);
+            bufferpoolResuesBuffer(getWorkerBufferPool(getWID()), k.ref->buf);
         }
         lineUnlock(k.ref->stream_line);
     }
@@ -299,7 +299,7 @@ static void onPingTimer(wtimer_t *timer)
         lineLock(h2line);
         while (0 < (len = nghttp2_session_mem_send2(con->session, (const uint8_t **) &data)))
         {
-            sbuf_t *send_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(h2line));
+            sbuf_t *send_buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(h2line));
             sbufSetLength(send_buf, len);
             sbufWrite(send_buf, data, len);
             context_t *req = contextCreate(h2line);

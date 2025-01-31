@@ -32,7 +32,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const tid_t   tid     = c->line->tid;
+        const wid_t   tid     = getWID();
         thread_box_t *this_tb = &(state->workers[tid]);
         if (c->init)
         {
@@ -53,7 +53,7 @@ static void upStream(tunnel_t *self, context_t *c)
             else
             {
                 atomicAddExplicit(&(state->active_cons), 1, memory_order_relaxed);
-                preconnect_client_con_state_t *dcon = createCstate(c->line->tid);
+                preconnect_client_con_state_t *dcon = createCstate(getWID());
                 CSTATE_MUT(c)                       = dcon;
                 dcon->mode                          = kConnectedDirect;
                 self->up->upStream(self->up, c);
@@ -124,7 +124,7 @@ static void downStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const unsigned int             tid     = c->line->tid;
+        const unsigned int             tid     = getWID();
         thread_box_t                  *this_tb = &(state->workers[tid]);
         preconnect_client_con_state_t *ucon    = CSTATE(c);
 

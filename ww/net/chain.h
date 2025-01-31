@@ -32,7 +32,7 @@ typedef struct tunnel_chain_s
     tunnel_array_t  tunnels;
     uint16_t        sum_padding_left;
     uint32_t        sum_line_state_size;
-    tid_t           workers_count;
+    wid_t           workers_count;
     master_pool_t  *masterpool_line_pool;
     generic_pool_t *line_pools[];
 

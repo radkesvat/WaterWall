@@ -33,7 +33,7 @@ static void onLineResumedD(void *cstate)
     resumeLineUpSide(((reverse_client_con_state_t *) cstate)->u);
 }
 
-static reverse_client_con_state_t *createCstate(tunnel_t *self, tid_t tid)
+static reverse_client_con_state_t *createCstate(tunnel_t *self, wid_t tid)
 {
     reverse_client_con_state_t *cstate = memoryAllocate(sizeof(reverse_client_con_state_t));
     line_t                     *up     = newLine(tid);
@@ -98,7 +98,7 @@ static void beforeConnect(wevent_t *ev)
     }
 }
 
-static void initiateConnect(tunnel_t *self, tid_t tid, bool delay)
+static void initiateConnect(tunnel_t *self, wid_t tid, bool delay)
 {
     reverse_client_state_t *state = TSTATE(self);
 

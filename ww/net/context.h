@@ -14,26 +14,28 @@
 
 */
 
+
 typedef struct context_s
 {
     sbuf_t *payload;
     line_t *line;
-    bool    init;
-    bool    est;
-    bool    fin;
+    uint8_t init : 1;
+    uint8_t est : 1;
+    uint8_t fin : 1;
+    uint8_t pause : 1;
+    uint8_t resume : 1;
 } context_t;
 
 static inline void contextDestroy(context_t *c)
 {
     assert(c->payload == NULL);
-    const tid_t tid = c->line->tid;
     lineUnlock(c->line);
-    genericpoolReuseItem(getWorkerContextPool(tid), c);
+    genericpoolReuseItem(getWorkerContextPool(getWID()), c);
 }
 
 static inline context_t *contextCreate(line_t *const line)
 {
-    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(line->tid));
+    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(getWID()));
     *new_ctx           = (context_t){.line = line};
     lineLock(line);
     return new_ctx;
@@ -42,7 +44,7 @@ static inline context_t *contextCreate(line_t *const line)
 static inline context_t *contextCreateFrom(const context_t *const source)
 {
     lineLock(source->line);
-    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(source->line->tid));
+    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(getWID()));
     *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
 }
@@ -100,7 +102,7 @@ static inline void contextDropPayload(context_t *const c)
 
 static inline buffer_pool_t *contextGetBufferPool(const context_t *const c)
 {
-    return getWorkerBufferPool(c->line->tid);
+    return getWorkerBufferPool(getWID());
 }
 
 static inline void contextReusePayload(context_t *const c)
@@ -116,3 +118,6 @@ static inline void bufferStreamPushContextPayload(buffer_stream_t *self, context
     bufferstreamPush(self, c->payload);
     contextDropPayload(c);
 }
+
+void contextApplyOnTunnelU(context_t *c, tunnel_t *t);
+void contextApplyOnTunnelD(context_t *c, tunnel_t *t);

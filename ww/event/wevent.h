@@ -36,7 +36,7 @@ struct wloop_s {
     uint64_t                    cur_hrtime;
     uint64_t                    loop_cnt;
     long                        pid;
-    long                        tid;
+    long                        wid;
     void*                       userdata;
 //private:
     // events

@@ -104,7 +104,7 @@ static void downStream(tunnel_t *self, context_t *c)
 
     if (c->payload != NULL)
     {
-        postUdpWrite(cstate->uio, c->line->tid, c->payload);
+        postUdpWrite(cstate->uio, getWID(), c->payload);
         contextDropPayload(c);
         contextDestroy(c);
     }
@@ -145,7 +145,7 @@ static void onUdpConnectonExpire(idle_item_t *idle_udp)
     self->upStream(self, context);
 }
 
-static udp_listener_con_state_t *newConnection(tid_t tid, tunnel_t *self, udpsock_t *uio, uint16_t real_localport)
+static udp_listener_con_state_t *newConnection(wid_t tid, tunnel_t *self, udpsock_t *uio, uint16_t real_localport)
 {
     line_t                   *line   = newLine(tid);
     udp_listener_con_state_t *cstate = memoryAllocate(sizeof(udp_listener_con_state_t));

@@ -42,14 +42,14 @@ static void destroyRawMsgPoolHandle(master_pool_t *pool, master_pool_item_t *ite
 static void localThreadEventReceived(wevent_t *ev)
 {
     struct msg_event *msg = weventGetUserdata(ev);
-    tid_t             tid = (tid_t) (wloopTID(weventGetLoop(ev)));
+    wid_t             tid = (wid_t) (wloopTID(weventGetLoop(ev)));
 
     msg->rdev->read_event_callback(msg->rdev, msg->rdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->rdev->reader_message_pool, (void **) &msg, 1, msg->rdev);
 }
 
-static void distributePacketPayload(raw_device_t *rdev, tid_t target_tid, sbuf_t *buf)
+static void distributePacketPayload(raw_device_t *rdev, wid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
     masterpoolGetItems(rdev->reader_message_pool, (const void **) &(msg), 1, rdev);
@@ -67,7 +67,7 @@ static void distributePacketPayload(raw_device_t *rdev, tid_t target_tid, sbuf_t
 static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 {
     raw_device_t   *rdev           = userdata;
-    tid_t           distribute_tid = 0;
+    wid_t           distribute_tid = 0;
     sbuf_t *buf;
     ssize_t         nread;
     struct sockaddr saddr;

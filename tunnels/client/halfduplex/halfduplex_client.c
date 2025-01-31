@@ -86,7 +86,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             LSTATE_MUT(cstate->main_line) = cstate;
 
-            cstate->upload_line             = newLine(c->line->tid);
+            cstate->upload_line             = newLine(getWID());
             LSTATE_MUT(cstate->upload_line) = cstate;
             lineLock(cstate->upload_line);
             self->up->upStream(self->up, contextCreateInit(cstate->upload_line));
@@ -98,7 +98,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
             lineUnlock(cstate->upload_line);
 
-            cstate->download_line             = newLine(c->line->tid);
+            cstate->download_line             = newLine(getWID());
             LSTATE_MUT(cstate->download_line) = cstate;
             lineLock(cstate->download_line);
             self->up->upStream(self->up, contextCreateInit(cstate->download_line));

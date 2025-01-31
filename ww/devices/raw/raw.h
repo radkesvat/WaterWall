@@ -8,7 +8,7 @@
 
 struct raw_device_s;
 
-typedef void (*RawReadEventHandle)(struct raw_device_s *rdev, void *userdata, sbuf_t *buf, tid_t tid);
+typedef void (*RawReadEventHandle)(struct raw_device_s *rdev, void *userdata, sbuf_t *buf, wid_t tid);
 
 typedef struct raw_device_s
 {

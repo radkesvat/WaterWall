@@ -274,7 +274,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
             // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
-            wloop_t *loop   = getWorkerLoop(c->line->tid);
+            wloop_t *loop   = getWorkerLoop(getWID());
             int      sockfd = socket(dest_ctx->address.sa.sa_family, SOCK_STREAM, 0);
 
             if (sockfd < 0)

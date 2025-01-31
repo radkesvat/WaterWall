@@ -76,7 +76,7 @@ static void upStream(tunnel_t *self, context_t *c)
 
                     dcstate->handshaked = 0 == memcmp(kHandshakeExpecetd, sbufGetRawPtr(data), kHandShakeLength);
 
-                    thread_box_t *this_tb = &(state->threadlocal_pool[c->line->tid]);
+                    thread_box_t *this_tb = &(state->threadlocal_pool[getWID()]);
 
                     if (dcstate->handshaked)
                     {
@@ -172,7 +172,7 @@ static void upStream(tunnel_t *self, context_t *c)
     }
     else
     {
-        const tid_t tid     = c->line->tid;
+        const wid_t tid     = getWID();
         thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
         if (c->init)
         {
@@ -222,7 +222,7 @@ static void downStream(tunnel_t *self, context_t *c)
         // so the context is null if nothing is received so far...
         if (ucstate == NULL)
         {
-            const tid_t tid     = c->line->tid;
+            const wid_t tid     = getWID();
             thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
 
             if (this_tb->d_count > 0)
@@ -261,7 +261,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                LOGW("reverseServer: no peer left, waiting tid: %d", c->line->tid);
+                LOGW("reverseServer: no peer left, waiting tid: %d", getWID());
                 ucstate = createCstateU(c->line);
                 addConnectionU(this_tb, ucstate);
                 contextqueuePush(ucstate->uqueue, c);
@@ -321,7 +321,7 @@ static void downStream(tunnel_t *self, context_t *c)
             }
             else
             {
-                const tid_t tid     = c->line->tid;
+                const wid_t tid     = getWID();
                 thread_box_t *this_tb = &(state->threadlocal_pool[tid]);
                 removeConnectionU(this_tb, ucstate);
                 cleanup(ucstate);

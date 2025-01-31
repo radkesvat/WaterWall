@@ -131,7 +131,7 @@ void tunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uin
 {
     tunnelarrayInesert(arr, t);
     t->chain_index   = *index;
-    t->cstate_offset = *mem_offset;
+    t->lstate_offset = *mem_offset;
     (*index)++;
     *mem_offset += t->lstate_size;
     if (t->up)
@@ -153,20 +153,23 @@ void tunnelDefaultOnStart(tunnel_t *t)
     }
 }
 
-enum
-{
-    kTunnelsMemSize = 16 * 200
-};
 
 tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
 {
+    tstate_size = tunnelGetCorrectAllignedStateSize(tstate_size);
+    lstate_size = tunnelGetCorrectAllignedLineStateSize(lstate_size);
+
     size_t tsize = sizeof(tunnel_t) + tstate_size;
 
-    tunnel_t *ptr = memoryAllocate(sizeof(tunnel_t));
+    tunnel_t *ptr = memoryAllocate(tsize);
+    if (ptr == NULL) {
+        // Handle memory allocation failure
+        return NULL;
+    }
 
     memorySet(ptr, 0, tsize);
 
-    *ptr = (tunnel_t){.lstate_size = lstate_size,
+    *ptr = (tunnel_t){
                       .fnInitU     = &tunnelDefaultUpStreamInit,
                       .fnInitD     = &tunnelDefaultdownStreamInit,
                       .fnPayloadU  = &tunnelDefaultUpStreamPayload,
@@ -183,6 +186,8 @@ tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
                       .onIndex     = &tunnelDefaultOnIndex,
                       .onPrepair   = &tunnelDefaultOnPrepair,
                       .onStart     = &tunnelDefaultOnStart,
+                      .tstate_size = tstate_size,
+                      .lstate_size = lstate_size,
                       .node        = node};
 
     return ptr;
@@ -192,59 +197,3 @@ void tunnelDestroy(tunnel_t *self)
 {
     memoryFree(self);
 }
-
-void pipeUpStream(context_t *c)
-{
-    if (! pipeSendToUpStream((pipe_line_t *) c->line->up_state, c))
-    {
-        if (c->payload)
-        {
-            contextReusePayload(c);
-        }
-        contextDestroy(c);
-    }
-}
-
-void pipeDownStream(context_t *c)
-{
-    if (! pipeSendToDownStream((pipe_line_t *) c->line->dw_state, c))
-    {
-        if (c->payload)
-        {
-            contextReusePayload(c);
-        }
-        contextDestroy(c);
-    }
-}
-
-static void defaultPipeLocalUpStream(tunnel_t *self, struct context_s *c, struct pipe_line_s *pl)
-{
-    (void) pl;
-    if (isUpPiped(c->line))
-    {
-        pipeUpStream(c);
-    }
-    else
-    {
-        self->upStream(self, c);
-    }
-}
-
-static void defaultPipeLocalDownStream(tunnel_t *self, struct context_s *c, struct pipe_line_s *pl)
-{
-    (void) pl;
-    if (isDownPiped(c->line))
-    {
-        pipeDownStream(c);
-    }
-    else
-    {
-        self->dw->downStream(self->dw, c);
-    }
-}
-
-// void pipeTo(tunnel_t *self, line_t *l, tid_t tid)
-// {
-//     assert(l->up_state == NULL);
-//     newPipeLine(self, l, tid, defaultPipeLocalUpStream, defaultPipeLocalDownStream);
-// }

@@ -7,7 +7,6 @@
 
 #include "chain.h"
 #include "context.h"
-#include "line.h"
 #include "node.h"
 #include "shiftbuffer.h"
 #include "worker.h"
@@ -39,48 +38,10 @@
 
 */
 
-// get the state object of each tunnel
-#define TSTATE(x) ((void *) ((x)->state))
-
-// get the line state at index I
-#define LSTATE_I(x, y) ((void *) ((((x)->tunnels_line_state)[(y)])))
-// mutate the line state at index I
-#define LSTATE_I_MUT(x, y) (x)->tunnels_line_state[(y)]
-
-// get the line state by using the chain_index of current tunnel which is assumed to be named as `self`
-#define LSTATE(x) LSTATE_I(x, self->chain_index)
-// mutate the line state by using the chain_index of current tunnel which is assumed to be named as `self`
-#define LSTATE_MUT(x) LSTATE_I_MUT(x, self->chain_index)
-
-// get the line state from the line of the context
-#define CSTATE(x) LSTATE((x)->line)
-// mutate the line state from the line of the context
-#define CSTATE_MUT(x) LSTATE_MUT((x)->line)
-
-/*
-    While it is necessary to drop each state when line is closing,
-    setting them to NULL can be removed on release build since the assert is also
-    removed
-*/
-#if defined(RELEASE)
-#define LSTATE_I_DROP(x, y)                                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        (void) (x);                                                                                                    \
-        (void) (y);                                                                                                    \
-    } while (0)
-#else
-#define LSTATE_I_DROP(x, y) (LSTATE_I_MUT((x), (y)) = NULL)
-#endif
-
-// mutate the state of line (at the index of current tunnel which is assumed to be named as `self`) to NULL
-// this is done when the state is being freed and is necessary
-#define LSTATE_DROP(x) LSTATE_I_DROP((x), self->chain_index)
-// mutate the state of the line of context to NULL
-#define CSTATE_DROP(x) LSTATE_DROP((x)->line)
 
 typedef struct node_s         node_t;
 typedef struct tunnel_s       tunnel_t;
+typedef struct line_s         line_t;
 typedef struct tunnel_chain_s tunnel_chain_t;
 typedef struct tunnel_array_s tunnel_array_t;
 
@@ -96,14 +57,14 @@ typedef void (*TunnelFlowRoutinePause)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineResume)(tunnel_t *, line_t *line);
 typedef splice_retcode_t (*TunnelFlowRoutineSplice)(tunnel_t *, line_t *line, int pipe_fd, size_t len);
 
-typedef struct pipeline_s
-{
-    atomic_bool closed;
-    atomic_uint pipeline_refc;
-    // compiler will insert padding here
-    struct line_s *up;
-    struct line_s *dw;
-} pipe_line_t;
+// typedef struct pipeline_s
+// {
+//     atomic_bool closed;
+//     atomic_uint pipeline_refc;
+//     // compiler will insert padding here
+//     struct line_s *up;
+//     struct line_s *dw;
+// } pipe_line_t;
 
 /*
     Tunnel is just a doubly linked list, it has its own state, per connection state is stored in line structure
@@ -140,14 +101,14 @@ struct tunnel_s
     uint16_t tstate_size;
     uint16_t lstate_size;
 
-    uint16_t cstate_offset;
+    uint16_t lstate_offset;
     uint16_t chain_index;
 
     node_t         *node;
     tunnel_chain_t *chain;
 
 
-    uint8_t state[] __attribute__((aligned(sizeof(void *))));
+    uint8_t state[] __attribute__((aligned(kCpuLineCacheSize)));
 };
 
 tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size);
@@ -181,6 +142,11 @@ void tunnelDefaultOnStart(tunnel_t *t);
 // void pipeUpStream(context_t *c);
 // void pipeDownStream(context_t *c);
 
+static void* tunnelGetState(tunnel_t *self)
+{
+    return &(self->state[0]);
+}
+
 static tunnel_chain_t* tunnelGetChain(tunnel_t *self)
 {
     return self->chain;
@@ -191,7 +157,7 @@ static node_t* tunnelGetNode(tunnel_t *self)
     return self->node;
 }
 
-static uint16_t tunnelGetLocalStateSize(tunnel_t *self)
+static uint16_t tunnelGetStateSize(tunnel_t *self)
 {
     return self->tstate_size;
 }
@@ -201,75 +167,16 @@ static uint16_t tunnelGetLineStateSize(tunnel_t *self)
     return self->tstate_size;
 }
 
+static uint16_t tunnelGetCorrectAllignedStateSize(uint16_t size)
+{
+    return (size + kCpuLineCacheSize - 1) & ~(kCpuLineCacheSize - 1);
+}
+
+static uint16_t tunnelGetCorrectAllignedLineStateSize(uint16_t size)
+{
+    return (size + kCpuLineCacheSize - 1) & ~(kCpuLineCacheSize - 1);
+}
 
 
 
-/*
-    Once the up state is setup, it will receive pasue/resume events from down end of the line, with the `state` as
-   userdata
-*/
-// static inline void setupLineUpSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
-//                                    LineFlowSignal resume_cb)
-// {
-//     assert(l->up_state == NULL);
-//     l->up_state     = state;
-//     l->up_pause_cb  = pause_cb;
-//     l->up_resume_cb = resume_cb;
-// }
 
-/*
-    Once the down state is setup, it will receive pasue/resume events from up end of the line, with the `state` as
-   userdata
-*/
-// static inline void setupLineDownSide(line_t *const l, LineFlowSignal pause_cb, void *const state,
-//                                      LineFlowSignal resume_cb)
-// {
-//     assert(l->dw_state == NULL);
-//     l->dw_state     = state;
-//     l->dw_pause_cb  = pause_cb;
-//     l->dw_resume_cb = resume_cb;
-// }
-
-// static inline void doneLineUpSide(line_t *const l)
-// {
-//     assert(l->up_state != NULL || l->up_pause_cb == NULL);
-//     l->up_state = NULL;
-// }
-
-// static inline void doneLineDownSide(line_t *const l)
-// {
-//     assert(l->dw_state != NULL || l->dw_pause_cb == NULL);
-//     l->dw_state = NULL;
-// }
-
-// static inline void pauseLineUpSide(line_t *const l)
-// {
-//     if (l->up_state)
-//     {
-//         l->up_pause_cb(l->up_state);
-//     }
-// }
-
-// static inline void pauseLineDownSide(line_t *const l)
-// {
-//     if (l->dw_state)
-//     {
-//         l->dw_pause_cb(l->dw_state);
-//     }
-// }
-
-// static inline void resumeLineUpSide(line_t *const l)
-// {
-//     if (l->up_state)
-//     {
-//         l->up_resume_cb(l->up_state);
-//     }
-// }
-
-// static inline void resumeLineDownSide(line_t *const l)
-// {
-//     if (l->dw_state)
-//     {
-//         l->dw_resume_cb(l->dw_state);
-//     }
-// }

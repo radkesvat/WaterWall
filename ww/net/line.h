@@ -1,9 +1,10 @@
 #pragma once
 #include "wlibc.h"
 
+#include "connection_context.h"
 #include "generic_pool.h"
 #include "global_state.h"
-#include "connection_context.h"
+#include "tunnel.h"
 #include "worker.h"
 
 typedef uint32_t line_refc_t;
@@ -25,32 +26,31 @@ typedef uint32_t line_refc_t;
 
 typedef struct line_s
 {
-    line_refc_t      refc;
-    tid_t            tid;
-    bool             alive;
-    uint8_t          auth_cur;
-    
+    line_refc_t refc;
+    bool        alive;
+    uint8_t     auth_cur;
+
     connection_context_t src_ctx;
     connection_context_t dest_ctx;
-    generic_pool_t  *pool;
+    generic_pool_t      *pool;
     // pipe_line_t     *pipe;
 
-    uintptr_t *tunnels_line_state[] __attribute__((aligned(sizeof(void *))));
+    uintptr_t *tunnels_line_state[] __attribute__((aligned(kCpuLineCacheSize)));
 
 } line_t;
 
-static inline line_t *newLine(generic_pool_t *pool, tid_t tid)
+static inline line_t *newLine(generic_pool_t *pool)
 {
     line_t *l = genericpoolGetItem(pool);
 
-    *l = (line_t){.tid      = tid,
-                  .refc     = 1,
-                  .auth_cur = 0,
-                  .alive    = true,
-                  .pool     = pool,
-                  // to set a port we need to know the AF family, default v4
-                  .dest_ctx = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
-                  .src_ctx = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}};
+    *l = (line_t){
+        .refc     = 1,
+        .auth_cur = 0,
+        .alive    = true,
+        .pool     = pool,
+        // to set a port we need to know the AF family, default v4
+        .dest_ctx = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+        .src_ctx  = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}};
 
     memorySet(&l->tunnels_line_state[0], 0, genericpoolGetItemSize(l->pool) - sizeof(line_t));
 
@@ -133,15 +133,20 @@ static inline bool lineIsAuthenticated(line_t *const line)
     return line->auth_cur > 0;
 }
 
-static inline buffer_pool_t *lineGetBufferPool(const line_t *const l)
+static inline void *lineGetState(tunnel_t *t, line_t *l)
 {
-    return getWorkerBufferPool(l->tid);
+    return l->tunnels_line_state[t->lstate_offset];
 }
 
-static inline wloop_t *lineGetEventLoop(const line_t *const l)
+static inline void lineClearState(void* state, size_t size)
 {
-    return getWorkerLoop(l->tid);
+#ifdef DEBUG
+    memorySet(state, 0, size);
+#endif
+
+
 }
+
 
 // static inline bool isUpPiped(const line_t *const l)
 // {

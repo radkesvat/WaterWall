@@ -214,7 +214,7 @@ fallback:
     }
     else
     {
-        wtimer_t *t = wtimerAdd(lineGetEventLoop(c->line), onFallbackTimer, state->fallback_delay, 1);
+        wtimer_t *t = wtimerAdd(getWorkerLoop(c->line), onFallbackTimer, state->fallback_delay, 1);
         weventSetUserData(t, newTimerData(self, c));
     }
 }

@@ -92,7 +92,7 @@ static reverse_server_con_state_t *createCstateD(line_t *line)
 {
     reverse_server_con_state_t *cstate = memoryAllocate(sizeof(reverse_server_con_state_t));
     memorySet(cstate, 0, sizeof(reverse_server_con_state_t));
-    cstate->wait_stream = bufferstreamCreate(lineGetBufferPool(line));
+    cstate->wait_stream = bufferstreamCreate(getWorkerBufferPool(line));
     cstate->d           = line;
     setupLineUpSide(line, onLinePausedD, cstate, onLineResumedD);
 

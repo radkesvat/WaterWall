@@ -191,8 +191,8 @@ static void upStream(tunnel_t *self, context_t *c)
             memorySet(CSTATE(c), 0, sizeof(reality_server_con_state_t));
             cstate->auth_state     = kConAuthPending;
             cstate->giveup_counter = state->counter_threshold;
-            cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
-            cstate->sign_context   = state->threadlocal_sign_context[c->line->tid];
+            cstate->cipher_context = state->threadlocal_cipher_context[getWID()];
+            cstate->sign_context   = state->threadlocal_sign_context[getWID()];
             cstate->read_stream    = bufferstreamCreate(contextGetBufferPool(c));
             cstate->msg_digest     = (EVP_MD *) EVP_get_digestbynid(MSG_DIGEST_ALG);
             int sk_size            = EVP_MD_size(cstate->msg_digest);

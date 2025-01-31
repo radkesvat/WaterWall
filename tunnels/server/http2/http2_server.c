@@ -96,7 +96,7 @@ static int onDataChunkRecvCallBack(nghttp2_session *session, uint8_t flags, int3
         return 0;
     }
 
-    sbuf_t *buf = bufferpoolGetLargeBuffer(lineGetBufferPool(con->line));
+    sbuf_t *buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(con->line));
     sbufSetLength(buf, len);
     sbufWrite(buf, data, len);
 
@@ -192,7 +192,7 @@ static void sendStreamResposnseData(http2_server_con_state_t *con, http2_server_
     http2_flag flags = kHttP2FlagNone;
     if (UNLIKELY(! stream))
     {
-        bufferpoolResuesBuffer(lineGetBufferPool(con->line), buf);
+        bufferpoolResuesBuffer(getWorkerBufferPool(con->line), buf);
         return;
     }
 
@@ -226,7 +226,7 @@ static bool sendNgHttp2Data(tunnel_t *self, http2_server_con_state_t *con)
 
     if (len > 0)
     {
-        sbuf_t *send_buf = sbufReserveSpace(bufferpoolGetLargeBuffer(lineGetBufferPool(main_line)),len);
+        sbuf_t *send_buf = sbufReserveSpace(bufferpoolGetLargeBuffer(getWorkerBufferPool(main_line)),len);
         sbufSetLength(send_buf, len);
         sbufWrite(send_buf, data, len);
         context_t *response_data = contextCreate(main_line);
@@ -246,7 +246,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
     {
         if (action.buf)
         {
-            bufferpoolResuesBuffer(lineGetBufferPool(action.stream_line), action.buf);
+            bufferpoolResuesBuffer(getWorkerBufferPool(action.stream_line), action.buf);
         }
         lineUnlock(action.stream_line);
         return;
@@ -278,7 +278,7 @@ static void doHttp2Action(const http2_action_t action, http2_server_con_state_t 
                     grpc_message_hd msghd;
                     grpcMessageHdUnpack(&msghd, sbufGetRawPtr(gheader_buf));
                     stream->grpc_bytes_needed = msghd.length;
-                    bufferpoolResuesBuffer(lineGetBufferPool(con->line), gheader_buf);
+                    bufferpoolResuesBuffer(getWorkerBufferPool(con->line), gheader_buf);
                 }
                 if (stream->grpc_bytes_needed > 0 &&
                     bufferstreamLen(stream->grpc_buffer_stream) >= stream->grpc_bytes_needed)

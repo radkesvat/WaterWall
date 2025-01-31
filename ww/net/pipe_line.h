@@ -62,5 +62,5 @@ void pipeOnDownLinePaused(void *state);
 bool pipeSendToUpStream(pipe_line_t *pl, context_t *c);
 bool pipeSendToDownStream(pipe_line_t *pl, context_t *c);
 
-void      pipeTo(tunnel_t *t, line_t *l, tid_t tid);
+void      pipeTo(tunnel_t *t, line_t *l, wid_t tid);
 tunnel_t *newPipeTunnel(tunnel_t *t);

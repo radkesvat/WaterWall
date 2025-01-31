@@ -28,11 +28,11 @@ typedef struct ww_global_state_s
     wloop_t                **shortcut_loops;
     buffer_pool_t          **shortcut_buffer_pools;
     generic_pool_t         **shortcut_context_pools;
-    generic_pool_t         **shortcut_pipeline_msg_pools;
+    generic_pool_t         **shortcut_pipetunnel_msg_pools;
     master_pool_t           *masterpool_buffer_pools_large;
     master_pool_t           *masterpool_buffer_pools_small;
     master_pool_t           *masterpool_context_pools;
-    master_pool_t           *masterpool_pipeline_msg_pools;
+    master_pool_t           *masterpool_pipetunnel_msg_pools;
     worker_t                *workers;
     struct signal_manager_s *signal_manager;
     struct socket_manager_s *socekt_manager;
@@ -65,33 +65,33 @@ extern ww_global_state_t global_ww_state;
 #define WORKERS       global_ww_state.workers
 #define WORKERS_COUNT global_ww_state.workers_count
 
-static inline tid_t getWorkersCount(void)
+static inline wid_t getWorkersCount(void)
 {
     return WORKERS_COUNT;
 }
 
-static inline worker_t *getWorker(tid_t tid)
+static inline worker_t *getWorker(wid_t tid)
 {
     return &(WORKERS[tid]);
 }
 
-static inline buffer_pool_t *getWorkerBufferPool(tid_t tid)
+static inline buffer_pool_t *getWorkerBufferPool(wid_t tid)
 {
     return GSTATE.shortcut_buffer_pools[tid];
 }
 
 
-static inline generic_pool_t *getWorkerContextPool(tid_t tid)
+static inline generic_pool_t *getWorkerContextPool(wid_t tid)
 {
     return GSTATE.shortcut_context_pools[tid];
 }
 
-static inline generic_pool_t *getWorkerPipeLineMsgPool(tid_t tid)
+static inline generic_pool_t *getWorkerPipeTunnelMsgPool(wid_t tid)
 {
-    return GSTATE.shortcut_pipeline_msg_pools[tid];
+    return GSTATE.shortcut_pipetunnel_msg_pools[tid];
 }
 
-static inline struct wloop_s *getWorkerLoop(tid_t tid)
+static inline struct wloop_s *getWorkerLoop(wid_t tid)
 {
     return GSTATE.shortcut_loops[tid];
 }

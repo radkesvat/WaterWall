@@ -136,4 +136,6 @@ static inline void atomicFlagClear(atomic_flag *p)
 #define atomicDec(p) ((*(p))--)
 #endif
 
+#define atomicLoadRelaxed(x) atomicLoadExplicit((x), memory_order_relaxed)
+
 #endif // WW_ATOMIC_H_

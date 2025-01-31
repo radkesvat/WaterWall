@@ -16,7 +16,7 @@ typedef void *tun_handle_t; // Windows handle (void* can hold HANDLE)
 
 struct tun_device_s;
 
-typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, tid_t tid);
+typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t tid);
 
 typedef struct tun_device_s
 {

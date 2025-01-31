@@ -23,11 +23,11 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->fin)
         {
-            const unsigned int tid = c->line->tid;
+            const unsigned int tid = getWID();
             context_t         *fc  = contextSwitchLine(c, dcstate->u);
             cleanup(dcstate);
             state->reverse_cons -= 1;
-            LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", fc->line->tid,
+            LOGD("ReverseClient: disconnected, tid: %d unused: %u active: %d", getWID(),
                  state->threadlocal_pool[tid].unused_cons_count, state->reverse_cons);
             self->up->upStream(self->up, fc);
 
@@ -48,7 +48,7 @@ static void upStream(tunnel_t *self, context_t *c)
 static void downStream(tunnel_t *self, context_t *c)
 {
     reverse_client_state_t *state = TSTATE(self);
-    uint8_t                 tid   = c->line->tid;
+    uint8_t                 tid   = getWID();
 
     if (c->payload != NULL)
     {
@@ -133,7 +133,7 @@ static void downStream(tunnel_t *self, context_t *c)
             initiateConnect(self, tid, false);
 
             ucstate->idle_handle = idleItemNew(state->starved_connections, (hash_t) (size_t)(ucstate), ucstate,
-                                               onStarvedConnectionExpire, c->line->tid,
+                                               onStarvedConnectionExpire, getWID(),
                                                kConnectionStarvationTimeOut);
 
             contextDestroy(c);

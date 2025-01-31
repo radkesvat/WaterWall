@@ -109,7 +109,7 @@ static int onDataChunkRecvCallBack(nghttp2_session *session, uint8_t flags, int3
         return 0;
     }
 
-    sbuf_t *buf = bufferpoolGetLargeBuffer(lineGetBufferPool(con->line));
+    sbuf_t *buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(con->line));
     sbufSetLength(buf, len);
     sbufWrite(buf, data, len);
     lineLock(stream->line);
@@ -195,7 +195,7 @@ static void sendStreamData(http2_client_con_state_t *con, http2_client_child_con
     http2_flag flags = kHttP2FlagNone;
     if (UNLIKELY(! stream))
     {
-        bufferpoolResuesBuffer(lineGetBufferPool(con->line), buf);
+        bufferpoolResuesBuffer(getWorkerBufferPool(con->line), buf);
         return;
     }
 
@@ -238,7 +238,7 @@ static bool sendNgHttp2Data(tunnel_t *self, http2_client_con_state_t *con)
 
     if (len > 0)
     {
-        sbuf_t *send_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(main_line));
+        sbuf_t *send_buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(main_line));
         sbufSetLength(send_buf, len);
         sbufWrite(send_buf, buf, len);
         context_t *data = contextCreate(main_line);
@@ -259,7 +259,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
     {
         if (action.buf)
         {
-            bufferpoolResuesBuffer(lineGetBufferPool(action.stream_line), action.buf);
+            bufferpoolResuesBuffer(getWorkerBufferPool(action.stream_line), action.buf);
         }
         lineUnlock(action.stream_line);
         return;
@@ -293,7 +293,7 @@ static void doHttp2Action(const http2_action_t action, http2_client_con_state_t 
                     grpc_message_hd msghd;
                     grpcMessageHdUnpack(&msghd, sbufGetRawPtr(gheader_buf));
                     stream->grpc_bytes_needed = msghd.length;
-                    bufferpoolResuesBuffer(lineGetBufferPool(con->line), gheader_buf);
+                    bufferpoolResuesBuffer(getWorkerBufferPool(con->line), gheader_buf);
                 }
                 if (stream->grpc_bytes_needed > 0 &&
                     bufferstreamLen(stream->grpc_buffer_stream) >= stream->grpc_bytes_needed)
@@ -392,7 +392,7 @@ static void upStream(tunnel_t *self, context_t *c)
     {
         if (c->init)
         {
-            http2_client_con_state_t       *con    = takeHttp2Connection(self, c->line->tid);
+            http2_client_con_state_t       *con    = takeHttp2Connection(self, getWID());
             http2_client_child_con_state_t *stream = createHttp2Stream(con, c->line);
             CSTATE_MUT(c)                          = stream;
             nghttp2_session_set_stream_user_data(con->session, stream->stream_id, stream);

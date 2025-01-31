@@ -98,7 +98,7 @@ static void downStream(tunnel_t *self, context_t *c)
     contextDestroy(c);
 }
 
-static void onIPPacketReceived(struct raw_device_s *rdev, void *userdata, sbuf_t *buf, tid_t tid)
+static void onIPPacketReceived(struct raw_device_s *rdev, void *userdata, sbuf_t *buf, wid_t tid)
 {
     (void) rdev;
     tunnel_t           *self  = userdata;

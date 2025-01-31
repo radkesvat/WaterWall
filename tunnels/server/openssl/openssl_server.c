@@ -380,7 +380,7 @@ static void upStream(tunnel_t *self, context_t *c)
             cstate               = CSTATE(c);
             cstate->rbio         = BIO_new(BIO_s_mem());
             cstate->wbio         = BIO_new(BIO_s_mem());
-            cstate->ssl          = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
+            cstate->ssl          = SSL_new(state->threadlocal_ssl_context[getWID()]);
             cstate->fallback_buf = bufferstreamCreate(contextGetBufferPool(c));
             SSL_set_accept_state(cstate->ssl); /* sets ssl to work in server mode. */
             SSL_set_bio(cstate->ssl, cstate->rbio, cstate->wbio);

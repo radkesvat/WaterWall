@@ -71,7 +71,7 @@ static void onMsgReceived(wevent_t *ev)
     struct msg_event *msg_ev = weventGetUserdata(ev);
     pipe_line_t      *pl     = msg_ev->pl;
     (*(MsgTargetFunction *) (&(msg_ev->function)))(pl, msg_ev->arg);
-    genericpoolReuseItem(getWorkerPipeLineMsgPool(msg_ev->target_tid), msg_ev);
+    genericpoolReuseItem(getWorkerPipeTunnelMsgPool(msg_ev->target_tid), msg_ev);
     unlock(pl);
 }
 
@@ -84,7 +84,7 @@ static void sendMessage(pipe_line_t *pl, MsgTargetFunction fn, void *arg, uint8_
         return;
     }
     lock(pl);
-    struct msg_event *evdata = genericpoolGetItem(getWorkerPipeLineMsgPool(tid_from));
+    struct msg_event *evdata = genericpoolGetItem(getWorkerPipeTunnelMsgPool(tid_from));
     *evdata = (struct msg_event) {.pl = pl, .function = *(void **) (&fn), .arg = arg, .target_tid = tid_to};
 
     wevent_t ev;
@@ -410,7 +410,7 @@ void pipeUpStreamResume(tunnel_t *self, line_t *line)
 //     setupLineUpSide(pl->left_line, pipeOnDownLinePaused, pl, pipeOnDownLineResumed);
 // }
 
-void pipeTo(tunnel_t *t, line_t *l, tid_t tid)
+void pipeTo(tunnel_t *t, line_t *l, wid_t tid)
 {
     assert(l->up_piped == false);
     assert(l->tid != tid);

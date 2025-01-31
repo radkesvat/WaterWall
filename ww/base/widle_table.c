@@ -69,7 +69,7 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     return newtable;
 }
 
-idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, tid_t tid, uint64_t age_ms)
+idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t tid, uint64_t age_ms)
 {
     assert(self);
     idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
@@ -107,7 +107,7 @@ void idleTableKeepIdleItemForAtleast(widle_table_t *self, idle_item_t *item, uin
     mutexUnlock(&(self->mutex));
 }
 
-idle_item_t *idleTableGetIdleItemByHash(tid_t tid, widle_table_t *self, hash_t key)
+idle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
 
@@ -121,7 +121,7 @@ idle_item_t *idleTableGetIdleItemByHash(tid_t tid, widle_table_t *self, hash_t k
     return (find_result.ref->second);
 }
 
-bool idleTableRemoveIdleItemByHash(tid_t tid, widle_table_t *self, hash_t key)
+bool idleTableRemoveIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);

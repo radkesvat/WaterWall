@@ -230,7 +230,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     // pair is found
                     uint8_t tid_download_line = (*f_iter.ref).second->download_line->tid;
 
-                    if (tid_download_line == c->line->tid)
+                    if (tid_download_line == getWID())
                     {
                         line_t *download_line =
                             ((halfduplex_server_con_state_t *) ((*f_iter.ref).second))->download_line;
@@ -333,7 +333,7 @@ static void upStream(tunnel_t *self, context_t *c)
                     // pair is found
                     uint8_t tid_upload_line = (*f_iter.ref).second->upload_line->tid;
 
-                    if (tid_upload_line == c->line->tid)
+                    if (tid_upload_line == getWID())
                     {
                         halfduplex_server_con_state_t *upload_line_cstate =
                             ((halfduplex_server_con_state_t *) ((*f_iter.ref).second));

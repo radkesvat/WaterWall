@@ -94,14 +94,14 @@ static void destroyTunMsgPoolHandle(master_pool_t *pool, master_pool_item_t *ite
 static void localThreadEventReceived(wevent_t *ev)
 {
     struct msg_event *msg = weventGetUserdata(ev);
-    tid_t             tid = (tid_t) (wloopTID(weventGetLoop(ev)));
+    wid_t             tid = (wid_t) (wloopTID(weventGetLoop(ev)));
 
     msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
 }
 
-static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, sbuf_t *buf)
+static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t *buf)
 {
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
@@ -119,7 +119,7 @@ static void distributePacketPayload(tun_device_t *tdev, tid_t target_tid, sbuf_t
 static WTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 {
     tun_device_t   *tdev           = userdata;
-    tid_t           distribute_tid = 0;
+    wid_t           distribute_tid = 0;
     sbuf_t *buf;
     ssize_t         nread;
 

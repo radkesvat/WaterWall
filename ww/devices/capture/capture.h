@@ -8,7 +8,7 @@
 
 struct capture_device_s;
 
-typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, tid_t tid);
+typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t tid);
 
 typedef struct capture_device_s
 {

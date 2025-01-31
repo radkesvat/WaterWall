@@ -159,9 +159,9 @@ static void upStream(tunnel_t *self, context_t *c)
             CSTATE_MUT(c)          = cstate;
             cstate->rbio           = BIO_new(BIO_s_mem());
             cstate->wbio           = BIO_new(BIO_s_mem());
-            cstate->ssl            = SSL_new(state->threadlocal_ssl_context[c->line->tid]);
-            cstate->cipher_context = state->threadlocal_cipher_context[c->line->tid];
-            cstate->sign_context   = state->threadlocal_sign_context[c->line->tid];
+            cstate->ssl            = SSL_new(state->threadlocal_ssl_context[getWID()]);
+            cstate->cipher_context = state->threadlocal_cipher_context[getWID()];
+            cstate->sign_context   = state->threadlocal_sign_context[getWID()];
             cstate->queue          = contextqueueCreate();
             cstate->msg_digest     = (EVP_MD *) EVP_get_digestbynid(MSG_DIGEST_ALG);
             int sk_size            = EVP_MD_size(cstate->msg_digest);

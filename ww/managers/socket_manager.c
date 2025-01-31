@@ -109,14 +109,14 @@ static void destroyUdpPayloadPoolHandle(generic_pool_t *pool, pool_item_t *item)
 
 void socketacceptresultDestroy(socket_accept_result_t *sar)
 {
-    const tid_t tid = sar->tid;
+    const wid_t tid = sar->tid;
 
     mutexLock(&(state->tcp_pools[tid].mutex));
     genericpoolReuseItem(state->tcp_pools[tid].pool, sar);
     mutexUnlock(&(state->tcp_pools[tid].mutex));
 }
 
-static udp_payload_t *newUpdPayload(tid_t tid)
+static udp_payload_t *newUpdPayload(wid_t tid)
 {
     mutexLock(&(state->udp_pools[tid].mutex));
     udp_payload_t *item = genericpoolGetItem(state->udp_pools[tid].pool);
@@ -126,7 +126,7 @@ static udp_payload_t *newUpdPayload(tid_t tid)
 
 void udppayloadDestroy(udp_payload_t *upl)
 {
-    const tid_t tid = upl->tid;
+    const wid_t tid = upl->tid;
 
     mutexLock(&(state->udp_pools[tid].mutex));
     genericpoolReuseItem(state->udp_pools[tid].pool, upl);
@@ -349,7 +349,7 @@ static inline void incrementDistributeTid(void)
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
 
-    tid_t tid = (uint8_t) getCurrentDistributeTid();
+    wid_t tid = (uint8_t) getCurrentDistributeTid();
 
     mutexLock(&(state->tcp_pools[tid].mutex));
     socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[tid].pool);
@@ -428,7 +428,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
     widle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
-    const uint8_t           this_tid   = state->worker->tid;
+    const uint8_t           this_tid   = state->worker->wid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -735,7 +735,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     widle_table_t           *selected_balance_table           = NULL;
     hash_t                  src_hash;
     bool                    src_hashed = false;
-    const uint8_t           this_tid   = state->worker->tid;
+    const uint8_t           this_tid   = state->worker->wid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -966,14 +966,14 @@ socket_manager_state_t *socketmanagerCreate(void)
 
     worker_t *worker = memoryAllocate(sizeof(worker_t));
 
-    *worker = (worker_t) {.tid = 255};
+    *worker = (worker_t) {.wid = 255};
 
 
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            GSTATE.ram_profile);
 
-    worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->tid);
+    worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->wid);
 
     state->worker = worker;
 
