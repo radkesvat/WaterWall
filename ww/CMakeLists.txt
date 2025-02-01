@@ -289,7 +289,7 @@ endif()
 
 if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 
-  target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/asmlib)
+  target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
   if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
       
     # The override method sometimes fails to call the asmlib function because the compiler uses
