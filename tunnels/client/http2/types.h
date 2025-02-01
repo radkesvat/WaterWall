@@ -26,7 +26,7 @@ typedef struct http2_action_s
 
 #define i_type action_queue_t
 #define i_key  http2_action_t 
-#include "stc/deq.h"
+#include "stc/deque.h"
 
 typedef struct http2_client_child_con_state_s
 {

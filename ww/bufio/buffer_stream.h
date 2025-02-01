@@ -17,7 +17,7 @@
 
 #define i_type queue
 #define i_key sbuf_t *
-#include "stc/deq.h"
+#include "stc/deque.h"
 
 struct buffer_stream_s
 {

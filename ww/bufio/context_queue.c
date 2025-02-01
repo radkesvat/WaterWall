@@ -5,7 +5,7 @@
 
 #define i_type queue_t
 #define i_key context_t *
-#include "stc/deq.h"
+#include "stc/deque.h"
 
 enum
 {
