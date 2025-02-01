@@ -1,0 +1,51 @@
+name: Windows MSVC
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+  
+jobs:
+  build-msvc:
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [3.3.1]
+        # version: [3.0.14, 3.1.6, 3.2.2, 3.3.1] all of them works, but lastest version is enough
+    name: msvc openssl-${{ matrix.version }}
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+    
+      - name: Install dependencies on Windows
+        shell: bash
+        run: |
+          choco install -y jom nasm ccache
+          echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
+
+
+      - name: Configure CMake
+        run: >
+          cmake -B build -G "Visual Studio 17 2022"
+          -DOPENSSL_BUILD_VERBOSE=ON
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          -DCMAKE_BUILD_TYPE=Release
+          -DOPENSSL_TARGET_VERSION=${{ matrix.version }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Show ccache statistics
+        run: ccache -sv
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ runner.arch }}_${{ matrix.c_compiler }}
+          path: ${{ github.workspace }}/build/bin
