@@ -584,13 +584,16 @@ void loggerDestroyDefaultLogger(void)
 void stdoutLogger(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    (void) write(fileno(stdout), buf, len);
+    ssize_t count = write(fileno(stdout), buf, len);
+    (void) count;
 }
 
 void stderrLogger(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    (void) write(fileno(stderr), buf, len);
+    ssize_t count = write(fileno(stderr), buf, len);
+    (void) count;
+
 }
 
 void fileLogger(int loglevel, const char *buf, int len)
