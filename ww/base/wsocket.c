@@ -178,7 +178,7 @@ static int sockaddrBind(sockaddr_u* localaddr, int type) {
     }
 
 #ifdef OS_UNIX
-    so_reuseaddr(sockfd, 1);
+    socketOptionReuseAddr(sockfd, 1);
     // so_reuseport(sockfd, 1);
 #endif
 

@@ -948,7 +948,7 @@ wio_t* wioCreateSocket(wloop_t* loop, const char* host, int port, wio_type_e typ
     wio_t* io = NULL;
     if (side == WIO_SERVER_SIDE) {
 #ifdef OS_UNIX
-        so_reuseaddr(sockfd, 1);
+        socketOptionReuseAddr(sockfd, 1);
         // so_reuseport(sockfd, 1);
 #endif
         if (addr.sa.sa_family == AF_INET6) {

@@ -88,7 +88,7 @@ static void upStream(tunnel_t *self, context_t *c)
             }
 
 #ifdef OS_UNIX
-            so_reuseaddr(sockfd, 1);
+            socketOptionReuseAddr(sockfd, 1);
 #endif
             sockaddr_u addr;
 
