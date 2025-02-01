@@ -213,7 +213,7 @@ static int sockaddrConnect(sockaddr_u* peeraddr, int nonblock) {
 #ifdef OS_WIN
     if (ret < 0 && socketERRNO() != WSAEWOULDBLOCK) {
 #else
-    if (ret < 0 && socket_errno() != EINPROGRESS) {
+    if (ret < 0 && socketERRNO() != EINPROGRESS) {
 #endif
         // printError("connect");
         goto error;

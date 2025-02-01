@@ -313,13 +313,13 @@ try_send:
     }
     //printd("write retval=%d\n", nwrite);
     if (nwrite < 0) {
-        if (socket_errno() == EAGAIN) {
+        if (socketERRNO() == EAGAIN) {
             nwrite = 0;
             goto WSASend;
         }
         else {
             printError("write");
-            io->error = socket_errno();
+            io->error = socketERRNO();
             goto write_error;
         }
     }

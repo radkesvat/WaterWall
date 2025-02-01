@@ -18,7 +18,7 @@ static void fillIoType(wio_t* io) {
     int type = 0;
     socklen_t optlen = sizeof(int);
     int ret = getsockopt(io->fd, SOL_SOCKET, SO_TYPE, (char*)&type, &optlen);
-    printd("getsockopt SO_TYPE fd=%d ret=%d type=%d errno=%d\n", io->fd, ret, type, socket_errno());
+    printd("getsockopt SO_TYPE fd=%d ret=%d type=%d errno=%d\n", io->fd, ret, type, socketERRNO());
     if (ret == 0) {
         switch (type) {
         case SOCK_STREAM: io->io_type = WIO_TYPE_TCP; break;
@@ -58,12 +58,12 @@ static void wioSocketInit(wio_t* io) {
     socklen_t addrlen = sizeof(sockaddr_u);
     int ret = getsockname(io->fd, io->localaddr, &addrlen);
     (void)ret;
-    printd("getsockname fd=%d ret=%d errno=%d\n", io->fd, ret, socket_errno());
+    printd("getsockname fd=%d ret=%d errno=%d\n", io->fd, ret, socketERRNO());
     // NOTE: udp peeraddr set by recvfrom/sendto
     if (io->io_type & WIO_TYPE_SOCK_STREAM) {
         addrlen = sizeof(sockaddr_u);
         ret = getpeername(io->fd, io->peeraddr, &addrlen);
-        printd("getpeername fd=%d ret=%d errno=%d\n", io->fd, ret, socket_errno());
+        printd("getpeername fd=%d ret=%d errno=%d\n", io->fd, ret, socketERRNO());
     }
 }
 

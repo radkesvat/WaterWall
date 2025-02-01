@@ -368,7 +368,7 @@ int wioConnect(wio_t* io) {
 #ifdef OS_WIN
     if (ret < 0 && socketERRNO() != WSAEWOULDBLOCK) {
 #else
-    if (ret < 0 && socket_errno() != EINPROGRESS) {
+    if (ret < 0 && socketERRNO() != EINPROGRESS) {
 #endif
         printError("connect");
         io->error = socketERRNO();
