@@ -126,12 +126,11 @@ WW_EXPORT bool stringContains(const char *str, const char *sub);
 WW_EXPORT bool stringWildCardMatch(const char *str, const char *pattern);
 
 
-// strncat n = sizeof(dest_buf)-1-strlen(dest)
-// stringCopyN n = sizeof(dest_buf)
-WW_EXPORT char *stringCat(char *dest, const char *src, size_t n);
 
 #if HAVE_STRLCPY
+
 #define stringCopyN strlcpy
+
 #else
 
 // strncpy n = sizeof(dest_buf)-1
@@ -140,8 +139,18 @@ WW_EXPORT char *stringCopyN(char *dest, const char *src, size_t n);
 
 #endif
 
+
+
 #if HAVE_STRLCAT
+
 #define stringCat strlcat
+
+#else
+
+// strncat n = sizeof(dest_buf)-1-strlen(dest)
+// stringCopyN n = sizeof(dest_buf)
+WW_EXPORT char *stringCat(char *dest, const char *src, size_t n);
+
 #endif
 
 WW_EXPORT char *stringChr(const char *s, char c, size_t n);

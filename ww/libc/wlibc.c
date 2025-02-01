@@ -92,6 +92,8 @@ char* stringCopyN(char* dest, const char* src, size_t n) {
 }
 #endif
 
+#if! HAVE_STRLCAT
+
 // n = sizeof(dest_buf)
 char* stringCat(char* dest, const char* src, size_t n) {
     assert(dest != NULL && src != NULL);
@@ -106,6 +108,8 @@ char* stringCat(char* dest, const char* src, size_t n) {
     *dest = '\0';
     return ret;
 }
+
+#endif
 
 bool stringStartsWith(const char* str, const char* start) {
     assert(str != NULL && start != NULL);
