@@ -419,7 +419,7 @@ static inline int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *
     char *slash;
     char *ip_part;
     char *subnet_part;
-    char  input_copy[strlen(input) + 1];
+    char  input_copy[100];
     strcpy(input_copy, input);
 
     slash = strchr(input_copy, '/');

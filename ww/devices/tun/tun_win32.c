@@ -1,5 +1,5 @@
 #include "wintun.h"
-#include <Windows.h>
+#include "wplatform.h"
 #include <ip2string.h>
 #include <iphlpapi.h>
 #include <mstcpip.h>

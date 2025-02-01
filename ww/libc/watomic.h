@@ -2,10 +2,157 @@
 #define WW_ATOMIC_H_
 
 #include "wplatform.h" // for HAVE_STDATOMIC_H
+
 #if HAVE_STDATOMIC_H
 
 // c11
 #include <stdatomic.h>
+
+#elif defined(OS_WIN)
+
+
+#include <stddef.h>
+#include <stdint.h>
+
+
+#define ATOMIC_FLAG_INIT 0
+
+#define ATOMIC_VAR_INIT(value) (value)
+
+#define atomic_init(obj, value)                                                                                        \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        *(obj) = (value);                                                                                              \
+    } while (0)
+
+#define kill_dependency(y) ((void) 0)
+
+#define atomic_thread_fence(order) MemoryBarrier();
+
+#define atomic_signal_fence(order) ((void) 0)
+
+#define atomic_is_lock_free(obj) 0
+
+typedef intptr_t atomic_flag;
+typedef intptr_t atomic_bool;
+typedef intptr_t atomic_char;
+typedef intptr_t atomic_schar;
+typedef intptr_t atomic_uchar;
+typedef intptr_t atomic_short;
+typedef intptr_t atomic_ushort;
+typedef intptr_t atomic_int;
+typedef intptr_t atomic_uint;
+typedef intptr_t atomic_long;
+typedef intptr_t atomic_ulong;
+typedef intptr_t atomic_llong;
+typedef intptr_t atomic_ullong;
+typedef intptr_t atomic_wchar_t;
+typedef intptr_t atomic_int_least8_t;
+typedef intptr_t atomic_uint_least8_t;
+typedef intptr_t atomic_int_least16_t;
+typedef intptr_t atomic_uint_least16_t;
+typedef intptr_t atomic_int_least32_t;
+typedef intptr_t atomic_uint_least32_t;
+typedef intptr_t atomic_int_least64_t;
+typedef intptr_t atomic_uint_least64_t;
+typedef intptr_t atomic_int_fast8_t;
+typedef intptr_t atomic_uint_fast8_t;
+typedef intptr_t atomic_int_fast16_t;
+typedef intptr_t atomic_uint_fast16_t;
+typedef intptr_t atomic_int_fast32_t;
+typedef intptr_t atomic_uint_fast32_t;
+typedef intptr_t atomic_int_fast64_t;
+typedef intptr_t atomic_uint_fast64_t;
+typedef intptr_t atomic_intptr_t;
+typedef intptr_t atomic_uintptr_t;
+typedef intptr_t atomic_size_t;
+typedef intptr_t atomic_ptrdiff_t;
+typedef intptr_t atomic_intmax_t;
+typedef intptr_t atomic_uintmax_t;
+
+#define _Atomic(x) intptr_t
+
+#define atomic_store(object, desired)                                                                                  \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        *(object) = (desired);                                                                                         \
+        MemoryBarrier();                                                                                               \
+    } while (0)
+
+#define atomic_store_explicit(object, desired, order) atomic_store(object, desired)
+
+#define atomic_load(object) (MemoryBarrier(), *(object))
+
+#define atomic_load_explicit(object, order) atomic_load(object)
+
+#define atomic_exchange(object, desired) InterlockedExchangePointer((PVOID volatile *) object, (PVOID) desired)
+
+#define atomic_exchange_explicit(object, desired, order) atomic_exchange(object, desired)
+
+static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *expected, intptr_t desired)
+{
+    intptr_t old = *expected;
+    *expected    = (intptr_t) InterlockedCompareExchangePointer((PVOID *) object, (PVOID) desired, (PVOID) old);
+    return *expected == old;
+}
+
+#define atomic_compare_exchange_strong_explicit(object, expected, desired, success, failure)                           \
+    atomic_compare_exchange_strong(object, expected, desired)
+
+#define atomic_compare_exchange_weak(object, expected, desired)                                                        \
+    atomic_compare_exchange_strong(object, expected, desired)
+
+#define atomic_compare_exchange_weak_explicit(object, expected, desired, success, failure)                             \
+    atomic_compare_exchange_weak(object, expected, desired)
+
+#ifdef _WIN64
+
+#define atomic_fetch_add(object, operand) InterlockedExchangeAdd64(object, operand)
+
+#define atomic_fetch_sub(object, operand) InterlockedExchangeAdd64(object, -(operand))
+
+#define atomic_fetch_or(object, operand) InterlockedOr64(object, operand)
+
+#define atomic_fetch_xor(object, operand) InterlockedXor64(object, operand)
+
+#define atomic_fetch_and(object, operand) InterlockedAnd64(object, operand)
+#else
+
+#define atomic_fetch_add(object, operand) InterlockedExchangeAdd(object, operand)
+
+#define atomic_fetch_sub(object, operand) InterlockedExchangeAdd(object, -(operand))
+
+#define atomic_fetch_or(object, operand) InterlockedOr(object, operand)
+
+#define atomic_fetch_xor(object, operand) InterlockedXor(object, operand)
+
+#define atomic_fetch_and(object, operand) InterlockedAnd(object, operand)
+
+#endif /* _WIN64 */
+
+#define atomic_fetch_add_explicit(object, operand, order) atomic_fetch_add(object, operand)
+
+#define atomic_fetch_sub_explicit(object, operand, order) atomic_fetch_sub(object, operand)
+
+#define atomic_fetch_or_explicit(object, operand, order) atomic_fetch_or(object, operand)
+
+#define atomic_fetch_xor_explicit(object, operand, order) atomic_fetch_xor(object, operand)
+
+#define atomic_fetch_and_explicit(object, operand, order) atomic_fetch_and(object, operand)
+
+#define atomic_flag_test_and_set(object) atomic_exchange(object, 1)
+
+#define atomic_flag_test_and_set_explicit(object, order) atomic_flag_test_and_set(object)
+
+#define atomic_flag_clear(object) atomic_store(object, 0)
+
+#define atomic_flag_clear_explicit(object, order) atomic_flag_clear(object)
+
+#else
+
+#error "Cannot define atomic operations"
+
+#endif
 
 #define atomicAdd    atomic_fetch_add
 #define atomicLoad   atomic_load
@@ -27,115 +174,7 @@
 #define atomicFlagTestAndSet atomic_flag_test_and_set
 #define atomicFlagClear      atomic_flag_clear
 
-#else
-typedef volatile bool               atomic_bool;
-typedef volatile char               atomic_char;
-typedef volatile unsigned char      atomic_uchar;
-typedef volatile short              atomic_short;
-typedef volatile unsigned short     atomic_ushort;
-typedef volatile int                atomic_int;
-typedef volatile unsigned int       atomic_uint;
-typedef volatile long               atomic_long;
-typedef volatile unsigned long      atomic_ulong;
-typedef volatile long long          atomic_llong;
-typedef volatile unsigned long long atomic_ullong;
-typedef volatile size_t             atomic_size_t;
 
-typedef struct atomic_flag
-{
-    atomic_bool _Value;
-} atomic_flag;
-
-#ifdef _WIN32
-
-static inline bool atomicFlagTestAndSet(atomic_flag *p)
-{
-    // return InterlockedIncrement((LONG*)&p->_Value, 1);
-    return InterlockedCompareExchange((LONG *) &p->_Value, 1, 0);
-}
-
-#define atomicAdd       InterlockedAdd
-#define atomicSub(p, n) InterlockedAdd(p, -n)
-
-#define atomicInc InterlockedIncrement
-#define atomicDec InterlockedDecrement
-
-#define atomicCompareExchange         InterlockedCompareExchange
-#define atomicCompareExchangeExplicit atomicCompareExchange
-
-#elif defined(__GNUC__)
-
-static inline bool atomicFlagTestAndSet(atomic_flag *p)
-{
-    return ! __sync_bool_compare_and_swap(&p->_Value, 0, 1);
-}
-
-#define atomicAdd    __sync_fetch_and_add
-#define atomicSub    __sync_fetch_and_sub
-#define atomicInc(p) atomicAdd(p, 1)
-#define atomicDec(p) atomicSub(p, 1)
-
-#endif
-
-#define atomicLoad(x)     (x)
-#define atomicStore(X, y) (x) = (y)
-
-#define atomicAddExplicit(X, y, z)   atomicAdd((X), (y))
-#define atomicLoadExplicit(X, y, z)  atomicLoad((X), (y))
-#define atomicStoreExplicit(X, y, z) atomicStore((X), (y))
-
-#define atomicSubExplicit(X, y, z) atomicSub((X), (y))
-#define atomicIncExplicit(p, x)    atomicAddExplicit(p, x, 1)
-#define atomicDecExplicit(p, x)    atomicSubExplicit(p, x, 1)
-
-static inline bool atomicFlagClear(atomic_flag *p)
-{
-    p->_Value = 0;
-}
-
-#endif // HAVE_STDATOMIC_H
-
-#ifndef ATOMIC_FLAG_INIT
-#define ATOMIC_FLAG_INIT                                                                                               \
-    {                                                                                                                  \
-        0                                                                                                              \
-    }
-#endif
-
-#ifndef atomic_fetch_sub_explicit
-#define atomic_fetch_sub_explicit atomic_fetch_sub_explicit
-static inline bool atomic_fetch_sub_explicit(atomic_flag *p)
-{
-    bool ret  = p->_Value;
-    p->_Value = 1;
-    return ret;
-}
-#endif
-
-#ifndef atomicFlagClear
-#define atomicFlagClear atomicFlagClear
-static inline void atomicFlagClear(atomic_flag *p)
-{
-    p->_Value = 0;
-}
-#endif
-
-#ifndef atomicAdd
-#define atomicAdd(p, n) (*(p) += (n))
-#endif
-
-#ifndef atomicSubExplicit
-#define atomicSubExplicit(p, n) (*(p) -= (n))
-#endif
-
-#ifndef atomicAdd
-#define atomicAdd(p) ((*(p))++)
-#endif
-
-#ifndef atomicDec
-#define atomicDec(p) ((*(p))--)
-#endif
-
-#define atomicLoadRelaxed(x) atomicLoadExplicit((x), memory_order_relaxed)
+#define atomicLoadRelaxed(x) atomic_load_explicit((x), memory_order_relaxed)
 
 #endif // WW_ATOMIC_H_

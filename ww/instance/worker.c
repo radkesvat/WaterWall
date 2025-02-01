@@ -8,7 +8,7 @@
 
 
 
-_Thread_local wid_t tl_wid;
+thread_local wid_t tl_wid;
 
 void workerInit(worker_t *worker, wid_t wid)
 {

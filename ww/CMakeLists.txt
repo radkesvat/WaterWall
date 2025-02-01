@@ -77,6 +77,14 @@ add_library(ww STATIC
 
 )
 
+# Enforce C11 for this specific target
+set_target_properties(ww 
+    PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
+
 if(LINUX)
   target_sources(ww PRIVATE devices/tun/tun_linux.c)
   target_sources(ww PRIVATE devices/raw/raw_linux.c)
@@ -84,8 +92,9 @@ if(LINUX)
 endif()
 
 
-
 if(WIN32)
+    set(WITH_WEPOLL    1)
+
     if(WITH_WEPOLL)
       target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)
       target_sources(ww PRIVATE event/wepoll/wepoll.c)
@@ -337,12 +346,12 @@ target_compile_definitions(ww PUBLIC WW_STATICLIB)
 
 
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-  message( FATAL_ERROR
-   "MSVC compiler is not supported"
-   "on windows you can still use GCC or CLANG to compile."
-   )
-endif()
+# if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+#   message( FATAL_ERROR
+#    "MSVC compiler is not supported"
+#    "on windows you can still use GCC or CLANG to compile."
+#    )
+# endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   target_link_options(ww PUBLIC -s)
@@ -406,8 +415,6 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 
   endif()
 
-
-
 endif()
 
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
@@ -416,6 +423,9 @@ target_compile_definitions(ww PUBLIC WW_AVX=1)
 target_compile_options(ww PUBLIC -mavx)
 
 endif()
+
+if (NOT CMAKE_CXX_COMPILER_ID  STREQUAL "MSVC")
+
 
 target_compile_options(ww PUBLIC 
                                   -Wall 
@@ -435,9 +445,17 @@ target_compile_options(ww PUBLIC
                                   # -Wcast-align    todo (fix code to enable this if possible...)
 
 )
+target_compile_options(ww PUBLIC -Wno-unused-function)
+
+endif()
+
+# Ensure MSVC uses C11
+# if (MSVC)
+#     target_compile_options(ww  PUBLIC /std:c11)
+# endif()
+
 
 # disabled warnings: only unused functions
-target_compile_options(ww PUBLIC -Wno-unused-function)
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 

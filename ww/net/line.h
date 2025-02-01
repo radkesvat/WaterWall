@@ -35,7 +35,11 @@ typedef struct line_s
     generic_pool_t      *pool;
     // pipe_line_t     *pipe;
 
-    uintptr_t *tunnels_line_state[] __attribute__((aligned(kCpuLineCacheSize)));
+#ifdef COMPILER_MSVC
+    ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[];
+#else
+    uintptr_t *tunnels_line_state[] ATTR_ALIGNED_LINE_CACHE;
+#endif
 
 } line_t;
 

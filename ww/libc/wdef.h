@@ -271,23 +271,17 @@ ASCII:
 
 // **** Cache & Optimization ****
 
-#if defined(__GNUC__) || defined(__clang__) || defined(__IBMC__) || defined(__IBMCPP__) || defined(__COMPCERT__)
+#if ! defined (COMPILER_MSVC)
 
 #define LIKELY(x)   __builtin_expect(x, 1)
 #define UNLIKELY(x) __builtin_expect(x, 0)
 
 #else
 
-#define LIKELY(x)   (v)
-#define UNLIKELY(x) (v)
+#define LIKELY(x)   (x)
+#define UNLIKELY(x) (x)
 #endif
 
-
-#define ATTR_ALIGNED_LINE_CACHE __attribute__((aligned(kCpuLineCacheSize)))
-
-#define MUSTALIGN2(n, w) assert(((w) & ((w) -1)) == 0); /* alignment w is not a power of two */
-
-#define ALIGN2(n, w) (((n) + ((w) -1)) & ~((w) -1))
 
 
 /*
@@ -307,15 +301,78 @@ enum
     kCpuLineCacheSize = 64
 #endif
         ,
-
-    kCpuLineCacheSizeMin1 = kCpuLineCacheSize - 1
+    kCpuLineCacheSizeMin1 = (kCpuLineCacheSize - 1)
 };
+
+// one more time for msvc
+#if defined(__i386__) || defined(__x86_64__)
+#define    CPULINECACHESIZE  64
+#elif defined(__arm__) || defined(__aarch64__)
+#define    CPULINECACHESIZE 64
+#elif defined(__powerpc64__)
+#define    CPULINECACHESIZE 128
+#else
+#define    CPULINECACHESIZE 64
+#endif
+
+#define  CPULINECACHESIZEMIN1 (kCpuLineCacheSize - 1)
+
+
+#ifdef COMPILER_MSVC
+
+#define ATTR_ALIGNED_LINE_CACHE __declspec(align(CPULINECACHESIZE))
+#define ATTR_ALIGNED_16 __declspec(align(16))
+
+#else
+
+#define ATTR_ALIGNED_LINE_CACHE __attribute__((aligned(kCpuLineCacheSize)))
+#define ATTR_ALIGNED_16 __attribute__((aligned(16)))
+
+#endif
+
+
+#define MUSTALIGN2(n, w) assert(((w) & ((w) -1)) == 0); /* alignment w is not a power of two */
+
+#define ALIGN2(n, w) (((n) + ((w) -1)) & ~((w) -1))
+
 
 
 #define memorySet     memset
 #define memoryMove    memmove
 #define memoryCopy    memcpy
 #define memoryCompare memcmp
+
+
+#ifndef thread_local
+#if __STDC_VERSION__ >= 201112 && ! defined __STDC_NO_THREADS__
+#define thread_local _Thread_local
+#elif defined _WIN32 && (defined _MSC_VER || defined __ICL || defined __DMC__ || defined __BORLANDC__)
+#define thread_local __declspec(thread)
+/* note that ICC (linux) and Clang are covered by __GNUC__ */
+#elif defined __GNUC__ || defined __SUNPRO_C || defined __hpux || defined __xlC__
+#define thread_local __thread
+#else
+#error "Cannot define thread_local"
+#endif
+#endif
+
+#ifdef COMPILER_MSVC
+
+#define STDIN_FILENO   _fileno(stdin)
+#define STDOUT_FILENO  _fileno(stdout)
+#define STDERR_FILENO  _fileno(stderr)
+
+#if !defined(ssize_t)
+    // Define ssize_t for Windows (MSVC)
+    #ifdef _WIN64
+        typedef __int64 ssize_t;  // 64-bit Windows
+    #else
+        typedef int ssize_t;      // 32-bit Windows
+    #endif
+#endif
+
+#endif
+
 
 
 #endif // WW_DEF_H_

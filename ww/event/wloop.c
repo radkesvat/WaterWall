@@ -424,7 +424,7 @@ void wloopDestroy(wloop_t** pp) {
 }
 
 #ifdef DEBUG
-_Thread_local wtimer_t* _loop_debug_timer = NULL;
+thread_local wtimer_t* _loop_debug_timer = NULL;
 #endif
 
 // while (loop->status) { wloopProcessEvents(loop); }

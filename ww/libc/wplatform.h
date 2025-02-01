@@ -64,9 +64,8 @@
 #endif
 
 // COMPILER
-#if defined (_MSC_VER) && ! defined(__clang__)
+#if defined (_MSC_VER)
 #define COMPILER_MSVC
-#error "we do not support msvc, because dose not have stdatomic, use clang or gcc"
 
 #if (_MSC_VER < 1200) // Visual C++ 6.0
 #define MSVS_VERSION    1998
@@ -118,6 +117,8 @@
 #pragma warning (disable: 4267) // size_t => int
 #pragma warning (disable: 4819) // Unicode
 #pragma warning (disable: 4996) // _CRT_SECURE_NO_WARNINGS
+#pragma warning(disable : 5105) // macro expansion producing 'defined' has undefined behavior
+#pragma warning(disable : 4133) // incompatible types - from 'long *' to 'intptr_t *'
 
 #elif defined(__GNUC__)
 #define COMPILER_GCC
@@ -158,6 +159,16 @@
     #endif
     #include <winsock2.h>
     #include <ws2tcpip.h>   // for inet_pton,inet_ntop
+
+        // When building with MSVC 19.28.29333.0 on Windows 10 (as of 2020-11-11),
+    // there appears to be a problem with winbase.h (which is included by
+    // Windows.h).  In particular, warnings of the form:
+    //
+    // warning C5105: macro expansion producing 'defined' has undefined behavior
+    //
+    // See https://developercommunity.visualstudio.com/content/problem/695656/wdk-and-sdk-are-not-compatible-with-experimentalpr.html
+    // for more information.  For now disable that warning when including windows.h
+
     #include <windows.h>
     #include <process.h>    // for getpid,exec
     #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
@@ -272,7 +283,6 @@
 #include <math.h>
 #include <signal.h>
 
-#ifndef __cplusplus
 #if HAVE_STDBOOL_H
 #include <stdbool.h>
 #else
@@ -287,7 +297,6 @@
     #ifndef false
     #define false 0
     #endif
-#endif
 #endif
 
 #if HAVE_STDINT_H

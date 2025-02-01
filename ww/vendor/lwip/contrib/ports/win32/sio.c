@@ -36,6 +36,7 @@
 #include <stdarg.h>
 
 #ifdef _MSC_VER
+#pragma warning (disable : 5105)
 #pragma warning (push, 3)
 #endif
 #include <windows.h>

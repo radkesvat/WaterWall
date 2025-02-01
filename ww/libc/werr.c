@@ -1,5 +1,6 @@
 #include "werr.h"
 #include "wplatform.h"
+#include "wdef.h"
 #include <string.h> // for strerror
 
 // errcode => errmsg
@@ -8,7 +9,7 @@ const char* errorCodeToString(int err) {
 #if defined(OS_UNIX)
         return strerror(err);
 #else
-        static _Thread_local char errmsg[100];
+        static thread_local char errmsg[100];
         strerror_s(errmsg, sizeof(errmsg), err);
         return errmsg;
 #endif

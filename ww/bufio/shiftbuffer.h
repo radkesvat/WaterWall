@@ -20,8 +20,11 @@ struct sbuf_s
     uint32_t len;
     uint32_t capacity;
     uint16_t l_pad;
-
-    uint8_t buf[] __attribute__((aligned(16)));
+#ifdef COMPILER_MSVC
+    ATTR_ALIGNED_16 uint8_t buf[];
+#else
+    uint8_t buf[] ATTR_ALIGNED_16;
+#endif
 };
 
 typedef struct sbuf_s sbuf_t;
@@ -242,7 +245,6 @@ static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict cons
     assert(sbufGetRightCapacity(to) >= length);
 
     memoryCopy128(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
-
 }
 
 /**

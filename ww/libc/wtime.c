@@ -76,7 +76,7 @@ datetime_t datetimeNow(void) {
 }
 
 datetime_t datetimeLocalTime(time_t seconds) {
-    static _Thread_local  struct tm tm;
+    static thread_local  struct tm tm;
 #ifdef OS_UNIX
     localtime_r(&seconds,&tm);
 #else
@@ -96,7 +96,7 @@ time_t datetimeMkTime(datetime_t* dt) {
     struct tm tm;
     time_t ts;
     time(&ts);
-    static _Thread_local  struct tm ptm;
+    static thread_local  struct tm ptm;
 #ifdef OS_UNIX
     localtime_r(&ts,&ptm);
 #else
@@ -248,7 +248,7 @@ time_t cronNextTimeout(int minute, int hour, int day, int week, int month) {
     } period_type = MINUTELY;
     time_t tt;
     time(&tt);
-    static _Thread_local  struct tm tm;
+    static thread_local  struct tm tm;
 #ifdef OS_UNIX
     localtime_r(&tt,&tm);
 #else

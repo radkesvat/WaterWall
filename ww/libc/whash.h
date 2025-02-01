@@ -42,11 +42,14 @@ static inline hash_t calcHashBytesSeed(const void *data, size_t len, uint64_t se
 #elif WHASH_ALG == KOMI_HASH
 
 // Komi-Hash
-
+#ifndef COMPILER_MSVC
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic" // int128 is not iso c (already macro guarded, no worries)
 #include "komihash.h"
 #pragma GCC diagnostic pop
+#else
+#include "komihash.h"
+#endif
 
 static inline hash_t calcHashBytesSeed(const void *data, size_t len, uint64_t seed)
 {

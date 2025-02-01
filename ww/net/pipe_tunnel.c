@@ -10,8 +10,8 @@ typedef struct pipetunnel_line_state_s
 {
     atomic_int    refc;
     atomic_bool   closed;
-    _Atomic wid_t left_wid;
-    _Atomic wid_t right_wid;
+    _Atomic(wid_t) left_wid;
+    _Atomic(wid_t) right_wid;
     bool          active;
     bool          left_open;
     bool          right_open;

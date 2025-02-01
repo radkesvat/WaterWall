@@ -41,6 +41,7 @@
 #include <stdio.h>
 
 #ifdef _MSC_VER
+#pragma warning (disable : 5105)
 #pragma warning( push, 3 )
 #include "pcap.h"
 #pragma warning ( pop )

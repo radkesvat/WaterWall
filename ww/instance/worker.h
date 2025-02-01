@@ -4,9 +4,11 @@
 #include "wlibc.h"
 #include "wloop.h"
 #include "wthread.h"
+#include "watomic.h"
 
 
 typedef uint8_t wid_t;
+typedef _Atomic(wid_t) atomic_uint8_t;
 
 typedef struct worker_s
 {
@@ -19,7 +21,7 @@ typedef struct worker_s
 
 } worker_t;
 
-extern _Thread_local wid_t tl_wid;
+extern thread_local wid_t tl_wid;
 
 void workerInit(worker_t *worker, wid_t tid);
 void workerRun(worker_t *worker);

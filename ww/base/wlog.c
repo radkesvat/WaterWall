@@ -61,7 +61,7 @@ logger_t *loggerCreate(void)
 {
     // init gmtoff here
     time_t                         ts = time(NULL);
-    static _Thread_local struct tm local_tm;
+    static thread_local struct tm local_tm;
 #ifdef OS_UNIX
     localtime_r(&ts, &local_tm);
 #else
@@ -278,7 +278,7 @@ const char *loggerSetCurrentFile(logger_t *logger)
 
 static void logfile_name(const char *filepath, time_t ts, char *buf, int len)
 {
-    static _Thread_local struct tm tm;
+    static thread_local struct tm tm;
 #ifdef OS_UNIX
     localtime_r(&ts, &tm);
 #else
@@ -429,7 +429,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     us    = tm.wMilliseconds * 1000;
 #else
     struct timeval                 tv;
-    static _Thread_local struct tm tm;
+    static thread_local struct tm tm;
     getTimeOfDay(&tv, NULL);
     time_t tt = tv.tv_sec;
     localtime_r(&tt, &tm);

@@ -47,6 +47,9 @@ struct widle_item_s
     bool           removed;
 };
 
+
+
+
 widle_table_t *idleTableCreate(wloop_t *loop);
 void          idleTableDestroy(widle_table_t *self);
 

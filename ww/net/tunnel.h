@@ -1,12 +1,13 @@
 #pragma once
 #include "buffer_pool.h"
-#include "generic_pool.h"
+#include "chain.h"
 #include "connection_context.h"
+#include "generic_pool.h"
+#include "shiftbuffer.h"
 #include "wlibc.h"
 #include "wloop.h"
-#include "chain.h"
-#include "shiftbuffer.h"
 #include "worker.h"
+
 
 /*
     Tunnels basicly encapsulate / decapsulate the packets and pass it to the next tunnel.
@@ -35,7 +36,6 @@
 
 */
 
-
 typedef struct node_s         node_t;
 typedef struct tunnel_s       tunnel_t;
 typedef struct line_s         line_t;
@@ -45,7 +45,7 @@ typedef struct tunnel_array_s tunnel_array_t;
 typedef void (*LineFlowSignal)(void *state);
 typedef void (*TunnelStatusCb)(tunnel_t *);
 typedef void (*TunnelChainFn)(tunnel_t *, tunnel_chain_t *info);
-typedef void (*TunnelIndexFn)(tunnel_t *, tunnel_array_t *arr, uint16_t* index, uint16_t* mem_offset);
+typedef void (*TunnelIndexFn)(tunnel_t *, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
 typedef void (*TunnelFlowRoutineInit)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutinePayload)(tunnel_t *, line_t *line, sbuf_t *payload);
 typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
@@ -104,8 +104,11 @@ struct tunnel_s
     node_t         *node;
     tunnel_chain_t *chain;
 
-
-    uint8_t state[] __attribute__((aligned(kCpuLineCacheSize)));
+#ifdef COMPILER_MSVC
+    ATTR_ALIGNED_LINE_CACHE uint8_t state[];
+#else
+    uint8_t state[] ATTR_ALIGNED_LINE_CACHE;
+#endif
 };
 
 tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size);
@@ -139,17 +142,17 @@ void tunnelDefaultOnStart(tunnel_t *t);
 // void pipeUpStream(context_t *c);
 // void pipeDownStream(context_t *c);
 
-static void* tunnelGetState(tunnel_t *self)
+static void *tunnelGetState(tunnel_t *self)
 {
     return &(self->state[0]);
 }
 
-static tunnel_chain_t* tunnelGetChain(tunnel_t *self)
+static tunnel_chain_t *tunnelGetChain(tunnel_t *self)
 {
     return self->chain;
 }
 
-static node_t* tunnelGetNode(tunnel_t *self)
+static node_t *tunnelGetNode(tunnel_t *self)
 {
     return self->node;
 }
@@ -173,7 +176,3 @@ static uint16_t tunnelGetCorrectAllignedLineStateSize(uint16_t size)
 {
     return (size + kCpuLineCacheSize - 1) & ~(kCpuLineCacheSize - 1);
 }
-
-
-
-

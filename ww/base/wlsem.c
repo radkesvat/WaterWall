@@ -1,4 +1,5 @@
 #include "wmutex.h"
+#include "wplatform.h"
 #include "wlibc.h"
 
 // This implementation is based on of Jeff Preshing's "lightweight semaphore"
@@ -26,7 +27,7 @@
 // #define USE_UNIX_SEMA
 
 #if defined(_WIN32) && !defined(USE_UNIX_SEMA)
-#include <windows.h>
+
 #undef min
 #undef max
 #elif defined(__MACH__) && !defined(USE_UNIX_SEMA)

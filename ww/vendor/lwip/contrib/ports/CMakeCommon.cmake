@@ -125,6 +125,6 @@ if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         $<$<CONFIG:Debug>:/Od>
         $<$<CONFIG:Release>:/Ox>
         /W4
-        /WX
+        /WX  #Radkesvat: This is too strict for lwIP, it will not compile
     )
 endif()

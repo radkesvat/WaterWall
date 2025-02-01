@@ -16,7 +16,7 @@
 #endif
 
 #ifndef HAVE_STDATOMIC_H
-#define HAVE_STDATOMIC_H 1
+#define HAVE_STDATOMIC_H 0
 #endif
 
 #ifndef HAVE_SYS_TYPES_H
@@ -28,7 +28,7 @@
 #endif
 
 #ifndef HAVE_SYS_TIME_H
-#define HAVE_SYS_TIME_H 1
+#define HAVE_SYS_TIME_H 0
 #endif
 
 #ifndef HAVE_FCNTL_H
@@ -36,7 +36,7 @@
 #endif
 
 #ifndef HAVE_PTHREAD_H
-#define HAVE_PTHREAD_H 1
+#define HAVE_PTHREAD_H 0
 #endif
 
 #ifndef HAVE_ENDIAN_H
@@ -60,23 +60,23 @@
 #endif
 
 #ifndef HAVE_CLOCK_GETTIME
-#define HAVE_CLOCK_GETTIME 1
+#define HAVE_CLOCK_GETTIME 0
 #endif
 
 #ifndef HAVE_GETTIMEOFDAY
-#define HAVE_GETTIMEOFDAY 1
+#define HAVE_GETTIMEOFDAY 0
 #endif
 
 #ifndef HAVE_PTHREAD_SPIN_LOCK
-#define HAVE_PTHREAD_SPIN_LOCK 1
+#define HAVE_PTHREAD_SPIN_LOCK 0
 #endif
 
 #ifndef HAVE_PTHREAD_MUTEX_TIMEDLOCK
-#define HAVE_PTHREAD_MUTEX_TIMEDLOCK 1
+#define HAVE_PTHREAD_MUTEX_TIMEDLOCK 0
 #endif
 
 #ifndef HAVE_SEM_TIMEDWAIT
-#define HAVE_SEM_TIMEDWAIT 1
+#define HAVE_SEM_TIMEDWAIT 0
 #endif
 
 #ifndef HAVE_PIPE
