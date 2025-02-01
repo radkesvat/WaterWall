@@ -127,6 +127,6 @@ if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         /W4
         /WX
         /wd5105 # Radkesvat: patched due to warning in winbase.h
-        /wd4267   # Radkesvat: patched due to warning in conversion from 'size_t' to 'int'
+        /wd4267 # Radkesvat: patched due to warning in conversion from 'size_t' to 'int'
     )
 endif()

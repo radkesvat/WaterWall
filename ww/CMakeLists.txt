@@ -336,6 +336,8 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wwrite-strings
         -Wno-unused-function
     )
+    # Link the math library
+    target_link_libraries(ww PRIVATE m)
 endif()
 
 if(MSVC)
@@ -351,7 +353,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)
 endif()
 
-# Link the math library
-target_link_libraries(ww PRIVATE m)
+
 
 
