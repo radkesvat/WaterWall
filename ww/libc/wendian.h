@@ -99,7 +99,7 @@
     {
         const unsigned __int64 Tempval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         double Retval;
-        // memcpy(&Retval, &Tempval, sizeof(Tempval));
+        memcpy(&Retval, &Tempval, sizeof(Tempval));
         // *((unsigned __int64*)&Retval) = Tempval;
         return Retval;
     }
