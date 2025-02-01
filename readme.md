@@ -4,7 +4,8 @@ Waterwall!
 [![CLang Static Analyzer](https://github.com/radkesvat/WaterWall/actions/workflows/clang_static_analyzer.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/clang_static_analyzer.yml)
 
 [![linux](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-linux.yml)
-[![Windows Mingw64](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml)
+[![Windows Mingw64](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-msvc-windows.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-msvc-windows.yml)
+[![Windows Msvc](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-mingw-windows.yml)
 [![macos gcc + clang](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-macos.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-macos.yml)
 [![Android gcc + clang](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-android.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-multi-android.yml)
 <!-- [![Ios build](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-ios-build.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cmake-ios-build.yml) -->
