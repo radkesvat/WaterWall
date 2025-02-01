@@ -15,7 +15,7 @@ enum
 #define i_cmp                     -c_default_cmp                                // NOLINT
 #define idletable_less_func(x, y) ((*(x))->expire_at_ms < (*(y))->expire_at_ms) // NOLINT
 #define i_less                    idletable_less_func                           // NOLINT
-#include "stc/pque.h"
+#include "stc/pqueue.h"
 
 #define i_type hmap_idles_t
 #define i_key uint64_t

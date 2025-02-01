@@ -65,12 +65,13 @@ set(LWIP_COMPILER_FLAGS_GNU_CLANG
     -Wlogical-not-parentheses
 )
 
-if (NOT LWIP_HAVE_MBEDTLS)
-    list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
-        -Wredundant-decls
-        $<$<COMPILE_LANGUAGE:C>:-Wc++-compat>
-    )
-endif()
+# Radkesvat: disabled , causes error on windows mingw
+# if (NOT LWIP_HAVE_MBEDTLS)
+#     list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
+#         -Wredundant-decls
+#         $<$<COMPILE_LANGUAGE:C>:-Wc++-compat>
+#     )
+# endif()
 
 if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
@@ -78,11 +79,12 @@ if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
         -Wtrampolines
     )
 
-    if (NOT LWIP_HAVE_MBEDTLS)
-        list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
-            $<$<COMPILE_LANGUAGE:C>:-Wc90-c99-compat>
-        )
-    endif()
+    # Radkesvat: disabled this worning, causes error on windows mingw
+    # if (NOT LWIP_HAVE_MBEDTLS)
+    #     list(APPEND LWIP_COMPILER_FLAGS_GNU_CLANG
+    #         $<$<COMPILE_LANGUAGE:C>:-Wc90-c99-compat>
+    #     )
+    # endif()
 
     if(NOT CMAKE_C_COMPILER_VERSION VERSION_LESS 4.9)
         if(LWIP_USE_SANITIZERS)

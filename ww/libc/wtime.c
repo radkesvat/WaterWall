@@ -69,7 +69,7 @@ datetime_t datetimeNow(void) {
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    datetime_t dt = datetime_localtime(tv.tv_sec);
+    datetime_t dt = datetimeLocalTime(tv.tv_sec);
     dt.ms = tv.tv_usec / 1000;
     return dt;
 #endif
