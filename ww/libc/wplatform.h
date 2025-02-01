@@ -111,14 +111,22 @@
 #define HAVE_PTHREAD_H          0
 
 #pragma warning (disable: 4018) // signed/unsigned comparison
+#pragma warning (disable: 4389) // signed/unsigned mismatch
 #pragma warning (disable: 4100) // unused param
 #pragma warning (disable: 4102) // unreferenced label
 #pragma warning (disable: 4244) // conversion loss of data
 #pragma warning (disable: 4267) // size_t => int
 #pragma warning (disable: 4819) // Unicode
 #pragma warning (disable: 4996) // _CRT_SECURE_NO_WARNINGS
-#pragma warning(disable : 5105) // macro expansion producing 'defined' has undefined behavior
-#pragma warning(disable : 4133) // incompatible types - from 'long *' to 'intptr_t *'
+#pragma warning (disable: 5105) // macro expansion producing 'defined' has undefined behavior
+#pragma warning (disable: 4133) // incompatible types - from 'long *' to 'intptr_t *'
+#pragma warning (disable: 4324) // structure was padded due to alignment specifier
+#pragma warning (disable: 4057) // long *' differs in indirection to slightly different base types from 'atomic_uint *'
+#pragma warning (disable: 4200) // nonstandard extension used: zero-sized array in struct/union
+#pragma warning (disable: 4702) // unreachable code
+#pragma warning (disable: 4201) //  nonstandard extension used: nameless struct/union
+
+
 
 #elif defined(__GNUC__)
 #define COMPILER_GCC

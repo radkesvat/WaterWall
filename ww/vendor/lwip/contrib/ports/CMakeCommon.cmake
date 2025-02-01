@@ -124,7 +124,7 @@ if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         $<$<CONFIG:Release>:/Ox>
         /W4
         /WX
-        /wd5105
+        /wd5105 # Radkesvat: patched due to warning in winbase.h
 
     )
 endif()

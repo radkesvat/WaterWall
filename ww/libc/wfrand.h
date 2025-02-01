@@ -1,6 +1,10 @@
 #pragma once
 #include "wplatform.h"
 
+#ifdef COMPILER_MSVC
+#pragma warning(disable : 4146) // unary minus operator applied to unsigned type, result still unsigned
+#endif
+
 /*
     Generic random implementations, to be faster or provide other features...
 */

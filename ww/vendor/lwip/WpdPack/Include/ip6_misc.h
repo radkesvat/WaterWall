@@ -29,6 +29,7 @@
 
 #include <ws2tcpip.h>
 
+// Radkesvat: pathced due to warning macro redifinition
 #if ! defined(__MINGW32_) && ! defined(IN_MULTICAST)
 #define	IN_MULTICAST(a)		IN_CLASSD(a)
 #endif

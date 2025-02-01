@@ -254,9 +254,11 @@ static void parseWhiteListOption(socket_filter_option_t *option)
     int   len = 0;
     char *cur = NULL;
 
-    while ((cur = option->white_list_raddr[len]))
+    cur = option->white_list_raddr[len];
+    while (cur != NULL)
     {
         len++;
+        cur = option->white_list_raddr[len];
     }
 
     option->white_list_parsed_length = len;
@@ -423,9 +425,9 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
     widle_table_t          *selected_balance_table           = NULL;
-    hash_t                  src_hash;
-    bool                    src_hashed = false;
-    const uint8_t           this_tid   = state->worker->wid;
+    hash_t                  src_hash                         = 0x0;
+    bool                    src_hashed                       = false;
+    const uint8_t           this_tid                         = state->worker->wid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -730,9 +732,9 @@ static void distributeUdpPayload(const udp_payload_t pl)
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
     widle_table_t          *selected_balance_table           = NULL;
-    hash_t                  src_hash;
-    bool                    src_hashed = false;
-    const uint8_t           this_tid   = state->worker->wid;
+    hash_t                  src_hash                         = 0x0;
+    bool                    src_hashed                       = false;
+    const uint8_t           this_tid                         = state->worker->wid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -966,7 +968,7 @@ socket_manager_state_t *socketmanagerCreate(void)
     *worker = (worker_t){.wid = 255};
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           GSTATE.ram_profile,SMALL_BUFFER_SIZE,LARGE_BUFFER_SIZE);
+                                           GSTATE.ram_profile, SMALL_BUFFER_SIZE, LARGE_BUFFER_SIZE);
 
     worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->wid);
 

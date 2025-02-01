@@ -128,7 +128,7 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
     // }
     // return;
 
-    if (pool->cap == atomicLoadExplicit(&(pool->len), memory_order_relaxed))
+    if (pool->cap == (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed))
     {
         for (uint32_t i = 0; i < count; i++)
         {
