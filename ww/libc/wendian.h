@@ -199,7 +199,7 @@
 #define PUSH64(p, v)    PUSH_BE64(p, v)
 #define PUSH_N(p, v, n) memoryCopy(p, v, n); p += n
 
-static inline int detect_endian() {
+static inline int detect_endian(void) {
     union {
         char c;
         short s;
