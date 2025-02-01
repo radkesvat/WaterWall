@@ -48,7 +48,6 @@ extern "C" {
 # ifndef WIN32_LEAN_AND_MEAN
 #  define WIN32_LEAN_AND_MEAN
 # endif
-# pragma warning (disable : 5105)
 # include <windows.h>
 # include <tchar.h>
 # pragma warning(push)
