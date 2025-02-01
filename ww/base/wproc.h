@@ -108,7 +108,7 @@ static cmd_result_t execCmd(const char *str)
 static bool checkCommandAvailable(const char *app)
 {
     char b[300];
-    sprintf(b, "command -v %299s", app);
+    sprintf(b, "command -v %288s", app);
     cmd_result_t result = execCmd(b);
     return (result.exit_code == 0 && strlen(result.output) > 0);
 }

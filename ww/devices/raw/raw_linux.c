@@ -2,6 +2,7 @@
 #include "wchan.h"
 #include "loggers/internal_logger.h"
 #include "raw.h"
+#include "global_state.h"
 #include "worker.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -105,7 +106,7 @@ static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 
         distributePacketPayload(rdev, distribute_tid++, buf);
 
-        if (distribute_tid >= WORKERS_COUNT)
+        if (distribute_tid >= getWorkersCount())
         {
             distribute_tid = 0;
         }

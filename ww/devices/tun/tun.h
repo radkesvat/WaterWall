@@ -1,10 +1,11 @@
 #pragma once
+#include "wlibc.h"
 #include "buffer_pool.h"
 #include "wloop.h"
 #include "wplatform.h"
 #include "wthread.h"
 #include "master_pool.h"
-#include <stdint.h>
+#include "worker.h"
 
 #define TUN_LOG_EVERYTHING false
 

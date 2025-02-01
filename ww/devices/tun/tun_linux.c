@@ -2,19 +2,17 @@
 #include "wchan.h"
 #include "loggers/internal_logger.h"
 #include "tun.h"
+#include "global_state.h"
+#include "wproc.h"
 
-#include "worker.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <linux/ipv6.h>
 #include <netinet/ip.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/ioctl.h>
-#include <unistd.h>
+
 
 enum
 {
@@ -160,7 +158,7 @@ static WTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 
         distributePacketPayload(tdev, distribute_tid++, buf);
 
-        if (distribute_tid >= WORKERS_COUNT)
+        if (distribute_tid >= getWorkersCount())
         {
             distribute_tid = 0;
         }
@@ -347,10 +345,10 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 
-                         (0) + GSTATE.ram_profile);
+                         (0) + GSTATE.ram_profile,SMALL_BUFFER_SIZE,LARGE_BUFFER_SIZE);
 
     buffer_pool_t  *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  1);
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  (0) + GSTATE.ram_profile,SMALL_BUFFER_SIZE,LARGE_BUFFER_SIZE);
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 

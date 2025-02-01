@@ -313,7 +313,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         distributePacketPayload(cdev, distribute_tid++, buf);
 
-        if (distribute_tid >= WORKERS_COUNT)
+        if (distribute_tid >= getWorkersCount())
         {
             distribute_tid = 0;
         }

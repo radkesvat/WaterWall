@@ -140,8 +140,8 @@ tunnel_t *newRawDevice(node_instance_context_t *instance_info)
         return NULL;
     }
 
-    state->thread_lines = memoryAllocate(sizeof(line_t *) * WORKERS_COUNT);
-    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
+    state->thread_lines = memoryAllocate(sizeof(line_t *) * getWorkersCount());
+    for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
         state->thread_lines[i] = newLine(i);
     }

@@ -146,8 +146,8 @@ tunnel_t *newTunDevice(node_instance_context_t *instance_info)
     char *subnet_part  = slash + 1;
     state->subnet_mask = atoi(subnet_part);
 
-    state->thread_lines = memoryAllocate(sizeof(line_t *) * WORKERS_COUNT);
-    for (unsigned int i = 0; i < WORKERS_COUNT; i++)
+    state->thread_lines = memoryAllocate(sizeof(line_t *) * getWorkersCount());
+    for (unsigned int i = 0; i < getWorkersCount(); i++)
     {
         state->thread_lines[i] = newLine(i);
     }
