@@ -63,7 +63,9 @@
     {
         unsigned __int32 Tempval;
         unsigned __int32 Retval;
-        Tempval = *(unsigned __int32*)(&Value);
+        // Tempval = *(unsigned __int32*)(&Value);
+        memcpy(&Tempval, &Value, sizeof(Value));
+
         Retval = _WS2_32_WINSOCK_SWAP_LONG (Tempval);
         return Retval;
     }
@@ -74,7 +76,8 @@
     {
         const unsigned __int32 Tempval = _WS2_32_WINSOCK_SWAP_LONG (Value);
         float Retval;
-        *((unsigned __int32*)&Retval) = Tempval;
+        // *((unsigned __int32*)&Retval) = Tempval;
+        memcpy(&Retval, &Tempval, sizeof(Tempval));
         return Retval;
     }
     #endif /* ntohf */
@@ -84,7 +87,8 @@
     {
         unsigned __int64 Tempval;
         unsigned __int64 Retval;
-        Tempval = *(unsigned __int64*)(&Value);
+        memcpy(&Tempval, &Value, sizeof(Value));
+        // Tempval = *(unsigned __int64*)(&Value);
         Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Tempval);
         return Retval;
     }
@@ -95,7 +99,8 @@
     {
         const unsigned __int64 Tempval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         double Retval;
-        *((unsigned __int64*)&Retval) = Tempval;
+        // memcpy(&Retval, &Tempval, sizeof(Tempval));
+        // *((unsigned __int64*)&Retval) = Tempval;
         return Retval;
     }
     #endif /* ntohd */
