@@ -29,7 +29,7 @@
 
 #include <ws2tcpip.h>
 
-#ifndef __MINGW32__
+#if ! defined(__MINGW32_) && ! defined(IN_MULTICAST)
 #define	IN_MULTICAST(a)		IN_CLASSD(a)
 #endif
 

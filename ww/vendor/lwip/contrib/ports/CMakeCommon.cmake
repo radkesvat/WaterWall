@@ -124,5 +124,7 @@ if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
         $<$<CONFIG:Release>:/Ox>
         /W4
         /WX
+        /wd5105
+
     )
 endif()
