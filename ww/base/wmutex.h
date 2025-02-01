@@ -3,8 +3,7 @@
 
 #include "wlibc.h"
 
-
-#ifdef OS_WIN
+#ifdef OS_WIN // Windows-specific definitions
 
 #define wmutex_t     CRITICAL_SECTION
 #define mutexInit    InitializeCriticalSection
@@ -77,7 +76,8 @@ static inline void wonce(wonce_t *once, wonce_fn fn)
 // false: WAIT_OBJECT_TIMEOUT
 #define semaphoreWaitFor(psem, ms) (WaitForSingleObject(*(psem), ms) == WAIT_OBJECT_0)
 
-#else
+#else // POSIX-specific definitions
+
 #define wmutex_t          pthread_mutex_t
 #define mutexInit(pmutex) pthread_mutex_init(pmutex, NULL)
 #define mutexDestroy      pthread_mutex_destroy
@@ -109,7 +109,7 @@ static inline void wonce(wonce_t *once, wonce_fn fn)
 #define spinlockDestroy      pthread_mutex_destroy
 #define spinlockLock         pthread_mutex_lock
 #define spinlockUnlock       pthread_mutex_unlock
-#endif // OS_WIN
+#endif // HAVE_PTHREAD_SPIN_LOCK
 
 #define wrwlock_t           pthread_rwlock_t
 #define rwlockinit(prwlock) pthread_rwlock_init(prwlock, NULL)
@@ -146,10 +146,10 @@ static inline int timedmutexLockFor(wtimed_mutex_t *mutex, unsigned int ms)
     return pthread_mutex_timedlock(mutex, &ts) != ETIMEDOUT;
 #else
     int          ret = 0;
-    unsigned int end = gettick_ms() + ms;
+    unsigned int end = getTickMS() + ms;
     while ((ret = pthread_mutex_trylock(mutex)) != 0)
     {
-        if (gettick_ms() >= end)
+        if (getTickMS() >= end)
         {
             break;
         }
@@ -178,12 +178,9 @@ static inline int condvarWaitFor(wcondvar_t *cond, wmutex_t *mutex, unsigned int
 #define WONCE_INIT PTHREAD_ONCE_INIT
 #define wonce      pthread_once
 
-// apple semaphore is not posix!
+// Apple semaphore is not POSIX!
+#if defined(__MACH__) // macOS-specific semaphore implementation
 
-#if defined(__MACH__)
-// Can't use POSIX semaphores due to
-// https://web.archive.org/web/20140109214515/
-// http://lists.apple.com/archives/darwin-kernel/2009/Apr/msg00010.html
 #include <mach/mach.h>
 #define wsem_t semaphore_t
 #define semaphoreInit(psem, value)                                                                                     \
@@ -242,7 +239,7 @@ static bool semaphoreWaitFor(wsem_t *sp, uint64_t timeout_usecs)
 #undef USECS_IN_1_SEC
 #undef NSECS_IN_1_SEC
 
-#else // linux semaphore
+#else // Linux-specific semaphore implementation
 
 #include <semaphore.h>
 #define wsem_t                     sem_t
@@ -271,10 +268,10 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
     return sem_timedwait(sem, &ts) != ETIMEDOUT;
 #else
     int          ret = 0;
-    unsigned int end = gettick_ms() + ms;
+    unsigned int end = getTickMS() + ms;
     while ((ret = sem_trywait(sem)) != 0)
     {
-        if (gettick_ms() >= end)
+        if (getTickMS() >= end)
         {
             break;
         }
@@ -284,9 +281,9 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 #endif
 }
 
-#endif // linux semaphore
+#endif // macOS semaphore
 
-#endif // ! OS_WIN
+#endif // OS_WIN
 
 // YIELD_THREAD() yields for other threads to be scheduled on the current CPU by the OS
 #if (defined(WIN32) || defined(_WIN32))
@@ -432,6 +429,6 @@ static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 #define mutexTryLock hybridmutexTryLock
 #define mutexUnlock  hybridmutexUnlock
 
-#endif
+#endif // TEST_HELGRIND
 
 #endif // WW_MUTEX_H_

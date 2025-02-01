@@ -82,7 +82,6 @@ if(WIN32)
         target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)
         target_sources(ww PRIVATE event/wepoll/wepoll.c)
     endif()
-    target_link_libraries(ww PUBLIC ws2_32)
 endif()
 
 # Include directories
@@ -147,7 +146,8 @@ set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip)
 
-target_link_libraries(ww PUBLIC mimalloc-static)
+set(LIBS ${LIBS} mimalloc-static)
+
 
 # Platform-specific options and settings
 if(WIN32)
@@ -207,6 +207,33 @@ check_function("setproctitle" "unistd.h")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
 
 message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
+
+if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+
+    target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
+        
+        # The override method sometimes fails to call the asmlib function because the compiler uses
+        # built-in inline codes for some common functions rather than calling a library. The built-in
+        # codes are not optimal on modern microprocessors. Use option -fno-builtin 
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin-function")  
+        set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
+    else()
+        target_link_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
+        set(LIBS ${LIBS} mimalloc-static)
+    endif()
+
+endif()
+
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+
+    target_compile_definitions(ww PUBLIC WW_AVX=1)
+    target_compile_options(ww PUBLIC -mavx)
+
+endif()
+
+
+
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     target_compile_definitions(ww PUBLIC DDEBUG=1)
 else()
@@ -249,6 +276,8 @@ if(APPLE)
     set(LIBS ${LIBS} "-framework CoreFoundation" "-framework Security")
 endif()
 
+target_link_libraries(ww PUBLIC ${LIBS})
+
 # Link options for Release build
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_link_options(ww PUBLIC -s)
@@ -287,33 +316,6 @@ endif()
 # endif()
 
 
-if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-
-  target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
-  if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
-      
-    # The override method sometimes fails to call the asmlib function because the compiler uses
-    # built-in inline codes for some common functions rather than calling a library. The built-in
-    # codes are not optimal on modern microprocessors. Use option -fno-builtin 
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin-function")  
-    set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
-  
-  else()
-
-    target_link_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
-    target_link_libraries(ww PUBLIC aelf64)
-
-  endif()
-
-endif()
-
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-
-target_compile_definitions(ww PUBLIC WW_AVX=1)
-target_compile_options(ww PUBLIC -mavx)
-
-endif()
-
 
 
 
@@ -336,8 +338,7 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wwrite-strings
         -Wno-unused-function
     )
-    # Link the math library
-    target_link_libraries(ww PRIVATE m)
+
 endif()
 
 if(MSVC)
