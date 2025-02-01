@@ -296,11 +296,11 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     # built-in inline codes for some common functions rather than calling a library. The built-in
     # codes are not optimal on modern microprocessors. Use option -fno-builtin 
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin-function")  
-    set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
+    set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
   
   else()
 
-    target_link_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/asmlib)
+    target_link_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
     target_link_libraries(ww PUBLIC aelf64)
 
   endif()
