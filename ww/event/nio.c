@@ -3,7 +3,7 @@
 #ifndef EVENT_IOCP
 #include "wevent.h"
 #include "wsocket.h"
-#include "wlog.h"
+#include "loggers/internal_logger.h"
 #include "werr.h"
 #include "wthread.h"
 

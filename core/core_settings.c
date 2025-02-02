@@ -1,17 +1,19 @@
 #include "core_settings.h"
 #include "wwapi.h"
 
-
-#define DEFAULT_CORE_LOG_LEVEL         "INFO"
-#define DEFAULT_CORE_LOG_FILE          "core.json"
-#define DEFAULT_CORE_ENABLE_CONSOLE    true
-#define DEFAULT_NETWORK_LOG_LEVEL      "INFO"
-#define DEFAULT_NETWORK_LOG_FILE       "network.json"
-#define DEFAULT_NETWORK_ENABLE_CONSOLE true
-#define DEFAULT_DNS_LOG_LEVEL          "INFO"
-#define DEFAULT_DNS_LOG_FILE           "dns.json"
-#define DEFAULT_DNS_ENABLE_CONSOLE     true
-#define DEFAULT_RAM_PROFILE            kRamProfileServer
+#define DEFAULT_INTERNAL_LOG_LEVEL      "INFO"
+#define DEFAULT_INTERNAL_LOG_FILE       ""
+#define DEFAULT_INTERNAL_ENABLE_CONSOLE true
+#define DEFAULT_CORE_LOG_LEVEL          "INFO"
+#define DEFAULT_CORE_LOG_FILE           "core.log"
+#define DEFAULT_CORE_ENABLE_CONSOLE     true
+#define DEFAULT_NETWORK_LOG_LEVEL       "INFO"
+#define DEFAULT_NETWORK_LOG_FILE        "network.log"
+#define DEFAULT_NETWORK_ENABLE_CONSOLE  true
+#define DEFAULT_DNS_LOG_LEVEL           "INFO"
+#define DEFAULT_DNS_LOG_FILE            "dns.log"
+#define DEFAULT_DNS_ENABLE_CONSOLE      true
+#define DEFAULT_RAM_PROFILE             kRamProfileServer
 
 enum settings_ram_profiles
 {
@@ -40,6 +42,25 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
 {
     getStringFromJsonObjectOrDefault(&(settings->log_path), log_obj, "path", DEFAULT_LOG_PATH);
 
+    {
+        const cJSON *internal_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "internal");
+        if (cJSON_IsObject(internal_obj) && (internal_obj->child != NULL))
+        {
+
+            getStringFromJsonObjectOrDefault(&(settings->internal_log_level), internal_obj, "loglevel",
+                                             DEFAULT_INTERNAL_LOG_LEVEL);
+            getStringFromJsonObjectOrDefault(&(settings->internal_log_file), internal_obj, "file",
+                                             DEFAULT_INTERNAL_LOG_FILE);
+            getBoolFromJsonObjectOrDefault(&(settings->internal_log_console), internal_obj, "console",
+                                           DEFAULT_INTERNAL_ENABLE_CONSOLE);
+        }
+        else
+        {
+            settings->internal_log_level   = stringDuplicate(DEFAULT_INTERNAL_LOG_LEVEL);
+            settings->internal_log_file    = stringDuplicate(DEFAULT_INTERNAL_LOG_FILE);
+            settings->internal_log_console = DEFAULT_INTERNAL_ENABLE_CONSOLE;
+        }
+    }
     {
         const cJSON *core_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "core");
         if (cJSON_IsObject(core_obj) && (core_obj->child != NULL))
@@ -113,14 +134,18 @@ static void parseLogPartOfJson(cJSON *log_obj)
         settings->network_log_level = stringDuplicate(DEFAULT_NETWORK_LOG_LEVEL);
         settings->dns_log_file      = stringDuplicate(DEFAULT_DNS_LOG_FILE);
         settings->dns_log_level     = stringDuplicate(DEFAULT_DNS_LOG_LEVEL);
+        settings->internal_log_file = stringDuplicate(DEFAULT_INTERNAL_LOG_FILE);
+        settings->internal_log_level = stringDuplicate(DEFAULT_INTERNAL_LOG_LEVEL);
 
         settings->core_log_console    = DEFAULT_CORE_ENABLE_CONSOLE;
         settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
         settings->dns_log_console     = DEFAULT_DNS_ENABLE_CONSOLE;
+        settings->internal_log_console = DEFAULT_INTERNAL_ENABLE_CONSOLE;
     }
     settings->core_log_file_fullpath    = stringConcat(settings->log_path, settings->core_log_file);
     settings->network_log_file_fullpath = stringConcat(settings->log_path, settings->network_log_file);
     settings->dns_log_file_fullpath     = stringConcat(settings->log_path, settings->dns_log_file);
+    settings->internal_log_file_fullpath = stringConcat(settings->log_path, settings->internal_log_file);
 }
 
 static void parseConfigPartOfJson(const cJSON *config_array)
@@ -229,7 +254,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
             if (settings->ram_profile <= 0)
             {
                 printError("CoreSettings: ram-profile can hold \"server\" or \"client\" "
-                                "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
+                           "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
 
                 exit(1);
             }

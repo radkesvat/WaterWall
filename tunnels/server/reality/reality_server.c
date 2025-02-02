@@ -347,7 +347,7 @@ tunnel_t *newRealityServer(node_instance_context_t *instance_info)
     }
 
     hash_t  hash_next = calcHashBytes(dest_node_name, strlen(dest_node_name));
-    node_t *next_node = nodemanagerGetNode(instance_info->node_manager_config, hash_next);
+    node_t *next_node = nodemanagerGetNodeInstance(instance_info->node_manager_config, hash_next);
     if (next_node == NULL)
     {
         LOGF("RealityServer: destination node not found");

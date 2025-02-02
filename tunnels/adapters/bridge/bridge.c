@@ -81,7 +81,7 @@ tunnel_t *newBridge(node_instance_context_t *instance_info)
     memorySet(state, 0, sizeof(bridge_state_t));
 
     hash_t  hash_pairname = calcHashBytes(pair_node_name, strlen(pair_node_name));
-    node_t *pair_node     = nodemanagerGetNode(instance_info->node_manager_config, hash_pairname);
+    node_t *pair_node     = nodemanagerGetNodeInstance(instance_info->node_manager_config, hash_pairname);
     if (pair_node == NULL)
     {
         LOGF("Bridge: pair node \"%s\" not found", pair_node_name);

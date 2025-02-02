@@ -10,8 +10,8 @@ typedef struct pipetunnel_line_state_s
 {
     atomic_int    refc;
     atomic_bool   closed;
-    _Atomic(wid_t) left_wid;
-    _Atomic(wid_t) right_wid;
+    atomic_wid_t left_wid;
+    atomic_wid_t right_wid;
     bool          active;
     bool          left_open;
     bool          right_open;
@@ -25,11 +25,22 @@ typedef struct pipetunnel_msg_event_s
 
 } pipetunnel_msg_event_t;
 
+/**
+ * @brief Get the size of the pipeline message.
+ * 
+ * @return size_t Size of the pipeline message.
+ */
 size_t pipeLineGetMesageSize(void)
 {
     return sizeof(pipetunnel_msg_event_t);
 }
 
+/**
+ * @brief Initialize the line state.
+ * 
+ * @param ls Pointer to the line state.
+ * @param wid_to WID to initialize.
+ */
 static void initializeLineState(pipetunnel_line_state_t *ls, wid_t wid_to)
 {
     atomicStoreExplicit(&ls->refc, 0, memory_order_relaxed);
@@ -41,6 +52,11 @@ static void initializeLineState(pipetunnel_line_state_t *ls, wid_t wid_to)
     ls->right_open = true;
 }
 
+/**
+ * @brief Deinitialize the line state.
+ * 
+ * @param ls Pointer to the line state.
+ */
 static void deinitializeLineState(pipetunnel_line_state_t *ls)
 {
     atomicStoreExplicit(&ls->refc, 0, memory_order_relaxed);
@@ -52,6 +68,11 @@ static void deinitializeLineState(pipetunnel_line_state_t *ls)
     ls->right_open = false;
 }
 
+/**
+ * @brief Lock the line state.
+ * 
+ * @param ls Pointer to the line state.
+ */
 static void lock(pipetunnel_line_state_t *ls)
 {
     int old_refc = atomicAddExplicit(&ls->refc, 1, memory_order_relaxed);
@@ -59,6 +80,11 @@ static void lock(pipetunnel_line_state_t *ls)
     (void) old_refc;
 }
 
+/**
+ * @brief Unlock the line state.
+ * 
+ * @param ls Pointer to the line state.
+ */
 static void unlock(pipetunnel_line_state_t *ls)
 {
     int old_refc = atomicAddExplicit(&ls->refc, -1, memory_order_relaxed);
@@ -68,9 +94,29 @@ static void unlock(pipetunnel_line_state_t *ls)
     }
 }
 
+/**
+ * @brief Send a message upstream.
+ * 
+ * @param ls Pointer to the line state.
+ * @param msg Pointer to the message event.
+ * @param wid_to WID to send the message to.
+ */
 static void sendMessageUp(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t *msg, wid_t wid_to);
+
+/**
+ * @brief Send a message downstream.
+ * 
+ * @param ls Pointer to the line state.
+ * @param msg Pointer to the message event.
+ * @param wid_to WID to send the message to.
+ */
 static void sendMessageDown(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t *msg, wid_t wid_to);
 
+/**
+ * @brief Callback for when a message is received upstream.
+ * 
+ * @param ev Pointer to the event.
+ */
 static void onMsgReceivedUp(wevent_t *ev)
 {
     pipetunnel_msg_event_t  *msg_ev = weventGetUserdata(ev);
@@ -101,6 +147,13 @@ static void onMsgReceivedUp(wevent_t *ev)
     unlock(lstate);
 }
 
+/**
+ * @brief Send a message upstream.
+ * 
+ * @param ls Pointer to the line state.
+ * @param msg Pointer to the message event.
+ * @param wid_to WID to send the message to.
+ */
 static void sendMessageUp(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t *msg, wid_t wid_to)
 {
 
@@ -116,6 +169,11 @@ static void sendMessageUp(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t *m
     wloopPostEvent(getWorkerLoop(wid_to), &ev);
 }
 
+/**
+ * @brief Callback for when a message is received downstream.
+ * 
+ * @param ev Pointer to the event.
+ */
 static void onMsgReceivedDown(wevent_t *ev)
 {
     pipetunnel_msg_event_t  *msg_ev = weventGetUserdata(ev);
@@ -140,12 +198,19 @@ static void onMsgReceivedDown(wevent_t *ev)
     }
     else
     {
-        contextApplyOnTunnelD(&msg_ev->ctx, t->dw);
+        contextApplyOnTunnelD(&msg_ev->ctx, t->prev);
     }
     genericpoolReuseItem(getWorkerPipeTunnelMsgPool(tid), msg_ev);
     unlock(lstate);
 }
 
+/**
+ * @brief Send a message downstream.
+ * 
+ * @param ls Pointer to the line state.
+ * @param msg Pointer to the message event.
+ * @param wid_to WID to send the message to.
+ */
 static void sendMessageDown(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t *msg, wid_t wid_to)
 {
 
@@ -159,6 +224,12 @@ static void sendMessageDown(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t 
     wloopPostEvent(getWorkerLoop(wid_to), &ev);
 }
 
+/**
+ * @brief Initialize the upstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
 {
 
@@ -184,6 +255,12 @@ void pipetunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
     sendMessageUp(lstate, msg, lstate->right_wid);
 }
 
+/**
+ * @brief Establish the upstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -208,6 +285,12 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
     sendMessageUp(lstate, msg, lstate->right_wid);
 }
 
+/**
+ * @brief Finalize the upstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -236,6 +319,13 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
     unlock(lstate);
 }
 
+/**
+ * @brief Handle upstream payload.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ * @param payload Pointer to the payload.
+ */
 void pipetunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -261,6 +351,12 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payl
     sendMessageUp(lstate, msg, lstate->right_wid);
 }
 
+/**
+ * @brief Pause the upstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -285,6 +381,12 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
     sendMessageUp(lstate, msg, lstate->right_wid);
 }
 
+/**
+ * @brief Resume the upstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 {
 
@@ -314,6 +416,12 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
     Downstream
 */
 
+/**
+ * @brief Initialize the downstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 {
     (void) self;
@@ -321,6 +429,12 @@ void pipetunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
     assert(false); // unreachable code
 }
 
+/**
+ * @brief Establish the downstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -346,6 +460,12 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
     sendMessageDown(lstate, msg, lstate->left_wid);
 }
 
+/**
+ * @brief Finalize the downstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -371,6 +491,13 @@ void pipetunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
     unlock(lstate);
 }
 
+/**
+ * @brief Handle downstream payload.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ * @param payload Pointer to the payload.
+ */
 void pipetunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -396,6 +523,12 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *pa
     sendMessageDown(lstate, msg, lstate->left_wid);
 }
 
+/**
+ * @brief Pause the downstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -420,6 +553,12 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
     sendMessageDown(lstate, msg, lstate->left_wid);
 }
 
+/**
+ * @brief Resume the downstream pipeline.
+ * 
+ * @param self Pointer to the tunnel.
+ * @param line Pointer to the line.
+ */
 void pipetunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
@@ -444,6 +583,12 @@ void pipetunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
     sendMessageDown(lstate, msg, lstate->left_wid);
 }
 
+/**
+ * @brief Handle the tunnel chain.
+ * 
+ * @param t Pointer to the tunnel.
+ * @param tc Pointer to the tunnel chain.
+ */
 void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 {
     tunnel_t *child = tunnelGetState(t);
@@ -453,9 +598,17 @@ void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     child->onChain(child, tc);
 }
 
+/**
+ * @brief Handle the tunnel index.
+ * 
+ * @param t Pointer to the tunnel.
+ * @param arr Pointer to the tunnel array.
+ * @param index Pointer to the index.
+ * @param mem_offset Pointer to the memory offset.
+ */
 void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
 {
-    tunnelarrayInesert(arr, t);
+    tunnelarrayInsert(arr, t);
     tunnel_t *child = tunnelGetState(t);
 
     t->chain_index   = *index;
@@ -467,18 +620,34 @@ void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index,
     child->onIndex(child, arr, index, mem_offset);
 }
 
+/**
+ * @brief Prepare the tunnel.
+ * 
+ * @param t Pointer to the tunnel.
+ */
 void pipetunnelDefaultOnPrepair(tunnel_t *t)
 {
     tunnel_t *child = tunnelGetState(t);
     child->onStart(child);
 }
 
+/**
+ * @brief Start the tunnel.
+ * 
+ * @param t Pointer to the tunnel.
+ */
 void pipetunnelDefaultOnStart(tunnel_t *t)
 {
     tunnel_t *child = tunnelGetState(t);
     child->onStart(child);
 }
 
+/**
+ * @brief Create a new pipeline tunnel.
+ * 
+ * @param child Pointer to the child tunnel.
+ * @return tunnel_t* Pointer to the created tunnel.
+ */
 tunnel_t *pipetunnelCreate(tunnel_t *child)
 {
     tunnel_t *pt = tunnelCreate(tunnelGetNode(child), tunnelGetStateSize(child) + sizeof(tunnel_t),
@@ -511,12 +680,24 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
     return pt;
 }
 
+/**
+ * @brief Destroy the pipeline tunnel.
+ * 
+ * @param t Pointer to the tunnel.
+ */
 void pipetunnelDestroy(tunnel_t *t)
 {
     tunnelDestroy(tunnelGetState(t));
     tunnelDestroy(t);
 }
 
+/**
+ * @brief Pipe to a specific WID.
+ * 
+ * @param t Pointer to the tunnel.
+ * @param l Pointer to the line.
+ * @param wid_to WID to pipe to.
+ */
 void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 {
     tunnel_t                *master = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));

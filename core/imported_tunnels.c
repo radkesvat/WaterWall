@@ -1,13 +1,15 @@
 #include "imported_tunnels.h"
-#include "wwapi.h"
 #include "loggers/core_logger.h"
+#include "wwapi.h"
 
+#define USING(x) nodelibraryRegister(node##x##Get());
+/*
 #define USING(x)                                                                                                       \
     do                                                                                                                 \
     {                                                                                                                  \
-        hash_t h = calcHashBytes(#x, strlen(#x));                                                                    \
-        nodelibraryRegister((node_lib_t) {                                                                             \
-            .hash_name         = h,                                                                                    \
+        hash_t h = calcHashBytes(#x, strlen(#x));                                                                      \
+        nodelibraryRegister((node_lib_t){                                                                              \
+            .type.hash_name    = h,                                                                                    \
             .createHandle      = new##x,                                                                               \
             .destroyHandle     = destroy##x,                                                                           \
             .apiHandle         = api##x,                                                                               \
@@ -15,6 +17,10 @@
         });                                                                                                            \
         LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                                                      \
     } while (0);
+*/
+#ifdef INCLUDE_TEMPLATE
+#include "tunnels/template/include/interface.h"
+#endif
 
 #ifdef INCLUDE_TUNDEVICE
 #include "tunnels/adapters/device/tun/tun_device.h"
@@ -47,7 +53,6 @@
 #ifdef INCLUDE_LAYER3_IP_MANIPULATOR
 #include "tunnels/layer3/ip/manipulator/ip_manipulator.h"
 #endif
-
 
 #ifdef INCLUDE_LAYER3_TCP_MANIPULATOR
 #include "tunnels/layer3/tcp/manipulator/tcp_manipulator.h"
@@ -187,6 +192,10 @@
 
 void loadImportedTunnelsIntoCore(void)
 {
+
+#if INCLUDE_TEMPLATE
+    USING(Template);
+#endif
 
 #ifdef INCLUDE_TUNDEVICE
     USING(TunDevice);

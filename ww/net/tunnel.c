@@ -2,103 +2,114 @@
 #include "loggers/internal_logger.h"
 #include "managers/node_manager.h"
 #include "node.h"
-#include "pipe_line.h"
-#include "string.h" // memorySet
 
-// `from` upstreams to `to`
+// Binds a tunnel as the upstream of another tunnel
 void tunnelBindUp(tunnel_t *from, tunnel_t *to)
 {
-    from->up = to;
+    from->next = to;
 }
 
-// `to` downstreams to `from`
+// Binds a tunnel as the downstream of another tunnel
 void tunnelBindDown(tunnel_t *from, tunnel_t *to)
 {
     // assert(to->dw == NULL); // 2 nodes cannot chain to 1 exact node
     // such chains are possible by a generic listener adapter
-    // but the cyclic refrence detection is already done in node map
-    to->dw = from;
+    // but the cyclic reference detection is already done in node map
+    to->prev = from;
 }
 
-// `from` <-> `to`
+// Binds two tunnels together (from <-> to)
 void tunnelBind(tunnel_t *from, tunnel_t *to)
 {
     tunnelBindUp(from, to);
     tunnelBindDown(from, to);
 }
 
+// Default upstream initialization function
 void tunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
 {
-    assert(self->up != NULL);
-    self->up->fnInitU(self->up, line);
+    assert(self->next != NULL);
+    self->next->fnInitU(self->next, line);
 }
 
+// Default upstream establishment function
 void tunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 {
-    assert(self->up != NULL);
-    self->up->fnEstU(self->up, line);
+    assert(self->next != NULL);
+    self->next->fnEstU(self->next, line);
 }
 
+// Default upstream finalization function
 void tunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
 {
-    assert(self->up != NULL);
-    self->up->fnFinU(self->up, line);
+    assert(self->next != NULL);
+    self->next->fnFinU(self->next, line);
 }
 
+// Default upstream payload function
 void tunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
-    assert(self->up != NULL);
-    self->up->fnPayloadU(self->up, line, payload);
+    assert(self->next != NULL);
+    self->next->fnPayloadU(self->next, line, payload);
 }
 
+// Default upstream pause function
 void tunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
 {
-    assert(self->up != NULL);
-    self->up->fnPauseU(self->up, line);
+    assert(self->next != NULL);
+    self->next->fnPauseU(self->next, line);
 }
 
+// Default upstream resume function
 void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 {
-    assert(self->up != NULL);
-    self->up->fnResumeU(self->up, line);
+    assert(self->next != NULL);
+    self->next->fnResumeU(self->next, line);
 }
 
+// Default downstream initialization function
 void tunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 {
-    assert(self->dw != NULL);
-    self->up->fnInitD(self->up, line);
+    assert(self->prev != NULL);
+    self->next->fnInitD(self->next, line);
 }
 
+// Default downstream establishment function
 void tunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
-    assert(self->dw != NULL);
-    self->up->fnEstD(self->up, line);
+    assert(self->prev != NULL);
+    self->next->fnEstD(self->next, line);
 }
 
-void tunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
+// Default downstream finalization function
+void tunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line)
 {
-    assert(self->dw != NULL);
-    self->up->fnFinD(self->up, line);
+    assert(self->prev != NULL);
+    self->next->fnFinD(self->next, line);
 }
 
+// Default downstream payload function
 void tunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
-    assert(self->dw != NULL);
-    self->up->fnPayloadD(self->up, line, payload);
+    assert(self->prev != NULL);
+    self->next->fnPayloadD(self->next, line, payload);
 }
 
+// Default downstream pause function
 void tunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
 {
-    assert(self->dw != NULL);
-    self->up->fnPauseD(self->up, line);
+    assert(self->prev != NULL);
+    self->next->fnPauseD(self->next, line);
 }
 
+// Default downstream resume function
 void tunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
 {
-    assert(self->dw != NULL);
-    self->up->fnResumeD(self->up, line);
+    assert(self->prev != NULL);
+    self->next->fnResumeD(self->next, line);
 }
 
+// Default function to handle tunnel chaining
 void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 {
     node_t *node = tunnelGetNode(t);
@@ -109,7 +120,7 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
         return;
     }
 
-    node_t *next = nodemanagerGetNode(node->node_manager_config, node->hash_next);
+    node_t *next = nodemanagerGetNodeInstance(node->node_manager_config, node->hash_next);
 
     if (next == NULL)
     {
@@ -117,9 +128,15 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
         exit(1);
     }
 
-    assert(next->instance); // every node in node map is created byfore chaining
+    assert(next->instance); // every node in node map is created before chaining
 
     tunnel_t *tnext = next->instance;
+    if (tnext->prev != NULL)
+    {
+        LOGF("Node Map Failure: Node (%s) wanted to bind to (%s) which is already bounded by %s", t->node->name,
+             tnext->node->name, tnext->prev->node->name);
+    }
+
     tunnelBind(t, tnext);
 
     assert(tnext->chain == NULL);
@@ -127,72 +144,85 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     tnext->onChain(tnext, tc);
 }
 
+// Default function to handle tunnel indexing
 void tunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
 {
-    tunnelarrayInesert(arr, t);
+    tunnelarrayInsert(arr, t);
     t->chain_index   = *index;
     t->lstate_offset = *mem_offset;
     (*index)++;
     *mem_offset += t->lstate_size;
-    if (t->up)
+    if (t->next)
     {
-        t->up->onIndex(t->up, arr, index, mem_offset);
+        t->next->onIndex(t->next, arr, index, mem_offset);
     }
 }
 
+// Default function to prepare the tunnel
 void tunnelDefaultOnPrepair(tunnel_t *t)
 {
     (void) t;
 }
 
+// Default function to start the tunnel
 void tunnelDefaultOnStart(tunnel_t *t)
 {
-    if (t->up)
+    if (t->next)
     {
-        t->up->onStart(t->up);
+        t->next->onStart(t->next);
     }
 }
 
-
+// Creates a new tunnel instance
 tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
 {
     tstate_size = tunnelGetCorrectAllignedStateSize(tstate_size);
     lstate_size = tunnelGetCorrectAllignedLineStateSize(lstate_size);
 
     size_t tsize = sizeof(tunnel_t) + tstate_size;
+    // ensure we have enough space to offset the allocation by line cache (for alignment)
+    MUSTALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    tsize = ALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
-    tunnel_t *ptr = memoryAllocate(tsize);
-    if (ptr == NULL) {
+    // allocate memory, placing tunnel_t at a line cache address boundary
+    uintptr_t ptr = (uintptr_t) memoryAllocate(tsize);
+    if (ptr == 0x0)
+    {
         // Handle memory allocation failure
         return NULL;
     }
+    MUSTALIGN2(ptr, kCpuLineCacheSize);
 
-    memorySet(ptr, 0, tsize);
+    // align pointer to line cache boundary
+    tunnel_t *tunnel_ptr = (tunnel_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    *ptr = (tunnel_t){
-                      .fnInitU     = &tunnelDefaultUpStreamInit,
-                      .fnInitD     = &tunnelDefaultdownStreamInit,
-                      .fnPayloadU  = &tunnelDefaultUpStreamPayload,
-                      .fnPayloadD  = &tunnelDefaultdownStreamPayload,
-                      .fnEstU      = &tunnelDefaultUpStreamEst,
-                      .fnEstD      = &tunnelDefaultdownStreamEst,
-                      .fnFinU      = &tunnelDefaultUpStreamFin,
-                      .fnFinD      = &tunnelDefaultdownStreamFin,
-                      .fnPauseU    = &tunnelDefaultUpStreamPause,
-                      .fnPauseD    = &tunnelDefaultDownStreamPause,
-                      .fnResumeU   = &tunnelDefaultUpStreamResume,
-                      .fnResumeD   = &tunnelDefaultDownStreamResume,
-                      .onChain     = &tunnelDefaultOnChain,
-                      .onIndex     = &tunnelDefaultOnIndex,
-                      .onPrepair   = &tunnelDefaultOnPrepair,
-                      .onStart     = &tunnelDefaultOnStart,
-                      .tstate_size = tstate_size,
-                      .lstate_size = lstate_size,
-                      .node        = node};
+    memorySet(tunnel_ptr, 0, tsize);
 
-    return ptr;
+    *tunnel_ptr = (tunnel_t){.memptr      = ptr,
+                             .fnInitU     = &tunnelDefaultUpStreamInit,
+                             .fnInitD     = &tunnelDefaultdownStreamInit,
+                             .fnPayloadU  = &tunnelDefaultUpStreamPayload,
+                             .fnPayloadD  = &tunnelDefaultdownStreamPayload,
+                             .fnEstU      = &tunnelDefaultUpStreamEst,
+                             .fnEstD      = &tunnelDefaultdownStreamEst,
+                             .fnFinU      = &tunnelDefaultUpStreamFin,
+                             .fnFinD      = &tunnelDefaultdownStreamFinish,
+                             .fnPauseU    = &tunnelDefaultUpStreamPause,
+                             .fnPauseD    = &tunnelDefaultDownStreamPause,
+                             .fnResumeU   = &tunnelDefaultUpStreamResume,
+                             .fnResumeD   = &tunnelDefaultDownStreamResume,
+                             .onChain     = &tunnelDefaultOnChain,
+                             .onIndex     = &tunnelDefaultOnIndex,
+                             .onPrepair   = &tunnelDefaultOnPrepair,
+                             .onStart     = &tunnelDefaultOnStart,
+                             .tstate_size = tstate_size,
+                             .lstate_size = lstate_size,
+                             .node        = node};
+
+    return tunnel_ptr;
 }
 
+// Destroys a tunnel instance
 void tunnelDestroy(tunnel_t *self)
 {
     memoryFree(self);

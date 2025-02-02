@@ -88,7 +88,7 @@ endif()
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/base)
 target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/base/internal_types)
-target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/node_builder)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/node_builder)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/bufio)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/event)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/net)
@@ -124,6 +124,9 @@ CPMAddPackage(
 
 if(stc_ADDED)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+        target_compile_options(ww PUBLIC /wd4310 ) # stc bug, hash -> cast trucncates constant value TODO fix in stc
+    endif()
     # target_sources(ww PRIVATE ${stc_SOURCE_DIR}/src/libstc.c)
 endif()
 
@@ -241,17 +244,17 @@ else()
 endif()
 
 if(ENABLE_UDS)
-    target_compile_definitions(ww PRIVATE -DENABLE_UDS)
+    target_compile_definitions(ww PUBLIC -DENABLE_UDS)
 endif()
 
 if(USE_MULTIMAP)
-    target_compile_definitions(ww PRIVATE -DUSE_MULTIMAP)
+    target_compile_definitions(ww PUBLIC -DUSE_MULTIMAP)
 endif()
 
 if(WW_STATICLIB)
-  target_compile_definitions(ww PRIVATE -DWW_STATICLIB)
+  target_compile_definitions(ww PUBLIC -DWW_STATICLIB)
 else()
-  target_compile_definitions(ww PRIVATE -DWW_DYNAMICLIB)
+  target_compile_definitions(ww PUBLIC -DWW_DYNAMICLIB)
 endif()
 
 if(WIN32)

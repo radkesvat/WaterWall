@@ -1,9 +1,5 @@
 #pragma once
 
-#ifdef __cplusplus
-extern "C"
-{
-#endif
 
 // Length-Prefixed-Message
 
@@ -88,6 +84,3 @@ extern "C"
 #define PROTOBUF_FILED_NUMBER(tag)                 ((tag) >> 3)
 #define PROTOBUF_WIRE_TYPE(tag)                    ((tag) &0x07)
 
-#ifdef __cplusplus
-}
-#endif

@@ -18,11 +18,11 @@ enum
 #include "stc/pqueue.h"
 
 #define i_type hmap_idles_t
-#define i_key uint64_t
-#define i_val struct widle_item_s *
+#define i_key  uint64_t
+#define i_val  struct widle_item_s *
 #include "stc/hmap.h"
 
-struct widle_table_s
+typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct  widle_table_s
 {
     wloop_t      *loop;
     wtimer_t     *idle_handle;
@@ -32,20 +32,20 @@ struct widle_table_s
     uint64_t      last_update_ms;
     uintptr_t     memptr;
 
-} ATTR_ALIGNED_LINE_CACHE;
+} GNU_ATTR_ALIGNED_LINE_CACHE widle_table_t ;
 
 void idleCallBack(wtimer_t *timer);
 
 widle_table_t *idleTableCreate(wloop_t *loop)
 {
-    // assert(sizeof(struct widle_table_s) <= kCpuLineCacheSize); promotion to 128 bytes
-    int64_t memsize = (int64_t) sizeof(struct widle_table_s);
+    // assert(sizeof(widle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
+    int64_t memsize = (int64_t) sizeof(widle_table_t);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
     memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
-    if (memsize < (int64_t) sizeof(struct widle_table_s))
+    if (memsize < (int64_t) sizeof(widle_table_t))
     {
         printError("buffer size out of range");
         exit(1);

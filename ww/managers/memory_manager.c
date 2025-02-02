@@ -113,7 +113,11 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 
 void *memoryAllocate(size_t size)
 {
-    return malloc(size);
+    void* ptr = malloc(size);
+#ifdef DEBUG
+    memorySet(ptr, 0XBE, size);
+#endif
+    return ptr;
 }
 
 void *memoryReAllocate(void *ptr, size_t size)

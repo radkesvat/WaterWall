@@ -1,7 +1,7 @@
 #include "node_manager.h"
 #include "chain.h"
-#include "utils/json_helpers.h"
 #include "loggers/internal_logger.h"
+#include "utils/json_helpers.h"
 
 enum
 {
@@ -42,7 +42,7 @@ static node_manager_t *state;
 
 //     if (n1->hash_next != 0)
 //     {
-//         node_t *n2 = nodemanagerGetNode(cfg, n1->hash_next);
+//         node_t *n2 = nodemanagerGetNodeInstance(cfg, n1->hash_next);
 
 //         if (n2->instance == NULL)
 //         {
@@ -125,7 +125,7 @@ static void runNodes(node_manager_config_t *cfg)
         {
             tunnel_t *tunnel = t_array[i];
 
-            if (tunnel == NULL || nodeHasFlagChainHead(tunnelGetNode(tunnel)))
+            if (tunnel == NULL || ! nodeHasFlagChainHead(tunnelGetNode(tunnel)))
             {
                 continue;
             }
@@ -213,7 +213,7 @@ static void pathWalk(node_manager_config_t *cfg)
                 break;
             }
             c++;
-            node_t *n2 = nodemanagerGetNode(cfg, n1->hash_next);
+            node_t *n2 = nodemanagerGetNodeInstance(cfg, n1->hash_next);
             n1         = n2;
             if (c > 200)
             {
@@ -235,19 +235,7 @@ static void cycleProcess(node_manager_config_t *cfg)
             continue;
         }
 
-        c_foreach(n2, map_node_t, cfg->node_map)
-        {
-            if (next_hash == n2.ref->second->hash_name)
-            {
-                ++(n2.ref->second->refrenced);
-                if (n2.ref->second->refrenced > 1)
-                {
-                    LOGF("Node Map Failure: no more than 1 node can be chained to node (\"%s\")", n2.ref->second->name);
-                    exit(1);
-                }
-                // LOGD("%-17s -> %s", n1.ref->second->name, n2.ref->second->name);
-            }
-        }
+       
     }
 
     // very basic check to see if there is no route starter node
@@ -255,7 +243,7 @@ static void cycleProcess(node_manager_config_t *cfg)
         c_foreach(n1, map_node_t, cfg->node_map)
         {
 
-            if ((n1.ref->second->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
+            if ((n1.ref->second->flags & kNodeFlagChainHead) == kNodeFlagChainHead)
             {
                 return;
             }
@@ -265,34 +253,56 @@ static void cycleProcess(node_manager_config_t *cfg)
     }
 }
 
-void nodemanagerRegisterNode(node_manager_config_t *cfg, node_t *new_node, cJSON *settings)
+void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
 {
-    new_node->hash_name = calcHashBytes(new_node->name, strlen(new_node->name));
-    new_node->hash_type = calcHashBytes(new_node->type, strlen(new_node->type));
-    if (new_node->next)
+    char *node_name    = NULL;
+    char *node_type    = NULL;
+    char *node_next    = NULL;
+    int   node_version = 0;
+
+    if (! getStringFromJsonObject(&(node_name), node_json, "name"))
     {
-        new_node->hash_next = calcHashBytes(new_node->next, strlen(new_node->next));
+        LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
+             cfg->config_file->file_path);
+        exit(1);
     }
-    // load lib
-    node_t lib = nodelibraryLoadByHash(new_node->hash_type);
-    if (lib.hash_name == 0)
+
+    if (! getStringFromJsonObject(&(node_type), node_json, "type"))
     {
-        LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", new_node->type,
-             new_node->hash_type);
+        LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
+             cfg->config_file->file_path);
+        exit(1);
+    }
+    getStringFromJsonObject(&(node_next), node_json, "next");
+    getIntFromJsonObjectOrDefault(&(node_version), node_json, "version", 0);
+
+    hash_t hash_name = calcHashBytes(node_name, strlen(node_name));
+    hash_t hash_type = calcHashBytes(node_type, strlen(node_type));
+    hash_t hash_next = node_next != NULL ? calcHashBytes(node_next, strlen(node_next)) : 0x0;
+
+    // load lib
+    node_t *new_node = nodemanagerNewNode();
+    *new_node        = nodelibraryLoadByTypeHash(hash_type);
+    if (new_node->hash_type != hash_type)
+    {
+        LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", node_type,
+             hash_type);
         exit(1);
     }
     else
     {
-        LOGD("%-18s: library \"%s\" loaded successfully", new_node->name, new_node->type);
+        LOGD("%-18s: library \"%s\" loaded successfully", node_name, node_type);
     }
-    new_node->metadata = lib.getMetadataHandle();
-    // if ((new_node->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead)
-    // {
-    //     new_node->flag_route_starter = true;
-    // }
+    new_node->name      = node_name;
+    new_node->type      = node_type;
+    new_node->next      = node_next;
+    new_node->hash_name = hash_name;
+    new_node->hash_type = hash_type;
+    new_node->hash_next = hash_next;
+    new_node->version   = node_version;
 
-    new_node->node_json           = settings;
-    new_node->node_settings_json  = cJSON_GetObjectItemCaseSensitive(settings, "settings");
+    new_node->node_json           = node_json;
+    new_node->node_settings_json  = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
     new_node->node_manager_config = cfg;
 
     map_node_t *map = &(cfg->node_map);
@@ -305,7 +315,7 @@ void nodemanagerRegisterNode(node_manager_config_t *cfg, node_t *new_node, cJSON
     map_node_t_insert(map, new_node->hash_name, new_node);
 }
 
-node_t *nodemanagerGetNode(node_manager_config_t *cfg, hash_t hash_node_name)
+node_t *nodemanagerGetNodeInstance(node_manager_config_t *cfg, hash_t hash_node_name)
 {
     map_node_t_iter iter = map_node_t_find(&(cfg->node_map), hash_node_name);
     if (iter.ref == map_node_t_end(&(cfg->node_map)).ref)
@@ -328,23 +338,7 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
     cJSON *node_json  = NULL;
     cJSON_ArrayForEach(node_json, nodes_json)
     {
-        node_t *new_node = nodemanagerNewNode();
-        if (! getStringFromJsonObject(&(new_node->name), node_json, "name"))
-        {
-            LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
-                 cfg->config_file->file_path);
-            exit(1);
-        }
-
-        if (! getStringFromJsonObject(&(new_node->type), node_json, "type"))
-        {
-            LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
-                 cfg->config_file->file_path);
-            exit(1);
-        }
-        getStringFromJsonObject(&(new_node->next), node_json, "next");
-        getIntFromJsonObjectOrDefault((int *) &(new_node->version), node_json, "version", 0);
-        nodemanagerRegisterNode(cfg, new_node, node_json);
+        nodemanagerCreateNodeInstance(cfg, node_json);
     }
 
     cycleProcess(cfg);

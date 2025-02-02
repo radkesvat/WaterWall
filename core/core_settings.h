@@ -9,6 +9,11 @@ struct core_settings_s
 
     char *log_path;
 
+    char *internal_log_file;
+    char *internal_log_level;
+    bool  internal_log_console;
+    char *internal_log_file_fullpath;
+
     char *core_log_file;
     char *core_log_level;
     bool  core_log_console;

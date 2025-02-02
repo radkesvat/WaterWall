@@ -78,8 +78,8 @@ tunnel_t *newListener(node_instance_context_t *instance_info)
     state->tcp_inbound_node = tcp_inbound_node;
     state->udp_inbound_node = udp_inbound_node;
     // this is enough, node map will run these and perform chaining
-    nodemanagerRegisterNode(instance_info->node_manager_config,tcp_inbound_node, settings);
-    nodemanagerRegisterNode(instance_info->node_manager_config,udp_inbound_node, settings);
+    nodemanagerCreateNodeInstance(instance_info->node_manager_config,tcp_inbound_node, settings);
+    nodemanagerCreateNodeInstance(instance_info->node_manager_config,udp_inbound_node, settings);
 
 
     tunnel_t *t   = tunnelCreate();

@@ -1,7 +1,7 @@
 #include "wevent.h"
 #include "wsocket.h"
 #include "watomic.h"
-#include "wlog.h"
+#include "loggers/internal_logger.h"
 #include "werr.h"
 // todo (invesitage) how a dynamic node can have these?
 uint64_t wloopGetNextEventID(void) {

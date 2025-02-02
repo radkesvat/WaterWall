@@ -196,6 +196,20 @@ void loggerEnableColor(logger_t *logger, int on)
 
 void loggerSetFile(logger_t *logger, const char *filepath)
 {
+    // when path ends with / means no log file 
+
+        
+    if(strrchr(filepath,'/') == filepath + strlen(filepath) - 1 || strlen(filepath) == 0)
+    {
+        if(logger->fp_)
+        {
+            fclose(logger->fp_);
+            logger->fp_ = NULL;
+        }
+        logger->filepath[0] = 0X0;
+        return;
+    }
+
 #if defined(OS_UNIX)
     strncpy(logger->filepath, filepath, sizeof(logger->filepath) - 1);
 #else

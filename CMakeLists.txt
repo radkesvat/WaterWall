@@ -55,6 +55,9 @@ set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 
 
+option(INCLUDE_TEMPLATE "link Template staticly to the core"  TRUE)
+
+
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
@@ -136,6 +139,17 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ww)
 target_link_libraries(Waterwall ww)
 
+
+
+
+
+#tun device
+if (INCLUDE_TEMPLATE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TEMPLATE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/template)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/template)
+target_link_libraries(Waterwall Template)
+endif()
 
 
 #tun device

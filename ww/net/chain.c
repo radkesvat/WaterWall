@@ -4,11 +4,11 @@
 #include "node_builder/node.h"
 #include "global_state.h"
 
-void tunnelarrayInesert(tunnel_array_t *tc, tunnel_t *t)
+void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
 {
     if (t->chain_index == kMaxChainLen)
     {
-        LOGF("tunnelarrayInesert overflow!");
+        LOGF("tunnelarrayInsert overflow!");
         exit(1);
     }
 
@@ -17,8 +17,8 @@ void tunnelarrayInesert(tunnel_array_t *tc, tunnel_t *t)
 
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
 {
-    tunnelarrayInesert(&(tci->tunnels), t);
-    tci->sum_padding_left += tunnelGetNode(t)->metadata.required_padding_left;
+    tunnelarrayInsert(&(tci->tunnels), t);
+    tci->sum_padding_left += tunnelGetNode(t)->required_padding_left;
     tci->sum_line_state_size += t->lstate_size;
     t->chain = tci;
     
@@ -26,7 +26,9 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
 
 tunnel_chain_t *tunnelchainCreate(void)
 {
-    tunnel_chain_t *tc = memoryAllocate(sizeof(tunnel_chain_t) + sizeof(void *) * getWorkersCount());
+    size_t size = sizeof(tunnel_chain_t) + sizeof(void *) * getWorkersCount();
+    tunnel_chain_t *tc = memoryAllocate(size);
+    memorySet(tc, 0, size);
     return tc;
 }
 

@@ -31,6 +31,7 @@ void contextApplyOnTunnelU(context_t *c, tunnel_t *t)
         t->fnResumeU(t, c->line);
         return;
     }
+    assert(false);
 }
 
 void contextApplyOnTunnelD(context_t *c, tunnel_t *t)
@@ -64,4 +65,6 @@ void contextApplyOnTunnelD(context_t *c, tunnel_t *t)
         t->fnResumeD(t, c->line);
         return;
     }
+    assert(false);
+
 }

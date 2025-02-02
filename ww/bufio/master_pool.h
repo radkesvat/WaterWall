@@ -60,7 +60,7 @@ typedef void (*MasterPoolItemDestroyHandle)(struct master_pool_s *pool, master_p
     do not read this pool properties from the struct, its a multi-threaded object
 */
 
-typedef struct master_pool_s
+typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct master_pool_s
 {
     void                       *memptr;
     wmutex_t                    mutex;
@@ -69,7 +69,7 @@ typedef struct master_pool_s
     atomic_uint                 len;
     const uint32_t              cap;
     void                       *available[];
-} ATTR_ALIGNED_LINE_CACHE master_pool_t;
+} GNU_ATTR_ALIGNED_LINE_CACHE master_pool_t;
 
 /**
  * Retrieves a specified number of items from the master pool.

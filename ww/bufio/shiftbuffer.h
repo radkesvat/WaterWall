@@ -20,11 +20,7 @@ struct sbuf_s
     uint32_t len;
     uint32_t capacity;
     uint16_t l_pad;
-#ifdef COMPILER_MSVC
-    ATTR_ALIGNED_16 uint8_t buf[];
-#else
-    uint8_t buf[] ATTR_ALIGNED_16;
-#endif
+    MSVC_ATTR_ALIGNED_16 uint8_t buf[] GNU_ATTR_ALIGNED_16;
 };
 
 typedef struct sbuf_s sbuf_t;

@@ -8,7 +8,7 @@
 
 
 typedef uint8_t wid_t;
-typedef _Atomic(wid_t) atomic_uint8_t;
+typedef _Atomic(wid_t) atomic_wid_t;
 
 typedef struct worker_s
 {

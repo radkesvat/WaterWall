@@ -647,7 +647,7 @@ tunnel_t *newOpenSSLServer(node_instance_context_t *instance_info)
     else
     {
         hash_t  hash_next = calcHashBytes(fallback_node, strlen(fallback_node));
-        node_t *next_node = nodemanagerGetNode(instance_info->node_manager_config, hash_next);
+        node_t *next_node = nodemanagerGetNodeInstance(instance_info->node_manager_config, hash_next);
         if (next_node == NULL)
         {
             LOGF("OpensslServer: fallback node not found");

@@ -176,5 +176,6 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 
 
 #define atomicLoadRelaxed(x) atomic_load_explicit((x), memory_order_relaxed)
+#define atomicExchangeExplicit(x,y,z) atomic_exchange_explicit(x,y,z) 
 
 #endif // WW_ATOMIC_H_

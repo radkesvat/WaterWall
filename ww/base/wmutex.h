@@ -364,13 +364,15 @@ static inline void hybridmutexDestroy(whybrid_mutex_t *m)
 
 static inline void hybridmutexLock(whybrid_mutex_t *m)
 {
-    if (atomic_exchange_explicit(&m->flag, true, memory_order_acquire))
+    if (atomicExchangeExplicit(&m->flag, true, memory_order_acquire))
     {
         // already locked -- slow path
         while (1)
         {
-            if (! atomic_exchange_explicit(&m->flag, true, memory_order_acquire))
+            if (! atomicExchangeExplicit(&m->flag, true, memory_order_acquire))
+            {
                 break;
+            }
             size_t n = kYieldProcessorTries;
             while (atomicLoadExplicit(&m->flag, memory_order_relaxed))
             {
@@ -395,7 +397,7 @@ static inline void hybridmutexLock(whybrid_mutex_t *m)
 
 static inline bool hybridmutexTryLock(whybrid_mutex_t *m)
 {
-    return 0 == atomic_exchange_explicit(&m->flag, true, memory_order_acquire);
+    return 0 == atomicExchangeExplicit(&m->flag, true, memory_order_acquire);
 }
 
 static inline void hybridmutexUnlock(whybrid_mutex_t *m)
@@ -413,7 +415,10 @@ static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 //  if you want to test, helgrind won't detect atomic flag
 // #define TEST_HELGRIND   // will transform hybrid mutex to a regular mutex
 
-#ifndef TEST_HELGRIND
+// according to microsoft docs, windows mutex uses atomic operation by default
+// and our implementation cannt be beter than the system one
+
+#if ! defined (TEST_HELGRIND) && ! defined (COMPILER_MSVC)
 
 #undef wmutex_t
 #undef mutexInit

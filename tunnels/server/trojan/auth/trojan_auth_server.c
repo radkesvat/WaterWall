@@ -298,7 +298,7 @@ static void parse(tunnel_t *t, cJSON *settings, node_instance_context_t *instanc
         }
 
         hash_t  hash_next     = calcHashBytes(fallback_node_name, strlen(fallback_node_name));
-        node_t *fallback_node = nodemanagerGetNode(instance_info->node_manager_config, hash_next);
+        node_t *fallback_node = nodemanagerGetNodeInstance(instance_info->node_manager_config, hash_next);
         if (fallback_node == NULL)
         {
             LOGF("TrojanAuthServer: fallback node not found");

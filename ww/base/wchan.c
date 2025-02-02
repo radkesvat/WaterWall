@@ -177,7 +177,7 @@ struct Thr
     bool                         init;
     atomic_bool                  closed;
     wlsem_t                      sema;
-    ATTR_ALIGNED_LINE_CACHE Thr *next; // list link
+    MSVC_ATTR_ALIGNED_LINE_CACHE Thr *next; // list link
     void                        *elemptr;
 };
 
@@ -194,7 +194,7 @@ struct Thr
     bool            init;
     atomic_bool     closed;
     wlsem_t         sema;
-    Thr *next       ATTR_ALIGNED_LINE_CACHE; // list link
+    Thr *next       GNU_ATTR_ALIGNED_LINE_CACHE; // list link
     _Atomic(void *) elemptr;
 };
 
@@ -206,7 +206,7 @@ typedef struct WaitQ
 
 #endif
 
-typedef struct wchan_s
+typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
 {
     // These fields don't change after wchan_Open
     uintptr_t memptr;   // memory allocation pointer
@@ -234,17 +234,12 @@ typedef struct wchan_s
     // So we make sure recvx ends up on a separate cache line.
     atomic_uint32_t sendx;
 
-#ifdef COMPILER_MSVC
     // send index in buf
-    ATTR_ALIGNED_LINE_CACHE atomic_uint32_t recvx; // receive index in buf
-#else
-    // send index in buf
-    atomic_uint32_t recvx ATTR_ALIGNED_LINE_CACHE; // receive index in buf
-#endif
+    MSVC_ATTR_ALIGNED_LINE_CACHE atomic_uint32_t recvx GNU_ATTR_ALIGNED_LINE_CACHE; // receive index in buf
 
     // uint8_t pad[kCpuLineCacheSize];
     uint8_t buf[]; // queue storage
-} ATTR_ALIGNED_LINE_CACHE wchan_t;
+} GNU_ATTR_ALIGNED_LINE_CACHE wchan_t;
 
 static void thr_init(Thr *t)
 {
@@ -671,7 +666,7 @@ void chanClose(wchan_t *c)
     chan_lock(&c->lock);
     // dlog_chan("close: channel locked");
 
-    if (atomic_exchange_explicit(&c->closed, 1, memory_order_acquire) != 0)
+    if (atomicExchangeExplicit(&c->closed, 1, memory_order_acquire) != 0)
     {
         printError("close of closed channel");
         exit(1);

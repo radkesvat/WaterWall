@@ -4,7 +4,7 @@
 
 #include "wdef.h"
 #include "ev_memory.h"
-#include "wlog.h"
+#include "loggers/internal_logger.h"
 #include "wmath.h"
 #include "wtime.h"
 #include "wsocket.h"

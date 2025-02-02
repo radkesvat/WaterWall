@@ -40,7 +40,7 @@ typedef struct ww_global_state_s
     struct logger_s         *core_logger;
     struct logger_s         *network_logger;
     struct logger_s         *dns_logger;
-    struct logger_s         *ww_logger;
+    struct logger_s         *internal_logger;
     uint32_t                 workers_count;
     uint32_t                 ram_profile;
     bool                     initialized;
@@ -79,7 +79,6 @@ static inline buffer_pool_t *getWorkerBufferPool(wid_t tid)
 {
     return GSTATE.shortcut_buffer_pools[tid];
 }
-
 
 static inline generic_pool_t *getWorkerContextPool(wid_t tid)
 {

@@ -3,7 +3,7 @@
 #include "buffer_pool.h"
 #include "wmutex.h"
 #include "loggers/network_logger.h"
-#include "pipe_line.h"
+
 #include "shiftbuffer.h"
 #include "tunnel.h"
 #include "worker.h"

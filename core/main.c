@@ -1,9 +1,9 @@
 #include "core_settings.h"
 
-#include "loggers/core_logger.h"
-#include "wwapi.h"
-#include "os_helpers.h"
 #include "imported_tunnels.h"
+#include "loggers/core_logger.h"
+#include "os_helpers.h"
+#include "wwapi.h"
 
 int main(void)
 {
@@ -18,8 +18,8 @@ int main(void)
 
     if (core_file_content == NULL)
     {
-        printError("Waterwall version %s\nCould not read core settings file \"%s\" \n",
-                TOSTRING(WATERWALL_VERSION), core_file_name);
+        printError("Waterwall version %s\nCould not read core settings file \"%s\" \n", TOSTRING(WATERWALL_VERSION),
+                   core_file_name);
         exit(1);
     }
     parseCoreSettings(core_file_content);
@@ -28,18 +28,22 @@ int main(void)
     //  [Runtime setup]
     createDirIfNotExists(getCoreSettings()->log_path);
 
-    
-
     ww_construction_data_t runtime_data = {
-        .workers_count       = getCoreSettings()->workers_count,
-        .ram_profile         = getCoreSettings()->ram_profile,
-        .core_logger_data    = (logger_construction_data_t) {.log_file_path = getCoreSettings()->core_log_file_fullpath,
+        .workers_count        = getCoreSettings()->workers_count,
+        .ram_profile          = getCoreSettings()->ram_profile,
+        .internal_logger_data    = (logger_construction_data_t){.log_file_path = getCoreSettings()->internal_log_file_fullpath,
+                                                             .log_level     = getCoreSettings()->internal_log_level,
+                                                             .log_console   = getCoreSettings()->internal_log_console},
+
+        .core_logger_data = (logger_construction_data_t){.log_file_path = getCoreSettings()->core_log_file_fullpath,
                                                              .log_level     = getCoreSettings()->core_log_level,
                                                              .log_console   = getCoreSettings()->core_log_console},
-        .network_logger_data = (logger_construction_data_t) {.log_file_path = getCoreSettings()->network_log_file_fullpath,
+
+        .network_logger_data =  (logger_construction_data_t){.log_file_path = getCoreSettings()->network_log_file_fullpath,
                                                              .log_level     = getCoreSettings()->network_log_level,
                                                              .log_console   = getCoreSettings()->network_log_console},
-        .dns_logger_data     = (logger_construction_data_t) {.log_file_path = getCoreSettings()->dns_log_file_fullpath,
+                                                             
+        .dns_logger_data =      (logger_construction_data_t){.log_file_path = getCoreSettings()->dns_log_file_fullpath,
                                                              .log_level     = getCoreSettings()->dns_log_level,
                                                              .log_console   = getCoreSettings()->dns_log_console},
     };
@@ -51,7 +55,7 @@ int main(void)
     LOGI("Parsing core file complete");
     increaseFileLimit();
     loadImportedTunnelsIntoCore();
-
+    
     //  [Parse ConfigFiles]
     {
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)

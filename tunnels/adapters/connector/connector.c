@@ -55,8 +55,8 @@ tunnel_t *newConnector(node_instance_context_t *instance_info)
     udp_outbound_node->name    = stringConcat(instance_info->node->name, "_udp_outbound");
     udp_outbound_node->type    = stringDuplicate("UdpConnector");
     udp_outbound_node->version = instance_info->node->version;
-    nodemanagerRegisterNode(instance_info->node_manager_config, tcp_outbound_node, settings);
-    nodemanagerRegisterNode(instance_info->node_manager_config, udp_outbound_node, settings);
+    nodemanagerCreateNodeInstance(instance_info->node_manager_config, tcp_outbound_node, settings);
+    nodemanagerCreateNodeInstance(instance_info->node_manager_config, udp_outbound_node, settings);
     nodemanagerRunNode(instance_info->node_manager_config, tcp_outbound_node, instance_info->chain_index);
     nodemanagerRunNode(instance_info->node_manager_config, udp_outbound_node, instance_info->chain_index);
     state->tcp_connector = tcp_outbound_node->instance;

@@ -24,7 +24,7 @@ void globalStateSet(struct ww_global_state_s *state)
     setCoreLogger(GSTATE.core_logger);
     setNetworkLogger(GSTATE.network_logger);
     setDnsLogger(GSTATE.dns_logger);
-    setInternalLogger(GSTATE.ww_logger);
+    setInternalLogger(GSTATE.internal_logger);
     setSignalManager(GSTATE.signal_manager);
     socketmanagerSet(GSTATE.socekt_manager);
     nodemanagerSetState(GSTATE.node_manager);
@@ -70,8 +70,9 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // [Section] loggers
     {
-        GSTATE.ww_logger = createInternalLogger(init_data.internal_logger_data.log_file_path,
+        GSTATE.internal_logger = createInternalLogger(init_data.internal_logger_data.log_file_path,
                                                 init_data.internal_logger_data.log_console);
+        stringUpperCase(init_data.internal_logger_data.log_level);
         setInternalLoggerLevelByStr(init_data.internal_logger_data.log_level);
 
         GSTATE.core_logger =

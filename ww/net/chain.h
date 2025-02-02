@@ -43,5 +43,5 @@ void            tunnelchainFinalize(tunnel_chain_t *tc);
 void            tunnelchainDestroy(tunnel_chain_t *tc);
 generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, uint32_t tid);
 
-void tunnelarrayInesert(tunnel_array_t *tc, tunnel_t *t);
+void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t);
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t);

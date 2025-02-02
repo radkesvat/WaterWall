@@ -35,9 +35,9 @@ static struct
 //     #endif
 // }
 
-// static node_t dynLoadNodeLib(hash_t hname) {
+// static node_t dynLoadNodeLib(hash_t htype) {
 //     char libName[256];
-//     snprintf(libName, sizeof(libName), "libname-%u.so", hname); // Example library name generation
+//     snprintf(libName, sizeof(libName), "libname-%u.so", htype); // Example library name generation
 
 //     void *handle = NULL;
 //     #ifdef OS_WIN
@@ -56,40 +56,40 @@ static struct
 //     lib.destroyHandle = (tunnel_t *(*)(tunnel_t *))getSymbol(handle, "destroyHandle");
 //     lib.apiHandle = (api_result_t (*)(tunnel_t *, const char *))getSymbol(handle, "apiHandle");
 //     lib.getMetadataHandle = (tunnel_metadata_t (*)(void))getSymbol(handle, "getMetadataHandle");
-//     lib.hash_name = hname;
+//     lib.hash_name = htype;
 
 //     return lib;
 // }
 
 
 
-static node_t dynLoadNodeLib(hash_t hname)
+static node_t dynLoadNodeLib(hash_t htype)
 {
-    (void) hname;
+    (void) htype;
     LOGF("dynLoadNodeLib not implemented");
     return (node_t){0};
 }
 
-node_t nodelibraryLoadByHash(hash_t hname)
+node_t nodelibraryLoadByTypeHash(hash_t htype)
 {
 
     if (state != NULL)
     {
         c_foreach(k, vec_static_libs, state->slibs)
         {
-            if ((k.ref)->hash_name == hname)
+            if ((k.ref)->hash_type == htype)
             {
                 return *(k.ref);
             }
         }
     }
-    return dynLoadNodeLib(hname);
+    return dynLoadNodeLib(htype);
 }
 
-node_t nodelibraryLoadByName(const char *name)
+node_t nodelibraryLoadByTypeName(const char *name)
 {
-    hash_t hname = calcHashBytes(name, strlen(name));
-    return nodelibraryLoadByHash(hname);
+    hash_t htype = calcHashBytes(name, strlen(name));
+    return nodelibraryLoadByTypeHash(htype);
 }
 
 
@@ -106,5 +106,5 @@ void nodelibraryRegister(node_t lib)
 }
 
 bool nodeHasFlagChainHead(node_t* node){
-    return (node->metadata.flags & kNodeFlagChainHead) == kNodeFlagChainHead;
+    return (node->flags & kNodeFlagChainHead) == kNodeFlagChainHead;
 }

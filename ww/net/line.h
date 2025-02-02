@@ -12,16 +12,15 @@ typedef uint32_t line_refc_t;
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
 
-    if forexample a write on the Down-end blocks, it pauses the Up-end and wice wersa
+    if forexample a write on the Down-end blocks, it pauses the Up-end and vice versa
 
     each context creation will increase refc on the line, so the line will never gets destroyed
-    before the contexts that refrense it
+    before the contexts that reference it
 
     line holds all the info such as dest and src contexts, it also contains each tunnel per connection state
     in tunnels_line_state[(tunnel_index)]
 
     a line only belongs to 1 thread, but it can cross the threads (if actually needed) using pipe line, easily
-
 */
 
 typedef struct line_s
@@ -35,15 +34,17 @@ typedef struct line_s
     generic_pool_t      *pool;
     // pipe_line_t     *pipe;
 
-#ifdef COMPILER_MSVC
-    ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[];
-#else
-    uintptr_t *tunnels_line_state[] ATTR_ALIGNED_LINE_CACHE;
-#endif
+    MSVC_ATTR_ALIGNED_16 uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_16;
 
 } line_t;
 
-static inline line_t *newLine(generic_pool_t *pool)
+/**
+ * @brief Creates a new line instance.
+ * 
+ * @param pool Pointer to the generic pool.
+ * @return line_t* Pointer to the created line.
+ */
+static inline line_t *lineCreate(generic_pool_t *pool)
 {
     line_t *l = genericpoolGetItem(pool);
 
@@ -61,14 +62,23 @@ static inline line_t *newLine(generic_pool_t *pool)
     return l;
 }
 
+/**
+ * @brief Checks if the line is alive.
+ * 
+ * @param line Pointer to the line.
+ * @return true If the line is alive.
+ * @return false If the line is not alive.
+ */
 static inline bool lineIsAlive(const line_t *const line)
 {
     return line->alive;
 }
 
-/*
-    called from unlockline which mostly is because destroy context
-*/
+/**
+ * @brief Decreases the reference count of the line and frees it if the count reaches zero.
+ * 
+ * @param l Pointer to the line.
+ */
 static inline void lineUnRefInternal(line_t *const l)
 {
     if (--(l->refc) > 0)
@@ -95,9 +105,11 @@ static inline void lineUnRefInternal(line_t *const l)
     genericpoolReuseItem(l->pool, l);
 }
 
-/*
-    called mostly because create context
-*/
+/**
+ * @brief Increases the reference count of the line.
+ * 
+ * @param line Pointer to the line.
+ */
 static inline void lineLock(line_t *const line)
 {
     assert(line->alive || line->refc > 0);
@@ -107,23 +119,32 @@ static inline void lineLock(line_t *const line)
     line->refc++;
 }
 
+/**
+ * @brief Decreases the reference count of the line.
+ * 
+ * @param line Pointer to the line.
+ */
 static inline void lineUnlock(line_t *const line)
 {
     lineUnRefInternal(line);
 }
 
-/*
-    Only the line creator must call this when it wants to end the line, this dose not necessarily free the line
-   instantly, but it will be freed as soon as the refc becomes zero which means no context is alive for this line, and
-   the line can still be used regularly during the time that it has at least 1 ref
-
-*/
+/**
+ * @brief Marks the line as destroyed and decreases its reference count.
+ * 
+ * @param l Pointer to the line.
+ */
 static inline void lineDestroy(line_t *const l)
 {
     l->alive = false;
     lineUnlock(l);
 }
 
+/**
+ * @brief Authenticates the line.
+ * 
+ * @param line Pointer to the line.
+ */
 static inline void lineAuthenticate(line_t *const line)
 {
     // basic overflow protection
@@ -132,16 +153,36 @@ static inline void lineAuthenticate(line_t *const line)
     line->auth_cur += 1;
 }
 
+/**
+ * @brief Checks if the line is authenticated.
+ * 
+ * @param line Pointer to the line.
+ * @return true If the line is authenticated.
+ * @return false If the line is not authenticated.
+ */
 static inline bool lineIsAuthenticated(line_t *const line)
 {
     return line->auth_cur > 0;
 }
 
+/**
+ * @brief Retrieves the state of the line for a given tunnel.
+ * 
+ * @param t Pointer to the tunnel.
+ * @param l Pointer to the line.
+ * @return void* Pointer to the state of the line.
+ */
 static inline void *lineGetState(tunnel_t *t, line_t *l)
 {
     return ((uint8_t *) l->tunnels_line_state) + t->lstate_offset;
 }
 
+/**
+ * @brief Clears the state of the line.
+ * 
+ * @param state Pointer to the state.
+ * @param size Size of the state.
+ */
 static inline void lineClearState(void *state, size_t size)
 {
 #ifdef DEBUG
@@ -151,12 +192,3 @@ static inline void lineClearState(void *state, size_t size)
     (void) state;
 }
 
-// static inline bool isUpPiped(const line_t *const l)
-// {
-//     return l->pipe != NULL && l->pipe->up != NULL;
-// }
-
-// static inline bool isDownPiped(const line_t *const l)
-// {
-//     return l->pipe != NULL && l->pipe->dw != NULL;
-// }
