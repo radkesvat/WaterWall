@@ -24,6 +24,7 @@ add_library(Template STATIC
                     downstream/est.c
   
 )
+
 target_include_directories(Template PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(Template ww)

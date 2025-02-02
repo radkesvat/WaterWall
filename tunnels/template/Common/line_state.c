@@ -1,5 +1,6 @@
 #include "structure.h"
 
+
 template_lstate_t *lineStateCreate(void)
 {
     return NULL;
