@@ -2,7 +2,6 @@
 #include "mimalloc.h"
 #include "wmutex.h"
 
-
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -55,7 +54,11 @@ dedicated_memory_t *memorymanagerCreateDedicatedMemory(void)
 */
 void *memoryAllocate(size_t size)
 {
-    return mi_malloc(size);
+    void *ptr = mi_malloc(size);
+#ifdef DEBUG
+    memorySet(ptr, 0XBE, size);
+#endif
+    return ptr;
 }
 void *memoryReAllocate(void *ptr, size_t size)
 {
@@ -113,7 +116,7 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 
 void *memoryAllocate(size_t size)
 {
-    void* ptr = malloc(size);
+    void *ptr = malloc(size);
 #ifdef DEBUG
     memorySet(ptr, 0XBE, size);
 #endif
@@ -130,7 +133,8 @@ void memoryFree(void *ptr)
     free(ptr);
 }
 
-dedicated_memory_t *memorymanagerCreateDedicatedMemory(void){
+dedicated_memory_t *memorymanagerCreateDedicatedMemory(void)
+{
     return NULL;
 }
 
