@@ -39,10 +39,10 @@ typedef struct socket_filter_s
 
 enum
 {
-    kSoOriginalDest          = 80,
-    kFilterLevels            = 4,
-    kMaxBalanceSelections    = 64,
-    kDefalultBalanceInterval = 60 * 1000
+    kSoOriginalDest         = 80,
+    kFilterLevels           = 4,
+    kMaxBalanceSelections   = 64,
+    kDefaultBalanceInterval = 60 * 1000
 };
 
 typedef struct socket_manager_s
@@ -65,16 +65,16 @@ typedef struct socket_manager_s
 
     wmutex_t                mutex;
     balancegroup_registry_t balance_groups;
-    wthread_t               accept_thread;
     worker_t               *worker;
+    wid_t                   wid;
 
-    uint16_t last_round_tid;
-    bool     iptables_installed;
-    bool     ip6tables_installed;
-    bool     lsof_installed;
-    bool     iptable_cleaned;
-    bool     iptables_used;
-    bool     started;
+    wid_t last_round_wid;
+    bool  iptables_installed;
+    bool  ip6tables_installed;
+    bool  lsof_installed;
+    bool  iptable_cleaned;
+    bool  iptables_used;
+    bool  started;
 
 } socket_manager_state_t;
 
@@ -106,28 +106,28 @@ static void destroyUdpPayloadPoolHandle(generic_pool_t *pool, pool_item_t *item)
 
 void socketacceptresultDestroy(socket_accept_result_t *sar)
 {
-    const wid_t tid = sar->tid;
+    const wid_t wid = sar->wid;
 
-    mutexLock(&(state->tcp_pools[tid].mutex));
-    genericpoolReuseItem(state->tcp_pools[tid].pool, sar);
-    mutexUnlock(&(state->tcp_pools[tid].mutex));
+    mutexLock(&(state->tcp_pools[wid].mutex));
+    genericpoolReuseItem(state->tcp_pools[wid].pool, sar);
+    mutexUnlock(&(state->tcp_pools[wid].mutex));
 }
 
-static udp_payload_t *newUpdPayload(wid_t tid)
+static udp_payload_t *newUpdPayload(wid_t wid)
 {
-    mutexLock(&(state->udp_pools[tid].mutex));
-    udp_payload_t *item = genericpoolGetItem(state->udp_pools[tid].pool);
-    mutexUnlock(&(state->udp_pools[tid].mutex));
+    mutexLock(&(state->udp_pools[wid].mutex));
+    udp_payload_t *item = genericpoolGetItem(state->udp_pools[wid].pool);
+    mutexUnlock(&(state->udp_pools[wid].mutex));
     return item;
 }
 
 void udppayloadDestroy(udp_payload_t *upl)
 {
-    const wid_t tid = upl->tid;
+    const wid_t wid = upl->wid;
 
-    mutexLock(&(state->udp_pools[tid].mutex));
-    genericpoolReuseItem(state->udp_pools[tid].pool, upl);
-    mutexUnlock(&(state->udp_pools[tid].mutex));
+    mutexLock(&(state->udp_pools[wid].mutex));
+    genericpoolReuseItem(state->udp_pools[wid].pool, upl);
+    mutexUnlock(&(state->udp_pools[wid].mutex));
 }
 
 static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
@@ -286,7 +286,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     }
     socket_filter_t *filter   = memoryAllocate(sizeof(socket_filter_t));
     unsigned int     pirority = 0;
-    if (option.multiport_backend == kMultiportBackendNothing)
+    if (option.multiport_backend == kMultiportBackendNone)
     {
         pirority++;
     }
@@ -333,38 +333,45 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
 
 static inline uint16_t getCurrentDistributeTid(void)
 {
-    return state->last_round_tid;
+    return state->last_round_wid;
 }
 
 static inline void incrementDistributeTid(void)
 {
-    state->last_round_tid++;
-    if (state->last_round_tid >= getWorkersCount())
+    state->last_round_wid++;
+    if (state->last_round_wid >= getWorkersCount())
     {
-        state->last_round_tid = 0;
+        state->last_round_wid = 0;
     }
 }
 
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
 
-    wid_t tid = (uint8_t) getCurrentDistributeTid();
+    wid_t wid = (uint8_t) getCurrentDistributeTid();
 
-    mutexLock(&(state->tcp_pools[tid].mutex));
-    socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[tid].pool);
-    mutexUnlock(&(state->tcp_pools[tid].mutex));
+    mutexLock(&(state->tcp_pools[wid].mutex));
+    socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[wid].pool);
+    mutexUnlock(&(state->tcp_pools[wid].mutex));
 
     result->real_localport = local_port;
 
-    wloop_t *worker_loop = getWorkerLoop(tid);
+    wloop_t *worker_loop = getWorkerLoop(wid);
     wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
-    result->tid          = tid;
+    result->wid          = wid;
     result->io           = io;
     result->tunnel       = filter->tunnel;
     ev.userdata          = result;
     incrementDistributeTid();
 
-    wloopPostEvent(worker_loop, &ev);
+    if (wid == state->wid)
+    {
+        filter->cb(&ev);
+    }
+    else
+    {
+        wloopPostEvent(worker_loop, &ev);
+    }
 }
 
 static void noTcpSocketConsumerFound(wio_t *io)
@@ -427,7 +434,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
     widle_table_t          *selected_balance_table           = NULL;
     hash_t                  src_hash                         = 0x0;
     bool                    src_hashed                       = false;
-    const uint8_t           this_tid                         = state->worker->wid;
+    const uint8_t           this_wid                         = state->wid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -462,13 +469,13 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
                 {
                     src_hash = sockaddrCalcHashNoPort((sockaddr_u *) wioGetPeerAddrU(io));
                 }
-                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
+                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
 
                 if (idle_item)
                 {
                     socket_filter_t *target_filter = idle_item->userdata;
                     idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
-                                                    option.balance_group_interval == 0 ? kDefalultBalanceInterval
+                                                    option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                                        : option.balance_group_interval);
                     if (option.no_delay)
                     {
@@ -503,10 +510,9 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_tid,
-                    filter->option.balance_group_interval == 0 ? kDefalultBalanceInterval
+        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_wid,
+                    filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                : filter->option.balance_group_interval);
-
         if (filter->option.no_delay)
         {
             tcpNoDelay(wioGetFD(io), 1);
@@ -677,7 +683,7 @@ static void listenTcp(wloop_t *loop, uint8_t *ports_overlapped)
             }
             else if (port_min == port_max)
             {
-                option.multiport_backend = kMultiportBackendNothing;
+                option.multiport_backend = kMultiportBackendNone;
             }
             if (option.protocol == kSapTcp)
             {
@@ -710,13 +716,13 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
 static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
 {
 
-    mutexLock(&(state->udp_pools[post_pl.tid].mutex));
-    udp_payload_t *pl = genericpoolGetItem(state->udp_pools[post_pl.tid].pool);
-    mutexUnlock(&(state->udp_pools[post_pl.tid].mutex));
+    mutexLock(&(state->udp_pools[post_pl.wid].mutex));
+    udp_payload_t *pl = genericpoolGetItem(state->udp_pools[post_pl.wid].pool);
+    mutexUnlock(&(state->udp_pools[post_pl.wid].mutex));
     *pl = post_pl;
 
     pl->tunnel           = filter->tunnel;
-    wloop_t *worker_loop = getWorkerLoop(pl->tid);
+    wloop_t *worker_loop = getWorkerLoop(pl->wid);
     wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
@@ -734,7 +740,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     widle_table_t          *selected_balance_table           = NULL;
     hash_t                  src_hash                         = 0x0;
     bool                    src_hashed                       = false;
-    const uint8_t           this_tid                         = state->worker->wid;
+    const uint8_t           this_wid                         = state->wid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
@@ -768,13 +774,13 @@ static void distributeUdpPayload(const udp_payload_t pl)
                 {
                     src_hash = sockaddrCalcHashNoPort((sockaddr_u *) wioGetPeerAddrU(pl.sock->io));
                 }
-                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_tid, option.shared_balance_table, src_hash);
+                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
 
                 if (idle_item)
                 {
                     socket_filter_t *target_filter = idle_item->userdata;
                     idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
-                                                    option.balance_group_interval == 0 ? kDefalultBalanceInterval
+                                                    option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                                        : option.balance_group_interval);
                     postPayload(pl, target_filter);
                     return;
@@ -798,8 +804,8 @@ static void distributeUdpPayload(const udp_payload_t pl)
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_tid,
-                    filter->option.balance_group_interval == 0 ? kDefalultBalanceInterval
+        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_wid,
+                    filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                : filter->option.balance_group_interval);
         postPayload(pl, filter);
     }
@@ -813,11 +819,11 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
 {
     udpsock_t *socket     = weventGetUserdata(io);
     uint16_t   local_port = sockaddrPort((sockaddr_u *) wioGetLocaladdrU(io));
-    uint8_t    target_tid = local_port % getWorkersCount();
+    uint8_t    target_wid = local_port % getWorkersCount();
 
     udp_payload_t item = (udp_payload_t){.sock           = socket,
                                          .buf            = buf,
-                                         .tid            = target_tid,
+                                         .wid            = target_wid,
                                          .peer_addr      = *(sockaddr_u *) wioGetPeerAddrU(io),
                                          .real_localport = local_port};
 
@@ -870,7 +876,7 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
             }
             else if (port_min == port_max)
             {
-                option.multiport_backend = kMultiportBackendNothing;
+                option.multiport_backend = kMultiportBackendNone;
             }
             if (option.protocol == kSapUdp)
             {
@@ -900,22 +906,42 @@ static void writeUdpThisLoop(wevent_t *ev)
     udppayloadDestroy(upl);
 }
 
-void postUdpWrite(udpsock_t *socket_io, uint8_t tid_from, sbuf_t *buf)
+void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
 {
+    if (wid_from == state->wid)
+    {
+        size_t nwrite = wioWrite(socket_io->io, buf);
+        (void) nwrite;
 
-    udp_payload_t *item = newUpdPayload(tid_from);
+        return;
+    }
 
-    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .tid = tid_from};
+    udp_payload_t *item = newUpdPayload(wid_from);
+
+    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .wid = wid_from};
 
     wevent_t ev = (wevent_t){.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
 
     wloopPostEvent(weventGetLoop(socket_io->io), &ev);
 }
 
-static WTHREAD_ROUTINE(accept_thread) // NOLINT
-{
-    (void) userdata;
 
+
+struct socket_manager_s *socketmanagerGet(void)
+{
+    return state;
+}
+
+void socketmanagerSet(struct socket_manager_s *new_state)
+{
+    assert(state == NULL);
+    state = new_state;
+}
+
+void socketmanagerStart(void)
+{
+    assert(state != NULL);
+    
     assert(state && state->worker->loop && ! state->started);
 
     frandInit();
@@ -932,29 +958,6 @@ static WTHREAD_ROUTINE(accept_thread) // NOLINT
     }
     state->started = true;
     mutexUnlock(&(state->mutex));
-
-    wloopRun(state->worker->loop);
-    LOGW("AcceptThread eventloop finished!");
-    return 0;
-}
-
-struct socket_manager_s *socketmanagerGet(void)
-{
-    return state;
-}
-
-void socketmanagerSet(struct socket_manager_s *new_state)
-{
-    assert(state == NULL);
-    state = new_state;
-}
-
-void socketmanagerStart(void)
-{
-    assert(state != NULL);
-    // accept_thread(accept_thread_loop);
-
-    state->accept_thread = threadCreate(accept_thread, NULL);
 }
 
 socket_manager_state_t *socketmanagerCreate(void)
@@ -963,16 +966,21 @@ socket_manager_state_t *socketmanagerCreate(void)
     state = memoryAllocate(sizeof(socket_manager_state_t));
     memorySet(state, 0, sizeof(socket_manager_state_t));
 
-    worker_t *worker = memoryAllocate(sizeof(worker_t));
+    // worker_t *worker = memoryAllocate(sizeof(worker_t));
 
-    *worker = (worker_t){.wid = 255};
+    // *worker = (worker_t){.wid = 255};
 
-    worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           GSTATE.ram_profile, SMALL_BUFFER_SIZE, LARGE_BUFFER_SIZE);
+    // worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+    // GSTATE.masterpool_buffer_pools_small,
+    //                                        GSTATE.ram_profile, SMALL_BUFFER_SIZE, LARGE_BUFFER_SIZE);
 
-    worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->wid);
+    // worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->wid);
 
-    state->worker = worker;
+    // state->worker = worker;
+
+    assert(getWID() == 0);
+    state->worker = getWorker(0);
+    state->wid    = 0;
 
     for (size_t i = 0; i < kFilterLevels; i++)
     {
@@ -1013,4 +1021,29 @@ socket_manager_state_t *socketmanagerCreate(void)
     registerAtExitCallBack(exitHook, NULL);
 
     return state;
+}
+
+void socketmanagerDestroy(void)
+{
+    assert(state != NULL);
+
+    for (size_t i = 0; i < kFilterLevels; i++)
+    {
+        filters_t_drop(&(state->filters[i]));
+    }
+    memoryFree(state->filters);
+
+    for (unsigned int i = 0; i < getWorkersCount(); ++i)
+    {
+        mutexDestroy(&(state->udp_pools[i].mutex));
+        genericpoolDestroy(state->udp_pools[i].pool);
+        mutexDestroy(&(state->tcp_pools[i].mutex));
+        genericpoolDestroy(state->tcp_pools[i].pool);
+    }
+
+    memoryFree(state->udp_pools);
+    memoryFree(state->tcp_pools);
+
+    memoryFree(state);
+    state = NULL;
 }

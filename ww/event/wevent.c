@@ -126,6 +126,7 @@ void wioReady(wio_t* io) {
     io->heartbeat_interval = 0;
     io->heartbeat_fn = NULL;
     io->heartbeat_timer = NULL;
+
     // private:
 #if defined(EVENT_POLL) || defined(EVENT_KQUEUE)
     io->event_index[0] = io->event_index[1] = -1;

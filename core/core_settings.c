@@ -1,11 +1,12 @@
 #include "core_settings.h"
 #include "wwapi.h"
 
+// Default logging configurations
 #define DEFAULT_INTERNAL_LOG_LEVEL      "INFO"
 #define DEFAULT_INTERNAL_LOG_FILE       ""
 #define DEFAULT_INTERNAL_ENABLE_CONSOLE true
 #define DEFAULT_CORE_LOG_LEVEL          "INFO"
-#define DEFAULT_CORE_LOG_FILE           "core.log"
+#define DEFAULT_CORE_LOG_FILE           "core.log"  // Changed from .json to .log
 #define DEFAULT_CORE_ENABLE_CONSOLE     true
 #define DEFAULT_NETWORK_LOG_LEVEL       "INFO"
 #define DEFAULT_NETWORK_LOG_FILE        "network.log"
@@ -42,79 +43,65 @@ static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
 {
     getStringFromJsonObjectOrDefault(&(settings->log_path), log_obj, "path", DEFAULT_LOG_PATH);
 
+    const cJSON *internal_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "internal");
+    if (cJSON_IsObject(internal_obj) && (internal_obj->child != NULL))
     {
-        const cJSON *internal_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "internal");
-        if (cJSON_IsObject(internal_obj) && (internal_obj->child != NULL))
-        {
-
-            getStringFromJsonObjectOrDefault(&(settings->internal_log_level), internal_obj, "loglevel",
-                                             DEFAULT_INTERNAL_LOG_LEVEL);
-            getStringFromJsonObjectOrDefault(&(settings->internal_log_file), internal_obj, "file",
-                                             DEFAULT_INTERNAL_LOG_FILE);
-            getBoolFromJsonObjectOrDefault(&(settings->internal_log_console), internal_obj, "console",
-                                           DEFAULT_INTERNAL_ENABLE_CONSOLE);
-        }
-        else
-        {
-            settings->internal_log_level   = stringDuplicate(DEFAULT_INTERNAL_LOG_LEVEL);
-            settings->internal_log_file    = stringDuplicate(DEFAULT_INTERNAL_LOG_FILE);
-            settings->internal_log_console = DEFAULT_INTERNAL_ENABLE_CONSOLE;
-        }
+        getStringFromJsonObjectOrDefault(&(settings->internal_log_level), internal_obj, "loglevel",
+                                         DEFAULT_INTERNAL_LOG_LEVEL);
+        getStringFromJsonObjectOrDefault(&(settings->internal_log_file), internal_obj, "file",
+                                         DEFAULT_INTERNAL_LOG_FILE);
+        getBoolFromJsonObjectOrDefault(&(settings->internal_log_console), internal_obj, "console",
+                                       DEFAULT_INTERNAL_ENABLE_CONSOLE);
     }
+    else
     {
-        const cJSON *core_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "core");
-        if (cJSON_IsObject(core_obj) && (core_obj->child != NULL))
-        {
-
-            getStringFromJsonObjectOrDefault(&(settings->core_log_level), core_obj, "loglevel", DEFAULT_CORE_LOG_LEVEL);
-            getStringFromJsonObjectOrDefault(&(settings->core_log_file), core_obj, "file", DEFAULT_CORE_LOG_FILE);
-            getBoolFromJsonObjectOrDefault(&(settings->core_log_console), core_obj, "console",
-                                           DEFAULT_CORE_ENABLE_CONSOLE);
-        }
-        else
-        {
-            settings->core_log_level   = stringDuplicate(DEFAULT_CORE_LOG_LEVEL);
-            settings->core_log_file    = stringDuplicate(DEFAULT_CORE_LOG_FILE);
-            settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
-        }
+        settings->internal_log_level   = stringDuplicate(DEFAULT_INTERNAL_LOG_LEVEL);
+        settings->internal_log_file    = stringDuplicate(DEFAULT_INTERNAL_LOG_FILE);
+        settings->internal_log_console = DEFAULT_INTERNAL_ENABLE_CONSOLE;
     }
 
+    const cJSON *core_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "core");
+    if (cJSON_IsObject(core_obj) && (core_obj->child != NULL))
     {
-        const cJSON *network_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "network");
-        if (cJSON_IsObject(network_obj) && (network_obj->child != NULL))
-        {
-
-            getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "loglevel",
-                                             DEFAULT_NETWORK_LOG_LEVEL);
-            getStringFromJsonObjectOrDefault(&(settings->network_log_file), network_obj, "file",
-                                             DEFAULT_NETWORK_LOG_FILE);
-            getBoolFromJsonObjectOrDefault(&(settings->network_log_console), network_obj, "console",
-                                           DEFAULT_NETWORK_ENABLE_CONSOLE);
-        }
-        else
-        {
-            settings->network_log_level   = stringDuplicate(DEFAULT_NETWORK_LOG_LEVEL);
-            settings->network_log_file    = stringDuplicate(DEFAULT_NETWORK_LOG_FILE);
-            settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
-        }
+        getStringFromJsonObjectOrDefault(&(settings->core_log_level), core_obj, "loglevel", DEFAULT_CORE_LOG_LEVEL);
+        getStringFromJsonObjectOrDefault(&(settings->core_log_file), core_obj, "file", DEFAULT_CORE_LOG_FILE);
+        getBoolFromJsonObjectOrDefault(&(settings->core_log_console), core_obj, "console", DEFAULT_CORE_ENABLE_CONSOLE);
+    }
+    else
+    {
+        settings->core_log_level   = stringDuplicate(DEFAULT_CORE_LOG_LEVEL);
+        settings->core_log_file    = stringDuplicate(DEFAULT_CORE_LOG_FILE);
+        settings->core_log_console = DEFAULT_CORE_ENABLE_CONSOLE;
     }
 
+    const cJSON *network_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "network");
+    if (cJSON_IsObject(network_obj) && (network_obj->child != NULL))
     {
-        const cJSON *dns_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "dns");
-        if (cJSON_IsObject(dns_obj) && (dns_obj->child != NULL))
-        {
-            getStringFromJsonObjectOrDefault(&(settings->dns_log_level), dns_obj, "loglevel", DEFAULT_DNS_LOG_LEVEL);
-            getStringFromJsonObjectOrDefault(&(settings->dns_log_file), dns_obj, "file", DEFAULT_DNS_LOG_FILE);
-            getBoolFromJsonObjectOrDefault(&(settings->dns_log_console), dns_obj, "console",
-                                           DEFAULT_DNS_ENABLE_CONSOLE);
-        }
-        else
-        {
-            settings->dns_log_level = stringDuplicate(DEFAULT_DNS_LOG_LEVEL);
-            settings->dns_log_file  = stringDuplicate(DEFAULT_DNS_LOG_FILE);
+        getStringFromJsonObjectOrDefault(&(settings->network_log_level), network_obj, "loglevel",
+                                         DEFAULT_NETWORK_LOG_LEVEL);
+        getStringFromJsonObjectOrDefault(&(settings->network_log_file), network_obj, "file", DEFAULT_NETWORK_LOG_FILE);
+        getBoolFromJsonObjectOrDefault(&(settings->network_log_console), network_obj, "console",
+                                       DEFAULT_NETWORK_ENABLE_CONSOLE);
+    }
+    else
+    {
+        settings->network_log_level   = stringDuplicate(DEFAULT_NETWORK_LOG_LEVEL);
+        settings->network_log_file    = stringDuplicate(DEFAULT_NETWORK_LOG_FILE);
+        settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
+    }
 
-            settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
-        }
+    const cJSON *dns_obj = cJSON_GetObjectItemCaseSensitive(log_obj, "dns");
+    if (cJSON_IsObject(dns_obj) && (dns_obj->child != NULL))
+    {
+        getStringFromJsonObjectOrDefault(&(settings->dns_log_level), dns_obj, "loglevel", DEFAULT_DNS_LOG_LEVEL);
+        getStringFromJsonObjectOrDefault(&(settings->dns_log_file), dns_obj, "file", DEFAULT_DNS_LOG_FILE);
+        getBoolFromJsonObjectOrDefault(&(settings->dns_log_console), dns_obj, "console", DEFAULT_DNS_ENABLE_CONSOLE);
+    }
+    else
+    {
+        settings->dns_log_level   = stringDuplicate(DEFAULT_DNS_LOG_LEVEL);
+        settings->dns_log_file    = stringDuplicate(DEFAULT_DNS_LOG_FILE);
+        settings->dns_log_console = DEFAULT_DNS_ENABLE_CONSOLE;
     }
 }
 
@@ -126,25 +113,27 @@ static void parseLogPartOfJson(cJSON *log_obj)
     }
     else
     {
-
-        settings->log_path          = stringDuplicate(DEFAULT_LOG_PATH);
-        settings->core_log_file     = stringDuplicate(DEFAULT_CORE_LOG_FILE);
-        settings->core_log_level    = stringDuplicate(DEFAULT_CORE_LOG_LEVEL);
-        settings->network_log_file  = stringDuplicate(DEFAULT_NETWORK_LOG_FILE);
-        settings->network_log_level = stringDuplicate(DEFAULT_NETWORK_LOG_LEVEL);
-        settings->dns_log_file      = stringDuplicate(DEFAULT_DNS_LOG_FILE);
-        settings->dns_log_level     = stringDuplicate(DEFAULT_DNS_LOG_LEVEL);
-        settings->internal_log_file = stringDuplicate(DEFAULT_INTERNAL_LOG_FILE);
+        // Set default values when log object is invalid
+        settings->log_path           = stringDuplicate(DEFAULT_LOG_PATH);
+        settings->core_log_file      = stringDuplicate(DEFAULT_CORE_LOG_FILE);
+        settings->core_log_level     = stringDuplicate(DEFAULT_CORE_LOG_LEVEL);
+        settings->network_log_file   = stringDuplicate(DEFAULT_NETWORK_LOG_FILE);
+        settings->network_log_level  = stringDuplicate(DEFAULT_NETWORK_LOG_LEVEL);
+        settings->dns_log_file       = stringDuplicate(DEFAULT_DNS_LOG_FILE);
+        settings->dns_log_level      = stringDuplicate(DEFAULT_DNS_LOG_LEVEL);
+        settings->internal_log_file  = stringDuplicate(DEFAULT_INTERNAL_LOG_FILE);
         settings->internal_log_level = stringDuplicate(DEFAULT_INTERNAL_LOG_LEVEL);
 
-        settings->core_log_console    = DEFAULT_CORE_ENABLE_CONSOLE;
-        settings->network_log_console = DEFAULT_NETWORK_ENABLE_CONSOLE;
-        settings->dns_log_console     = DEFAULT_DNS_ENABLE_CONSOLE;
+        settings->core_log_console     = DEFAULT_CORE_ENABLE_CONSOLE;
+        settings->network_log_console  = DEFAULT_NETWORK_ENABLE_CONSOLE;
+        settings->dns_log_console      = DEFAULT_DNS_ENABLE_CONSOLE;
         settings->internal_log_console = DEFAULT_INTERNAL_ENABLE_CONSOLE;
     }
-    settings->core_log_file_fullpath    = stringConcat(settings->log_path, settings->core_log_file);
-    settings->network_log_file_fullpath = stringConcat(settings->log_path, settings->network_log_file);
-    settings->dns_log_file_fullpath     = stringConcat(settings->log_path, settings->dns_log_file);
+    
+    // Construct full paths
+    settings->core_log_file_fullpath     = stringConcat(settings->log_path, settings->core_log_file);
+    settings->network_log_file_fullpath  = stringConcat(settings->log_path, settings->network_log_file);
+    settings->dns_log_file_fullpath      = stringConcat(settings->log_path, settings->dns_log_file);
     settings->internal_log_file_fullpath = stringConcat(settings->log_path, settings->internal_log_file);
 }
 
@@ -182,7 +171,6 @@ static void parseConfigPartOfJson(const cJSON *config_array)
 
 static void parseMiscPartOfJson(cJSON *misc_obj)
 {
-
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
@@ -272,6 +260,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }
 }
+
 void parseCoreSettings(const char *data_json)
 {
     if (settings == NULL)

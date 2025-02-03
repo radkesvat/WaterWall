@@ -27,12 +27,12 @@ typedef struct line_s
 {
     line_refc_t refc;
     bool        alive;
+    wid_t       wid;
     uint8_t     auth_cur;
 
     connection_context_t src_ctx;
     connection_context_t dest_ctx;
     generic_pool_t      *pool;
-    // pipe_line_t     *pipe;
 
     MSVC_ATTR_ALIGNED_16 uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_16;
 
@@ -40,17 +40,18 @@ typedef struct line_s
 
 /**
  * @brief Creates a new line instance.
- * 
+ *
  * @param pool Pointer to the generic pool.
  * @return line_t* Pointer to the created line.
  */
-static inline line_t *lineCreate(generic_pool_t *pool)
+static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
 {
     line_t *l = genericpoolGetItem(pool);
 
     *l = (line_t){
         .refc     = 1,
         .auth_cur = 0,
+        .wid      = wid,
         .alive    = true,
         .pool     = pool,
         // to set a port we need to know the AF family, default v4
@@ -64,7 +65,7 @@ static inline line_t *lineCreate(generic_pool_t *pool)
 
 /**
  * @brief Checks if the line is alive.
- * 
+ *
  * @param line Pointer to the line.
  * @return true If the line is alive.
  * @return false If the line is not alive.
@@ -76,7 +77,7 @@ static inline bool lineIsAlive(const line_t *const line)
 
 /**
  * @brief Decreases the reference count of the line and frees it if the count reaches zero.
- * 
+ *
  * @param l Pointer to the line.
  */
 static inline void lineUnRefInternal(line_t *const l)
@@ -107,7 +108,7 @@ static inline void lineUnRefInternal(line_t *const l)
 
 /**
  * @brief Increases the reference count of the line.
- * 
+ *
  * @param line Pointer to the line.
  */
 static inline void lineLock(line_t *const line)
@@ -121,7 +122,7 @@ static inline void lineLock(line_t *const line)
 
 /**
  * @brief Decreases the reference count of the line.
- * 
+ *
  * @param line Pointer to the line.
  */
 static inline void lineUnlock(line_t *const line)
@@ -131,7 +132,7 @@ static inline void lineUnlock(line_t *const line)
 
 /**
  * @brief Marks the line as destroyed and decreases its reference count.
- * 
+ *
  * @param l Pointer to the line.
  */
 static inline void lineDestroy(line_t *const l)
@@ -142,7 +143,7 @@ static inline void lineDestroy(line_t *const l)
 
 /**
  * @brief Authenticates the line.
- * 
+ *
  * @param line Pointer to the line.
  */
 static inline void lineAuthenticate(line_t *const line)
@@ -155,7 +156,7 @@ static inline void lineAuthenticate(line_t *const line)
 
 /**
  * @brief Checks if the line is authenticated.
- * 
+ *
  * @param line Pointer to the line.
  * @return true If the line is authenticated.
  * @return false If the line is not authenticated.
@@ -167,7 +168,7 @@ static inline bool lineIsAuthenticated(line_t *const line)
 
 /**
  * @brief Retrieves the state of the line for a given tunnel.
- * 
+ *
  * @param t Pointer to the tunnel.
  * @param l Pointer to the line.
  * @return void* Pointer to the state of the line.
@@ -179,7 +180,7 @@ static inline void *lineGetState(tunnel_t *t, line_t *l)
 
 /**
  * @brief Clears the state of the line.
- * 
+ *
  * @param state Pointer to the state.
  * @param size Size of the state.
  */
@@ -190,5 +191,10 @@ static inline void lineClearState(void *state, size_t size)
 #endif
     (void) size;
     (void) state;
+}
+
+static inline wid_t lineGetWID(const line_t *const line)
+{
+    return line->wid;
 }
 

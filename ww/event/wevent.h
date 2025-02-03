@@ -55,7 +55,7 @@ struct wloop_s {
     // ios: with fd as array.index
     struct io_array             ios;
     uint32_t                    nios;
-    // one loop per thread, so one readbuf per loop is OK.
+    // one loop per thread, so one readbuf per loop is OK. operates on large mode by default.
     buffer_pool_t*              bufpool;
     void*                       iowatcher;
     // custom_events

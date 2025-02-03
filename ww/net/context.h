@@ -25,25 +25,32 @@ typedef struct context_s
     uint8_t resume : 1;
 } context_t;
 
+static inline line_t* contextGetLine(const context_t *const c)
+{
+    return c->line;
+}
+
 static inline void contextDestroy(context_t *c)
 {
     assert(c->payload == NULL);
     lineUnlock(c->line);
-    genericpoolReuseItem(getWorkerContextPool(getWID()), c);
+    genericpoolReuseItem(getWorkerContextPool(lineGetWID(contextGetLine(c))), c);
 }
 
 static inline context_t *contextCreate(line_t *const line)
 {
-    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(getWID()));
+    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(lineGetWID(line)));
     *new_ctx           = (context_t){.line = line};
     lineLock(line);
     return new_ctx;
 }
 
+
+
 static inline context_t *contextCreateFrom(const context_t *const source)
 {
     lineLock(source->line);
-    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(getWID()));
+    context_t *new_ctx = genericpoolGetItem(getWorkerContextPool(lineGetWID(contextGetLine(source))));
     *new_ctx           = (context_t){.line = source->line};
     return new_ctx;
 }
@@ -102,7 +109,7 @@ static inline void contextDropPayload(context_t *const c)
 static inline void contextReusePayload(context_t *const c)
 {
     assert(c->payload != NULL);
-    bufferpoolResuesBuffer(getWorkerBufferPool(getWID()), c->payload);
+    bufferpoolResuesBuffer(getWorkerBufferPool(lineGetWID(contextGetLine(c))), c->payload);
     contextDropPayload(c);
 }
 

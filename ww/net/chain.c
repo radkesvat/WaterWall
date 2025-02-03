@@ -42,13 +42,9 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
             tc->masterpool_line_pool , tc->sum_line_state_size, (8) + GSTATE.ram_profile);
     }
 
-    
-    for (int wi = 0; wi < getWorkersCount(); wi++)
-    {
-        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), tc->sum_padding_left,
-                                            tc->sum_padding_left);
-    }
+    globalstateUpdaeAllocationPadding(tc->sum_padding_left);
 
+ 
 
 }
 

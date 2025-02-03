@@ -284,9 +284,9 @@ WW_EXPORT bool wioIsClosed(wio_t* io);
 typedef struct fifo_buf_s wio_readbuf_t;
 // NOTE: One loop per thread, one readbuf per loop.
 // But you can pass in your own readbuf instead of the default readbuf to avoid memcopy.
-WW_EXPORT void wioSetReadBuf(wio_t* io, void* buf, size_t len);
-WW_EXPORT sbuf_t* wioGetReadBUf(wio_t* io);
 WW_EXPORT void wioSetMaxWriteBufSize(wio_t* io, uint32_t size);
+
+
 // NOTE: wioWrite is non-blocking, so there is a write queue inside wio_t to cache unwritten data and wait for writable.
 // @return current buffer size of write queue.
 WW_EXPORT size_t wioGetWriteBufSize(wio_t* io);

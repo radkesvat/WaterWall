@@ -27,17 +27,17 @@ enum socket_address_protocol
 
 typedef struct connection_context_s
 {
-    char                        *domain;
     sockaddr_u                   address;
     enum socket_address_protocol address_protocol;
     enum socket_address_type     address_type;
-    enum domain_strategy         domain_strategy;
-    unsigned int                 domain_len;
-    bool                         domain_resolved;
-    bool                         domain_constant;
+
+    char                *domain;
+    enum domain_strategy domain_strategy;
+    unsigned int         domain_len;
+    bool                 domain_resolved;
+    bool                 domain_constant;
 
 } connection_context_t;
-
 
 static inline void connectionContextPortCopy(connection_context_t *dest, connection_context_t *source)
 {
@@ -65,7 +65,8 @@ static inline void connectionContextPortSet(connection_context_t *dest, uint16_t
     dest->address.sin.sin_port = htons(port);
 }
 
-static inline void connectionContextDomainSet(connection_context_t *restrict scontext, const char *restrict domain, uint8_t len)
+static inline void connectionContextDomainSet(connection_context_t *restrict scontext, const char *restrict domain,
+                                              uint8_t len)
 {
     if (scontext->domain != NULL)
     {
@@ -84,7 +85,8 @@ static inline void connectionContextDomainSet(connection_context_t *restrict sco
     scontext->domain_len  = len;
 }
 
-static inline void connectionContextDomainSetConstMem(connection_context_t *restrict scontext, const char *restrict domain, uint8_t len)
+static inline void connectionContextDomainSetConstMem(connection_context_t *restrict scontext,
+                                                      const char *restrict domain, uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
@@ -95,7 +97,6 @@ static inline void connectionContextDomainSetConstMem(connection_context_t *rest
     scontext->domain_len      = len;
     assert(scontext->domain[len] == 0x0);
 }
-
 
 static inline void connectionContextAddrCopy(connection_context_t *dest, const connection_context_t *const source)
 {

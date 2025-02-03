@@ -14,6 +14,7 @@ typedef struct api_result_s
 {
     enum api_result_e result_code;
     sbuf_t           *buffer;
+
 } api_result_t;
 
 enum node_flags
@@ -22,6 +23,14 @@ enum node_flags
     kNodeFlagNone = (1 << 0),
     // this node can be a chain head (begin of the chain)
     kNodeFlagChainHead = (1 << 1)
+};
+
+enum node_layer_group
+{
+    kNodeLayerNone = 0,
+    kNodeLayerAnything,
+    kNodeLayer3,
+    kNodeLayer4
 };
 
 typedef struct node_s node_t;
@@ -49,6 +58,12 @@ struct node_s
     struct cJSON                 *node_json;
     struct cJSON                 *node_settings_json; // node_json -> settings
     struct node_manager_config_s *node_manager_config;
+
+    enum node_layer_group layer_group;
+    enum node_layer_group layer_group_next_node;
+    enum node_layer_group layer_group_prev_node;
+    bool                  can_have_next;
+    bool                  can_have_prev;
 
     tunnel_t *instance;
 };

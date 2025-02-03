@@ -15,7 +15,6 @@ ww_global_state_t *globalStateGet(void)
     return &GSTATE;
 }
 
-
 void globalStateSet(struct ww_global_state_s *state)
 {
     assert(! GSTATE.initialized && state->initialized);
@@ -30,27 +29,36 @@ void globalStateSet(struct ww_global_state_s *state)
     nodemanagerSetState(GSTATE.node_manager);
 }
 
+void globalstateUpdaeAllocationPadding(uint16_t padding)
+{
+    for (int wi = 0; wi < getWorkersCount(); wi++)
+    {
+        bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
+    }
+}
+
 static void initializeShortCuts(void)
 {
     assert(GSTATE.initialized);
 
     static const int kShourtcutsCount = 5;
+
     const int        total_workers    = WORKERS_COUNT;
 
     void **space = (void **) memoryAllocate(sizeof(void *) * kShourtcutsCount * total_workers);
 
-    GSTATE.shortcut_loops              = (wloop_t **) (space + (0ULL * total_workers));
-    GSTATE.shortcut_buffer_pools       = (buffer_pool_t **) (space + (1ULL * total_workers));
-    GSTATE.shortcut_context_pools      = (generic_pool_t **) (space + (2ULL * total_workers));
+    GSTATE.shortcut_loops                = (wloop_t **) (space + (0ULL * total_workers));
+    GSTATE.shortcut_buffer_pools         = (buffer_pool_t **) (space + (1ULL * total_workers));
+    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (2ULL * total_workers));
     GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (3ULL * total_workers));
 
     for (unsigned int tid = 0; tid < GSTATE.workers_count; tid++)
     {
 
-        GSTATE.shortcut_context_pools[tid]      = WORKERS[tid].context_pool;
+        GSTATE.shortcut_context_pools[tid]        = WORKERS[tid].context_pool;
         GSTATE.shortcut_pipetunnel_msg_pools[tid] = WORKERS[tid].pipetunnel_msg_pool;
-        GSTATE.shortcut_buffer_pools[tid]       = WORKERS[tid].buffer_pool;
-        GSTATE.shortcut_loops[tid]              = WORKERS[tid].loop;
+        GSTATE.shortcut_buffer_pools[tid]         = WORKERS[tid].buffer_pool;
+        GSTATE.shortcut_loops[tid]                = WORKERS[tid].loop;
     }
 }
 
@@ -58,9 +66,9 @@ static void initializeMasterPools(void)
 {
     assert(GSTATE.initialized);
 
-    GSTATE.masterpool_buffer_pools_large = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_buffer_pools_small = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_context_pools      = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
     GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
 }
 
@@ -71,7 +79,7 @@ void createGlobalState(const ww_construction_data_t init_data)
     // [Section] loggers
     {
         GSTATE.internal_logger = createInternalLogger(init_data.internal_logger_data.log_file_path,
-                                                init_data.internal_logger_data.log_console);
+                                                      init_data.internal_logger_data.log_console);
         stringUpperCase(init_data.internal_logger_data.log_level);
         setInternalLoggerLevelByStr(init_data.internal_logger_data.log_level);
 

@@ -764,6 +764,7 @@ void wioAttach(wloop_t* loop, wio_t* io) {
 
     io->loop = loop;
     loop->ios.ptr[fd] = io;
+
 }
 
 bool wioExists(wloop_t* loop, int fd) {

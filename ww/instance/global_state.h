@@ -43,6 +43,7 @@ typedef struct ww_global_state_s
     struct logger_s         *internal_logger;
     uint32_t                 workers_count;
     uint32_t                 ram_profile;
+    uint16_t                 buffer_allocation_padding;
     bool                     initialized;
 
 } ww_global_state_t;
@@ -70,29 +71,29 @@ static inline wid_t getWorkersCount(void)
     return WORKERS_COUNT;
 }
 
-static inline worker_t *getWorker(wid_t tid)
+static inline worker_t *getWorker(wid_t wid)
 {
-    return &(WORKERS[tid]);
+    return &(WORKERS[wid]);
 }
 
-static inline buffer_pool_t *getWorkerBufferPool(wid_t tid)
+static inline buffer_pool_t *getWorkerBufferPool(wid_t wid)
 {
-    return GSTATE.shortcut_buffer_pools[tid];
+    return GSTATE.shortcut_buffer_pools[wid];
 }
 
-static inline generic_pool_t *getWorkerContextPool(wid_t tid)
+static inline generic_pool_t *getWorkerContextPool(wid_t wid)
 {
-    return GSTATE.shortcut_context_pools[tid];
+    return GSTATE.shortcut_context_pools[wid];
 }
 
-static inline generic_pool_t *getWorkerPipeTunnelMsgPool(wid_t tid)
+static inline generic_pool_t *getWorkerPipeTunnelMsgPool(wid_t wid)
 {
-    return GSTATE.shortcut_pipetunnel_msg_pools[tid];
+    return GSTATE.shortcut_pipetunnel_msg_pools[wid];
 }
 
-static inline struct wloop_s *getWorkerLoop(wid_t tid)
+static inline struct wloop_s *getWorkerLoop(wid_t wid)
 {
-    return GSTATE.shortcut_loops[tid];
+    return GSTATE.shortcut_loops[wid];
 }
 
 WW_EXPORT void runMainThread(void);
@@ -100,3 +101,4 @@ WW_EXPORT void runMainThread(void);
 WW_EXPORT void               createGlobalState(ww_construction_data_t data);
 WW_EXPORT ww_global_state_t *globalStateGet(void);
 WW_EXPORT void               globalStateSet(ww_global_state_t *state);
+WW_EXPORT void               globalstateUpdaeAllocationPadding(uint16_t padding);
