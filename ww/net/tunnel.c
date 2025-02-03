@@ -196,7 +196,7 @@ tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
     // align pointer to line cache boundary
     tunnel_t *tunnel_ptr = (tunnel_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    memorySet(tunnel_ptr, 0, tsize);
+    memorySet(tunnel_ptr, 0, sizeof(tunnel_t));
 
     *tunnel_ptr = (tunnel_t){.memptr      = ptr,
                              .fnInitU     = &tunnelDefaultUpStreamInit,
