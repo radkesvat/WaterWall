@@ -1,6 +1,5 @@
 #pragma once
 
-#include "interface.h"
 #include "wwapi.h"
 
 typedef struct tcplistener_tstate_s
@@ -27,7 +26,6 @@ typedef struct tcplistener_lstate_s
     buffer_pool_t  *buffer_pool;
     bool            write_paused;
     bool            read_paused;
-
     // this flag is set when the connection is established (est recevied from upstream)
     bool established;
 
@@ -65,7 +63,7 @@ WW_EXPORT void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t
 WW_EXPORT void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 WW_EXPORT void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void lineStateInitialize(tcplistener_lstate_t * ls);
+void lineStateInitialize(tcplistener_lstate_t * ls,wid_t wid);
 void                  lineStateDestroy(tcplistener_lstate_t *ls);
 
 void flushWriteQueue(tcplistener_lstate_t *lstate);

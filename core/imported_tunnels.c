@@ -95,7 +95,7 @@
 #endif
 
 #ifdef INCLUDE_TCPCONNECTOR
-#include "tunnels/adapters/connector/tcp/tcp_connector.h"
+#include "tunnels/TcpConnector/include/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_CONNECTOR

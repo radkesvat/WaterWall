@@ -1,6 +1,5 @@
 #pragma once
 
-#include "interface.h"
 #include "wwapi.h"
 
 typedef struct template_tstate_s

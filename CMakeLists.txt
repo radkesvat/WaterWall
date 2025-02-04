@@ -259,8 +259,8 @@ endif()
 #tcp connector
 if (INCLUDE_TCPCONNECTOR)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TCPCONNECTOR=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/tcp)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/tcp)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpConnector)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpConnector)
 target_link_libraries(Waterwall TcpConnector)
 endif()
 

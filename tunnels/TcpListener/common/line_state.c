@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void lineStateInitialize(tcplistener_lstate_t * ls)
+void lineStateInitialize(tcplistener_lstate_t * ls,wid_t wid)
 {
     ls->data_queue   = bufferqueueCreate(wid);
 }

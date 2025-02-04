@@ -1,7 +1,6 @@
 #include "loggers/network_logger.h"
 #include "structure.h"
 
-
 static void onRecv(wio_t *io, sbuf_t *buf)
 {
     tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
@@ -61,7 +60,7 @@ void onInboundConnected(wevent_t *ev)
     line->src_ctx.address_protocol = kSapTcp;
     line->src_ctx.address          = *(sockaddr_u *) wioGetPeerAddr(io);
 
-    lineStateInitialize(lstate);
+    lineStateInitialize(lstate, wid);
 
     lstate->io           = io;
     lstate->tunnel       = t;
