@@ -4,5 +4,9 @@
 
 void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    tunnelPrevDownStreamPayload(t, l, buf);
+    (void) t;
+    (void) l;
+    (void) buf;
+    LOGF("TcpConnector: downStreamPayload disabled");
+    assert(false);
 }

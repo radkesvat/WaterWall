@@ -70,7 +70,7 @@ option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  FALSE)
 option(INCLUDE_LISTENER "link Listener staticly to the core"  FALSE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  FALSE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  FALSE)
-option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  FALSE)
+option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_UDP_CONNECTOR "link UdpConnector staticly to the core"  FALSE)
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 

@@ -4,5 +4,8 @@
 
 void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
-    tunnelPrevDownStreamResume(t, l);
+    (void) t;
+    (void) l;
+    LOGF("TcpConnector: downStreamResume disabled");
+    assert(false);
 }

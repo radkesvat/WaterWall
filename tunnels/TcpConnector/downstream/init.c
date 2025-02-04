@@ -4,5 +4,8 @@
 
 void tcpconnectorTunnelDownStreamInit(tunnel_t *t, line_t *l)
 {
-    tunnelPrevDownStreamInit(t, l);
+    (void) t;
+    (void) l;
+    LOGF("TcpConnector: downStreamInit disabled");
+    assert(false);
 }
