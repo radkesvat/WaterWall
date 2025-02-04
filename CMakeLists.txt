@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
+cmake_policy(SET CMP0091 NEW)
+
+if(POLICY CMP0169)
+  cmake_policy(SET CMP0169 OLD) 
+  set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
+endif()
+
+
 project(Waterwall VERSION 1.32)
+
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
 set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL  "CXX standard version" FORCE)
@@ -20,10 +29,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versio
 #   [cmake]   but the ability to call it with declared details will be removed completely
 #   [cmake]   in a future version.
 
-if(POLICY CMP0169)
-  cmake_policy(SET CMP0169 OLD) 
-  set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
-endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
   cmake_policy(SET CMP0069 NEW) 
@@ -116,6 +121,8 @@ add_executable(Waterwall
                   core/os_helpers.c
                   # core/tests/bench_memcpy.c
 )
+
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 
 # download CPM.cmake
