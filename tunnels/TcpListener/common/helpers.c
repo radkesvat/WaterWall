@@ -1,9 +1,10 @@
-#include "structure.h"
 #include "loggers/network_logger.h"
+#include "structure.h"
+
 
 static void onRecv(wio_t *io, sbuf_t *buf)
 {
-    tcplistener_lstate_t *lstate = (tcplistener_lstate_t *)(weventGetUserdata(io));
+    tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
     if (UNLIKELY(lstate == NULL))
     {
         assert(false);
@@ -24,6 +25,7 @@ static void onClose(wio_t *io)
     if (lstate != NULL)
     {
         LOGD("TcpListener: received close for FD:%x ", wioGetFD(io));
+        weventSetUserData(lstate->io, NULL);
 
         line_t   *l = lstate->line;
         tunnel_t *t = lstate->tunnel;
@@ -45,10 +47,10 @@ static void onClose(wio_t *io)
 void onInboundConnected(wevent_t *ev)
 {
     wloop_t                *loop = ev->loop;
-    socket_accept_result_t *data = (socket_accept_result_t *)weventGetUserdata(ev);
-    wio_t                 *io   = data->io;
-    wid_t                  wid  = data->wid;
-    tunnel_t              *t    = data->tunnel;
+    socket_accept_result_t *data = (socket_accept_result_t *) weventGetUserdata(ev);
+    wio_t                  *io   = data->io;
+    wid_t                   wid  = data->wid;
+    tunnel_t               *t    = data->tunnel;
 
     wioAttach(loop, io);
     wioSetKeepaliveTimeout(io, kDefaultKeepAliveTimeOutMs);
@@ -57,16 +59,15 @@ void onInboundConnected(wevent_t *ev)
     tcplistener_lstate_t *lstate = lineGetState(line, t);
 
     line->src_ctx.address_protocol = kSapTcp;
-    line->src_ctx.address         = *(sockaddr_u *)wioGetPeerAddr(io);
+    line->src_ctx.address          = *(sockaddr_u *) wioGetPeerAddr(io);
 
     lineStateInitialize(lstate);
-    
-        lstate-> io          = io;
-        lstate-> tunnel      = t;
-        lstate-> line        = line;
-        lstate-> write_paused = false;
-        lstate-> established  = false;
-     
+
+    lstate->io           = io;
+    lstate->tunnel       = t;
+    lstate->line         = line;
+    lstate->write_paused = false;
+    lstate->established  = false;
 
     sockaddrSetPort(&(line->src_ctx.address), data->real_localport);
     line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
@@ -158,4 +159,3 @@ void onWriteComplete(wio_t *io)
         tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
     }
 }
-
