@@ -123,7 +123,7 @@ static void onMsgReceivedUp(wevent_t *ev)
     tunnel_t                *t      = msg_ev->tunnel;
     line_t                  *l      = msg_ev->ctx.line;
     wid_t                    wid    = wloopGetWID(weventGetLoop(ev));
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(t, l);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l,t);
 
     if (atomicLoadRelaxed(&(lstate->to_wid)) != wid)
     {
@@ -180,7 +180,7 @@ static void onMsgReceivedDown(wevent_t *ev)
     tunnel_t                *t      = msg_ev->tunnel;
     line_t                  *l      = msg_ev->ctx.line;
     wid_t                    wid    = wloopGetWID(weventGetLoop(ev));
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(t, l);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l,t);
 
     if (atomicLoadRelaxed(&(lstate->from_wid)) != wid)
     {
@@ -227,14 +227,14 @@ static void sendMessageDown(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t 
 /**
  * @brief Initialize the upstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
+void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
 {
 
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -249,7 +249,7 @@ void pipetunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .init = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageUp(lstate, msg, lstate->to_wid);
@@ -258,13 +258,13 @@ void pipetunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
 /**
  * @brief Establish the upstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
+void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -279,7 +279,7 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .est = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageUp(lstate, msg, lstate->to_wid);
@@ -288,13 +288,13 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 /**
  * @brief Finalize the upstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
+void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -312,7 +312,7 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .fin = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageUp(lstate, msg, lstate->to_wid);
@@ -322,14 +322,14 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
 /**
  * @brief Handle upstream payload.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  * @param payload Pointer to the payload.
  */
-void pipetunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
+void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -345,7 +345,7 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payl
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .payload = payload};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageUp(lstate, msg, lstate->to_wid);
@@ -354,13 +354,13 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payl
 /**
  * @brief Pause the upstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
+void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -375,7 +375,7 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .pause = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageUp(lstate, msg, lstate->to_wid);
@@ -384,14 +384,14 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *self, line_t *line)
 /**
  * @brief Resume the upstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
+void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
 {
 
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -406,7 +406,7 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .resume = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageUp(lstate, msg, lstate->to_wid);
@@ -419,12 +419,12 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 /**
  * @brief Initialize the downstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
+void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *line)
 {
-    (void) self;
+    (void) t;
     (void) line;
     assert(false); // unreachable code
 }
@@ -432,13 +432,13 @@ void pipetunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 /**
  * @brief Establish the downstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
+void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -454,7 +454,7 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .est = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageDown(lstate, msg, lstate->from_wid);
@@ -463,13 +463,13 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 /**
  * @brief Finalize the downstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
+void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -484,7 +484,7 @@ void pipetunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .fin = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageDown(lstate, msg, lstate->from_wid);
@@ -494,14 +494,14 @@ void pipetunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
 /**
  * @brief Handle downstream payload.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  * @param payload Pointer to the payload.
  */
-void pipetunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
+void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -517,7 +517,7 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *pa
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .payload = payload};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageDown(lstate, msg, lstate->from_wid);
@@ -526,13 +526,13 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *pa
 /**
  * @brief Pause the downstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
+void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -547,7 +547,7 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .pause = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageDown(lstate, msg, lstate->from_wid);
@@ -556,13 +556,13 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
 /**
  * @brief Resume the downstream pipeline.
  *
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
+void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(self, line);
-    tunnel_t                *child  = tunnelGetState(self);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
@@ -577,7 +577,7 @@ void pipetunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .resume = true};
 
-    msg->tunnel = self;
+    msg->tunnel = t;
     msg->ctx    = ctx;
 
     sendMessageDown(lstate, msg, lstate->from_wid);
@@ -701,8 +701,8 @@ void pipetunnelDestroy(tunnel_t *t)
  */
 void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 {
-    tunnel_t                *master = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
-    pipetunnel_line_state_t *ls     = (pipetunnel_line_state_t *) lineGetState(master, l);
+    tunnel_t                *parent_t = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
+    pipetunnel_line_state_t *ls     = (pipetunnel_line_state_t *) lineGetState(l,parent_t);
 
     if (ls->active)
     {

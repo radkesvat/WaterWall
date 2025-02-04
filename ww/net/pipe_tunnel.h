@@ -12,100 +12,100 @@ size_t pipeLineGetMesageSize(void);
 /**
  * @brief Initialize the upstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamInit(tunnel_t *self, line_t *line);
+void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line);
 
 /**
  * @brief Establish the upstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamEst(tunnel_t *self, line_t *line);
+void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line);
 
 /**
  * @brief Finalize the upstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamFin(tunnel_t *self, line_t *line);
+void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line);
 
 /**
  * @brief Handle upstream payload.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  * @param payload Pointer to the payload.
  */
-void pipetunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
+void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload);
 
 /**
  * @brief Pause the upstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamPause(tunnel_t *self, line_t *line);
+void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line);
 
 /**
  * @brief Resume the upstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamResume(tunnel_t *self, line_t *line);
+void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line);
 
 /**
  * @brief Initialize the downstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamInit(tunnel_t *self, line_t *line);
+void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *line);
 
 /**
  * @brief Establish the downstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamEst(tunnel_t *self, line_t *line);
+void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line);
 
 /**
  * @brief Finalize the downstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamFin(tunnel_t *self, line_t *line);
+void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line);
 
 /**
  * @brief Handle downstream payload.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  * @param payload Pointer to the payload.
  */
-void pipetunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
+void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload);
 
 /**
  * @brief Pause the downstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultDownStreamPause(tunnel_t *self, line_t *line);
+void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line);
 
 /**
  * @brief Resume the downstream pipeline.
  * 
- * @param self Pointer to the tunnel.
+ * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultDownStreamResume(tunnel_t *self, line_t *line);
+void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line);
 
 /**
  * @brief Handle the tunnel chain.
