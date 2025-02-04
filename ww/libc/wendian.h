@@ -3,6 +3,7 @@
 
 #include "wplatform.h"
 
+// ------------------- OS_MAC condition -------------------
 #if defined(OS_MAC)
 #include <libkern/OSByteOrder.h>
 #define htobe16(v) OSSwapHostToBigInt16(v)
@@ -18,6 +19,9 @@
 #define le16toh(v) OSSwapLittleToHostInt16(v)
 #define le32toh(v) OSSwapLittleToHostInt32(v)
 #define le64toh(v) OSSwapLittleToHostInt64(v)
+// ------------------- End OS_MAC condition -------------------
+
+// ------------------- OS_WIN condition -------------------
 #elif defined(OS_WIN)
 
 #if _WIN32_WINNT < _WIN32_WINNT_WIN8
@@ -44,7 +48,7 @@
 
 
     #ifndef htonll
-    static __inline unsigned __int64 htonll ( unsigned __int64 Value )
+    __inline unsigned __int64 htonll ( unsigned __int64 Value )
     {
         const unsigned __int64 Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         return Retval;
@@ -52,7 +56,7 @@
     #endif /* htonll */
 
     #ifndef ntohll
-    static __inline unsigned __int64 ntohll ( unsigned __int64 Value )
+    __inline unsigned __int64 ntohll ( unsigned __int64 Value )
     {
         const unsigned __int64 Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         return Retval;
@@ -60,75 +64,46 @@
     #endif /* ntohll */
 
     #ifndef htonf
-    static __inline unsigned __int32 htonf ( float Value )
+    __inline unsigned __int32 htonf ( float Value )
     {
         unsigned __int32 Tempval;
         unsigned __int32 Retval;
-        // Tempval = *(unsigned __int32*)(&Value);
-        memcpy(&Tempval, &Value, sizeof(Value));
-
+        Tempval = *(unsigned __int32*)(&Value);
         Retval = _WS2_32_WINSOCK_SWAP_LONG (Tempval);
         return Retval;
     }
     #endif /* htonf */
 
     #ifndef ntohf
-    static __inline float ntohf ( unsigned __int32 Value )
+    __inline float ntohf ( unsigned __int32 Value )
     {
         const unsigned __int32 Tempval = _WS2_32_WINSOCK_SWAP_LONG (Value);
         float Retval;
-        // *((unsigned __int32*)&Retval) = Tempval;
-        memcpy(&Retval, &Tempval, sizeof(Tempval));
+        *((unsigned __int32*)&Retval) = Tempval;
         return Retval;
     }
     #endif /* ntohf */
 
     #ifndef htond
-    static __inline unsigned __int64 htond ( double Value )
+    __inline unsigned __int64 htond ( double Value )
     {
         unsigned __int64 Tempval;
         unsigned __int64 Retval;
-        memcpy(&Tempval, &Value, sizeof(Value));
-        // Tempval = *(unsigned __int64*)(&Value);
+        Tempval = *(unsigned __int64*)(&Value);
         Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Tempval);
         return Retval;
     }
     #endif /* htond */
 
     #ifndef ntohd
-    static __inline double ntohd ( unsigned __int64 Value )
+    __inline double ntohd ( unsigned __int64 Value )
     {
         const unsigned __int64 Tempval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         double Retval;
-        memcpy(&Retval, &Tempval, sizeof(Tempval));
-        // *((unsigned __int64*)&Retval) = Tempval;
+        *((unsigned __int64*)&Retval) = Tempval;
         return Retval;
     }
     #endif /* ntohd */
-
-#else
-    #ifndef htonll
-
-    static inline uint64_t htonll(uint64_t x)
-    {
-        uint32_t low  = htonl((uint32_t) (x & 0xFFFFFFFF));
-        uint32_t high = htonl((uint32_t) (x >> 32));
-        return ((uint64_t) low << 32) | high;
-    }
-
-    #endif
-
-    #ifndef ntohll
-
-    static inline uint64_t ntohll(uint64_t x)
-    {
-        uint32_t low  = ntohl((uint32_t) (x & 0xFFFFFFFF));
-        uint32_t high = ntohl((uint32_t) (x >> 32));
-        return ((uint64_t) low << 32) | high;
-    }
-
-    #endif
-
 #endif
 
 #define htobe16(v) htons(v)
@@ -153,12 +128,61 @@
 #define le32toh(v) __builtin_bswap32(v)
 #define le64toh(v) __builtin_bswap64(v)
 #endif
-#elif HAVE_ENDIAN_H
-#include <endian.h>
-#elif HAVE_SYS_ENDIAN_H
-#include <sys/endian.h>
-#else
-#warning "Not found endian.h!"
+// ------------------- End OS_WIN condition -------------------
+
+#else 
+    // ------------------- HAVE_ENDIAN_H condition -------------------
+    #if HAVE_ENDIAN_H
+    #include <endian.h>
+    // ------------------- End HAVE_ENDIAN_H condition -------------------
+
+    // ------------------- HAVE_SYS_ENDIAN_H condition -------------------
+    #elif HAVE_SYS_ENDIAN_H
+    #include <sys/endian.h>
+    // ------------------- End HAVE_SYS_ENDIAN_H condition -------------------
+
+    #else
+    #warning "Not found endian.h!"
+    #endif
+    // ------------------- End main platform condition -------------------
+
+
+        
+    #if __BIG_ENDIAN__
+
+        #ifndef htonll
+        #define htonll(x) (x)
+        #endif
+        #ifndef ntohll
+        #define ntohll(x) (x)
+        #endif
+
+    #else
+
+        #ifndef htonll
+
+        static inline uint64_t htonll(uint64_t x)
+        {
+            uint32_t low  = htonl((uint32_t) (x & 0xFFFFFFFF));
+            uint32_t high = htonl((uint32_t) (x >> 32));
+            return ((uint64_t) low << 32) | high;
+        }
+
+        #endif
+
+        #ifndef ntohll
+
+        static inline uint64_t ntohll(uint64_t x)
+        {
+            uint32_t low  = ntohl((uint32_t) (x & 0xFFFFFFFF));
+            uint32_t high = ntohl((uint32_t) (x >> 32));
+            return ((uint64_t) low << 32) | high;
+        }
+        #endif
+
+    #endif
+
+
 #endif
 
 #define PI8(p)      *(int8_t*)(p)
@@ -216,15 +240,15 @@
 #define POP16(p, v)     POP_BE16(p, v)
 #define POP32(p, v)     POP_BE32(p, v)
 #define POP64(p, v)     POP_BE64(p, v)
-#define POP_N(p, v, n)  memoryCopy(v, p, n); p += n
+#define POP_N(p, v, n)  memcpy(v, p, n); p += n
 
 #define PUSH8(p, v)     PUSH_BE8(p, v)
 #define PUSH16(p, v)    PUSH_BE16(p, v)
 #define PUSH32(p, v)    PUSH_BE32(p, v)
 #define PUSH64(p, v)    PUSH_BE64(p, v)
-#define PUSH_N(p, v, n) memoryCopy(p, v, n); p += n
+#define PUSH_N(p, v, n) memcpy(p, v, n); p += n
 
-static inline int detect_endian(void) {
+static inline int detect_endian() {
     union {
         char c;
         short s;
@@ -233,5 +257,4 @@ static inline int detect_endian(void) {
     return u.c ==0x11 ? BIG_ENDIAN : LITTLE_ENDIAN;
 }
 
-
-#endif // WW_ENDIAN_H_
+#endif /* WW_ENDIAN_H_ */
