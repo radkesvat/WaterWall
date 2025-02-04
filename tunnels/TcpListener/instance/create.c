@@ -53,13 +53,6 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     tunnel_t *t = adapterCreate(node, sizeof(tcplistener_tstate_t), sizeof(tcplistener_lstate_t),false);
 
 
-    t->fnInitU    = &tcplistenerTunnelUpStreamInit;
-    t->fnEstU     = &tcplistenerTunnelUpStreamEst;
-    t->fnFinU     = &tcplistenerTunnelUpStreamFinish;
-    t->fnPayloadU = &tcplistenerTunnelUpStreamPayload;
-    t->fnPauseU   = &tcplistenerTunnelUpStreamPause;
-    t->fnResumeU  = &tcplistenerTunnelUpStreamResume;
-
     t->fnInitD    = &tcplistenerTunnelDownStreamInit;
     t->fnEstD     = &tcplistenerTunnelDownStreamEst;
     t->fnFinD     = &tcplistenerTunnelDownStreamFinish;

@@ -13,12 +13,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     t->fnPauseU   = &tcpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &tcpconnectorTunnelUpStreamResume;
 
-    t->fnInitD    = &tcpconnectorTunnelDownStreamInit;
-    t->fnEstD     = &tcpconnectorTunnelDownStreamEst;
-    t->fnFinD     = &tcpconnectorTunnelDownStreamFinish;
-    t->fnPayloadD = &tcpconnectorTunnelDownStreamPayload;
-    t->fnPauseD   = &tcpconnectorTunnelDownStreamPause;
-    t->fnResumeD  = &tcpconnectorTunnelDownStreamResume;
+
 
     tcpconnector_tstate_t *state = tunnelGetState(t);
 
