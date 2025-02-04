@@ -25,7 +25,7 @@ enum socket_address_protocol
     kSapUdp = IPPROTO_UDP,
 };
 
-typedef struct connection_context_s
+typedef struct address_context_s
 {
     sockaddr_u                   address;
     enum socket_address_protocol address_protocol;
@@ -37,9 +37,9 @@ typedef struct connection_context_s
     bool                 domain_resolved;
     bool                 domain_constant;
 
-} connection_context_t;
+} address_context_t;
 
-static inline void connectionContextPortCopy(connection_context_t *dest, connection_context_t *source)
+static inline void addresscontextPortCopy(address_context_t *dest, address_context_t *source)
 {
     // this is supposed to work for both ipv4/6
     dest->address.sin.sin_port = source->address.sin.sin_port;
@@ -60,12 +60,12 @@ static inline void connectionContextPortCopy(connection_context_t *dest, connect
     // }
 }
 
-static inline void connectionContextPortSet(connection_context_t *dest, uint16_t port)
+static inline void addresscontextPortSet(address_context_t *dest, uint16_t port)
 {
     dest->address.sin.sin_port = htons(port);
 }
 
-static inline void connectionContextDomainSet(connection_context_t *restrict scontext, const char *restrict domain,
+static inline void addresscontextDomainSet(address_context_t *restrict scontext, const char *restrict domain,
                                               uint8_t len)
 {
     if (scontext->domain != NULL)
@@ -85,7 +85,7 @@ static inline void connectionContextDomainSet(connection_context_t *restrict sco
     scontext->domain_len  = len;
 }
 
-static inline void connectionContextDomainSetConstMem(connection_context_t *restrict scontext,
+static inline void addresscontextDomainSetConstMem(address_context_t *restrict scontext,
                                                       const char *restrict domain, uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
@@ -98,7 +98,7 @@ static inline void connectionContextDomainSetConstMem(connection_context_t *rest
     assert(scontext->domain[len] == 0x0);
 }
 
-static inline void connectionContextAddrCopy(connection_context_t *dest, const connection_context_t *const source)
+static inline void addresscontextAddrCopy(address_context_t *dest, const address_context_t *const source)
 {
     dest->address_protocol = source->address_protocol;
     dest->address_type     = source->address_type;
@@ -116,11 +116,11 @@ static inline void connectionContextAddrCopy(connection_context_t *dest, const c
         {
             if (source->domain_constant)
             {
-                connectionContextDomainSetConstMem(dest, source->domain, source->domain_len);
+                addresscontextDomainSetConstMem(dest, source->domain, source->domain_len);
             }
             else
             {
-                connectionContextDomainSet(dest, source->domain, source->domain_len);
+                addresscontextDomainSet(dest, source->domain, source->domain_len);
             }
             dest->domain_resolved = source->domain_resolved;
             if (source->domain_resolved)

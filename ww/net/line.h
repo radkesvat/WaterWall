@@ -1,7 +1,7 @@
 #pragma once
 #include "wlibc.h"
 
-#include "connection_context.h"
+#include "address_context.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "tunnel.h"
@@ -23,6 +23,15 @@ typedef uint32_t line_refc_t;
     a line only belongs to 1 thread, but it can cross the threads (if actually needed) using pipe line, easily
 */
 
+typedef struct routing_context_s
+{
+    address_context_t src_ctx;
+    address_context_t dest_ctx;
+    wio_type_e        network_type;
+    const char       *user_name;
+    size_t            user_name_len;
+} routing_context_t;
+
 typedef struct line_s
 {
     line_refc_t refc;
@@ -30,9 +39,9 @@ typedef struct line_s
     wid_t       wid;
     uint8_t     auth_cur;
 
-    connection_context_t src_ctx;
-    connection_context_t dest_ctx;
-    generic_pool_t      *pool;
+    routing_context_t routing_context;
+
+    generic_pool_t *pool;
 
     MSVC_ATTR_ALIGNED_16 uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_16;
 
@@ -55,8 +64,9 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
         .alive    = true,
         .pool     = pool,
         // to set a port we need to know the AF family, default v4
-        .dest_ctx = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
-        .src_ctx  = (connection_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}};
+        .routing_context = {
+            .dest_ctx = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+            .src_ctx  = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}}};
 
     memorySet(&l->tunnels_line_state[0], 0, genericpoolGetItemSize(l->pool) - sizeof(line_t));
 
@@ -98,9 +108,9 @@ static inline void lineUnRefInternal(line_t *const l)
 
     // assert(l->src_ctx.domain == NULL); // impossible (source domain?) (no need to assert)
 
-    if (l->dest_ctx.domain != NULL && ! l->dest_ctx.domain_constant)
+    if (l->routing_context.dest_ctx.domain != NULL && ! l->routing_context.dest_ctx.domain_constant)
     {
-        memoryFree(l->dest_ctx.domain);
+        memoryFree(l->routing_context.dest_ctx.domain);
     }
 
     genericpoolReuseItem(l->pool, l);

@@ -4,7 +4,7 @@
 #include "loggers/dns_logger.h"
 
 
-bool resolveContextSync(connection_context_t *sctx)
+bool resolveContextSync(address_context_t *sctx)
 {
     // please check these before calling this function -> more performance
     assert(sctx->address_type == kSatDomainName && sctx->domain_resolved == false && sctx->domain != NULL);

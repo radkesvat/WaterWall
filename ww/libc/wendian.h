@@ -43,7 +43,7 @@
 
 
     #ifndef htonll
-    __inline unsigned __int64 htonll ( unsigned __int64 Value )
+    static __inline unsigned __int64 htonll ( unsigned __int64 Value )
     {
         const unsigned __int64 Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         return Retval;
@@ -51,7 +51,7 @@
     #endif /* htonll */
 
     #ifndef ntohll
-    __inline unsigned __int64 ntohll ( unsigned __int64 Value )
+    static __inline unsigned __int64 ntohll ( unsigned __int64 Value )
     {
         const unsigned __int64 Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         return Retval;
@@ -59,7 +59,7 @@
     #endif /* ntohll */
 
     #ifndef htonf
-    __inline unsigned __int32 htonf ( float Value )
+    static __inline unsigned __int32 htonf ( float Value )
     {
         unsigned __int32 Tempval;
         unsigned __int32 Retval;
@@ -72,7 +72,7 @@
     #endif /* htonf */
 
     #ifndef ntohf
-    __inline float ntohf ( unsigned __int32 Value )
+    static __inline float ntohf ( unsigned __int32 Value )
     {
         const unsigned __int32 Tempval = _WS2_32_WINSOCK_SWAP_LONG (Value);
         float Retval;
@@ -83,7 +83,7 @@
     #endif /* ntohf */
 
     #ifndef htond
-    __inline unsigned __int64 htond ( double Value )
+    static __inline unsigned __int64 htond ( double Value )
     {
         unsigned __int64 Tempval;
         unsigned __int64 Retval;
@@ -95,7 +95,7 @@
     #endif /* htond */
 
     #ifndef ntohd
-    __inline double ntohd ( unsigned __int64 Value )
+    static __inline double ntohd ( unsigned __int64 Value )
     {
         const unsigned __int64 Tempval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         double Retval;
