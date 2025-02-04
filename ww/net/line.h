@@ -64,7 +64,7 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
         .alive    = true,
         .pool     = pool,
         // to set a port we need to know the AF family, default v4
-        .routing_context = {
+        .routing_context = (routing_context_t){
             .dest_ctx = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
             .src_ctx  = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}}};
 
