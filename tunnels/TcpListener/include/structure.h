@@ -65,7 +65,7 @@ WW_EXPORT void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t
 WW_EXPORT void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 WW_EXPORT void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-tcplistener_lstate_t *lineStateCreate(void);
+void lineStateInitialize(tcplistener_lstate_t * ls);
 void                  lineStateDestroy(tcplistener_lstate_t *ls);
 
 void flushWriteQueue(tcplistener_lstate_t *lstate);

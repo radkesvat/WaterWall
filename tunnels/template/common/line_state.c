@@ -3,9 +3,10 @@
 #include "loggers/network_logger.h"
 
 
-template_lstate_t *lineStateCreate(void)
+void lineStateInitialize(template_lstate_t * ls)
 {
-    return NULL;
+    (void)ls;
+
 }
 
 void lineStateDestroy(template_lstate_t *ls)

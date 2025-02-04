@@ -44,6 +44,6 @@ WW_EXPORT void templateTunnelDownStreamPause(tunnel_t *t, line_t *l);
 WW_EXPORT void templateTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 
-template_lstate_t* lineStateCreate(void);
+void lineStateInitialize(template_lstate_t * ls);
 void lineStateDestroy(template_lstate_t *ls);
 

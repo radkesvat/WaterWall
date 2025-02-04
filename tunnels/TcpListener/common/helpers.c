@@ -59,14 +59,14 @@ void onInboundConnected(wevent_t *ev)
     line->src_ctx.address_protocol = kSapTcp;
     line->src_ctx.address         = *(sockaddr_u *)wioGetPeerAddr(io);
 
-    *lstate = (tcplistener_lstate_t) {
-        .data_queue   = bufferqueueCreate(wid),
-        .io          = io,
-        .tunnel      = t,
-        .line        = line,
-        .write_paused = false,
-        .established  = false,
-    };
+    lineStateInitialize(lstate);
+    
+        lstate-> io          = io;
+        lstate-> tunnel      = t;
+        lstate-> line        = line;
+        lstate-> write_paused = false;
+        lstate-> established  = false;
+     
 
     sockaddrSetPort(&(line->src_ctx.address), data->real_localport);
     line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
