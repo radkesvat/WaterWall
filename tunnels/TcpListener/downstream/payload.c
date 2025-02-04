@@ -20,7 +20,7 @@ void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (nwrite >= 0 && nwrite < bytes)
         {
             lstate->write_paused = true;
-            wioSetCallBackWrite(lstate->io, onWriteComplete);
+            wioSetCallBackWrite(lstate->io, tcplistenerOnWriteComplete);
             tunnelNextUpStreamPause(t, l);
         }
     }

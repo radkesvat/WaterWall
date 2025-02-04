@@ -2,14 +2,12 @@
 
 #include "loggers/network_logger.h"
 
-
-void lineStateInitialize(template_lstate_t * ls)
+void templateLinestateInitialize(template_lstate_t *ls)
 {
-    (void)ls;
-
+    (void) ls;
 }
 
-void lineStateDestroy(template_lstate_t *ls)
+void templateLinestateDestroy(template_lstate_t *ls)
 {
-    (void)ls;
+    memorySet(ls, 0, sizeof(template_lstate_t));
 }

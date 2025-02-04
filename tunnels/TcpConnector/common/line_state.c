@@ -3,13 +3,13 @@
 #include "loggers/network_logger.h"
 
 
-void lineStateInitialize(tcpconnector_lstate_t * ls)
+void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls, wid_t wid)
 {
-    (void)ls;
-
+    ls->data_queue = bufferqueueCreate(wid);
 }
 
-void lineStateDestroy(tcpconnector_lstate_t *ls)
+void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls)
 {
-    (void)ls;
+    bufferqueueDestory(ls->data_queue);
+    memorySet(ls, 0, sizeof(tcpconnector_lstate_t));
 }

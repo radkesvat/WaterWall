@@ -63,9 +63,9 @@ WW_EXPORT void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t
 WW_EXPORT void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 WW_EXPORT void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void lineStateInitialize(tcplistener_lstate_t * ls,wid_t wid);
-void                  lineStateDestroy(tcplistener_lstate_t *ls);
+void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wid_t wid);
+void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls);
 
-void flushWriteQueue(tcplistener_lstate_t *lstate);
-void onInboundConnected(wevent_t *ev);
-void onWriteComplete(wio_t *io);
+void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);
+void tcplistenerOnInboundConnected(wevent_t *ev);
+void tcplistenerOnWriteComplete(wio_t *io);

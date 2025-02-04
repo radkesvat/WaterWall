@@ -31,7 +31,7 @@ static void onClose(wio_t *io)
 
         lineLock(l);
         lineDestroy(l);
-        lineStateDestroy(lstate);
+        tcplistenerLinestateDestroy(lstate);
 
         tunnelNextUpStreamFinish(t, l);
 
@@ -43,7 +43,7 @@ static void onClose(wio_t *io)
     }
 }
 
-void onInboundConnected(wevent_t *ev)
+void tcplistenerOnInboundConnected(wevent_t *ev)
 {
     wloop_t                *loop = ev->loop;
     socket_accept_result_t *data = (socket_accept_result_t *) weventGetUserdata(ev);
@@ -57,10 +57,10 @@ void onInboundConnected(wevent_t *ev)
     line_t               *line   = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
     tcplistener_lstate_t *lstate = lineGetState(line, t);
 
-    line->src_ctx.address_protocol = kSapTcp;
-    line->src_ctx.address          = *(sockaddr_u *) wioGetPeerAddr(io);
+    line->routing_context.src_ctx.address_protocol = kSapTcp;
+    line->routing_context.src_ctx.address          = *(sockaddr_u *) wioGetPeerAddr(io);
 
-    lineStateInitialize(lstate, wid);
+    tcplistenerLinestateInitialize(lstate, wid);
 
     lstate->io           = io;
     lstate->tunnel       = t;
@@ -68,8 +68,9 @@ void onInboundConnected(wevent_t *ev)
     lstate->write_paused = false;
     lstate->established  = false;
 
-    sockaddrSetPort(&(line->src_ctx.address), data->real_localport);
-    line->src_ctx.address_type = line->src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
+    sockaddrSetPort(&(line->routing_context.src_ctx.address), data->real_localport);
+    line->routing_context.src_ctx.address_type =
+        line->routing_context.src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
     weventSetUserData(io, lstate);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
@@ -103,7 +104,7 @@ void onInboundConnected(wevent_t *ev)
     wioRead(io);
 }
 
-void flushWriteQueue(tcplistener_lstate_t *lstate)
+void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)
 {
     while (bufferqueueLen(lstate->data_queue) > 0)
     {
@@ -118,7 +119,7 @@ void flushWriteQueue(tcplistener_lstate_t *lstate)
 
 static bool resumeWriteQueue(tcplistener_lstate_t *lstate)
 {
-    buffer_queue_t *data_queue = (lstate)->data_queue;
+    buffer_queue_t *data_queue = lstate->data_queue;
     wio_t          *io         = lstate->io;
     while (bufferqueueLen(data_queue) > 0)
     {
@@ -135,7 +136,7 @@ static bool resumeWriteQueue(tcplistener_lstate_t *lstate)
     return true;
 }
 
-void onWriteComplete(wio_t *io)
+void tcplistenerOnWriteComplete(wio_t *io)
 {
     // resume the read on other end of the connection
     tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
@@ -145,9 +146,10 @@ void onWriteComplete(wio_t *io)
         return;
     }
 
+    line_t *l = lstate->line;
+
     if (wioCheckWriteComplete(io))
     {
-
         buffer_queue_t *data_queue = lstate->data_queue;
         if (bufferqueueLen(data_queue) > 0 && ! resumeWriteQueue(lstate))
         {
@@ -155,6 +157,9 @@ void onWriteComplete(wio_t *io)
         }
         wioSetCallBackWrite(lstate->io, NULL);
         lstate->write_paused = false;
+
+        lineLock(l);
         tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
+        lineUnlock(l);
     }
 }

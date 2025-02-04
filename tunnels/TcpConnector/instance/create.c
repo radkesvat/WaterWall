@@ -13,8 +13,6 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     t->fnPauseU   = &tcpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &tcpconnectorTunnelUpStreamResume;
 
-
-
     tcpconnector_tstate_t *state = tunnelGetState(t);
 
     const cJSON *settings = node->node_settings_json;
@@ -38,6 +36,8 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         LOGF("JSON Error: TcpConnector->settings->address (string field) : The vaule was empty or invalid");
         return NULL;
     }
+
+    // Free bind parsings
     if (state->dest_addr_selected.status == kDvsConstant)
     {
         char *slash = strchr(state->dest_addr_selected.value_ptr, '/');
@@ -115,7 +115,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
         if (state->constant_dest_addr.address_type == kSatDomainName)
         {
-            connectionContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+            addresscontextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
                                                strlen(state->dest_addr_selected.value_ptr));
         }
         else
@@ -136,7 +136,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        connectionContextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
+        addresscontextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);

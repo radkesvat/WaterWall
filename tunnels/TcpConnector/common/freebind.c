@@ -5,10 +5,10 @@
 
 #include "loggers/network_logger.h"
 
-bool applyFreeBindRandomDestIp(tunnel_t* self,connection_context_t *dest_ctx)
+bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t* t,address_context_t *dest_ctx)
 {
 
-    tcp_connector_state_t* state = TSTATE(self);
+    tcpconnector_tstate_t* state = tunnelGetState(t);
 
     unsigned int seed = fastRand();
 

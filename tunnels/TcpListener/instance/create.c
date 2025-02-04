@@ -136,7 +136,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     filter_opt.protocol         = kSapTcp;
     filter_opt.black_list_raddr = NULL;
 
-    socketacceptorRegister(t, filter_opt, onInboundConnected);
+    socketacceptorRegister(t, filter_opt, tcplistenerOnInboundConnected);
 
     return t;
 }

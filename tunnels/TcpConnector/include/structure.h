@@ -5,18 +5,18 @@
 typedef struct tcpconnector_tstate_s
 {
     // These options are read form the json configuration
-    dynamic_value_t      dest_addr_selected;   // dynamic value for destination address
-    dynamic_value_t      dest_port_selected;   // dynamic value for destination port
-    bool                 option_tcp_no_delay;  // apply TCP no delay option on sockets
-    bool                 option_tcp_fast_open; // apply TCP fast open option on sockets
-    bool                 option_reuse_addr;    // apply reuse address option on sockets
-    int                  domain_strategy;      // prefer ipv4 or ipv6
-    int                  fwmark;               // firewall mark on linux (beta)
-    uint64_t             outbound_ip_range;    // range for outbound ip (this means free bind)
+    dynamic_value_t dest_addr_selected;   // dynamic value for destination address
+    dynamic_value_t dest_port_selected;   // dynamic value for destination port
+    bool            option_tcp_no_delay;  // apply TCP no delay option on sockets
+    bool            option_tcp_fast_open; // apply TCP fast open option on sockets
+    bool            option_reuse_addr;    // apply reuse address option on sockets
+    int             domain_strategy;      // prefer ipv4 or ipv6
+    int             fwmark;               // firewall mark on linux (beta)
+    uint64_t        outbound_ip_range;    // range for outbound ip (this means free bind)
 
     // These options are evaluatde at start
     // constant destination address to avoid copy, can contain the domain name, used if possible
-    connection_context_t constant_dest_addr;    
+    address_context_t constant_dest_addr;
 } tcpconnector_tstate_t;
 
 typedef struct tcpconnector_lstate_s
@@ -39,13 +39,13 @@ enum
     kLineStateSize   = sizeof(tcpconnector_lstate_t)
 };
 
-enum tcpconnector_port_strategy
+typedef enum tcpconnector_strategy
 {
-    kTcpConnectorPortStrategyRandom = 0,
-    kTcpConnectorPortStrategyConstant,
-    kTcpConnectorPortStrategyFromSource,
-    kTcpConnectorPortStrategyFromDest
-};
+    kTcpConnectorStrategyRandom = 0,
+    kTcpConnectorStrategyConstant,
+    kTcpConnectorStrategyFromSource,
+    kTcpConnectorStrategyFromDest
+} tcpconnector_strategy_e;
 
 enum
 {
@@ -75,7 +75,11 @@ WW_EXPORT void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_
 WW_EXPORT void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 WW_EXPORT void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void lineStateInitialize(tcpconnector_lstate_t *ls);
-void lineStateDestroy(tcpconnector_lstate_t *ls);
+void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls, wid_t wid);
+void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
 
-bool applyFreeBindRandomDestIp(tunnel_t *self, connection_context_t *dest_ctx);
+bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t *self, address_context_t *dest_ctx);
+void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate);
+void tcpconnectorOnOutBoundConnected(wio_t *upstream_io);
+void tcpconnectorOnWriteComplete(wio_t *io);
+void tcpconnectorOnClose(wio_t *io);

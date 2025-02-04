@@ -15,7 +15,7 @@ typedef struct template_lstate_s
 enum
 {
     kTunnelStateSize = sizeof(template_tstate_t),
-    kLineStateSize = sizeof(template_lstate_t)
+    kLineStateSize   = sizeof(template_lstate_t)
 };
 
 WW_EXPORT void         templateTunnelDestroy(tunnel_t *t);
@@ -26,7 +26,6 @@ WW_EXPORT void templateTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t 
 WW_EXPORT void templateTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 WW_EXPORT void templateTunnelOnPrepair(tunnel_t *t);
 WW_EXPORT void templateTunnelOnStart(tunnel_t *t);
-
 
 WW_EXPORT void templateTunnelUpStreamInit(tunnel_t *t, line_t *l);
 WW_EXPORT void templateTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -42,7 +41,5 @@ WW_EXPORT void templateTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b
 WW_EXPORT void templateTunnelDownStreamPause(tunnel_t *t, line_t *l);
 WW_EXPORT void templateTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-
-void lineStateInitialize(template_lstate_t * ls);
-void lineStateDestroy(template_lstate_t *ls);
-
+void templateLinestateInitialize(template_lstate_t *ls);
+void templateLinestateDestroy(template_lstate_t *ls);
