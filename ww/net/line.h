@@ -65,8 +65,9 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
         .pool     = pool,
         // to set a port we need to know the AF family, default v4
         .routing_context = (routing_context_t){
-            .dest_ctx = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
-            .src_ctx  = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}}};
+            .network_type = WIO_TYPE_UNKNOWN,
+            .dest_ctx     = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}},
+            .src_ctx = (address_context_t){.address.sa = (struct sockaddr){.sa_family = AF_INET, .sa_data = {0}}}}};
 
     memorySet(&l->tunnels_line_state[0], 0, genericpoolGetItemSize(l->pool) - sizeof(line_t));
 
