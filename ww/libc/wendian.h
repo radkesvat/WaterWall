@@ -2,6 +2,7 @@
 #define WW_ENDIAN_H_
 
 #include "wplatform.h"
+
 #if defined(OS_MAC)
 #include <libkern/OSByteOrder.h>
 #define htobe16(v) OSSwapHostToBigInt16(v)
@@ -104,6 +105,30 @@
         return Retval;
     }
     #endif /* ntohd */
+
+#else
+    #ifndef htonll
+
+    static inline uint64_t htonll(uint64_t x)
+    {
+        uint32_t low  = htonl((uint32_t) (x & 0xFFFFFFFF));
+        uint32_t high = htonl((uint32_t) (x >> 32));
+        return ((uint64_t) low << 32) | high;
+    }
+
+    #endif
+
+    #ifndef ntohll
+
+    static inline uint64_t ntohll(uint64_t x)
+    {
+        uint32_t low  = ntohl((uint32_t) (x & 0xFFFFFFFF));
+        uint32_t high = ntohl((uint32_t) (x >> 32));
+        return ((uint64_t) low << 32) | high;
+    }
+
+    #endif
+
 #endif
 
 #define htobe16(v) htons(v)
