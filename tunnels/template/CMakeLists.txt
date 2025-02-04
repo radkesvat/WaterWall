@@ -15,12 +15,14 @@ add_library(Template STATIC
                     upstream/fin.c
                     upstream/payload.c
                     upstream/pause.c
+                    upstream/resume.c
                     upstream/est.c
                     downstream/init.c
                     downstream/est.c
                     downstream/fin.c
                     downstream/payload.c
                     downstream/pause.c
+                    downstream/resume.c
                     downstream/est.c
   
 )

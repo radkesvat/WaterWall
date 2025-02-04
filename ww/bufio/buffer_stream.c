@@ -31,7 +31,7 @@ void bufferstreamEmpty(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
-        bufferpoolResuesBuffer(self->pool, *i.ref);
+        bufferpoolReuseBuffer(self->pool, *i.ref);
     }
     queue_clear(&self->q);
     self->size = 0;
@@ -45,7 +45,7 @@ void bufferstreamDestroy(buffer_stream_t *self)
 {
     c_foreach(i, queue, self->q)
     {
-        bufferpoolResuesBuffer(self->pool, *i.ref);
+        bufferpoolReuseBuffer(self->pool, *i.ref);
     }
     queue_drop(&self->q);
     memoryFree(self);

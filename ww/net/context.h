@@ -109,7 +109,7 @@ static inline void contextDropPayload(context_t *const c)
 static inline void contextReusePayload(context_t *const c)
 {
     assert(c->payload != NULL);
-    bufferpoolResuesBuffer(getWorkerBufferPool(lineGetWID(contextGetLine(c))), c->payload);
+    bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(contextGetLine(c))), c->payload);
     contextDropPayload(c);
 }
 

@@ -339,7 +339,7 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payl
 
     if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
     {
-        bufferpoolResuesBuffer(getWorkerBufferPool(lineGetWID(line)), payload);
+        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(line)), payload);
         return;
     }
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
@@ -511,7 +511,7 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *pa
 
     if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
     {
-        bufferpoolResuesBuffer(getWorkerBufferPool(lineGetWID(line)), payload);
+        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(line)), payload);
         return;
     }
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));

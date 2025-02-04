@@ -169,11 +169,11 @@ static inline bool lineIsAuthenticated(line_t *const line)
 /**
  * @brief Retrieves the state of the line for a given tunnel.
  *
- * @param t Pointer to the tunnel.
  * @param l Pointer to the line.
+ * @param t Pointer to the tunnel.
  * @return void* Pointer to the state of the line.
  */
-static inline void *lineGetState(tunnel_t *t, line_t *l)
+static inline void *lineGetState(line_t *l, tunnel_t *t)
 {
     return ((uint8_t *) l->tunnels_line_state) + t->lstate_offset;
 }
@@ -197,4 +197,3 @@ static inline wid_t lineGetWID(const line_t *const line)
 {
     return line->wid;
 }
-

@@ -65,7 +65,7 @@ option(INCLUDE_LAYER3_IP_OVERRIDER "link Layer3IpOverrider staticly to the core"
 option(INCLUDE_LAYER3_IP_MANIPULATOR "link Layer3IPManipulator staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_TCP_MANIPULATOR "link Layer3TcpManipulator staticly to the core"  FALSE)
 
-option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  FALSE)
+option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
 option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  FALSE)
 option(INCLUDE_LISTENER "link Listener staticly to the core"  FALSE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  FALSE)
@@ -227,8 +227,8 @@ endif()
 #tcp listener
 if (INCLUDE_TCP_LISTENER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TCP_LISTENER=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/tcp)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/listener/tcp)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpListener)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpListener)
 target_link_libraries(Waterwall TcpListener)
 endif()
 

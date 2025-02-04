@@ -242,7 +242,7 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
  * @param pool The buffer pool.
  * @param b The buffer to reuse.
  */
-void bufferpoolResuesBuffer(buffer_pool_t *pool, sbuf_t *b)
+void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 {
 
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
@@ -286,7 +286,7 @@ void bufferpoolResuesBuffer(buffer_pool_t *pool, sbuf_t *b)
 sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
 {
     b1 = sbufConcat(b1, b2);
-    bufferpoolResuesBuffer(pool, b2);
+    bufferpoolReuseBuffer(pool, b2);
     return b1;
 }
 
@@ -343,7 +343,7 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, uint32_t bufcount,
                                 uint32_t large_buffer_size, uint32_t small_buffer_size)
 {
-    // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolResuesBuffer
+    // stop using pool if you want less, simply uncomment lines in popbuffer and bufferpoolReuseBuffer
     assert(bufcount >= 1);
 
     bufcount = 2 * bufcount;

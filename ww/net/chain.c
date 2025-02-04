@@ -1,8 +1,8 @@
 #include "chain.h"
-
+#include "global_state.h"
+#include "line.h"
 #include "loggers/internal_logger.h"
 #include "node_builder/node.h"
-#include "global_state.h"
 
 void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
 {
@@ -21,14 +21,14 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
     tci->sum_padding_left += tunnelGetNode(t)->required_padding_left;
     tci->sum_line_state_size += t->lstate_size;
     t->chain = tci;
-    
 }
 
-tunnel_chain_t *tunnelchainCreate(void)
+tunnel_chain_t *tunnelchainCreate(wid_t workers_count)
 {
-    size_t size = sizeof(tunnel_chain_t) + sizeof(void *) * getWorkersCount();
-    tunnel_chain_t *tc = memoryAllocate(size);
+    size_t          size = sizeof(tunnel_chain_t) + sizeof(void *) * getWorkersCount();
+    tunnel_chain_t *tc   = memoryAllocate(size);
     memorySet(tc, 0, size);
+    tc->workers_count = workers_count;
     return tc;
 }
 
@@ -39,13 +39,10 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     for (uint32_t i = 0; i < tc->workers_count; i++)
     {
         tc->line_pools[i] = genericpoolCreateWithDefaultAllocatorAndCapacity(
-            tc->masterpool_line_pool , tc->sum_line_state_size, (8) + GSTATE.ram_profile);
+            tc->masterpool_line_pool, sizeof(line_t) + tc->sum_line_state_size, (8) + GSTATE.ram_profile);
     }
 
     globalstateUpdaeAllocationPadding(tc->sum_padding_left);
-
- 
-
 }
 
 void tunnelchainDestroy(tunnel_chain_t *tc)
@@ -57,7 +54,7 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
     memoryFree(tc);
 }
 
-generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, uint32_t tid)
+generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, wid_t wid)
 {
-    return tc->line_pools[tid];
+    return tc->line_pools[wid];
 }

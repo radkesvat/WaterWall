@@ -1,6 +1,8 @@
 #include "interface.h"
 #include "structure.h"
 
+#include "loggers/network_logger.h"
+
 node_t nodeTemplateGet(void)
 {
     const char *type_name     = "Template";

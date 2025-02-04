@@ -15,6 +15,7 @@ add_library(ww STATIC
     bufio/buffer_pool.c
     bufio/buffer_stream.c
     bufio/context_queue.c
+    bufio/buffer_queue.c
     bufio/generic_pool.c
     bufio/master_pool.c
     bufio/shiftbuffer.c
@@ -41,6 +42,7 @@ add_library(ww STATIC
     net/line.c
     net/pipe_tunnel.c
     net/sync_dns.c
+    net/adapter.c
     net/tunnel.c
     net/chain.c
     net/context.c
@@ -125,7 +127,7 @@ CPMAddPackage(
 if(stc_ADDED)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-        target_compile_options(ww PUBLIC /wd4310 ) # stc bug, hash -> cast trucncates constant value TODO fix in stc
+        target_compile_options(ww PUBLIC /wd4310) # stc bug, hash -> cast trucncates constant value TODO fix in stc
     endif()
     # target_sources(ww PRIVATE ${stc_SOURCE_DIR}/src/libstc.c)
 endif()
@@ -285,9 +287,23 @@ target_link_libraries(ww PUBLIC ${LIBS})
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_link_options(ww PUBLIC -s)
     if(WIN32)
-        target_link_options(ww PUBLIC -static-libgcc -static)
+        if(MSVC)
+        target_link_options(ww PUBLIC /MT)
+        else()
+            target_compile_options(ww PUBLIC -static-libgcc -static)
+        endif()
+    endif()
+
+endif()
+# Link options for Debug build
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)
+    if(MSVC)
+        # target_compile_options(ww PUBLIC /MTd)
     endif()
 endif()
+
+
 
 # Enable sanitizers for non-Release builds
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -349,13 +365,11 @@ if(MSVC)
         /W4
         /WX
     )
+
 endif()
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)
-endif()
 
 
 

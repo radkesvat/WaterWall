@@ -38,10 +38,10 @@ typedef struct tunnel_chain_s
 
 } tunnel_chain_t;
 
-tunnel_chain_t *tunnelchainCreate(void);
+tunnel_chain_t *tunnelchainCreate(wid_t workers_count);
 void            tunnelchainFinalize(tunnel_chain_t *tc);
 void            tunnelchainDestroy(tunnel_chain_t *tc);
-generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, uint32_t tid);
+generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, wid_t wid);
 
 void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t);
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t);

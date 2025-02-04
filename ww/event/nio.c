@@ -7,7 +7,6 @@
 #include "wsocket.h"
 #include "wthread.h"
 
-
 static void __connect_timeout_cb(wtimer_t *timer)
 {
     wio_t *io = (wio_t *) timer->privdata;
@@ -171,12 +170,12 @@ static int __nio_read(wio_t *io, void *buf, unsigned int len)
         //             nread = splice(io->fd, NULL,io->pfd_w,0, len, SPLICE_F_NONBLOCK);
         //         }else
         // #endif
-        nread = recv(io->fd, buf, (int)len, 0);
+        nread = recv(io->fd, buf, (int) len, 0);
         break;
     case WIO_TYPE_UDP:
     case WIO_TYPE_IP: {
         socklen_t addrlen = sizeof(sockaddr_u);
-        nread             = recvfrom(io->fd, buf, (int)len, 0, io->peeraddr, &addrlen);
+        nread             = recvfrom(io->fd, buf, (int) len, 0, io->peeraddr, &addrlen);
     }
     break;
     default:
@@ -222,7 +221,7 @@ static void nio_read(wio_t *io)
 {
     // printd("nio_read fd=%d\n", io->fd);
     int nread = 0;
-    int err = 0;
+    int err   = 0;
     //  read:;
 
     // #if defined(OS_LINUX) && defined(HAVE_PIPE)
@@ -232,13 +231,17 @@ static void nio_read(wio_t *io)
     // #endif
     sbuf_t *buf;
 
-    switch (io->io_type) {
+    switch (io->io_type)
+    {
     default:
-    case WIO_TYPE_TCP: buf = bufferpoolGetLargeBuffer(io->loop->bufpool); break;
+    case WIO_TYPE_TCP:
+        buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
+        break;
     case WIO_TYPE_UDP:
-    case WIO_TYPE_IP: buf = bufferpoolGetSmallBuffer(io->loop->bufpool); break;
+    case WIO_TYPE_IP:
+        buf = bufferpoolGetSmallBuffer(io->loop->bufpool);
+        break;
     }
-
 
     unsigned int available = sbufGetRightCapacity(buf);
     assert(available >= 1024);
@@ -252,26 +255,26 @@ static void nio_read(wio_t *io)
         if (err == EAGAIN || err == EINTR)
         {
             // goto read_done;
-            bufferpoolResuesBuffer(io->loop->bufpool, buf);
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
             return;
         }
         else if (err == EMSGSIZE)
         {
             // ignore
-            bufferpoolResuesBuffer(io->loop->bufpool, buf);
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
             return;
         }
         else
         {
             // printError("read");
-            bufferpoolResuesBuffer(io->loop->bufpool, buf);
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
             io->error = err;
             goto read_error;
         }
     }
     if (nread == 0)
     {
-        bufferpoolResuesBuffer(io->loop->bufpool, buf);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         goto disconnect;
     }
     // printf("%d \n",nread);
@@ -350,7 +353,7 @@ write:
         //     if(io->pfd_w == 0)
         //         EVENTLOOP_FREE(base);
         // #else
-        bufferpoolResuesBuffer(io->loop->bufpool, buf);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         // #endif
         write_queue_pop_front(&io->write_queue);
         __write_cb(io);
@@ -467,7 +470,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     if (io->closed)
     {
         wloge("wioWrite called but fd[%d] already closed!", io->fd);
-        bufferpoolResuesBuffer(io->loop->bufpool, buf);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return -1;
     }
     int nwrite = 0, err = 0;
@@ -552,7 +555,7 @@ write_done:
     {
         if (nwrite == len)
         {
-            bufferpoolResuesBuffer(io->loop->bufpool, buf);
+            bufferpoolReuseBuffer(io->loop->bufpool, buf);
         }
         __write_cb(io);
     }
@@ -565,7 +568,7 @@ disconnect:
      * if wio_close_sync, we have to be very careful to avoid using freed resources.
      * But if wioCloseAsync, we do not have to worry about this.
      */
-    bufferpoolResuesBuffer(io->loop->bufpool, buf);
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
     if (io->io_type & WIO_TYPE_SOCK_STREAM)
     {
         wioCloseAsync(io);
@@ -576,9 +579,6 @@ disconnect:
 // This must only be called from the same thread that created the loop
 int wioClose(wio_t *io)
 {
-    if (io->closed)
-        return 0;
-
     // if (io->destroy == 0 && getTID() != io->loop->tid) {
     //     return wioCloseAsync(io); /*  tid lost its meaning, its now ww tid */
     // }

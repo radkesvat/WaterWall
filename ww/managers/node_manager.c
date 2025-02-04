@@ -2,6 +2,7 @@
 #include "chain.h"
 #include "loggers/internal_logger.h"
 #include "utils/json_helpers.h"
+#include "global_state.h"
 
 enum
 {
@@ -130,7 +131,7 @@ static void runNodes(node_manager_config_t *cfg)
                 continue;
             }
 
-            tunnel_chain_t *tc = tunnelchainCreate();
+            tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount());
             tunnel->onChain(tunnel, tc);
 
             tunnelchainFinalize(tc);

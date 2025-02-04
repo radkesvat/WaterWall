@@ -59,7 +59,7 @@
 #endif
 
 #ifdef INCLUDE_TCP_LISTENER
-#include "tunnels/adapters/listener/tcp/tcp_listener.h"
+#include "tunnels/TcpListener/include/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_LISTENER

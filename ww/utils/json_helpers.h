@@ -3,6 +3,11 @@
 #include "cJSON.h"
 #include "objects/dynamic_value.h"
 
+static inline bool checkJsonIsObjectAndHasChild(const cJSON *json_obj)
+{
+    return cJSON_IsObject(json_obj) && json_obj->child != NULL;
+}
+
 static inline bool getBoolFromJsonObject(bool *dest, const cJSON *json_obj, const char *key)
 {
     assert(dest != NULL);

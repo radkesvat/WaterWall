@@ -726,6 +726,11 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
     wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
+    if(pl->wid == state->wid)
+    {
+        filter->cb(&ev);
+        return;
+    }
     wloopPostEvent(worker_loop, &ev);
 }
 

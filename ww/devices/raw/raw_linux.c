@@ -84,14 +84,14 @@ static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 
         if (nread == 0)
         {
-            bufferpoolResuesBuffer(rdev->reader_buffer_pool, buf);
+            bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
             LOGW("RawDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            bufferpoolResuesBuffer(rdev->reader_buffer_pool, buf);
+            bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
 
             LOGE("RawDevice: reading a packet from RAW device failed, code: %d", (int) nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
@@ -137,7 +137,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         nwrite = sendto(rdev->socket, ip_header, sbufGetBufLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        bufferpoolResuesBuffer(rdev->writer_buffer_pool, buf);
+        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -216,7 +216,7 @@ bool bringRawDeviceDown(raw_device_t *rdev)
     sbuf_t *buf;
     while (chanRecv(rdev->writer_buffer_channel, &buf))
     {
-        bufferpoolResuesBuffer(rdev->reader_buffer_pool, buf);
+        bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
     }
 
     return true;

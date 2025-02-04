@@ -297,14 +297,14 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         if (nread == 0)
         {
-            bufferpoolResuesBuffer(cdev->reader_buffer_pool, buf);
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
             LOGW("CaptureDevice: Exit read routine due to End Of File");
             return 0;
         }
 
         if (nread < 0)
         {
-            bufferpoolResuesBuffer(cdev->reader_buffer_pool, buf);
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
             LOGW("CaptureDevice: failed to read a packet from netfilter socket, retrying...");
             continue;
         }
@@ -342,7 +342,7 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         nwrite = sendto(cdev->socket, ip_header, sbufGetBufLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
-        bufferpoolResuesBuffer(cdev->writer_buffer_pool, buf);
+        bufferpoolReuseBuffer(cdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
         {
@@ -413,7 +413,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     sbuf_t *buf;
     while (chanRecv(cdev->writer_buffer_channel, &buf))
     {
-        bufferpoolResuesBuffer(cdev->reader_buffer_pool, buf);
+        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
     }
 
     return true;

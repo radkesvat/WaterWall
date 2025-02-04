@@ -9,7 +9,7 @@
 
 enum
 {
-    kQCap = 16
+    kQCap = 8
 };
 
 struct context_queue_s

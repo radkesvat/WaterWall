@@ -9,7 +9,7 @@
 
     preallocates (n) number of buffers at each call to charge(),
 
-    users should call bufferpoolGetLargeBuffer() when they want a buffer, and later call bufferpoolResuesBuffer when
+    users should call bufferpoolGetLargeBuffer() when they want a buffer, and later call bufferpoolReuseBuffer when
     they are done with the buffer.
 
     recharing is done autmatically and internally.
@@ -57,7 +57,7 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool);
  * @param pool The buffer pool.
  * @param b The buffer to reuse.
  */
-void bufferpoolResuesBuffer(buffer_pool_t *pool, sbuf_t *b);
+void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b);
 
 /**
  * Updates the allocation paddings for the buffer pool.

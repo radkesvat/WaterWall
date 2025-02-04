@@ -224,11 +224,11 @@ static void eventFDReadCB(wio_t* io, sbuf_t* buf) {
             ev.cb(&ev);
         }
     }
-    bufferpoolResuesBuffer(io->loop->bufpool, buf);
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
     return;
 unlock:
     mutexUnlock(&loop->custom_events_mutex);
-    bufferpoolResuesBuffer(io->loop->bufpool, buf);
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
 }
 
 static int wloopCreateEventFDS(wloop_t* loop) {

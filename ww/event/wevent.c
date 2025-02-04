@@ -154,7 +154,7 @@ void wioDone(wio_t* io) {
     //
     while (!write_queue_empty(&io->write_queue)) {
         buf = *write_queue_front(&io->write_queue);
-        bufferpoolResuesBuffer(io->loop->bufpool, buf);
+        bufferpoolReuseBuffer(io->loop->bufpool, buf);
         write_queue_pop_front(&io->write_queue);
     }
     write_queue_cleanup(&io->write_queue);
