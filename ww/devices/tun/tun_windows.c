@@ -279,6 +279,8 @@ static WTHREAD_ROUTINE(routineReadFromTun)
         if (Packet)
         {
             sbufSetLength(buf, PacketSize);
+            memoryCopy(sbufGetMutablePtr(buf), Packet, PacketSize);
+            WintunReleaseReceivePacket(Session, Packet);
 
             if (TUN_LOG_EVERYTHING)
             {
@@ -293,7 +295,6 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 distribute_tid = 0;
             }
 
-            WintunReleaseReceivePacket(Session, Packet);
         }
         else
         {
