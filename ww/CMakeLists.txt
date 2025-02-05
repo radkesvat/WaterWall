@@ -72,7 +72,7 @@ set_target_properties(ww
 )
 
 # Platform-specific sources
-if(UNIX AND NOT APPLE)
+if(LINUX OR ANDROID)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
     # target_sources(ww PRIVATE devices/raw/raw_linux.c)
     # target_sources(ww PRIVATE devices/capture/capture_linux.c)
@@ -369,6 +369,7 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wnested-externs
         -Wuninitialized
         -Wwrite-strings
+
         -Wno-unused-function
         -Wno-unknown-pragmas
     )
