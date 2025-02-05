@@ -123,6 +123,8 @@ void *memoryAllocate(size_t size)
     return ptr;
 }
 
+
+
 void *memoryReAllocate(void *ptr, size_t size)
 {
     return realloc(ptr, size);
@@ -160,3 +162,11 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 }
 
 #endif
+
+
+void *memoryAllocateZero(size_t size)
+{
+    void *ptr = memoryAllocate(size);
+    memorySet(ptr, 0, size);
+    return ptr;
+}

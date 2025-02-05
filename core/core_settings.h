@@ -1,5 +1,7 @@
 #pragma once
 
+#include "wlibc.h"
+
 #define i_type vec_config_path_t // NOLINT
 #define i_key  char *            // NOLINT
 #include "stc/vec.h"

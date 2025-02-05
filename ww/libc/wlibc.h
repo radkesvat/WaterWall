@@ -20,12 +20,19 @@ struct dedicated_memory_s;
 typedef struct dedicated_memory_s dedicated_memory_t;
 
 void *memoryAllocate(size_t size);
+void *memoryAllocateZero(size_t size);
 void *memoryReAllocate(void *ptr, size_t size);
 void  memoryFree(void *ptr);
 
 void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
+
+/* STC lib will use our custom allocators*/
+#define c_malloc(sz) memoryAllocate(sz)
+#define c_calloc(n, sz) memoryAllocateZero(n * sz)
+#define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, sz)
+#define c_free(ptr, sz) memoryFree(ptr)
 
 #ifdef DEBUG
 static inline void debugAssertZeroBuf(void *buf, size_t size)
