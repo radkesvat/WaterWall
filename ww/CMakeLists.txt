@@ -76,7 +76,7 @@ if(LINUX OR ANDROID)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
     # target_sources(ww PRIVATE devices/raw/raw_linux.c)
     # target_sources(ww PRIVATE devices/capture/capture_linux.c)
-else()
+elseif(WIN32)
 
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     message(STATUS "Including WinTun Target architecture: amd64")
@@ -101,7 +101,14 @@ endif()
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
     # target_sources(ww PRIVATE devices/raw/raw_windows.c)
     # target_sources(ww PRIVATE devices/capture/capture_windows.c)
+elseif(APPLE)
+    message(STATUS "No Tun device for MacOS yet")
+
+    # target_sources(ww PRIVATE devices/tun/tun_darwin.c)
+    # target_sources(ww PRIVATE devices/raw/raw_darwin.c)
+    # target_sources(ww PRIVATE devices/capture/capture_darwin.c)
 endif()
+
 
 if(WIN32)
     set(WITH_WEPOLL 1)
