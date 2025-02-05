@@ -44,7 +44,8 @@ typedef struct ww_global_state_s
     uint32_t                 workers_count;
     uint32_t                 ram_profile;
     uint16_t                 buffer_allocation_padding;
-    bool                     initialized;
+    uint8_t                  initialized : 1;
+    uint8_t                  internal_flag_buffers_calculated : 1;
 
 } ww_global_state_t;
 

@@ -35,6 +35,7 @@ void globalstateUpdaeAllocationPadding(uint16_t padding)
     {
         bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
     }
+    GSTATE.internal_flag_buffers_calculated = true;
 }
 
 static void initializeShortCuts(void)

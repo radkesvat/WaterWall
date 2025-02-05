@@ -1,9 +1,10 @@
 #include "generic_pool.h"
-#include "wchan.h"
+#include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "tun.h"
-#include "global_state.h"
+#include "wchan.h"
 #include "wproc.h"
+
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -13,18 +14,17 @@
 #include <netinet/ip.h>
 #include <sys/ioctl.h>
 
-
 enum
 {
-    kReadPacketSize          = 1500,
-    kMasterMessagePoosbufGetLeftCapacity    = 64,
-    kTunWriteChannelQueueMax = 256
+    kReadPacketSize                      = 1500,
+    kMasterMessagePoosbufGetLeftCapacity = 64,
+    kTunWriteChannelQueueMax             = 256
 };
 
 struct msg_event
 {
-    tun_device_t   *tdev;
-    sbuf_t *buf;
+    tun_device_t *tdev;
+    sbuf_t       *buf;
 };
 
 static void printIPPacketInfo(const char *devname, const unsigned char *buffer)
@@ -104,7 +104,7 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -116,10 +116,10 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t
 
 static WTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 {
-    tun_device_t   *tdev           = userdata;
-    wid_t           distribute_tid = 0;
-    sbuf_t *buf;
-    ssize_t         nread;
+    tun_device_t *tdev           = userdata;
+    wid_t         distribute_tid = 0;
+    sbuf_t       *buf;
+    ssize_t       nread;
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
@@ -169,9 +169,9 @@ static WTHREAD_ROUTINE(routineReadFromTun) // NOLINT
 
 static WTHREAD_ROUTINE(routineWriteToTun) // NOLINT
 {
-    tun_device_t   *tdev = userdata;
-    sbuf_t *buf;
-    ssize_t         nwrite;
+    tun_device_t *tdev = userdata;
+    sbuf_t       *buf;
+    ssize_t       nwrite;
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
@@ -332,7 +332,7 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     if (*name)
     {
         strncpy(ifr.ifr_name, name, IFNAMSIZ);
-        ifr.ifr_name[IFNAMSIZ-1] = '\0';  
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
     }
 
     int err = ioctl(fd, TUNSETIFF, (void *) &ifr);
@@ -344,26 +344,27 @@ tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, Tu
     }
 
     buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 
-                         (0) + GSTATE.ram_profile,SMALL_BUFFER_SIZE,LARGE_BUFFER_SIZE);
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                         (0) + GSTATE.ram_profile, SMALL_BUFFER_SIZE, LARGE_BUFFER_SIZE);
 
-    buffer_pool_t  *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,  (0) + GSTATE.ram_profile,SMALL_BUFFER_SIZE,LARGE_BUFFER_SIZE);
+    buffer_pool_t *writer_bpool =
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                         (0) + GSTATE.ram_profile, SMALL_BUFFER_SIZE, LARGE_BUFFER_SIZE);
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t) {.name                     = stringDuplicate(ifr.ifr_name),
-                            .running                  = false,
-                            .up                       = false,
-                            .routine_reader           = routineReadFromTun,
-                            .routine_writer           = routineWriteToTun,
-                            .handle                   = fd,
-                            .read_event_callback      = cb,
-                            .userdata                 = userdata,
-                            .writer_buffer_channel    = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
-                            .reader_message_pool      = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                            .reader_buffer_pool       = reader_bpool,
-                            .writer_buffer_pool       = writer_bpool
+    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
+                           .running               = false,
+                           .up                    = false,
+                           .routine_reader        = routineReadFromTun,
+                           .routine_writer        = routineWriteToTun,
+                           .handle                = fd,
+                           .read_event_callback   = cb,
+                           .userdata              = userdata,
+                           .writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
+                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                           .reader_buffer_pool    = reader_bpool,
+                           .writer_buffer_pool    = writer_bpool
 
     };
 
