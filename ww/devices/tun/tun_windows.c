@@ -559,6 +559,17 @@ static void exitHandle(void *userdata, int signum)
     tundeviceDestroy(tdev);
 }
 
+// Function to load a function pointer from a DLL
+static bool loadFunctionFromDLL(const char* function_name, void* target) {
+    FARPROC proc = GetProcAddress(GSTATE.wintun_dll_handle, function_name);
+    if (proc == NULL) {
+        LOGE("Error: Failed to load function '%s' from WinTun DLL.", function_name);
+        return false;
+    }
+    memoryCopy(target, &proc, sizeof(FARPROC)); 
+    return true;
+}
+
 /**
  * Creates a new TUN device
  * @param name Name of the TUN device
@@ -584,19 +595,24 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         return NULL;
     }
 
-#define X(Name) ((*(FARPROC *)&Name = GetProcAddress(GSTATE.wintun_dll_handle , #Name)) == NULL)
-    if (X(WintunCreateAdapter) || X(WintunCloseAdapter) || X(WintunOpenAdapter) || X(WintunGetAdapterLUID) ||
-        X(WintunGetRunningDriverVersion) || X(WintunDeleteDriver) || X(WintunSetLogger) || X(WintunStartSession) ||
-        X(WintunEndSession) || X(WintunGetReadWaitEvent) || X(WintunReceivePacket) || X(WintunReleaseReceivePacket) ||
-        X(WintunAllocateSendPacket) || X(WintunSendPacket))
-#undef X
-    {
-        LastError = GetLastError();
-        SetLastError(LastError);
-        LOGE("Could not setup Wintun functions, Code: %lu", LastError);
 
-        return NULL;
-    }
+    // Load each function pointer and check for NULL
+    if (!loadFunctionFromDLL("WintunCreateAdapter", &WintunCreateAdapter)) return NULL;
+    if (!loadFunctionFromDLL("WintunCloseAdapter", &WintunCloseAdapter)) return NULL;
+    if (!loadFunctionFromDLL("WintunOpenAdapter", &WintunOpenAdapter)) return NULL;
+    if (!loadFunctionFromDLL("WintunGetAdapterLUID", &WintunGetAdapterLUID)) return NULL;
+    if (!loadFunctionFromDLL("WintunGetRunningDriverVersion", &WintunGetRunningDriverVersion)) return NULL;
+    if (!loadFunctionFromDLL("WintunDeleteDriver", &WintunDeleteDriver)) return NULL;
+    if (!loadFunctionFromDLL("WintunSetLogger", &WintunSetLogger)) return NULL;
+    if (!loadFunctionFromDLL("WintunStartSession", &WintunStartSession)) return NULL;
+    if (!loadFunctionFromDLL("WintunEndSession", &WintunEndSession)) return NULL;
+    if (!loadFunctionFromDLL("WintunGetReadWaitEvent", &WintunGetReadWaitEvent)) return NULL;
+    if (!loadFunctionFromDLL("WintunReceivePacket", &WintunReceivePacket)) return NULL;
+    if (!loadFunctionFromDLL("WintunReleaseReceivePacket", &WintunReleaseReceivePacket)) return NULL;
+    if (!loadFunctionFromDLL("WintunAllocateSendPacket", &WintunAllocateSendPacket)) return NULL;
+    if (!loadFunctionFromDLL("WintunSendPacket", &WintunSendPacket)) return NULL;
+
+
     LOGD("Wintun loaded successfully");
 
     buffer_pool_t *reader_bpool =
