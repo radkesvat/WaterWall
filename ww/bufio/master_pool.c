@@ -67,7 +67,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     memorySet(pool_ptr, 0xEB, sizeof(master_pool_t) + container_len);
 #endif
 
-    master_pool_t pool = {.memptr              = pool_ptr,
+    master_pool_t pool = {.memptr              = (void*)ptr,
                           .cap                 = pool_width,
                           .len                 = 0,
                           .create_item_handle  = defaultCreateHandle,

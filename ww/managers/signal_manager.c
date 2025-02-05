@@ -8,13 +8,15 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata)
     assert(state->handlers_len < kMaxSigHandles);
     for (int i = 0; i < kMaxSigHandles; i++)
     {
-        if (state->handlers[i].handle != NULL)
+        if (state->handlers[i].handle == NULL)
         {
             state->handlers[i] = (signal_handler_t){.handle = handle, .userdata = userdata};
             state->handlers_len++;
             return;
         }
     }
+    printError("SignalManager: Too many atexit handlers, max is %d", kMaxSigHandles);
+    _Exit(1);
 }
 void removeAtExitCallBack(SignalHandler handle, void *userdata)
 {

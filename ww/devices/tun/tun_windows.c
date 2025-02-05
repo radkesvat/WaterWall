@@ -109,22 +109,7 @@ static void tunWindowsStartup(void)
 
     LOGI("DLL loaded successfully");
 
-    // Optionally, call functions from the DLL
-    FARPROC func = GetProcAddress(hModule, "SomeFunction");
-    if (func)
-    {
-        LOGI("Function 'SomeFunction' located");
-        // Call the function here
-    }
-    else
-    {
-        LOGW("Function lookup failed: error %lu", GetLastError());
-    }
-
-    // Clean up
-    FreeLibrary(hModule);
-    DeleteFile(tempDllPath);
-    free(tempDllPath);
+    GSTATE.wintun_dll_handle = hModule;
 }
 
 /**
@@ -279,7 +264,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 {
     tun_device_t         *tdev           = userdata;
     WINTUN_SESSION_HANDLE Session        = tdev->session_handle;
-    HANDLE                wait_handle    = WintunGetReadWaitEvent(Session);
+    HANDLE WaitHandles[] = { WintunGetReadWaitEvent(Session), tdev->quit_event };
     wid_t                 distribute_tid = 0;
     sbuf_t               *buf;
     ssize_t               nread;
@@ -318,9 +303,8 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             switch (LastError)
             {
             case ERROR_NO_MORE_ITEMS:
-                WaitForSingleObject(wait_handle, INFINITE);
-                continue;
-
+                if (WaitForMultipleObjects(_countof(WaitHandles), WaitHandles, FALSE, INFINITE) == WAIT_OBJECT_0)
+                    continue;
                 return ERROR_SUCCESS;
             default:
                 LOGE("ReadThread: Packet read failed: error %lu", LastError);
@@ -329,6 +313,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             }
         }
     }
+    LOGD("ReadThread: Terminating due to not running");
 
     return 0;
 }
@@ -374,6 +359,9 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
     }
+
+    LOGD("WriteThread: Terminating due to not running");
+
     return 0;
 }
 
@@ -390,6 +378,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
+    tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
+
     WINTUN_SESSION_HANDLE Session = WintunStartSession(tdev->adapter_handle, 0x400000);
     if (! Session)
     {
@@ -397,9 +387,13 @@ bool tundeviceBringUp(tun_device_t *tdev)
         LOGE("Failed to start session, code: %lu", lastError);
         return false;
     }
+
+    ResetEvent(tdev->quit_event);
     tdev->up = true;
     atomicStoreRelaxed(&(tdev->running), true);
     tdev->session_handle = Session;
+
+    MemoryBarrier();
 
     if (tdev->read_event_callback != NULL)
     {
@@ -424,11 +418,19 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     atomicStoreRelaxed(&(tdev->running), false);
     tdev->up = false;
+    SetEvent(tdev->quit_event);
+    MemoryBarrier();
 
-    assert(tdev->session_handle != NULL);
-    LOGD("Ending session");
-    WintunEndSession(tdev->session_handle);
-    tdev->session_handle = NULL;
+    chanClose(tdev->writer_buffer_channel);
+    sbuf_t *buf;
+
+    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+    {
+        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+    }
+    tdev->writer_buffer_channel = NULL;
+
+  
 
     if (tdev->read_event_callback != NULL)
     {
@@ -436,11 +438,10 @@ bool tundeviceBringDown(tun_device_t *tdev)
     }
     threadJoin(tdev->write_thread);
 
-    sbuf_t *buf;
-    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
-    {
-        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-    }
+    assert(tdev->session_handle != NULL);
+    LOGD("Ending session");
+    WintunEndSession(tdev->session_handle);
+    tdev->session_handle = NULL;
 
     return true;
 }
@@ -530,6 +531,12 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     // minimum length of an IP header is 20 bytes
     assert(sbufGetBufLength(buf) > 20);
+    if (atomicLoadRelaxed(&(tdev->running)) == false)
+    {
+        LOGE("Write failed, device is not running");
+        return false;
+    
+    }
 
     bool closed = false;
     if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
@@ -554,9 +561,12 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
  */
 static void exitHandle(void *userdata, int signum)
 {
+    Sleep(2200);
+    LOGW("called close handle");
     (void) signum;
     tun_device_t *tdev = userdata;
     tundeviceDestroy(tdev);
+    Sleep(2200);
 }
 
 // Function to load a function pointer from a DLL
@@ -639,7 +649,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                            .reader_buffer_pool    = reader_bpool,
                            .writer_buffer_pool    = writer_bpool,
                            .adapter_handle        = NULL,
-                           .session_handle        = NULL};
+                           .session_handle        = NULL,
+                           .quit_event            = CreateEventW(NULL, TRUE, FALSE, NULL)};  
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
@@ -675,6 +686,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
  */
 void tundeviceDestroy(tun_device_t *tdev)
 {
+    
 
     if (tdev->up)
     {
@@ -690,10 +702,10 @@ void tundeviceDestroy(tun_device_t *tdev)
         WintunCloseAdapter(tdev->adapter_handle);
     }
 
+    CloseHandle(tdev->quit_event);
     memoryFree(tdev->name);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
     masterpoolDestroy(tdev->reader_message_pool);
-    chanClose(tdev->writer_buffer_channel);
     memoryFree(tdev);
 }

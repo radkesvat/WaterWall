@@ -8,14 +8,14 @@
 #include "wthread.h"
 
 #ifdef OS_WIN
-#include <ws2ipdef.h>
 #include <iphlpapi.h>
 #include <mstcpip.h>
 #include <winternl.h>
+#include <ws2ipdef.h>
+
 #endif
 
 #define TUN_LOG_EVERYTHING false
-
 
 struct tun_device_s;
 
@@ -32,8 +32,9 @@ typedef struct tun_device_s
 {
 #ifdef OS_WIN
     wchar_t                 *name;
-    void                    *adapter_handle;
-    void                    *session_handle;
+    HANDLE                   adapter_handle;
+    HANDLE                   session_handle;
+    HANDLE                   quit_event;
     MIB_UNICASTIPADDRESS_ROW address_row;
 #else
     char *name;
@@ -56,7 +57,7 @@ typedef struct tun_device_s
     struct wchan_s *writer_buffer_channel;
 
     atomic_bool running;
-    atomic_bool up;
+    bool        up;
 
 } tun_device_t;
 

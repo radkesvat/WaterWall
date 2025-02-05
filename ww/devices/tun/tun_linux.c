@@ -13,8 +13,6 @@
 #include <netinet/ip.h>
 #include <sys/ioctl.h>
 
-
-
 struct msg_event
 {
     tun_device_t *tdev;
@@ -204,7 +202,12 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
-
+    if (atomicLoadRelaxed(&(tdev->running)) == false)
+    {
+        LOGE("Write failed, device is not running");
+        return false;
+    }
+    
     bool closed = false;
     if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
     {
@@ -263,6 +266,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
     tdev->up = true;
     atomicStoreRelaxed(&(tdev->running), true);
 
+    tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
+
     char command[128];
     snprintf(command, sizeof(command), "ip link set dev %s up", tdev->name);
     if (execCmd(command).exit_code != 0)
@@ -292,6 +297,15 @@ bool tundeviceBringDown(tun_device_t *tdev)
     atomicStoreRelaxed(&(tdev->running), false);
     tdev->up = false;
 
+    chanClose(tdev->writer_buffer_channel);
+    sbuf_t *buf;
+
+    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+    {
+        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+    }
+    tdev->writer_buffer_channel = NULL;
+
     char command[128];
     snprintf(command, sizeof(command), "ip link set dev %s down", tdev->name);
     if (execCmd(command).exit_code != 0)
@@ -306,12 +320,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
         threadJoin(tdev->read_thread);
     }
     threadJoin(tdev->write_thread);
-
-    sbuf_t *buf;
-    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
-    {
-        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-    }
 
     return true;
 }
@@ -366,7 +374,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                            .handle                = fd,
                            .read_event_callback   = cb,
                            .userdata              = userdata,
-                           .writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
+                           .writer_buffer_channel = NULL,
                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
                            .reader_buffer_pool    = reader_bpool,
                            .writer_buffer_pool    = writer_bpool};
@@ -386,7 +394,6 @@ void tundeviceDestroy(tun_device_t *tdev)
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
     masterpoolDestroy(tdev->reader_message_pool);
-    chanClose(tdev->writer_buffer_channel);
     close(tdev->handle);
     memoryFree(tdev);
 }
