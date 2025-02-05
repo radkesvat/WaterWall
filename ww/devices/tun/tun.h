@@ -42,9 +42,9 @@ typedef struct tun_device_s {
 } tun_device_t;
 
 // Function prototypes
-tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, TunReadEventHandle cb);
-bool bringTunDeviceUP(tun_device_t *tdev);
-bool bringTunDeviceDown(tun_device_t *tdev);
-bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
-bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
-bool writeToTunDevce(tun_device_t *tdev, sbuf_t *buf);
+tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb);
+bool tundeviceBringUp(tun_device_t *tdev);
+bool tundeviceBringDown(tun_device_t *tdev);
+bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
+bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
+bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);

@@ -180,7 +180,7 @@ static WTHREAD_ROUTINE(routineWriteToTun) {
 }
 
 // Write to TUN device
-bool writeToTunDevce(tun_device_t *tdev, sbuf_t *buf) {
+bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf) {
     assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
 
     bool closed = false;
@@ -196,7 +196,7 @@ bool writeToTunDevce(tun_device_t *tdev, sbuf_t *buf) {
 }
 
 // Unassign IP address from TUN device
-bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet) {
+bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet) {
     char command[128];
 
     snprintf(command, sizeof(command), "ip addr del %s/%d  dev %s", ip_presentation, subnet, tdev->name);
@@ -209,7 +209,7 @@ bool unAssignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsi
 }
 
 // Assign IP address to TUN device
-bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet) {
+bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet) {
     char command[128];
 
     snprintf(command, sizeof(command), "ip addr add %s/%d dev %s", ip_presentation, subnet, tdev->name);
@@ -222,7 +222,7 @@ bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsign
 }
 
 // Bring TUN device up
-bool bringTunDeviceUP(tun_device_t *tdev) {
+bool tundeviceBringUp(tun_device_t *tdev) {
     assert(! tdev->up);
 
     tdev->up      = true;
@@ -244,7 +244,7 @@ bool bringTunDeviceUP(tun_device_t *tdev) {
 }
 
 // Bring TUN device down
-bool bringTunDeviceDown(tun_device_t *tdev) {
+bool tundeviceBringDown(tun_device_t *tdev) {
     assert(tdev->up);
 
     tdev->running = false;
@@ -274,7 +274,7 @@ bool bringTunDeviceDown(tun_device_t *tdev) {
 }
 
 // Create TUN device
-tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, TunReadEventHandle cb) {
+tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb) {
     (void) offload; // todo (send/receive offloading)
 
     struct ifreq ifr;

@@ -41,11 +41,13 @@ typedef struct ww_global_state_s
     struct logger_s         *network_logger;
     struct logger_s         *dns_logger;
     struct logger_s         *internal_logger;
+    void*                    wintun_dll_handle;
     uint32_t                 workers_count;
     uint32_t                 ram_profile;
     uint16_t                 buffer_allocation_padding;
     uint8_t                  initialized : 1;
     uint8_t                  internal_flag_buffers_calculated : 1;
+    uint8_t                  internal_flag_tundev_windows_initialized : 1;
 
 } ww_global_state_t;
 

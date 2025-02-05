@@ -72,10 +72,35 @@ set_target_properties(ww
 )
 
 # Platform-specific sources
-if(LINUX)
-    # target_sources(ww PRIVATE devices/tun/tun_linux.c)
+if(UNIX)
+    target_sources(ww PRIVATE devices/tun/tun_linux.c)
     # target_sources(ww PRIVATE devices/raw/raw_linux.c)
     # target_sources(ww PRIVATE devices/capture/capture_linux.c)
+else()
+
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    message(STATUS "Including WinTun Target architecture: amd64")
+    target_sources(ww PRIVATE devices/tun/wintun/amd64/wintun_bytes.c)
+
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "i386")
+    message(STATUS "Including WinTun Target architecture: x86")
+    target_sources(ww PRIVATE devices/tun/wintun/x86/wintun_bytes.c)
+
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM")
+    message(STATUS "Including WinTun Target architecture: arm")
+    target_sources(ww PRIVATE devices/tun/wintun/arm/wintun_bytes.c)
+
+elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    message(STATUS "Including WinTun Target architecture: arm64")
+    target_sources(ww PRIVATE devices/tun/wintun/arm64/wintun_bytes.c)
+
+else()
+    message(FATAL_ERROR  "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
+    # target_sources(ww PRIVATE devices/tun/tun_windows.c)
+    # target_sources(ww PRIVATE devices/raw/raw_windows.c)
+    # target_sources(ww PRIVATE devices/capture/capture_windows.c)
 endif()
 
 if(WIN32)

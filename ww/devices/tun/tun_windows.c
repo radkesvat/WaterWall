@@ -1,14 +1,14 @@
-#include "wintun.h"
-#include "wplatform.h"
+#include "global_state.h"
+#include "wlibc.h"
 #include <ip2string.h>
-#include <iphlpapi.h>
-#include <mstcpip.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <winsock2.h>
-#include <winternl.h>
-#include <ws2ipdef.h>
+#include <tchar.h>
+
+#include "loggers/internal_logger.h"
+
+#include "wintun/wintun.h"
+
+extern unsigned char wintun_dll;
+extern unsigned int  wintun_dll_len;
 
 static WINTUN_CREATE_ADAPTER_FUNC             *WintunCreateAdapter;
 static WINTUN_CLOSE_ADAPTER_FUNC              *WintunCloseAdapter;
@@ -25,118 +25,97 @@ static WINTUN_RELEASE_RECEIVE_PACKET_FUNC     *WintunReleaseReceivePacket;
 static WINTUN_ALLOCATE_SEND_PACKET_FUNC       *WintunAllocateSendPacket;
 static WINTUN_SEND_PACKET_FUNC                *WintunSendPacket;
 
-static HMODULE InitializeWintun(void)
+// Function to write the embedded DLL to a temporary file
+TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
 {
-    HMODULE Wintun =
-        LoadLibraryExW(L"wintun.dll", NULL, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (! Wintun)
-        return NULL;
-#define X(Name) ((*(FARPROC *) &Name = GetProcAddress(Wintun, #Name)) == NULL)
-    if (X(WintunCreateAdapter) || X(WintunCloseAdapter) || X(WintunOpenAdapter) || X(WintunGetAdapterLUID) ||
-        X(WintunGetRunningDriverVersion) || X(WintunDeleteDriver) || X(WintunSetLogger) || X(WintunStartSession) ||
-        X(WintunEndSession) || X(WintunGetReadWaitEvent) || X(WintunReceivePacket) || X(WintunReleaseReceivePacket) ||
-        X(WintunAllocateSendPacket) || X(WintunSendPacket))
-#undef X
+    TCHAR tempPath[MAX_PATH];
+    TCHAR tempFileName[MAX_PATH];
+
+    // Get the system's temporary directory
+    if (GetTempPath(MAX_PATH, tempPath) == 0)
     {
-        DWORD LastError = GetLastError();
-        FreeLibrary(Wintun);
-        SetLastError(LastError);
+        LOGE("Failed to get temporary path.");
         return NULL;
     }
-    return Wintun;
-}
 
-static void CALLBACK ConsoleLogger(_In_ WINTUN_LOGGER_LEVEL Level, _In_ DWORD64 Timestamp, _In_z_ const WCHAR *LogLine)
-{
-    SYSTEMTIME SystemTime;
-    FileTimeToSystemTime((FILETIME *) &Timestamp, &SystemTime);
-    WCHAR LevelMarker;
-    switch (Level)
+    // Generate a unique temporary file name
+    if (GetTempFileName(tempPath, _T("dll"), 0, tempFileName) == 0)
     {
-    case WINTUN_LOG_INFO:
-        LevelMarker = L'+';
-        break;
-    case WINTUN_LOG_WARN:
-        LevelMarker = L'-';
-        break;
-    case WINTUN_LOG_ERR:
-        LevelMarker = L'!';
-        break;
-    default:
-        return;
+        LOGE("Failed to create temporary file name.");
+        return NULL;
     }
-    fwprintf(stderr, L"%04u-%02u-%02u %02u:%02u:%02u.%04u [%c] %s\n", SystemTime.wYear, SystemTime.wMonth,
-             SystemTime.wDay, SystemTime.wHour, SystemTime.wMinute, SystemTime.wSecond, SystemTime.wMilliseconds,
-             LevelMarker, LogLine);
-}
 
-static DWORD64 Now(VOID)
-{
-    LARGE_INTEGER Timestamp;
-    NtQuerySystemTime(&Timestamp);
-    return Timestamp.QuadPart;
-}
-
-static DWORD LogError(_In_z_ const WCHAR *Prefix, _In_ DWORD Error)
-{
-    WCHAR *SystemMessage = NULL, *FormattedMessage = NULL;
-    FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_MAX_WIDTH_MASK, NULL,
-                   HRESULT_FROM_SETUPAPI(Error), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (void *) &SystemMessage, 0,
-                   NULL);
-    FormatMessageW(FORMAT_MESSAGE_FROM_STRING | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_ARGUMENT_ARRAY |
-                       FORMAT_MESSAGE_MAX_WIDTH_MASK,
-                   SystemMessage ? L"%1: %3(Code 0x%2!08X!)" : L"%1: Code 0x%2!08X!", 0, 0, (void *) &FormattedMessage,
-                   0, (va_list *) (DWORD_PTR[]) {(DWORD_PTR) Prefix, (DWORD_PTR) Error, (DWORD_PTR) SystemMessage});
-    if (FormattedMessage)
-        ConsoleLogger(WINTUN_LOG_ERR, Now(), FormattedMessage);
-    LocalFree(FormattedMessage);
-    LocalFree(SystemMessage);
-    return Error;
-}
-
-static DWORD LogLastError(_In_z_ const WCHAR *Prefix)
-{
-    DWORD LastError = GetLastError();
-    LogError(Prefix, LastError);
-    SetLastError(LastError);
-    return LastError;
-}
-
-static void Log(_In_ WINTUN_LOGGER_LEVEL Level, _In_z_ const WCHAR *Format, ...)
-{
-    WCHAR   LogLine[0x200];
-    va_list args;
-    va_start(args, Format);
-    _vsnwprintf_s(LogLine, _countof(LogLine), _TRUNCATE, Format, args);
-    va_end(args);
-    ConsoleLogger(Level, Now(), LogLine);
-}
-
-static HANDLE        QuitEvent;
-static volatile BOOL HaveQuit;
-
-static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
-{
-    switch (CtrlType)
+    // Open the temporary file for writing
+    HANDLE hFile = CreateFile(tempFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE)
     {
-    case CTRL_C_EVENT:
-    case CTRL_BREAK_EVENT:
-    case CTRL_CLOSE_EVENT:
-    case CTRL_LOGOFF_EVENT:
-    case CTRL_SHUTDOWN_EVENT:
-        Log(WINTUN_LOG_INFO, L"Cleaning up and shutting down...");
-        HaveQuit = TRUE;
-        SetEvent(QuitEvent);
-        return TRUE;
+        LOGE("Failed to create temporary file.");
+        return NULL;
     }
-    return FALSE;
+
+    // Write the DLL bytes to the file
+    DWORD bytesWritten;
+    if (! WriteFile(hFile, dllBytes, (DWORD) dllSize, &bytesWritten, NULL))
+    {
+        LOGE("Failed to write to temporary file.");
+        CloseHandle(hFile);
+        DeleteFile(tempFileName);
+        return NULL;
+    }
+
+    // Close the file handle
+    CloseHandle(hFile);
+
+    // Return the path to the temporary file
+    return _tcsdup(tempFileName);
+}
+
+static void tunWindowsStartup(void)
+{
+    // Write the embedded DLL to a temporary file
+    TCHAR *tempDllPath = WriteDllToTempFile(wintun_dll, wintun_dll_len);
+    if (! tempDllPath)
+    {
+        LOGE("Failed to write DLL to temporary file.");
+        return 1;
+    }
+
+    // Load the DLL using LoadLibraryExW
+    HMODULE hModule = LoadLibraryExW(tempDllPath, NULL, 0);
+
+    if (! hModule)
+    {
+        LOGE("Failed to load DLL: %lu", GetLastError());
+        DeleteFile(tempDllPath);
+        free(tempDllPath);
+        return 1;
+    }
+
+    LOGI("DLL loaded successfully.");
+
+    // Optionally, call functions from the DLL
+    FARPROC func = GetProcAddress(hModule, "SomeFunction");
+    if (func)
+    {
+        LOGI("Function 'SomeFunction' found.");
+        // Call the function here
+    }
+    else
+    {
+        LOGW("Failed to find function: %lu", GetLastError());
+    }
+
+    // Clean up
+    FreeLibrary(hModule);
+    DeleteFile(tempDllPath);
+    free(tempDllPath);
 }
 
 static void PrintPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
 {
     if (PacketSize < 20)
     {
-        Log(WINTUN_LOG_INFO, L"Received packet without room for an IP header");
+        LOGI("Received packet without room for an IP header");
         return;
     }
     BYTE  IpVersion = Packet[0] >> 4, Proto;
@@ -150,7 +129,7 @@ static void PrintPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
     }
     else if (IpVersion == 6 && PacketSize < 40)
     {
-        Log(WINTUN_LOG_INFO, L"Received packet without room for an IP header");
+        LOGI("Received packet without room for an IP header");
         return;
     }
     else if (IpVersion == 6)
@@ -162,13 +141,13 @@ static void PrintPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
     }
     else
     {
-        Log(WINTUN_LOG_INFO, L"Received packet that was not IP");
+        LOGI("Received packet that was not IP");
         return;
     }
     if (Proto == 1 && PacketSize >= 8 && Packet[0] == 0)
-        Log(WINTUN_LOG_INFO, L"Received IPv%d ICMP echo reply from %s to %s", IpVersion, Src, Dst);
+        LOGI("Received IPv%d ICMP echo reply from %s to %s", IpVersion, Src, Dst);
     else
-        Log(WINTUN_LOG_INFO, L"Received IPv%d proto 0x%x packet from %s to %s", IpVersion, Proto, Src, Dst);
+        LOGI("Received IPv%d proto 0x%x packet from %s to %s", IpVersion, Proto, Src, Dst);
 }
 
 static USHORT IPChecksum(_In_reads_bytes_(Len) BYTE *Buffer, _In_ DWORD Len)
@@ -183,19 +162,79 @@ static USHORT IPChecksum(_In_reads_bytes_(Len) BYTE *Buffer, _In_ DWORD Len)
     return (USHORT) (~Sum);
 }
 
-static void MakeICMP(_Out_writes_bytes_all_(28) BYTE Packet[28])
-{
-    memorySet(Packet, 0, 28);
-    Packet[0]               = 0x45;
-    *(USHORT *) &Packet[2]  = htons(28);
-    Packet[8]               = 255;
-    Packet[9]               = 1;
-    *(ULONG *) &Packet[12]  = htonl((10 << 24) | (6 << 16) | (7 << 8) | (8 << 0)); /* 10.6.7.8 */
-    *(ULONG *) &Packet[16]  = htonl((10 << 24) | (6 << 16) | (7 << 8) | (7 << 0)); /* 10.6.7.7 */
-    *(USHORT *) &Packet[10] = IPChecksum(Packet, 20);
-    Packet[20]              = 8;
-    *(USHORT *) &Packet[22] = IPChecksum(&Packet[20], 8);
-    Log(WINTUN_LOG_INFO, L"Sending IPv4 ICMP echo request to 10.6.7.8 from 10.6.7.7");
+
+
+// Handle local thread event
+static void localThreadEventReceived(wevent_t *ev) {
+    struct msg_event *msg = weventGetUserdata(ev);
+    wid_t             tid = (wid_t) (wloopTID(weventGetLoop(ev)));
+
+    msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, tid);
+    masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
+}
+
+// Distribute packet payload to the target thread
+static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t *buf) {
+    struct msg_event *msg;
+    masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
+
+    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+
+    wevent_t ev;
+    memorySet(&ev, 0, sizeof(ev));
+    ev.loop = getWorkerLoop(target_tid);
+    ev.cb   = localThreadEventReceived;
+    weventSetUserData(&ev, msg);
+    wloopPostEvent(getWorkerLoop(target_tid), &ev);
+}
+
+// Routine to read from TUN device
+static WTHREAD_ROUTINE(routineReadFromTun) {
+    tun_device_t *tdev           = userdata;
+    wid_t         distribute_tid = 0;
+    sbuf_t       *buf;
+    ssize_t       nread;
+
+    WINTUN_SESSION_HANDLE Session       = (WINTUN_SESSION_HANDLE) SessionPtr;
+    HANDLE                WaitHandles[] = {WintunGetReadWaitEvent(Session), QuitEvent};
+
+
+    while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed)) {
+        buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
+        assert(sbufGetRightCapacity(buf) >= kReadPacketSize);
+
+        nread = read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
+
+        if (nread == 0) {
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            LOGW("TunDevice: Exit read routine due to End Of File");
+            return 0;
+        }
+
+        if (nread < 0) {
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            LOGE("TunDevice: reading a packet from TUN device failed, code: %d", (int) nread);
+            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                continue;
+            }
+            LOGE("TunDevice: Exit read routine due to critical error");
+            return 0;
+        }
+
+        sbufSetLength(buf, nread);
+
+        if (TUN_LOG_EVERYTHING) {
+            LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
+        }
+
+        distributePacketPayload(tdev, distribute_tid++, buf);
+
+        if (distribute_tid >= getWorkersCount()) {
+            distribute_tid = 0;
+        }
+    }
+
+    return 0;
 }
 
 static DWORD WINAPI ReceivePackets(_Inout_ DWORD_PTR SessionPtr)
@@ -222,7 +261,7 @@ static DWORD WINAPI ReceivePackets(_Inout_ DWORD_PTR SessionPtr)
                     continue;
                 return ERROR_SUCCESS;
             default:
-                LogError(L"Packet read failed", LastError);
+                LOGE("Packet read failed: %lu", LastError);
                 return LastError;
             }
         }
@@ -254,91 +293,88 @@ static DWORD WINAPI SendPackets(_Inout_ DWORD_PTR SessionPtr)
     return ERROR_SUCCESS;
 }
 
-int __cdecl main(void)
-{
-    HMODULE Wintun = InitializeWintun();
-    if (! Wintun)
-        return LogError(L"Failed to initialize Wintun", GetLastError());
-    WintunSetLogger(ConsoleLogger);
-    Log(WINTUN_LOG_INFO, L"Wintun library loaded");
 
-    DWORD LastError;
-    HaveQuit  = FALSE;
-    QuitEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
-    if (! QuitEvent)
-    {
-        LastError = LogError(L"Failed to create event", GetLastError());
-        goto cleanupWintun;
-    }
-    if (! SetConsoleCtrlHandler(CtrlHandler, TRUE))
-    {
-        LastError = LogError(L"Failed to set console handler", GetLastError());
-        goto cleanupQuit;
-    }
 
-    GUID                  ExampleGuid = {0xdeadbabe, 0xcafe, 0xbeef, {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}};
-    WINTUN_ADAPTER_HANDLE Adapter     = WintunCreateAdapter(L"Demo", L"Example", &ExampleGuid);
-    if (! Adapter)
-    {
-        LastError = GetLastError();
-        LogError(L"Failed to create adapter", LastError);
-        goto cleanupQuit;
-    }
 
-    DWORD Version = WintunGetRunningDriverVersion();
-    Log(WINTUN_LOG_INFO, L"Wintun v%u.%u loaded", (Version >> 16) & 0xff, (Version >> 0) & 0xff);
+// Routine to write to TUN device
+static WTHREAD_ROUTINE(routineWriteToTun) {
+    tun_device_t *tdev = userdata;
+    sbuf_t       *buf;
+    ssize_t       nwrite;
 
-    MIB_UNICASTIPADDRESS_ROW AddressRow;
-    InitializeUnicastIpAddressEntry(&AddressRow);
-    WintunGetAdapterLUID(Adapter, &AddressRow.InterfaceLuid);
-    AddressRow.Address.Ipv4.sin_family           = AF_INET;
-    AddressRow.Address.Ipv4.sin_addr.S_un.S_addr = htonl((10 << 24) | (6 << 16) | (7 << 8) | (7 << 0)); /* 10.6.7.7 */
-    AddressRow.OnLinkPrefixLength                = 24; /* This is a /24 network */
-    AddressRow.DadState                          = IpDadStatePreferred;
-    LastError                                    = CreateUnicastIpAddressEntry(&AddressRow);
-    if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
-    {
-        LogError(L"Failed to set IP address", LastError);
-        goto cleanupAdapter;
-    }
+    while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed)) {
+        if (! chanRecv(tdev->writer_buffer_channel, (void*) &buf)) {
+            LOGD("TunDevice: routine write will exit due to channel closed");
+            return 0;
+        }
 
-    WINTUN_SESSION_HANDLE Session = WintunStartSession(Adapter, 0x400000);
-    if (! Session)
-    {
-        LastError = LogLastError(L"Failed to create adapter");
-        goto cleanupAdapter;
-    }
+        assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
 
-    Log(WINTUN_LOG_INFO, L"Launching threads and mangling packets...");
+        nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetBufLength(buf));
+        bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
 
-    HANDLE Workers[] = {CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE) ReceivePackets, (LPVOID) Session, 0, NULL),
-                        CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE) SendPackets, (LPVOID) Session, 0, NULL)};
-    if (! Workers[0] || ! Workers[1])
-    {
-        LastError = LogError(L"Failed to create threads", GetLastError());
-        goto cleanupWorkers;
-    }
-    WaitForMultipleObjectsEx(_countof(Workers), Workers, TRUE, INFINITE, TRUE);
-    LastError = ERROR_SUCCESS;
+        if (nwrite == 0) {
+            LOGW("TunDevice: Exit write routine due to End Of File");
+            return 0;
+        }
 
-cleanupWorkers:
-    HaveQuit = TRUE;
-    SetEvent(QuitEvent);
-    for (size_t i = 0; i < _countof(Workers); ++i)
-    {
-        if (Workers[i])
-        {
-            WaitForSingleObject(Workers[i], INFINITE);
-            CloseHandle(Workers[i]);
+        if (nwrite < 0) {
+            LOGW("TunDevice: writing a packet to TUN device failed, code: %d", (int) nwrite);
+            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                continue;
+            }
+            LOGE("TunDevice: Exit write routine due to critical error");
+            return 0;
         }
     }
-    WintunEndSession(Session);
-cleanupAdapter:
-    WintunCloseAdapter(Adapter);
-cleanupQuit:
-    SetConsoleCtrlHandler(CtrlHandler, FALSE);
-    CloseHandle(QuitEvent);
-cleanupWintun:
-    FreeLibrary(Wintun);
-    return LastError;
+    return 0;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Function prototypes
+tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb)
+{
+    if (! GSTATE.internal_flag_tundev_windows_initialized)
+    {
+        tunWindowsStartup();
+        GSTATE.internal_flag_tundev_windows_initialized = true;
+    }
+
+    if (GSTATE.wintun_dll_handle == NULL)
+    {
+        LOGE("TunDevice: Wintun DLL not loaded");
+        return NULL;
+    }
+
+#define X(Name) ((*(FARPROC *) &Name = GetProcAddress(Wintun, #Name)) == NULL)
+    if (X(WintunCreateAdapter) || X(WintunCloseAdapter) || X(WintunOpenAdapter) || X(WintunGetAdapterLUID) ||
+        X(WintunGetRunningDriverVersion) || X(WintunDeleteDriver) || X(WintunSetLogger) || X(WintunStartSession) ||
+        X(WintunEndSession) || X(WintunGetReadWaitEvent) || X(WintunReceivePacket) || X(WintunReleaseReceivePacket) ||
+        X(WintunAllocateSendPacket) || X(WintunSendPacket))
+#undef X
+    {
+        DWORD LastError = GetLastError();
+        FreeLibrary(Wintun);
+        SetLastError(LastError);
+        LOGE("TunDevice: Could not setup Wintun functions, Code: %lu", LastError);
+
+        return NULL;
+    }
+}
+
+bool tundeviceBringUp(tun_device_t *tdev);
+bool tundeviceBringDown(tun_device_t *tdev);
+bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
+bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
+bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
