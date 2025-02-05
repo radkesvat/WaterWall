@@ -29,9 +29,9 @@ void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
 /* STC lib will use our custom allocators*/
-#define c_malloc(sz) memoryAllocate(sz)
-#define c_calloc(n, sz) memoryAllocateZero(n * sz)
-#define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, sz)
+#define c_malloc(sz) memoryAllocate((size_t)(sz))
+#define c_calloc(n, sz) memoryAllocateZero((size_t)((n)* (sz)))
+#define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t)(sz))
 #define c_free(ptr, sz) memoryFree(ptr)
 
 #ifdef DEBUG
