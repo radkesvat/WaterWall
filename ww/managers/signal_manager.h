@@ -3,7 +3,7 @@
 #include "wlibc.h"
 #include "worker.h"
 
-typedef void (*SignalHandler)(void*userdata,int signum);
+typedef void (*SignalHandler)(void *userdata, int signum);
 
 typedef struct
 {
@@ -13,30 +13,32 @@ typedef struct
 
 enum
 {
-    kMaxSigHandles = 16
+    kMaxSigHandles = 48
 };
 
 typedef struct signal_manager_s
 {
     signal_handler_t handlers[kMaxSigHandles];
     unsigned int     handlers_len;
-    bool             started;
-    bool             raise_defaults;
-    bool             handle_sigint;
-    bool             handle_sigquit;
-    bool             handle_sighup;
-    bool             handle_sigill;
-    bool             handle_sigfpe;
-    bool             handle_sigabrt;
-    bool             handle_sigsegv;
-    bool             handle_sigterm;
-    bool             handle_sigpipe;
-    bool             handle_sigalrm;
+    uint32_t         started : 1;
+    uint32_t         handlers_ran : 1;
+    uint32_t         raise_defaults : 1;
+    uint32_t         handle_sigint : 1;
+    uint32_t         handle_sigquit : 1;
+    uint32_t         handle_sighup : 1;
+    uint32_t         handle_sigill : 1;
+    uint32_t         handle_sigfpe : 1;
+    uint32_t         handle_sigabrt : 1;
+    uint32_t         handle_sigsegv : 1;
+    uint32_t         handle_sigterm : 1;
+    uint32_t         handle_sigpipe : 1;
+    uint32_t         handle_sigalrm : 1;
 
 } signal_manager_t;
 
 signal_manager_t *createSignalManager(void);
 signal_manager_t *getSignalManager(void);
 void              registerAtExitCallBack(SignalHandler handle, void *userdata);
+void              removeAtExitCallBack(SignalHandler handle, void *userdata);
 void              setSignalManager(signal_manager_t *sm);
 void              startSignalManager(void);

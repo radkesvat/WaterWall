@@ -72,7 +72,7 @@ set_target_properties(ww
 )
 
 # Platform-specific sources
-if(UNIX)
+if(UNIX AND NOT APPLE)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
     # target_sources(ww PRIVATE devices/raw/raw_linux.c)
     # target_sources(ww PRIVATE devices/capture/capture_linux.c)
@@ -98,7 +98,7 @@ else()
     message(FATAL_ERROR  "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-    # target_sources(ww PRIVATE devices/tun/tun_windows.c)
+    target_sources(ww PRIVATE devices/tun/tun_windows.c)
     # target_sources(ww PRIVATE devices/raw/raw_windows.c)
     # target_sources(ww PRIVATE devices/capture/capture_windows.c)
 endif()
@@ -370,6 +370,7 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wuninitialized
         -Wwrite-strings
         -Wno-unused-function
+        -Wno-unknown-pragmas
     )
 
 endif()

@@ -38,6 +38,8 @@ typedef struct buffer_pool_s buffer_pool_t;
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, uint32_t bufcount,
                                 uint32_t large_buffer_size, uint32_t small_buffer_size);
 
+void bufferpoolDestroy(buffer_pool_t *pool);
+
 /**
  * Retrieves a large buffer from the buffer pool.
  * @param pool The buffer pool.

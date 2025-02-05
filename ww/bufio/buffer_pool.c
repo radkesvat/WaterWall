@@ -376,3 +376,9 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
     // firstCharge(ptr_pool);
     return ptr_pool;
 }
+
+void bufferpoolDestroy(buffer_pool_t *pool){
+    memoryFree(pool->large_buffers);
+    memoryFree(pool->small_buffers);
+    memoryFree(pool);
+}

@@ -48,7 +48,7 @@
 
 
     #ifndef htonll
-    __inline unsigned __int64 htonll ( unsigned __int64 Value )
+    static __inline unsigned __int64 htonll ( unsigned __int64 Value )
     {
         const unsigned __int64 Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         return Retval;
@@ -56,7 +56,7 @@
     #endif /* htonll */
 
     #ifndef ntohll
-    __inline unsigned __int64 ntohll ( unsigned __int64 Value )
+    static __inline unsigned __int64 ntohll ( unsigned __int64 Value )
     {
         const unsigned __int64 Retval = _WS2_32_WINSOCK_SWAP_LONGLONG (Value);
         return Retval;
