@@ -19,10 +19,8 @@ struct tun_device_s;
 
 typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t tid);
 
-typedef struct tun_device_s
-{
+typedef struct tun_device_s {
     char *name;
-    // wio_t       *io; not using fd multiplexer
     tun_handle_t handle;
     void        *userdata;
     wthread_t    read_thread;
@@ -43,8 +41,8 @@ typedef struct tun_device_s
 
 } tun_device_t;
 
+// Function prototypes
 tun_device_t *createTunDevice(const char *name, bool offload, void *userdata, TunReadEventHandle cb);
-
 bool bringTunDeviceUP(tun_device_t *tdev);
 bool bringTunDeviceDown(tun_device_t *tdev);
 bool assignIpToTunDevice(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
