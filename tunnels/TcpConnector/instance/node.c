@@ -23,7 +23,7 @@ node_t nodeTcpConnectorGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagChainHead,
              .required_padding_left = 0,
-             .layer_group           = kNodeLayerAnything,
+             .layer_group           = kNodeLayer4,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,
              .can_have_next         = true,
