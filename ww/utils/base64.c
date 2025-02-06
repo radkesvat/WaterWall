@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include "base64.h"
 
 /* BASE 64 encode table */

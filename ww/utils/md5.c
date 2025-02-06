@@ -1,5 +1,3 @@
-#include <string.h>
-
 #include "md5.h"
 
 #define F(x,y,z) ((x & y) | (~x & z))
