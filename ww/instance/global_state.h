@@ -25,29 +25,31 @@ typedef struct
 
 typedef struct ww_global_state_s
 {
-    wloop_t                **shortcut_loops;
-    buffer_pool_t          **shortcut_buffer_pools;
-    generic_pool_t         **shortcut_context_pools;
-    generic_pool_t         **shortcut_pipetunnel_msg_pools;
-    master_pool_t           *masterpool_buffer_pools_large;
-    master_pool_t           *masterpool_buffer_pools_small;
-    master_pool_t           *masterpool_context_pools;
-    master_pool_t           *masterpool_pipetunnel_msg_pools;
-    worker_t                *workers;
-    struct signal_manager_s *signal_manager;
-    struct socket_manager_s *socekt_manager;
-    struct node_manager_s   *node_manager;
-    struct logger_s         *core_logger;
-    struct logger_s         *network_logger;
-    struct logger_s         *dns_logger;
-    struct logger_s         *internal_logger;
-    void                    *wintun_dll_handle;
-    uint32_t                 workers_count;
-    uint32_t                 ram_profile;
-    uint16_t                 buffer_allocation_padding;
-    uint8_t                  initialized : 1;
-    uint8_t                  internal_flag_buffers_calculated : 1;
-    uint8_t                  internal_flag_tundev_windows_initialized : 1;
+    wloop_t                  **shortcut_loops;
+    buffer_pool_t            **shortcut_buffer_pools;
+    generic_pool_t           **shortcut_context_pools;
+    generic_pool_t           **shortcut_pipetunnel_msg_pools;
+    master_pool_t             *masterpool_buffer_pools_large;
+    master_pool_t             *masterpool_buffer_pools_small;
+    master_pool_t             *masterpool_context_pools;
+    master_pool_t             *masterpool_pipetunnel_msg_pools;
+    worker_t                  *workers;
+    struct signal_manager_s   *signal_manager;
+    struct socket_manager_s   *socekt_manager;
+    struct node_manager_s     *node_manager;
+    struct logger_s           *core_logger;
+    struct logger_s           *network_logger;
+    struct logger_s           *dns_logger;
+    struct logger_s           *internal_logger;
+    struct dedicated_memory_s *openssl_dedicated_memory;
+    void                      *wintun_dll_handle;
+    uint32_t                   workers_count;
+    uint32_t                   ram_profile;
+    uint16_t                   buffer_allocation_padding;
+    uint8_t                    flag_initialized : 1;
+    uint8_t                    flag_buffers_calculated : 1;
+    uint8_t                    flag_tundev_windows_initialized : 1;
+    uint8_t                    flag_openssl_initialized : 1;
 
 } ww_global_state_t;
 

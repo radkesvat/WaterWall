@@ -32,8 +32,8 @@ int main(void)
         .workers_count        = getCoreSettings()->workers_count,
         .ram_profile          = getCoreSettings()->ram_profile,
         .internal_logger_data    = (logger_construction_data_t){.log_file_path = getCoreSettings()->internal_log_file_fullpath,
-                                                             .log_level     = getCoreSettings()->internal_log_level,
-                                                             .log_console   = getCoreSettings()->internal_log_console},
+                                                                .log_level     = getCoreSettings()->internal_log_level,
+                                                                .log_console   = getCoreSettings()->internal_log_console},
 
         .core_logger_data = (logger_construction_data_t){.log_file_path = getCoreSettings()->core_log_file_fullpath,
                                                              .log_level     = getCoreSettings()->core_log_level,

@@ -57,6 +57,7 @@ add_library(ww STATIC
     managers/data/iprange_mokhaberat.c
     managers/data/iprange_rightel.c
     managers/data/iprange_iran.c
+    ssl/openssl_instance.c
     loggers/core_logger.c
     loggers/network_logger.c
     loggers/dns_logger.c
@@ -177,6 +178,22 @@ if(cjson_ADDED)
     target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
+
+set(OPENSSL_CONFIGURE_VERBOSE ON)
+
+# add openssl (default version is latest 3.3.0 +)
+CPMAddPackage(
+    NAME openssl-cmake
+    URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
+    OPTIONS
+    "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+    "BUILD_SHARED_LIBS OFF"
+)
+
+set(LIBS ${LIBS} OpenSSL::SSL)
+set(LIBS ${LIBS} OpenSSL::Crypto)
+set(LIBS ${LIBS} OpenSSL::applink)
+
 
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)
 
@@ -311,13 +328,8 @@ target_link_libraries(ww PUBLIC ${LIBS})
 # Link options for Release build
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_link_options(ww PUBLIC -s)
-    if(WIN32)
-        if(NOT MSVC)
-            target_compile_options(ww PUBLIC -static-libgcc -static)
-        endif()
-    endif()
-
 endif()
+
 # Link options for Debug build
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)

@@ -7,6 +7,7 @@
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
+#include "ssl/openssl_instance.h"
 
 ww_global_state_t global_ww_state = {0};
 
@@ -17,7 +18,7 @@ ww_global_state_t *globalStateGet(void)
 
 void globalStateSet(struct ww_global_state_s *state)
 {
-    assert(! GSTATE.initialized && state->initialized);
+    assert(! GSTATE.flag_initialized && state->flag_initialized);
     GSTATE = *state;
 
     setCoreLogger(GSTATE.core_logger);
@@ -35,12 +36,12 @@ void globalstateUpdaeAllocationPadding(uint16_t padding)
     {
         bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
     }
-    GSTATE.internal_flag_buffers_calculated = true;
+    GSTATE.flag_buffers_calculated = true;
 }
 
 static void initializeShortCuts(void)
 {
-    assert(GSTATE.initialized);
+    assert(GSTATE.flag_initialized);
 
     static const int kShourtcutsCount = 5;
 
@@ -65,7 +66,7 @@ static void initializeShortCuts(void)
 
 static void initializeMasterPools(void)
 {
-    assert(GSTATE.initialized);
+    assert(GSTATE.flag_initialized);
 
     GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
     GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
@@ -75,7 +76,7 @@ static void initializeMasterPools(void)
 
 void createGlobalState(const ww_construction_data_t init_data)
 {
-    GSTATE.initialized = true;
+    GSTATE.flag_initialized = true;
 
     // [Section] loggers
     {
@@ -132,6 +133,10 @@ void createGlobalState(const ww_construction_data_t init_data)
     GSTATE.socekt_manager = socketmanagerCreate();
     GSTATE.node_manager   = nodemanagerCreate();
 
+    // SSL
+    {
+        opensslGlobalInit();
+    }
     // Spawn all workers except main worker which is current thread
     {
         for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
@@ -143,7 +148,7 @@ void createGlobalState(const ww_construction_data_t init_data)
 
 void runMainThread(void)
 {
-    assert(GSTATE.initialized);
+    assert(GSTATE.flag_initialized);
 
     WORKERS[0].thread = (wthread_t) NULL;
     workerRun(getWorker(0));

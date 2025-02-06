@@ -25,6 +25,14 @@ enum socket_address_protocol
     kSapUdp = IPPROTO_UDP,
 };
 
+typedef struct ip_address_s {
+    union {
+        uint16_t addr;               /* IPv4 address */
+        uint16_t addr_ipv6[4];       /* IPv6 address (128 bits) */
+    } u_addr;
+    uint16_t type;                    /* Type of the address: IPv4 or IPv6 */
+} ip_address_t;
+
 typedef struct address_context_s
 {
     sockaddr_u                   address;

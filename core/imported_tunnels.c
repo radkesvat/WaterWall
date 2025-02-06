@@ -3,21 +3,8 @@
 #include "wwapi.h"
 
 #define USING(x) nodelibraryRegister(node##x##Get());
-/*
-#define USING(x)                                                                                                       \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        hash_t h = calcHashBytes(#x, strlen(#x));                                                                      \
-        nodelibraryRegister((node_lib_t){                                                                              \
-            .type.hash_name    = h,                                                                                    \
-            .createHandle      = new##x,                                                                               \
-            .destroyHandle     = destroy##x,                                                                           \
-            .apiHandle         = api##x,                                                                               \
-            .getMetadataHandle = getMetadata##x,                                                                       \
-        });                                                                                                            \
-        LOGD("Imported static tunnel lib%-20s  hash:%lx", #x, h);                                                      \
-    } while (0);
-*/
+
+
 #ifdef INCLUDE_TEMPLATE
 #include "tunnels/template/include/interface.h"
 #endif
@@ -32,6 +19,11 @@
 
 #ifdef INCLUDE_CAPTUREDEVICE
 #include "tunnels/adapters/device/capture/caputre_device.h"
+#endif
+
+
+#ifdef INCLUDE_WIREGUARD_DEVICE
+#include "tunnels/WireGuardDevice/include/interface.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_RECEIVER
@@ -207,6 +199,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_CAPTUREDEVICE
     USING(CaptureDevice);
+#endif
+
+#ifdef INCLUDE_WIREGUARD_DEVICE
+    USING(WireGuardDevice);
 #endif
 
 #ifdef INCLUDE_LAYER3_RECEIVER

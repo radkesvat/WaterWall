@@ -63,6 +63,7 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 option(INCLUDE_TEMPLATE "link Template staticly to the core"  TRUE)
 
 
+option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
@@ -111,7 +112,18 @@ option(INCLUDE_BGP4_CLIENT "link Bgp4Client staticly to the core"  FALSE)
 option(INCLUDE_MUX_SERVER "link MuxServer staticly to the core"  FALSE)
 option(INCLUDE_MUX_CLIENT "link MuxClient staticly to the core"  FALSE)
 
-set(OPENSSL_CONFIGURE_VERBOSE ON)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+# Platform-specific flags
+if(MINGW OR MSYS)
+    # On Windows (MinGW), statically link libgcc, libstdc++, and libwinpthread
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+elseif(UNIX AND NOT APPLE)
+    # On Linux, statically link libstdc++ and libgcc
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
+endif()
+
 
 # add executable
 add_executable(Waterwall
@@ -122,7 +134,6 @@ add_executable(Waterwall
                   # core/tests/bench_memcpy.c
 )
 
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 
 # download CPM.cmake
@@ -150,7 +161,7 @@ target_link_libraries(Waterwall ww)
 
 
 
-#tun device
+#template
 if (INCLUDE_TEMPLATE)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_TEMPLATE=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/template)
@@ -182,6 +193,15 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/capture)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/capture)
 target_link_libraries(Waterwall CaptureDevice)
 endif()
+
+#layer3 receiver
+if (INCLUDE_WIREGUARD_DEVICE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_WIREGUARD_DEVICE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/WireGuardDevice)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/WireGuardDevice)
+target_link_libraries(Waterwall WireGuardDevice)
+endif()
+
 
 #layer3 receiver
 if (INCLUDE_LAYER3_RECEIVER)
