@@ -4,7 +4,7 @@
 
 tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(wireguarddevice_tstate_t), sizeof(wireguarddevice_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(wgd_tstate_t), sizeof(wgd_lstate_t));
 
     t->fnInitU    = &wireguarddeviceTunnelUpStreamInit;
     t->fnEstU     = &wireguarddeviceTunnelUpStreamEst;

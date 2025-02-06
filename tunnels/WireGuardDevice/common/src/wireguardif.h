@@ -44,16 +44,16 @@
 #define WIREGUARDIF_DEFAULT_PORT		(51820)
 #define WIREGUARDIF_KEEPALIVE_DEFAULT	(0xFFFF)
 
-struct wireguardif_init_data {
+typedef struct wireguardif_init_data {
 	// Required: the private key of this WireGuard network interface
 	const char *private_key;
 	// Required: What UDP port to listen on
 	u16_t listen_port;
 	// Optional: restrict send/receive of encapsulated WireGuard traffic to this network interface only (NULL to use routing table)
 	struct netif *bind_netif;
-};
+} wireguardif_init_data_t;
 
-struct wireguardif_peer {
+typedef struct wireguardif_peer {
 	const char *public_key;
 	// Optional pre-shared key (32 bytes) - make sure this is NULL if not to be used
 	const uint8_t *preshared_key;
@@ -68,7 +68,7 @@ struct wireguardif_peer {
 	ip_addr_t endpoint_ip;
 	u16_t endport_port;
 	u16_t keep_alive;
-};
+} wireguardif_peer_t;
 
 #define WIREGUARDIF_INVALID_INDEX (0xFF)
 
@@ -104,28 +104,28 @@ struct wireguardif_peer {
  */
 
 // Initialise a new WireGuard network interface (netif)
-err_t wireguardif_init(struct netif *netif);
+err_t wireguardifInit(struct netif *netif);
 
 // Helper to initialise the peer struct with defaults
-void wireguardif_peer_init(struct wireguardif_peer *peer);
+void wireguardifPeerInit(wireguardif_peer_t *peer);
 
 // Add a new peer to the specified interface - see wireguard.h for maximum number of peers allowed
 // On success the peer_index can be used to reference this peer in future function calls
-err_t wireguardif_add_peer(struct netif *netif, struct wireguardif_peer *peer, u8_t *peer_index);
+err_t wireguardifAddPeer(struct netif *netif, wireguardif_peer_t *peer, u8_t *peer_index);
 
 // Remove the given peer from the network interface
-err_t wireguardif_remove_peer(struct netif *netif, u8_t peer_index);
+err_t wireguardifRemovePeer(struct netif *netif, u8_t peer_index);
 
 // Update the "connect" IP of the given peer
-err_t wireguardif_update_endpoint(struct netif *netif, u8_t peer_index, const ip_addr_t *ip, u16_t port);
+err_t wireguardifUpdateEndpoint(struct netif *netif, u8_t peer_index, const ip_addr_t *ip, u16_t port);
 
 // Try and connect to the given peer
-err_t wireguardif_connect(struct netif *netif, u8_t peer_index);
+err_t wireguardifConnect(struct netif *netif, u8_t peer_index);
 
 // Stop trying to connect to the given peer
-err_t wireguardif_disconnect(struct netif *netif, u8_t peer_index);
+err_t wireguardifDisconnect(struct netif *netif, u8_t peer_index);
 
 // Is the given peer "up"? A peer is up if it has a valid session key it can communicate with
-err_t wireguardif_peer_is_up(struct netif *netif, u8_t peer_index, ip_addr_t *current_ip, u16_t *current_port);
+err_t wireguardifPeerIsUp(struct netif *netif, u8_t peer_index, ip_addr_t *current_ip, u16_t *current_port);
 
 #endif /* _WIREGUARDIF_H_ */

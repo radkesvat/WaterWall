@@ -2,12 +2,12 @@
 
 #include "loggers/network_logger.h"
 
-void wireguarddeviceLinestateInitialize(wireguarddevice_lstate_t *ls)
+void wireguarddeviceLinestateInitialize(wgd_lstate_t *ls)
 {
     (void) ls;
 }
 
-void wireguarddeviceLinestateDestroy(wireguarddevice_lstate_t *ls)
+void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(wireguarddevice_lstate_t));
+    memorySet(ls, 0, sizeof(wgd_lstate_t));
 }

@@ -7,7 +7,7 @@
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
-#include "ssl/openssl_instance.h"
+#include "crypto/openssl_instance.h"
 
 ww_global_state_t global_ww_state = {0};
 

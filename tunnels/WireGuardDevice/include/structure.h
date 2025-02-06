@@ -1,65 +1,34 @@
 #pragma once
 
+#include "wireguard_types.h"
 #include "wwapi.h"
 
-// Default MTU for WireGuard is 1420 bytes
-#define WIREGUARDIF_MTU (1420)
+// getTickMS
+// getRandomBytes
+// getTAI64N
+// isSystemUnderLoad
 
-#define WIREGUARDIF_DEFAULT_PORT      (51820)
-#define WIREGUARDIF_KEEPALIVE_DEFAULT (0xFFFF)
-
-/*
-    * WireGuard device initialisation data
-    we parse json to get this data
-
-*/
-
-typedef struct wgdevice_init_data_s
-{
-    // Required: the private key of this WireGuard network interface
-    const char *private_key;
-    // Required: What UDP port to listen on
-    uint16 listen_port;
-    // Optional: restrict send/receive of encapsulated WireGuard traffic to this network interface only (NULL to use
-    // routing table)
-    struct netif *bind_netif;
-} wgdevice_init_data_t;
-
-typedef struct wgpeer_init_data_s
-{
-    const char *public_key;
-    // Optional pre-shared key (32 bytes) - make sure this is NULL if not to be used
-    const uint8_t *preshared_key;
-    // tai64n of largest timestamp we have seen during handshake to avoid replays
-    uint8_t greatest_timestamp[12];
-
-    // Allowed ip/netmask (can add additional later but at least one is required)
-    sockaddr_u allowed_ip;
-    sockaddr_u allowed_mask;
-
-    // End-point details (may be blank)
-    ip_address_t endpoint_ip;
-    uint16       endport_port;
-    uint16       keep_alive;
-} wgpeer_init_data_t;
-
-typedef struct wireguarddevice_tstate_s
+typedef struct wgd_tstate_s
 {
     wgdevice_init_data_t device_configuration;
     wgpeer_init_data_t  *peers_configuration;
-    uint16               peers_count;
+    uint16               peers_configuration_count;
 
-} wireguarddevice_tstate_t;
+    wireguard_device_t wg_device;
+    wireguard_peer_t  *peers;
+    uint16             peers_count;
 
-typedef struct wireguarddevice_lstate_s
+} wgd_tstate_t;
+
+typedef struct wgd_lstate_s
 {
     int xxx;
-} wireguarddevice_lstate_t;
+} wgd_lstate_t;
 
 enum
 {
-    kTunnelStateSize = sizeof(wireguarddevice_tstate_t),
-    kLineStateSize   = sizeof(wireguarddevice_lstate_t)
+    kTunnelStateSize = sizeof(wgd_tstate_t),
+    kLineStateSize   = sizeof(wgd_lstate_t)
 };
 
 WW_EXPORT void         wireguarddeviceTunnelDestroy(tunnel_t *t);
@@ -85,5 +54,7 @@ WW_EXPORT void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sb
 WW_EXPORT void wireguarddeviceTunnelDownStreamPause(tunnel_t *t, line_t *l);
 WW_EXPORT void wireguarddeviceTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void wireguarddeviceLinestateInitialize(wireguarddevice_lstate_t *ls);
-void wireguarddeviceLinestateDestroy(wireguarddevice_lstate_t *ls);
+void wireguarddeviceLinestateInitialize(wgd_lstate_t *ls);
+void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
+
+void wdevCycle(void *arg);

@@ -12,6 +12,7 @@ add_library(ww STATIC
     base/wlog.c
     base/wlsem.c
     base/wsocket.c
+    base/wsysinfo.c
     bufio/buffer_pool.c
     bufio/buffer_stream.c
     bufio/context_queue.c
@@ -46,6 +47,7 @@ add_library(ww STATIC
     net/tunnel.c
     net/chain.c
     net/context.c
+    crypto/openssl_instance.c
     node_builder/config_file.c
     node_builder/node_loader.c
     managers/signal_manager.c
@@ -57,7 +59,6 @@ add_library(ww STATIC
     managers/data/iprange_mokhaberat.c
     managers/data/iprange_rightel.c
     managers/data/iprange_iran.c
-    ssl/openssl_instance.c
     loggers/core_logger.c
     loggers/network_logger.c
     loggers/dns_logger.c
@@ -193,6 +194,22 @@ CPMAddPackage(
 set(LIBS ${LIBS} OpenSSL::SSL)
 set(LIBS ${LIBS} OpenSSL::Crypto)
 set(LIBS ${LIBS} OpenSSL::applink)
+
+# Add libsodium as a static library
+CPMAddPackage(
+    NAME libsodium
+    GITHUB_REPOSITORY robinlinden/libsodium-cmake
+    GIT_TAG HEAD
+    OPTIONS
+        "SODIUM_MINIMAL ON"          # Minimal build
+        "SODIUM_DISABLE_TESTS ON"    # Disable tests
+        "BUILD_SHARED_LIBS OFF"      # Disable shared library generation
+        "SODIUM_BUILD_TESTS OFF"     # Disable tests
+        "SODIUM_BUILD_EXAMPLES OFF"  # Disable examples
+        "SODIUM_BUILD_SHARED OFF"    # Disable shared library build
+        "SODIUM_STATIC ON"           # Enable static library build
+)
+set(LIBS ${LIBS} sodium)
 
 
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)

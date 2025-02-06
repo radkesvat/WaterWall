@@ -9,12 +9,9 @@
     Generic random implementations, to be faster or provide other features...
 */
 
-
 // access to correctly aligned variables are atomic
 extern uint32_t frand_seed32;
 extern uint64_t frand_seed64;
-
-
 
 /*
 
@@ -37,11 +34,25 @@ static inline uint32_t fastRand(void)
 */
 static inline uint32_t fastRand32(void)
 {
-    
+
     frand_seed64        = frand_seed64 * 6364136223846793005ULL + 13971ULL;
     uint32_t xorshifted = (uint32_t) (((frand_seed64 >> 18U) ^ frand_seed64) >> 27U);
     uint32_t rot        = frand_seed64 >> 59U;
     return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+}
+
+static void getRandomBytes(void *bytes, size_t size)
+{
+    uint8_t *b = (uint8_t *) bytes;
+    for (size_t i = 0; i < size / 4; i++)
+    {
+        ((uint32_t *) b)[i] = fastRand32();
+    }
+    const size_t remainder = size % 4;
+    for (size_t i = 0; i < remainder; i++)
+    {
+        b[size - remainder + i] = fastRand32() & 0xFF;
+    }
 }
 
 // every thread should call this once
