@@ -594,10 +594,10 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     (void) offload;
     DWORD LastError;
 
-    if (! GSTATE.internal_flag_tundev_windows_initialized)
+    if (! GSTATE.flag_tundev_windows_initialized)
     {
         tunWindowsStartup();
-        GSTATE.internal_flag_tundev_windows_initialized = true;
+        GSTATE.flag_tundev_windows_initialized = true;
     }
 
     if (GSTATE.wintun_dll_handle == NULL)
