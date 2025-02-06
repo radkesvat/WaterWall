@@ -16,10 +16,6 @@ A million repetitions of "a"
 /* #define SHA1HANDSOFF * Copies data before messing with it. */
 
 #define SHA1HANDSOFF
-
-#include <stdio.h>
-#include <string.h>
-
 #include "sha1.h"
 
 #define rol(value, bits) (((value) << (bits)) | ((value) >> (32 - (bits))))
