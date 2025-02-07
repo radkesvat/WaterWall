@@ -2,10 +2,10 @@
 #include "wlibc.h"
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-#include <string.h>
+#include "sodium.h"
 
 // Helper function for encryption using EVP API
-int chacha20poly1305_encrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
+int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
                              size_t adlen, const unsigned char *nonce, const unsigned char *key)
 {
     EVP_CIPHER_CTX *ctx            = NULL;
@@ -61,7 +61,7 @@ cleanup:
 }
 
 // Helper function for decryption using EVP API
-int chacha20poly1305_decrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
+int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
                              size_t adlen, const unsigned char *nonce, const unsigned char *key)
 {
     EVP_CIPHER_CTX *ctx           = NULL;
@@ -115,32 +115,41 @@ cleanup:
     return ret ? plaintext_len : -1;
 }
 
-// Similar functions for XChaCha20-Poly1305
-int xchacha20poly1305_encrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                              size_t adlen, const unsigned char *nonce, const unsigned char *key)
-{
-    // OpenSSL does not directly support XChaCha20-Poly1305 via EVP.
-    // You would need to use libsodium or another library for this.
-    return -1; // Not implemented
+// Encrypt function
+int xchacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
+                              const unsigned char *ad, size_t adlen,
+                              const unsigned char *nonce, const unsigned char *key) {
+    // Destination buffer must have space for ciphertext + authentication tag
+    unsigned long long ciphertext_len = srclen + crypto_aead_xchacha20poly1305_ietf_ABYTES;
+
+    // Perform encryption
+    int result = crypto_aead_xchacha20poly1305_ietf_encrypt(
+        dst, &ciphertext_len, src, srclen, ad, adlen, NULL, nonce, key);
+
+    if (result != 0) {
+        printError("Encryption failed\n");
+        return -1;
+    }
+
+    return 0; // Success
 }
 
-int xchacha20poly1305_decrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                              size_t adlen, const unsigned char *nonce, const unsigned char *key)
-{
-    // OpenSSL does not directly support XChaCha20-Poly1305 via EVP.
-    // You would need to use libsodium or another library for this.
-    return -1; // Not implemented
+// Decrypt function
+int xchacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen,
+                              const unsigned char *ad, size_t adlen,
+                              const unsigned char *nonce, const unsigned char *key) {
+
+    // Destination buffer must have space for plaintext
+    unsigned long long plaintext_len = srclen - crypto_aead_xchacha20poly1305_ietf_ABYTES;
+
+    // Perform decryption
+    int result = crypto_aead_xchacha20poly1305_ietf_decrypt(
+        dst, &plaintext_len, NULL, src, srclen, ad, adlen, nonce, key);
+
+    if (result != 0) {
+        printError("Decryption failed (possible tampering or invalid inputs)\n");
+        return -1;
+    }
+
+    return 0; // Success
 }
-
-// Define the macros
-#define wireguard_aead_encrypt(dst, src, srclen, ad, adlen, nonce, key)                                                \
-    chacha20poly1305_encrypt(dst, src, srclen, ad, adlen, nonce, key)
-
-#define wireguard_aead_decrypt(dst, src, srclen, ad, adlen, nonce, key)                                                \
-    chacha20poly1305_decrypt(dst, src, srclen, ad, adlen, nonce, key)
-
-#define wireguard_xaead_encrypt(dst, src, srclen, ad, adlen, nonce, key)                                               \
-    xchacha20poly1305_encrypt(dst, src, srclen, ad, adlen, nonce, key)
-
-#define wireguard_xaead_decrypt(dst, src, srclen, ad, adlen, nonce, key)                                               \
-    xchacha20poly1305_decrypt(dst, src, srclen, ad, adlen, nonce, key)

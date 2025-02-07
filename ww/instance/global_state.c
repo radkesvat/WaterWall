@@ -1,5 +1,7 @@
 #include "global_state.h"
 #include "buffer_pool.h"
+#include "crypto/openssl_instance.h"
+#include "crypto/sodium_instance.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/internal_logger.h"
@@ -7,7 +9,6 @@
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
-#include "crypto/openssl_instance.h"
 
 ww_global_state_t global_ww_state = {0};
 
@@ -45,7 +46,7 @@ static void initializeShortCuts(void)
 
     static const int kShourtcutsCount = 5;
 
-    const int        total_workers    = WORKERS_COUNT;
+    const int total_workers = WORKERS_COUNT;
 
     void **space = (void **) memoryAllocate(sizeof(void *) * kShourtcutsCount * total_workers);
 
@@ -109,10 +110,11 @@ void createGlobalState(const ww_construction_data_t init_data)
         WORKERS_COUNT      = init_data.workers_count;
         GSTATE.ram_profile = init_data.ram_profile;
 
-        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (254))
+        // this check was required to avoid overflow in older version when workers_count was limited to 254
+        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (255))
         {
-            LOGW("workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (254));
-            WORKERS_COUNT = (254);
+            LOGW("workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (255));
+            WORKERS_COUNT = (255);
         }
 
         WORKERS = (worker_t *) memoryAllocate(sizeof(worker_t) * (WORKERS_COUNT));
@@ -127,15 +129,22 @@ void createGlobalState(const ww_construction_data_t init_data)
         initializeShortCuts();
     }
 
-    GSTATE.signal_manager = createSignalManager();
-    startSignalManager();
-
-    GSTATE.socekt_manager = socketmanagerCreate();
-    GSTATE.node_manager   = nodemanagerCreate();
+    // managers
+    {
+        GSTATE.signal_manager = createSignalManager();
+        GSTATE.socekt_manager = socketmanagerCreate();
+        GSTATE.node_manager   = nodemanagerCreate();
+    }
 
     // SSL
     {
         opensslGlobalInit();
+        GSTATE.flag_libsodium_initialized = initSodium();
+        if (! (GSTATE.flag_libsodium_initialized))
+        {
+            printError("Failed to initialize libsodium\n");
+            exit(1);
+        }
     }
     // Spawn all workers except main worker which is current thread
     {
@@ -144,6 +153,8 @@ void createGlobalState(const ww_construction_data_t init_data)
             workerRunNewThread(&WORKERS[i]);
         }
     }
+
+    startSignalManager();
 }
 
 void runMainThread(void)

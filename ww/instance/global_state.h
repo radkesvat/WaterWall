@@ -50,6 +50,7 @@ typedef struct ww_global_state_s
     uint8_t                    flag_buffers_calculated : 1;
     uint8_t                    flag_tundev_windows_initialized : 1;
     uint8_t                    flag_openssl_initialized : 1;
+    uint8_t                    flag_libsodium_initialized : 1;
 
 } ww_global_state_t;
 

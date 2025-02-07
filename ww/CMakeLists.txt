@@ -48,6 +48,10 @@ add_library(ww STATIC
     net/chain.c
     net/context.c
     crypto/openssl_instance.c
+    crypto/chacha20poly1305.c
+    crypto/sodium_instance.c
+    crypto/blake2s.c
+    crypto/x25519.c
     node_builder/config_file.c
     node_builder/node_loader.c
     managers/signal_manager.c
