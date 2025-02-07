@@ -21,13 +21,17 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: ilammy/setup-nasm@v1
+      
       - uses: actions/checkout@v4
-    
+      
       - name: Install dependencies on Windows
         shell: bash
         run: |
-          choco install -y jom nasm
-          echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
+          choco install -y jom ccache
 
 
       - name: Configure CMake
