@@ -266,7 +266,7 @@ static void parseWhiteListOption(socket_filter_option_t *option)
     for (int i = 0; i < len; i++)
     {
         cur              = option->white_list_raddr[i];
-        int parse_result = parseIPWithSubnetMask(&(option->white_list_parsed[i].ip_bytes_buf), cur,
+        int parse_result = parseIPWithSubnetMask(cur,&(option->white_list_parsed[i].ip_bytes_buf), 
                                                  &(option->white_list_parsed[i].mask_bytes_buf));
 
         if (parse_result == -1)

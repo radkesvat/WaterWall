@@ -414,7 +414,7 @@ static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
     return result;
 }
 
-static inline int parseIPWithSubnetMask(struct in6_addr *base_addr, const char *input, struct in6_addr *subnet_mask)
+static inline int parseIPWithSubnetMask( const char *input,struct in6_addr *base_addr, struct in6_addr *subnet_mask)
 {
     char *slash;
     char *ip_part;
@@ -514,8 +514,7 @@ static inline int checkIPRange6(const struct in6_addr test_addr, const struct in
     return 0;
 }
 
-struct logger_s;
-bool verifyIPCdir(const char *ipc, struct logger_s *logger);
+bool verifyIPCdir(const char *ipc);
 
 
 #endif // WW_SOCKET_H_

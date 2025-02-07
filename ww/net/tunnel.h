@@ -556,7 +556,7 @@ static inline void tunnelNextUpStreamResume(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Initializes the next downstream pipeline.
+ * @brief Initializes the prev downstream pipeline.
  * 
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -567,7 +567,7 @@ static inline void tunnelPrevDownStreamInit(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Establishes the next downstream pipeline.
+ * @brief Establishes the prev downstream pipeline.
  * 
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -578,7 +578,7 @@ static inline void tunnelPrevDownStreamEst(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Finalizes the next downstream pipeline.
+ * @brief Finalizes the prev downstream pipeline.
  * 
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -589,7 +589,7 @@ static inline void tunnelPrevdownStreamFinish(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Handles the next downstream payload.
+ * @brief Handles the prev downstream payload.
  * 
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -601,7 +601,7 @@ static inline void tunnelPrevDownStreamPayload(tunnel_t *self, line_t *line, sbu
 }
 
 /**
- * @brief Pauses the next downstream pipeline.
+ * @brief Pauses the prev downstream pipeline.
  * 
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
@@ -612,7 +612,7 @@ static inline void tunnelPrevDownStreamPause(tunnel_t *self, line_t *line)
 }
 
 /**
- * @brief Resumes the next downstream pipeline.
+ * @brief Resumes the prev downstream pipeline.
  * 
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.

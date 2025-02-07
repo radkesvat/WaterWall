@@ -29,8 +29,7 @@ typedef struct tcpconnector_lstate_s
     buffer_pool_t  *buffer_pool;
     bool            write_paused;
     bool            read_paused;
-    // this flag is set when the connection is established (est recevied from upstream)
-    bool established;
+
 } tcpconnector_lstate_t;
 
 enum

@@ -12,6 +12,8 @@
 #include "node_builder/node.h"
 #include "sync_dns.h"
 #include "tunnel.h"
+#include "pipe_tunnel.h"
+#include "packet_tunnel.h"
 #include "utils/json_helpers.h"
 #include "utils/base64.h"
 #include "worker.h"

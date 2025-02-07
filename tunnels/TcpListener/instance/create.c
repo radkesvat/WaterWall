@@ -115,7 +115,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
             const cJSON *list_item = NULL;
             cJSON_ArrayForEach(list_item, wlist)
             {
-                if (! getStringFromJson(&(list[i]), list_item) || ! verifyIPCdir(list[i], getNetworkLogger()))
+                if (! getStringFromJson(&(list[i]), list_item) || ! verifyIPCdir(list[i]))
                 {
                     LOGF("JSON Error: TcpListener->settings->whitelist (array of strings field) index %d : The data "
                          "was empty or invalid",

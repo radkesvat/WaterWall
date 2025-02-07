@@ -38,8 +38,6 @@ void adapterDefaultOnIndexDownEnd(tunnel_t *t, tunnel_array_t *arr, uint16_t *in
     }
 }
 
-
-
 static void disabledPayloadRoutine(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
     (void) t;
@@ -49,7 +47,8 @@ static void disabledPayloadRoutine(tunnel_t *t, line_t *line, sbuf_t *payload)
     exit(1);
 }
 
-static void disabledRoutine(tunnel_t *t, line_t *line){
+static void disabledRoutine(tunnel_t *t, line_t *line)
+{
     (void) t;
     (void) line;
     LOGF("Illegal call to routine on Adapter %s", t->node->name);
@@ -62,27 +61,26 @@ tunnel_t *adapterCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size
 
     if (up_end)
     {
-        t->onChain   = adapterDefaultOnChainUpEnd;
-        t->onIndex   = adapterDefaultOnIndexUpEnd;
+        t->onChain = adapterDefaultOnChainUpEnd;
+        t->onIndex = adapterDefaultOnIndexUpEnd;
 
-        t->fnPauseD  = disabledRoutine;
-        t->fnResumeD = disabledRoutine;
-        t->fnInitD = disabledRoutine;
-        t->fnEstD = disabledRoutine;
-        t->fnFinD = disabledRoutine;
+        t->fnPauseD   = disabledRoutine;
+        t->fnResumeD  = disabledRoutine;
+        t->fnInitD    = disabledRoutine;
+        t->fnEstD     = disabledRoutine;
+        t->fnFinD     = disabledRoutine;
         t->fnPayloadD = disabledPayloadRoutine;
-
     }
     else
     {
         t->onChain = adapterDefaultOnChainDownEnd;
         t->onIndex = adapterDefaultOnIndexDownEnd;
 
-        t->fnPauseU  = disabledRoutine;
-        t->fnResumeU = disabledRoutine;
-        t->fnInitU = disabledRoutine;
-        t->fnEstU = disabledRoutine;
-        t->fnFinU = disabledRoutine;
+        t->fnPauseU   = disabledRoutine;
+        t->fnResumeU  = disabledRoutine;
+        t->fnInitU    = disabledRoutine;
+        t->fnEstU     = disabledRoutine;
+        t->fnFinU     = disabledRoutine;
         t->fnPayloadU = disabledPayloadRoutine;
     }
     return t;

@@ -46,6 +46,18 @@ typedef struct address_context_s
 
 } address_context_t;
 
+static inline void ip4AddrSetAny(ip_address_t *ip)
+{
+    ip->u_addr.addr = 0;
+    ip->type        = AF_INET;
+}
+
+static inline void ip6AddrSetAny(ip_address_t *ip)
+{
+    memset(ip->u_addr.addr_ipv6, 0, sizeof(ip->u_addr.addr_ipv6));
+    ip->type = AF_INET6;
+}
+
 static inline void addresscontextPortCopy(address_context_t *dest, address_context_t *source)
 {
     dest->port = source->port;
@@ -163,6 +175,14 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
     assert(false); // not valid ip type
     return (sockaddr_u) {0};
 
+}
+
+static void addresscontextSetIpPort(address_context_t *restrict scontext, const char *host, int port){
+
+    sockaddr_u temp = {0};
+    sockaddrSetIpPort(&temp, host, port);
+    sockaddrToIpAddressCopy(&temp, &scontext->ip_address);
+    addresscontextPortSet(scontext, ntohs(port));
 }
 
 static inline int getIpVersion(char *host)

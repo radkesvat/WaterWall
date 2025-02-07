@@ -133,6 +133,7 @@ WW_EXPORT bool stringContains(const char *str, const char *sub);
 WW_EXPORT bool stringWildCardMatch(const char *str, const char *pattern);
 
 
+WW_EXPORT char* stringNewWithoutSpace(const char *str);
 
 #if HAVE_STRLCPY
 
@@ -160,7 +161,9 @@ WW_EXPORT char *stringCat(char *dest, const char *src, size_t n);
 
 #endif
 
-WW_EXPORT char *stringChr(const char *s, char c, size_t n);
+#define stringChr strchr
+
+WW_EXPORT char *stringChrLen(const char *s, char c, size_t n);
 
 #define stringChrDot(str) strrchr(str, '.')
 WW_EXPORT char *stringChrDir(const char *filepath);

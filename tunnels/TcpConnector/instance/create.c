@@ -56,7 +56,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     // Free bind parsings
     if (state->dest_addr_selected.status == kDvsConstant)
     {
-        char *slash = strchr(state->dest_addr_selected.value_ptr, '/');
+        char *slash = stringChr(state->dest_addr_selected.value_ptr, '/');
         if (slash != NULL)
         {
             *slash            = '\0';
