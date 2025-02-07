@@ -1,4 +1,4 @@
-#include "crypto/helpers.h"
+#include "wcrypto.h"
 #include "wlibc.h"
 #include <openssl/ec.h>
 #include <openssl/evp.h>

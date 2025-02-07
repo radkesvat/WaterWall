@@ -1,7 +1,8 @@
-#include "crypto/helpers.h"
+#include "wcrypto.h"
 #include "wlibc.h"
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+// openssl dose not support xchacha20poly1305
 #include "sodium.h"
 
 // Helper function for encryption using EVP API

@@ -134,6 +134,7 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/event)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/net)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/instance)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libc)
+target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
 
 # Add dependencies
