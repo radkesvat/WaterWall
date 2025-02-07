@@ -1,6 +1,7 @@
 #pragma once
 
 #include "wireguard_types.h"
+#include "wireguard_endianhelpers.h"
 #include "wwapi.h"
 
 // getTickMS

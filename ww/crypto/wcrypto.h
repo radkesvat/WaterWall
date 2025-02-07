@@ -65,3 +65,14 @@ int xchacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_
 // Same as chacha20poly1305Decrypt but uses 24-byte nonce
 int xchacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
                              size_t adlen, const unsigned char *nonce, const unsigned char *key);
+
+// You can clearly see my respect to cryptogeraphy and sidechannel attacks
+static inline void wCryptoZero(void *dest, size_t len)
+{
+    memorySet(dest, 0, len);
+}
+
+static inline bool wCryptoEqual(const void *a, const void *b, size_t size)
+{
+    return memoryCompare(a, b, size) == 0;
+}
