@@ -12,69 +12,52 @@ enum domain_strategy
     kDsOnlyIpV6
 };
 
-enum socket_address_type
-{
-    kSatIPV4       = 0X1,
-    kSatDomainName = 0X3,
-    kSatIPV6       = 0X4,
-};
-
 enum socket_address_protocol
 {
     kSapTcp = IPPROTO_TCP,
     kSapUdp = IPPROTO_UDP,
 };
 
-typedef struct ip_address_s {
+typedef struct ip_address_s
+{
+    /* NETWORK BYTE ORDER */
     union {
-        uint16_t addr;               /* IPv4 address */
-        uint16_t addr_ipv6[4];       /* IPv6 address (128 bits) */
+        uint32_t addr;         /* IPv4 address (32 bits) */
+        uint16_t addr_ipv6[8]; /* IPv6 address (128 bits, represented as 8 x 16-bit words) */
     } u_addr;
-    uint16_t type;                    /* Type of the address: IPv4 or IPv6 */
+    uint16_t type; /* Type of the address: IPv4 or IPv6 (AF_INET OR AF_INET6)*/
 } ip_address_t;
 
 typedef struct address_context_s
 {
-    sockaddr_u                   address;
-    enum socket_address_protocol address_protocol;
-    enum socket_address_type     address_type;
-
+    // i think we could define them as union but its better not to (IMO)
+    ip_address_t         ip_address; // network byte order
+    uint16_t             port;       // host byte order
     char                *domain;
     enum domain_strategy domain_strategy;
-    unsigned int         domain_len;
-    bool                 domain_resolved;
-    bool                 domain_constant;
+    uint8_t              domain_len;
+
+    uint8_t domain_constant : 1; // domain points to constant memory , should not be freed
+    uint8_t type_ip : 1;         // ip or domain? when domain is resolved then it becomes ip
+    uint8_t proto_tcp : 1;
+    uint8_t proto_ucp : 1;
+    uint8_t proto_icmp : 1;
+    uint8_t proto_packet : 1;
 
 } address_context_t;
 
 static inline void addresscontextPortCopy(address_context_t *dest, address_context_t *source)
 {
-    // this is supposed to work for both ipv4/6
-    dest->address.sin.sin_port = source->address.sin.sin_port;
-
-    // alternative:
-
-    // switch (dest->address_type)
-    // {
-    // case kSatIPV4:
-    // case kSatDomainName:
-    // default:
-    //     dest->address.sin.sin_port = source->address.sin.sin_port;
-    //     break;
-
-    // case kSatIPV6:
-    //     dest->address.sin6.sin6_port = source->address.sin6.sin6_port;
-    //     break;
-    // }
+    dest->port = source->port;
 }
 
 static inline void addresscontextPortSet(address_context_t *dest, uint16_t port)
 {
-    dest->address.sin.sin_port = htons(port);
+    dest->port = port;
 }
 
 static inline void addresscontextDomainSet(address_context_t *restrict scontext, const char *restrict domain,
-                                              uint8_t len)
+                                           uint8_t len)
 {
     if (scontext->domain != NULL)
     {
@@ -93,8 +76,8 @@ static inline void addresscontextDomainSet(address_context_t *restrict scontext,
     scontext->domain_len  = len;
 }
 
-static inline void addresscontextDomainSetConstMem(address_context_t *restrict scontext,
-                                                      const char *restrict domain, uint8_t len)
+static inline void addresscontextDomainSetConstMem(address_context_t *restrict scontext, const char *restrict domain,
+                                                   uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
@@ -108,18 +91,19 @@ static inline void addresscontextDomainSetConstMem(address_context_t *restrict s
 
 static inline void addresscontextAddrCopy(address_context_t *dest, const address_context_t *const source)
 {
-    dest->address_protocol = source->address_protocol;
-    dest->address_type     = source->address_type;
-    switch (dest->address_type)
+    dest->domain_constant = source->domain_constant;
+    dest->type_ip         = source->type_ip;
+    dest->proto_tcp       = source->proto_tcp;
+    dest->proto_ucp       = source->proto_ucp;
+    dest->proto_icmp      = source->proto_icmp;
+    dest->proto_packet    = source->proto_packet;
+
+    if (dest->type_ip)
     {
-    case kSatIPV4:
-        dest->address.sa.sa_family = AF_INET;
-        dest->address.sin.sin_addr = source->address.sin.sin_addr;
-
-        break;
-
-    case kSatDomainName:
-        dest->address.sa.sa_family = AF_INET;
+        dest->ip_address = source->ip_address;
+    }
+    else
+    {
         if (source->domain != NULL)
         {
             if (source->domain_constant)
@@ -130,33 +114,66 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
             {
                 addresscontextDomainSet(dest, source->domain, source->domain_len);
             }
-            dest->domain_resolved = source->domain_resolved;
-            if (source->domain_resolved)
-            {
-                dest->domain_resolved = true;
-                sockaddrCopy(&(dest->address), &(source->address));
-            }
         }
-
-        break;
-
-    case kSatIPV6:
-        dest->address.sa.sa_family = AF_INET6;
-        memoryCopy(&(dest->address.sin6.sin6_addr), &(source->address.sin6.sin6_addr), sizeof(struct in6_addr));
-
-        break;
     }
 }
 
-static inline enum socket_address_type getHostAddrType(char *host)
+// Helper function to copy sockaddr_in or sockaddr_in6 to ip_address_t
+static inline void sockaddrToIpAddressCopy(const sockaddr_u *src, ip_address_t *dest)
+{
+    assert(src != NULL && dest != NULL);
+
+    if (((const struct sockaddr *) src)->sa_family == AF_INET)
+    {
+        // Copy IPv4 address
+        const struct sockaddr_in *src_in = (const struct sockaddr_in *) src;
+        dest->u_addr.addr                = src_in->sin_addr.s_addr;
+        dest->type                       = AF_INET;
+    }
+    else if (((const struct sockaddr *) src)->sa_family == AF_INET6)
+    {
+        // Copy IPv6 address
+        const struct sockaddr_in6 *src_in6 = (const struct sockaddr_in6 *) src;
+        memcpy(dest->u_addr.addr_ipv6, &src_in6->sin6_addr.s6_addr, sizeof(dest->u_addr.addr_ipv6));
+        dest->type = AF_INET6;
+    }
+}
+
+static inline sockaddr_u addresscontextToSockAddr(const address_context_t *context)
+{
+    sockaddr_u addr;
+    assert(context->type_ip);
+    if (context->ip_address.type == AF_INET)
+    {
+        struct sockaddr_in *addr_in = (struct sockaddr_in *) &addr;
+        addr_in->sin_family         = AF_INET;
+        addr_in->sin_port           = htons(context->port);
+        addr_in->sin_addr.s_addr    = context->ip_address.u_addr.addr;
+        return addr;
+    }
+    if (context->ip_address.type == AF_INET6)
+    {
+        struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *) &addr;
+        addr_in6->sin6_family         = AF_INET6;
+        addr_in6->sin6_port           = htons(context->port);
+        memcpy(&addr_in6->sin6_addr.s6_addr, context->ip_address.u_addr.addr_ipv6, sizeof(addr_in6->sin6_addr.s6_addr));
+
+        return addr;
+    }
+    assert(false); // not valid ip type
+    return (sockaddr_u) {0};
+
+}
+
+static inline int getIpVersion(char *host)
 {
     if (isIPVer4(host))
     {
-        return kSatIPV4;
+        return AF_INET;
     }
     if (isIPVer6(host))
     {
-        return kSatIPV6;
+        return AF_INET6;
     }
-    return kSatDomainName;
+    return 0; // not valid ip
 }

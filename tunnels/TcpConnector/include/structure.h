@@ -56,24 +56,24 @@ WW_EXPORT void         tcpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-WW_EXPORT void tcpconnectorTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
-WW_EXPORT void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-WW_EXPORT void tcpconnectorTunnelOnPrepair(tunnel_t *t);
-WW_EXPORT void tcpconnectorTunnelOnStart(tunnel_t *t);
+void tcpconnectorTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
+void tcpconnectorTunnelOnPrepair(tunnel_t *t);
+void tcpconnectorTunnelOnStart(tunnel_t *t);
 
-WW_EXPORT void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-WW_EXPORT void tcpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void tcpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-WW_EXPORT void tcpconnectorTunnelDownStreamInit(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelDownStreamEst(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-WW_EXPORT void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
-WW_EXPORT void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelDownStreamInit(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelDownStreamEst(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
+void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls, wid_t wid);
 void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);

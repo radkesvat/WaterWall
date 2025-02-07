@@ -63,7 +63,7 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 option(INCLUDE_TEMPLATE "link Template staticly to the core"  TRUE)
 
 
-option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  FALSE)
+option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)

@@ -1,30 +1,32 @@
 #include "sync_dns.h"
+#include "loggers/dns_logger.h"
 #include "wlibc.h"
 #include "wsocket.h"
-#include "loggers/dns_logger.h"
-
 
 bool resolveContextSync(address_context_t *sctx)
 {
     // please check these before calling this function -> more performance
-    assert(sctx->address_type == kSatDomainName && sctx->domain_resolved == false && sctx->domain != NULL);
+    assert(sctx->type_ip == false && sctx->domain != NULL);
     // we need to get and set port again because resolved ip can be v6/v4 which have different sizes
-    uint16_t old_port = sockaddrPort(&(sctx->address));
-#ifdef PROFILE
+
+    #ifdef PROFILE
     struct timeval tv1, tv2;
     getTimeOfDay(&tv1, NULL);
 #endif
     /* resolve domain */
     {
-        if (sockaddrSetIpPort(&(sctx->address), sctx->domain, old_port) != 0)
+        sockaddr_u temp;
+        if (sockaddrSetIp(&temp, sctx->domain) != 0)
         {
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
             return false;
         }
+        sockaddrToIpAddressCopy(&temp, &(sctx->ip_address));
+
         if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_INFO))
         {
             char ip[64];
-            sockaddrStr(&(sctx->address), ip, 64);
+            sockaddrStr(&(temp), ip, 64);
             LOGI("SyncDns: %s resolved to %s", sctx->domain, ip);
         }
     }
@@ -34,6 +36,6 @@ bool resolveContextSync(address_context_t *sctx)
     LOGD("SyncDns: dns resolve took %lf sec", time_spent);
 #endif
 
-    sctx->domain_resolved = true;
+    sctx->type_ip = false;
     return true;
 }

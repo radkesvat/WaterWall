@@ -37,15 +37,30 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
+
+    /**
+        TODO 
+        this is old code, i think the free bind part may not work if getIpVersion consider that slash
+    */
+    state->constant_dest_addr.ip_address.type = getIpVersion(state->dest_addr_selected.value_ptr);
+
+    if (state->constant_dest_addr.ip_address.type == 0)
+    {
+        // its a domain
+        state->constant_dest_addr.type_ip = false;
+    }
+    else
+    {
+        state->constant_dest_addr.type_ip = true;
+    }
     // Free bind parsings
     if (state->dest_addr_selected.status == kDvsConstant)
     {
         char *slash = strchr(state->dest_addr_selected.value_ptr, '/');
         if (slash != NULL)
         {
-            *slash                                 = '\0';
-            int prefix_length                      = atoi(slash + 1);
-            state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
+            *slash            = '\0';
+            int prefix_length = atoi(slash + 1);
 
             if (prefix_length < 0)
             {
@@ -53,7 +68,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
                 exit(1);
             }
 
-            if (state->constant_dest_addr.address_type == kSatIPV4)
+            if (state->constant_dest_addr.ip_address.type == AF_INET)
             {
                 if (prefix_length > 32)
                 {
@@ -82,7 +97,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
                 // uint32_t calc = ((uint32_t) state->constant_dest_addr.address.sin.sin_addr.s_addr) & mask;
                 // memoryCopy(&(state->constant_dest_addr.address.sin.sin_addr), &calc, sizeof(struct in_addr));
             }
-            else
+            else if (state->constant_dest_addr.ip_address.type == AF_INET6)
             {
                 if (64 > prefix_length) // limit to 64
                 {
@@ -108,20 +123,17 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
                 // }
             }
         }
-        else
-        {
-            state->constant_dest_addr.address_type = getHostAddrType(state->dest_addr_selected.value_ptr);
-        }
 
-        if (state->constant_dest_addr.address_type == kSatDomainName)
+        if (state->constant_dest_addr.type_ip == false)
         {
             addresscontextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
-                                               strlen(state->dest_addr_selected.value_ptr));
+                                            strlen(state->dest_addr_selected.value_ptr));
         }
         else
         {
-
-            sockaddrSetIp(&(state->constant_dest_addr.address), state->dest_addr_selected.value_ptr);
+            sockaddr_u temp;
+            sockaddrSetIp(&(temp), state->dest_addr_selected.value_ptr);
+            sockaddrToIpAddressCopy(&temp, &(state->constant_dest_addr.ip_address));
         }
     }
 

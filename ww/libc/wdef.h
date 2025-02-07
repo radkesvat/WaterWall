@@ -290,6 +290,7 @@ enum
 #define memoryMove          memmove
 #define memoryCopy          memcpy
 #define memoryCompare       memcmp
+#define stringLength        strlen
 
 #ifndef thread_local
 #if __STDC_VERSION__ >= 201112 && !defined __STDC_NO_THREADS__
@@ -305,18 +306,24 @@ enum
 
 #ifdef COMPILER_MSVC
 
-#define STDIN_FILENO        _fileno(stdin)
-#define STDOUT_FILENO       _fileno(stdout)
-#define STDERR_FILENO       _fileno(stderr)
+    #define STDIN_FILENO        _fileno(stdin)
+    #define STDOUT_FILENO       _fileno(stdout)
+    #define STDERR_FILENO       _fileno(stderr)
 
-#if !defined(ssize_t)
-#ifdef _WIN64
-typedef __int64 ssize_t;  // 64-bit Windows
+    #if !defined(ssize_t)
+        #ifdef _WIN64
+        typedef __int64 ssize_t;  // 64-bit Windows
+        #else
+        typedef int ssize_t;      // 32-bit Windows
+        #endif
+    #endif
+
+#endif
+
+#ifdef OS_WIN
+    #define INVALID_SOCKET_VALUE INVALID_SOCKET
 #else
-typedef int ssize_t;      // 32-bit Windows
-#endif
-#endif
-
+    define INVALID_SOCKET_VALUE -1
 #endif
 
 #endif // WW_DEF_H_

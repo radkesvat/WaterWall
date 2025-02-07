@@ -44,24 +44,24 @@ WW_EXPORT void         tcplistenerTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcplistenerTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcplistenerTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-WW_EXPORT void tcplistenerTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
-WW_EXPORT void tcplistenerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
-WW_EXPORT void tcplistenerTunnelOnPrepair(tunnel_t *t);
-WW_EXPORT void tcplistenerTunnelOnStart(tunnel_t *t);
+void tcplistenerTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void tcplistenerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
+void tcplistenerTunnelOnPrepair(tunnel_t *t);
+void tcplistenerTunnelOnStart(tunnel_t *t);
 
-WW_EXPORT void tcplistenerTunnelUpStreamInit(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelUpStreamEst(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-WW_EXPORT void tcplistenerTunnelUpStreamPause(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelUpStreamResume(tunnel_t *t, line_t *l);
+void tcplistenerTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void tcplistenerTunnelUpStreamEst(tunnel_t *t, line_t *l);
+void tcplistenerTunnelUpStreamFinish(tunnel_t *t, line_t *l);
+void tcplistenerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void tcplistenerTunnelUpStreamPause(tunnel_t *t, line_t *l);
+void tcplistenerTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
-WW_EXPORT void tcplistenerTunnelDownStreamInit(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelDownStreamEst(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-WW_EXPORT void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
-WW_EXPORT void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void tcplistenerTunnelDownStreamInit(tunnel_t *t, line_t *l);
+void tcplistenerTunnelDownStreamEst(tunnel_t *t, line_t *l);
+void tcplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
+void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wid_t wid);
 void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls);

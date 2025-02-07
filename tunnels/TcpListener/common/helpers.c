@@ -57,8 +57,9 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     line_t               *line   = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
     tcplistener_lstate_t *lstate = lineGetState(line, t);
 
-    line->routing_context.src_ctx.address_protocol = kSapTcp;
-    line->routing_context.src_ctx.address          = *(sockaddr_u *) wioGetPeerAddr(io);
+    line->routing_context.src_ctx.type_ip = true; // we have a client ip
+    line->routing_context.src_ctx.proto_tcp = true; // tcp client
+    sockaddrToIpAddressCopy((const sockaddr_u *) wioGetPeerAddr(io), &(line->routing_context.src_ctx.ip_address));
 
     tcplistenerLinestateInitialize(lstate, wid);
 
@@ -68,9 +69,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     lstate->write_paused = false;
     lstate->established  = false;
 
-    sockaddrSetPort(&(line->routing_context.src_ctx.address), data->real_localport);
-    line->routing_context.src_ctx.address_type =
-        line->routing_context.src_ctx.address.sa.sa_family == AF_INET ? kSatIPV4 : kSatIPV6;
+    line->routing_context.src_ctx.port = data->real_localport;
     weventSetUserData(io, lstate);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
