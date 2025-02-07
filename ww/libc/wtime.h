@@ -124,7 +124,7 @@ typedef struct
 } tai64n_t;
 
 
-#if  defined(OS_OS_DARWIN)
+#if  defined(OS_DARWIN)
 
 static inilne void getTAI64N(tai64n_t *timestamp) {
     struct timespec ts;
