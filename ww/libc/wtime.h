@@ -123,46 +123,47 @@ typedef struct
     uint32_t nanoseconds; // Fractional seconds in nanoseconds
 } tai64n_t;
 
+#if defined(OS_DARWIN)
 
-#if  defined(OS_DARWIN)
-
-static inilne void getTAI64N(tai64n_t *timestamp) {
+static inline void getTAI64N(tai64n_t *timestamp)
+{
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
 
     // Convert Unix time to TAI time (add 10 seconds for leap seconds up to 2023)
-    timestamp->seconds = (uint64_t)(ts.tv_sec) + 10;
-    timestamp->nanoseconds = (uint32_t)(ts.tv_nsec);
+    timestamp->seconds     = (uint64_t) (ts.tv_sec) + 10;
+    timestamp->nanoseconds = (uint32_t) (ts.tv_nsec);
 }
-
-
 
 #elif defined(OS_LINUX)
 
-static inline void getTAI64N(tai64n_t *timestamp) {
+static inline void getTAI64N(tai64n_t *timestamp)
+{
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
 
     // Convert Unix time to TAI time (add 10 seconds for leap seconds up to 2023)
-    timestamp->seconds = (uint64_t)(ts.tv_sec) + 10;
-    timestamp->nanoseconds = (uint32_t)(ts.tv_nsec);
+    timestamp->seconds     = (uint64_t) (ts.tv_sec) + 10;
+    timestamp->nanoseconds = (uint32_t) (ts.tv_nsec);
 }
 
-#elif defined (OS_WIN)
+#elif defined(OS_WIN)
 
 // Function to convert FILETIME to Unix timestamp
-static int64_t filetimeToUnix(const FILETIME *ft) {
+static int64_t filetimeToUnix(const FILETIME *ft)
+{
     // FILETIME is in 100-nanosecond intervals since January 1, 1601
     const uint64_t EPOCH_DIFF = 116444736000000000ULL; // Difference in 100-ns units
-    uint64_t filetime = ((uint64_t)ft->dwHighDateTime << 32) | ft->dwLowDateTime;
-    return (int64_t)((filetime - EPOCH_DIFF) / 10000000); // Convert to seconds
+    uint64_t       filetime   = ((uint64_t) ft->dwHighDateTime << 32) | ft->dwLowDateTime;
+    return (int64_t) ((filetime - EPOCH_DIFF) / 10000000); // Convert to seconds
 }
 
 // Function to get TAI64N timestamp
-static inline void getTAI64N(tai64n_t *tai64n) {
-    FILETIME ft;
+static inline void getTAI64N(tai64n_t *tai64n)
+{
+    FILETIME      ft;
     LARGE_INTEGER freq, counter;
-    double ns_fraction;
+    double        ns_fraction;
 
     // Get the current system time as FILETIME
     GetSystemTimeAsFileTime(&ft);
@@ -171,24 +172,26 @@ static inline void getTAI64N(tai64n_t *tai64n) {
     int64_t unix_time = filetimeToUnix(&ft);
 
     // Add the TAI offset (37 seconds as of 2023)
-    tai64n->seconds = (uint64_t)(unix_time + 37);
+    tai64n->seconds = (uint64_t) (unix_time + 37);
 
     // Query performance counter for nanoseconds
-    if (QueryPerformanceFrequency(&freq) && QueryPerformanceCounter(&counter)) {
+    if (QueryPerformanceFrequency(&freq) && QueryPerformanceCounter(&counter))
+    {
         // Calculate the fractional part in nanoseconds
-        ns_fraction = (double)(counter.QuadPart % freq.QuadPart) * 1e9 / freq.QuadPart;
-    } else {
+        ns_fraction = (double) (counter.QuadPart % freq.QuadPart) * 1e9 / freq.QuadPart;
+    }
+    else
+    {
         // Fallback: Use zero nanoseconds if QPC is unavailable
         ns_fraction = 0.0;
     }
 
     // Store the nanoseconds fraction
-    tai64n->nanoseconds = (uint32_t)ns_fraction;
+    tai64n->nanoseconds = (uint32_t) ns_fraction;
 }
 
 #else
 #error cannot define getTAI64N
 #endif
-
 
 #endif // WW_TIME_H_
