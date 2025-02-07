@@ -103,29 +103,5 @@ typedef struct wireguardif_peer {
  *
  */
 
-// Initialise a new WireGuard network interface (netif)
-err_t wireguardifInit(struct netif *netif);
-
-// Helper to initialise the peer struct with defaults
-void wireguardifPeerInit(wireguardif_peer_t *peer);
-
-// Add a new peer to the specified interface - see wireguard.h for maximum number of peers allowed
-// On success the peer_index can be used to reference this peer in future function calls
-err_t wireguardifAddPeer(struct netif *netif, wireguardif_peer_t *peer, u8_t *peer_index);
-
-// Remove the given peer from the network interface
-err_t wireguardifRemovePeer(struct netif *netif, u8_t peer_index);
-
-// Update the "connect" IP of the given peer
-err_t wireguardifUpdateEndpoint(struct netif *netif, u8_t peer_index, const ip_addr_t *ip, u16_t port);
-
-// Try and connect to the given peer
-err_t wireguardifConnect(struct netif *netif, u8_t peer_index);
-
-// Stop trying to connect to the given peer
-err_t wireguardifDisconnect(struct netif *netif, u8_t peer_index);
-
-// Is the given peer "up"? A peer is up if it has a valid session key it can communicate with
-err_t wireguardifPeerIsUp(struct netif *netif, u8_t peer_index, ip_addr_t *current_ip, u16_t *current_port);
 
 #endif /* _WIREGUARDIF_H_ */

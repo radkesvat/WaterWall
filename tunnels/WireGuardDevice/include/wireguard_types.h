@@ -75,10 +75,10 @@ typedef struct wgdevice_init_data_s
     // Required: the private key of this WireGuard network interface
     const char *private_key;
     // Required: What UDP port to listen on
-    uint16 listen_port;
+    // uint16 listen_port;
     // Optional: restrict send/receive of encapsulated WireGuard traffic to this network interface only (NULL to use
     // routing table)
-    struct netif *bind_netif;
+    // struct netif *bind_netif;
 } wgdevice_init_data_t;
 
 typedef struct wgpeer_init_data_s
@@ -207,6 +207,7 @@ struct wireguard_device_s
     // Maybe have a "Device private" member to abstract these?
     struct netif   *netif;
     struct udp_pcb *udp_pcb;
+    uint64_t        status_connected : 1;
 
     uint8_t public_key[WIREGUARD_PUBLIC_KEY_LEN];
     uint8_t private_key[WIREGUARD_PRIVATE_KEY_LEN];

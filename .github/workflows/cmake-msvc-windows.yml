@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies on Windows
         shell: bash
         run: |
-          choco install -y jom nasm ccache
+          choco install -y jom nasm
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
 
 

@@ -13,6 +13,7 @@
 #include "sync_dns.h"
 #include "tunnel.h"
 #include "utils/json_helpers.h"
+#include "utils/base64.h"
 #include "worker.h"
 #include "wsocket.h"
 #include "wsysinfo.h"

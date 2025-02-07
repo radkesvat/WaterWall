@@ -157,14 +157,14 @@ wireguard_peer_t *peerLookupByHandshake(wireguard_device_t *device, uint32_t rec
 }
 
 bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds) {
-	uint32_t diff = wireguard_sys_now() - created_millis;
+	uint32_t diff = getTickMS() - created_millis;
 	return (diff >= (valid_seconds * 1000));
 }
 
 
 static void generateCookieSecret(wireguard_device_t *device) {
 	wireguard_random_bytes(device->cookie_secret, WIREGUARD_HASH_LEN);
-	device->cookie_secret_millis = wireguard_sys_now();
+	device->cookie_secret_millis = getTickMS();
 }
 
 static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint8_t *source_addr_port, size_t source_length) {
@@ -481,7 +481,7 @@ void wireguardStartSession(wireguard_peer_t *peer, bool initiator) {
 	new_keypair.local_index = handshake->local_index;
 	new_keypair.remote_index = handshake->remote_index;
 
-	new_keypair.keypair_millis = wireguard_sys_now();
+	new_keypair.keypair_millis = getTickMS();
 	new_keypair.sending_valid = true;
 	new_keypair.receiving_valid = true;
 
@@ -605,7 +605,7 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
 					// Hi := Hash(Hi || msg.timestamp)
 					wireguardMixHash(hash, msg->enc_timestamp, sizeof(msg->enc_timestamp));
 
-					now = wireguard_sys_now();
+					now = getTickMS();
 
 					// Check that timestamp is increasing and we haven't had too many initiations (should only get one per peer every 5 seconds max?)
 					replay = (memcmp(t, peer->greatest_timestamp, WIREGUARD_TAI64N_LEN) <= 0); // tai64n is big endian so we can use memcmp to compare
@@ -749,7 +749,7 @@ bool wireguardProcessCookieMessage(wireguard_device_t *device, wireguard_peer_t 
 			// 5.4.7 Under Load: Cookie Reply Message
 			// Upon receiving this message, if it is valid, the only thing the recipient of this message should do is store the cookie along with the time at which it was received
 			memcpy(peer->cookie, cookie, WIREGUARD_COOKIE_LEN);
-			peer->cookie_millis = wireguard_sys_now();
+			peer->cookie_millis = getTickMS();
 			peer->handshake_mac1_valid = false;
 		}
 	} else {
