@@ -185,12 +185,12 @@ if(cjson_ADDED)
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
 
-set(OPENSSL_CONFIGURE_VERBOSE ON)
+set(OPENSSL_CONFIGURE_VERBOSE FALSE)
 
 # add openssl (default version is latest 3.3.0 +)
 CPMAddPackage(
     NAME openssl-cmake
-    URL https://github.com/jimmy-park/openssl-cmake/archive/main.tar.gz
+    URL https://github.com/radkesvat/openssl-cmake/archive/main.tar.gz
     OPTIONS
     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
     "BUILD_SHARED_LIBS OFF"
