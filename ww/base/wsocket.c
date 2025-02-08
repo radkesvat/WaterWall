@@ -214,7 +214,7 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
     int sockfd = socket(localaddr->sa.sa_family, type, 0);
     if (sockfd < 0)
     {
-        printError("socket");
+        printError("syscall return error, call: socket , value: %d\n", sockfd);
         goto error;
     }
 
@@ -230,7 +230,7 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
 
     if (bind(sockfd, &localaddr->sa, sockaddrLen(localaddr)) < 0)
     {
-        printError("bind");
+        printError("syscall return error , call: bind , value: %d\n", -1);
         goto error;
     }
 
@@ -278,7 +278,8 @@ static int ListenFD(int sockfd)
         return sockfd;
     if (listen(sockfd, SOMAXCONN) < 0)
     {
-        printError("listen");
+        
+        printError("syscall return error, call: listen , value: %d\n", -1);
         return socketErrnoNegative(sockfd);
     }
     return sockfd;
@@ -434,22 +435,22 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0)
     {
-        printError("socket");
+        printError("syscall return error , call: socket , value: %d\n", listenfd);
         goto error;
     }
     if (bind(listenfd, (struct sockaddr *) &localaddr, addrlen) < 0)
     {
-        printError("bind");
+        printError("syscall return error , call: bind , value: %d\n", -1);
         goto error;
     }
     if (listen(listenfd, 1) < 0)
     {
-        printError("listen");
+        printError("syscall return error, call: listen , value: %d\n", -1);
         goto error;
     }
     if (getsockname(listenfd, (struct sockaddr *) &localaddr, &addrlen) < 0)
     {
-        printError("getsockname");
+        printError("syscall return error, call: getsockname , value: %d\n", -1);
         goto error;
     }
     // connector

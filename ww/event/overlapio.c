@@ -257,7 +257,7 @@ int wioConnect (wio_t* io) {
     localaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     localaddr.sin_port = htons(0);
     if (bind(io->fd, (struct sockaddr*)&localaddr, addrlen) < 0) {
-        printError("bind");
+        printError("syscall return error , call: bind , value: %d\n", -1);
         goto error;
     }
     // ConnectEx

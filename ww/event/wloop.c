@@ -943,7 +943,7 @@ wio_t* wioCreateSocket(wloop_t* loop, const char* host, int port, wio_type_e typ
     }
     int sockfd = socket(addr.sa.sa_family, sock_type, 0);
     if (sockfd < 0) {
-        printError("socket");
+        printError("syscall return error, call: socket , value: %d\n", sockfd);
         return NULL;
     }
     wio_t* io = NULL;
@@ -956,7 +956,7 @@ wio_t* wioCreateSocket(wloop_t* loop, const char* host, int port, wio_type_e typ
             ipV6Only(sockfd, 0);
         }
         if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0) {
-            printError("bind");
+            printError("syscall return error , call: bind , value: %d\n", -1);
             closesocket(sockfd);
             return NULL;
         }
