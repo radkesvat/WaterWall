@@ -73,9 +73,9 @@ extern unsigned int lwip_port_rand(void);
   handler;}} while(0)
 #endif
 
-#if defined(LWIP_UNIX_ANDROID) && defined(FD_SET)
-typedef __kernel_fd_set fd_set;
-#endif
+// #if defined(LWIP_UNIX_ANDROID) && defined(FD_SET)
+// typedef __kernel_fd_set fd_set;
+// #endif
 
 #if defined(LWIP_UNIX_MACH)
 /* sys/types.h and signal.h bring in Darwin byte order macros. pull the

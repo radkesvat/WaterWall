@@ -231,7 +231,7 @@ set (LWIP_INCLUDE_DIRS
     # lwipopts is located in ww/net
 )
 
-if(NOT DARWIN)
+if(NOT APPLE)
     target_compile_definitions(ww PUBLIC LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 endif()
 
