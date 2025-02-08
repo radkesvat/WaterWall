@@ -233,7 +233,7 @@ set (LWIP_INCLUDE_DIRS
 
 target_compile_definitions(ww PUBLIC LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 
-if(ANDROID)
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_compile_definitions(ww PUBLIC SOCKLEN_T_DEFINED=1)
 endif()
 
