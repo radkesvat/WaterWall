@@ -7,7 +7,7 @@
 // Define the context type
 typedef EVP_MAC_CTX blake2s_ctx_t;
 
-int blake2sInit(blake2s_ctx_t **ctx, size_t outlen, const unsigned char *key, size_t keylen)
+int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen)
 {
     if (!ctx || outlen == 0 || outlen > 32) 
     {
@@ -15,32 +15,20 @@ int blake2sInit(blake2s_ctx_t **ctx, size_t outlen, const unsigned char *key, si
         return -1;
     }
 
-    // Create a new MAC context for BLAKE2s
-    *ctx = EVP_MAC_CTX_new(EVP_MAC_fetch(NULL, "BLAKE2s", NULL));
-    if (!*ctx) 
-    {
-        printError("Failed to allocate EVP_MAC_CTX.\n");
-        return -1;
-    }
-
     // Set the output length using OSSL_PARAM
     OSSL_PARAM params[3];
     size_t params_idx = 0;
-
     params[params_idx++] = OSSL_PARAM_construct_size_t(OSSL_MAC_PARAM_SIZE, &outlen);
-
     if (key && keylen > 0) 
     {
         params[params_idx++] = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY, (void *)key, keylen);
     }
-
     params[params_idx] = OSSL_PARAM_construct_end();
 
-    if (EVP_MAC_init(*ctx, NULL, 0, params) != 1) 
+    if (EVP_MAC_init(ctx, NULL, 0, params) != 1) 
     {
         printError("Failed to initialize BLAKE2s context.\n");
-        EVP_MAC_CTX_free(*ctx);
-        *ctx = NULL;
+        EVP_MAC_CTX_free(ctx);
         return -1;
     }
 
@@ -90,22 +78,26 @@ int blake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
 int blake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen, const unsigned char *in,
             size_t inlen)
 {
-    blake2s_ctx_t *ctx = NULL;
-
-    // Initialize the context
-    if (blake2sInit(&ctx, outlen, key, keylen) < 0)
+    // Allocate and initialize the context externally
+    blake2s_ctx_t *ctx = EVP_MAC_CTX_new(EVP_MAC_fetch(NULL, "BLAKE2s", NULL));
+    if (!ctx)
     {
+        printError("Failed to allocate EVP_MAC_CTX.\n");
         return -1;
     }
 
-    // Update the context with input data
+    if (blake2sInit(ctx, outlen, key, keylen) < 0)
+    {
+        // ctx is already freed within blake2sInit on error
+        return -1;
+    }
+
     if (blake2sUpdate(ctx, in, inlen) < 0)
     {
         EVP_MAC_CTX_free(ctx);
         return -1;
     }
 
-    // Finalize the hash computation
     if (blake2sFinal(ctx, out) < 0)
     {
         return -1;

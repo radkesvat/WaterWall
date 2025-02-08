@@ -2,17 +2,23 @@
 #include "wlibc.h"
 
 #ifdef WCRYPTO_BACKEND_SODIUM
+
 #include "sodium.h"
-typedef crypto_generichash_state blake2s_ctx_t;
 
+// state context
+typedef struct {
+    uint8_t b[64];                      // input buffer
+    uint32_t h[8];                      // chained state
+    uint32_t t[2];                      // total number of bytes
+    size_t c;                           // pointer for b[]
+    size_t outlen;                      // digest size
+} blake2s_ctx_t;
 #else
-#include <openssl/core_names.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
 
-typedef EVP_MAC_CTX blake2s_ctx_t;
+typedef struct evp_mac_ctx_st blake2s_ctx_t;
 
 #endif
+
 
 // Context structure for BLAKE2s hash function operations
 
@@ -21,7 +27,7 @@ typedef EVP_MAC_CTX blake2s_ctx_t;
 // key: optional key for keyed hashing (NULL for unkeyed)
 // keylen: length of key (0 for unkeyed)
 // Returns: 1 on success, 0 on failure
-int blake2sInit(blake2s_ctx_t **ctx, size_t outlen, const unsigned char *key, size_t keylen);
+int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, size_t keylen);
 
 // Update BLAKE2s hash context with new data
 // ctx: initialized BLAKE2s context

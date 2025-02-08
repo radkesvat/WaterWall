@@ -47,16 +47,16 @@ static void wireguard12byteTai64(uint8_t *output)
 
 void wireguardInit(void)
 {
-    blake2s_ctx_t *ctx;
+    blake2s_ctx_t ctx;
     // Pre-calculate chaining key hash
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
-    blake2sUpdate(ctx, CONSTRUCTION, sizeof(CONSTRUCTION));
-    blake2sFinal(ctx, construction_hash);
+    blake2sUpdate(&ctx, CONSTRUCTION, sizeof(CONSTRUCTION));
+    blake2sFinal(&ctx, construction_hash);
     // Pre-calculate initial handshake hash - uses construction_hash calculated above
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
-    blake2sUpdate(ctx, construction_hash, sizeof(construction_hash));
-    blake2sUpdate(ctx, IDENTIFIER, sizeof(IDENTIFIER));
-    blake2sFinal(ctx, identifier_hash);
+    blake2sUpdate(&ctx, construction_hash, sizeof(construction_hash));
+    blake2sUpdate(&ctx, IDENTIFIER, sizeof(IDENTIFIER));
+    blake2sFinal(&ctx, identifier_hash);
 }
 
 wireguard_peer_t *peerAlloc(wireguard_device_t *device)
@@ -181,7 +181,7 @@ static void generateCookieSecret(wireguard_device_t *device)
 static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint8_t *source_addr_port,
                                size_t source_length)
 {
-    blake2s_ctx_t *ctx;
+    blake2s_ctx_t ctx;
 
     if (wireguardExpired(device->cookie_secret_millis, COOKIE_SECRET_MAX_AGE))
     {
@@ -197,9 +197,9 @@ static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint
     // in this module
     if ((source_addr_port) && (source_length > 0))
     {
-        blake2sUpdate(ctx, source_addr_port, source_length);
+        blake2sUpdate(&ctx, source_addr_port, source_length);
     }
-    blake2sFinal(ctx, cookie);
+    blake2sFinal(&ctx, cookie);
 }
 
 static void wireguardMac(uint8_t *dst, const void *message, size_t len, const uint8_t *key, size_t keylen)
@@ -209,26 +209,26 @@ static void wireguardMac(uint8_t *dst, const void *message, size_t len, const ui
 
 static void wireguardMacKey(uint8_t *key, const uint8_t *public_key, const uint8_t *label, size_t label_len)
 {
-    blake2s_ctx_t *ctx;
+    blake2s_ctx_t ctx;
     blake2sInit(&ctx, WIREGUARD_SESSION_KEY_LEN, NULL, 0);
-    blake2sUpdate(ctx, label, label_len);
-    blake2sUpdate(ctx, public_key, WIREGUARD_PUBLIC_KEY_LEN);
-    blake2sFinal(ctx, key);
+    blake2sUpdate(&ctx, label, label_len);
+    blake2sUpdate(&ctx, public_key, WIREGUARD_PUBLIC_KEY_LEN);
+    blake2sFinal(&ctx, key);
 }
 
 static void wireguardMixHash(uint8_t *hash, const uint8_t *src, size_t src_len)
 {
-    blake2s_ctx_t *ctx;
+    blake2s_ctx_t ctx;
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
-    blake2sUpdate(ctx, hash, WIREGUARD_HASH_LEN);
-    blake2sUpdate(ctx, src, src_len);
-    blake2sFinal(ctx, hash);
+    blake2sUpdate(&ctx, hash, WIREGUARD_HASH_LEN);
+    blake2sUpdate(&ctx, src, src_len);
+    blake2sFinal(&ctx, hash);
 }
 
 static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, const uint8_t *text, size_t text_len)
 {
     // Adapted from appendix example in RFC2104 to use BLAKE2S instead of MD5 - https://tools.ietf.org/html/rfc2104
-    blake2s_ctx_t *ctx;
+    blake2s_ctx_t ctx;
     uint8_t        k_ipad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // inner padding - key XORd with ipad
     uint8_t        k_opad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // outer padding - key XORd with opad
 
@@ -237,10 +237,10 @@ static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, c
     // if key is longer than BLAKE2S_BLOCK_SIZE bytes reset it to key=BLAKE2S(key)
     if (key_len > WIREGUARD_BLAKE2S_BLOCK_SIZE)
     {
-        blake2s_ctx_t *tctx;
+        blake2s_ctx_t tctx;
         blake2sInit(&tctx, WIREGUARD_HASH_LEN, NULL, 0);
-        blake2sUpdate(tctx, key, key_len);
-        blake2sFinal(tctx, tk);
+        blake2sUpdate(&tctx, key, key_len);
+        blake2sFinal(&tctx, tk);
         key     = tk;
         key_len = WIREGUARD_HASH_LEN;
     }
@@ -264,15 +264,15 @@ static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, c
     }
     // perform inner HASH
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);           // init context for 1st pass
-    blake2sUpdate(ctx, k_ipad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with inner pad
-    blake2sUpdate(ctx, text, text_len);                       // then text of datagram
-    blake2sFinal(ctx, digest);                                // finish up 1st pass
+    blake2sUpdate(&ctx, k_ipad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with inner pad
+    blake2sUpdate(&ctx, text, text_len);                       // then text of datagram
+    blake2sFinal(&ctx, digest);                                // finish up 1st pass
 
     // perform outer HASH
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);           // init context for 2nd pass
-    blake2sUpdate(ctx, k_opad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with outer pad
-    blake2sUpdate(ctx, digest, WIREGUARD_HASH_LEN);           // then results of 1st hash
-    blake2sFinal(ctx, digest);                                // finish up 2nd pass
+    blake2sUpdate(&ctx, k_opad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with outer pad
+    blake2sUpdate(&ctx, digest, WIREGUARD_HASH_LEN);           // then results of 1st hash
+    blake2sFinal(&ctx, digest);                                // finish up 2nd pass
 }
 
 static void wireguardKdf1(uint8_t *tau1, const uint8_t *chaining_key, const uint8_t *data, size_t data_len)
