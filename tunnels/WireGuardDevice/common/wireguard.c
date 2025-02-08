@@ -5,6 +5,7 @@
 
 #pragma warning(disable : 4295) // array is too small to include a terminating null character (IT IS OK)
 #pragma warning(disable : 4703) // potentially uninitialized local pointer variable (IT IS OK)
+#pragma warning(disable : 4701) // potentially uninitialized local variable (IT IS OK)
 
 #endif
 
