@@ -231,12 +231,18 @@ set (LWIP_INCLUDE_DIRS
     # lwipopts is located in ww/net
 )
 
-target_compile_definitions(ww PUBLIC LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Android")
-    target_compile_definitions(ww PUBLIC SOCKLEN_T_DEFINED=1)
+if(NOT DARWIN)
+    target_compile_definitions(ww PUBLIC LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 endif()
 
+if(ANDROID)
+    set (LWIP_DEFINITIONS SOCKLEN_T_DEFINED=1)
+endif()
+
+
+if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+    set (LWIP_DEFINITIONS SOCKLEN_T_DEFINED=1)
+endif()
 
 if(WIN32)
     set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
@@ -339,7 +345,7 @@ endif()
 
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    target_compile_definitions(ww PUBLIC DEBUG=1 LWIP_DEBUG=1)
+    target_compile_definitions(ww PUBLIC DEBUG=1)
 else()
     target_compile_definitions(ww PUBLIC NDEBUG=1)
 endif()
