@@ -45,6 +45,23 @@ static void wireguard12byteTai64(uint8_t *output)
     U32TO8_BIG(output + 8, nanos);
 }
 
+static int chacha20poly1305EncryptWrapper(unsigned char *dst, const unsigned char *src, size_t srclen,
+                                           const unsigned char *ad, size_t adlen, uint64_t nonce,
+                                           const unsigned char *key)
+{
+    uint32_t wireguard_way_of_nonce[4] = {0, 0, nonce & 0xFFFFFFFF, nonce >> 32};
+    return chacha20poly1305Encrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce, key);
+}
+
+static int chacha20poly1305DecryptWrapper(unsigned char *dst, const unsigned char *src, size_t srclen,
+                                           const unsigned char *ad, size_t adlen, uint64_t nonce,
+                                           const unsigned char *key)
+{
+    uint32_t wireguard_way_of_nonce[4] = {0, 0, nonce & 0xFFFFFFFF, nonce >> 32};
+
+    return chacha20poly1305Decrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce, key);
+}
+
 void wireguardInit(void)
 {
     blake2s_ctx_t ctx;
@@ -229,8 +246,8 @@ static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, c
 {
     // Adapted from appendix example in RFC2104 to use BLAKE2S instead of MD5 - https://tools.ietf.org/html/rfc2104
     blake2s_ctx_t ctx;
-    uint8_t        k_ipad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // inner padding - key XORd with ipad
-    uint8_t        k_opad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // outer padding - key XORd with opad
+    uint8_t       k_ipad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // inner padding - key XORd with ipad
+    uint8_t       k_opad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // outer padding - key XORd with opad
 
     uint8_t tk[WIREGUARD_HASH_LEN];
     int     i;
@@ -263,13 +280,13 @@ static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, c
         k_opad[i] ^= 0x5c;
     }
     // perform inner HASH
-    blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);           // init context for 1st pass
+    blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);            // init context for 1st pass
     blake2sUpdate(&ctx, k_ipad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with inner pad
     blake2sUpdate(&ctx, text, text_len);                       // then text of datagram
     blake2sFinal(&ctx, digest);                                // finish up 1st pass
 
     // perform outer HASH
-    blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);           // init context for 2nd pass
+    blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);            // init context for 2nd pass
     blake2sUpdate(&ctx, k_opad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with outer pad
     blake2sUpdate(&ctx, digest, WIREGUARD_HASH_LEN);           // then results of 1st hash
     blake2sFinal(&ctx, digest);                                // finish up 2nd pass
@@ -673,7 +690,7 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
         wireguardKdf2(chaining_key, key, chaining_key, dh_calculation, WIREGUARD_PUBLIC_KEY_LEN);
 
         // msg.static := AEAD(k, 0, Spubi, Hi)
-        if (chacha20poly1305Decrypt(s, msg->enc_static, sizeof(msg->enc_static), hash, WIREGUARD_HASH_LEN, 0, key))
+        if (chacha20poly1305DecryptWrapper(s, msg->enc_static, sizeof(msg->enc_static), hash, WIREGUARD_HASH_LEN, 0, key))
         {
             // Hi := Hash(Hi || msg.static)
             wireguardMixHash(hash, msg->enc_static, sizeof(msg->enc_static));
@@ -687,7 +704,7 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
                 wireguardKdf2(chaining_key, key, chaining_key, peer->public_key_dh, WIREGUARD_PUBLIC_KEY_LEN);
 
                 // msg.timestamp := AEAD(k, 0, Timestamp(), Hi)
-                if (chacha20poly1305Decrypt(t, msg->enc_timestamp, sizeof(msg->enc_timestamp), hash, WIREGUARD_HASH_LEN,
+                if (chacha20poly1305DecryptWrapper(t, msg->enc_timestamp, sizeof(msg->enc_timestamp), hash, WIREGUARD_HASH_LEN,
                                             0, key))
                 {
                     // Hi := Hash(Hi || msg.timestamp)
@@ -923,7 +940,7 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
                           WIREGUARD_PUBLIC_KEY_LEN);
 
             // msg.static := AEAD(k,0,Spubi, Hi)
-            chacha20poly1305Encrypt(dst->enc_static, device->public_key, WIREGUARD_PUBLIC_KEY_LEN, handshake->hash,
+            chacha20poly1305EncryptWrapper(dst->enc_static, device->public_key, WIREGUARD_PUBLIC_KEY_LEN, handshake->hash,
                                     WIREGUARD_HASH_LEN, 0, key);
 
             // Hi := Hash(Hi || msg.static)
@@ -936,7 +953,7 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
 
             // msg.timestamp := AEAD(k, 0, Timestamp(), Hi)
             wireguard12byteTai64(timestamp);
-            chacha20poly1305Encrypt(dst->enc_timestamp, timestamp, WIREGUARD_TAI64N_LEN, handshake->hash,
+            chacha20poly1305EncryptWrapper(dst->enc_timestamp, timestamp, WIREGUARD_TAI64N_LEN, handshake->hash,
                                     WIREGUARD_HASH_LEN, 0, key);
 
             // Hi := Hash(Hi || msg.timestamp)
@@ -1032,7 +1049,7 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
                     wireguardMixHash(handshake->hash, tau, WIREGUARD_HASH_LEN);
 
                     // msg.empty := AEAD(k, 0, E, Hr)
-                    chacha20poly1305Encrypt(dst->enc_empty, NULL, 0, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
+                    chacha20poly1305EncryptWrapper(dst->enc_empty, NULL, 0, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
 
                     // Hr := Hash(Hr | msg.empty)
                     wireguardMixHash(handshake->hash, dst->enc_empty, sizeof(dst->enc_empty));
@@ -1167,14 +1184,16 @@ bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key)
     return device->valid;
 }
 
+// Modify packet functions to use the wrappers:
 void wireguardEncryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, wireguard_keypair_t *keypair)
 {
-    chacha20poly1305Encrypt(dst, src, src_len, NULL, 0, (uint8_t *) &keypair->sending_counter, keypair->sending_key);
+    // Use the wrapper with keypair->sending_counter passed by value.
+    chacha20poly1305EncryptWrapper(dst, src, src_len, NULL, 0, keypair->sending_counter, keypair->sending_key);
     keypair->sending_counter++;
 }
 
 bool wireguardDecryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, uint64_t counter,
                             wireguard_keypair_t *keypair)
 {
-    return chacha20poly1305Decrypt(dst, src, src_len, NULL, 0, (uint8_t *) &counter, keypair->receiving_key);
+    return chacha20poly1305DecryptWrapper(dst, src, src_len, NULL, 0, counter, keypair->receiving_key);
 }

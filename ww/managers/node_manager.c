@@ -189,6 +189,16 @@ static void runNodes(node_manager_config_t *cfg)
     {
         for (int i = 0; i < tunnels_count; i++)
         {
+            if(t_array_cpy[i]->chain == NULL && !(t_array_cpy[i]->node->flags & kNodeFlagNoChain))
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array_cpy[i]->node->name);
+                exit(1);
+            }
+        }
+    }
+    {
+        for (int i = 0; i < tunnels_count; i++)
+        {
             assert(t_array_cpy[i] != NULL);
             t_array_cpy[i]->onPrepair(t_array_cpy[i]);
         }
