@@ -230,6 +230,9 @@ set (LWIP_INCLUDE_DIRS
     "${LWIPOPTS_DIR}"
     # lwipopts is located in ww/net
 )
+
+target_compile_definitions(ww PUBLIC LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
+
 if(WIN32)
     set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
     target_compile_definitions(ww PUBLIC LWIP_NO_UNISTD_H=1)

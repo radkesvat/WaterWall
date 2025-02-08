@@ -22,11 +22,11 @@ bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t* t,address_context_t *dest_c
 #else
             const uint32_t large_random = (((uint32_t) rand_s(&seed)) % state->outbound_ip_range);
 #endif
-            uint32_t calc = ntohl((uint32_t) dest_ctx->ip_address.u_addr.addr);
+            uint32_t calc = ntohl((uint32_t) dest_ctx->ip_address.u_addr.ip4.addr);
             calc          = calc & ~(state->outbound_ip_range - 1ULL);
             calc          = htonl(calc + large_random);
 
-            memoryCopy(&(dest_ctx->ip_address.u_addr.addr), &calc, sizeof(struct in_addr));
+            memoryCopy(&(dest_ctx->ip_address.u_addr.ip4), &calc, sizeof(struct in_addr));
         }
         break;
     case AF_INET6:
@@ -37,14 +37,14 @@ bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t* t,address_context_t *dest_c
 #else
             const uint64_t large_random = (((uint64_t) rand_s(&seed)) % state->outbound_ip_range);
 #endif
-            uint64_t *addr_ptr = (uint64_t *) &dest_ctx->ip_address.u_addr.addr_ipv6;
+            uint64_t *addr_ptr = (uint64_t *) &dest_ctx->ip_address.u_addr.ip6;
             addr_ptr += 1;
 
             uint64_t calc = ntohll(*addr_ptr);
             calc          = calc & ~(state->outbound_ip_range - 1ULL);
             calc          = htonll(calc + large_random);
 
-            memoryCopy(8 + ((char *) &(dest_ctx->ip_address.u_addr.addr_ipv6)), &calc, sizeof(calc));
+            memoryCopy(8 + ((char *) &(dest_ctx->ip_address.u_addr.ip6)), &calc, sizeof(calc));
         }
         break;
 
