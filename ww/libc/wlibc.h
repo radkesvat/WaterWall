@@ -12,6 +12,9 @@
 #include "whash.h"
 #include "wmath.h"
 
+#include "ww_lwip.h"
+
+
 void initWLibc(void);
 
 //--------------------Memory-------------------------------

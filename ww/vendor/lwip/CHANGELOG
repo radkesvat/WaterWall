@@ -896,7 +896,7 @@ HISTORY
   * tcp_out.c: reset rto timer on fast retransmission
 
   2016-03-16: Deomid Ryabkov
-  * tcp_out.c: fixed bug #46384 Segment size calculation bug with MSS != TCP_MSS
+  * tcp_out.c: fixed bug #46384 Segment size calculation bug with MSS != LWIP_TCP_MSS
 
   2016-03-05: Simon Goldschmidt
   * err.h/.c, sockets.c: ERR_IF is not necessarily a fatal error
@@ -1530,7 +1530,7 @@ HISTORY
   * timers.c: fixed bug #34337 (possible NULL pointer in sys_check_timeouts)
 
   2011-09-11: Simon Goldschmidt
-  * tcp_out.c: use pcb->mss instead of TCP_MSS for preallocate mss-sized pbufs
+  * tcp_out.c: use pcb->mss instead of LWIP_TCP_MSS for preallocate mss-sized pbufs
     (bug #34019)
 
   2011-09-09: Simon Goldschmidt
@@ -2325,8 +2325,8 @@ HISTORY
   * netdb.h: Fixed bug #27994: incorrect define for freeaddrinfo(addrinfo)
 
   2009-10-30: Simon Goldschmidt
-  * opt.h: Increased default value for TCP_MSS to 536, updated default
-    value for TCP_WND to 4*TCP_MSS to keep delayed ACK working.
+  * opt.h: Increased default value for LWIP_TCP_MSS to 536, updated default
+    value for TCP_WND to 4*LWIP_TCP_MSS to keep delayed ACK working.
 
   2009-10-28: Kieran Mansley
   * tcp_in.c, tcp_out.c, tcp.h: re-work the fast retransmission code
@@ -2401,7 +2401,7 @@ HISTORY
     is error.
 
   2009-08-23 Simon Goldschmidt
-  * opt.h, init.c: bug #26649: TCP fails when TCP_MSS > TCP_SND_BUF
+  * opt.h, init.c: bug #26649: TCP fails when LWIP_TCP_MSS > TCP_SND_BUF
     Fixed wrong parenthesis, added check in init.c
 
   2009-08-23 Simon Goldschmidt
@@ -3479,17 +3479,17 @@ HISTORY
 
   2007-11-01 Simon Goldschmidt
   * tcp.c, tcp_in.c: Fixed bug #21494: The send mss (pcb->mss) is set to 536 (or
-    TCP_MSS if that is smaller) as long as no MSS option is received from the
+    LWIP_TCP_MSS if that is smaller) as long as no MSS option is received from the
     remote host.
 
   2007-11-01 Simon Goldschmidt
   * tcp.h, tcp.c, tcp_in.c: Fixed bug #21491: The MSS option sent (with SYN)
-    is now based on TCP_MSS instead of pcb->mss (on passive open now effectively
-    sending our configured TCP_MSS instead of the one received).
+    is now based on LWIP_TCP_MSS instead of pcb->mss (on passive open now effectively
+    sending our configured LWIP_TCP_MSS instead of the one received).
 
   2007-11-01 Simon Goldschmidt
   * tcp_in.c: Fixed bug #21181: On active open, the initial congestion window was
-    calculated based on the configured TCP_MSS, not on the MSS option received
+    calculated based on the configured LWIP_TCP_MSS, not on the MSS option received
     with SYN+ACK.
 
   2007-10-09 Simon Goldschmidt

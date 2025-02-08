@@ -7,7 +7,7 @@
  *         Simon Goldschmidt
  *
  * @todo:
- * - take TCP_MSS, LWIP_TCP_TIMESTAMPS and
+ * - take LWIP_TCP_MSS, LWIP_TCP_TIMESTAMPS and
  *   PAYLOAD_ALIGN_TYPE/PAYLOAD_ALIGNMENT as arguments
  */
 
@@ -708,7 +708,7 @@ static void process_file_data(FILE *data_file, u8_t *file_data, size_t file_size
 static int write_checksums(FILE *struct_file, const char *varname,
                            u16_t hdr_len, u16_t hdr_chksum, const u8_t *file_data, size_t file_size)
 {
-  int chunk_size = TCP_MSS;
+  int chunk_size = LWIP_TCP_MSS;
   int offset, src_offset;
   size_t len;
   int i = 0;

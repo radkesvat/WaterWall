@@ -1290,13 +1290,13 @@
 
 /**
  * TCP_WND: The size of a TCP window.  This must be at least
- * (2 * TCP_MSS) for things to work well.
+ * (2 * LWIP_TCP_MSS) for things to work well.
  * ATTENTION: when using TCP_RCV_SCALE, TCP_WND is the total size
  * with scaling applied. Maximum window value in the TCP header
  * will be TCP_WND >> TCP_RCV_SCALE
  */
 #if !defined TCP_WND || defined __DOXYGEN__
-#define TCP_WND                         (4 * TCP_MSS)
+#define TCP_WND                         (4 * LWIP_TCP_MSS)
 #endif
 
 /**
@@ -1343,14 +1343,14 @@
 #endif
 
 /**
- * TCP_MSS: TCP Maximum segment size. (default is 536, a conservative default,
+ * LWIP_TCP_MSS: TCP Maximum segment size. (default is 536, a conservative default,
  * you might want to increase this.)
  * For the receive side, this MSS is advertised to the remote side
  * when opening a connection. For the transmit size, this MSS sets
  * an upper limit on the MSS advertised by the remote host.
  */
-#if !defined TCP_MSS || defined __DOXYGEN__
-#define TCP_MSS                         536
+#if !defined LWIP_TCP_MSS || defined __DOXYGEN__
+#define LWIP_TCP_MSS                         536
 #endif
 
 /**
@@ -1358,7 +1358,7 @@
  * sends, the 'effective send MSS,' MUST be the smaller of the send MSS (which
  * reflects the available reassembly buffer size at the remote host) and the
  * largest size permitted by the IP layer" (RFC 1122)
- * Setting this to 1 enables code that checks TCP_MSS against the MTU of the
+ * Setting this to 1 enables code that checks LWIP_TCP_MSS against the MTU of the
  * netif used for a connection and limits the MSS if it would be too big otherwise.
  */
 #if !defined TCP_CALCULATE_EFF_SEND_MSS || defined __DOXYGEN__
@@ -1377,18 +1377,18 @@
 
 /**
  * TCP_SND_BUF: TCP sender buffer space (bytes).
- * To achieve good performance, this should be at least 2 * TCP_MSS.
+ * To achieve good performance, this should be at least 2 * LWIP_TCP_MSS.
  */
 #if !defined TCP_SND_BUF || defined __DOXYGEN__
-#define TCP_SND_BUF                     (2 * TCP_MSS)
+#define TCP_SND_BUF                     (2 * LWIP_TCP_MSS)
 #endif
 
 /**
  * TCP_SND_QUEUELEN: TCP sender buffer space (pbufs). This must be at least
- * as much as (2 * TCP_SND_BUF/TCP_MSS) for things to work.
+ * as much as (2 * TCP_SND_BUF/LWIP_TCP_MSS) for things to work.
  */
 #if !defined TCP_SND_QUEUELEN || defined __DOXYGEN__
-#define TCP_SND_QUEUELEN                ((4 * (TCP_SND_BUF) + (TCP_MSS - 1))/(TCP_MSS))
+#define TCP_SND_QUEUELEN                ((4 * (TCP_SND_BUF) + (LWIP_TCP_MSS - 1))/(LWIP_TCP_MSS))
 #endif
 
 /**
@@ -1397,7 +1397,7 @@
  * TCP snd_buf for select to return writable (combined with TCP_SNDQUEUELOWAT).
  */
 #if !defined TCP_SNDLOWAT || defined __DOXYGEN__
-#define TCP_SNDLOWAT                    LWIP_MIN(LWIP_MAX(((TCP_SND_BUF)/2), (2 * TCP_MSS) + 1), (TCP_SND_BUF) - 1)
+#define TCP_SNDLOWAT                    LWIP_MIN(LWIP_MAX(((TCP_SND_BUF)/2), (2 * LWIP_TCP_MSS) + 1), (TCP_SND_BUF) - 1)
 #endif
 
 /**
@@ -1474,7 +1474,7 @@
 /**
  * TCP_OVERSIZE: The maximum number of bytes that tcp_write may
  * allocate ahead of time in an attempt to create shorter pbuf chains
- * for transmission. The meaningful range is 0 to TCP_MSS. Some
+ * for transmission. The meaningful range is 0 to LWIP_TCP_MSS. Some
  * suggested values are:
  *
  * 0:         Disable oversized allocation. Each tcp_write() allocates a new
@@ -1482,11 +1482,11 @@
  * 1:         Allocate size-aligned pbufs with minimal excess. Use this if your
  *            scatter-gather DMA requires aligned fragments.
  * 128:       Limit the pbuf/memory overhead to 20%.
- * TCP_MSS:   Try to create unfragmented TCP packets.
- * TCP_MSS/4: Try to create 4 fragments or less per TCP packet.
+ * LWIP_TCP_MSS:   Try to create unfragmented TCP packets.
+ * LWIP_TCP_MSS/4: Try to create 4 fragments or less per TCP packet.
  */
 #if !defined TCP_OVERSIZE || defined __DOXYGEN__
-#define TCP_OVERSIZE                    TCP_MSS
+#define TCP_OVERSIZE                    LWIP_TCP_MSS
 #endif
 
 /**
@@ -1504,7 +1504,7 @@
  * explicit window update
  */
 #if !defined TCP_WND_UPDATE_THRESHOLD || defined __DOXYGEN__
-#define TCP_WND_UPDATE_THRESHOLD        LWIP_MIN((TCP_WND / 4), (TCP_MSS * 4))
+#define TCP_WND_UPDATE_THRESHOLD        LWIP_MIN((TCP_WND / 4), (LWIP_TCP_MSS * 4))
 #endif
 
 /**
@@ -1611,10 +1611,10 @@
 /**
  * PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool. The default is
  * designed to accommodate single full size TCP frame in one pbuf, including
- * TCP_MSS, IP header, and link header.
+ * LWIP_TCP_MSS, IP header, and link header.
  */
 #if !defined PBUF_POOL_BUFSIZE || defined __DOXYGEN__
-#define PBUF_POOL_BUFSIZE               LWIP_MEM_ALIGN_SIZE(TCP_MSS+PBUF_IP_HLEN+PBUF_TRANSPORT_HLEN+PBUF_LINK_ENCAPSULATION_HLEN+PBUF_LINK_HLEN)
+#define PBUF_POOL_BUFSIZE               LWIP_MEM_ALIGN_SIZE(LWIP_TCP_MSS+PBUF_IP_HLEN+PBUF_TRANSPORT_HLEN+PBUF_LINK_ENCAPSULATION_HLEN+PBUF_LINK_HLEN)
 #endif
 
 /**
@@ -2220,10 +2220,10 @@
 #endif
 
 /**
- * IP_STATS==1: Enable IP stats.
+ * LWIP_IP_STATS==1: Enable IP stats.
  */
-#if !defined IP_STATS || defined __DOXYGEN__
-#define IP_STATS                        1
+#if !defined LWIP_IP_STATS || defined __DOXYGEN__
+#define LWIP_IP_STATS                        1
 #endif
 
 /**
@@ -2235,10 +2235,10 @@
 #endif
 
 /**
- * ICMP_STATS==1: Enable ICMP stats.
+ * LWIP_ICMP_STATS==1: Enable ICMP stats.
  */
-#if !defined ICMP_STATS || defined __DOXYGEN__
-#define ICMP_STATS                      1
+#if !defined LWIP_ICMP_STATS || defined __DOXYGEN__
+#define LWIP_ICMP_STATS                      1
 #endif
 
 /**
@@ -2249,19 +2249,19 @@
 #endif
 
 /**
- * UDP_STATS==1: Enable UDP stats. Default is on if
+ * LWIP_UDP_STATS==1: Enable UDP stats. Default is on if
  * UDP enabled, otherwise off.
  */
-#if !defined UDP_STATS || defined __DOXYGEN__
-#define UDP_STATS                       (LWIP_UDP)
+#if !defined LWIP_UDP_STATS || defined __DOXYGEN__
+#define LWIP_UDP_STATS                       (LWIP_UDP)
 #endif
 
 /**
- * TCP_STATS==1: Enable TCP stats. Default is on if TCP
+ * LWIP_TCP_STATS==1: Enable TCP stats. Default is on if TCP
  * enabled, otherwise off.
  */
-#if !defined TCP_STATS || defined __DOXYGEN__
-#define TCP_STATS                       (LWIP_TCP)
+#if !defined LWIP_TCP_STATS || defined __DOXYGEN__
+#define LWIP_TCP_STATS                       (LWIP_TCP)
 #endif
 
 /**
@@ -2286,10 +2286,10 @@
 #endif
 
 /**
- * IP6_STATS==1: Enable IPv6 stats.
+ * LWIP_IP6_STATS==1: Enable IPv6 stats.
  */
-#if !defined IP6_STATS || defined __DOXYGEN__
-#define IP6_STATS                       (LWIP_IPV6)
+#if !defined LWIP_IP6_STATS || defined __DOXYGEN__
+#define LWIP_IP6_STATS                       (LWIP_IPV6)
 #endif
 
 /**
@@ -2331,17 +2331,17 @@
 
 #define LINK_STATS                      0
 #define ETHARP_STATS                    0
-#define IP_STATS                        0
+#define LWIP_IP_STATS                        0
 #define IPFRAG_STATS                    0
-#define ICMP_STATS                      0
+#define LWIP_ICMP_STATS                      0
 #define IGMP_STATS                      0
-#define UDP_STATS                       0
-#define TCP_STATS                       0
+#define LWIP_UDP_STATS                       0
+#define LWIP_TCP_STATS                       0
 #define MEM_STATS                       0
 #define MEMP_STATS                      0
 #define SYS_STATS                       0
 #define LWIP_STATS_DISPLAY              0
-#define IP6_STATS                       0
+#define LWIP_IP6_STATS                       0
 #define ICMP6_STATS                     0
 #define IP6_FRAG_STATS                  0
 #define MLD6_STATS                      0

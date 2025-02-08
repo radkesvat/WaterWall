@@ -245,11 +245,11 @@ struct stats_ {
   /** Fragmentation */
   struct stats_proto ip_frag;
 #endif
-#if IP_STATS
+#if LWIP_IP_STATS
   /** IP */
   struct stats_proto ip;
 #endif
-#if ICMP_STATS
+#if LWIP_ICMP_STATS
   /** ICMP */
   struct stats_proto icmp;
 #endif
@@ -257,11 +257,11 @@ struct stats_ {
   /** IGMP */
   struct stats_igmp igmp;
 #endif
-#if UDP_STATS
+#if LWIP_UDP_STATS
   /** UDP */
   struct stats_proto udp;
 #endif
-#if TCP_STATS
+#if LWIP_TCP_STATS
   /** TCP */
   struct stats_proto tcp;
 #endif
@@ -277,7 +277,7 @@ struct stats_ {
   /** System */
   struct stats_sys sys;
 #endif
-#if IP6_STATS
+#if LWIP_IP6_STATS
   /** IPv6 */
   struct stats_proto ip6;
 #endif
@@ -324,7 +324,7 @@ void stats_init(void);
 #define STATS_INC_USED(x, y, type)
 #endif /* LWIP_STATS */
 
-#if TCP_STATS
+#if LWIP_TCP_STATS
 #define TCP_STATS_INC(x) STATS_INC(x)
 #define TCP_STATS_DISPLAY() stats_display_proto(&lwip_stats.tcp, "TCP")
 #else
@@ -332,7 +332,7 @@ void stats_init(void);
 #define TCP_STATS_DISPLAY()
 #endif
 
-#if UDP_STATS
+#if LWIP_UDP_STATS
 #define UDP_STATS_INC(x) STATS_INC(x)
 #define UDP_STATS_DISPLAY() stats_display_proto(&lwip_stats.udp, "UDP")
 #else
@@ -340,7 +340,7 @@ void stats_init(void);
 #define UDP_STATS_DISPLAY()
 #endif
 
-#if ICMP_STATS
+#if LWIP_ICMP_STATS
 #define ICMP_STATS_INC(x) STATS_INC(x)
 #define ICMP_STATS_DISPLAY() stats_display_proto(&lwip_stats.icmp, "ICMP")
 #else
@@ -356,7 +356,7 @@ void stats_init(void);
 #define IGMP_STATS_DISPLAY()
 #endif
 
-#if IP_STATS
+#if LWIP_IP_STATS
 #define IP_STATS_INC(x) STATS_INC(x)
 #define IP_STATS_DISPLAY() stats_display_proto(&lwip_stats.ip, "IP")
 #else
@@ -424,7 +424,7 @@ void stats_init(void);
 #define SYS_STATS_DISPLAY()
 #endif
 
-#if IP6_STATS
+#if LWIP_IP6_STATS
 #define IP6_STATS_INC(x) STATS_INC(x)
 #define IP6_STATS_DISPLAY() stats_display_proto(&lwip_stats.ip6, "IPv6")
 #else

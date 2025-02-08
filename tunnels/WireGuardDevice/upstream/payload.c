@@ -31,7 +31,7 @@ static wireguard_peer_t *peerLookupByAllowedIp(wireguard_device_t *device, const
 err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, wireguard_peer_t *peer)
 {
     (void) ipaddr;
-    
+
     // The LWIP IP layer wants to send an IP packet out over the interface - we need to encrypt and send it to the peer
     message_transport_data_t *hdr;
     err_t                     result;
@@ -105,6 +105,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             wireguardEncryptPacket(dst, dst, padded_len, keypair);
 
             result = wireguardifPeerOutput(device, q, peer);
+            q      = NULL; // buffer is consumed by wireguardifPeerOutput
 
             if (result == ERR_OK)
             {
@@ -126,14 +127,20 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
         else
         {
             // key has expired...
+            LOGD("WrireugardDevice: DISCARDING PACKET - KEY EXPIRED");
             keypairDestroy(keypair);
             result = ERR_CONN;
         }
     }
     else
     {
+        LOGD("WrireugardDevice: DISCARDING PACKET - NO VALID KEYS");
         // No valid keys!
         result = ERR_CONN;
+    }
+    if (q != NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
     }
     return result;
 }
@@ -169,7 +176,7 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         ip4AddrCopy(dest_ip4, header->dest);
         ip_addr_t dest;
         ipAddrCopyFromIp4(dest, dest_ip4);
-        
+
         wireguardifOutputToPeer(dev, buf, &dest, peerLookupByAllowedIp(dev, &dest));
     }
     else if (IP_HDR_GET_VERSION(data) == 4)
@@ -181,7 +188,6 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         ipAddrCopyFromIp6(dest, dest_ip6);
 
         wireguardifOutputToPeer(dev, buf, &dest, peerLookupByAllowedIp(dev, &dest));
-
     }
     else
     {

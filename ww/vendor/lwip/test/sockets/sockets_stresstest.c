@@ -67,7 +67,7 @@
 #endif
 
 #define TEST_TIME_SECONDS     10
-#define TEST_TXRX_BUFSIZE     (TCP_MSS * 2)
+#define TEST_TXRX_BUFSIZE     (LWIP_TCP_MSS * 2)
 #define TEST_MAX_RXWAIT_MS    50
 #define TEST_MAX_CONNECTIONS  50
 

@@ -7,7 +7,7 @@
 #include "lwip/stats.h"
 #include "lwip/prot/iana.h"
 
-#if !LWIP_STATS || !UDP_STATS || !MEMP_STATS || !ETHARP_STATS
+#if !LWIP_STATS || !LWIP_UDP_STATS || !MEMP_STATS || !ETHARP_STATS
 #error "This tests needs UDP-, MEMP- and ETHARP-statistics enabled"
 #endif
 #if !ETHARP_SUPPORT_STATIC_ENTRIES

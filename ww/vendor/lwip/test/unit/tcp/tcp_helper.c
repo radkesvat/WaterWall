@@ -7,7 +7,7 @@
 #include "lwip/inet_chksum.h"
 #include "lwip/ip_addr.h"
 
-#if !LWIP_STATS || !TCP_STATS || !MEMP_STATS
+#if !LWIP_STATS || !LWIP_TCP_STATS || !MEMP_STATS
 #error "This tests needs TCP- and MEMP-statistics enabled"
 #endif
 

@@ -134,11 +134,11 @@
 #define TCP_KEEP_INTVL(pcb) TCP_KEEPINTVL_DEFAULT
 #endif /* LWIP_TCP_KEEPALIVE */
 
-/* As initial send MSS, we use TCP_MSS but limit it to 536. */
-#if TCP_MSS > 536
+/* As initial send MSS, we use LWIP_TCP_MSS but limit it to 536. */
+#if LWIP_TCP_MSS > 536
 #define INITIAL_MSS 536
 #else
-#define INITIAL_MSS TCP_MSS
+#define INITIAL_MSS LWIP_TCP_MSS
 #endif
 
 static const char *const tcp_state_str[] = {
@@ -1156,7 +1156,7 @@ tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port,
   pcb->rcv_wnd = pcb->rcv_ann_wnd = TCPWND_MIN16(TCP_WND);
   pcb->rcv_ann_right_edge = pcb->rcv_nxt;
   pcb->snd_wnd = TCP_WND;
-  /* As initial send MSS, we use TCP_MSS but limit it to 536.
+  /* As initial send MSS, we use LWIP_TCP_MSS but limit it to 536.
      The send MSS is updated when an MSS option is received. */
   pcb->mss = INITIAL_MSS;
 #if TCP_CALCULATE_EFF_SEND_MSS
@@ -1898,7 +1898,7 @@ tcp_alloc(u8_t prio)
        enabled and used, the window is enlarged when both sides agree on scaling. */
     pcb->rcv_wnd = pcb->rcv_ann_wnd = TCPWND_MIN16(TCP_WND);
     pcb->ttl = TCP_TTL;
-    /* As initial send MSS, we use TCP_MSS but limit it to 536.
+    /* As initial send MSS, we use LWIP_TCP_MSS but limit it to 536.
        The send MSS is updated when an MSS option is received. */
     pcb->mss = INITIAL_MSS;
     /* Set initial TCP's retransmission timeout to 3000 ms by default.
@@ -2241,7 +2241,7 @@ tcp_next_iss(struct tcp_pcb *pcb)
 #if TCP_CALCULATE_EFF_SEND_MSS
 /**
  * Calculates the effective send mss that can be used for a specific IP address
- * by calculating the minimum of TCP_MSS and the mtu (if set) of the target
+ * by calculating the minimum of LWIP_TCP_MSS and the mtu (if set) of the target
  * netif (if not NULL).
  */
 u16_t

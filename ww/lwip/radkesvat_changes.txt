@@ -1,0 +1,16 @@
+disabled some warnings for msvc, some changes in cmake
+
+RENAME THESE GLOBALLY
+
+TCP_MSS -> LWIP_TCP_MSS
+
+IP_STATS -> LWIP_IP_STATS
+
+ICMP_STATS -> LWIP_ICMP_STATS
+
+TCP_STATS -> LWIP_TCP_STATS
+
+UDP_STATS -> LWIP_UDP_STATS
+
+IP6_STATS -> IP6_STATS
+

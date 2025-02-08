@@ -3,7 +3,6 @@
 #include "wlibc.h"
 #include "wsocket.h"
 
-#include "ww_lwip.h"
 
 /**
  * Network Address Management System

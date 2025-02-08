@@ -67,8 +67,8 @@
 #define TCP_SND_QUEUELEN                40
 #define MEMP_NUM_TCP_SEG                TCP_SND_QUEUELEN
 #define TCP_OVERSIZE                    1
-#define TCP_SND_BUF                     (12 * TCP_MSS)
-#define TCP_WND                         (10 * TCP_MSS)
+#define TCP_SND_BUF                     (12 * LWIP_TCP_MSS)
+#define TCP_WND                         (10 * LWIP_TCP_MSS)
 #define LWIP_WND_SCALE                  1
 #define TCP_RCV_SCALE                   2
 #define PBUF_POOL_SIZE                  400 /* pbuf tests need ~200KByte */

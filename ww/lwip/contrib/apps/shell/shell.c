@@ -109,7 +109,7 @@ quit: quits"NEWLINE"";
 #if LWIP_STATS
 static char padding_10spaces[] = "          ";
 
-#define PROTOCOL_STATS (LINK_STATS && ETHARP_STATS && IPFRAG_STATS && IP_STATS && ICMP_STATS && UDP_STATS && TCP_STATS)
+#define PROTOCOL_STATS (LINK_STATS && ETHARP_STATS && IPFRAG_STATS && LWIP_IP_STATS && LWIP_ICMP_STATS && LWIP_UDP_STATS && LWIP_TCP_STATS)
 
 #if PROTOCOL_STATS
 static const char* shell_stat_proto_names[] = {
@@ -122,16 +122,16 @@ static const char* shell_stat_proto_names[] = {
 #if IPFRAG_STATS
   "IP_FRAG   ",
 #endif
-#if IP_STATS
+#if LWIP_IP_STATS
   "IP        ",
 #endif
-#if ICMP_STATS
+#if LWIP_ICMP_STATS
   "ICMP      ",
 #endif
-#if UDP_STATS
+#if LWIP_UDP_STATS
   "UDP       ",
 #endif
-#if TCP_STATS
+#if LWIP_TCP_STATS
   "TCP       ",
 #endif
   "last"
@@ -147,16 +147,16 @@ static struct stats_proto* shell_stat_proto_stats[] = {
 #if IPFRAG_STATS
   &lwip_stats.ip_frag,
 #endif
-#if IP_STATS
+#if LWIP_IP_STATS
   &lwip_stats.ip,
 #endif
-#if ICMP_STATS
+#if LWIP_ICMP_STATS
   &lwip_stats.icmp,
 #endif
-#if UDP_STATS
+#if LWIP_UDP_STATS
   &lwip_stats.udp,
 #endif
-#if TCP_STATS
+#if LWIP_TCP_STATS
   &lwip_stats.tcp,
 #endif
 };

@@ -9,14 +9,14 @@
 #pragma warning(disable: 4307) /* we explicitly wrap around TCP seqnos */
 #endif
 
-#if !LWIP_STATS || !TCP_STATS || !MEMP_STATS
+#if !LWIP_STATS || !LWIP_TCP_STATS || !MEMP_STATS
 #error "This tests needs TCP- and MEMP-statistics enabled"
 #endif
 
 static struct netif test_netif = {0};
 static struct test_tcp_txcounters test_txcounters = {0};
 
-#define SEQNO1 (0xFFFFFF00 - TCP_MSS)
+#define SEQNO1 (0xFFFFFF00 - LWIP_TCP_MSS)
 #define ISS    6510
 static u8_t test_tcp_timer;
 

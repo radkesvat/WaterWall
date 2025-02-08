@@ -20,5 +20,4 @@
 #include "wsocket.h"
 #include "wsysinfo.h"
 #include "wversion.h"
-#include "ww_lwip.h"
 

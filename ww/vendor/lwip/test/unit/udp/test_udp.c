@@ -4,7 +4,7 @@
 #include "lwip/stats.h"
 #include "lwip/inet_chksum.h"
 
-#if !LWIP_STATS || !UDP_STATS || !MEMP_STATS
+#if !LWIP_STATS || !LWIP_UDP_STATS || !MEMP_STATS
 #error "This tests needs UDP- and MEMP-statistics enabled"
 #endif
 

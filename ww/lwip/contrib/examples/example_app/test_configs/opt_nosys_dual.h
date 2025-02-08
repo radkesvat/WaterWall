@@ -99,17 +99,17 @@
 #define LWIP_NETBUF_RECVINFO            0
 #define LWIP_TCP                        1
 #define TCP_TTL                         (IP_DEFAULT_TTL)
-#define TCP_WND                         (4 * TCP_MSS)
+#define TCP_WND                         (4 * LWIP_TCP_MSS)
 #define TCP_MAXRTX                      12
 #define TCP_SYNMAXRTX                   6
 #define TCP_QUEUE_OOSEQ                 (LWIP_TCP)
 #define LWIP_TCP_SACK_OUT               0
 #define LWIP_TCP_MAX_SACK_NUM           4
-#define TCP_MSS                         536
+#define LWIP_TCP_MSS                         536
 #define TCP_CALCULATE_EFF_SEND_MSS      1
-#define TCP_SND_BUF                     (2 * TCP_MSS)
-#define TCP_SND_QUEUELEN                ((4 * (TCP_SND_BUF) + (TCP_MSS - 1))/(TCP_MSS))
-#define TCP_SNDLOWAT                    LWIP_MIN(LWIP_MAX(((TCP_SND_BUF)/2), (2 * TCP_MSS) + 1), (TCP_SND_BUF) - 1)
+#define TCP_SND_BUF                     (2 * LWIP_TCP_MSS)
+#define TCP_SND_QUEUELEN                ((4 * (TCP_SND_BUF) + (LWIP_TCP_MSS - 1))/(LWIP_TCP_MSS))
+#define TCP_SNDLOWAT                    LWIP_MIN(LWIP_MAX(((TCP_SND_BUF)/2), (2 * LWIP_TCP_MSS) + 1), (TCP_SND_BUF) - 1)
 #define TCP_SNDQUEUELOWAT               LWIP_MAX(((TCP_SND_QUEUELEN)/2), 5)
 #define TCP_OOSEQ_MAX_BYTES             0
 #define TCP_OOSEQ_BYTES_LIMIT(pcb)      TCP_OOSEQ_MAX_BYTES
@@ -117,9 +117,9 @@
 #define TCP_OOSEQ_PBUFS_LIMIT(pcb)      TCP_OOSEQ_MAX_PBUFS
 #define TCP_LISTEN_BACKLOG              0
 #define TCP_DEFAULT_LISTEN_BACKLOG      0xff
-#define TCP_OVERSIZE                    TCP_MSS
+#define TCP_OVERSIZE                    LWIP_TCP_MSS
 #define LWIP_TCP_TIMESTAMPS             0
-#define TCP_WND_UPDATE_THRESHOLD        LWIP_MIN((TCP_WND / 4), (TCP_MSS * 4))
+#define TCP_WND_UPDATE_THRESHOLD        LWIP_MIN((TCP_WND / 4), (LWIP_TCP_MSS * 4))
 #define LWIP_EVENT_API                  0
 #define LWIP_CALLBACK_API               1
 #define LWIP_WND_SCALE                  0
@@ -129,7 +129,7 @@
 #define LWIP_ALTCP_TLS                  0
 #define PBUF_LINK_HLEN                  (14 + ETH_PAD_SIZE)
 #define PBUF_LINK_ENCAPSULATION_HLEN    0
-#define PBUF_POOL_BUFSIZE               LWIP_MEM_ALIGN_SIZE(TCP_MSS+40+PBUF_LINK_ENCAPSULATION_HLEN+PBUF_LINK_HLEN)
+#define PBUF_POOL_BUFSIZE               LWIP_MEM_ALIGN_SIZE(LWIP_TCP_MSS+40+PBUF_LINK_ENCAPSULATION_HLEN+PBUF_LINK_HLEN)
 #define LWIP_PBUF_REF_T                 u8_t
 #define LWIP_SINGLE_NETIF               0
 #define LWIP_NETIF_HOSTNAME             0
@@ -186,16 +186,16 @@
 #define LWIP_STATS_DISPLAY              0
 #define LINK_STATS                      1
 #define ETHARP_STATS                    (LWIP_ARP)
-#define IP_STATS                        1
+#define LWIP_IP_STATS                        1
 #define IPFRAG_STATS                    (IP_REASSEMBLY || IP_FRAG)
-#define ICMP_STATS                      1
+#define LWIP_ICMP_STATS                      1
 #define IGMP_STATS                      (LWIP_IGMP)
-#define UDP_STATS                       (LWIP_UDP)
-#define TCP_STATS                       (LWIP_TCP)
+#define LWIP_UDP_STATS                       (LWIP_UDP)
+#define LWIP_TCP_STATS                       (LWIP_TCP)
 #define MEM_STATS                       ((MEM_LIBC_MALLOC == 0) && (MEM_USE_POOLS == 0))
 #define MEMP_STATS                      (MEMP_MEM_MALLOC == 0)
 #define SYS_STATS                       (NO_SYS == 0)
-#define IP6_STATS                       (LWIP_IPV6)
+#define LWIP_IP6_STATS                       (LWIP_IPV6)
 #define ICMP6_STATS                     (LWIP_IPV6 && LWIP_ICMP6)
 #define IP6_FRAG_STATS                  (LWIP_IPV6 && (LWIP_IPV6_FRAG || LWIP_IPV6_REASS))
 #define MLD6_STATS                      (LWIP_IPV6 && LWIP_IPV6_MLD)

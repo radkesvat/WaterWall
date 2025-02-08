@@ -187,14 +187,14 @@ a lot of data that needs to be copied, this should be set high. */
 #define TCP_QUEUE_OOSEQ         1
 
 /* TCP Maximum segment size. */
-#define TCP_MSS                 1024
+#define LWIP_TCP_MSS                 1024
 
 /* TCP sender buffer space (bytes). */
 #define TCP_SND_BUF             2048
 
 /* TCP sender buffer space (pbufs). This must be at least = 2 *
-   TCP_SND_BUF/TCP_MSS for things to work. */
-#define TCP_SND_QUEUELEN       (4 * TCP_SND_BUF/TCP_MSS)
+   TCP_SND_BUF/LWIP_TCP_MSS for things to work. */
+#define TCP_SND_QUEUELEN       (4 * TCP_SND_BUF/LWIP_TCP_MSS)
 
 /* TCP writable space (bytes). This must be less than or equal
    to TCP_SND_BUF. It is the amount of space which must be
@@ -267,12 +267,12 @@ a lot of data that needs to be copied, this should be set high. */
 
 #if LWIP_STATS
 #define LINK_STATS              1
-#define IP_STATS                1
-#define ICMP_STATS              1
+#define LWIP_IP_STATS                1
+#define LWIP_ICMP_STATS              1
 #define IGMP_STATS              1
 #define IPFRAG_STATS            1
-#define UDP_STATS               1
-#define TCP_STATS               1
+#define LWIP_UDP_STATS               1
+#define LWIP_TCP_STATS               1
 #define MEM_STATS               1
 #define MEMP_STATS              1
 #define PBUF_STATS              1

@@ -303,19 +303,19 @@ PACK_STRUCT_END
 #if !MEMP_MEM_MALLOC && (MEMP_NUM_TCP_SEG < TCP_SND_QUEUELEN)
 #error "lwip_sanity_check: WARNING: MEMP_NUM_TCP_SEG should be at least as big as TCP_SND_QUEUELEN. If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
 #endif
-#if TCP_SND_BUF < (2 * TCP_MSS)
-#error "lwip_sanity_check: WARNING: TCP_SND_BUF must be at least as much as (2 * TCP_MSS) for things to work smoothly. If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
+#if TCP_SND_BUF < (2 * LWIP_TCP_MSS)
+#error "lwip_sanity_check: WARNING: TCP_SND_BUF must be at least as much as (2 * LWIP_TCP_MSS) for things to work smoothly. If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
 #endif
-#if TCP_SND_QUEUELEN < (2 * (TCP_SND_BUF / TCP_MSS))
-#error "lwip_sanity_check: WARNING: TCP_SND_QUEUELEN must be at least as much as (2 * TCP_SND_BUF/TCP_MSS) for things to work. If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
+#if TCP_SND_QUEUELEN < (2 * (TCP_SND_BUF / LWIP_TCP_MSS))
+#error "lwip_sanity_check: WARNING: TCP_SND_QUEUELEN must be at least as much as (2 * TCP_SND_BUF/LWIP_TCP_MSS) for things to work. If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
 #endif
 #if TCP_SNDLOWAT >= TCP_SND_BUF
 #error "lwip_sanity_check: WARNING: TCP_SNDLOWAT must be less than TCP_SND_BUF. If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
 #endif
-#if TCP_MSS >= ((16 * 1024) - 1)
-#error "lwip_sanity_check: WARNING: TCP_MSS must be <= 16382 to prevent u16_t underflow in TCP_SNDLOWAT calculation!"
+#if LWIP_TCP_MSS >= ((16 * 1024) - 1)
+#error "lwip_sanity_check: WARNING: LWIP_TCP_MSS must be <= 16382 to prevent u16_t underflow in TCP_SNDLOWAT calculation!"
 #endif
-#if TCP_SNDLOWAT >= (0xFFFF - (4 * TCP_MSS))
+#if TCP_SNDLOWAT >= (0xFFFF - (4 * LWIP_TCP_MSS))
 #error "lwip_sanity_check: WARNING: TCP_SNDLOWAT must at least be 4*MSS below u16_t overflow!"
 #endif
 #if TCP_SNDQUEUELOWAT >= TCP_SND_QUEUELEN
@@ -327,7 +327,7 @@ PACK_STRUCT_END
 #if !MEMP_MEM_MALLOC && PBUF_POOL_SIZE && (TCP_WND > (PBUF_POOL_SIZE * (PBUF_POOL_BUFSIZE - (PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN))))
 #error "lwip_sanity_check: WARNING: TCP_WND is larger than space provided by PBUF_POOL_SIZE * (PBUF_POOL_BUFSIZE - protocol headers). If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
 #endif
-#if TCP_WND < TCP_MSS
+#if TCP_WND < LWIP_TCP_MSS
 #error "lwip_sanity_check: WARNING: TCP_WND is smaller than MSS. If you know what you are doing, define LWIP_DISABLE_TCP_SANITY_CHECKS to 1 to disable this error."
 #endif
 #endif /* LWIP_TCP */

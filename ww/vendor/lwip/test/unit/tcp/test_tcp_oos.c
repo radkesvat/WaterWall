@@ -4,7 +4,7 @@
 #include "lwip/stats.h"
 #include "tcp_helper.h"
 
-#if !LWIP_STATS || !TCP_STATS || !MEMP_STATS
+#if !LWIP_STATS || !LWIP_TCP_STATS || !MEMP_STATS
 #error "This tests needs TCP- and MEMP-statistics enabled"
 #endif
 #if !TCP_QUEUE_OOSEQ
@@ -36,7 +36,7 @@ static int tcp_oos_count(struct tcp_pcb* pcb)
   return num;
 }
 
-#if TCP_OOSEQ_MAX_PBUFS && (TCP_OOSEQ_MAX_PBUFS < ((TCP_WND / TCP_MSS) + 1)) && (PBUF_POOL_BUFSIZE >= (TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN))
+#if TCP_OOSEQ_MAX_PBUFS && (TCP_OOSEQ_MAX_PBUFS < ((TCP_WND / LWIP_TCP_MSS) + 1)) && (PBUF_POOL_BUFSIZE >= (LWIP_TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN))
 /** Get the numbers of pbufs on the ooseq list */
 static int tcp_oos_pbuf_count(struct tcp_pcb* pcb)
 {
@@ -453,7 +453,7 @@ START_TEST(test_tcp_recv_ooseq_FIN_INSEQ)
 }
 END_TEST
 
-static char data_full_wnd[TCP_WND + TCP_MSS];
+static char data_full_wnd[TCP_WND + LWIP_TCP_MSS];
 
 /** create multiple segments and pass them to tcp_input with the first segment missing
  * to simulate overruning the rxwin with ooseq queueing enabled */
@@ -487,12 +487,12 @@ START_TEST(test_tcp_recv_ooseq_overrun_rxwin)
 
   /* create segments */
   /* pinseq is sent as last segment! */
-  pinseq = tcp_create_rx_segment(pcb, &data_full_wnd[0],  TCP_MSS, 0, 0, TCP_ACK);
+  pinseq = tcp_create_rx_segment(pcb, &data_full_wnd[0],  LWIP_TCP_MSS, 0, 0, TCP_ACK);
 
-  for(i = TCP_MSS, k = 0; i < TCP_WND; i += TCP_MSS, k++) {
+  for(i = LWIP_TCP_MSS, k = 0; i < TCP_WND; i += LWIP_TCP_MSS, k++) {
     int count, expected_datalen;
-    struct pbuf *p = tcp_create_rx_segment(pcb, &data_full_wnd[TCP_MSS*(k+1)],
-                                           TCP_MSS, TCP_MSS*(k+1), 0, TCP_ACK);
+    struct pbuf *p = tcp_create_rx_segment(pcb, &data_full_wnd[LWIP_TCP_MSS*(k+1)],
+                                           LWIP_TCP_MSS, LWIP_TCP_MSS*(k+1), 0, TCP_ACK);
     EXPECT_RET(p != NULL);
     /* pass the segment to tcp_input */
     test_tcp_input(p, &netif);
@@ -505,10 +505,10 @@ START_TEST(test_tcp_recv_ooseq_overrun_rxwin)
     count = tcp_oos_count(pcb);
     EXPECT_OOSEQ(count == k+1);
     datalen = tcp_oos_tcplen(pcb);
-    if (i + TCP_MSS < TCP_WND) {
-      expected_datalen = (k+1)*TCP_MSS;
+    if (i + LWIP_TCP_MSS < TCP_WND) {
+      expected_datalen = (k+1)*LWIP_TCP_MSS;
     } else {
-      expected_datalen = TCP_WND - TCP_MSS;
+      expected_datalen = TCP_WND - LWIP_TCP_MSS;
     }
     if (datalen != expected_datalen) {
       EXPECT_OOSEQ(datalen == expected_datalen);
@@ -516,7 +516,7 @@ START_TEST(test_tcp_recv_ooseq_overrun_rxwin)
   }
 
   /* pass in one more segment, clearly overrunning the rxwin */
-  p_ovr = tcp_create_rx_segment(pcb, &data_full_wnd[TCP_MSS*(k+1)], TCP_MSS, TCP_MSS*(k+1), 0, TCP_ACK);
+  p_ovr = tcp_create_rx_segment(pcb, &data_full_wnd[LWIP_TCP_MSS*(k+1)], LWIP_TCP_MSS, LWIP_TCP_MSS*(k+1), 0, TCP_ACK);
   EXPECT_RET(p_ovr != NULL);
   /* pass the segment to tcp_input */
   test_tcp_input(p_ovr, &netif);
@@ -574,12 +574,12 @@ START_TEST(test_tcp_recv_ooseq_overrun_rxwin_edge)
 
   /* create segments */
   /* pinseq is sent as last segment! */
-  pinseq = tcp_create_rx_segment(pcb, &data_full_wnd[0],  TCP_MSS, 0, 0, TCP_ACK);
+  pinseq = tcp_create_rx_segment(pcb, &data_full_wnd[0],  LWIP_TCP_MSS, 0, 0, TCP_ACK);
 
-  for(i = TCP_MSS, k = 0; i < TCP_WND; i += TCP_MSS, k++) {
+  for(i = LWIP_TCP_MSS, k = 0; i < TCP_WND; i += LWIP_TCP_MSS, k++) {
     int count, expected_datalen;
-    struct pbuf *p = tcp_create_rx_segment(pcb, &data_full_wnd[TCP_MSS*(k+1)],
-                                           TCP_MSS, TCP_MSS*(k+1), 0, TCP_ACK);
+    struct pbuf *p = tcp_create_rx_segment(pcb, &data_full_wnd[LWIP_TCP_MSS*(k+1)],
+                                           LWIP_TCP_MSS, LWIP_TCP_MSS*(k+1), 0, TCP_ACK);
     EXPECT_RET(p != NULL);
     /* pass the segment to tcp_input */
     test_tcp_input(p, &netif);
@@ -592,10 +592,10 @@ START_TEST(test_tcp_recv_ooseq_overrun_rxwin_edge)
     count = tcp_oos_count(pcb);
     EXPECT_OOSEQ(count == k+1);
     datalen = tcp_oos_tcplen(pcb);
-    if (i + TCP_MSS < TCP_WND) {
-      expected_datalen = (k+1)*TCP_MSS;
+    if (i + LWIP_TCP_MSS < TCP_WND) {
+      expected_datalen = (k+1)*LWIP_TCP_MSS;
     } else {
-      expected_datalen = TCP_WND - TCP_MSS;
+      expected_datalen = TCP_WND - LWIP_TCP_MSS;
     }
     if (datalen != expected_datalen) {
       EXPECT_OOSEQ(datalen == expected_datalen);
@@ -603,7 +603,7 @@ START_TEST(test_tcp_recv_ooseq_overrun_rxwin_edge)
   }
 
   /* pass in one more segment, clearly overrunning the rxwin */
-  p_ovr = tcp_create_rx_segment(pcb, &data_full_wnd[TCP_MSS*(k+1)], TCP_MSS, TCP_MSS*(k+1), 0, TCP_ACK);
+  p_ovr = tcp_create_rx_segment(pcb, &data_full_wnd[LWIP_TCP_MSS*(k+1)], LWIP_TCP_MSS, LWIP_TCP_MSS*(k+1), 0, TCP_ACK);
   EXPECT_RET(p_ovr != NULL);
   /* pass the segment to tcp_input */
   test_tcp_input(p_ovr, &netif);
@@ -632,7 +632,7 @@ END_TEST
 
 START_TEST(test_tcp_recv_ooseq_max_bytes)
 {
-#if TCP_OOSEQ_MAX_BYTES && (TCP_OOSEQ_MAX_BYTES < (TCP_WND + 1)) && (PBUF_POOL_BUFSIZE >= (TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN))
+#if TCP_OOSEQ_MAX_BYTES && (TCP_OOSEQ_MAX_BYTES < (TCP_WND + 1)) && (PBUF_POOL_BUFSIZE >= (LWIP_TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN))
   int i, k;
   struct test_tcp_counters counters;
   struct tcp_pcb* pcb;
@@ -661,10 +661,10 @@ START_TEST(test_tcp_recv_ooseq_max_bytes)
   /* don't 'recv' the first segment (1 byte) so that all other segments will be ooseq */
 
   /* create segments and 'recv' them */
-  for(k = 1, i = 1; k < TCP_OOSEQ_MAX_BYTES; k += TCP_MSS, i++) {
+  for(k = 1, i = 1; k < TCP_OOSEQ_MAX_BYTES; k += LWIP_TCP_MSS, i++) {
     int count;
     struct pbuf *p = tcp_create_rx_segment(pcb, &data_full_wnd[k],
-                                           TCP_MSS, k, 0, TCP_ACK);
+                                           LWIP_TCP_MSS, k, 0, TCP_ACK);
     EXPECT_RET(p != NULL);
     EXPECT_RET(p->next == NULL);
     /* pass the segment to tcp_input */
@@ -678,7 +678,7 @@ START_TEST(test_tcp_recv_ooseq_max_bytes)
     count = tcp_oos_pbuf_count(pcb);
     EXPECT_OOSEQ(count == i);
     datalen = tcp_oos_tcplen(pcb);
-    EXPECT_OOSEQ(datalen == (i * TCP_MSS));
+    EXPECT_OOSEQ(datalen == (i * LWIP_TCP_MSS));
   }
 
   /* pass in one more segment, overrunning the limit */
@@ -694,20 +694,20 @@ START_TEST(test_tcp_recv_ooseq_max_bytes)
   /* check ooseq queue (ensure the new segment was not accepted) */
   EXPECT_OOSEQ(tcp_oos_count(pcb) == (i-1));
   datalen2 = tcp_oos_tcplen(pcb);
-  EXPECT_OOSEQ(datalen2 == ((i-1) * TCP_MSS));
+  EXPECT_OOSEQ(datalen2 == ((i-1) * LWIP_TCP_MSS));
 
   /* make sure the pcb is freed */
   EXPECT(MEMP_STATS_GET(used, MEMP_TCP_PCB) == 1);
   tcp_abort(pcb);
   EXPECT(MEMP_STATS_GET(used, MEMP_TCP_PCB) == 0);
-#endif /* TCP_OOSEQ_MAX_BYTES && (TCP_OOSEQ_MAX_BYTES < (TCP_WND + 1)) && (PBUF_POOL_BUFSIZE >= (TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN)) */
+#endif /* TCP_OOSEQ_MAX_BYTES && (TCP_OOSEQ_MAX_BYTES < (TCP_WND + 1)) && (PBUF_POOL_BUFSIZE >= (LWIP_TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN)) */
   LWIP_UNUSED_ARG(_i);
 }
 END_TEST
 
 START_TEST(test_tcp_recv_ooseq_max_pbufs)
 {
-#if TCP_OOSEQ_MAX_PBUFS && (TCP_OOSEQ_MAX_PBUFS < ((TCP_WND / TCP_MSS) + 1)) && (PBUF_POOL_BUFSIZE >= (TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN))
+#if TCP_OOSEQ_MAX_PBUFS && (TCP_OOSEQ_MAX_PBUFS < ((TCP_WND / LWIP_TCP_MSS) + 1)) && (PBUF_POOL_BUFSIZE >= (LWIP_TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN))
   int i;
   struct test_tcp_counters counters;
   struct tcp_pcb* pcb;
@@ -775,7 +775,7 @@ START_TEST(test_tcp_recv_ooseq_max_pbufs)
   EXPECT(MEMP_STATS_GET(used, MEMP_TCP_PCB) == 1);
   tcp_abort(pcb);
   EXPECT(MEMP_STATS_GET(used, MEMP_TCP_PCB) == 0);
-#endif /* TCP_OOSEQ_MAX_PBUFS && (TCP_OOSEQ_MAX_BYTES < (TCP_WND + 1)) && (PBUF_POOL_BUFSIZE >= (TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN)) */
+#endif /* TCP_OOSEQ_MAX_PBUFS && (TCP_OOSEQ_MAX_BYTES < (TCP_WND + 1)) && (PBUF_POOL_BUFSIZE >= (LWIP_TCP_MSS + PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN)) */
   LWIP_UNUSED_ARG(_i);
 }
 END_TEST
@@ -796,7 +796,7 @@ check_rx_counters(struct tcp_pcb *pcb, struct test_tcp_counters *counters, u32_t
 }
 
 /* this test uses 4 packets:
- * - data (len=TCP_MSS)
+ * - data (len=LWIP_TCP_MSS)
  * - FIN
  * - data after FIN (len=1) (invalid)
  * - 2nd FIN (invalid)
@@ -831,11 +831,11 @@ static void test_tcp_recv_ooseq_double_FINs(int delay_packet)
   pcb->rcv_nxt = 0x8000;
 
   /* create segments */
-  p = tcp_create_rx_segment(pcb, &data_full_wnd[0], TCP_MSS, 0, 0, TCP_ACK);
-  p_normal_fin = tcp_create_rx_segment(pcb, NULL, 0, TCP_MSS, 0, TCP_ACK|TCP_FIN);
+  p = tcp_create_rx_segment(pcb, &data_full_wnd[0], LWIP_TCP_MSS, 0, 0, TCP_ACK);
+  p_normal_fin = tcp_create_rx_segment(pcb, NULL, 0, LWIP_TCP_MSS, 0, TCP_ACK|TCP_FIN);
   k = 1;
-  p_data_after_fin = tcp_create_rx_segment(pcb, &data_full_wnd[TCP_MSS+1], k, TCP_MSS+1, 0, TCP_ACK);
-  p_2nd_fin_ooseq = tcp_create_rx_segment(pcb, NULL, 0, TCP_MSS+1+k, 0, TCP_ACK|TCP_FIN);
+  p_data_after_fin = tcp_create_rx_segment(pcb, &data_full_wnd[LWIP_TCP_MSS+1], k, LWIP_TCP_MSS+1, 0, TCP_ACK);
+  p_2nd_fin_ooseq = tcp_create_rx_segment(pcb, NULL, 0, LWIP_TCP_MSS+1+k, 0, TCP_ACK|TCP_FIN);
 
   if(delay_packet & 1) {
     /* drop normal data */
@@ -844,7 +844,7 @@ static void test_tcp_recv_ooseq_double_FINs(int delay_packet)
     /* send normal data */
     test_tcp_input(p, &netif);
     exp_rx_calls++;
-    exp_rx_bytes += TCP_MSS;
+    exp_rx_bytes += LWIP_TCP_MSS;
   }
   /* check if counters are as expected */
   check_rx_counters(pcb, &counters, exp_close_calls, exp_rx_calls, exp_rx_bytes, 0, exp_oos_pbufs, exp_oos_tcplen);
@@ -917,7 +917,7 @@ static void test_tcp_recv_ooseq_double_FINs(int delay_packet)
     /* dropped normal data before */
     test_tcp_input(p, &netif);
     exp_rx_calls++;
-    exp_rx_bytes += TCP_MSS;
+    exp_rx_bytes += LWIP_TCP_MSS;
     if((delay_packet & 2) == 0) {
       /* normal FIN was NOT delayed */
       exp_close_calls++;

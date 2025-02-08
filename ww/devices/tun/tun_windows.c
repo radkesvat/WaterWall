@@ -1,11 +1,11 @@
+#include "tun.h"
+
 #include "global_state.h"
 #include "managers/signal_manager.h"
 #include "master_pool.h"
 #include "buffer_pool.h"
-#include "tun.h"
 #include "wchan.h"
 #include "wintun/wintun.h"
-#include "wlibc.h"
 #include <tchar.h>
 
 #include "loggers/internal_logger.h"
