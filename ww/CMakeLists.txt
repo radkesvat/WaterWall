@@ -48,11 +48,6 @@ add_library(ww STATIC
     net/tunnel.c
     net/chain.c
     net/context.c
-    crypto/openssl_instance.c
-    crypto/chacha20poly1305.c
-    crypto/sodium_instance.c
-    crypto/blake2s.c
-    crypto/x25519.c
     node_builder/config_file.c
     node_builder/node_loader.c
     managers/signal_manager.c
@@ -69,6 +64,34 @@ add_library(ww STATIC
     loggers/dns_logger.c
     loggers/internal_logger.c
 )
+
+
+option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
+option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
+option(WCRYPTO_BACKEND_SODIUM "use libsodium instead of openssl for crypto (note that opensssl dose not support xchacha)" ON)
+
+if(WIN32)
+    option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
+    option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
+endif()
+
+
+if(WCRYPTO_BACKEND_SODIUM)
+    target_sources(ww PRIVATE crypto/sodium_instance.c)
+    target_sources(ww PRIVATE crypto/impl_sodium/blake2s.c)
+    target_sources(ww PRIVATE crypto/impl_sodium/chacha20poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_sodium/xchacha20poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_sodium/x25519.c)
+    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
+
+else()
+    target_sources(ww PRIVATE crypto/openssl_instance.c)
+    target_sources(ww PRIVATE crypto/impl_openssl/blake2s.c)
+    target_sources(ww PRIVATE crypto/impl_openssl/chacha20poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_openssl/x25519.c)
+    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_OPENSSL=1)
+endif()
+
 
 # Enforce C11 for this specific target
 set_target_properties(ww 
@@ -141,8 +164,7 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
 # Add dependencies
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
-option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
-option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
+
 
 # Add komihash library
 CPMAddPackage(
@@ -187,19 +209,19 @@ if(cjson_ADDED)
 endif()
 
 # add openssl (default version is latest 3.3.0 +)
-CPMAddPackage(
-    NAME openssl-cmake
-    URL https://github.com/radkesvat/openssl-cmake/archive/main.tar.gz
-    OPTIONS
-    "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-    "BUILD_SHARED_LIBS OFF"
-    "OPENSSL_CONFIGURE_VERBOSE OFF"
-    "OPENSSL_BUILD_VERBOSE TRUE"
-)
+# CPMAddPackage(
+#     NAME openssl-cmake
+#     URL https://github.com/radkesvat/openssl-cmake/archive/main.tar.gz
+#     OPTIONS
+#     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+#     "BUILD_SHARED_LIBS OFF"
+#     "OPENSSL_CONFIGURE_VERBOSE OFF"
+#     "OPENSSL_BUILD_VERBOSE TRUE"
+# )
 
-set(LIBS ${LIBS} OpenSSL::SSL)
-set(LIBS ${LIBS} OpenSSL::Crypto)
-set(LIBS ${LIBS} OpenSSL::applink)
+# set(LIBS ${LIBS} OpenSSL::SSL)
+# set(LIBS ${LIBS} OpenSSL::Crypto)
+# set(LIBS ${LIBS} OpenSSL::applink)
 
 # Add libsodium as a static library
 CPMAddPackage(
@@ -216,6 +238,7 @@ CPMAddPackage(
         "SODIUM_STATIC ON"           # Enable static library build
 )
 set(LIBS ${LIBS} sodium)
+
 
 
 # Add LWIP library
@@ -267,10 +290,7 @@ set(LIBS ${LIBS} mimalloc-static)
 
 
 # Platform-specific options and settings
-if(WIN32)
-    option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
-    option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
-endif()
+
 
 message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
 message(STATUS "CMAKE_CURRENT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}")

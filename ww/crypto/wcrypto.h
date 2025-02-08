@@ -1,8 +1,20 @@
 #pragma once
 #include "wlibc.h"
 
+#ifdef WCRYPTO_BACKEND_SODIUM
+#include "sodium.h"
+typedef crypto_generichash_state blake2s_ctx_t;
+
+#else
+#include <openssl/core_names.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+
+typedef EVP_MAC_CTX blake2s_ctx_t;
+
+#endif
+
 // Context structure for BLAKE2s hash function operations
-typedef struct evp_mac_ctx_st blake2s_ctx_t;
 
 // Initialize BLAKE2s hash context
 // outlen: desired hash output length in bytes

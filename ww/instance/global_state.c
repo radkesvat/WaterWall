@@ -1,7 +1,5 @@
 #include "global_state.h"
 #include "buffer_pool.h"
-#include "crypto/openssl_instance.h"
-#include "crypto/sodium_instance.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/internal_logger.h"
@@ -9,6 +7,14 @@
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
+
+#if defined(WCRYPTO_BACKEND_OPENSSL)
+#include "crypto/openssl_instance.h"
+#elif defined(WCRYPTO_BACKEND_SODIUM)
+#include "crypto/sodium_instance.h"
+#else
+#error "No crypto backend defined"
+#endif
 
 ww_global_state_t global_ww_state = {0};
 
@@ -138,13 +144,17 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // SSL
     {
+#ifdef WCRYPTO_BACKEND_OPENSSL
         opensslGlobalInit();
+        GSTATE.flag_openssl_initialized = true;
+#else
         GSTATE.flag_libsodium_initialized = initSodium();
         if (! (GSTATE.flag_libsodium_initialized))
         {
             printError("Failed to initialize libsodium\n");
             exit(1);
         }
+#endif
     }
     // Spawn all workers except main worker which is current thread
     {

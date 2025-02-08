@@ -10,7 +10,7 @@ int performX25519(unsigned char out[32], const unsigned char scalar[32], const u
     if (!out || !scalar || !point)
     {
         printError("Invalid input for X25519.\n");
-        return 0;
+        return -1;
     }
 
     EVP_PKEY_CTX *ctx = NULL;
@@ -68,7 +68,7 @@ int performX25519(unsigned char out[32], const unsigned char scalar[32], const u
     EVP_PKEY_free(pubkey);
     EVP_PKEY_CTX_free(ctx);
 
-    return 1; // Success
+    return 0; // Success
 
 err:
     // Error cleanup
@@ -76,5 +76,5 @@ err:
     if (pubkey) EVP_PKEY_free(pubkey);
     if (ctx) EVP_PKEY_CTX_free(ctx);
 
-    return 0; // Failure
+    return -1; // Failure
 }

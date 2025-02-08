@@ -12,7 +12,7 @@ int blake2sInit(blake2s_ctx_t **ctx, size_t outlen, const unsigned char *key, si
     if (!ctx || outlen == 0 || outlen > 32) 
     {
         printError("Invalid parameters: ctx is NULL or output length is out of range.\n");
-        return 0;
+        return -1;
     }
 
     // Create a new MAC context for BLAKE2s
@@ -20,7 +20,7 @@ int blake2sInit(blake2s_ctx_t **ctx, size_t outlen, const unsigned char *key, si
     if (!*ctx) 
     {
         printError("Failed to allocate EVP_MAC_CTX.\n");
-        return 0;
+        return -1;
     }
 
     // Set the output length using OSSL_PARAM
@@ -41,10 +41,10 @@ int blake2sInit(blake2s_ctx_t **ctx, size_t outlen, const unsigned char *key, si
         printError("Failed to initialize BLAKE2s context.\n");
         EVP_MAC_CTX_free(*ctx);
         *ctx = NULL;
-        return 0;
+        return -1;
     }
 
-    return 1; // Success
+    return 0; // Success
 }
 
 // Function to update the BLAKE2s context with input data
@@ -53,16 +53,16 @@ int blake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
     if (!ctx || !in)
     {
         printError("Invalid input for BLAKE2s update.\n");
-        return 0;
+        return -1;
     }
 
     if (EVP_MAC_update(ctx, in, inlen) != 1)
     {
         printError("Failed to update BLAKE2s context.\n");
-        return 0;
+        return -1;
     }
 
-    return 1; // Success
+    return 0; // Success
 }
 
 // Function to finalize the BLAKE2s hash computation
@@ -71,7 +71,7 @@ int blake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
     if (!ctx || !out)
     {
         printError("Invalid input for BLAKE2s finalization.\n");
-        return 0;
+        return -1;
     }
 
     size_t hash_len;
@@ -79,11 +79,11 @@ int blake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
     {
         printError("Failed to finalize BLAKE2s hash.\n");
         EVP_MAC_CTX_free(ctx);
-        return 0;
+        return -1;
     }
 
     EVP_MAC_CTX_free(ctx); // Free the context after finalization
-    return 1;              // Success
+    return 0;              // Success
 }
 
 // One-shot function to compute BLAKE2s hash
@@ -93,23 +93,23 @@ int blake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t 
     blake2s_ctx_t *ctx = NULL;
 
     // Initialize the context
-    if (!blake2sInit(&ctx, outlen, key, keylen))
+    if (blake2sInit(&ctx, outlen, key, keylen) < 0)
     {
-        return 0;
+        return -1;
     }
 
     // Update the context with input data
-    if (!blake2sUpdate(ctx, in, inlen))
+    if (blake2sUpdate(ctx, in, inlen) < 0)
     {
         EVP_MAC_CTX_free(ctx);
-        return 0;
+        return -1;
     }
 
     // Finalize the hash computation
-    if (!blake2sFinal(ctx, out))
+    if (blake2sFinal(ctx, out) < 0)
     {
-        return 0;
+        return -1;
     }
 
-    return 1; // Success
+    return 0; // Success
 }
