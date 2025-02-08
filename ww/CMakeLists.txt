@@ -241,7 +241,7 @@ endif()
 
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    set (LWIP_DEFINITIONS SOCKLEN_T_DEFINED=1)
+    set (LWIP_DEFINITIONS LWIP_DEBUG=1)
 endif()
 
 if(WIN32)
