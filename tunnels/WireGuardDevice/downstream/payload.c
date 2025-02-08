@@ -71,7 +71,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     uint8_t             *src;
     size_t               src_len;
     sbuf_t              *buf;
-    ip_hdr_t            *iphdr;
+    ip4_hdr_t           *iphdr;
     ip_addr_t            dest;
     bool                 dest_ok = false;
     int                  x;
@@ -129,7 +129,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                     {
                         // 4a. Once the packet payload is decrypted, the interface has a plaintext packet. If this is
                         // not an IP packet, it is dropped.
-                        iphdr = (ip_hdr_t *) sbufGetMutablePtr(buf);
+                        iphdr = (ip4_hdr_t *) sbufGetMutablePtr(buf);
                         // Check for packet replay / dupes
                         if (wireguardCheckReplay(keypair, nonce))
                         {
@@ -172,7 +172,13 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                                 if (dest_ok)
                                 {
                                     // Send packet to be process by LWIP
-                                    ip_input(buf, device->ts);
+                                    // ip_input(buf, device->ts);
+
+                                    wgd_tstate_t *ts = (wgd_tstate_t *) device;
+                                    tunnel_t* tunnel = ts->tunnel;
+                                    line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
+                                    tunnelPrevDownStreamPayload(tunnel,line,buf);
+                                    
                                     // buf is owned by IP layer now
                                     buf = NULL;
                                 }
@@ -241,7 +247,6 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
 {
     message_handshake_response_t packet;
     sbuf_t                      *buf = NULL;
-    err_t                        err = ERR_OK;
 
     if (wireguardCreateHandshakeResponse(device, peer, &packet))
     {
@@ -257,7 +262,7 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
 
             sbufWrite(buf, &packet, sizeof(message_handshake_response_t));
             // OK!
-            wireguardifPeerOutput(device->ts, buf, peer);
+            wireguardifPeerOutput(device, buf, peer);
         }
     }
 }
@@ -271,8 +276,7 @@ static bool wireguardifCheckResponseMessage(wireguard_device_t *device, message_
     size_t   source_len;
     // We received an initiation packet check it is valid
 
-    if (wireguardCheckMac1(device, data, sizeof(message_handshake_response_t) - (2 * WIREGUARD_COOKIE_LEN),
-                             msg->mac1))
+    if (wireguardCheckMac1(device, data, sizeof(message_handshake_response_t) - (2 * WIREGUARD_COOKIE_LEN), msg->mac1))
     {
         // mac1 is valid!
         if (! isSystemUnderLoad(SYSTEM_LOAD_THRESHOULD))
@@ -286,7 +290,7 @@ static bool wireguardifCheckResponseMessage(wireguard_device_t *device, message_
             source_len = getSourceAddrPort(addr, port, source_buf, sizeof(source_buf));
 
             result = wireguardCheckMac2(device, data, sizeof(message_handshake_response_t) - (WIREGUARD_COOKIE_LEN),
-                                          source_buf, source_len, msg->mac2);
+                                        source_buf, source_len, msg->mac2);
 
             if (! result)
             {
@@ -315,7 +319,7 @@ static bool wireguardifCheckInitiationMessage(wireguard_device_t *device, messag
     // We received an initiation packet check it is valid
 
     if (wireguardCheckMac1(device, data, sizeof(message_handshake_initiation_t) - (2 * WIREGUARD_COOKIE_LEN),
-                             msg->mac1))
+                           msg->mac1))
     {
         // mac1 is valid!
         if (! isSystemUnderLoad(SYSTEM_LOAD_THRESHOULD))
@@ -329,7 +333,7 @@ static bool wireguardifCheckInitiationMessage(wireguard_device_t *device, messag
             source_len = getSourceAddrPort(addr, port, source_buf, sizeof(source_buf));
 
             result = wireguardCheckMac2(device, data, sizeof(message_handshake_initiation_t) - (WIREGUARD_COOKIE_LEN),
-                                          source_buf, source_len, msg->mac2);
+                                        source_buf, source_len, msg->mac2);
 
             if (! result)
             {
@@ -353,9 +357,9 @@ void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip_addr_t
     assert(device != NULL);
     assert(p != NULL);
     // We have received a packet from the base_netif to our UDP port - process this as a possible Wireguard packet
-    wireguard_peer_t   *peer;
-    uint8_t            *data = sbufGetMutablePtr(p);
-    size_t              len  = p->len; // This buf, not chained ones
+    wireguard_peer_t *peer;
+    uint8_t          *data = sbufGetMutablePtr(p);
+    size_t            len  = p->len; // This buf, not chained ones
 
     message_handshake_initiation_t *msg_initiation;
     message_handshake_response_t   *msg_response;
@@ -431,7 +435,7 @@ void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip_addr_t
         break;
     }
     // Release data!
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()),p);
+    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), p);
 }
 
 void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

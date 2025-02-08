@@ -60,10 +60,10 @@ set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 
 
-option(INCLUDE_TEMPLATE "link Template staticly to the core"  TRUE)
+option(INCLUDE_TEMPLATE "link Template staticly to the core"  FALSE)
 
 
-option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  FALSE)
+option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
@@ -71,12 +71,12 @@ option(INCLUDE_LAYER3_IP_OVERRIDER "link Layer3IpOverrider staticly to the core"
 option(INCLUDE_LAYER3_IP_MANIPULATOR "link Layer3IPManipulator staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_TCP_MANIPULATOR "link Layer3TcpManipulator staticly to the core"  FALSE)
 
-option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
+option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  FALSE)
 option(INCLUDE_UDP_LISTENER "link UdpListener staticly to the core"  FALSE)
 option(INCLUDE_LISTENER "link Listener staticly to the core"  FALSE)
 option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  FALSE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  FALSE)
-option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
+option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  FALSE)
 option(INCLUDE_UDP_CONNECTOR "link UdpConnector staticly to the core"  FALSE)
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 

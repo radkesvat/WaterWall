@@ -4,13 +4,14 @@
 #include "wireguard_types.h"
 #include "wwapi.h"
 
-
 typedef struct wgd_tstate_s
 {
     // this is th real wireguard device that we built using data
     // Note dont change the order of this struct, we use pointer casting to get the device and state
     wireguard_device_t wg_device;
 
+    tunnel_t *tunnel;
+    
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;
     wireguard_peer_init_data_t  *peers_configuration;
@@ -55,17 +56,13 @@ void wireguarddeviceTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void wireguarddeviceLinestateInitialize(wgd_lstate_t *ls);
 void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
 
-
 /***************************************** WireGuard Interface ****************************************** */
 
 /* wireguard device cycle is the heart of the device that is by defalut runs every 400 ms*/
 void wireguarddeviceLoop(wireguard_device_t *device);
 
-
-
-
 // Create new WireGuard device from the given data
-wireguard_device_t * wireguarddeviceCreate(wireguard_device_init_data_t *data);
+wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data);
 
 // Helper to initialise the peer struct with defaults
 void wireguardifPeerInit(wireguard_peer_init_data_t *peer);
@@ -87,7 +84,8 @@ err_t wireguardifConnect(wireguard_device_t *device, uint8_t peer_index);
 err_t wireguardifDisconnect(wireguard_device_t *device, uint8_t peer_index);
 
 // Is the given peer "up"? A peer is up if it has a valid session key it can communicate with
-err_t wireguardifPeerIsUp(wireguard_device_t *device, uint8_t peer_index, ip_addr_t *current_ip, uint16_t *current_port);
+err_t wireguardifPeerIsUp(wireguard_device_t *device, uint8_t peer_index, ip_addr_t *current_ip,
+                          uint16_t *current_port);
 
 err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer);
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port);

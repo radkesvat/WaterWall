@@ -103,7 +103,8 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     t->fnResumeD  = &wireguarddeviceTunnelDownStreamResume;
 
     wgd_tstate_t *state = tunnelGetState(t);
-
+    state->tunnel        = t;
+    
     char *device_private_key = NULL;
 
     const cJSON *settings = node->node_settings_json;

@@ -5,17 +5,29 @@
 
 err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer)
 {
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
     // Send to last know port, not the connect port
     // TODO: Support DSCP and ECN - lwip requires this set on PCB globally, not per packet
-    return udpSendTo(device->udp_pcb, q, &peer->ip, peer->port);
+    wgd_tstate_t *ts = (wgd_tstate_t *) device;
+    tunnel_t* tunnel = ts->tunnel;
+    line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
+    line->routing_context.dest_ctx.ip_address = peer->ip;
+    line->routing_context.dest_ctx.port = peer->port;
+    tunnelNextUpStreamPayload(tunnel,line,q);
+    return ERR_OK;
+    // return udpSendTo(device->udp_pcb, q, &peer->ip, peer->port);
 }
 
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port)
 {
     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
-
-    return udpSendTo(device->udp_pcb, q, ipaddr, port);
+    wgd_tstate_t *ts = (wgd_tstate_t *) device;
+    tunnel_t* tunnel = ts->tunnel;
+    line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
+    line->routing_context.dest_ctx.ip_address = *ipaddr;
+    line->routing_context.dest_ctx.port = port;
+    tunnelNextUpStreamPayload(tunnel,line,q);
+    return ERR_OK;
+    // return udpSendTo(device->udp_pcb, q, ipaddr, port);
 }
 
 static bool peerAddIp(wireguard_peer_t *peer, ip_addr_t ip, ip_addr_t mask)

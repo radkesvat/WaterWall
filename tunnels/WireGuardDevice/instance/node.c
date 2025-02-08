@@ -22,7 +22,7 @@ node_t nodeWireGuardDeviceGet(void)
              .node_manager_config   = NULL,
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
-             .required_padding_left = 0,
+             .required_padding_left = WIREGUARD_AUTHTAG_LEN,
              .layer_group           = kNodeLayer3,
              .layer_group_next_node = kNodeLayer3,
              .layer_group_prev_node = kNodeLayer3,
