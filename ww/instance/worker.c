@@ -21,7 +21,7 @@ void workerInit(worker_t *worker, wid_t wid)
         GSTATE.masterpool_pipetunnel_msg_pools, pipeLineGetMesageSize(), (8) + GSTATE.ram_profile);
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           (0) + GSTATE.ram_profile, SMALL_BUFFER_SIZE, LARGE_BUFFER_SIZE);
+                                           (0) + GSTATE.ram_profile,LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE );
 
     // note that loop depeneds on worker->buffer_pool
     worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, wid);

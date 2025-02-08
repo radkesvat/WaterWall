@@ -22,7 +22,9 @@ enum node_flags
     // no flags (default)
     kNodeFlagNone = (1 << 0),
     // this node can be a chain head (begin of the chain)
-    kNodeFlagChainHead = (1 << 1)
+    kNodeFlagChainHead = (1 << 1),
+    // this node dose not need to be in a chain to work (maybe a database node for user auth?)
+    kNodeFlagNoChain = (1 << 2)
 };
 
 enum node_layer_group
