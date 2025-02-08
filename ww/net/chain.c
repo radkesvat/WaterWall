@@ -20,6 +20,11 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
     tunnelarrayInsert(&(tci->tunnels), t);
     tci->sum_padding_left += tunnelGetNode(t)->required_padding_left;
     tci->sum_line_state_size += t->lstate_size;
+    if ((tunnelGetNode(t)->layer_group & kNodeLayer3) == kNodeLayer3)
+    {
+        tci->contains_packet_node = true;
+    }
+
     t->chain = tci;
 }
 
@@ -36,10 +41,20 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
 {
     tc->masterpool_line_pool = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
 
+    if (tc->contains_packet_node)
+    {
+        tc->packet_lines = memoryAllocate(sizeof(line_t) * tc->workers_count);
+    }
+
     for (uint32_t i = 0; i < tc->workers_count; i++)
     {
         tc->line_pools[i] = genericpoolCreateWithDefaultAllocatorAndCapacity(
             tc->masterpool_line_pool, sizeof(line_t) + tc->sum_line_state_size, (8) + GSTATE.ram_profile);
+
+        if (tc->contains_packet_node)
+        {
+            tc->packet_lines[i] = lineCreate(tc->line_pools[i], tc->sum_line_state_size);
+        }
     }
 
     globalstateUpdaeAllocationPadding(tc->sum_padding_left);

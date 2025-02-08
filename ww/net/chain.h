@@ -1,10 +1,11 @@
 #pragma once
 #include "wlibc.h"
 
-#include "worker.h"
 #include "generic_pool.h"
+#include "worker.h"
 
 typedef struct tunnel_s tunnel_t;
+typedef struct line_s   line_t;
 
 enum
 {
@@ -33,6 +34,8 @@ typedef struct tunnel_chain_s
     uint16_t        sum_padding_left;
     uint32_t        sum_line_state_size;
     wid_t           workers_count;
+    bool            contains_packet_node;
+    line_t        **packet_lines;
     master_pool_t  *masterpool_line_pool;
     generic_pool_t *line_pools[];
 
@@ -45,3 +48,8 @@ generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, wid_t wid);
 
 void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t);
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t);
+
+static line_t *tunnelchainGetPacketLine(tunnel_chain_t *tc, wid_t wid)
+{
+    return tc->packet_lines[wid];
+}

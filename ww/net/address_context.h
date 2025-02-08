@@ -3,8 +3,7 @@
 #include "wlibc.h"
 #include "wsocket.h"
 
-#include "ip_types.h"
-
+#include "ww_lwip.h"
 
 /**
  * Network Address Management System
@@ -43,7 +42,7 @@ enum socket_address_protocol
  */
 typedef struct address_context_s
 {
-    ip_addr_t         ip_address;      // IP address in network byte order
+    ip_addr_t            ip_address;      // IP address in network byte order
     uint16_t             port;            // Port number in host byte order
     char                *domain;          // Domain name if applicable
     enum domain_strategy domain_strategy; // DNS resolution strategy
