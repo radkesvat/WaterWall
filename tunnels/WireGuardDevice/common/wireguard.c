@@ -42,7 +42,7 @@ static void wireguard12byteTai64(uint8_t *output) {
 	U32TO8_BIG(output + 8, nanos);
 }
 
-void wireguardInit()
+void wireguardInit(void)
 {
     blake2s_ctx_t *ctx;
     // Pre-calculate chaining key hash

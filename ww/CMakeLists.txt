@@ -452,7 +452,8 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wuninitialized
         -Wwrite-strings
         -Wunused-parameter
-
+        -Wstrict-prototypes
+        
         -Wno-unused-function
         -Wno-unknown-pragmas
     )
