@@ -4,6 +4,7 @@
 #ifdef COMPILER_MSVC
 
 #pragma warning(disable : 4295) // array is too small to include a terminating null character (IT IS OK)
+#pragma warning(disable : 4703) // potentially uninitialized local pointer variable (IT IS OK)
 
 #endif
 
@@ -28,18 +29,19 @@ static const uint8_t zero_key[WIREGUARD_PUBLIC_KEY_LEN] = {0};
 static uint8_t construction_hash[WIREGUARD_HASH_LEN];
 static uint8_t identifier_hash[WIREGUARD_HASH_LEN];
 
-static void wireguard12byteTai64(uint8_t *output) {
-	// See https://cr.yp.to/libtai/tai64.html
-	// 64 bit seconds from 1970 = 8 bytes
-	// 32 bit nano seconds from current second
+static void wireguard12byteTai64(uint8_t *output)
+{
+    // See https://cr.yp.to/libtai/tai64.html
+    // 64 bit seconds from 1970 = 8 bytes
+    // 32 bit nano seconds from current second
 
-	uint64_t millis = getTickMS();
+    uint64_t millis = getTickMS();
 
-	// Split into seconds offset + nanos
-	uint64_t seconds = 0x400000000000000aULL + (millis / 1000);
-	uint32_t nanos = (millis % 1000) * 1000;
-	U64TO8_BIG(output + 0, seconds);
-	U32TO8_BIG(output + 8, nanos);
+    // Split into seconds offset + nanos
+    uint64_t seconds = 0x400000000000000aULL + (millis / 1000);
+    uint32_t nanos   = (millis % 1000) * 1000;
+    U64TO8_BIG(output + 0, seconds);
+    U32TO8_BIG(output + 8, nanos);
 }
 
 void wireguardInit(void)
@@ -55,7 +57,6 @@ void wireguardInit(void)
     blake2sUpdate(ctx, IDENTIFIER, sizeof(IDENTIFIER));
     blake2sFinal(ctx, identifier_hash);
 }
-
 
 wireguard_peer_t *peerAlloc(wireguard_device_t *device)
 {
