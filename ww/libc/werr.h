@@ -103,7 +103,7 @@
 
 #undef ERR_OK // prevent conflict
 enum {
-#define F(errcode, name, errmsg) ERR_##name = errcode,
+#define F(errcode, name, errmsg) WERR_##name = errcode,
     FOREACH_ERR(F)
 #undef  F
 };

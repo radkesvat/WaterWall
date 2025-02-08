@@ -313,8 +313,12 @@ enum
     #if !defined(ssize_t)
         #ifdef _WIN64
         typedef __int64 ssize_t;  // 64-bit Windows
+        #define SSIZE_MAX INT64_MAX
+
         #else
         typedef int ssize_t;      // 32-bit Windows
+        #define SSIZE_MAX INT_MAX
+
         #endif
     #endif
 

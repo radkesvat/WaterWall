@@ -514,7 +514,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
         if (io->write_bufsize + len - nwrite > io->max_write_bufsize)
         {
             wloge("write bufsize > %u, close it!", io->max_write_bufsize);
-            io->error = ERR_OVER_LIMIT;
+            io->error = WERR_OVER_LIMIT;
             goto write_error;
         }
         sbufShiftRight(buf, nwrite);

@@ -10,7 +10,7 @@
 #include <netinet/udp.h>
 #include <netinet/tcp.h>
 #include <netinet/ip_icmp.h>
-typedef struct iphdr    iphdr_t;
+typedef struct iphdr    ip_hdr_t;
 typedef struct udphdr   udphdr_t;
 typedef struct tcphdr   tcphdr_t;
 
@@ -18,7 +18,7 @@ typedef struct icmphdr  icmphdr_t;
 typedef struct icmp     icmp_t;
 #else
 */
-// sizeof(iphdr_t) = 20
+// sizeof(ip_hdr_t) = 20
 typedef struct iphdr_s {
 #if BYTE_ORDER == LITTLE_ENDIAN
     uint8_t     ihl:4; // ip header length
@@ -39,7 +39,7 @@ typedef struct iphdr_s {
     uint32_t    saddr; // srcaddr
     uint32_t    daddr; // dstaddr
     /*The options start here.*/
-} iphdr_t;
+} ip_hdr_t;
 
 // sizeof(udphdr_t) = 8
 typedef struct udphdr_s {

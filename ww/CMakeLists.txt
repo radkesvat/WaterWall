@@ -218,10 +218,36 @@ CPMAddPackage(
 set(LIBS ${LIBS} sodium)
 
 
+# Add LWIP library
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)
+set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip)
+set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
+set(LWIP_CONTRIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip/contrib)
+
+set (LWIP_INCLUDE_DIRS
+    "${LWIP_DIR}/src/include"
+    "${LWIP_DIR}/contrib"
+    "${LWIPOPTS_DIR}"
+    # lwipopts is located in ww/net
+)
+if(WIN32)
+    set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
+    target_compile_definitions(ww PUBLIC LWIP_NO_UNISTD_H=1)
+else()
+    set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/unix/include")
+endif()
+
+
+include(${LWIP_DIR}/src/Filelists.cmake)
+include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
+
+target_include_directories(ww PUBLIC ${LWIP_INCLUDE_DIRS})
+
+set(LIBS ${LIBS} lwipcore)
+
+# Add mimalloc library
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip)
 
 set(LIBS ${LIBS} mimalloc-static)
 
@@ -305,9 +331,9 @@ endif()
 
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    target_compile_definitions(ww PUBLIC DDEBUG=1)
+    target_compile_definitions(ww PUBLIC DEBUG=1 LWIP_DEBUG=1)
 else()
-    target_compile_definitions(ww PUBLIC DNDEBUG=1)
+    target_compile_definitions(ww PUBLIC NDEBUG=1)
 endif()
 
 if(ENABLE_UDS)

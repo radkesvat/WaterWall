@@ -16,10 +16,10 @@
 
 struct sbuf_s
 {
-    uint32_t curpos;
-    uint32_t len;
-    uint32_t capacity;
-    uint16_t l_pad;
+    uint32_t                     curpos;
+    uint32_t                     len;
+    uint32_t                     capacity;
+    uint16_t                     l_pad;
     MSVC_ATTR_ALIGNED_16 uint8_t buf[] GNU_ATTR_ALIGNED_16;
 };
 
@@ -228,6 +228,16 @@ static inline void sbufRead(const sbuf_t *const b, void *const dest, const uint3
 static inline void sbufWrite(sbuf_t *restrict const b, const void *restrict const buffer, const uint32_t len)
 {
     memoryCopy(sbufGetMutablePtr(b), buffer, len);
+}
+
+/**
+ * Writes zeros to the buffer.
+ * @param b The buffer.
+ * @param len The length of the zeros to write.
+ */
+static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
+{
+    memorySet(sbufGetMutablePtr(b), 0, len);
 }
 
 /**
