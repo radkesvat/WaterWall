@@ -1,8 +1,10 @@
 #pragma once
 
-#include "ip_types.h"
 #include "wlibc.h"
 #include "wsocket.h"
+
+#include "ip_types.h"
+
 
 /**
  * Network Address Management System
