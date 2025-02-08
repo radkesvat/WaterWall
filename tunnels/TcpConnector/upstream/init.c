@@ -47,7 +47,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     // resolve domain name if needed (TODO : make it async and consider domain strategy)
     if (! dest_ctx->type_ip)
     {
-        if(dest_ctx->domain == NULL)
+        if (dest_ctx->domain == NULL)
         {
             LOGF("TcpConnector: destination address is not set");
             goto fail;
@@ -72,9 +72,9 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
     wloop_t *loop   = getWorkerLoop(getWID());
-    int sockfd = socket(dest_ctx->ip_address.type, SOCK_STREAM, 0);
+    int      sockfd = socket(dest_ctx->ip_address.type, SOCK_STREAM, 0);
 
-    if (sockfd == INVALID_SOCKET)
+    if (sockfd < 0)
     {
         LOGE("TcpConnector: could not create socket");
         goto fail;
@@ -107,7 +107,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
 
-    wioSetPeerAddr(upstream_io, (struct sockaddr*)&(addr), (int) sockaddrLen(&(addr)));
+    wioSetPeerAddr(upstream_io, (struct sockaddr *) &(addr), (int) sockaddrLen(&(addr)));
     lstate->io = upstream_io;
     weventSetUserData(upstream_io, lstate);
     wioSetCallBackConnect(upstream_io, tcpconnectorOnOutBoundConnected);
