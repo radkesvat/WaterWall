@@ -8,7 +8,6 @@
 #include "global_state.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
-#include "ip_types.h"
 #include "node_builder/config_file.h"
 #include "node_builder/node.h"
 #include "packet_tunnel.h"
@@ -21,3 +20,5 @@
 #include "wsocket.h"
 #include "wsysinfo.h"
 #include "wversion.h"
+#include "ww_lwip.h"
+
