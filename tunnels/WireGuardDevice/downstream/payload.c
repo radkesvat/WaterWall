@@ -352,7 +352,7 @@ static bool wireguardifCheckInitiationMessage(wireguard_device_t *device, messag
     return result;
 }
 
-void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip_addr_t *addr, uint16_t port)
+static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip_addr_t *addr, uint16_t port)
 {
     assert(device != NULL);
     assert(p != NULL);

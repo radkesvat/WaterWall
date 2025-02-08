@@ -186,8 +186,6 @@ if(cjson_ADDED)
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
 
-set(OPENSSL_CONFIGURE_VERBOSE FALSE)
-
 # add openssl (default version is latest 3.3.0 +)
 CPMAddPackage(
     NAME openssl-cmake
@@ -195,6 +193,8 @@ CPMAddPackage(
     OPTIONS
     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
     "BUILD_SHARED_LIBS OFF"
+    "OPENSSL_CONFIGURE_VERBOSE OFF"
+    "OPENSSL_BUILD_VERBOSE TRUE"
 )
 
 set(LIBS ${LIBS} OpenSSL::SSL)
@@ -451,6 +451,7 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wnested-externs
         -Wuninitialized
         -Wwrite-strings
+        -Wunused-parameter
 
         -Wno-unused-function
         -Wno-unknown-pragmas

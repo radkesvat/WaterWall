@@ -30,6 +30,8 @@ static wireguard_peer_t *peerLookupByAllowedIp(wireguard_device_t *device, const
 
 err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, wireguard_peer_t *peer)
 {
+    (void) ipaddr;
+    
     // The LWIP IP layer wants to send an IP packet out over the interface - we need to encrypt and send it to the peer
     message_transport_data_t *hdr;
     err_t                     result;
