@@ -31,10 +31,8 @@
  */
 
 
-#include <stdbool.h>
-#include <stdlib.h>
-#include <string.h>
-#include <limits.h>
+#include "structure.h"
+#include "wcrypto.h"
 
 
 // For HMAC calculation
@@ -47,7 +45,6 @@ static const uint8_t IDENTIFIER[34] = "WireGuard v1 zx2c4 Jason@zx2c4.com"; // T
 static const uint8_t LABEL_MAC1[8] = "mac1----"; // Label-Mac1 The UTF-8 string literal "mac1----", 8 bytes of output.
 static const uint8_t LABEL_COOKIE[8] = "cookie--"; // Label-Cookie The UTF-8 string literal "cookie--", 8 bytes of output
 
-static const char *base64_lookup = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static const uint8_t zero_key[WIREGUARD_PUBLIC_KEY_LEN] = { 0 };
 
@@ -57,16 +54,16 @@ static uint8_t identifier_hash[WIREGUARD_HASH_LEN];
 
 
 void wireguardInit() {
-	wireguard_blake2s_ctx ctx;
-	// Pre-calculate chaining key hash
-	wireguard_blake2s_init(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
-	wireguard_blake2s_update(&ctx, CONSTRUCTION, sizeof(CONSTRUCTION));
-	wireguard_blake2s_final(&ctx, construction_hash);
-	// Pre-calculate initial handshake hash - uses construction_hash calculated above
-	wireguard_blake2s_init(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
-	wireguard_blake2s_update(&ctx, construction_hash, sizeof(construction_hash));
-	wireguard_blake2s_update(&ctx, IDENTIFIER, sizeof(IDENTIFIER));
-	wireguard_blake2s_final(&ctx, identifier_hash);
+    blake2s_ctx_t *ctx;
+    // Pre-calculate chaining key hash
+    blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
+    blake2sUpdate(ctx, CONSTRUCTION, sizeof(CONSTRUCTION));
+    blake2sFinal(ctx, construction_hash);
+    // Pre-calculate initial handshake hash - uses construction_hash calculated above
+    blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
+    blake2sUpdate(ctx, construction_hash, sizeof(construction_hash));
+    blake2sUpdate(ctx, IDENTIFIER, sizeof(IDENTIFIER));
+    blake2sFinal(ctx, identifier_hash);
 }
 
 wireguard_peer_t *peerAlloc(wireguard_device_t *device) {
@@ -163,12 +160,12 @@ bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds) {
 
 
 static void generateCookieSecret(wireguard_device_t *device) {
-	wireguard_random_bytes(device->cookie_secret, WIREGUARD_HASH_LEN);
+	getRandomBytes(device->cookie_secret, WIREGUARD_HASH_LEN);
 	device->cookie_secret_millis = getTickMS();
 }
 
 static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint8_t *source_addr_port, size_t source_length) {
-	wireguard_blake2s_ctx ctx;
+	blake2s_ctx_t *ctx;
 
 	if (wireguardExpired(device->cookie_secret_millis, COOKIE_SECRET_MAX_AGE)) {
 		// Generate new random bytes
@@ -176,38 +173,38 @@ static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint
 	}
 
 	// Mac(key, input) Keyed-Blake2s(key, input, 16), the keyed MAC variant of the BLAKE2s hash function, returning 16 bytes of output
-	wireguard_blake2s_init(&ctx, WIREGUARD_COOKIE_LEN, device->cookie_secret, WIREGUARD_HASH_LEN);
+	blake2sInit(&ctx, WIREGUARD_COOKIE_LEN, device->cookie_secret, WIREGUARD_HASH_LEN);
 	// 5.4.7 Under Load: Cookie Reply Message
 	// Mix in the IP address and port - have the IP layer pass this in as byte array to avoid using Lwip specific APIs in this module
 	if ((source_addr_port) && (source_length > 0)) {
-		wireguard_blake2s_update(&ctx, source_addr_port, source_length);
+		blake2sUpdate(ctx, source_addr_port, source_length);
 	}
-	wireguard_blake2s_final(&ctx, cookie);
+	blake2sFinal(ctx, cookie);
 }
 
 static void wireguardMac(uint8_t *dst, const void *message, size_t len, const uint8_t *key, size_t keylen) {
-	wireguard_blake2s(dst, WIREGUARD_COOKIE_LEN, key, keylen, message, len);
+	blake2s(dst, WIREGUARD_COOKIE_LEN, key, keylen, message, len);
 }
 
 static void wireguardMacKey(uint8_t *key, const uint8_t *public_key, const uint8_t *label, size_t label_len) {
-	blake2s_ctx ctx;
-	blake2s_init(&ctx, WIREGUARD_SESSION_KEY_LEN, NULL, 0);
-	blake2s_update(&ctx, label, label_len);
-	blake2s_update(&ctx, public_key, WIREGUARD_PUBLIC_KEY_LEN);
-	blake2s_final(&ctx, key);
+	blake2s_ctx_t *ctx;
+	blake2sInit(&ctx, WIREGUARD_SESSION_KEY_LEN, NULL, 0);
+	blake2sUpdate(ctx, label, label_len);
+	blake2sUpdate(ctx, public_key, WIREGUARD_PUBLIC_KEY_LEN);
+	blake2sFinal(ctx, key);
 }
 
 static void wireguardMixHash(uint8_t *hash, const uint8_t *src, size_t src_len) {
-	wireguard_blake2s_ctx ctx;
-	wireguard_blake2s_init(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
-	wireguard_blake2s_update(&ctx, hash, WIREGUARD_HASH_LEN);
-	wireguard_blake2s_update(&ctx, src, src_len);
-	wireguard_blake2s_final(&ctx, hash);
+	blake2s_ctx_t *ctx;
+	blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
+	blake2sUpdate(ctx, hash, WIREGUARD_HASH_LEN);
+	blake2sUpdate(ctx, src, src_len);
+	blake2sFinal(ctx, hash);
 }
 
 static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, const uint8_t *text, size_t text_len) {
 	// Adapted from appendix example in RFC2104 to use BLAKE2S instead of MD5 - https://tools.ietf.org/html/rfc2104
-	wireguard_blake2s_ctx ctx;
+	blake2s_ctx_t *ctx;
 	uint8_t k_ipad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // inner padding - key XORd with ipad
 	uint8_t k_opad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // outer padding - key XORd with opad
 
@@ -215,10 +212,10 @@ static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, c
 	int i;
 	// if key is longer than BLAKE2S_BLOCK_SIZE bytes reset it to key=BLAKE2S(key)
 	if (key_len > WIREGUARD_BLAKE2S_BLOCK_SIZE) {
-		wireguard_blake2s_ctx tctx;
-		wireguard_blake2s_init(&tctx, WIREGUARD_HASH_LEN, NULL, 0);
-		wireguard_blake2s_update(&tctx, key, key_len);
-		wireguard_blake2s_final(&tctx, tk);
+		blake2s_ctx_t *tctx;
+		blake2sInit(&tctx, WIREGUARD_HASH_LEN, NULL, 0);
+		blake2sUpdate(tctx, key, key_len);
+		blake2sFinal(tctx, tk);
 		key = tk;
 		key_len = WIREGUARD_HASH_LEN;
 	}
@@ -240,16 +237,16 @@ static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, c
 		k_opad[i] ^= 0x5c;
 	}
 	// perform inner HASH
-	wireguard_blake2s_init(&ctx, WIREGUARD_HASH_LEN, NULL, 0); // init context for 1st pass
-	wireguard_blake2s_update(&ctx, k_ipad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with inner pad
-	wireguard_blake2s_update(&ctx, text, text_len); // then text of datagram
-	wireguard_blake2s_final(&ctx, digest); // finish up 1st pass
+	blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0); // init context for 1st pass
+	blake2sUpdate(ctx, k_ipad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with inner pad
+	blake2sUpdate(ctx, text, text_len); // then text of datagram
+	blake2sFinal(ctx, digest); // finish up 1st pass
 
 	// perform outer HASH
-	wireguard_blake2s_init(&ctx, WIREGUARD_HASH_LEN, NULL, 0); // init context for 2nd pass
-	wireguard_blake2s_update(&ctx, k_opad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with outer pad
-	wireguard_blake2s_update(&ctx, digest, WIREGUARD_HASH_LEN); // then results of 1st hash
-	wireguard_blake2s_final(&ctx, digest); // finish up 2nd pass
+	blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0); // init context for 2nd pass
+	blake2sUpdate(ctx, k_opad, WIREGUARD_BLAKE2S_BLOCK_SIZE); // start with outer pad
+	blake2sUpdate(ctx, digest, WIREGUARD_HASH_LEN); // then results of 1st hash
+	blake2sFinal(ctx, digest); // finish up 2nd pass
 }
 
 static void wireguardKdf1(uint8_t *tau1, const uint8_t *chaining_key, const uint8_t *data, size_t data_len) {
@@ -264,8 +261,8 @@ static void wireguardKdf1(uint8_t *tau1, const uint8_t *chaining_key, const uint
 	memcpy(tau1, output, WIREGUARD_HASH_LEN);
 
 	// Wipe intermediates
-	crypto_zero(tau0, sizeof(tau0));
-	crypto_zero(output, sizeof(output));
+	wCryptoZero(tau0, sizeof(tau0));
+	wCryptoZero(output, sizeof(output));
 }
 
 static void wireguardKdf2(uint8_t *tau1, uint8_t *tau2, const uint8_t *chaining_key, const uint8_t *data, size_t data_len) {
@@ -285,8 +282,8 @@ static void wireguardKdf2(uint8_t *tau1, uint8_t *tau2, const uint8_t *chaining_
 	memcpy(tau2, output, WIREGUARD_HASH_LEN);
 
 	// Wipe intermediates
-	crypto_zero(tau0, sizeof(tau0));
-	crypto_zero(output, sizeof(output));
+	wCryptoZero(tau0, sizeof(tau0));
+	wCryptoZero(output, sizeof(output));
 }
 
 static void wireguardKdf3(uint8_t *tau1, uint8_t *tau2, uint8_t *tau3, const uint8_t *chaining_key, const uint8_t *data, size_t data_len) {
@@ -311,8 +308,8 @@ static void wireguardKdf3(uint8_t *tau1, uint8_t *tau2, uint8_t *tau3, const uin
 	memcpy(tau3, output, WIREGUARD_HASH_LEN);
 
 	// Wipe intermediates
-	crypto_zero(tau0, sizeof(tau0));
-	crypto_zero(output, sizeof(output));
+	wCryptoZero(tau0, sizeof(tau0));
+	wCryptoZero(output, sizeof(output));
 }
 
 bool wireguardCheckReplay(wireguard_keypair_t *keypair, uint64_t seq) {
@@ -382,7 +379,7 @@ static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device) {
 	bool existing;
 	do {
 		do {
-			wireguard_random_bytes(buf, 4);
+			getRandomBytes(buf, 4);
 			result = U8TO32_LITTLE(buf);
 		} while ((result == 0) || (result == 0xFFFFFFFF)); // Don't allow 0 or 0xFFFFFFFF as valid values
 
@@ -406,15 +403,15 @@ static void wireguardClampPrivateKey(uint8_t *key) {
 }
 
 static void wireguardGeneratePrivateKey(uint8_t *key) {
-	wireguard_random_bytes(key, WIREGUARD_PRIVATE_KEY_LEN);
+	getRandomBytes(key, WIREGUARD_PRIVATE_KEY_LEN);
 	wireguardClampPrivateKey(key);
 }
 
 static bool wireguardGeneratePublicKey(uint8_t *public_key, const uint8_t *private_key) {
 	static const uint8_t basepoint[WIREGUARD_PUBLIC_KEY_LEN] = { 9 };
 	bool result = false;
-	if (memcmp(private_key, zero_key, WIREGUARD_PUBLIC_KEY_LEN) != 0) {
-		result = (wireguard_x25519(public_key, private_key, basepoint) == 0);
+	if (!wCryptoEqual(private_key, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
+		result = (performX25519(public_key, private_key, basepoint) == 0);
 	}
 	return result;
 }
@@ -423,7 +420,7 @@ bool wireguardCheckMac1(wireguard_device_t *device, const uint8_t *data, size_t 
 	bool result = false;
 	uint8_t calculated[WIREGUARD_COOKIE_LEN];
 	wireguardMac(calculated, data, len, device->label_mac1_key, WIREGUARD_SESSION_KEY_LEN);
-	if (crypto_equal(calculated, mac1, WIREGUARD_COOKIE_LEN)) {
+	if (wCryptoEqual(calculated, mac1, WIREGUARD_COOKIE_LEN)) {
 		result = true;
 	}
 	return result;
@@ -437,14 +434,14 @@ bool wireguardCheckMac2(wireguard_device_t *device, const uint8_t *data, size_t 
 	generatePeerCookie(device, cookie, source_addr_port, source_length);
 
 	wireguardMac(calculated, data, len, cookie, WIREGUARD_COOKIE_LEN);
-	if (crypto_equal(calculated, mac2, WIREGUARD_COOKIE_LEN)) {
+	if (wCryptoEqual(calculated, mac2, WIREGUARD_COOKIE_LEN)) {
 		result = true;
 	}
 	return result;
 }
 
 void keypairDestroy(wireguard_keypair_t *keypair) {
-	crypto_zero(keypair, sizeof(wireguard_keypair_t));
+	wCryptoZero(keypair, sizeof(wireguard_keypair_t));
 	keypair->valid = false;
 }
 
@@ -476,7 +473,7 @@ void wireguardStartSession(wireguard_peer_t *peer, bool initiator) {
 	wireguard_handshake_t *handshake = &peer->handshake;
 	wireguard_keypair_t new_keypair;
 
-	crypto_zero(&new_keypair, sizeof(wireguard_keypair_t));
+	wCryptoZero(&new_keypair, sizeof(wireguard_keypair_t));
 	new_keypair.initiator = initiator;
 	new_keypair.local_index = handshake->local_index;
 	new_keypair.remote_index = handshake->remote_index;
@@ -502,10 +499,10 @@ void wireguardStartSession(wireguard_peer_t *peer, bool initiator) {
 	new_keypair.valid = true;
 
 	// Eprivi = Epubi = Eprivr = Epubr = Ci = Cr := E
-	crypto_zero(handshake->ephemeral_private, WIREGUARD_PUBLIC_KEY_LEN);
-	crypto_zero(handshake->remote_ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
-	crypto_zero(handshake->hash, WIREGUARD_HASH_LEN);
-	crypto_zero(handshake->chaining_key, WIREGUARD_HASH_LEN);
+	wCryptoZero(handshake->ephemeral_private, WIREGUARD_PUBLIC_KEY_LEN);
+	wCryptoZero(handshake->remote_ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
+	wCryptoZero(handshake->hash, WIREGUARD_HASH_LEN);
+	wCryptoZero(handshake->chaining_key, WIREGUARD_HASH_LEN);
 	handshake->remote_index = 0;
 	handshake->local_index = 0;
 	handshake->valid = false;
@@ -582,14 +579,14 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
 	wireguardMixHash(hash, msg->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
 
 	// Calculate DH(Eprivi,Spubr)
-	wireguard_x25519(dh_calculation, device->private_key, e);
-	if (!crypto_equal(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
+	performX25519(dh_calculation, device->private_key, e);
+	if (!wCryptoEqual(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
 
 		// (Ci,k) := Kdf2(Ci,DH(Eprivi,Spubr))
 		wireguardKdf2(chaining_key, key, chaining_key, dh_calculation, WIREGUARD_PUBLIC_KEY_LEN);
 
 		// msg.static := AEAD(k, 0, Spubi, Hi)
-		if (wireguard_aead_decrypt(s, msg->enc_static, sizeof(msg->enc_static), hash, WIREGUARD_HASH_LEN, 0, key)) {
+		if (chacha20poly1305Decrypt(s, msg->enc_static, sizeof(msg->enc_static), hash, WIREGUARD_HASH_LEN, 0, key)) {
 			// Hi := Hash(Hi || msg.static)
 			wireguardMixHash(hash, msg->enc_static, sizeof(msg->enc_static));
 
@@ -601,7 +598,7 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
 				wireguardKdf2(chaining_key, key, chaining_key, peer->public_key_dh, WIREGUARD_PUBLIC_KEY_LEN);
 
 				// msg.timestamp := AEAD(k, 0, Timestamp(), Hi)
-				if (wireguard_aead_decrypt(t, msg->enc_timestamp, sizeof(msg->enc_timestamp), hash, WIREGUARD_HASH_LEN, 0, key)) {
+				if (chacha20poly1305Decrypt(t, msg->enc_timestamp, sizeof(msg->enc_timestamp), hash, WIREGUARD_HASH_LEN, 0, key)) {
 					// Hi := Hash(Hi || msg.timestamp)
 					wireguardMixHash(hash, msg->enc_timestamp, sizeof(msg->enc_timestamp));
 
@@ -642,10 +639,10 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
 		// Bad X25519
 	}
 
-	crypto_zero(key, sizeof(key));
-	crypto_zero(hash, sizeof(hash));
-	crypto_zero(chaining_key, sizeof(chaining_key));
-	crypto_zero(dh_calculation, sizeof(dh_calculation));
+	wCryptoZero(key, sizeof(key));
+	wCryptoZero(hash, sizeof(hash));
+	wCryptoZero(chaining_key, sizeof(chaining_key));
+	wCryptoZero(dh_calculation, sizeof(dh_calculation));
 
 	return ret_peer;
 }
@@ -685,14 +682,14 @@ bool wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_pee
 
 		// Cr := Kdf1(Cr, DH(Eprivr, Epubi))
 		// Calculate DH(Eprivr, Epubi)
-		wireguard_x25519(dh_calculation, ephemeral_private, e);
-		if (!crypto_equal(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
+		performX25519(dh_calculation, ephemeral_private, e);
+		if (!wCryptoEqual(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
 			wireguardKdf1(chaining_key, chaining_key, dh_calculation, WIREGUARD_PUBLIC_KEY_LEN);
 
 			// Cr := Kdf1(Cr, DH(Eprivr, Spubi))
 			// CalculateDH(Eprivr, Spubi)
-			wireguard_x25519(dh_calculation, device->private_key, e);
-			if (!crypto_equal(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
+			performX25519(dh_calculation, device->private_key, e);
+			if (!wCryptoEqual(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
 				wireguardKdf1(chaining_key, chaining_key, dh_calculation, WIREGUARD_PUBLIC_KEY_LEN);
 
 				// (Cr, t, k) := Kdf3(Cr, Q)
@@ -702,7 +699,7 @@ bool wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_pee
 				wireguardMixHash(hash, tau, WIREGUARD_HASH_LEN);
 
 				// msg.empty := AEAD(k, 0, E, Hr)
-				if (wireguard_aead_decrypt(NULL, src->enc_empty, sizeof(src->enc_empty), hash, WIREGUARD_HASH_LEN, 0, key)) {
+				if (chacha20poly1305Decrypt(NULL, src->enc_empty, sizeof(src->enc_empty), hash, WIREGUARD_HASH_LEN, 0, key)) {
 					// Hr := Hash(Hr | msg.empty)
 					// Not required as discarded
 
@@ -726,13 +723,13 @@ bool wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_pee
 		}
 
 	}
-	crypto_zero(key, sizeof(key));
-	crypto_zero(hash, sizeof(hash));
-	crypto_zero(chaining_key, sizeof(chaining_key));
-	crypto_zero(ephemeral_private, sizeof(ephemeral_private));
-	crypto_zero(static_private, sizeof(static_private));
-	crypto_zero(preshared_key, sizeof(preshared_key));
-	crypto_zero(tau, sizeof(tau));
+	wCryptoZero(key, sizeof(key));
+	wCryptoZero(hash, sizeof(hash));
+	wCryptoZero(chaining_key, sizeof(chaining_key));
+	wCryptoZero(ephemeral_private, sizeof(ephemeral_private));
+	wCryptoZero(static_private, sizeof(static_private));
+	wCryptoZero(preshared_key, sizeof(preshared_key));
+	wCryptoZero(tau, sizeof(tau));
 
 	return result;
 }
@@ -743,7 +740,7 @@ bool wireguardProcessCookieMessage(wireguard_device_t *device, wireguard_peer_t 
 
 	if (peer->handshake_mac1_valid) {
 
-		result = wireguard_xaead_decrypt(cookie, src->enc_cookie, sizeof(src->enc_cookie), peer->handshake_mac1, WIREGUARD_COOKIE_LEN, src->nonce, peer->label_cookie_key);
+		result = xchacha20poly1305Decrypt(cookie, src->enc_cookie, sizeof(src->enc_cookie), peer->handshake_mac1, WIREGUARD_COOKIE_LEN, src->nonce, peer->label_cookie_key);
 
 		if (result) {
 			// 5.4.7 Under Load: Cookie Reply Message
@@ -791,14 +788,14 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
 		wireguardMixHash(handshake->hash, dst->ephemeral, WIREGUARD_PUBLIC_KEY_LEN);
 
 		// Calculate DH(Eprivi,Spubr)
-		wireguard_x25519(dh_calculation, handshake->ephemeral_private, peer->public_key);
-		if (!crypto_equal(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
+		performX25519(dh_calculation, handshake->ephemeral_private, peer->public_key);
+		if (!wCryptoEqual(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
 
 			// (Ci,k) := Kdf2(Ci,DH(Eprivi,Spubr))
 			wireguardKdf2(handshake->chaining_key, key, handshake->chaining_key, dh_calculation, WIREGUARD_PUBLIC_KEY_LEN);
 
 			// msg.static := AEAD(k,0,Spubi, Hi)
-			wireguard_aead_encrypt(dst->enc_static, device->public_key, WIREGUARD_PUBLIC_KEY_LEN, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
+			chacha20poly1305Encrypt(dst->enc_static, device->public_key, WIREGUARD_PUBLIC_KEY_LEN, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
 
 			// Hi := Hash(Hi || msg.static)
 			wireguardMixHash(handshake->hash, dst->enc_static, sizeof(dst->enc_static));
@@ -809,7 +806,7 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
 
 			// msg.timestamp := AEAD(k, 0, Timestamp(), Hi)
 			wireguard_tai64n_now(timestamp);
-			wireguard_aead_encrypt(dst->enc_timestamp, timestamp, WIREGUARD_TAI64N_LEN, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
+			chacha20poly1305Encrypt(dst->enc_timestamp, timestamp, WIREGUARD_TAI64N_LEN, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
 
 			// Hi := Hash(Hi || msg.timestamp)
 			wireguardMixHash(handshake->hash, dst->enc_timestamp, sizeof(dst->enc_timestamp));
@@ -834,7 +831,7 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
 		// if Lm = E or Lm ≥ 120:
 		if ((peer->cookie_millis == 0) || wireguardExpired(peer->cookie_millis, COOKIE_SECRET_MAX_AGE)) {
 			// msg.mac2 := 0
-			crypto_zero(dst->mac2, WIREGUARD_COOKIE_LEN);
+			wCryptoZero(dst->mac2, WIREGUARD_COOKIE_LEN);
 		} else {
 			// msg.mac2 := Mac(Lm, msgB)
 			wireguardMac(dst->mac2, dst, (sizeof(message_handshake_initiation_t)-(WIREGUARD_COOKIE_LEN)), peer->cookie, WIREGUARD_COOKIE_LEN);
@@ -842,8 +839,8 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
 		}
 	}
 
-	crypto_zero(key, sizeof(key));
-	crypto_zero(dh_calculation, sizeof(dh_calculation));
+	wCryptoZero(key, sizeof(key));
+	wCryptoZero(dh_calculation, sizeof(dh_calculation));
 	return result;
 }
 
@@ -873,14 +870,14 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
 
 			// Cr := Kdf1(Cr, DH(Eprivr, Epubi))
 			// Calculate DH(Eprivi,Spubr)
-			wireguard_x25519(dh_calculation, handshake->ephemeral_private, handshake->remote_ephemeral);
-			if (!crypto_equal(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
+			performX25519(dh_calculation, handshake->ephemeral_private, handshake->remote_ephemeral);
+			if (!wCryptoEqual(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
 				wireguardKdf1(handshake->chaining_key, handshake->chaining_key, dh_calculation, WIREGUARD_PUBLIC_KEY_LEN);
 
 				// Cr := Kdf1(Cr, DH(Eprivr, Spubi))
 				// Calculate DH(Eprivi,Spubr)
-				wireguard_x25519(dh_calculation, handshake->ephemeral_private, peer->public_key);
-				if (!crypto_equal(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
+				performX25519(dh_calculation, handshake->ephemeral_private, peer->public_key);
+				if (!wCryptoEqual(dh_calculation, zero_key, WIREGUARD_PUBLIC_KEY_LEN)) {
 					wireguardKdf1(handshake->chaining_key, handshake->chaining_key, dh_calculation, WIREGUARD_PUBLIC_KEY_LEN);
 
 					// (Cr, t, k) := Kdf3(Cr, Q)
@@ -890,7 +887,7 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
 					wireguardMixHash(handshake->hash, tau, WIREGUARD_HASH_LEN);
 
 					// msg.empty := AEAD(k, 0, E, Hr)
-					wireguard_aead_encrypt(dst->enc_empty, NULL, 0, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
+					chacha20poly1305Encrypt(dst->enc_empty, NULL, 0, handshake->hash, WIREGUARD_HASH_LEN, 0, key);
 
 					// Hr := Hash(Hr | msg.empty)
 					wireguardMixHash(handshake->hash, dst->enc_empty, sizeof(dst->enc_empty));
@@ -923,27 +920,27 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
 		// if Lm = E or Lm ≥ 120:
 		if ((peer->cookie_millis == 0) || wireguardExpired(peer->cookie_millis, COOKIE_SECRET_MAX_AGE)) {
 			// msg.mac2 := 0
-			crypto_zero(dst->mac2, WIREGUARD_COOKIE_LEN);
+			wCryptoZero(dst->mac2, WIREGUARD_COOKIE_LEN);
 		} else {
 			// msg.mac2 := Mac(Lm, msgB)
 			wireguardMac(dst->mac2, dst, (sizeof(message_handshake_response_t)-(WIREGUARD_COOKIE_LEN)), peer->cookie, WIREGUARD_COOKIE_LEN);
 		}
 	}
 
-	crypto_zero(key, sizeof(key));
-	crypto_zero(dh_calculation, sizeof(dh_calculation));
-	crypto_zero(tau, sizeof(tau));
+	wCryptoZero(key, sizeof(key));
+	wCryptoZero(dh_calculation, sizeof(dh_calculation));
+	wCryptoZero(tau, sizeof(tau));
 	return result;
 }
 
 void wireguardCreateCookieReply(wireguard_device_t *device, message_cookie_reply_t *dst, const uint8_t *mac1, uint32_t index, uint8_t *source_addr_port, size_t source_length) {
 	uint8_t cookie[WIREGUARD_COOKIE_LEN];
-	crypto_zero(dst, sizeof(message_cookie_reply_t));
+	wCryptoZero(dst, sizeof(message_cookie_reply_t));
 	dst->type = MESSAGE_COOKIE_REPLY;
 	dst->receiver = index;
-	wireguard_random_bytes(dst->nonce, COOKIE_NONCE_LEN);
+	getRandomBytes(dst->nonce, COOKIE_NONCE_LEN);
 	generatePeerCookie(device, cookie, source_addr_port, source_length);
-	wireguard_xaead_encrypt(dst->enc_cookie, cookie, WIREGUARD_COOKIE_LEN, mac1, WIREGUARD_COOKIE_LEN, dst->nonce, device->label_cookie_key);
+	xchacha20poly1305Encrypt(dst->enc_cookie, cookie, WIREGUARD_COOKIE_LEN, mac1, WIREGUARD_COOKIE_LEN, dst->nonce, device->label_cookie_key);
 }
 
 bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const uint8_t *public_key, const uint8_t *preshared_key) {
@@ -956,10 +953,10 @@ bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const
 		if (preshared_key) {
 			memcpy(peer->preshared_key, preshared_key, WIREGUARD_SESSION_KEY_LEN);
 		} else {
-			crypto_zero(peer->preshared_key, WIREGUARD_SESSION_KEY_LEN);
+			wCryptoZero(peer->preshared_key, WIREGUARD_SESSION_KEY_LEN);
 		}
 
-		if (wireguard_x25519(peer->public_key_dh, device->private_key, peer->public_key) == 0) {
+		if (performX25519(peer->public_key_dh, device->private_key, peer->public_key) == 0) {
 			// Zero out handshake
 			memset(&peer->handshake, 0, sizeof(wireguard_handshake_t));
 			peer->handshake.valid = false;
@@ -974,7 +971,7 @@ bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const
 
 			peer->valid = true;
 		} else {
-			crypto_zero(peer->public_key_dh, WIREGUARD_PUBLIC_KEY_LEN);
+			wCryptoZero(peer->public_key_dh, WIREGUARD_PUBLIC_KEY_LEN);
 		}
 	}
 	return peer->valid;
@@ -994,125 +991,17 @@ bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key)
 		wireguardMacKey(device->label_cookie_key, device->public_key, LABEL_COOKIE, sizeof(LABEL_COOKIE));
 
 	} else {
-		crypto_zero(device->private_key, WIREGUARD_PRIVATE_KEY_LEN);
+		wCryptoZero(device->private_key, WIREGUARD_PRIVATE_KEY_LEN);
 	}
 	return device->valid;
 }
 
 void wireguardEncryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, wireguard_keypair_t *keypair) {
-	wireguard_aead_encrypt(dst, src, src_len, NULL, 0, keypair->sending_counter, keypair->sending_key);
+	chacha20poly1305Encrypt(dst, src, src_len, NULL, 0, keypair->sending_counter, keypair->sending_key);
 	keypair->sending_counter++;
 }
 
 bool wireguardDecryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, uint64_t counter, wireguard_keypair_t *keypair) {
-	return wireguard_aead_decrypt(dst, src, src_len, NULL, 0, counter, keypair->receiving_key);
+	return chacha20poly1305Decrypt(dst, src, src_len, NULL, 0, counter, keypair->receiving_key);
 }
 
-bool wireguardBase64Decode(const char *str, uint8_t *out, size_t *outlen) {
-	uint32_t accum = 0; // We accumulate upto four blocks of 6 bits into this to form 3 bytes output
-	uint8_t char_count = 0; // How many characters have we processed in this block
-	int byte_count = 3; // How many bytes are we expecting in current 4 char block
-	int len = 0; // result length in bytes
-	bool result = true;
-	uint8_t bits;
-	char c;
-	char *ptr;
-	int x;
-	size_t inlen;
-
-	if (!str) {
-		return false;
-	}
-
-	inlen = strlen(str);
-
-	for (x = 0; x < inlen; x++) {
-		c = str[x];
-		if (c == '=') {
-			// This is '=' padding at end of string - decrease the number of bytes to write
-			bits = 0;
-			byte_count--;
-			if (byte_count < 0) {
-				// Too much padding!
-				result = false;
-				break;
-			}
-		} else {
-			if (byte_count != 3) {
-				// Padding only allowed at end - this is a valid byte and we have already seen padding
-				result = false;
-				break;
-			}
-			ptr = strchr(base64_lookup, c);
-			if (ptr) {
-				bits = (uint8_t)((ptr - base64_lookup) & 0x3F);
-			} else {
-				// invalid character in input string
-				result = false;
-				break;
-			}
-		}
-
-		accum = (accum << 6) | bits;
-		char_count++;
-
-		if (char_count == 4) {
-			if (len + byte_count > *outlen) {
-				// Output buffer overflow
-				result = false;
-				break;
-			}
-			out[len++] = (uint8_t)((accum >> 16) & 0xFF);
-			if (byte_count > 1) {
-				out[len++] = (uint8_t)((accum >> 8) & 0xFF);
-			}
-			if (byte_count > 2) {
-				out[len++] = (uint8_t)(accum & 0xFF);
-			}
-			char_count = 0;
-			accum = 0;
-		}
-	}
-	if (char_count != 0) {
-		// We require padding to multiple of 3 input length - bytes are missing from output!
-		result = false;
-	}
-	*outlen = len;
-	return result;
-}
-
-bool wireguardBase64Encode(const uint8_t *in, size_t inlen, char *out, size_t *outlen) {
-	bool result = false;
-	int read_offset = 0;
-	int write_offset = 0;
-	uint8_t byte1, byte2, byte3;
-	uint32_t tmp;
-	char c;
-	size_t len = 4 * ((inlen + 2) / 3);
-	int padding = (3 - (inlen % 3));
-	if (padding > 2) padding = 0;
-	if (*outlen > len) {
-
-		while (read_offset < inlen) {
-			// Read three bytes
-			byte1 = (read_offset < inlen) ? in[read_offset++] : 0;
-			byte2 = (read_offset < inlen) ? in[read_offset++] : 0;
-			byte3 = (read_offset < inlen) ? in[read_offset++] : 0;
-			// Turn into 24 bit intermediate
-			tmp = (byte1 << 16) | (byte2 << 8) | (byte3);
-			// Write out 4 characters each representing 6 bits of input
-			out[write_offset++] = base64_lookup[(tmp >> 18) & 0x3F];
-			out[write_offset++] = base64_lookup[(tmp >> 12) & 0x3F];
-			c = (write_offset < len - padding) ? base64_lookup[(tmp >> 6) & 0x3F] : '=';
-			out[write_offset++] = c;
-			c = (write_offset < len - padding) ? base64_lookup[(tmp) & 0x3F] : '=';
-			out[write_offset++] = c;
-		}
-		out[len] = '\0';
-		*outlen = len;
-		result = true;
-	} else {
-		// Not enough data to put in base64 and null terminate
-	}
-	return result;
-}

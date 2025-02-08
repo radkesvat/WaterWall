@@ -1,31 +1,4 @@
-#ifndef _CRYPTO_H_
-#define _CRYPTO_H_
-
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h>
-
-// BLAKE2S IMPLEMENTATION
-#include "crypto/refc/blake2s.h"
-#define wireguard_blake2s_ctx blake2s_ctx
-#define wireguard_blake2s_init(ctx,outlen,key,keylen) blake2s_init(ctx,outlen,key,keylen)
-#define wireguard_blake2s_update(ctx,in,inlen) blake2s_update(ctx,in,inlen)
-#define wireguard_blake2s_final(ctx,out) blake2s_final(ctx,out)
-#define wireguard_blake2s(out,outlen,key,keylen,in,inlen) blake2s(out,outlen,key,keylen,in,inlen)
-
-// X25519 IMPLEMENTATION
-#include "crypto/refc/x25519.h"
-#define wireguard_x25519(a,b,c)	x25519(a,b,c,1)
-
-//#include "crypto/cortex/scalarmult.h"
-//#define wireguard_x25519(a,b,c)	crypto_scalarmult_curve25519(a,b,c)
-
-// CHACHA20POLY1305 IMPLEMENTATION
-#include "crypto/refc/chacha20poly1305.h"
-#define wireguard_aead_encrypt(dst,src,srclen,ad,adlen,nonce,key) chacha20poly1305_encrypt(dst,src,srclen,ad,adlen,nonce,key)
-#define wireguard_aead_decrypt(dst,src,srclen,ad,adlen,nonce,key) chacha20poly1305_decrypt(dst,src,srclen,ad,adlen,nonce,key)
-#define wireguard_xaead_encrypt(dst,src,srclen,ad,adlen,nonce,key) xchacha20poly1305_encrypt(dst,src,srclen,ad,adlen,nonce,key)
-#define wireguard_xaead_decrypt(dst,src,srclen,ad,adlen,nonce,key) xchacha20poly1305_decrypt(dst,src,srclen,ad,adlen,nonce,key)
+#pragma once
 
 
 // Endian / unaligned helper macros
@@ -96,10 +69,3 @@
     (p)[1] = U8V((v) >> 48); \
     (p)[0] = U8V((v) >> 56); \
 } while (0)
-
-
-void crypto_zero(void *dest, size_t len);
-bool crypto_equal(const void *a, const void *b, size_t size);
-
-#endif /* _CRYPTO_H_ */
-

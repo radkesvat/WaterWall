@@ -32,9 +32,61 @@
     PersistentKeepalive = 15                              # Keepalive interval for this peer
 */
 
+wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data)
+{
+    assert(data != NULL);
+
+    uint8_t private_key[WIREGUARD_PRIVATE_KEY_LEN];
+    size_t  private_key_len = sizeof(private_key);
+
+    // We need to initialise the wireguard module
+    wireguardInit();
+
+    if (private_key_len * 4 != stringLength((char *) data->private_key))
+    {
+        LOGE("Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
+        return NULL;
+    }
+
+    wireguard_device_t *device = memoryAllocate(sizeof(wireguard_device_t));
+    if (! device)
+    {
+        LOGE("Error: wireguarddeviceCreate failed to allocate memory for device");
+        return NULL;
+    }
+
+    if (wwBase64Decode((char *) data->private_key, stringLength((char *) data->private_key), private_key) ==
+        WIREGUARD_PRIVATE_KEY_LEN)
+    {
+
+        // Per-wireguard ts/device setup
+        uint32_t t1 = getTickMS();
+        if (wireguardDeviceInit(device, private_key))
+        {
+            uint32_t t2 = getTickMS();
+            printf("Device init took %ums\r\n", (t2 - t1));
+            // We set up no state flags here - caller should set them
+            // NETIF_FLAG_LINK_UP is automatically set/cleared when at least one peer is connected
+            device->status_connected = 0;
+        }
+        else
+        {
+            memoryFree(device);
+            return NULL;
+        }
+    }
+    else
+    {
+        memoryFree(device);
+        return NULL;
+    }
+
+    return device;
+}
+
 tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(wgd_tstate_t), sizeof(wgd_lstate_t));
+    tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), sizeof(wgd_lstate_t));
 
     t->fnInitU    = &wireguarddeviceTunnelUpStreamInit;
     t->fnEstU     = &wireguarddeviceTunnelUpStreamEst;
@@ -52,7 +104,6 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 
     wgd_tstate_t *state = tunnelGetState(t);
 
-
     char *device_private_key = NULL;
 
     const cJSON *settings = node->node_settings_json;
@@ -69,13 +120,16 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
         return NULL;
     }
 
-    wgdevice_init_data_t device_configuration = {0};
-    device_configuration.private_key = device_private_key;
+    wireguard_device_init_data_t device_configuration = {0};
+    device_configuration.private_key                  = (const uint8_t *) device_private_key;
+    state->device_configuration                       = device_configuration;
 
-    state->device_configuration = device_configuration;
-    wireguardifInit(state);
-
-
+    wireguard_device_t *device = wireguarddeviceCreate(&state->device_configuration);
+    if (! device)
+    {
+        LOGF("Error: wireguarddeviceCreate failed");
+        return NULL;
+    }
 
     const cJSON *peers_jarray = cJSON_GetObjectItemCaseSensitive(settings, "peers");
     if (! cJSON_IsArray(peers_jarray))
@@ -138,9 +192,75 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
         }
         getIntFromJsonObject(&persistentkeepalive, peer_jobject, "persistentkeepalive");
 
+        wireguard_peer_init_data_t peer = {0};
+        wireguardifPeerInit(&peer);
+        peer.public_key    = (const uint8_t *) peer_public_key;
+        peer.preshared_key = (const uint8_t *) peer_preshared_key;
+        { //  10.0.0.1/24, fd86:ea04:1115::1/64
+            char *peer_allowed_ips_nospace = stringNewWithoutSpace(peer_allowed_ips);
+            memoryFree(peer_allowed_ips);
 
-        // Create the peer
+            char *coma_ptr = stringChr(peer_allowed_ips_nospace, ',');
 
+            if (! coma_ptr)
+            {
+                LOGF("Error: peer_allowed_ips_nospace does not contain a ','");
+                return NULL;
+            }
+            coma_ptr[0]     = '\0';
+            char *ipv4_part = peer_allowed_ips_nospace;
+            char *ipv6_part = coma_ptr + 1;
+
+            if (! verifyIPCdir(ipv4_part))
+            {
+                LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips (string field) (ipv4 "
+                     "part) : The data "
+                     "was empty or invalid",
+                     i);
+                return NULL;
+            }
+            if (! verifyIPCdir(ipv6_part))
+            {
+                LOGF("JSON Error: WireGuardDevice->settings->peers [ index %d  ]->allowedips (string field) (ipv6 "
+                     "part): The data "
+                     "was empty or invalid",
+                     i);
+                return NULL;
+            }
+            /*
+                TODO
+                currently only supports ipv4
+            */
+            parseIPWithSubnetMask(ipv4_part, (struct in6_addr *) &peer.allowed_ip,
+                                  (struct in6_addr *) &peer.allowed_mask);
+        }
+        {
+            char *colon_ptr = stringChr(peer_endpoint, ':');
+            if (! colon_ptr)
+            {
+                LOGF("Error: peer_endpoint does not contain a ':'");
+                return NULL;
+            }
+            colon_ptr[0]                = '\0';
+            char    *peer_endpoint_ip   = peer_endpoint;
+            char    *peer_endpoint_port = colon_ptr + 1;
+            uint16_t port               = atoi(peer_endpoint_port);
+            if (port == 0)
+            {
+                LOGF("Error: peer_endpoint_port is not a valid port number");
+                return NULL;
+            }
+            address_context_t temp = {0};
+            addresscontextSetIpPort(&temp, peer_endpoint_ip, port);
+            peer.endpoint_ip   = temp.ip_address;
+            peer.endpoint_port = port;
+        }
+        // Add the peer
+        if (! wireguardifAddPeer(device, &peer, NULL))
+        {
+            LOGF("Error: wireguardifAddPeer failed");
+            return NULL;
+        }
     }
 
     return t;

@@ -70,34 +70,34 @@ typedef struct message_transport_data_s message_transport_data_t;
 #pragma pack(pop) // Restore previous packing setting
 #endif
 
-typedef struct wgdevice_init_data_s
+typedef struct wireguard_device_init_data_s
 {
     // Required: the private key of this WireGuard network interface
-    const char *private_key;
+    const uint8_t *private_key;
     // Required: What UDP port to listen on
     // uint16 listen_port;
     // Optional: restrict send/receive of encapsulated WireGuard traffic to this network interface only (NULL to use
     // routing table)
     // struct netif *bind_netif;
-} wgdevice_init_data_t;
+} wireguard_device_init_data_t;
 
-typedef struct wgpeer_init_data_s
+typedef struct wireguard_peer_init_data_s
 {
-    const char *public_key;
+    const uint8_t *public_key;
     // Optional pre-shared key (32 bytes) - make sure this is NULL if not to be used
     const uint8_t *preshared_key;
     // tai64n of largest timestamp we have seen during handshake to avoid replays
     uint8_t greatest_timestamp[12];
 
     // Allowed ip/netmask (can add additional later but at least one is required)
-    sockaddr_u allowed_ip;
-    sockaddr_u allowed_mask;
+    ip_addr_t allowed_ip;
+    ip_addr_t allowed_mask;
 
     // End-point details (may be blank)
-    ip_address_t endpoint_ip;
-    uint16       endport_port;
-    uint16       keep_alive;
-} wgpeer_init_data_t;
+    ip_addr_t endpoint_ip;
+    uint16    endpoint_port;
+    uint16    keep_alive;
+} wireguard_peer_init_data_t;
 
 struct wireguard_keypair_s
 {
@@ -138,9 +138,9 @@ typedef struct wireguard_handshake_s wireguard_handshake_t;
 
 typedef struct wireguard_allowed_ip_s
 {
-    bool         valid;
-    ip_address_t ip;
-    ip_address_t mask;
+    bool      valid;
+    ip_addr_t ip;
+    ip_addr_t mask;
 } wireguard_allowed_ip_t;
 
 struct wireguard_peer_s
@@ -149,11 +149,11 @@ struct wireguard_peer_s
     bool active; // Should we be actively trying to connect?
 
     // This is the configured IP of the peer (endpoint)
-    ip_address_t connect_ip;
-    uint16_t     connect_port;
+    ip_addr_t connect_ip;
+    uint16_t  connect_port;
     // This is the latest received IP/port
-    ip_address_t ip;
-    uint16_t     port;
+    ip_addr_t ip;
+    uint16_t  port;
     // keep-alive interval in seconds, 0 is disable
     uint16_t keepalive_interval;
 
@@ -207,6 +207,7 @@ struct wireguard_device_s
     // Maybe have a "Device private" member to abstract these?
     struct netif   *netif;
     struct udp_pcb *udp_pcb;
+    wtimer_t       *loop_timer;
     uint64_t        status_connected : 1;
 
     uint8_t public_key[WIREGUARD_PUBLIC_KEY_LEN];
@@ -225,3 +226,4 @@ struct wireguard_device_s
     bool valid;
 };
 typedef struct wireguard_device_s wireguard_device_t;
+
