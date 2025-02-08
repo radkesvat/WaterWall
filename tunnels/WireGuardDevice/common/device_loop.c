@@ -42,7 +42,7 @@ static err_t wireguardStartHandshake(wireguard_device_t *device, wireguard_peer_
         result = wireguardifPeerOutput(device, buf, peer);
         peer->send_handshake     = false;
         peer->last_initiation_tx = getTickMS();
-        memcpy(peer->handshake_mac1, msg.mac1, WIREGUARD_COOKIE_LEN);
+        memoryCopy(peer->handshake_mac1, msg.mac1, WIREGUARD_COOKIE_LEN);
         peer->handshake_mac1_valid = true;
     }
     return result;

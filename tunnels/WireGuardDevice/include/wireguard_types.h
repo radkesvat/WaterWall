@@ -221,7 +221,7 @@ struct wireguard_device_s
     uint8_t label_mac1_key[WIREGUARD_SESSION_KEY_LEN];
 
     // List of peers associated with this device
-    struct wireguard_peer_s peers[WIREGUARD_MAX_PEERS];
+    wireguard_peer_t peers[WIREGUARD_MAX_PEERS];
 
     bool valid;
 };

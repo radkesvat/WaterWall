@@ -14,8 +14,7 @@ typedef struct wgd_tstate_s
     
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;
-    wireguard_peer_init_data_t  *peers_configuration;
-    uint16                       peers_configuration_count;
+
 
 } wgd_tstate_t;
 
@@ -38,7 +37,6 @@ void wireguarddeviceTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *in
 void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
-void wireguarddeviceTunnelDestroy(tunnel_t *t);
 
 void wireguarddeviceTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void wireguarddeviceTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -62,8 +60,6 @@ void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
 /* wireguard device cycle is the heart of the device that is by defalut runs every 400 ms*/
 void wireguarddeviceLoop(wireguard_device_t *device);
 
-// Create new WireGuard device from the given data
-wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data);
 
 // Helper to initialise the peer struct with defaults
 void wireguardifPeerInit(wireguard_peer_init_data_t *peer);

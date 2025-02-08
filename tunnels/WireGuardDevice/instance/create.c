@@ -32,7 +32,7 @@
     PersistentKeepalive = 15                              # Keepalive interval for this peer
 */
 
-wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data)
+static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_init_data_t *data)
 {
     assert(data != NULL);
 
@@ -45,14 +45,7 @@ wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data)
     if (BASE64_ENCODE_OUT_SIZE(private_key_len) != stringLength((char *) data->private_key))
     {
         LOGE("Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
-        return NULL;
-    }
-
-    wireguard_device_t *device = memoryAllocate(sizeof(wireguard_device_t));
-    if (! device)
-    {
-        LOGE("Error: wireguarddeviceCreate failed to allocate memory for device");
-        return NULL;
+        exit(1);
     }
 
     if (wwBase64Decode((char *) data->private_key, stringLength((char *) data->private_key), private_key) ==
@@ -69,35 +62,31 @@ wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data)
         else
         {
             memoryFree(device);
-            return NULL;
+            exit(1);
         }
     }
     else
     {
         memoryFree(device);
-        return NULL;
+        exit(1);
     }
-
-    return device;
 }
 
 tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), sizeof(wgd_lstate_t));
 
-  
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
 
-
-   
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
 
     t->onPrepair = &wireguarddeviceTunnelOnPrepair;
-    t->onStart = &wireguarddeviceTunnelOnStart;
+    t->onStart   = &wireguarddeviceTunnelOnStart;
 
     wgd_tstate_t *state = tunnelGetState(t);
-    state->tunnel        = t;
-    
+
+    state->tunnel = t;
+
     char *device_private_key = NULL;
 
     const cJSON *settings = node->node_settings_json;
@@ -118,10 +107,12 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     device_configuration.private_key                  = (const uint8_t *) device_private_key;
     state->device_configuration                       = device_configuration;
 
-    wireguard_device_t *device = wireguarddeviceCreate(&state->device_configuration);
+    wireguard_device_t *device = &state->wg_device;
+    wireguarddeviceInit(device, &state->device_configuration);
+
     if (! device)
     {
-        LOGF("Error: wireguarddeviceCreate failed");
+        LOGF("Error: wireguarddeviceInit failed");
         return NULL;
     }
 
@@ -250,7 +241,7 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
             peer.endpoint_port = port;
         }
         // Add the peer
-        if (! wireguardifAddPeer(device, &peer, NULL))
+        if (wireguardifAddPeer(device, &peer, NULL) != ERR_OK)
         {
             LOGF("Error: wireguardifAddPeer failed");
             return NULL;

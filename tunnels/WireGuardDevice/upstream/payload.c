@@ -78,7 +78,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
 
             // Note: allocating buf from RAM above guarantees that the buf is in one section and not chained
             // - i.e payload points to the contiguous memory region
-            // memset(buf->payload, 0, buf->tot_len);
+            // memorySet(buf->payload, 0, buf->tot_len);
 
             hdr = (message_transport_data_t *) sbufGetMutablePtr(q);
 

@@ -106,7 +106,7 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
                     peer->keepalive_interval = p->keep_alive;
                 }
                 peerAddIp(peer, p->allowed_ip, p->allowed_mask);
-                memcpy(peer->greatest_timestamp, p->greatest_timestamp, sizeof(peer->greatest_timestamp));
+                memoryCopy(peer->greatest_timestamp, p->greatest_timestamp, sizeof(peer->greatest_timestamp));
 
                 result = ERR_OK;
             }
@@ -266,7 +266,7 @@ err_t wireguardifDisconnect(wireguard_device_t *device, uint8_t peer_index)
 void wireguardifPeerInit(wireguard_peer_init_data_t *peer)
 {
     assert(peer != NULL);
-    memset(peer, 0, sizeof(wireguard_peer_init_data_t));
+    memorySet(peer, 0, sizeof(wireguard_peer_init_data_t));
     // Caller must provide 'public_key'
     peer->public_key = NULL;
     ipAddrSetAny(false, &peer->endpoint_ip);
@@ -274,6 +274,6 @@ void wireguardifPeerInit(wireguard_peer_init_data_t *peer)
     peer->keep_alive    = WIREGUARDIF_KEEPALIVE_DEFAULT;
     ipAddrSetAny(false, &peer->allowed_ip);
     ipAddrSetAny(false, &peer->allowed_mask);
-    memset(peer->greatest_timestamp, 0, sizeof(peer->greatest_timestamp));
+    memorySet(peer->greatest_timestamp, 0, sizeof(peer->greatest_timestamp));
     peer->preshared_key = NULL;
 }
