@@ -327,7 +327,7 @@ enum
 #ifdef OS_WIN
     #define INVALID_SOCKET_VALUE INVALID_SOCKET
 #else
-    define INVALID_SOCKET_VALUE -1
+    #define INVALID_SOCKET_VALUE -1
 #endif
 
 #endif // WW_DEF_H_
