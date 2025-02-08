@@ -1,8 +1,9 @@
 #include "node_manager.h"
 #include "chain.h"
+#include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "utils/json_helpers.h"
-#include "global_state.h"
+
 
 enum
 {
@@ -98,7 +99,7 @@ static void runNodes(node_manager_config_t *cfg)
             assert(n1 != NULL && n1->instance == NULL);
             t_array[index++] = n1->instance = n1->createHandle(n1);
 
-            if(n1->instance == NULL)
+            if (n1->instance == NULL)
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
                 exit(1);
@@ -197,10 +198,7 @@ static void runNodes(node_manager_config_t *cfg)
         {
             assert(t_array_cpy[i] != NULL);
             tunnel_t *tunnel = t_array_cpy[i];
-            if (nodeHasFlagChainHead(tunnelGetNode(tunnel)))
-            {
-                tunnel->onStart(tunnel);
-            }
+            tunnel->onStart(tunnel);
         }
     }
 }
@@ -241,8 +239,6 @@ static void cycleProcess(node_manager_config_t *cfg)
         {
             continue;
         }
-
-       
     }
 
     // very basic check to see if there is no route starter node
