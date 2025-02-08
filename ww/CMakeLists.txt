@@ -233,6 +233,11 @@ set (LWIP_INCLUDE_DIRS
 
 target_compile_definitions(ww PUBLIC LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 
+if(ANDROID)
+    target_compile_definitions(ww PUBLIC SOCKLEN_T_DEFINED=1)
+endif()
+
+
 if(WIN32)
     set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
     target_compile_definitions(ww PUBLIC LWIP_NO_UNISTD_H=1)
