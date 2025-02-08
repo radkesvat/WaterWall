@@ -10,6 +10,7 @@ add_library(WireGuardDevice STATIC
                     instance/index.c
                     common/helpers.c
                     common/line_state.c
+                    common/device_loop.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c

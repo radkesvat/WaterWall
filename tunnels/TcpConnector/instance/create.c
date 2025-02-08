@@ -13,6 +13,10 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     t->fnPauseU   = &tcpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &tcpconnectorTunnelUpStreamResume;
 
+    t->onPrepair = &tcpconnectorTunnelOnPrepair;
+    t->onStart   = &tcpconnectorTunnelOnStart;
+    t->onDestroy = &tcpconnectorTunnelDestroy;
+
     tcpconnector_tstate_t *state = tunnelGetState(t);
 
     const cJSON *settings = node->node_settings_json;
@@ -37,9 +41,8 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-
     /**
-        TODO 
+        TODO
         this is old code, i think the free bind part may not work if getIpVersion consider that slash
     */
     state->constant_dest_addr.ip_address.type = getIpVersion(state->dest_addr_selected.value_ptr);

@@ -60,6 +60,10 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     t->fnPauseD   = &tcplistenerTunnelDownStreamPause;
     t->fnResumeD  = &tcplistenerTunnelDownStreamResume;
     
+    t->onPrepair = &tcplistenerTunnelOnPrepair;
+    t->onStart   = &tcplistenerTunnelOnStart;
+    t->onDestroy = &tcplistenerTunnelDestroy;
+
     tcplistener_tstate_t *state = tunnelGetState(t);
 
     const cJSON *settings = node->node_settings_json;

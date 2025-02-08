@@ -78,7 +78,8 @@ struct tunnel_s
     TunnelIndexFn  onIndex;
     TunnelStatusCb onPrepair;
     TunnelStatusCb onStart;
-
+    TunnelStatusCb onDestroy;
+    
     uint16_t tstate_size;
     uint16_t lstate_size;
 

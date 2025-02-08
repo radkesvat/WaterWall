@@ -8,7 +8,7 @@ static sbuf_t *wireguarddeviceCreateiateHandshake(wireguard_device_t *device, wi
     if (wireguardCreateHandshakeInitiation(device, peer, msg))
     {
         // Send this packet out!
-        sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+        buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
         if (buf)
         {
             sbufWrite(buf, msg, sizeof(message_handshake_initiation_t));
@@ -150,7 +150,7 @@ void wireguarddeviceLoop(wireguard_device_t *device)
             }
             if (shouldSendInitiation(peer))
             {
-                wireguardStartHandshake(ts, peer);
+                wireguardStartHandshake(device, peer);
             }
 
             if ((peer->curr_keypair.valid) || (peer->prev_keypair.valid))

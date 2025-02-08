@@ -42,7 +42,7 @@ wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data)
     // We need to initialise the wireguard module
     wireguardInit();
 
-    if (private_key_len * 4 != stringLength((char *) data->private_key))
+    if (BASE64_ENCODE_OUT_SIZE(private_key_len) != stringLength((char *) data->private_key))
     {
         LOGE("Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
         return NULL;
@@ -60,11 +60,8 @@ wireguard_device_t *wireguarddeviceCreate(wireguard_device_init_data_t *data)
     {
 
         // Per-wireguard ts/device setup
-        uint32_t t1 = getTickMS();
         if (wireguardDeviceInit(device, private_key))
         {
-            uint32_t t2 = getTickMS();
-            printf("Device init took %ums\r\n", (t2 - t1));
             // We set up no state flags here - caller should set them
             // NETIF_FLAG_LINK_UP is automatically set/cleared when at least one peer is connected
             device->status_connected = 0;
@@ -88,19 +85,15 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), sizeof(wgd_lstate_t));
 
-    t->fnInitU    = &wireguarddeviceTunnelUpStreamInit;
-    t->fnEstU     = &wireguarddeviceTunnelUpStreamEst;
-    t->fnFinU     = &wireguarddeviceTunnelUpStreamFinish;
+  
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
-    t->fnPauseU   = &wireguarddeviceTunnelUpStreamPause;
-    t->fnResumeU  = &wireguarddeviceTunnelUpStreamResume;
 
-    t->fnInitD    = &wireguarddeviceTunnelDownStreamInit;
-    t->fnEstD     = &wireguarddeviceTunnelDownStreamEst;
-    t->fnFinD     = &wireguarddeviceTunnelDownStreamFinish;
+
+   
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
-    t->fnPauseD   = &wireguarddeviceTunnelDownStreamPause;
-    t->fnResumeD  = &wireguarddeviceTunnelDownStreamResume;
+
+    t->onPrepair = &wireguarddeviceTunnelOnPrepair;
+    t->onStart = &wireguarddeviceTunnelOnStart;
 
     wgd_tstate_t *state = tunnelGetState(t);
     state->tunnel        = t;

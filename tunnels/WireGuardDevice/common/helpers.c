@@ -73,9 +73,8 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
     size_t            public_key_len = sizeof(public_key);
     wireguard_peer_t *peer           = NULL;
 
-    uint32_t t1 = getTickMS();
 
-    if (stringLength((const char *) p->public_key) / 4 != public_key_len)
+    if (stringLength((const char *) p->public_key) != BASE64_ENCODE_OUT_SIZE(public_key_len))
     {
         return ERR_ARG;
     }
@@ -125,9 +124,6 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
     {
         result = ERR_OK;
     }
-
-    uint32_t t2 = getTickMS();
-    LOGD("Adding peer took %ums\r\n", (t2 - t1));
 
     if (peer_index)
     {

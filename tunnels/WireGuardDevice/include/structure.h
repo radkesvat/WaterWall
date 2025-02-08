@@ -38,6 +38,7 @@ void wireguarddeviceTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *in
 void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);
+void wireguarddeviceTunnelDestroy(tunnel_t *t);
 
 void wireguarddeviceTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void wireguarddeviceTunnelUpStreamEst(tunnel_t *t, line_t *l);
@@ -135,6 +136,3 @@ bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds);
 void wireguardEncryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, wireguard_keypair_t *keypair);
 bool wireguardDecryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, uint64_t counter,
                             wireguard_keypair_t *keypair);
-
-bool wireguardBase64Decode(const char *str, uint8_t *out, size_t *outlen);
-bool wireguardBase64Encode(const uint8_t *in, size_t inlen, char *out, size_t *outlen);

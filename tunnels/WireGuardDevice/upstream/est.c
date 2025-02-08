@@ -8,5 +8,5 @@ void wireguarddeviceTunnelUpStreamEst(tunnel_t *t, line_t *l)
     (void) l;
     LOGF("This Function is disabled, using the default PacketTunnel instead");
     exit(1);
-    ;
+    
 }

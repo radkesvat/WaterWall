@@ -59,6 +59,7 @@ void tcpconnectorTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index
 void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpconnectorTunnelOnStart(tunnel_t *t);
+void tcpconnectorTunnelDestroy(tunnel_t *t);
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l);

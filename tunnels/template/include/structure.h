@@ -26,6 +26,7 @@ void templateTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, ui
 void templateTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void templateTunnelOnPrepair(tunnel_t *t);
 void templateTunnelOnStart(tunnel_t *t);
+void templateTunnelDestroy(tunnel_t *t);
 
 void templateTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void templateTunnelUpStreamEst(tunnel_t *t, line_t *l);

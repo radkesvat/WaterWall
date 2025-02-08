@@ -98,13 +98,19 @@ static void runNodes(node_manager_config_t *cfg)
             assert(n1 != NULL && n1->instance == NULL);
             t_array[index++] = n1->instance = n1->createHandle(n1);
 
+            if(n1->instance == NULL)
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
+                exit(1);
+            }
+
             if (nodeHasFlagChainHead(n1))
             {
                 t_starters_array[index_starters++] = n1->instance;
             }
             if (index == kMaxTarraySize + 1)
             {
-                LOGF("NodeManager:  too many nodes in config");
+                LOGF("NodeManager: too many nodes in config");
                 exit(1);
             }
         }
