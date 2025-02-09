@@ -3,16 +3,17 @@
 #include "wlibc.h"
 #include "wsocket.h"
 
+// ============================================================================
+// Data Types and Enumerations
+// ============================================================================
 /**
  * Network Address Management System
  * This header defines structures and functions for handling both IPv4 and IPv6 addresses,
- * as well as domain names in a unified way. It provides abstraction for different address types
- * and protocols used in network communications.
+ * as well as domain names in a unified way.
  */
 
 /**
  * Domain name resolution strategy.
- * Defines how the system should handle DNS resolution when both IPv4 and IPv6 are available.
  */
 enum domain_strategy
 {
@@ -39,8 +40,6 @@ enum socket_address_protocol
 
 /**
  * Complete network address context.
- * Represents either an IP address or domain name with associated metadata.
- * Used for storing and managing network endpoint information.
  */
 typedef struct address_context_s
 {
@@ -51,7 +50,7 @@ typedef struct address_context_s
     uint8_t              domain_len;      // Length of domain name
 
     // Flags for address properties
-    uint8_t domain_constant : 1; // True if domain points to constant memory, will not call free on <domain ptr>
+    uint8_t domain_constant : 1; // True if domain points to constant memory, will not free it
     uint8_t type_ip : 1;         // True for IP address, false for domain
     uint8_t proto_tcp : 1;       // TCP protocol enabled
     uint8_t proto_ucp : 1;       // UDP protocol enabled
@@ -59,8 +58,45 @@ typedef struct address_context_s
     uint8_t proto_packet : 1;    // Raw packet protocol enabled
 } address_context_t;
 
-// Helper Functions
+// ============================================================================
+// Initialization and Reset Helpers
+// ============================================================================
+/**
+ * @brief Initialize an address context structure.
+ *
+ * Sets the structure to zeros and defaults type to domain.
+ */
+static inline void addressContextInit(address_context_t *ctx)
+{
+    // Set all fields to zero then default type as domain
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->type_ip = kAcDomain;
+}
 
+/**
+ * @brief Reset an address context structure.
+ *
+ * Frees domain memory if allocated (non-constant) and resets all fields.
+ */
+static inline void addressContextReset(address_context_t *ctx)
+{
+    if (ctx->domain != NULL && ! ctx->domain_constant)
+    {
+        memoryFree(ctx->domain);
+    }
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->type_ip = kAcDomain;
+}
+
+// ============================================================================
+// Validation Helper
+// ============================================================================
+/**
+ * @brief Check whether the address context contains a valid IP or domain.
+ *
+ * @param context The address context to verify.
+ * @return true if valid; false otherwise.
+ */
 static inline bool addresscontextIsValid(const address_context_t *context)
 {
     if (context->type_ip && ! ipAddrIsAny(&context->ip_address))
@@ -71,58 +107,71 @@ static inline bool addresscontextIsValid(const address_context_t *context)
     {
         return true; // Valid domain name
     }
-    return false; // Neither IP nor domain is valid
+    return false;
 }
 
+// ============================================================================
+// Port Management Functions
+// ============================================================================
 /**
- * Port management functions
+ * @brief Copy port from source to destination context.
  */
 static inline void addresscontextCopyPort(address_context_t *dest, address_context_t *source)
 {
     dest->port = source->port;
 }
 
+/**
+ * @brief Set the port for an address context.
+ */
 static inline void addresscontextSetPort(address_context_t *dest, uint16_t port)
 {
     dest->port = port;
 }
 
+// ============================================================================
+// Domain Name Management Functions
+// ============================================================================
 /**
- * Domain name management functions
- * These functions handle dynamic and constant memory allocation for domain names
+ * @brief Set a domain for the address context (dynamic memory).
  */
 static inline void addressContextDomainSet(address_context_t *restrict scontext, const char *restrict domain,
                                            uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
-        memoryFree(scontext->domain); // Free previously allocated memory
+        memoryFree(scontext->domain); // Free previous allocation
     }
     scontext->domain = memoryAllocate(256);
-
     memoryCopy(scontext->domain, domain, len);
     scontext->domain[len]     = '\0';
     scontext->domain_len      = len;
     scontext->domain_constant = false;
-
-    scontext->type_ip = kAcDomain;
+    scontext->type_ip         = kAcDomain;
 }
 
+/**
+ * @brief Set a domain for the address context using constant memory.
+ */
 static inline void addressContextDomainSetConstMem(address_context_t *restrict scontext, const char *restrict domain,
                                                    uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
-        memoryFree(scontext->domain); // Free previously allocated memory
+        memoryFree(scontext->domain); // Free previous allocation
     }
-    scontext->domain          = (char *) domain; // Point to constant memory
+    scontext->domain          = (char *) domain; // Use constant memory pointer
     scontext->domain_len      = len;
-    scontext->domain_constant = true;      // Mark as constant memory
+    scontext->domain_constant = true;
     assert(scontext->domain[len] == '\0'); // Ensure null-termination
-
     scontext->type_ip = kAcDomain;
 }
 
+/**
+ * @brief Copy an address context.
+ *
+ * Copies flags, port, and either IP address or domain.
+ */
 static inline void addresscontextAddrCopy(address_context_t *dest, const address_context_t *const source)
 {
     // Copy flags
@@ -132,10 +181,8 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
     dest->proto_ucp       = source->proto_ucp;
     dest->proto_icmp      = source->proto_icmp;
     dest->proto_packet    = source->proto_packet;
-
     // Copy port
     dest->port = source->port;
-
     // Copy IP address or domain
     if (dest->type_ip)
     {
@@ -162,86 +209,107 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
     }
 }
 
-// Protocol flag management functions
+// ============================================================================
+// Protocol Flag Management Functions
+// ============================================================================
+/**
+ * @brief Enable/Disable protocol flags.
+ */
 static inline void addressContextEnableTcp(address_context_t *dest)
 {
     dest->proto_tcp = true;
 }
-
 static inline void addressContextDisableTcp(address_context_t *dest)
 {
     dest->proto_tcp = false;
 }
-
 static inline void addressContextEnableUdp(address_context_t *dest)
 {
     dest->proto_ucp = true;
 }
-
 static inline void addressContextDisableUdp(address_context_t *dest)
 {
     dest->proto_ucp = false;
 }
-
 static inline void addressContextEnableIcmp(address_context_t *dest)
 {
     dest->proto_icmp = true;
 }
-
 static inline void addressContextDisableIcmp(address_context_t *dest)
 {
     dest->proto_icmp = false;
 }
-
 static inline void addressContextEnablePacket(address_context_t *dest)
 {
     dest->proto_packet = true;
 }
-
 static inline void addressContextDisablePacket(address_context_t *dest)
 {
     dest->proto_packet = false;
 }
 
+/**
+ * @brief Set protocol flag based on socket address protocol enum.
+ */
 static inline void addresscontextSetProtocol(address_context_t *dest, enum socket_address_protocol protocol)
 {
     switch (protocol)
     {
-        case kSocketProtocolTcp:
-            addressContextEnableTcp(dest);
-            break;
-        case kSocketProtocolUdp:
-            addressContextEnableUdp(dest);
-            break;
-        case kSocketProtocolIcmp:
-            addressContextEnableIcmp(dest);
-            break;
-        case kSocketProtocolPacket:
-            addressContextEnablePacket(dest);
-            break;
-        default:
-            break;
+    case kSocketProtocolTcp:
+        addressContextEnableTcp(dest);
+        break;
+    case kSocketProtocolUdp:
+        addressContextEnableUdp(dest);
+        break;
+    case kSocketProtocolIcmp:
+        addressContextEnableIcmp(dest);
+        break;
+    case kSocketProtocolPacket:
+        addressContextEnablePacket(dest);
+        break;
+    default:
+        break;
     }
 }
 
+// ============================================================================
+// IP Address Management Functions
+// ============================================================================
 /**
- * IP address management functions
+ * @brief Set the IP address for an address context.
  */
-
 static void addresscontextSetIp(address_context_t *restrict scontext, const ip_addr_t *restrict ip)
 {
     scontext->ip_address = *ip;
     scontext->type_ip    = kAcIp;
 }
 
+/**
+ * @brief Set the IP address and port for an address context.
+ */
 static void addresscontextSetIpPort(address_context_t *restrict scontext, const ip_addr_t *restrict ip, uint16_t port)
 {
     scontext->ip_address = *ip;
     scontext->port       = port;
     scontext->type_ip    = kAcIp;
 }
+
 /**
- * IP version detection and validation
+ * @brief Clear the IP address in an address context.
+ *
+ * Sets IP to any (zero) and marks it as non-IP.
+ */
+static inline void addressContextClearIp(address_context_t *ctx)
+{
+    ipAddrSetAny(false, &ctx->ip_address); // false indicates IPv4 wildcard
+    ctx->type_ip = kAcDomain;
+}
+
+/**
+ * @brief Detect IP version from a host string.
+ *
+ * @param host Pointer to host string.
+ * @return IP type value (IPADDR_TYPE_V4 or IPADDR_TYPE_V6), or 0 if invalid.
  */
 static inline int getIpVersion(char *host)
 {
@@ -253,41 +321,35 @@ static inline int getIpVersion(char *host)
     {
         return IPADDR_TYPE_V6;
     }
-    return 0; // not valid ip
+    return 0; // Not a valid IP
 }
 
-static inline void addressContextClearIp(address_context_t *ctx)
-{
-    ipAddrSetAny(false, &ctx->ip_address); // false means ipv4,  Set to zero IP address
-    ctx->type_ip = kAcDomain;              // Mark as not an IP address
-}
-
+// ============================================================================
+// Address Conversion Functions
+// ============================================================================
 /**
- * Address conversion functions
- * Convert between different address representation formats
+ * @brief Copy sockaddr (IPv4 or IPv6) to ip_addr_t.
  */
-
-// Helper function to copy sockaddr_in or sockaddr_in6 to ip_addr_t
 static inline void sockaddrToIpAddressCopy(const sockaddr_u *src, ip_addr_t *dest)
 {
     assert(src != NULL && dest != NULL);
-
     if (((const struct sockaddr *) src)->sa_family == IPADDR_TYPE_V4)
     {
-        // Copy IPv4 address
         const struct sockaddr_in *src_in = (const struct sockaddr_in *) src;
         dest->u_addr.ip4.addr            = src_in->sin_addr.s_addr;
         dest->type                       = AF_INET;
     }
     else if (((const struct sockaddr *) src)->sa_family == IPADDR_TYPE_V6)
     {
-        // Copy IPv6 address
         const struct sockaddr_in6 *src_in6 = (const struct sockaddr_in6 *) src;
         memoryCopy(&dest->u_addr.ip6, &src_in6->sin6_addr.s6_addr, sizeof(dest->u_addr.ip6));
         dest->type = AF_INET6;
     }
 }
 
+/**
+ * @brief Convert an address context with IP to a sockaddr structure.
+ */
 static inline sockaddr_u addresscontextToSockAddr(const address_context_t *context)
 {
     sockaddr_u addr;
@@ -300,15 +362,14 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
         addr_in->sin_addr.s_addr    = context->ip_address.u_addr.ip4.addr;
         return addr;
     }
-    if (context->ip_address.type == IPADDR_TYPE_V4)
+    if (context->ip_address.type == IPADDR_TYPE_V6)
     {
         struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *) &addr;
         addr_in6->sin6_family         = AF_INET6;
         addr_in6->sin6_port           = htons(context->port);
         memoryCopy(&addr_in6->sin6_addr.s6_addr, &context->ip_address.u_addr.ip6, sizeof(addr_in6->sin6_addr.s6_addr));
-
         return addr;
     }
-    assert(false); // not valid ip type
+    assert(false); // Not a valid IP type
     return (sockaddr_u){0};
 }

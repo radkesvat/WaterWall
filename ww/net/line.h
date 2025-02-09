@@ -66,8 +66,8 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
                   .pool     = pool,
                   // to set a port we need to know the AF family, default v4
                   .routing_context = (routing_context_t){.network_type = WIO_TYPE_UNKNOWN,
-                                                         .dest_ctx  = (address_context_t){.ip_address.type = AF_INET},
-                                                         .src_ctx   = (address_context_t){.ip_address.type = AF_INET},
+                                                         .dest_ctx  = (address_context_t){.ip_address.type = IPADDR_TYPE_V4},
+                                                         .src_ctx   = (address_context_t){.ip_address.type = IPADDR_TYPE_V4},
                                                          .user_name = NULL,
                                                          .user_name_len = 0
 
