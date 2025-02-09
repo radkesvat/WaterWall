@@ -10,8 +10,7 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
     wgd_tstate_t *ts = (wgd_tstate_t *) device;
     tunnel_t* tunnel = ts->tunnel;
     line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
-    line->routing_context.dest_ctx.ip_address = peer->ip;
-    line->routing_context.dest_ctx.port = peer->port;
+    addresscontextSetIpPort(&(line->routing_context.dest_ctx), &peer->ip, peer->port);
     tunnelNextUpStreamPayload(tunnel,line,q);
     return ERR_OK;
     // return udpSendTo(device->udp_pcb, q, &peer->ip, peer->port);
@@ -23,8 +22,7 @@ err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_ad
     wgd_tstate_t *ts = (wgd_tstate_t *) device;
     tunnel_t* tunnel = ts->tunnel;
     line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
-    line->routing_context.dest_ctx.ip_address = *ipaddr;
-    line->routing_context.dest_ctx.port = port;
+    addresscontextSetIpPort(&(line->routing_context.dest_ctx), ipaddr, port);
     tunnelNextUpStreamPayload(tunnel,line,q);
     return ERR_OK;
     // return udpSendTo(device->udp_pcb, q, ipaddr, port);

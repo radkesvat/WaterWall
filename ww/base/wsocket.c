@@ -493,6 +493,30 @@ error:
     return -1;
 }
 
+bool verifyIPPort(const char *ipp){
+    char        *colon      = strchr(ipp, ':');
+    if (colon == NULL)
+    {
+        LOGE("verifyIPPort Error: could not find ':' in ip:port, value was: %s", ipp);
+        return false;
+    }
+    *colon = '\0';
+    if (! isIpAddr(ipp))
+    {
+        LOGE("verifyIPPort Error: \"%s\" is not a valid ip address", ipp);
+        return false;
+    }
+    char *port_part   = colon + 1;
+    int   port = atoi(port_part);
+    if (port < 0 || port > 65535)
+    {
+        LOGE("verifyIPPort Error: \"%s\" is not a valid port number", port_part);
+        return false;
+    }
+    return true;
+}
+
+
 bool verifyIPCdir(const char *ipc)
 {
     unsigned int ipc_length = strlen(ipc);

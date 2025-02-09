@@ -359,7 +359,7 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
     // We have received a packet from the base_netif to our UDP port - process this as a possible Wireguard packet
     wireguard_peer_t *peer;
     uint8_t          *data = sbufGetMutablePtr(p);
-    size_t            len  = p->len; // This buf, not chained ones
+    size_t            len  = sbufGetBufLength(p); // This buf, not chained ones
 
     message_handshake_initiation_t *msg_initiation;
     message_handshake_response_t   *msg_response;
@@ -440,5 +440,5 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
 
 void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    tunnelPrevDownStreamPayload(t, l, buf);
+    wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &l->routing_context.dest_ctx.ip_address, l->routing_context.dest_ctx.port);
 }

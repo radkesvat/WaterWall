@@ -151,7 +151,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        addresscontextPortSet(&(state->constant_dest_addr), state->dest_port_selected.value);
+        addresscontextSetPort(&(state->constant_dest_addr), state->dest_port_selected.value);
     }
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);

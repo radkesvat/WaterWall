@@ -60,10 +60,10 @@ void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
-    if (! line->established)
-    {
-        self->prev->fnEstD(self->prev, line);
-    }
+    // if (! line->established)
+    // {
+    //     self->prev->fnEstD(self->prev, line);
+    // }
     LOGD("packet tunnel blocked down stream est");
 }
 
@@ -72,14 +72,14 @@ void packettunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
     LOGD("packet tunnel received Finish, forcing line to recreate");
-    if (line->established)
-    {
+    // if (line->established)
+    // {
         self->next->fnInitU(self->next, line);
-    }
-    else
-    {
-        self->prev->fnEstD(self->prev, line);
-    }
+    // }
+    // else
+    // {
+        // self->prev->fnEstD(self->prev, line);
+    // }
 }
 
 // Default downstream payload function

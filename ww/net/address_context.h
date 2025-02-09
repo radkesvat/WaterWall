@@ -40,7 +40,7 @@ enum socket_address_protocol
  */
 typedef struct address_context_s
 {
-    ip_addr_t         ip_address;      // IP address in network byte order
+    ip_addr_t            ip_address;      // IP address in network byte order
     uint16_t             port;            // Port number in host byte order
     char                *domain;          // Domain name if applicable
     enum domain_strategy domain_strategy; // DNS resolution strategy
@@ -57,6 +57,11 @@ typedef struct address_context_s
 
 // Helper Functions
 
+static inline bool addresscontextIsInitialized(const address_context_t *context)
+{
+    return context->type_ip || context->domain != NULL;
+}
+
 /**
  * Port management functions
  */
@@ -65,7 +70,7 @@ static inline void addresscontextPortCopy(address_context_t *dest, address_conte
     dest->port = source->port;
 }
 
-static inline void addresscontextPortSet(address_context_t *dest, uint16_t port)
+static inline void addresscontextSetPort(address_context_t *dest, uint16_t port)
 {
     dest->port = port;
 }
@@ -146,14 +151,14 @@ static inline void sockaddrToIpAddressCopy(const sockaddr_u *src, ip_addr_t *des
 {
     assert(src != NULL && dest != NULL);
 
-    if (((const struct sockaddr *) src)->sa_family == AF_INET)
+    if (((const struct sockaddr *) src)->sa_family == IPADDR_TYPE_V4)
     {
         // Copy IPv4 address
         const struct sockaddr_in *src_in = (const struct sockaddr_in *) src;
         dest->u_addr.ip4.addr            = src_in->sin_addr.s_addr;
         dest->type                       = AF_INET;
     }
-    else if (((const struct sockaddr *) src)->sa_family == AF_INET6)
+    else if (((const struct sockaddr *) src)->sa_family == IPADDR_TYPE_V6)
     {
         // Copy IPv6 address
         const struct sockaddr_in6 *src_in6 = (const struct sockaddr_in6 *) src;
@@ -166,7 +171,7 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
 {
     sockaddr_u addr;
     assert(context->type_ip);
-    if (context->ip_address.type == AF_INET)
+    if (context->ip_address.type == IPADDR_TYPE_V4)
     {
         struct sockaddr_in *addr_in = (struct sockaddr_in *) &addr;
         addr_in->sin_family         = AF_INET;
@@ -174,7 +179,7 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
         addr_in->sin_addr.s_addr    = context->ip_address.u_addr.ip4.addr;
         return addr;
     }
-    if (context->ip_address.type == AF_INET6)
+    if (context->ip_address.type == IPADDR_TYPE_V4)
     {
         struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *) &addr;
         addr_in6->sin6_family         = AF_INET6;
@@ -186,16 +191,18 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
     assert(false); // not valid ip type
     return (sockaddr_u){0};
 }
-
-static void addresscontextSetIpPort(address_context_t *restrict scontext, const char *host, int port)
+static void addresscontextSetIp(address_context_t *restrict scontext, const ip_addr_t *restrict ip)
 {
-
-    sockaddr_u temp = {0};
-    sockaddrSetIpPort(&temp, host, port);
-    sockaddrToIpAddressCopy(&temp, &scontext->ip_address);
-    addresscontextPortSet(scontext, ntohs(port));
+    scontext->ip_address = *ip;
+    scontext->type_ip    = true;
 }
 
+static void addresscontextSetIpPort(address_context_t *restrict scontext, const ip_addr_t *restrict ip, uint16_t port)
+{
+    scontext->ip_address = *ip;
+    scontext->port       = port;
+    scontext->type_ip    = true;
+}
 /**
  * IP version detection and validation
  */
@@ -203,11 +210,11 @@ static inline int getIpVersion(char *host)
 {
     if (isIPVer4(host))
     {
-        return AF_INET;
+        return IPADDR_TYPE_V4;
     }
     if (isIPVer6(host))
     {
-        return AF_INET6;
+        return IPADDR_TYPE_V6;
     }
     return 0; // not valid ip
 }

@@ -94,6 +94,10 @@
 #include "tunnels/adapters/connector/udp/udp_connector.h"
 #endif
 
+#ifdef INCLUDE_UDP_STATELESS_SOCKET
+#include "tunnels/UdpStatelessSocket/include/interface.h"
+#endif
+
 #ifdef INCLUDE_BRIDGE
 #include "tunnels/adapters/bridge/bridge.h"
 #endif
@@ -271,6 +275,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_UDP_CONNECTOR
     USING(UdpConnector);
+#endif
+
+#ifdef INCLUDE_UDP_STATELESS_SOCKET
+    USING(UdpStatelessSocket);
 #endif
 
 #ifdef INCLUDE_BRIDGE

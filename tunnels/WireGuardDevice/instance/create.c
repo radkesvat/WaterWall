@@ -31,6 +31,11 @@
     Endpoint = another-peer.example.com:51821             # Endpoint for this peer
     PersistentKeepalive = 15                              # Keepalive interval for this peer
 */
+// cOFOrq/KdE/fVZRZFY307An+F8PAxYbrBRAErgK6CFo=
+// ldnNQe9VwBtL5jJbJzNyWCKfRbj8/50sGtqJsh3ErGA=
+
+// YIJmMTi+hQ4o/FBx1vWxLQRrOV4ShetmmjcHRveClBg=
+// uJb7QdPW9u5+1SjXUNf0VYeZzyFwT2iJCJ7hlH7f71k=
 
 static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_init_data_t *data)
 {
@@ -235,9 +240,12 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
                 LOGF("Error: peer_endpoint_port is not a valid port number");
                 return NULL;
             }
-            address_context_t temp = {0};
-            addresscontextSetIpPort(&temp, peer_endpoint_ip, port);
-            peer.endpoint_ip   = temp.ip_address;
+            sockaddr_u temp;
+            resolveAddr(peer_endpoint_ip, &temp);
+            ip4_addr_t ipaddr;
+            ip4_addr_set_u32(&ipaddr, temp.sin.sin_addr.s_addr);
+
+            ip_addr_copy_from_ip4(peer.endpoint_ip, ipaddr);
             peer.endpoint_port = port;
         }
         // Add the peer

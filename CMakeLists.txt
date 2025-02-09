@@ -78,6 +78,8 @@ option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  FALSE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  FALSE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_UDP_CONNECTOR "link UdpConnector staticly to the core"  FALSE)
+option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the core"  TRUE)
+
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
 if(LINUX) # todo (other platforms)
@@ -297,6 +299,14 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_UDP_CONNECTOR=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/udp)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/connector/udp)
 target_link_libraries(Waterwall UdpConnector)
+endif()
+
+#udp stateless socket
+if (INCLUDE_UDP_STATELESS_SOCKET)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_UDP_STATELESS_SOCKET=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpStatelessSocket)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpStatelessSocket)
+target_link_libraries(Waterwall UdpStatelessSocket)
 endif()
 
 #bridge
