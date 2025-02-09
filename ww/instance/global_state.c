@@ -16,13 +16,27 @@
 #error "No crypto backend defined"
 #endif
 
+// Global instance of the ww_global_state_t structure.
 ww_global_state_t global_ww_state = {0};
 
+/*!
+ * @brief Retrieves the global state.
+ *
+ * @return A pointer to the global state structure.
+ */
 ww_global_state_t *globalStateGet(void)
 {
     return &GSTATE;
 }
 
+/*!
+ * @brief Sets the global state.
+ *
+ * This function sets the global state and initializes related components like loggers, signal manager, socket manager, and node manager.
+ * It asserts that the global state is not already initialized before setting it.
+ *
+ * @param state A pointer to the global state structure to be set.
+ */
 void globalStateSet(struct ww_global_state_s *state)
 {
     assert(! GSTATE.flag_initialized && state->flag_initialized);
@@ -37,6 +51,13 @@ void globalStateSet(struct ww_global_state_s *state)
     nodemanagerSetState(GSTATE.node_manager);
 }
 
+/*!
+ * @brief Updates the allocation padding for all worker buffer pools.
+ *
+ * This function updates the allocation padding for each worker's buffer pool. It is used to adjust memory allocation sizes.
+ *
+ * @param padding The padding value to be applied to the buffer pools.
+ */
 void globalstateUpdaeAllocationPadding(uint16_t padding)
 {
     for (int wi = 0; wi < getWorkersCount(); wi++)
@@ -46,6 +67,12 @@ void globalstateUpdaeAllocationPadding(uint16_t padding)
     GSTATE.flag_buffers_calculated = true;
 }
 
+/*!
+ * @brief Initializes shortcut pointers for frequently accessed worker-related data.
+ *
+ * This function initializes shortcut pointers to worker loops, buffer pools, context pools, and pipe tunnel message pools.
+ * These shortcuts provide faster access to these resources.
+ */
 static void initializeShortCuts(void)
 {
     assert(GSTATE.flag_initialized);
@@ -71,6 +98,12 @@ static void initializeShortCuts(void)
     }
 }
 
+/*!
+ * @brief Initializes master pools for different types of resources.
+ *
+ * This function initializes master pools for buffer pools (large and small), context pools, and pipe tunnel message pools.
+ * Master pools are used for managing the allocation of these resources.
+ */
 static void initializeMasterPools(void)
 {
     assert(GSTATE.flag_initialized);
@@ -81,6 +114,14 @@ static void initializeMasterPools(void)
     GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
 }
 
+/*!
+ * @brief Creates the global state and initializes the WaterWall instance.
+ *
+ * This function creates the global state, initializes loggers, workers, pools, and managers.
+ * It also initializes the crypto backend (OpenSSL or Sodium) and spawns worker threads.
+ *
+ * @param init_data The construction data for the global state, including logger configurations and worker counts.
+ */
 void createGlobalState(const ww_construction_data_t init_data)
 {
     GSTATE.flag_initialized = true;
@@ -167,6 +208,12 @@ void createGlobalState(const ww_construction_data_t init_data)
     startSignalManager();
 }
 
+/*!
+ * @brief Runs the main thread's event loop.
+ *
+ * This function runs the event loop for the main worker thread. It asserts that the global state is initialized.
+ * After the main loop finishes, it joins all other worker threads and exits.
+ */
 void runMainThread(void)
 {
     assert(GSTATE.flag_initialized);

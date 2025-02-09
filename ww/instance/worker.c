@@ -10,6 +10,15 @@
 
 thread_local wid_t tl_wid;
 
+/**
+ * @brief Initializes a worker.
+ *
+ * This function initializes a worker by setting its ID, creating context and message pools,
+ * and creating an event loop.
+ *
+ * @param worker Pointer to the worker to initialize.
+ * @param wid  Worker ID.
+ */
 void workerInit(worker_t *worker, wid_t wid)
 {
     *worker = (worker_t){.wid = wid};
@@ -27,6 +36,14 @@ void workerInit(worker_t *worker, wid_t wid)
     worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, wid);
 }
 
+/**
+ * @brief Runs the worker.
+ *
+ * This function sets the thread-local worker ID, initializes the random number generator,
+ * runs the event loop, and destroys the event loop.
+ *
+ * @param worker Pointer to the worker to run.
+ */
 void workerRun(worker_t *worker)
 {
     tl_wid = worker->wid;
@@ -35,6 +52,14 @@ void workerRun(worker_t *worker)
     wloopDestroy(&worker->loop);
 }
 
+/**
+ * @brief Worker thread routine.
+ *
+ * This function is the entry point for the worker thread. It runs the worker and returns 0.
+ *
+ * @param userdata Pointer to the worker.
+ * @return 0.
+ */
 static WTHREAD_ROUTINE(worker_thread) // NOLINT
 {
     worker_t *worker = userdata;
@@ -44,6 +69,13 @@ static WTHREAD_ROUTINE(worker_thread) // NOLINT
     return 0;
 }
 
+/**
+ * @brief Runs the worker in a new thread.
+ *
+ * This function creates a new thread and runs the worker in it.
+ *
+ * @param worker Pointer to the worker to run.
+ */
 void workerRunNewThread(worker_t *worker)
 {
     worker->thread = threadCreate(worker_thread, worker);

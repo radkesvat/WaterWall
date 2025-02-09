@@ -1,6 +1,11 @@
 #include "wversion.h"
 #include "wtime.h"
 
+/**
+ * @brief Returns the compile version string.
+ *
+ * @return const char* A static string containing the version in the format "WW_VERSION_MAJOR.YY.MM.DD".
+ */
 const char* wwGetCompileVersion(void) {
     static char s_version[16] = {0};
     datetime_t dt = wwCompileDateTime();
@@ -9,6 +14,15 @@ const char* wwGetCompileVersion(void) {
     return s_version;
 }
 
+/**
+ * @brief Converts a version string (e.g., "v1.2.3.4" or "1.2.3.4") to an integer.
+ *
+ * Parses the version string and converts it into a 32-bit integer, where each part of the version
+ * represents a byte.  For example, "1.2.3.4" becomes 0x01020304.
+ *
+ * @param str const char* The version string to convert.
+ * @return int The integer representation of the version.
+ */
 int versionATOI(const char* str) {
     int hex = 0;
 
@@ -26,19 +40,23 @@ int versionATOI(const char* str) {
     return hex;
 }
 
+/**
+ * @brief Converts an integer representation of a version to a string (e.g., "1.2.3.4").
+ *
+ * Converts a 32-bit integer, where each byte represents a part of the version, into a string
+ * in the format "X.Y.Z.W".  For example, 0x01020304 becomes "1.2.3.4". Leading zeros are trimmed.
+ *
+ * @param num int The integer representation of the version.
+ * @param str char* The buffer to store the resulting version string.  Must be large enough to hold the string.
+ */
 void versionITOA(int num, char* str) {
-    char* ch = (char*)&num;
-    sprintf(str, "%d.%d.%d.%d", ch[3], ch[2], ch[1], ch[0]);
+    unsigned char* ch = (unsigned char*)&num; // Use unsigned char to avoid sign extension issues
+    sprintf(str, "%d.%d.%d.%d", ch[0], ch[1], ch[2], ch[3]);
 
     // trim 0.1.2.3
     const char* p = str;
-    while (1) {
-        if (p[0] == '0' && p[1] == '.') {
-            p += 2;
-        }
-        else {
-            break;
-        }
+    while (p[0] == '0' && p[1] == '.') {
+        p += 2;
     }
 
     if (p != str) {

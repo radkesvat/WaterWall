@@ -72,39 +72,97 @@ extern ww_global_state_t global_ww_state;
 #define WORKERS       global_ww_state.workers
 #define WORKERS_COUNT global_ww_state.workers_count
 
+/*!
+ * @brief Get the number of workers.
+ *
+ * @return The number of workers.
+ */
 static inline wid_t getWorkersCount(void)
 {
     return WORKERS_COUNT;
 }
 
+/*!
+ * @brief Get a worker by its ID.
+ *
+ * @param wid The worker ID.
+ * @return A pointer to the worker.
+ */
 static inline worker_t *getWorker(wid_t wid)
 {
     return &(WORKERS[wid]);
 }
 
+/*!
+ * @brief Get the buffer pool for a worker.
+ *
+ * @param wid The worker ID.
+ * @return A pointer to the buffer pool.
+ */
 static inline buffer_pool_t *getWorkerBufferPool(wid_t wid)
 {
     return GSTATE.shortcut_buffer_pools[wid];
 }
 
+/*!
+ * @brief Get the context pool for a worker.
+ *
+ * @param wid The worker ID.
+ * @return A pointer to the context pool.
+ */
 static inline generic_pool_t *getWorkerContextPool(wid_t wid)
 {
     return GSTATE.shortcut_context_pools[wid];
 }
 
+/*!
+ * @brief Get the pipe tunnel message pool for a worker.
+ *
+ * @param wid The worker ID.
+ * @return A pointer to the pipe tunnel message pool.
+ */
 static inline generic_pool_t *getWorkerPipeTunnelMsgPool(wid_t wid)
 {
     return GSTATE.shortcut_pipetunnel_msg_pools[wid];
 }
 
+/*!
+ * @brief Get the event loop for a worker.
+ *
+ * @param wid The worker ID.
+ * @return A pointer to the event loop.
+ */
 static inline struct wloop_s *getWorkerLoop(wid_t wid)
 {
     return GSTATE.shortcut_loops[wid];
 }
 
+/*!
+ * @brief Runs the main thread.
+ */
 WW_EXPORT void runMainThread(void);
 
+/*!
+ * @brief Creates the global state.
+ *
+ * @param data The construction data for the global state.
+ */
 WW_EXPORT void               createGlobalState(ww_construction_data_t data);
+/*!
+ * @brief Gets the global state.
+ *
+ * @return A pointer to the global state.
+ */
 WW_EXPORT ww_global_state_t *globalStateGet(void);
+/*!
+ * @brief Sets the global state.
+ *
+ * @param state A pointer to the global state.
+ */
 WW_EXPORT void               globalStateSet(ww_global_state_t *state);
+/*!
+ * @brief Updates the allocation padding for the global state.
+ *
+ * @param padding The padding value.
+ */
 WW_EXPORT void               globalstateUpdaeAllocationPadding(uint16_t padding);
