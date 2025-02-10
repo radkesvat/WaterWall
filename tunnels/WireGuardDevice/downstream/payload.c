@@ -217,7 +217,10 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     {
         // Could not locate valid keypair for remote index
     }
-    assert(buf == NULL);
+    if(buf != NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+    }
 }
 
 static void wireguardifProcessResponseMessage(wireguard_device_t *device, wireguard_peer_t *peer,

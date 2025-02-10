@@ -325,6 +325,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
     tun_device_t         *tdev    = userdata;
     WINTUN_SESSION_HANDLE Session = tdev->session_handle;
     sbuf_t               *buf;
+    MemoryBarrier();
 
     while (atomicLoadRelaxed(&(tdev->running)))
     {
@@ -378,6 +379,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
+    MemoryBarrier();
 
     WINTUN_SESSION_HANDLE Session = WintunStartSession(tdev->adapter_handle, 0x400000);
     if (! Session)

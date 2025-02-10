@@ -71,7 +71,7 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         MessageBox(NULL, fail_msg, "Error", MB_OK | MB_ICONERROR);
         exit(1);
     }
-    // if (! windowsElevatePrivileges(
+    // if (! elevatePrivileges(
     //         FINAL_EXECUTABLE_NAME,
     //         fail_msg))
     // {
