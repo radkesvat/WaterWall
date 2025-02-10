@@ -392,7 +392,7 @@ endif()
 
 if(WIN32)
     target_compile_definitions(ww PUBLIC -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0600)
-    set(LIBS ${LIBS} secur32 crypt32 winmm iphlpapi ws2_32 pdh)
+    set(LIBS ${LIBS} secur32 crypt32 winmm ntdll iphlpapi ws2_32 pdh)
     if(ENABLE_WINDUMP)
         target_compile_definitions(ww PUBLIC -DENABLE_WINDUMP)
         set(LIBS ${LIBS} dbghelp)

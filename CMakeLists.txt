@@ -549,12 +549,11 @@ message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 set_target_properties(Waterwall
   PROPERTIES
   OUTPUT_NAME ${FINAL_EXECUTABLE_NAME}
-  LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
   ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 # admin to load wintun driver
-if(WIN32)
+if(WIN32 AND MSVC)
   set_target_properties(Waterwall PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
 endif()
