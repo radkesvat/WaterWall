@@ -76,6 +76,8 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
  * @return The size of large buffers.
  */
 uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
+uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool);
+
 
 /**
  * Gets the size of small buffers in the buffer pool.
@@ -83,6 +85,7 @@ uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
  * @return The size of small buffers.
  */
 uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool);
+uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool);
 
 /**
  * Checks if a buffer is a large buffer.

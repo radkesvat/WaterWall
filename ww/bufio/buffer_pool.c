@@ -36,6 +36,12 @@ uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
     return pool->large_buffers_size;
 }
 
+uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool)
+{
+    return pool->large_buffer_left_padding;
+}
+
+
 /**
  * Gets the size of small buffers in the buffer pool.
  * @param pool The buffer pool.
@@ -45,6 +51,13 @@ uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool)
 {
     return pool->small_buffers_size;
 }
+
+
+uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool)
+{
+    return pool->small_buffer_left_padding;
+}
+
 
 /**
  * Creates a large buffer using the provided create handler.
