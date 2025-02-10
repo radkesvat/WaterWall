@@ -192,7 +192,7 @@ int xchacha20poly1305Decrypt(uint8_t *dst, const uint8_t *src, size_t src_len, c
     uint64_t wireguard_way_of_nonce[2] = {0, new_nonce};
 
 	hchacha20(subkey, nonce, key);
-	result = 0 == chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
+	result = chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
 
 	wCryptoZero(subkey, sizeof(subkey));
 	return result;
