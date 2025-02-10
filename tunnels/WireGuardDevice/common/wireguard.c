@@ -1,5 +1,4 @@
 #include "structure.h"
-#include "wcrypto.h"
 
 #ifdef COMPILER_MSVC
 

@@ -81,8 +81,11 @@ if(NOT DEFINED FINAL_EXECUTABLE_NAME OR MY_VARIABLE STREQUAL "")
     message(FATAL_ERROR "Error: FINAL_EXECUTABLE_NAME is not set! Please define FINAL_EXECUTABLE_NAME before configuring.")
 endif()
 
-if(win32)
+if(WIN32)
+    option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
+    option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
     target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}.exe")
+
 else()
     target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}")
 endif()
@@ -124,10 +127,7 @@ elseif(WCRYPTO_BACKEND_SOFTWARE)
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SOFTWARE=1)
 endif()
 
-if(WIN32)
-    option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
-    option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
-endif()
+
 
 # Enforce C11 for this specific target
 set_target_properties(ww 

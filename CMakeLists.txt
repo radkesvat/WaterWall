@@ -10,6 +10,7 @@ endif()
 
 project(Waterwall VERSION 1.32)
 
+set(FINAL_EXECUTABLE_NAME "Waterwall" CACHE STRING "Final executable name" FORCE)
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
 set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL  "CXX standard version" FORCE)
@@ -140,9 +141,6 @@ add_executable(Waterwall
                   core/os_helpers.c
                   # core/tests/bench_memcpy.c
 )
-
-
-
 
 
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -550,8 +548,13 @@ message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
 set_target_properties(Waterwall
   PROPERTIES
+  OUTPUT_NAME ${FINAL_EXECUTABLE_NAME}
+  LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
   ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
-
+# admin to load wintun driver
+if(WIN32)
+  set_target_properties(Waterwall PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+endif()

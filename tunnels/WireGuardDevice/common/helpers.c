@@ -1,5 +1,4 @@
 #include "structure.h"
-#include "wcrypto.h"
 
 #include "loggers/network_logger.h"
 

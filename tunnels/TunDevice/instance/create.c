@@ -23,12 +23,11 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     t->onPrepair = &tundeviceTunnelOnPrepair;
     t->onStart   = &tundeviceTunnelOnStart;
     t->onDestroy = &tundeviceTunnelDestroy;
-    
-    tundevice_tstate_t * state = tunnelGetState(t);
+
+    tundevice_tstate_t *state = tunnelGetState(t);
 
     const cJSON *settings = node->node_settings_json;
 
-    
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: TcpListener->settings (object field) : The object was empty or invalid");
@@ -47,23 +46,38 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if(!verifyIPCdir(state->ip_subnet)){
-        LOGF("TunDevice: verifyIPCdir failed, check the ip and subnet that you given"); 
+    if (! verifyIPCdir(state->ip_subnet))
+    {
+        LOGF("TunDevice: verifyIPCdir failed, check the ip and subnet that you given");
         return NULL;
     }
 
-    char *slash        = strchr(state->ip_subnet, '/');
-    slash[0]           = 0x0;
-    state->ip_present  = stringDuplicate(state->ip_subnet);
-    slash[0]           = '/';
-    char *subnet_part  = slash + 1;
+    char *slash       = strchr(state->ip_subnet, '/');
+    slash[0]          = 0x0;
+    state->ip_present = stringDuplicate(state->ip_subnet);
+    slash[0]          = '/';
+    char *subnet_part = slash + 1;
 
     state->subnet_mask = atoi(subnet_part);
 
     // tun creation must be done in prepair or start padding, in create method paddings are not calculated yout
-   
- 
 
+    // on windows we need admin to load win tun driver
+    const char *fail_msg = "Error: Loading the WireGuard driver requires administrative privileges.\n\n"
+                           "Please restart Waterwall as an administrator and try again.";
+#ifdef OS_WIN
+    if (! isAdmin())
+    {
+        MessageBox(NULL, fail_msg, "Error", MB_OK | MB_ICONERROR);
+        exit(1);
+    }
+    // if (! windowsElevatePrivileges(
+    //         FINAL_EXECUTABLE_NAME,
+    //         fail_msg))
+    // {
+    //     exit(1);
+    // }
+#endif
 
     return t;
 }

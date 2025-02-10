@@ -8,15 +8,15 @@
  *
  * @return BOOL TRUE if running as admin, FALSE otherwise.
  */
-BOOL isAdmin(void)
+bool isAdmin(void)
 {
-    BOOL is_admin = FALSE;
-    HANDLE h_token = NULL;
+    BOOL   is_admin = FALSE;
+    HANDLE h_token  = NULL;
 
     if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &h_token))
     {
         TOKEN_ELEVATION elevation;
-        DWORD dw_size;
+        DWORD           dw_size;
         if (GetTokenInformation(h_token, TokenElevation, &elevation, sizeof(elevation), &dw_size))
         {
             is_admin = elevation.TokenIsElevated;
@@ -44,25 +44,53 @@ bool windowsElevatePrivileges(const char *app_name, char *fail_msg)
     {
         return true;
     }
+    char szPath[MAX_PATH];
 
-    SHELLEXECUTEINFO shell_exec_info = {
-        .cbSize = sizeof(shell_exec_info),
-        .fMask  = SEE_MASK_NOCLOSEPROCESS,
-        .lpVerb = "runas",      // Request elevated privileges
-        .lpFile = app_name,     // Application executable name
-        .hwnd   = NULL,
-        .nShow  = SW_NORMAL
-    };
-
-    if (!ShellExecuteEx(&shell_exec_info))
+    // Retrieve the full path of the current executable
+    if (GetModuleFileName(NULL, szPath, MAX_PATH) == 0)
     {
-        MessageBox(NULL, fail_msg, "Error", MB_OK | MB_ICONERROR);
+        // Handle error
+        printError("Failed to get executable path. Error: %lu\n", GetLastError());
         return false;
     }
+
+    if (GetModuleFileName(NULL, szPath, MAX_PATH))
+    {
+        SHELLEXECUTEINFO sei = {sizeof(sei)};
+        sei.lpVerb           = L"runas"; // Request elevation
+        sei.lpFile           = szPath;   // Path to the current executable
+        sei.hwnd             = NULL;
+        sei.nShow            = SW_NORMAL;
+
+        if (! ShellExecuteEx(&sei))
+        {
+            DWORD dwError = GetLastError();
+            if (dwError == ERROR_CANCELLED)
+            {
+                printError("User canceled the elevation prompt.\n");
+            }
+            else
+            {
+                printError("Failed to elevate privileges. Error: %lu\n", dwError);
+            }
+            return false;
+        }
+        else
+        {
+            // Successfully restarted with admin privileges
+            ExitProcess(0); // Exit the current instance
+        }
+    }
+
     return true;
 }
 
 #else
+
+bool isAdmin(void)
+{
+    return true;
+}
 
 /**
  * @brief Stub for non-Windows platforms.

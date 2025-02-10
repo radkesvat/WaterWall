@@ -1,5 +1,4 @@
 #include "structure.h"
-#include "wcrypto.h"
 
 // Helper function to compare results
 static inline bool compareBuffers(const uint8_t *a, const uint8_t *b, size_t len)
