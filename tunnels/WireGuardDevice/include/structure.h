@@ -132,3 +132,6 @@ bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds);
 void wireguardEncryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, wireguard_keypair_t *keypair);
 bool wireguardDecryptPacket(uint8_t *dst, const uint8_t *src, size_t src_len, uint64_t counter,
                             wireguard_keypair_t *keypair);
+
+// test all encryption and decryption functions
+void testWireGuardImpl(void);

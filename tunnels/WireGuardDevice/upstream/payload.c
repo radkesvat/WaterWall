@@ -87,7 +87,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             // Alignment required... pbuf_alloc has probably aligned data, but want to be sure
             U64TO8_LITTLE(hdr->counter, keypair->sending_counter);
 
-            // Copy the encrypted (padded) data to the output packet - chacha20poly1305_encrypt() can encrypt data
+            // Copy the encrypted (padded) data to the output packet - chacha20poly1305Encrypt() can encrypt data
             // in-place which avoids call to mem_malloc
             dst = &hdr->enc_packet[0];
             // if ((padded_len > 0) && q)
