@@ -18,7 +18,6 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
 
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port)
 {
-    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), q);
     wgd_tstate_t *ts = (wgd_tstate_t *) device;
     tunnel_t* tunnel = ts->tunnel;
     line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());

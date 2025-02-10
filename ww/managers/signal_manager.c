@@ -127,10 +127,10 @@ static void multiplexedSignalHandler(int signum)
     {
         raise(signum);
 
-        written = write(STDOUT_FILENO,
-                        "SignalManager: The program should have been terminated before this, exiting...\n", 75);
-        (void) written;
-        _Exit(1);
+        // written = write(STDOUT_FILENO,
+        //                 "SignalManager: The program should have been terminated before this, exiting...\n", 75);
+        // (void) written;
+        // _Exit(1);
     }
 }
 

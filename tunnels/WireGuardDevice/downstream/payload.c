@@ -370,7 +370,8 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
     case MESSAGE_HANDSHAKE_INITIATION:
         msg_initiation = (message_handshake_initiation_t *) data;
 
-        // Check mac1 (and optionally mac2) are correct - note it may internally generate a cookie reply packet
+        // Check mac1 (and optionally mac2) are correct - note it may internally generate a cookie reply pack
+        // t
         if (wireguardifCheckInitiationMessage(device, msg_initiation, addr, port))
         {
 
