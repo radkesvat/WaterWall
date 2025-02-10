@@ -3,45 +3,56 @@
 
 #include "wlibc.h"
 
-typedef struct proc_ctx_s {
-    pid_t           pid; // tid in Windows
-    time_t          start_time;
-    int             spawn_cnt;
-    procedure_t     init;
-    void*           init_userdata;
-    procedure_t     proc;
-    void*           proc_userdata;
-    procedure_t     exit;
-    void*           exit_userdata;
+typedef struct proc_ctx_s
+{
+    pid_t       pid; // tid in Windows
+    time_t      start_time;
+    int         spawn_cnt;
+    procedure_t init;
+    void       *init_userdata;
+    procedure_t proc;
+    void       *proc_userdata;
+    procedure_t exit;
+    void       *exit_userdata;
 } proc_ctx_t;
 
-static inline void procRun(proc_ctx_t* ctx) {
-    if (ctx->init) {
+static inline void procRun(proc_ctx_t *ctx)
+{
+    if (ctx->init)
+    {
         ctx->init(ctx->init_userdata);
     }
-    if (ctx->proc) {
+    if (ctx->proc)
+    {
         ctx->proc(ctx->proc_userdata);
     }
-    if (ctx->exit) {
+    if (ctx->exit)
+    {
         ctx->exit(ctx->exit_userdata);
     }
 }
 
 #ifdef OS_UNIX
 // unix use multi-processes
-static inline int procSpawn(proc_ctx_t* ctx) {
+static inline int procSpawn(proc_ctx_t *ctx)
+{
     ++ctx->spawn_cnt;
     ctx->start_time = time(NULL);
-    pid_t pid = fork();
-    if (pid < 0) {
+    pid_t pid       = fork();
+    if (pid < 0)
+    {
         printError("fork");
         return -1;
-    } else if (pid == 0) {
+    }
+    else if (pid == 0)
+    {
         // child process
         ctx->pid = getpid();
         procRun(ctx);
         exit(0);
-    } else if (pid > 0) {
+    }
+    else if (pid > 0)
+    {
         // parent process
         ctx->pid = pid;
     }
@@ -49,23 +60,25 @@ static inline int procSpawn(proc_ctx_t* ctx) {
 }
 #elif defined(OS_WIN)
 // win32 use multi-threads
-static void win_thread(void* userdata) {
-    proc_ctx_t* ctx = (proc_ctx_t*)userdata;
-    ctx->pid = GetCurrentThreadId(); // tid in Windows
+static void win_thread(void *userdata)
+{
+    proc_ctx_t *ctx = (proc_ctx_t *) userdata;
+    ctx->pid        = GetCurrentThreadId(); // tid in Windows
     procRun(ctx);
 }
-static inline int procSpawn(proc_ctx_t* ctx) {
+static inline int procSpawn(proc_ctx_t *ctx)
+{
     ++ctx->spawn_cnt;
     ctx->start_time = time(NULL);
-    HANDLE h = (HANDLE)_beginthread(win_thread, 0, ctx);
-    if (h == NULL) {
+    HANDLE h        = (HANDLE) _beginthread(win_thread, 0, ctx);
+    if (h == NULL)
+    {
         return -1;
     }
     ctx->pid = GetThreadId(h); // tid in Windows
     return ctx->pid;
 }
 #endif
-
 
 typedef struct
 {
@@ -112,5 +125,14 @@ static bool checkCommandAvailable(const char *app)
     cmd_result_t result = execCmd(b);
     return (result.exit_code == 0 && strlen(result.output) > 0);
 }
+
+/**
+* @brief Attempts to elevate the privileges of the current process.
+*
+* @param app_name The executable name of the application.
+* @param fail_msg The error message to display if elevation fails.
+* @return bool true on success, false otherwise.
+*/
+bool windowsElevatePrivileges(const char *app_name, char *fail_msg);
 
 #endif // WW_PROC_H_
