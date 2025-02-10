@@ -467,6 +467,7 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wno-unused-function
         -Wno-unknown-pragmas
         -Wno-error=pragmas
+        -Wno-unknown-warning-option
     )
 endif()
 
