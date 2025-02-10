@@ -72,9 +72,9 @@ option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functi
 option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
 
 # Crypto backend options
-option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
+option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" OFF)
 option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
-option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
+option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" ON)
 
 # Ensure only one backend is selected
 if(WCRYPTO_BACKEND_SODIUM)
