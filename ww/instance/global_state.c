@@ -9,11 +9,19 @@
 #include "managers/socket_manager.h"
 
 #if defined(WCRYPTO_BACKEND_OPENSSL)
+
 #include "crypto/openssl_instance.h"
+
 #elif defined(WCRYPTO_BACKEND_SODIUM)
+
 #include "crypto/sodium_instance.h"
+
+#elif defined(WCRYPTO_BACKEND_SOFTWARE)
+
 #else
+
 #error "No crypto backend defined"
+
 #endif
 
 // Global instance of the ww_global_state_t structure.
@@ -32,8 +40,8 @@ ww_global_state_t *globalStateGet(void)
 /*!
  * @brief Sets the global state.
  *
- * This function sets the global state and initializes related components like loggers, signal manager, socket manager, and node manager.
- * It asserts that the global state is not already initialized before setting it.
+ * This function sets the global state and initializes related components like loggers, signal manager, socket manager,
+ * and node manager. It asserts that the global state is not already initialized before setting it.
  *
  * @param state A pointer to the global state structure to be set.
  */
@@ -54,7 +62,8 @@ void globalStateSet(struct ww_global_state_s *state)
 /*!
  * @brief Updates the allocation padding for all worker buffer pools.
  *
- * This function updates the allocation padding for each worker's buffer pool. It is used to adjust memory allocation sizes.
+ * This function updates the allocation padding for each worker's buffer pool. It is used to adjust memory allocation
+ * sizes.
  *
  * @param padding The padding value to be applied to the buffer pools.
  */
@@ -70,8 +79,8 @@ void globalstateUpdaeAllocationPadding(uint16_t padding)
 /*!
  * @brief Initializes shortcut pointers for frequently accessed worker-related data.
  *
- * This function initializes shortcut pointers to worker loops, buffer pools, context pools, and pipe tunnel message pools.
- * These shortcuts provide faster access to these resources.
+ * This function initializes shortcut pointers to worker loops, buffer pools, context pools, and pipe tunnel message
+ * pools. These shortcuts provide faster access to these resources.
  */
 static void initializeShortCuts(void)
 {
@@ -101,8 +110,8 @@ static void initializeShortCuts(void)
 /*!
  * @brief Initializes master pools for different types of resources.
  *
- * This function initializes master pools for buffer pools (large and small), context pools, and pipe tunnel message pools.
- * Master pools are used for managing the allocation of these resources.
+ * This function initializes master pools for buffer pools (large and small), context pools, and pipe tunnel message
+ * pools. Master pools are used for managing the allocation of these resources.
  */
 static void initializeMasterPools(void)
 {
@@ -185,10 +194,17 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // SSL
     {
-#ifdef WCRYPTO_BACKEND_OPENSSL
+
+// later we gona brind openssl anyway...
+#if defined(WCRYPTO_BACKEND_OPENSSL)
+
         opensslGlobalInit();
         GSTATE.flag_openssl_initialized = true;
-#else
+
+#endif
+
+#if defined(WCRYPTO_BACKEND_SODIUM)
+
         GSTATE.flag_libsodium_initialized = initSodium();
         if (! (GSTATE.flag_libsodium_initialized))
         {
@@ -196,6 +212,8 @@ void createGlobalState(const ww_construction_data_t init_data)
             exit(1);
         }
 #endif
+
+
     }
     // Spawn all workers except main worker which is current thread
     {

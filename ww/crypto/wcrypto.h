@@ -1,24 +1,27 @@
 #pragma once
 #include "wlibc.h"
 
-#ifdef WCRYPTO_BACKEND_SODIUM
+#if defined (WCRYPTO_BACKEND_SODIUM) || defined (WCRYPTO_BACKEND_SOFTWARE)
 
 #include "sodium.h"
 
 // state context
-typedef struct {
-    uint8_t b[64];                      // input buffer
-    uint32_t h[8];                      // chained state
-    uint32_t t[2];                      // total number of bytes
-    size_t c;                           // pointer for b[]
-    size_t outlen;                      // digest size
+typedef struct
+{
+    uint8_t  b[64];  // input buffer
+    uint32_t h[8];   // chained state
+    uint32_t t[2];   // total number of bytes
+    size_t   c;      // pointer for b[]
+    size_t   outlen; // digest size
 } blake2s_ctx_t;
-#else
+
+#endif 
+
+#if defined (WCRYPTO_BACKEND_OPENSSL) 
 
 typedef struct evp_mac_ctx_st blake2s_ctx_t;
 
 #endif
-
 
 // Context structure for BLAKE2s hash function operations
 
@@ -64,14 +67,14 @@ int performX25519(unsigned char out[32], const unsigned char scalar[32], const u
 // nonce: 12-byte unique nonce
 // key: 32-byte encryption key
 // Returns: 1 on success, 0 on failure
-int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                            size_t adlen, const unsigned char *nonce, const unsigned char *key);
+int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
+                            size_t ad_len, const unsigned char *nonce, const unsigned char *key);
 
 // Decrypt and verify data using ChaCha20-Poly1305 AEAD
 // Parameters same as encrypt function
 // Returns: 1 on success (valid decryption), 0 on failure (authentication failed)
-int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
-                            size_t adlen, const unsigned char *nonce, const unsigned char *key);
+int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t src_len, const unsigned char *ad,
+                            size_t ad_len, const unsigned char *nonce, const unsigned char *key);
 
 // Encrypt using XChaCha20-Poly1305 (extended nonce version)
 // Same as chacha20poly1305Encrypt but uses 24-byte nonce

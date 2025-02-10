@@ -147,7 +147,7 @@ WW_EXPORT void runMainThread(void);
  *
  * @param data The construction data for the global state.
  */
-WW_EXPORT void               createGlobalState(ww_construction_data_t data);
+WW_EXPORT void createGlobalState(ww_construction_data_t data);
 /*!
  * @brief Gets the global state.
  *
@@ -159,10 +159,10 @@ WW_EXPORT ww_global_state_t *globalStateGet(void);
  *
  * @param state A pointer to the global state.
  */
-WW_EXPORT void               globalStateSet(ww_global_state_t *state);
+WW_EXPORT void globalStateSet(ww_global_state_t *state);
 /*!
  * @brief Updates the allocation padding for the global state.
  *
  * @param padding The padding value.
  */
-WW_EXPORT void               globalstateUpdaeAllocationPadding(uint16_t padding);
+WW_EXPORT void globalstateUpdaeAllocationPadding(uint16_t padding);

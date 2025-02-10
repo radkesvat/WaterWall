@@ -236,9 +236,25 @@ WW_EXPORT int stringToUrl(hurl_t *stURL, const char *strURL);
 // #define printError perror
 
 
+static void printDebug(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+}
+
 static void printError(const char *format, ...) {
     va_list args;
     va_start(args, format);
     vfprintf(stderr, format, args);
     va_end(args);
+}
+
+static void printHex(const char *label, const unsigned char *data, size_t len) {
+    printf("%s: ", label);
+    for (size_t i = 0; i < len; i++) {
+        printf("%02x", data[i]);
+    }
+    printf("\n");
+    fflush(stdout);
 }

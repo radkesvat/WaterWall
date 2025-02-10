@@ -138,14 +138,6 @@ add_executable(Waterwall
 
 
 
-# download CPM.cmake
-file(
-  DOWNLOAD
-  https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.40.0/CPM.cmake
-  ${CMAKE_BINARY_DIR}/cmake/CPM.cmake
-)
-include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
 
 
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

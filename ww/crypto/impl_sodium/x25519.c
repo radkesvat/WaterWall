@@ -8,8 +8,9 @@ int performX25519(unsigned char out[32], const unsigned char scalar[32], const u
 {
     assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
 
+    // This dose clamp the base point 
     // Perform the scalar multiplication using crypto_scalarmult
-    if (crypto_scalarmult(out, scalar, point) != 0)
+    if (0 != crypto_scalarmult(out, scalar, point))
     {
         // Scalar multiplication failed
         return -1;

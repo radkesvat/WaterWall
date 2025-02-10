@@ -59,6 +59,8 @@ void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 // Default downstream establishment function
 void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
+    (void) self;
+    (void) line;
     assert(self->prev != NULL);
     // if (! line->established)
     // {

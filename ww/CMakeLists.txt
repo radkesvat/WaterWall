@@ -68,7 +68,52 @@ add_library(ww STATIC
 
 option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
 option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
-option(WCRYPTO_BACKEND_SODIUM "use libsodium instead of openssl for crypto (note that opensssl dose not support xchacha)" ON)
+
+# (note that opensssl dose not support xchacha, we used software for that)
+# (note that libsodium dose not support blake2s, we used software for that)
+option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
+option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
+option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
+
+# Ensure only one backend is selected
+if(WCRYPTO_BACKEND_SODIUM)
+    set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
+    set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
+
+    target_sources(ww PRIVATE crypto/sodium_instance.c)
+    target_sources(ww PRIVATE crypto/impl_sodium/chacha20poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_sodium/xchacha20poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_sodium/x25519.c)
+
+    target_sources(ww PRIVATE crypto/impl_software/blake2s.c)
+
+    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
+elseif(WCRYPTO_BACKEND_OPENSSL)
+    set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
+    set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
+
+    target_sources(ww PRIVATE crypto/openssl_instance.c)
+    target_sources(ww PRIVATE crypto/impl_openssl/blake2s.c)
+    target_sources(ww PRIVATE crypto/impl_openssl/chacha20poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_openssl/x25519.c)
+
+    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_OPENSSL=1)
+elseif(WCRYPTO_BACKEND_SOFTWARE)
+    set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
+    set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
+
+    target_sources(ww PRIVATE crypto/impl_software/blake2s.c)
+    target_sources(ww PRIVATE crypto/impl_software/chacha20.c)
+    target_sources(ww PRIVATE crypto/impl_software/chacha20poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_software/poly1305.c)
+    target_sources(ww PRIVATE crypto/impl_software/poly1305-donna.c)
+    target_sources(ww PRIVATE crypto/impl_software/x25519.c)
+
+    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SOFTWARE=1)
+endif()
+
+
+
 
 if(WIN32)
     option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
@@ -77,19 +122,10 @@ endif()
 
 
 if(WCRYPTO_BACKEND_SODIUM)
-    target_sources(ww PRIVATE crypto/sodium_instance.c)
-    target_sources(ww PRIVATE crypto/impl_sodium/blake2s.c)
-    target_sources(ww PRIVATE crypto/impl_sodium/chacha20poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_sodium/xchacha20poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_sodium/x25519.c)
-    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
+
 
 else()
-    target_sources(ww PRIVATE crypto/openssl_instance.c)
-    target_sources(ww PRIVATE crypto/impl_openssl/blake2s.c)
-    target_sources(ww PRIVATE crypto/impl_openssl/chacha20poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_openssl/x25519.c)
-    target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_OPENSSL=1)
+
 endif()
 
 
@@ -162,6 +198,13 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
 
 # Add dependencies
+
+# download CPM.cmake
+file(
+  DOWNLOAD
+  https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.40.0/CPM.cmake
+  ${CMAKE_BINARY_DIR}/cmake/CPM.cmake
+)
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
 
 
