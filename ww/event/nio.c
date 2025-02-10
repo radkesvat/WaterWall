@@ -165,7 +165,6 @@ static int __nio_read(wio_t *io, void *buf, unsigned int len)
     {
 
     case WIO_TYPE_TCP:
-    case WIO_TYPE_UDP: // udp can also be more than 1472 bytes
 
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w){
@@ -174,6 +173,7 @@ static int __nio_read(wio_t *io, void *buf, unsigned int len)
         // #endif
         nread = recv(io->fd, buf, (int) len, 0);
         break;
+    case WIO_TYPE_UDP: // udp can also be more than 1472 bytes
     case WIO_TYPE_IP: {
         socklen_t addrlen = sizeof(sockaddr_u);
         nread             = recvfrom(io->fd, buf, (int) len, 0, io->peeraddr, &addrlen);
