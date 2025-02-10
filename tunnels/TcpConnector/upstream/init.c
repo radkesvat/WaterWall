@@ -34,10 +34,10 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     switch ((tcpconnector_strategy_e) state->dest_port_selected.status)
     {
     case kTcpConnectorStrategyFromSource:
-        addresscontextPortCopy(dest_ctx, src_ctx);
+        addresscontextCopyPort(dest_ctx, src_ctx);
         break;
     case kTcpConnectorStrategyConstant:
-        addresscontextPortCopy(dest_ctx, &(state->constant_dest_addr));
+        addresscontextCopyPort(dest_ctx, &(state->constant_dest_addr));
         break;
     default:
     case kTcpConnectorStrategyFromDest:

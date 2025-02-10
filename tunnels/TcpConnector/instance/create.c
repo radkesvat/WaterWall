@@ -129,7 +129,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
         if (state->constant_dest_addr.type_ip == false)
         {
-            addresscontextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
+            addressContextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
                                             strlen(state->dest_addr_selected.value_ptr));
         }
         else
