@@ -15,6 +15,7 @@ add_library(ww STATIC
     base/wlsem.c
     base/wsocket.c
     base/wsysinfo.c
+    base/wproc.c
     bufio/buffer_pool.c
     bufio/buffer_stream.c
     bufio/context_queue.c
@@ -75,6 +76,16 @@ option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
 option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" OFF)
 option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
 option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" ON)
+
+if(NOT DEFINED FINAL_EXECUTABLE_NAME OR MY_VARIABLE STREQUAL "")
+    message(FATAL_ERROR "Error: FINAL_EXECUTABLE_NAME is not set! Please define FINAL_EXECUTABLE_NAME before configuring.")
+endif()
+
+if(win32)
+    target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}.exe")
+else()
+    target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}")
+endif()
 
 # Ensure only one backend is selected
 if(WCRYPTO_BACKEND_SODIUM)
