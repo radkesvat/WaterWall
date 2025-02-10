@@ -64,7 +64,11 @@ option(INCLUDE_TEMPLATE "link Template staticly to the core"  TRUE)
 
 
 option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  TRUE)
+
+if(NOT APPLE)
 option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  TRUE)
+endif()
+
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
