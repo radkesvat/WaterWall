@@ -1,15 +1,14 @@
 #include "tun.h"
 
+#include "buffer_pool.h"
 #include "global_state.h"
 #include "managers/signal_manager.h"
 #include "master_pool.h"
-#include "buffer_pool.h"
 #include "wchan.h"
 #include "wintun/wintun.h"
 #include <tchar.h>
 
 #include "loggers/internal_logger.h"
-
 
 // External variables
 extern unsigned char wintun_dll[];
@@ -247,7 +246,7 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -264,7 +263,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 {
     tun_device_t         *tdev           = userdata;
     WINTUN_SESSION_HANDLE Session        = tdev->session_handle;
-    HANDLE WaitHandles[] = { WintunGetReadWaitEvent(Session), tdev->quit_event };
+    HANDLE                WaitHandles[]  = {WintunGetReadWaitEvent(Session), tdev->quit_event};
     wid_t                 distribute_tid = 0;
     sbuf_t               *buf;
     ssize_t               nread;
@@ -294,7 +293,6 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             {
                 distribute_tid = 0;
             }
-
         }
         else
         {
@@ -431,8 +429,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     }
     tdev->writer_buffer_channel = NULL;
 
-  
-
     if (tdev->read_event_callback != NULL)
     {
         threadJoin(tdev->read_thread);
@@ -536,7 +532,6 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     {
         LOGE("Write failed, device is not running");
         return false;
-    
     }
 
     bool closed = false;
@@ -571,13 +566,15 @@ static void exitHandle(void *userdata, int signum)
 }
 
 // Function to load a function pointer from a DLL
-static bool loadFunctionFromDLL(const char* function_name, void* target) {
+static bool loadFunctionFromDLL(const char *function_name, void *target)
+{
     FARPROC proc = GetProcAddress(GSTATE.wintun_dll_handle, function_name);
-    if (proc == NULL) {
+    if (proc == NULL)
+    {
         LOGE("Error: Failed to load function '%s' from WinTun DLL.", function_name);
         return false;
     }
-    memoryCopy(target, &proc, sizeof(FARPROC)); 
+    memoryCopy(target, &proc, sizeof(FARPROC));
     return true;
 }
 
@@ -606,67 +603,83 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         return NULL;
     }
 
-
     // Load each function pointer and check for NULL
-    if (!loadFunctionFromDLL("WintunCreateAdapter", &WintunCreateAdapter)) return NULL;
-    if (!loadFunctionFromDLL("WintunCloseAdapter", &WintunCloseAdapter)) return NULL;
-    if (!loadFunctionFromDLL("WintunOpenAdapter", &WintunOpenAdapter)) return NULL;
-    if (!loadFunctionFromDLL("WintunGetAdapterLUID", &WintunGetAdapterLUID)) return NULL;
-    if (!loadFunctionFromDLL("WintunGetRunningDriverVersion", &WintunGetRunningDriverVersion)) return NULL;
-    if (!loadFunctionFromDLL("WintunDeleteDriver", &WintunDeleteDriver)) return NULL;
-    if (!loadFunctionFromDLL("WintunSetLogger", &WintunSetLogger)) return NULL;
-    if (!loadFunctionFromDLL("WintunStartSession", &WintunStartSession)) return NULL;
-    if (!loadFunctionFromDLL("WintunEndSession", &WintunEndSession)) return NULL;
-    if (!loadFunctionFromDLL("WintunGetReadWaitEvent", &WintunGetReadWaitEvent)) return NULL;
-    if (!loadFunctionFromDLL("WintunReceivePacket", &WintunReceivePacket)) return NULL;
-    if (!loadFunctionFromDLL("WintunReleaseReceivePacket", &WintunReleaseReceivePacket)) return NULL;
-    if (!loadFunctionFromDLL("WintunAllocateSendPacket", &WintunAllocateSendPacket)) return NULL;
-    if (!loadFunctionFromDLL("WintunSendPacket", &WintunSendPacket)) return NULL;
-
+    if (! loadFunctionFromDLL("WintunCreateAdapter", &WintunCreateAdapter))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunCloseAdapter", &WintunCloseAdapter))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunOpenAdapter", &WintunOpenAdapter))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunGetAdapterLUID", &WintunGetAdapterLUID))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunGetRunningDriverVersion", &WintunGetRunningDriverVersion))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunDeleteDriver", &WintunDeleteDriver))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunSetLogger", &WintunSetLogger))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunStartSession", &WintunStartSession))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunEndSession", &WintunEndSession))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunGetReadWaitEvent", &WintunGetReadWaitEvent))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunReceivePacket", &WintunReceivePacket))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunReleaseReceivePacket", &WintunReleaseReceivePacket))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunAllocateSendPacket", &WintunAllocateSendPacket))
+        return NULL;
+    if (! loadFunctionFromDLL("WintunSendPacket", &WintunSendPacket))
+        return NULL;
 
     LOGD("Wintun loaded successfully");
 
-    buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                         (0) + GSTATE.ram_profile, 
-                         
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
-                        
-                        );
+    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small, (0) + GSTATE.ram_profile,
 
-    buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                         (0) + GSTATE.ram_profile, 
-                         
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
-                        
-                        );
+                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+
+    );
+
+    buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small, (0) + GSTATE.ram_profile,
+
+                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+
+    );
+
+    bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+
+    bufferpoolUpdateAllocationPaddings(writer_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){.name                  = NULL,
-                           .running               = false,
-                           .up                    = false,
-                           .routine_reader        = routineReadFromTun,
-                           .routine_writer        = routineWriteToTun,
-                           .read_event_callback   = cb,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
-                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                           .reader_buffer_pool    = reader_bpool,
-                           .writer_buffer_pool    = writer_bpool,
-                           .adapter_handle        = NULL,
-                           .session_handle        = NULL,
-                           .quit_event            = CreateEventW(NULL, TRUE, FALSE, NULL)};  
+    *tdev = (tun_device_t) {.name                  = NULL,
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromTun,
+                            .routine_writer        = routineWriteToTun,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
+                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                            .reader_buffer_pool    = reader_bpool,
+                            .writer_buffer_pool    = writer_bpool,
+                            .adapter_handle        = NULL,
+                            .session_handle        = NULL,
+                            .quit_event            = CreateEventW(NULL, TRUE, FALSE, NULL)};
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
     int wideSize = MultiByteToWideChar(CP_UTF8, 0, name, -1, NULL, 0);
 
     tdev->name = (wchar_t *) malloc(wideSize * sizeof(wchar_t));
-    if (! tdev->name )
+    if (! tdev->name)
     {
         LOGE("Memory allocation failed!");
         return NULL;
@@ -675,12 +688,12 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     MultiByteToWideChar(CP_UTF8, 0, name, -1, (tdev->name), wideSize);
 
     GUID                  example_guid = {0xdeadbabe, 0xcafe, 0xbeef, {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}};
-    WINTUN_ADAPTER_HANDLE adapter     = WintunCreateAdapter(tdev->name, L"Waterwall Adapter", &example_guid);
+    WINTUN_ADAPTER_HANDLE adapter      = WintunCreateAdapter(tdev->name, L"Waterwall Adapter", &example_guid);
     if (! adapter)
     {
         LastError = GetLastError();
         LOGE("Failed to create adapter, code: %lu", LastError);
-      
+
         return NULL;
     }
     tdev->adapter_handle = adapter;
@@ -695,7 +708,6 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
  */
 void tundeviceDestroy(tun_device_t *tdev)
 {
-    
 
     if (tdev->up)
     {

@@ -367,6 +367,12 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                          bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
         );
+    
+    bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())), 
+    bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+
+    bufferpoolUpdateAllocationPaddings(writer_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())), 
+    bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
