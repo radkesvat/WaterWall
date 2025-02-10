@@ -50,10 +50,7 @@ static void wireguardifSendHandshakeCookie(wireguard_device_t *device, const uin
 
     sbufSetLength(buf, sizeof(message_cookie_reply_t));
     sbufWrite(buf, &packet, sizeof(message_cookie_reply_t));
-    if (buf)
-    {
-        wireguardifDeviceOutput(device, buf, addr, port);
-    }
+    wireguardifDeviceOutput(device, buf, addr, port);
 }
 
 static void updatePeerAddr(wireguard_peer_t *peer, const ip_addr_t *addr, uint16_t port)
