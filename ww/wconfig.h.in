@@ -120,8 +120,12 @@ enum ram_profiles_e
     small buffer size is used for small buffers that are allocated for Udp and Raw Ip packets
     going lower than 1500 bytes is not recommended, as it is the standard MTU size for Ethernet
 */
+/*
+    you may hurt wireguard implementation if you come below 1516 bytes, dont do that
+    adding 16 bytes to the standard MTU to make our wireguard implementation work zero copy
+*/
 
-#define SMALL_BUFFER_SIZE 1500
+#define SMALL_BUFFER_SIZE 1516
 
 /*
     large buffer size is used for large buffers that are allocated for Tcp Read/Write buffers

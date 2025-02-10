@@ -9,7 +9,7 @@ bool resolveContextSync(address_context_t *sctx)
     assert(sctx->type_ip == false && sctx->domain != NULL);
     // we need to get and set port again because resolved ip can be v6/v4 which have different sizes
 
-    #ifdef PROFILE
+#ifdef PROFILE
     struct timeval tv1, tv2;
     getTimeOfDay(&tv1, NULL);
 #endif
@@ -21,7 +21,7 @@ bool resolveContextSync(address_context_t *sctx)
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
             return false;
         }
-        sockaddrToIpAddressCopy(&temp, &(sctx->ip_address));
+        ipAddressFromSockAddr(&(sctx->ip_address), &temp);
 
         if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_INFO))
         {

@@ -5,6 +5,7 @@
 #include "wplatform.h"
 #include "wdef.h"
 
+#include "wsocket.h"
 #include "buffer_pool.h"
 
 typedef struct wloop_s wloop_t;
@@ -269,8 +270,8 @@ WW_EXPORT int wioGetError(wio_t* io);
 WW_EXPORT int wioGetEvents(wio_t* io);
 WW_EXPORT int wioGetREvents(wio_t* io);
 WW_EXPORT wio_type_e wioGetType(wio_t* io);
-WW_EXPORT struct sockaddr_u* wioGetLocaladdrU(wio_t* io);
-WW_EXPORT struct sockaddr_u* wioGetPeerAddrU(wio_t* io);
+WW_EXPORT sockaddr_u* wioGetLocaladdrU(wio_t* io);
+WW_EXPORT sockaddr_u* wioGetPeerAddrU(wio_t* io);
 WW_EXPORT struct sockaddr* wioGetLocaladdr(wio_t* io);
 WW_EXPORT struct sockaddr* wioGetPeerAddr(wio_t* io);
 WW_EXPORT void wioSetContext(wio_t* io, void* ctx);

@@ -136,7 +136,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         {
             sockaddr_u temp;
             sockaddrSetIp(&(temp), state->dest_addr_selected.value_ptr);
-            sockaddrToIpAddressCopy(&temp, &(state->constant_dest_addr.ip_address));
+            ipAddressFromSockAddr( &(state->constant_dest_addr.ip_address),&temp);
         }
     }
 

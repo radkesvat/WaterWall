@@ -35,3 +35,10 @@ typedef struct ip6_hdr ip6_hdr_t;
 #define ip6AddrSetAny         ip6_addr_set_any           /**< Set IPv6 address to the wildcard address */
 #define ip6AddrNetcmp         ip6_addr_netcmp            /**< Compare two IPv6 addresses, considering network mask */
 #define ip6AddrCopyFromPacket ip6_addr_copy_from_packed /**< Copy an IPv6 address from a packed (network byte order) representation */
+
+
+#define ip6AddrNetworkToAaddress    ip6addr_ntoa           /**< Convert an IPv6 address to a string representation */
+#define ip4AddrNetworkToAaddress    ip4addr_ntoa           /**< Convert an IPv6 address to a string representation */
+
+
+void printIPPacketInfo(const char *devname, const unsigned char *buffer);

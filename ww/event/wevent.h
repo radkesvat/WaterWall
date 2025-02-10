@@ -128,11 +128,11 @@ struct wio_s {
 
     union{
         struct sockaddr*   localaddr;
-        struct sockaddr_u* localaddr_u;
+        sockaddr_u* localaddr_u;
     };
     union{
         struct sockaddr*   peeraddr;
-        struct sockaddr_u* peeraddr_u;
+        sockaddr_u* peeraddr_u;
     };
     
     uint64_t            last_read_hrtime;

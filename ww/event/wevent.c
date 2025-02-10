@@ -209,11 +209,11 @@ int wioGetREvents(wio_t* io) {
     return io->revents;
 }
 
-struct sockaddr_u* wioGetLocaladdrU(wio_t* io) {
+sockaddr_u* wioGetLocaladdrU(wio_t* io) {
     return io->localaddr_u;
 }
 
-struct sockaddr_u* wioGetPeerAddrU(wio_t* io) {
+sockaddr_u* wioGetPeerAddrU(wio_t* io) {
     return io->peeraddr_u;
 }
 

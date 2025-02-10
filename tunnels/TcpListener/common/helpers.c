@@ -59,7 +59,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     line->routing_context.src_ctx.type_ip = true; // we have a client ip
     line->routing_context.src_ctx.proto_tcp = true; // tcp client
-    sockaddrToIpAddressCopy((const sockaddr_u *) wioGetPeerAddr(io), &(line->routing_context.src_ctx.ip_address));
+    ipAddressFromSockAddr(&(line->routing_context.src_ctx.ip_address),(const sockaddr_u *) wioGetPeerAddr(io));
 
     tcplistenerLinestateInitialize(lstate, wid);
 

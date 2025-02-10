@@ -11,14 +11,17 @@ void tundeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     struct ip_hdr *ip_header = (struct ip_hdr *) sbufGetMutablePtr(buf);
     
     // Clear the existing checksum field before calculation
-    IPH_CHKSUM_SET(ip_header, 0);
+    // IPH_CHKSUM_SET(ip_header, 0);
 
-    // Calculate and set the checksum
-    IPH_CHKSUM_SET(ip_header, inet_chksum(ip_header, IP_HLEN));
+    // // Calculate and set the checksum
+    // IPH_CHKSUM_SET(ip_header, inet_chksum(ip_header, IP_HLEN));
+
+    printIPPacketInfo("TunDevice write", (const unsigned char*)ip_header);
+
 
     if (! tundeviceWrite(tdev, buf))
     {
-        LOGW("TunDevice: tundeviceWrite failed");
+        LOGW("TunDevice: Write failed");
         bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
     }
 

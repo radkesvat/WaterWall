@@ -68,12 +68,15 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
                 unpadded_len = 0;
             }
             padded_len = (unpadded_len + 15) & 0xFFFFFFF0; // Round up to next 16 byte boundary
+            assert(padded_len + WIREGUARD_AUTHTAG_LEN <= 1516); 
+            assert(padded_len + WIREGUARD_AUTHTAG_LEN <= SMALL_BUFFER_SIZE); 
+            sbufSetLength(q, padded_len + WIREGUARD_AUTHTAG_LEN); // 1500 is the max packet size which is divided by 16
 
             // The buffer needs to be allocated from "transport" pool to leave room for LwIP generated IP headers
             // The IP packet consists of 16 byte header (struct message_transport_data), data padded upto 16 byte
             // boundary + encrypted auth tag (16 bytes)
             // buf = pbufAlloc(sbuf_tRANSPORT, header_len + padded_len + WIREGUARD_AUTHTAG_LEN, PBUF_RAM);
-            sbufShiftLeft(q, WIREGUARD_AUTHTAG_LEN);
+            sbufShiftLeft(q, header_len);
             sbufWriteZeros(q, header_len);
 
             // Note: allocating buf from RAM above guarantees that the buf is in one section and not chained

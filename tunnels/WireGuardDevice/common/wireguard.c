@@ -49,7 +49,7 @@ static bool chacha20poly1305EncryptWrapper(unsigned char *dst, const unsigned ch
                                            const unsigned char *ad, size_t adlen, uint64_t nonce,
                                            const unsigned char *key)
 {
-    uint64_t wireguard_way_of_nonce[2] = {0, nonce};
+    uint32_t wireguard_way_of_nonce[4] = {nonce >> 32, nonce & 0xFFFFFFFF,0,0 };
     return 0 == chacha20poly1305Encrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce, key);
 }
 
@@ -57,9 +57,8 @@ static bool chacha20poly1305DecryptWrapper(unsigned char *dst, const unsigned ch
                                            const unsigned char *ad, size_t adlen, uint64_t nonce,
                                            const unsigned char *key)
 {
-    uint64_t wireguard_way_of_nonce[2] = {0, nonce};
-
-    return 0 == chacha20poly1305Decrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce, key);
+    uint32_t wireguard_way_of_nonce[4] = {nonce >> 32, nonce & 0xFFFFFFFF,0,0 };
+    return 0 == chacha20poly1305Decrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce[0], key);
 }
 
 void wireguardInit(void)
@@ -831,8 +830,8 @@ bool wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_pee
                 wireguardMixHash(hash, tau, WIREGUARD_HASH_LEN);
 
                 // msg.empty := AEAD(k, 0, E, Hr)
-                if (chacha20poly1305DecryptWrapper(NULL, src->enc_empty, sizeof(src->enc_empty), hash, WIREGUARD_HASH_LEN,
-                                                 0, key))
+                if (chacha20poly1305DecryptWrapper(NULL, src->enc_empty, sizeof(src->enc_empty), hash,
+                                                   WIREGUARD_HASH_LEN, 0, key))
                 {
                     // Hr := Hash(Hr | msg.empty)
                     // Not required as discarded

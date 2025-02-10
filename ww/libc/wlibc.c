@@ -734,7 +734,10 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
  */
 void lwip_example_app_platform_assert(const char *msg, int line, const char *file)
 {
-    printf("Assertion \"%s\" failed at line %d in %s\n", msg, line, file);
+    printf("LWIP: Assertion \"%s\" failed at line %d in %s\n", msg, line, file);
     fflush(NULL);
     abort();
 }
+
+
+

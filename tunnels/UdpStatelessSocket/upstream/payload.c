@@ -17,7 +17,7 @@ void udpstatelesssocketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        LOGE("UdpStatelessSocket: %u bytes Packet to => [%s]", sbufGetBufLength(buf), SOCKADDR_STR(&addr, peeraddrstr));
+        LOGD("UdpStatelessSocket: %u bytes Packet to => [%s]", sbufGetBufLength(buf), SOCKADDR_STR(&addr, peeraddrstr));
     }
 
     (void) state;

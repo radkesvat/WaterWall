@@ -19,50 +19,7 @@ struct msg_event
     sbuf_t       *buf;
 };
 
-// Function to print IP packet information
-static void printIPPacketInfo(const char *devname, const unsigned char *buffer)
-{
-    char  src_ip[INET6_ADDRSTRLEN];
-    char  dst_ip[INET6_ADDRSTRLEN];
-    char  logbuf[256];
-    int   rem = sizeof(logbuf);
-    char *ptr = logbuf;
-    int   ret;
 
-    uint8_t version = buffer[0] >> 4;
-
-    if (version == 4)
-    {
-        struct iphdr *ip_header = (struct iphdr *) buffer;
-        inet_ntop(AF_INET, &ip_header->saddr, src_ip, INET_ADDRSTRLEN);
-        inet_ntop(AF_INET, &ip_header->daddr, dst_ip, INET_ADDRSTRLEN);
-        ret = snprintf(ptr, rem, "TunDevice: %s => From %s to %s, Data: ", devname, src_ip, dst_ip);
-    }
-    else if (version == 6)
-    {
-        struct ipv6hdr *ip6_header = (struct ipv6hdr *) buffer;
-        inet_ntop(AF_INET6, &ip6_header->saddr, src_ip, INET6_ADDRSTRLEN);
-        inet_ntop(AF_INET6, &ip6_header->daddr, dst_ip, INET6_ADDRSTRLEN);
-        ret = snprintf(ptr, rem, "TunDevice: %s => From %s to %s, Data: ", devname, src_ip, dst_ip);
-    }
-    else
-    {
-        ret = snprintf(ptr, rem, "TunDevice: %s => Unknown IP version, Data: ", devname);
-    }
-
-    ptr += ret;
-    rem -= ret;
-
-    for (int i = 0; i < 16; i++)
-    {
-        ret = snprintf(ptr, rem, "%02x ", buffer[i]);
-        ptr += ret;
-        rem -= ret;
-    }
-    *ptr = '\0';
-
-    LOGD(logbuf);
-}
 
 // Allocate memory for message pool handle
 static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)

@@ -330,21 +330,45 @@ static inline int getIpVersion(char *host)
 /**
  * @brief Copy sockaddr (IPv4 or IPv6) to ip_addr_t.
  */
-static inline void sockaddrToIpAddressCopy(const sockaddr_u *src, ip_addr_t *dest)
+static inline void ipAddressFromSockAddr(ip_addr_t *dest, const sockaddr_u *src)
 {
     assert(src != NULL && dest != NULL);
-    if (((const struct sockaddr *) src)->sa_family == IPADDR_TYPE_V4)
+    if (src->sa.sa_family == AF_INET)
     {
         const struct sockaddr_in *src_in = (const struct sockaddr_in *) src;
         dest->u_addr.ip4.addr            = src_in->sin_addr.s_addr;
-        dest->type                       = AF_INET;
+        dest->type                       = IPADDR_TYPE_V4;
+        return;
     }
-    else if (((const struct sockaddr *) src)->sa_family == IPADDR_TYPE_V6)
+    
+    if (src->sa.sa_family == AF_INET6)
     {
         const struct sockaddr_in6 *src_in6 = (const struct sockaddr_in6 *) src;
         memoryCopy(&dest->u_addr.ip6, &src_in6->sin6_addr.s6_addr, sizeof(dest->u_addr.ip6));
-        dest->type = AF_INET6;
+        dest->type = IPADDR_TYPE_V6;
+        return;
     }
+    printError("Invalid IP address type.\n");
+}
+
+static inline address_context_t addresscontextFromSockAddr(const sockaddr_u *src)
+{
+    address_context_t dest;
+    addressContextInit(&dest);
+    ipAddressFromSockAddr(&dest.ip_address, src);
+
+    if(src->sa.sa_family == AF_INET)
+    {
+        dest.port = ntohs(src->sin.sin_port);
+    }
+    else if(src->sa.sa_family == AF_INET6)
+    {
+        dest.port = ntohs(src->sin6.sin6_port);
+    }
+    dest.type_ip = kAcIp;
+
+  
+    return dest;
 }
 
 /**
@@ -371,5 +395,5 @@ static inline sockaddr_u addresscontextToSockAddr(const address_context_t *conte
         return addr;
     }
     assert(false); // Not a valid IP type
-    return (sockaddr_u){0};
+    return (sockaddr_u) {0};
 }

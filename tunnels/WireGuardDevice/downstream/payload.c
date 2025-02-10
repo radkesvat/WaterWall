@@ -67,7 +67,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     uint64_t             nonce;
     uint8_t             *src;
     size_t               src_len;
-    sbuf_t              *buf;
+    sbuf_t              *buf = NULL;
     ip4_hdr_t           *iphdr;
     ip_addr_t            dest;
     bool                 dest_ok = false;
@@ -171,11 +171,11 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                                     // Send packet to be process by LWIP
                                     // ip_input(buf, device->ts);
 
-                                    wgd_tstate_t *ts = (wgd_tstate_t *) device;
-                                    tunnel_t* tunnel = ts->tunnel;
-                                    line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
-                                    tunnelPrevDownStreamPayload(tunnel,line,buf);
-                                    
+                                    wgd_tstate_t *ts     = (wgd_tstate_t *) device;
+                                    tunnel_t     *tunnel = ts->tunnel;
+                                    line_t       *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
+                                    tunnelPrevDownStreamPayload(tunnel, line, buf);
+
                                     // buf is owned by IP layer now
                                     buf = NULL;
                                 }
@@ -193,10 +193,11 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                     else
                     {
                         // This was a keep-alive packet
+                        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+                        buf = NULL;
                     }
                 }
-
-                if (buf)
+                else
                 {
                     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
                     buf = NULL;
@@ -216,6 +217,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     {
         // Could not locate valid keypair for remote index
     }
+    assert(buf == NULL);
 }
 
 static void wireguardifProcessResponseMessage(wireguard_device_t *device, wireguard_peer_t *peer,
@@ -438,5 +440,6 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
 
 void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &l->routing_context.dest_ctx.ip_address, l->routing_context.dest_ctx.port);
+    wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &l->routing_context.src_ctx.ip_address,
+                         l->routing_context.src_ctx.port);
 }
