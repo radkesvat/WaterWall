@@ -40,47 +40,50 @@ bool isAdmin(void)
  */
 bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
+    (void) app_name;
+    (void) fail_msg;
     if (isAdmin())
     {
         return true;
     }
-    char szPath[MAX_PATH];
+    return false;
+    // char szPath[MAX_PATH];
 
-    // Retrieve the full path of the current executable
-    if (GetModuleFileName(NULL, szPath, MAX_PATH) == 0)
-    {
-        // Handle error
-        printError("Failed to get executable path. Error: %lu\n", GetLastError());
-        return false;
-    }
+    // // Retrieve the full path of the current executable
+    // if (GetModuleFileName(NULL, szPath, MAX_PATH) == 0)
+    // {
+    //     // Handle error
+    //     printError("Failed to get executable path. Error: %lu\n", GetLastError());
+    //     return false;
+    // }
 
-    if (GetModuleFileName(NULL, szPath, MAX_PATH))
-    {
-        SHELLEXECUTEINFO sei = {sizeof(sei)};
-        sei.lpVerb           = L"runas"; // Request elevation
-        sei.lpFile           = szPath;   // Path to the current executable
-        sei.hwnd             = NULL;
-        sei.nShow            = SW_NORMAL;
+    // if (GetModuleFileName(NULL, szPath, MAX_PATH))
+    // {
+    //     SHELLEXECUTEINFO sei = {sizeof(sei)};
+    //     sei.lpVerb           = L"runas"; // Request elevation
+    //     sei.lpFile           = szPath;   // Path to the current executable
+    //     sei.hwnd             = NULL;
+    //     sei.nShow            = SW_NORMAL;
 
-        if (! ShellExecuteEx(&sei))
-        {
-            DWORD dwError = GetLastError();
-            if (dwError == ERROR_CANCELLED)
-            {
-                printError("User canceled the elevation prompt.\n");
-            }
-            else
-            {
-                printError("Failed to elevate privileges. Error: %lu\n", dwError);
-            }
-            return false;
-        }
-        else
-        {
-            // Successfully restarted with admin privileges
-            ExitProcess(0); // Exit the current instance
-        }
-    }
+    //     if (! ShellExecuteEx(&sei))
+    //     {
+    //         DWORD dwError = GetLastError();
+    //         if (dwError == ERROR_CANCELLED)
+    //         {
+    //             printError("User canceled the elevation prompt.\n");
+    //         }
+    //         else
+    //         {
+    //             printError("Failed to elevate privileges. Error: %lu\n", dwError);
+    //         }
+    //         return false;
+    //     }
+    //     else
+    //     {
+    //         // Successfully restarted with admin privileges
+    //         ExitProcess(0); // Exit the current instance
+    //     }
+    // }
 
     return true;
 }
