@@ -387,7 +387,6 @@ if(WIN32)
     endif()
 endif()
 
-endif()
 
 if(ANDROID)
     set(LIBS ${LIBS} log)
