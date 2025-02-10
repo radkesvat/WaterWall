@@ -35,9 +35,11 @@
 #include <stdio.h> /* sprintf() for task names */
 
 #ifdef _MSC_VER
+#pragma warning (disable: 5105) // macro expansion producing 'defined' has undefined behavior
 #pragma warning (push, 3)
 #endif
 #include <windows.h>
+#include <wincrypt.h>
 #ifdef _MSC_VER
 #pragma warning (pop)
 #endif
