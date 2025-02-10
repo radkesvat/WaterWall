@@ -831,7 +831,7 @@ bool wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_pee
                 wireguardMixHash(hash, tau, WIREGUARD_HASH_LEN);
 
                 // msg.empty := AEAD(k, 0, E, Hr)
-                if (0 == chacha20poly1305Decrypt(NULL, src->enc_empty, sizeof(src->enc_empty), hash, WIREGUARD_HASH_LEN,
+                if (chacha20poly1305DecryptWrapper(NULL, src->enc_empty, sizeof(src->enc_empty), hash, WIREGUARD_HASH_LEN,
                                                  0, key))
                 {
                     // Hr := Hash(Hr | msg.empty)

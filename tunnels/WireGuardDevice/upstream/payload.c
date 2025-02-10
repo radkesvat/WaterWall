@@ -160,6 +160,7 @@ static err_t wireguardifOutput(wireguard_device_t *device, sbuf_t *q, const ip_a
 
 void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    (void) l;
 
     if (sbufGetBufLength(buf) < sizeof(ip4_hdr_t))
     {
@@ -195,6 +196,4 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         return;
     }
-
-    tunnelNextUpStreamPayload(t, l, buf);
 }

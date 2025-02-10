@@ -60,14 +60,8 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     state->subnet_mask = atoi(subnet_part);
 
-    state->tdev = tundeviceCreate(state->name, false, t, tundeviceOnIPPacketReceived);
-
-    if (state->tdev == NULL)
-    {
-        LOGF("TunDevice: could not create device");
-        return NULL;
-    }
-    // ip assign and bring up is called in prepair callabcks of this tunnel
+    // tun creation must be done in prepair or start padding, in create method paddings are not calculated yout
+   
  
 
 

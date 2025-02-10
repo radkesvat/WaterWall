@@ -139,7 +139,8 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
 void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer)
 {
     // Send a NULL packet as a keep-alive
-    wireguardifOutputToPeer(device, NULL, NULL, peer);
+    sbuf_t *empty_buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+    wireguardifOutputToPeer(device, empty_buf, NULL, peer);
 }
 
 static err_t wireguardifLookupPeer(wireguard_device_t *device, uint8_t peer_index, wireguard_peer_t **out)

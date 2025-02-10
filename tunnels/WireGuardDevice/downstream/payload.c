@@ -198,8 +198,8 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
 
                 if (buf)
                 {
-                    assert(false);
                     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+                    buf = NULL;
                 }
             }
         }
