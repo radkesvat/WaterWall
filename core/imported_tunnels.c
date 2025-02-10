@@ -9,8 +9,8 @@
 #include "tunnels/template/include/interface.h"
 #endif
 
-#ifdef INCLUDE_TUNDEVICE
-#include "tunnels/adapters/device/tun/tun_device.h"
+#ifdef INCLUDE_TUN_DEVICE
+#include "tunnels/TunDevice/include/interface.h"
 #endif
 
 #ifdef INCLUDE_RAWDEVICE
@@ -193,7 +193,7 @@ void loadImportedTunnelsIntoCore(void)
     USING(Template);
 #endif
 
-#ifdef INCLUDE_TUNDEVICE
+#ifdef INCLUDE_TUN_DEVICE
     USING(TunDevice);
 #endif
 
