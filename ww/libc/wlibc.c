@@ -728,3 +728,13 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
     stURL->fields[WW_URL_FRAGMENT].len = ep - sp;
     return 0;
 }
+
+/* This function is only required to prevent arch.h including stdio.h
+ * (which it does if LWIP_PLATFORM_ASSERT is undefined)
+ */
+void lwip_example_app_platform_assert(const char *msg, int line, const char *file)
+{
+    printf("Assertion \"%s\" failed at line %d in %s\n", msg, line, file);
+    fflush(NULL);
+    abort();
+}

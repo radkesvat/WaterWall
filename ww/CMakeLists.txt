@@ -113,19 +113,9 @@ elseif(WCRYPTO_BACKEND_SOFTWARE)
 endif()
 
 
-
-
 if(WIN32)
     option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
     option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
-endif()
-
-
-if(WCRYPTO_BACKEND_SODIUM)
-
-
-else()
-
 endif()
 
 
@@ -288,7 +278,7 @@ set(LIBS ${LIBS} sodium)
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)
 set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
-set(LWIP_CONTRIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip/contrib)
+set(LWIP_CONTRIB_DIR ${LWIPOPTS_DIR}/contrib)
 
 set (LWIP_INCLUDE_DIRS
     "${LWIP_DIR}/src/include"
@@ -318,12 +308,27 @@ else()
 endif()
 
 
+# if(UNIX)
+# set(lwipcore_SRCS ${lwipcore_SRCS} ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
+# else()
+# target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
+# endif()
+
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 
 target_include_directories(ww PUBLIC ${LWIP_INCLUDE_DIRS})
 
-set(LIBS ${LIBS} lwipcore)
+
+target_sources(ww PRIVATE ${lwipnoapps_SRCS})
+
+if(UNIX)
+    target_sources(ww PRIVATE  ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
+else()
+    target_sources(ww PRIVATE  ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
+endif()
+
+# set(LIBS ${LIBS} lwipcore lwipcontribaddons)
 
 # Add mimalloc library
 

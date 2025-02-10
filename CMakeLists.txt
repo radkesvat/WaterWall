@@ -64,6 +64,7 @@ option(INCLUDE_TEMPLATE "link Template staticly to the core"  TRUE)
 
 
 option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  TRUE)
+option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
@@ -83,7 +84,7 @@ option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the cor
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
 if(LINUX) # todo (other platforms)
-  option(INCLUDE_TUNDEVICE "link TunDevice staticly to the core"  FALSE)
+  option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  FALSE)
   option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  FALSE)
   option(INCLUDE_CAPTUREDEVICE "link CapTureDevice staticly to the core"  FALSE)
 endif()
@@ -165,10 +166,10 @@ endif()
 
 
 #tun device
-if (INCLUDE_TUNDEVICE)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_TUNDEVICE=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/tun)
+if (INCLUDE_TUN_DEVICE)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_TUN_DEVICE=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TunDevice)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TunDevice)
 target_link_libraries(Waterwall TunDevice)
 endif()
 
