@@ -1,7 +1,9 @@
+# Version settings
 set(WW_VERSION_MAJOR 1)
 set(WW_VERSION_MINOR 1)
 set(WW_VERSION_PATCH 0)
 
+# Build library configuration
 add_library(ww STATIC
     libc/wlibc.c
     libc/wtime.c
@@ -65,12 +67,10 @@ add_library(ww STATIC
     loggers/internal_logger.c
 )
 
-
 option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
 option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
 
-# (note that opensssl dose not support xchacha, we used software for that)
-# (note that libsodium dose not support blake2s, we used software for that)
+# Crypto backend options
 option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
 option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
 option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
@@ -79,45 +79,43 @@ option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
 if(WCRYPTO_BACKEND_SODIUM)
     set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
     set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
-
+    
     target_sources(ww PRIVATE crypto/sodium_instance.c)
     target_sources(ww PRIVATE crypto/impl_sodium/chacha20poly1305.c)
     target_sources(ww PRIVATE crypto/impl_sodium/xchacha20poly1305.c)
     target_sources(ww PRIVATE crypto/impl_sodium/x25519.c)
 
     target_sources(ww PRIVATE crypto/impl_software/blake2s.c)
-
+    
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
 elseif(WCRYPTO_BACKEND_OPENSSL)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
     set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
-
+    
     target_sources(ww PRIVATE crypto/openssl_instance.c)
     target_sources(ww PRIVATE crypto/impl_openssl/blake2s.c)
     target_sources(ww PRIVATE crypto/impl_openssl/chacha20poly1305.c)
     target_sources(ww PRIVATE crypto/impl_openssl/x25519.c)
-
+    
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_OPENSSL=1)
 elseif(WCRYPTO_BACKEND_SOFTWARE)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
     set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
-
+    
     target_sources(ww PRIVATE crypto/impl_software/blake2s.c)
     target_sources(ww PRIVATE crypto/impl_software/chacha20.c)
     target_sources(ww PRIVATE crypto/impl_software/chacha20poly1305.c)
     target_sources(ww PRIVATE crypto/impl_software/poly1305.c)
     target_sources(ww PRIVATE crypto/impl_software/poly1305-donna.c)
     target_sources(ww PRIVATE crypto/impl_software/x25519.c)
-
+    
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SOFTWARE=1)
 endif()
-
 
 if(WIN32)
     option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
     option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
 endif()
-
 
 # Enforce C11 for this specific target
 set_target_properties(ww 
@@ -130,41 +128,30 @@ set_target_properties(ww
 # Platform-specific sources
 if(LINUX OR ANDROID)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
-    # target_sources(ww PRIVATE devices/raw/raw_linux.c)
-    # target_sources(ww PRIVATE devices/capture/capture_linux.c)
+    # ...existing commented raw/capture devices...
 elseif(WIN32)
-
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    message(STATUS "Including WinTun Target architecture: amd64")
-    target_sources(ww PRIVATE devices/tun/wintun/amd64/wintun_bytes.c)
-
-elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "i386")
-    message(STATUS "Including WinTun Target architecture: x86")
-    target_sources(ww PRIVATE devices/tun/wintun/x86/wintun_bytes.c)
-
-elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM")
-    message(STATUS "Including WinTun Target architecture: arm")
-    target_sources(ww PRIVATE devices/tun/wintun/arm/wintun_bytes.c)
-
-elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-    message(STATUS "Including WinTun Target architecture: arm64")
-    target_sources(ww PRIVATE devices/tun/wintun/arm64/wintun_bytes.c)
-
-else()
-    message(FATAL_ERROR  "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
-endif()
-
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        message(STATUS "Including WinTun Target architecture: amd64")
+        target_sources(ww PRIVATE devices/tun/wintun/amd64/wintun_bytes.c)
+    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "i386")
+        message(STATUS "Including WinTun Target architecture: x86")
+        target_sources(ww PRIVATE devices/tun/wintun/x86/wintun_bytes.c)
+    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM")
+        message(STATUS "Including WinTun Target architecture: arm")
+        target_sources(ww PRIVATE devices/tun/wintun/arm/wintun_bytes.c)
+    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+        message(STATUS "Including WinTun Target architecture: arm64")
+        target_sources(ww PRIVATE devices/tun/wintun/arm64/wintun_bytes.c)
+    else()
+        message(FATAL_ERROR  "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
-    # target_sources(ww PRIVATE devices/raw/raw_windows.c)
-    # target_sources(ww PRIVATE devices/capture/capture_windows.c)
+    # ...existing commented raw/capture devices...
 elseif(APPLE)
     message(STATUS "No Tun device for MacOS yet")
-
-    # target_sources(ww PRIVATE devices/tun/tun_darwin.c)
-    # target_sources(ww PRIVATE devices/raw/raw_darwin.c)
-    # target_sources(ww PRIVATE devices/capture/capture_darwin.c)
+    # ...existing commented devices for darwin...
 endif()
-
 
 if(WIN32)
     set(WITH_WEPOLL 1)
@@ -188,16 +175,12 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
 
 # Add dependencies
-
-# download CPM.cmake
 file(
   DOWNLOAD
   https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.40.0/CPM.cmake
   ${CMAKE_BINARY_DIR}/cmake/CPM.cmake
 )
 include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
-
-
 
 # Add komihash library
 CPMAddPackage(
@@ -222,9 +205,9 @@ CPMAddPackage(
 if(stc_ADDED)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-        target_compile_options(ww PUBLIC /wd4310) # stc bug, hash -> cast trucncates constant value TODO fix in stc
+        target_compile_options(ww PUBLIC /wd4310) # stc bug, hash -> cast truncates constant value
     endif()
-    # target_sources(ww PRIVATE ${stc_SOURCE_DIR}/src/libstc.c)
+    # ...existing commented stc source...
 endif()
 
 # Add cJSON library
@@ -241,20 +224,7 @@ if(cjson_ADDED)
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
 
-# add openssl (default version is latest 3.3.0 +)
-# CPMAddPackage(
-#     NAME openssl-cmake
-#     URL https://github.com/radkesvat/openssl-cmake/archive/main.tar.gz
-#     OPTIONS
-#     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-#     "BUILD_SHARED_LIBS OFF"
-#     "OPENSSL_CONFIGURE_VERBOSE OFF"
-#     "OPENSSL_BUILD_VERBOSE TRUE"
-# )
-
-# set(LIBS ${LIBS} OpenSSL::SSL)
-# set(LIBS ${LIBS} OpenSSL::Crypto)
-# set(LIBS ${LIBS} OpenSSL::applink)
+# ...existing commented openssl package code...
 
 # Add libsodium as a static library
 CPMAddPackage(
@@ -262,19 +232,17 @@ CPMAddPackage(
     GITHUB_REPOSITORY robinlinden/libsodium-cmake
     GIT_TAG HEAD
     OPTIONS
-        "SODIUM_MINIMAL ON"          # Minimal build
-        "SODIUM_DISABLE_TESTS ON"    # Disable tests
-        "BUILD_SHARED_LIBS OFF"      # Disable shared library generation
-        "SODIUM_BUILD_TESTS OFF"     # Disable tests
-        "SODIUM_BUILD_EXAMPLES OFF"  # Disable examples
-        "SODIUM_BUILD_SHARED OFF"    # Disable shared library build
-        "SODIUM_STATIC ON"           # Enable static library build
+        "SODIUM_MINIMAL ON"
+        "SODIUM_DISABLE_TESTS ON"
+        "BUILD_SHARED_LIBS OFF"
+        "SODIUM_BUILD_TESTS OFF"
+        "SODIUM_BUILD_EXAMPLES OFF"
+        "SODIUM_BUILD_SHARED OFF"
+        "SODIUM_STATIC ON"
 )
 set(LIBS ${LIBS} sodium)
 
-
-
-# Add LWIP library
+# Add LWIP library settings
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)
 set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
@@ -288,16 +256,16 @@ set (LWIP_INCLUDE_DIRS
 )
 
 if(NOT APPLE)
-    target_compile_definitions(ww PUBLIC LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
+    target_compile_definitions(ww PUBLIC )
+    set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 endif()
 
 if(ANDROID)
-    set (LWIP_DEFINITIONS SOCKLEN_T_DEFINED=1)
+    set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} SOCKLEN_T_DEFINED=1)
 endif()
 
-
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    set (LWIP_DEFINITIONS LWIP_DEBUG=1)
+    set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} LWIP_DEBUG=1)
 endif()
 
 if(WIN32)
@@ -307,19 +275,11 @@ else()
     set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/unix/port/include")
 endif()
 
-
-# if(UNIX)
-# set(lwipcore_SRCS ${lwipcore_SRCS} ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
-# else()
-# target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
-# endif()
-
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 
 target_include_directories(ww PUBLIC ${LWIP_INCLUDE_DIRS})
-
-
+target_compile_definitions(ww PUBLIC ${LWIP_DEFINITIONS})
 target_sources(ww PRIVATE ${lwipnoapps_SRCS})
 
 if(UNIX)
@@ -328,18 +288,13 @@ else()
     target_sources(ww PRIVATE  ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
 endif()
 
-# set(LIBS ${LIBS} lwipcore lwipcontribaddons)
+# ...existing commented lwip libs...
 
 # Add mimalloc library
-
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
-
 set(LIBS ${LIBS} mimalloc-static)
 
-
 # Platform-specific options and settings
-
-
 message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
 message(STATUS "CMAKE_CURRENT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -352,7 +307,7 @@ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
 include(utils)
 include(vars)
 
-# Checks for header files
+# Header checks
 check_header("stdbool.h")
 check_header("stdint.h")
 check_header("stdatomic.h")
@@ -364,7 +319,7 @@ check_header("pthread.h")
 check_header("endian.h")
 check_header("sys/endian.h")
 
-# Checks for functions
+# Function checks
 if(NOT MSVC)
     set(CMAKE_REQUIRED_LIBRARIES "-pthread")
 endif()
@@ -387,30 +342,21 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_D
 message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
 if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-
     target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
     if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
-        
-        # The override method sometimes fails to call the asmlib function because the compiler uses
-        # built-in inline codes for some common functions rather than calling a library. The built-in
-        # codes are not optimal on modern microprocessors. Use option -fno-builtin 
+        # Disable built-in inline functions for optimal performance
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin-function")  
         set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
     else()
         target_link_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
         set(LIBS ${LIBS} mimalloc-static)
     endif()
-
 endif()
 
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-
     target_compile_definitions(ww PUBLIC WW_AVX=1)
     target_compile_options(ww PUBLIC -mavx)
-
 endif()
-
-
 
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     target_compile_definitions(ww PUBLIC DEBUG=1)
@@ -427,9 +373,9 @@ if(USE_MULTIMAP)
 endif()
 
 if(WW_STATICLIB)
-  target_compile_definitions(ww PUBLIC -DWW_STATICLIB)
+    target_compile_definitions(ww PUBLIC -DWW_STATICLIB)
 else()
-  target_compile_definitions(ww PUBLIC -DWW_DYNAMICLIB)
+    target_compile_definitions(ww PUBLIC -DWW_DYNAMICLIB)
 endif()
 
 if(WIN32)
@@ -464,10 +410,7 @@ endif()
 # Link options for Debug build
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)
-
 endif()
-
-
 
 # Enable sanitizers for non-Release builds
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -475,32 +418,19 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
         target_compile_options(ww PUBLIC -fsanitize=address)
         target_link_options(ww PUBLIC -fsanitize=address)
     endif()
-
     if(ENABLE_TSAN)
         target_compile_options(ww PUBLIC -fsanitize=thread)
         target_link_options(ww PUBLIC -fsanitize=thread)
     endif()
-
     if(ENABLE_LSAN)
         target_compile_options(ww PUBLIC -fsanitize=leak)
         target_link_options(ww PUBLIC -fsanitize=leak)
     endif()
-
     if(ENABLE_USAN)
         target_compile_options(ww PUBLIC -fsanitize=undefined)
         target_link_options(ww PUBLIC -fsanitize=undefined)
     endif()
 endif()
-
-
-# clang-tidy dose not like this even if cc = gcc
-# if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-# target_compile_options(ww PUBLIC -ftrack-macro-expansion=0)
-# endif()
-
-
-
-
 
 # Compiler-specific options
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
@@ -525,7 +455,6 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         -Wno-unused-function
         -Wno-unknown-pragmas
     )
-
 endif()
 
 if(MSVC)
@@ -533,7 +462,6 @@ if(MSVC)
         /W4
         /WX
     )
-
 endif()
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
