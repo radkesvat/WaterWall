@@ -242,10 +242,17 @@ static void ladder_part1(fe xs[5])
     sqr1(t1);        // t1 = AA
     sqr1(z2);        // z2 = BB
     sub(x2, t1, z2); // x2 = E = AA-BB
+#if ! defined (COMPILER_MSVC)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
+
     mul(z2, x2, a24, sizeof(a24) / sizeof(a24[0])); // z2 = E*a24
+    
+#if ! defined (COMPILER_MSVC)
 #pragma GCC diagnostic pop
+#endif
+
     add(z2, z2, t1); // z2 = E*a24 + AA
 }
 static void ladder_part2(fe xs[5], const fe x1)
