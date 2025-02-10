@@ -3,6 +3,7 @@
 
 #include "lwip/ip.h"
 #include "lwip/ip_addr.h"
+#include "lwip/inet_chksum.h"
 
 typedef struct ip_hdr  ip4_hdr_t;
 typedef struct ip6_hdr ip6_hdr_t;
