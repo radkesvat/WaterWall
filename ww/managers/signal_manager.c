@@ -1,12 +1,14 @@
 #include "signal_manager.h"
 
+#include "global_state.h"
+
 static signal_manager_t *state = NULL;
 
 void registerAtExitCallBack(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
     assert(state->handlers_len < kMaxSigHandles);
-    for (int i = 0; i < kMaxSigHandles; i++)
+    for (int i = kMaxSigHandles - 1; i >= 0; i--)
     {
         if (state->handlers[i].handle == NULL)
         {
@@ -76,6 +78,8 @@ static void exitHandler(void)
         _Exit(1); // exit(1) will call the atexit handlers again
         return;
     }
+
+    mainThreadExitJoin();
 
     for (unsigned int i = 0; i < kMaxSigHandles; i++)
     {
