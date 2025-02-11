@@ -38,7 +38,7 @@ bool isAdmin(void)
  * @param fail_msg The error message to display if elevation fails.
  * @return bool true on success, false otherwise.
  */
-bool windowsElevatePrivileges(const char *app_name, char *fail_msg)
+bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
     if (isAdmin())
     {
