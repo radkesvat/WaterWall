@@ -99,7 +99,7 @@ bool isAdmin(void)
  * @param fail_msg The error message, unused on non-Windows.
  * @return bool Always returns true.
  */
-bool windows_elevate_privileges(const char *app_name, char *fail_msg)
+bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
     (void) app_name;
     (void) fail_msg;
