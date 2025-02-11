@@ -14,7 +14,7 @@ static size_t getSourceAddrPort(const ip_addr_t *addr, uint16_t port, uint8_t *b
     }
 #endif
 #if LWIP_IPV6
-    if (IP_IS_V4(addr) && (buflen >= 16))
+    if (IP_IS_V6(addr) && (buflen >= 16))
     {
         U16TO8_BIG(buf + result + 0, IP6_ADDR_BLOCK1(ip_2_ip6(addr)));
         U16TO8_BIG(buf + result + 2, IP6_ADDR_BLOCK2(ip_2_ip6(addr)));
