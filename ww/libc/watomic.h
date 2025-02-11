@@ -174,7 +174,7 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 #define atomicFlagTestAndSet atomic_flag_test_and_set
 #define atomicFlagClear      atomic_flag_clear
 
-
+#define atomicThreadFence(x) atomic_thread_fence(x)
 #define atomicLoadRelaxed(x) atomic_load_explicit((x), memory_order_relaxed)
 #define atomicStoreRelaxed(x,y) atomic_store_explicit((x),(y), memory_order_relaxed)
 #define atomicExchangeExplicit(x,y,z) atomic_exchange_explicit(x,y,z) 
