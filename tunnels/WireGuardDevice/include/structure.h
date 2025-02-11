@@ -1,8 +1,9 @@
 #pragma once
 
+#include "wwapi.h"
+
 #include "wireguard_endian_helpers.h"
 #include "wireguard_types.h"
-#include "wwapi.h"
 
 typedef struct wgd_tstate_s
 {
@@ -11,6 +12,7 @@ typedef struct wgd_tstate_s
     wireguard_device_t wg_device;
 
     tunnel_t *tunnel;
+    wmutex_t  mutex;
     
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;

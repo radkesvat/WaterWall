@@ -8,7 +8,12 @@ if(POLICY CMP0169)
 endif()
 
 
-project(Waterwall VERSION 1.32)
+project(Waterwall 
+        VERSION 1.32
+        DESCRIPTION "A fast and secure VPN tunnel"
+        HOMEPAGE_URL "https://github.com/radkesvat/waterwall"
+        LANGUAGES C
+)
 
 set(FINAL_EXECUTABLE_NAME "Waterwall" CACHE STRING "Final executable name" FORCE)
 
@@ -55,7 +60,7 @@ endif()
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include  ${CMAKE_CURRENT_SOURCE_DIR}/core/force_link_glibc_2.27.h")
 
 
-set(ENABLE_ASAN ON CACHE BOOL "enable address sanitizer" FORCE)
+set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
 set(ENABLE_TSAN OFF CACHE BOOL "enable thread sanitizer" FORCE)
 set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
@@ -141,6 +146,27 @@ add_executable(Waterwall
                   core/os_helpers.c
                   # core/tests/bench_memcpy.c
 )
+
+
+if(WIN32)
+  if(MSVC)
+    set_target_properties(Waterwall PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+  else()
+    target_sources(Waterwall PRIVATE core/rc/app.rc)
+  endif()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    message(STATUS "Compiling for iOS on a macOS host")
+
+    set_target_properties(Waterwall PROPERTIES
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.alireza.Waterwall"
+        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"  # for test, later we need apple developer account
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""       # for test, later we need apple developer account
+    )
+else()
+    message(STATUS "Not compiling for iOS on macOS")
+endif()
 
 
 target_include_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -553,7 +579,3 @@ set_target_properties(Waterwall
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
-# admin to load wintun driver
-if(WIN32 AND MSVC)
-  set_target_properties(Waterwall PROPERTIES LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
-endif()

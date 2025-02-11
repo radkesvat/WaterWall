@@ -60,6 +60,6 @@ static void getRandomBytes(void *bytes, size_t size)
 // but it is ok , it is not a secure random anyway
 static inline void frandInit(void)
 {
-    frand_seed32 = time(NULL);
-    frand_seed64 = time(NULL);
+    frand_seed32 = (uint32_t) time(NULL);
+    frand_seed64 = (uint64_t) time(NULL);
 }

@@ -1,0 +1,285 @@
+{
+    "version": 4,
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "installDir": "${sourceDir}/install/${presetName}",
+            "cmakeExecutable": "cmake",
+            "cacheVariables": {
+                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache",
+                "OPENSSL_INSTALL": true
+            }
+        },
+        {
+            "name": "host-linux",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "host-macos",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "host-windows",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "host-not-windows",
+            "hidden": true,
+            "condition": {
+                "type": "notEquals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "target-android",
+            "hidden": true,
+            "toolchainFile": "$env{ANDROID_NDK}/build/cmake/android.toolchain.cmake",
+            "cacheVariables": {
+                "ANDROID_NDK": "$env{ANDROID_NDK}",
+                "ANDROID_PLATFORM": "android-27",
+                "OPENSSL_CONFIGURE_OPTIONS": "-D__ANDROID_API__=27;--openssldir=/system/etc/security/cacerts",
+                "OPENSSL_PATCH": "${sourceDir}/patch/android.patch"
+            }
+        },
+        {
+            "name": "target-android-arm",
+            "hidden": true,
+            "inherits": "target-android",
+            "cacheVariables": {
+                "ANDROID_ABI": "armeabi-v7a"
+            }
+        },
+        {
+            "name": "target-android-arm64",
+            "hidden": true,
+            "inherits": "target-android",
+            "cacheVariables": {
+                "ANDROID_ABI": "arm64-v8a"
+            }
+        },
+        {
+            "name": "target-android-x86",
+            "hidden": true,
+            "inherits": "target-android",
+            "cacheVariables": {
+                "ANDROID_ABI": "x86"
+            }
+        },
+        {
+            "name": "target-android-x86_64",
+            "hidden": true,
+            "inherits": "target-android",
+            "cacheVariables": {
+                "ANDROID_ABI": "x86_64"
+            }
+        },
+        {
+            "name": "target-ios",
+            "hidden": true,
+            "toolchainFile": "${sourceDir}/ww/cmake/toolchain/ios.cmake"
+        },
+        {
+            "name": "target-ios_sim",
+            "hidden": true,
+            "toolchainFile": "${sourceDir}/ww/cmake/toolchain/ios_sim.cmake"
+        },
+        {
+            "name": "target-linux",
+            "hidden": true
+        },
+        {
+            "name": "target-macos",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0",
+                "OPENSSL_CONFIGURE_OPTIONS": "-mmacos-version-min=12.0"
+            }
+        },
+        {
+            "name": "target-windows",
+            "hidden": true
+        },
+        {
+            "name": "target-windows-arm",
+            "hidden": true,
+            "inherits": "target-windows",
+            "architecture": {
+                "value": "ARM"
+            }
+        },
+        {
+            "name": "target-windows-arm64",
+            "hidden": true,
+            "inherits": "target-windows",
+            "architecture": {
+                "value": "ARM64"
+            }
+        },
+        {
+            "name": "target-windows-x86",
+            "hidden": true,
+            "inherits": "target-windows",
+            "architecture": {
+                "value": "Win32"
+            }
+        },
+        {
+            "name": "target-windows-x86_64",
+            "hidden": true,
+            "inherits": "target-windows",
+            "architecture": {
+                "value": "x64"
+            }
+        },
+        {
+            "name": "ninja",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_COLOR_DIAGNOSTICS": true,
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+            }
+        },
+        {
+            "name": "vs2022",
+            "hidden": true,
+            "generator": "Visual Studio 17 2022",
+            "toolset": {
+                "value": "host=x64",
+                "strategy": "set"
+            }
+        },
+        {
+            "name": "vs2019",
+            "hidden": true,
+            "generator": "Visual Studio 16 2019",
+            "toolset": {
+                "value": "host=x64",
+                "strategy": "set"
+            }
+        },
+        {
+            "name": "xcode",
+            "hidden": true,
+            "generator": "Xcode"
+        },
+        {
+            "name": "clang",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "gcc",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "host-linux",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "host-macos",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "host-windows",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "host-not-windows",
+            "hidden": true,
+            "condition": {
+                "type": "notEquals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "host-linux",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "host-macos",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "host-windows",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "host-not-windows",
+            "hidden": true,
+            "condition": {
+                "type": "notEquals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "options",
+            "hidden": true,
+            "configuration": "Debug",
+            "output": {
+                "verbosity": "verbose"
+            }
+        }
+    ]
+}

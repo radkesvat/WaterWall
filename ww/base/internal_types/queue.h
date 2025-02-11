@@ -33,11 +33,11 @@ static inline type* qtype##_data(qtype* p) {\
 }\
 \
 static inline int qtype##_size(qtype* p) {\
-    return p->size;\
+    return (int) p->size;\
 }\
 \
 static inline int qtype##_maxsize(qtype* p) {\
-    return p->maxsize;\
+    return (int) p->maxsize;\
 }\
 \
 static inline int qtype##_empty(qtype* p) {\
@@ -77,7 +77,7 @@ static inline void qtype##_resize(qtype* p, int maxsize) {\
 }\
 \
 static inline void qtype##_double_resize(qtype* p) {\
-    qtype##_resize(p, p->maxsize * 2);\
+    qtype##_resize(p, (int)(p->maxsize * 2));\
 }\
 \
 static inline void qtype##_push_back(qtype* p, type* elem) {\

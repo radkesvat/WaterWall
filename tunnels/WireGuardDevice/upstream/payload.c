@@ -170,8 +170,11 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         return;
     }
+    wgd_tstate_t *state  = tunnelGetState(t);
     wireguard_device_t *dev  = tunnelGetState(t);
     uint8_t            *data = sbufGetMutablePtr(buf);
+
+    mutexLock(&state->mutex);
 
     if (IP_HDR_GET_VERSION(data) == 6)
     {
@@ -197,6 +200,6 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         LOGE("WireguardDevice cannot route a packet with unknown IP version");
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
-        return;
     }
+    mutexUnlock(&state->mutex);
 }

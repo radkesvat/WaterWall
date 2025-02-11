@@ -22,7 +22,7 @@ static inline int getNCPU(void)
     // return get_nprocs();
     // return get_nprocs_conf();
     // return sysconf(_SC_NPROCESSORS_ONLN);     // processors available
-    return sysconf(_SC_NPROCESSORS_CONF); // processors configured
+    return (int) sysconf(_SC_NPROCESSORS_CONF); // processors configured
 #endif
 }
 

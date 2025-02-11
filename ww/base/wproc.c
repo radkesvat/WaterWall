@@ -40,6 +40,10 @@ bool isAdmin(void)
  */
 bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
+    (void) app_name;
+    (void) fail_msg;
+    return false; // for now
+
     if (isAdmin())
     {
         return true;
@@ -56,11 +60,14 @@ bool elevatePrivileges(const char *app_name, char *fail_msg)
 
     if (GetModuleFileName(NULL, szPath, MAX_PATH))
     {
-        SHELLEXECUTEINFO sei = {sizeof(sei)};
-        sei.lpVerb           = L"runas"; // Request elevation
-        sei.lpFile           = szPath;   // Path to the current executable
-        sei.hwnd             = NULL;
-        sei.nShow            = SW_NORMAL;
+        SHELLEXECUTEINFO sei = {
+            .cbSize = sizeof(sei),
+            .fMask = 0,
+            .hwnd = NULL,
+            .lpVerb = "runas", // Request elevation
+            .lpFile = szPath,  // Path to the current executable
+            .nShow = SW_NORMAL
+        };
 
         if (! ShellExecuteEx(&sei))
         {

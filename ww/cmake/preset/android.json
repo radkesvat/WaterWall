@@ -1,0 +1,90 @@
+{
+    "version": 4,
+    "include": [
+        "base.json"
+    ],
+    "configurePresets": [
+        {
+            "name": "android",
+            "inherits": [
+                "host-not-windows",
+                "target-android",
+                "ninja",
+                "default"
+            ]
+        },
+        {
+            "name": "android-arm",
+            "inherits": [
+                "host-not-windows",
+                "target-android-arm",
+                "ninja",
+                "default"
+            ]
+        },
+        {
+            "name": "android-arm64",
+            "inherits": [
+                "host-not-windows",
+                "target-android-arm64",
+                "ninja",
+                "default"
+            ]
+        },
+        {
+            "name": "android-x86",
+            "inherits": [
+                "host-not-windows",
+                "target-android-x86",
+                "ninja",
+                "default"
+            ]
+        },
+        {
+            "name": "android-x86_64",
+            "inherits": [
+                "host-not-windows",
+                "target-android-x86_64",
+                "ninja",
+                "default"
+            ]
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "android",
+            "configurePreset": "android",
+            "inherits": [
+                "host-not-windows"
+            ]
+        },
+        {
+            "name": "android-arm",
+            "configurePreset": "android-arm",
+            "inherits": [
+                "host-not-windows"
+            ]
+        },
+        {
+            "name": "android-arm64",
+            "configurePreset": "android-arm64",
+            "inherits": [
+                "host-not-windows"
+            ]
+        },
+        {
+            "name": "android-x86",
+            "configurePreset": "android-x86",
+            "inherits": [
+                "host-not-windows"
+            ]
+        },
+        {
+            "name": "android-x86_64",
+            "configurePreset": "android-x86_64",
+            "inherits": [
+                "host-not-windows"
+            ]
+        }
+    ]
+}

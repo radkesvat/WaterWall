@@ -156,7 +156,7 @@ int ppp_vslprintf(char *buf, int buflen, const char *fmt, va_list args) {
 	for (f = fmt; *f != '%' && *f != 0; ++f)
 	    ;
 	if (f > fmt) {
-	    len = f - fmt;
+	    len = (int)(f - fmt);
 	    if (len > buflen)
 		len = buflen;
 	    memcpy(buf, fmt, len);
@@ -376,7 +376,7 @@ int ppp_vslprintf(char *buf, int buflen, const char *fmt, va_list args) {
 	    default:
 		break;
 	    }
-	    len = num + sizeof(num) - 1 - str;
+	    len = (int)(num + sizeof(num) - 1 - str);
 	} else {
 	    len = (int) strlen(str);
 	    if (prec >= 0 && len > prec)
@@ -398,7 +398,7 @@ int ppp_vslprintf(char *buf, int buflen, const char *fmt, va_list args) {
 	buflen -= len;
     }
     *buf = 0;
-    return buf - buf0;
+    return (int)(buf - buf0);
 }
 
 #if PRINTPKT_SUPPORT

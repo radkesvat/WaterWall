@@ -30,7 +30,7 @@ typedef struct pipetunnel_msg_event_s
  *
  * @return size_t Size of the pipeline message.
  */
-size_t pipeLineGetMesageSize(void)
+size_t pipeTunnelGetMesageSize(void)
 {
     return sizeof(pipetunnel_msg_event_t);
 }

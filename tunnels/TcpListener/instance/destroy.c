@@ -17,7 +17,6 @@ void tcplistenerTunnelDestroy(tunnel_t *t)
     {
         memoryFree(tstate->black_list_range);
     }
-    memoryFree(tstate);
 
     tunnelDestroy(t);
 }

@@ -4,6 +4,8 @@
 
 void wireguarddeviceTunnelDestroy(tunnel_t *t)
 {
-    (void)t;
+    wgd_tstate_t *state = tunnelGetState(t);
+    mutexDestroy(&state->mutex);
+    tunnelDestroy(t);
 }
 

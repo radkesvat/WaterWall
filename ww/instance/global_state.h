@@ -45,6 +45,7 @@ typedef struct ww_global_state_s
     void                      *wintun_dll_handle;
     uint32_t                   workers_count;
     uint32_t                   ram_profile;
+    uint64_t                   main_thread_id;
     uint16_t                   buffer_allocation_padding;
     uint8_t                    flag_initialized : 1;
     uint8_t                    flag_buffers_calculated : 1;
@@ -141,6 +142,13 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
  * @brief Runs the main thread.
  */
 WW_EXPORT void runMainThread(void);
+
+/*!
+ * @brief Exits the main thread.
+ *
+ * This function exits the main thread, it is supposed to be called from other threads
+ */
+WW_EXPORT void mainThreadExitJoin(void);
 
 /*!
  * @brief Creates the global state.

@@ -9,7 +9,9 @@ typedef struct udpstatelesssocket_tstate_s
     uint16_t listen_port;    // port to listen on
     int      fwmark;         // fwmark to set on the socket
 
-    wio_t *io; // socket file descriptor
+    wio_t   *io;    // socket file descriptor
+    wmutex_t mutex; // socket protection
+
 } udpstatelesssocket_tstate_t;
 
 typedef struct udpstatelesssocket_lstate_s

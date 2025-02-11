@@ -494,7 +494,7 @@ error:
 }
 
 bool verifyIPPort(const char *ipp){
-    char        *colon      = strchr(ipp, ':');
+    char        *colon      = stringChr(ipp, ':');
     if (colon == NULL)
     {
         LOGE("verifyIPPort Error: could not find ':' in ip:port, value was: %s", ipp);
@@ -519,8 +519,8 @@ bool verifyIPPort(const char *ipp){
 
 bool verifyIPCdir(const char *ipc)
 {
-    unsigned int ipc_length = strlen(ipc);
-    char        *slash      = strchr(ipc, '/');
+    unsigned int ipc_length = (unsigned int)stringLength(ipc);
+    char        *slash      = stringChr(ipc, '/');
     if (slash == NULL)
     {
         LOGE("verifyIPCdir Error: Subnet prefix is missing in ip. \"%s\" + /xx", ipc);

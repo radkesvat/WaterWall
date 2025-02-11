@@ -53,7 +53,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
 
         if (tc->contains_packet_node)
         {
-            tc->packet_lines[i] = lineCreate(tc->line_pools[i], tc->sum_line_state_size);
+            tc->packet_lines[i] = lineCreate(tc->line_pools[i], i);
         }
     }
 

@@ -11,7 +11,7 @@ uint64_t wloopGetNextEventID(void) {
 
 uint32_t wioSetNextID(void) {
     static atomic_long s_id = (0);
-    return ++s_id;
+    return (uint32_t)(++s_id);
 }
 
 static void fillIoType(wio_t* io) {
@@ -411,7 +411,7 @@ static void __read_timeout_cb(wtimer_t* timer) {
     wio_t* io = (wio_t*)timer->privdata;
     uint64_t inactive_ms = (io->loop->cur_hrtime - io->last_read_hrtime) / 1000;
     if (inactive_ms + 100 < (uint64_t)io->read_timeout) {
-        wtimerReset(io->read_timer, io->read_timeout - inactive_ms);
+        wtimerReset(io->read_timer, (uint32_t) (io->read_timeout - inactive_ms));
     }
     else {
         if (io->io_type & WIO_TYPE_SOCKET) {
@@ -447,7 +447,7 @@ static void __write_timeout_cb(wtimer_t* timer) {
     wio_t* io = (wio_t*)timer->privdata;
     uint64_t inactive_ms = (io->loop->cur_hrtime - io->last_write_hrtime) / 1000;
     if (inactive_ms + 100 < (uint64_t)io->write_timeout) {
-        wtimerReset(io->write_timer, io->write_timeout - inactive_ms);
+        wtimerReset(io->write_timer, (uint32_t) (io->write_timeout - inactive_ms));
     }
     else {
         if (io->io_type & WIO_TYPE_SOCKET) {
@@ -484,7 +484,7 @@ static void __keepalive_timeout_cb(wtimer_t* timer) {
     uint64_t last_rw_hrtime = max(io->last_read_hrtime, io->last_write_hrtime);
     uint64_t inactive_ms = (io->loop->cur_hrtime - last_rw_hrtime) / 1000;
     if (inactive_ms + 100 < (uint64_t)io->keepalive_timeout) {
-        wtimerReset(io->keepalive_timer, io->keepalive_timeout - inactive_ms);
+        wtimerReset(io->keepalive_timer, (uint32_t) (io->keepalive_timeout - inactive_ms));
     }
     else {
         if (io->io_type & WIO_TYPE_SOCKET) {

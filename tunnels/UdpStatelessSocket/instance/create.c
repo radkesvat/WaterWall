@@ -61,6 +61,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         LOGF("UdpStatelessSocket: could not create udp socket");
         return NULL;
     }
+    mutexInit(&state->mutex);
     weventSetUserData(state->io, t);
     wioSetCallBackRead(state->io, udpstatelesssocketOnRecvFrom);
     wioRead(state->io);

@@ -1,37 +1,46 @@
 #include "signal_manager.h"
 
-#include "global_state.h"
-
 static signal_manager_t *state = NULL;
 
 void registerAtExitCallBack(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
     assert(state->handlers_len < kMaxSigHandles);
+    mutexLock(&(state->mutex));
     for (int i = kMaxSigHandles - 1; i >= 0; i--)
     {
         if (state->handlers[i].handle == NULL)
         {
             state->handlers[i] = (signal_handler_t){.handle = handle, .userdata = userdata};
             state->handlers_len++;
+            mutexUnlock(&(state->mutex));
+
             return;
         }
     }
+    mutexUnlock(&(state->mutex));
+
     printError("SignalManager: Too many atexit handlers, max is %d", kMaxSigHandles);
     _Exit(1);
 }
 void removeAtExitCallBack(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
+    mutexLock(&(state->mutex));
+
     for (int i = 0; i < kMaxSigHandles; i++)
     {
         if (state->handlers[i].handle == handle && state->handlers[i].userdata == userdata)
         {
             state->handlers[i] = (signal_handler_t){.handle = NULL, .userdata = NULL};
             state->handlers_len--;
+            mutexUnlock(&(state->mutex));
+
             return;
         }
     }
+    // not found...
+    mutexUnlock(&(state->mutex));
 }
 
 signal_manager_t *createSignalManager(void)
@@ -53,6 +62,8 @@ signal_manager_t *createSignalManager(void)
                                 .handle_sigterm = true,
                                 .handle_sigpipe = true,
                                 .handle_sigalrm = true};
+
+    mutexInit(&(state->mutex));
     return state;
 }
 
@@ -72,14 +83,14 @@ static void exitHandler(void)
 {
     if (state->handlers_ran)
     {
-        const char *msg     = "SignalManager: Not runnig signal handlers again\n";
-        int         written = write(STDOUT_FILENO, msg, strlen(msg));
+        const char *msg     = "SignalManager: Not running signal handlers again!, gracefully exiting\n";
+        int         written = (int) write(STDOUT_FILENO, msg, strlen(msg));
         (void) written;
         _Exit(1); // exit(1) will call the atexit handlers again
         return;
     }
 
-    mainThreadExitJoin();
+    state->handlers_ran = true;
 
     for (unsigned int i = 0; i < kMaxSigHandles; i++)
     {
@@ -94,6 +105,8 @@ static void exitHandler(void)
 
 static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
 {
+    printError("SignalManager: Received windows event %d", CtrlType);
+
     switch (CtrlType)
     {
     case CTRL_C_EVENT:
@@ -117,7 +130,7 @@ static void multiplexedSignalHandler(int signum)
 {
     char message[50];
     int  length  = snprintf(message, sizeof(message), "SignalManager: Received signal %d\n", signum);
-    int  written = write(STDOUT_FILENO, message, length);
+    int  written = (int) write(STDOUT_FILENO, message, length);
     (void) written;
 
     if (state->raise_defaults)
@@ -129,7 +142,7 @@ static void multiplexedSignalHandler(int signum)
 
     if (state->raise_defaults)
     {
-        raise(signum);
+        raise(signum); // maybe this later calls our handler again (atexit call) but its already guarded
 
         // written = write(STDOUT_FILENO,
         //                 "SignalManager: The program should have been terminated before this, exiting...\n", 75);
@@ -253,4 +266,11 @@ void startSignalManager(void)
 #endif
 
     atexit(exitHandler);
+}
+
+void destroySignalManager(signal_manager_t *sm)
+{
+    assert(sm != NULL);
+    mutexDestroy(&(sm->mutex));
+    memoryFree(sm);
 }

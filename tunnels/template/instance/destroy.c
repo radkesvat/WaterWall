@@ -4,6 +4,6 @@
 
 void templateTunnelDestroy(tunnel_t *t)
 {
-    (void)t;
+    tunnelDestroy(t);
 }
 

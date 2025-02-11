@@ -20,7 +20,7 @@ void tundeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! tundeviceWrite(tdev, buf))
     {
-        LOGW("TunDevice: Write failed");
+        LOGW("TunDevice: Write failed , %d %d", lineGetWID(l), getWID());
         bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
     }
 }

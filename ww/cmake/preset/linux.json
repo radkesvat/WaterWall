@@ -1,0 +1,86 @@
+{
+    "version": 4,
+    "include": [
+        "base.json"
+    ],
+    "configurePresets": [
+        {
+            "name": "linux",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "default"
+            ]
+        },
+        {
+            "name": "linux-clang",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "clang",
+                "default"
+            ]
+        },
+        {
+            "name": "linux-gcc",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "gcc",
+                "default"
+            ]
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "linux",
+            "configurePreset": "linux",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-clang",
+            "configurePreset": "linux-clang",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-gcc",
+            "configurePreset": "linux-gcc",
+            "inherits": [
+                "host-linux"
+            ]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "linux",
+            "configurePreset": "linux",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-clang",
+            "configurePreset": "linux-clang",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        },
+        {
+            "name": "linux-gcc",
+            "configurePreset": "linux-gcc",
+            "inherits": [
+                "host-linux",
+                "options"
+            ]
+        }
+    ]
+}

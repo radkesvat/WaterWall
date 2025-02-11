@@ -7,7 +7,7 @@
  * 
  * @return size_t Size of the pipeline message.
  */
-size_t pipeLineGetMesageSize(void);
+size_t pipeTunnelGetMesageSize(void);
 
 /**
  * @brief Initialize the upstream pipeline.

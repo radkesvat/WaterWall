@@ -286,7 +286,7 @@ static void sockaddr_to_ipaddr_port(const struct sockaddr *sockaddr, ip_addr_t *
     {                                                                                                                  \
         u32_t loc                              = (val);                                                                \
         ((struct timeval *) (optval))->tv_sec  = (long) ((loc) / 1000U);                                               \
-        ((struct timeval *) (optval))->tv_usec = (long) (((loc) % 1000U) * 1000U);                                     \
+        ((struct timeval *) (optval))->tv_usec = (int) (((loc) % 1000U) * 1000U);                                     \
     } while (0)
 #define LWIP_SO_SNDRCVTIMEO_GET_MS(optval)                                                                             \
     ((((const struct timeval *) (optval))->tv_sec * 1000) + (((const struct timeval *) (optval))->tv_usec / 1000))

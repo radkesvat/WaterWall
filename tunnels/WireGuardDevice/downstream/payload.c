@@ -443,6 +443,11 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
 
 void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    wgd_tstate_t *state = tunnelGetState(t);
+    mutexLock(&state->mutex);
+
     wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &l->routing_context.src_ctx.ip_address,
                          l->routing_context.src_ctx.port);
+
+    mutexUnlock(&state->mutex);
 }

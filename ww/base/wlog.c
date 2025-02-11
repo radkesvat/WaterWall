@@ -308,8 +308,8 @@ static FILE *shiftLogFile(logger_t *logger)
 {
     time_t ts_now        = time(NULL);
     int    interval_days = logger->last_logfile_ts == 0 ? 0
-                                                        : (ts_now + s_gmtoff) / SECONDS_PER_DAY -
-                                                           (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY;
+                                                        : (int) ((ts_now + s_gmtoff) / SECONDS_PER_DAY -
+                                                           (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY);
     if (logger->fp_ == NULL || interval_days > 0)
     {
         // close old logfile
@@ -388,7 +388,7 @@ static FILE *shiftLogFile(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt = (logger->max_filesize - filesize) / logger->bufsize;
+            logger->can_write_cnt = (int)((logger->max_filesize - filesize) / logger->bufsize);
         }
     }
 

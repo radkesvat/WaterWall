@@ -187,12 +187,9 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
 
 # Add dependencies
-file(
-  DOWNLOAD
-  https://github.com/cpm-cmake/CPM.cmake/releases/download/v0.40.0/CPM.cmake
-  ${CMAKE_BINARY_DIR}/cmake/CPM.cmake
-)
-include(${CMAKE_BINARY_DIR}/cmake/CPM.cmake)
+include(cmake/GetCPM.cmake)
+
+
 
 # Add komihash library
 CPMAddPackage(
@@ -236,7 +233,22 @@ if(cjson_ADDED)
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
 
-# ...existing commented openssl package code...
+# add openssl (default version is latest)
+
+# CPMAddPackage(
+#     NAME openssl-cmake
+#     URL https://github.com/radkesvat/openssl-cmake/archive/main.tar.gz
+#     OPTIONS
+#     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
+#     "BUILD_SHARED_LIBS OFF"
+#     "OPENSSL_CONFIGURE_VERBOSE OFF"
+#     "OPENSSL_BUILD_VERBOSE TRUE"
+# )
+
+# set(LIBS ${LIBS} OpenSSL::SSL)
+# set(LIBS ${LIBS} OpenSSL::Crypto)
+# set(LIBS ${LIBS} OpenSSL::applink)
+
 
 # Add libsodium as a static library
 CPMAddPackage(
@@ -450,7 +462,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # Compiler-specific options
-if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+if(NOT MSVC)
     target_compile_options(ww PUBLIC 
         -Wall 
         -Wextra 

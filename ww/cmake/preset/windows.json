@@ -1,0 +1,141 @@
+{
+    "version": 4,
+    "include": [
+        "base.json"
+    ],
+    "configurePresets": [
+        {
+            "name": "windows vs2019",
+            "inherits": [
+                "host-windows",
+                "target-windows",
+                "vs2019",
+                "default"
+            ]
+        },
+        {
+            "name": "windows",
+            "inherits": [
+                "host-windows",
+                "target-windows",
+                "vs2022",
+                "default"
+            ]
+        },
+        {
+            "name": "windows-arm",
+            "inherits": [
+                "host-windows",
+                "target-windows-arm",
+                "vs2022",
+                "default"
+            ]
+        },
+        {
+            "name": "windows-arm64",
+            "inherits": [
+                "host-windows",
+                "target-windows-arm64",
+                "vs2022",
+                "default"
+            ]
+        },
+        {
+            "name": "windows-x86",
+            "inherits": [
+                "host-windows",
+                "target-windows-x86",
+                "vs2022",
+                "default"
+            ]
+        },
+        {
+            "name": "windows-x86_64",
+            "inherits": [
+                "host-windows",
+                "target-windows-x86_64",
+                "vs2022",
+                "default"
+            ]
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows",
+            "configurePreset": "windows",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
+            "name": "windows-arm",
+            "configurePreset": "windows-arm",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
+            "name": "windows-arm64",
+            "configurePreset": "windows-arm64",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
+            "name": "windows-x86",
+            "configurePreset": "windows-x86",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
+            "name": "windows-x86_64",
+            "configurePreset": "windows-x86_64",
+            "inherits": [
+                "host-windows"
+            ]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "windows",
+            "configurePreset": "windows",
+            "inherits": [
+                "host-windows",
+                "options"
+            ]
+        },
+        {
+            "name": "windows-arm",
+            "configurePreset": "windows-arm",
+            "inherits": [
+                "host-windows",
+                "options"
+            ]
+        },
+        {
+            "name": "windows-arm64",
+            "configurePreset": "windows-arm64",
+            "inherits": [
+                "host-windows",
+                "options"
+            ]
+        },
+        {
+            "name": "windows-x86",
+            "configurePreset": "windows-x86",
+            "inherits": [
+                "host-windows",
+                "options"
+            ]
+        },
+        {
+            "name": "windows-x86_64",
+            "configurePreset": "windows-x86_64",
+            "inherits": [
+                "host-windows",
+                "options"
+            ]
+        }
+    ]
+}

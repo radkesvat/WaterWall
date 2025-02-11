@@ -2266,17 +2266,17 @@ endswitch:
 
     switch (rc) {
     case CONFACK:
-	*lenp = next - inp;
+	*lenp = (int) (next - inp);
 	break;
     case CONFNAK:
 	/*
 	 * Copy the Nak'd options from the nak buffer to the caller's buffer.
 	 */
-	*lenp = nakoutp - (u_char*)nakp->payload;
+	*lenp = int(nakoutp - (u_char*)nakp->payload);
 	MEMCPY(inp, nakp->payload, *lenp);
 	break;
     case CONFREJ:
-	*lenp = rejp - inp;
+	*lenp = (int)( rejp - inp );
 	break;
     default:
 	break;
@@ -2756,7 +2756,7 @@ static void LcpSendEchoRequest(fsm *f) {
         lcp_magic = go->magicnumber;
 	pktp = pkt;
 	PUTLONG(lcp_magic, pktp);
-        fsm_sdata(f, ECHOREQ, pcb->lcp_echo_number++, pkt, pktp - pkt);
+        fsm_sdata(f, ECHOREQ, pcb->lcp_echo_number++, pkt,(int)(pktp - pkt));
 	++pcb->lcp_echos_pending;
     }
 }

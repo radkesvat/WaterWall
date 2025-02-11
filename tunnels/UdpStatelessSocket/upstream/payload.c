@@ -4,13 +4,15 @@
 
 void udpstatelesssocketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    mutexLock(&state->mutex);
 
     if (addresscontextIsValid(&(l->routing_context.dest_ctx)) == false)
     {
         LOGE("udpstatelesssocketTunnelUpStreamPayload: address not initialized");
         bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
-        return;
+        goto normalexit;
     }
 
     sockaddr_u addr = addresscontextToSockAddr(&(l->routing_context.dest_ctx));
@@ -25,4 +27,7 @@ void udpstatelesssocketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     wioSetPeerAddr(state->io, &(addr.sa), (int) sockaddrLen(&addr));
     wioWrite(state->io, buf);
+
+normalexit:
+    mutexUnlock(&state->mutex);
 }

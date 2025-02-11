@@ -1,7 +1,8 @@
 #pragma once
-#include "wlibc.h"
 #include "cJSON.h"
 #include "objects/dynamic_value.h"
+#include "wlibc.h"
+
 
 static inline bool checkJsonIsObjectAndHasChild(const cJSON *json_obj)
 {
@@ -86,7 +87,8 @@ static inline bool getStringFromJsonObject(char **dest, const cJSON *json_obj, c
     return false;
 }
 
-static inline bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key, const char *def) // NOLINT
+static inline bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *json_obj, const char *key,
+                                                    const char *def) // NOLINT
 {
     assert(def != NULL);
     if (! getStringFromJsonObject(dest, json_obj, key))
@@ -98,7 +100,8 @@ static inline bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *js
     return true;
 }
 
-static inline dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...)
+static inline dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *json_obj, const char *key,
+                                                                 size_t matchers, ...)
 {
 
     dynamic_value_t result = {0};
@@ -121,7 +124,7 @@ static inline dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *js
             if (strcmp(matcher, jstr->valuestring) == 0)
             {
                 va_end(argp);
-                result.status = mi;
+                result.status = (int) mi;
                 return result;
             }
         }
@@ -134,7 +137,8 @@ static inline dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *js
     return result;
 }
 
-static inline dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, const char *key, size_t matchers, ...)
+static inline dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON *json_obj, const char *key,
+                                                                     size_t matchers, ...)
 {
 
     dynamic_value_t result = {0};
@@ -156,7 +160,7 @@ static inline dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON
             if (strcmp(matcher, jstr->valuestring) == 0)
             {
                 va_end(argp);
-                result.status = mi;
+                result.status = (int) mi;
                 return result;
             }
         }

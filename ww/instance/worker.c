@@ -1,14 +1,47 @@
 #include "worker.h"
 #include "context.h"
 #include "global_state.h"
+#include "managers/signal_manager.h"
 #include "pipe_tunnel.h"
 #include "tunnel.h"
+#include "wevent.h"
 #include "wloop.h"
 #include "wthread.h"
 
-
+#include "loggers/internal_logger.h"
 
 thread_local wid_t tl_wid;
+
+/**
+ * @brief Cleanly exits a worker.
+ *
+ * Signals the worker's event loop to run once, waits for the worker thread to finish,
+ * and destroys allocated resource pools.
+ *
+ * @param worker Pointer to the worker structure.
+ */
+void workerExitJoin(worker_t *worker)
+{
+    worker->loop->flags = worker->loop->flags | WLOOP_FLAG_RUN_ONCE;
+    atomicThreadFence(memory_order_release);
+
+    threadJoin(worker->thread);
+}
+
+/**
+ * @brief Signal handler for worker exit.
+ *
+ * Invoked when a termination signal is received and calls workerExitJoin.
+ *
+ * @param userdata Pointer to the worker structure.
+ * @param signum Signal number.
+ */
+static void exitHandle(void *userdata, int signum)
+{
+    (void) signum;
+    worker_t *worker = userdata;
+    workerExitJoin(worker);
+}
 
 /**
  * @brief Initializes a worker.
@@ -27,10 +60,10 @@ void workerInit(worker_t *worker, wid_t wid)
         GSTATE.masterpool_context_pools, sizeof(context_t), (16) + GSTATE.ram_profile);
 
     worker->pipetunnel_msg_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_pipetunnel_msg_pools, pipeLineGetMesageSize(), (8) + GSTATE.ram_profile);
+        GSTATE.masterpool_pipetunnel_msg_pools, (uint32_t) pipeTunnelGetMesageSize(), (8) + GSTATE.ram_profile);
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           (0) + GSTATE.ram_profile,LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE );
+                                           (0) + GSTATE.ram_profile, LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE);
 
     // note that loop depeneds on worker->buffer_pool
     worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, wid);
@@ -46,10 +79,17 @@ void workerInit(worker_t *worker, wid_t wid)
  */
 void workerRun(worker_t *worker)
 {
-    tl_wid = worker->wid;
+    tl_wid    = worker->wid;
+    wid_t wid = worker->wid;
+
     frandInit();
     wloopRun(worker->loop);
-    wloopDestroy(&worker->loop);
+
+    genericpoolDestroy(worker->context_pool);
+    genericpoolDestroy(worker->pipetunnel_msg_pool);
+    bufferpoolDestroy(worker->buffer_pool);
+
+    LOGD("Worker %d cleanly exited !", wid);
 }
 
 /**
@@ -76,7 +116,8 @@ static WTHREAD_ROUTINE(worker_thread) // NOLINT
  *
  * @param worker Pointer to the worker to run.
  */
-void workerRunNewThread(worker_t *worker)
+void workerSpawn(worker_t *worker)
 {
     worker->thread = threadCreate(worker_thread, worker);
+    registerAtExitCallBack(exitHandle, worker);
 }

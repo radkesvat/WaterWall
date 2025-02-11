@@ -1,0 +1,52 @@
+{
+    "version": 4,
+    "include": [
+        "base.json"
+    ],
+    "configurePresets": [
+        {
+            "name": "ios",
+            "inherits": [
+                "host-macos",
+                "target-ios",
+                "xcode",
+                "default"
+            ]
+        },
+        {
+            "name": "ios_sim",
+            "inherits": [
+                "host-macos",
+                "target-ios_sim",
+                "xcode",
+                "default"
+            ]
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "build-options",
+            "hidden": true,
+            "nativeToolOptions": [
+                "BUILD_LIBRARY_FOR_DISTRIBUTION=YES",
+                "SKIP_INSTALL=NO"
+            ]
+        },
+        {
+            "name": "ios",
+            "configurePreset": "ios",
+            "inherits": [
+                "host-macos",
+                "build-options"
+            ]
+        },
+        {
+            "name": "ios_sim",
+            "configurePreset": "ios_sim",
+            "inherits": [
+                "host-macos",
+                "build-options"
+            ]
+        }
+    ]
+}

@@ -34,11 +34,11 @@ static inline type* atype##_data(atype* p) {\
 }\
 \
 static inline int atype##_size(atype* p) {\
-    return p->size;\
+    return (int) p->size;\
 }\
 \
 static inline int atype##_maxsize(atype* p) {\
-    return p->maxsize;\
+    return (int) p->maxsize;\
 }\
 \
 static inline int atype##_empty(atype* p) {\
@@ -84,7 +84,7 @@ static inline void atype##_resize(atype* p, int maxsize) {\
 }\
 \
 static inline void atype##_double_resize(atype* p) {\
-    atype##_resize(p, p->maxsize * 2);\
+    atype##_resize(p, (int) (p->maxsize * 2));\
 }\
 \
 static inline void atype##_push_back(atype* p, type* elem) {\

@@ -1,0 +1,14 @@
+{
+    "version": 4,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 25
+    },
+    "include": [
+        "ww/cmake/preset/android.json",
+        "ww/cmake/preset/ios.json",
+        "ww/cmake/preset/linux.json",
+        "ww/cmake/preset/macos.json",
+        "ww/cmake/preset/windows.json"
+    ]
+}

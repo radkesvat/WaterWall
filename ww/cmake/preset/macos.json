@@ -1,0 +1,36 @@
+{
+    "version": 4,
+    "include": [
+        "base.json"
+    ],
+    "configurePresets": [
+        {
+            "name": "macos",
+            "inherits": [
+                "host-macos",
+                "target-macos",
+                "xcode",
+                "default"
+            ]
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "macos",
+            "configurePreset": "macos",
+            "inherits": [
+                "host-macos"
+            ]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "macos",
+            "configurePreset": "macos",
+            "inherits": [
+                "host-macos",
+                "options"
+            ]
+        }
+    ]
+}

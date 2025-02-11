@@ -123,6 +123,21 @@ static void initializeMasterPools(void)
     GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
 }
 
+/**
+ * @brief Signal handler for mainthread exit.
+ *
+ * Invoked when a termination signal is received and calls mainThreadExitJoin.
+ *
+ * @param userdata Pointer to the worker structure.
+ * @param signum Signal number.
+ */
+static void exitHandle(void *userdata, int signum)
+{
+    (void) signum;
+    (void) userdata;
+    mainThreadExitJoin();
+}
+
 /*!
  * @brief Creates the global state and initializes the WaterWall instance.
  *
@@ -212,14 +227,21 @@ void createGlobalState(const ww_construction_data_t init_data)
             exit(1);
         }
 #endif
-
-
     }
     // Spawn all workers except main worker which is current thread
     {
+        worker_t *worker      = getWorker(0);
+        GSTATE.main_thread_id = getTID();
+#ifdef OS_WIN
+        worker->thread = (wthread_t) GetCurrentThread();
+#else
+        worker->thread = pthread_self();
+#endif
+        registerAtExitCallBack(exitHandle, worker);
+
         for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
         {
-            workerRunNewThread(&WORKERS[i]);
+            workerSpawn(&WORKERS[i]);
         }
     }
 
@@ -236,15 +258,19 @@ void runMainThread(void)
 {
     assert(GSTATE.flag_initialized);
 
-    WORKERS[0].thread = (wthread_t) NULL;
     workerRun(getWorker(0));
+}
 
-    LOGF("Unexpected: main loop joined");
-
-    for (size_t i = 1; i < WORKERS_COUNT; i++)
+/*!
+ * @brief Exits the main thread.
+ *
+ * This function exits the main thread, it is supposed to be called from other threads
+ */
+WW_EXPORT void mainThreadExitJoin(void)
+{
+    if ((uint64_t) getTID() ==  GSTATE.main_thread_id)
     {
-        threadJoin(getWorker(i)->thread);
+        return; // incrorrect call, you are in main thread
     }
-    LOGF("Unexpected: other loops joined");
-    exit(1);
+    workerExitJoin(getWorker(0));
 }

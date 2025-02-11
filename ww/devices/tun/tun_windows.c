@@ -164,48 +164,7 @@ struct msg_event
     sbuf_t       *buf;
 };
 
-static void PrintPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
-{
-    if (PacketSize < 20)
-    {
-        LOGI("Received packet without room for an IP header");
-        return;
-    }
-    BYTE  IpVersion = Packet[0] >> 4, Proto;
-    WCHAR Src[46], Dst[46];
-    if (IpVersion == 4)
-    {
-        RtlIpv4AddressToStringW((struct in_addr *) &Packet[12], Src);
-        RtlIpv4AddressToStringW((struct in_addr *) &Packet[16], Dst);
-        Proto = Packet[9];
-        Packet += 20, PacketSize -= 20;
-    }
-    else if (IpVersion == 6 && PacketSize < 40)
-    {
-        LOGI("Received packet without room for an IP header");
-        return;
-    }
-    else if (IpVersion == 6)
-    {
-        RtlIpv6AddressToStringW((struct in6_addr *) &Packet[8], Src);
-        RtlIpv6AddressToStringW((struct in6_addr *) &Packet[24], Dst);
-        Proto = Packet[6];
-        Packet += 40, PacketSize -= 40;
-    }
-    else
-    {
-        LOGI("Received packet that was not IP");
-        return;
-    }
-    if (Proto == 1 && PacketSize >= 8 && Packet[0] == 0)
-    {
-        LOGI("Received IPv%d protocol 0x%x packet from %s to %s", IpVersion, Proto, Src, Dst);
-    }
-    else
-    {
-        LOGI("Received IPv%d proto 0x%x packet from %s to %s", IpVersion, Proto, Src, Dst);
-    }
-}
+
 // Allocate memory for message pool handle
 static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
@@ -246,7 +205,7 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -414,7 +373,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     if (! tdev->up)
     {
         LOGE("Device is already down");
-        return false;
+        return true;
     }
 
     atomicStoreRelaxed(&(tdev->running), false);
@@ -559,12 +518,23 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
  */
 static void exitHandle(void *userdata, int signum)
 {
-    Sleep(2200);
-    LOGW("called close handle");
+    // Sleep(2200);
+    // LOGW("called close handle");
     (void) signum;
     tun_device_t *tdev = userdata;
-    tundeviceDestroy(tdev);
-    Sleep(2200);
+    if (tdev->up)
+    {
+        tundeviceBringDown(tdev);
+    }
+
+    assert(tdev->session_handle == NULL);
+
+    if (tdev->adapter_handle)
+    {
+        WintunCloseAdapter(tdev->adapter_handle);
+        tdev->adapter_handle = NULL;
+    }
+    // Sleep(2200);
 }
 
 // Function to load a function pointer from a DLL
@@ -661,20 +631,20 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t) {.name                  = NULL,
-                            .running               = false,
-                            .up                    = false,
-                            .routine_reader        = routineReadFromTun,
-                            .routine_writer        = routineWriteToTun,
-                            .read_event_callback   = cb,
-                            .userdata              = userdata,
-                            .writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
-                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                            .reader_buffer_pool    = reader_bpool,
-                            .writer_buffer_pool    = writer_bpool,
-                            .adapter_handle        = NULL,
-                            .session_handle        = NULL,
-                            .quit_event            = CreateEventW(NULL, TRUE, FALSE, NULL)};
+    *tdev = (tun_device_t){.name                  = NULL,
+                           .running               = false,
+                           .up                    = false,
+                           .routine_reader        = routineReadFromTun,
+                           .routine_writer        = routineWriteToTun,
+                           .read_event_callback   = cb,
+                           .userdata              = userdata,
+                           .writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax),
+                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                           .reader_buffer_pool    = reader_bpool,
+                           .writer_buffer_pool    = writer_bpool,
+                           .adapter_handle        = NULL,
+                           .session_handle        = NULL,
+                           .quit_event            = CreateEventW(NULL, TRUE, FALSE, NULL)};
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
@@ -707,6 +677,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 /**
  * Destroys the TUN device and releases resources
  * @param tdev TUN device handle
+ * the creator worker thread has to call this function
  */
 void tundeviceDestroy(tun_device_t *tdev)
 {
@@ -723,6 +694,7 @@ void tundeviceDestroy(tun_device_t *tdev)
         removeAtExitCallBack(exitHandle, tdev);
 
         WintunCloseAdapter(tdev->adapter_handle);
+        tdev->adapter_handle = NULL;
     }
 
     CloseHandle(tdev->quit_event);

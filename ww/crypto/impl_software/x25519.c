@@ -36,7 +36,7 @@ typedef uint32_t limb_t;
 typedef uint64_t dlimb_t;
 typedef int64_t  sdlimb_t;
 #define eswap_limb eswap_letoh_32
-#define LIMB(x)    (uint32_t) (x##ull), (uint32_t) ((x##ull) >> 32)
+#define LIMB(x)    (uint32_t)(x##ull), (uint32_t) ((x##ull) >> 32)
 #else
 #error "Need to know X25519_WBITS"
 #endif
@@ -57,7 +57,7 @@ static inline limb_t umaal(limb_t *carry, limb_t acc, limb_t mand, limb_t mier)
 {
     dlimb_t tmp = (dlimb_t) mand * mier + acc + *carry;
     *carry      = tmp >> X25519_WBITS;
-    return tmp;
+    return (limb_t) tmp;
 }
 
 /* These functions are implemented in terms of umaal on ARM */
@@ -65,14 +65,14 @@ static inline limb_t adc(limb_t *carry, limb_t acc, limb_t mand)
 {
     dlimb_t total = (dlimb_t) *carry + acc + mand;
     *carry        = total >> X25519_WBITS;
-    return total;
+    return (limb_t) total;
 }
 
 static inline limb_t adc0(limb_t *carry, limb_t acc)
 {
     dlimb_t total = (dlimb_t) *carry + acc;
     *carry        = total >> X25519_WBITS;
-    return total;
+    return (limb_t) total;
 }
 
 /* Precondition: carry is small.
@@ -110,10 +110,11 @@ static void sub(fe out, const fe a, const fe b)
     sdlimb_t carry = -38;
     for (i = 0; i < NLIMBS; i++)
     {
-        out[i] = carry = carry + a[i] - b[i];
+        carry  = carry + a[i] - b[i];
+        out[i] = (limb_t) carry;
         carry >>= X25519_WBITS;
     }
-    propagate(out, 1 + carry);
+    propagate(out, (limb_t) (1 + carry));
 }
 
 static void __attribute__((unused)) swapin(limb_t *x, const uint8_t *in)
@@ -220,7 +221,7 @@ static limb_t canon(fe x)
     limb_t   res   = 0;
     for (i = 0; i < NLIMBS; i++)
     {
-        res |= x[i] = carry += x[i];
+        res |= x[i] = (limb_t) (carry += x[i]);
         carry >>= X25519_WBITS;
     }
     return ((dlimb_t) res - 1) >> X25519_WBITS;
@@ -242,14 +243,14 @@ static void ladder_part1(fe xs[5])
     sqr1(t1);        // t1 = AA
     sqr1(z2);        // z2 = BB
     sub(x2, t1, z2); // x2 = E = AA-BB
-#if ! defined (COMPILER_MSVC)
+#if ! defined(COMPILER_MSVC)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overread"
 #endif
 
     mul(z2, x2, a24, sizeof(a24) / sizeof(a24[0])); // z2 = E*a24
-    
-#if ! defined (COMPILER_MSVC)
+
+#if ! defined(COMPILER_MSVC)
 #pragma GCC diagnostic pop
 #endif
 

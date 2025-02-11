@@ -155,7 +155,7 @@ int wloopProcessEvents(wloop_t* loop, int timeout_ms) {
             blocktime_us = min(blocktime_us, min_timeout);
         }
         if (blocktime_us < 0) goto process_timers;
-        blocktime_ms = blocktime_us / 1000 + 1;
+        blocktime_ms = (int32_t)(blocktime_us / 1000 + 1);
         blocktime_ms = min(blocktime_ms, timeout_ms);
     }
 
@@ -293,7 +293,7 @@ void wloopPostEvent(wloop_t* loop, wevent_t* ev) {
     uint64_t count = 1;
     nwrite = write(loop->eventfds[EVENTFDS_WRITE_INDEX], &count, sizeof(count));
 #elif defined(OS_UNIX) && HAVE_PIPE
-    nwrite = write(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1);
+    nwrite = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1);
 #else
     nwrite = send(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1, 0);
 #endif
@@ -417,7 +417,7 @@ void wloopDestroy(wloop_t** pp) {
     wloop_t* loop = *pp;
     if (loop->status == WLOOP_STATUS_DESTROY) return;
     loop->status = WLOOP_STATUS_DESTROY;
-    wlogd("wloopDestroy tid=%ld", loop->wid);
+    wlogd("Eventloop shutdown worker=%ld", loop->wid);
     wloopCleanup(loop);
     EVENTLOOP_FREE(loop);
     *pp = NULL;
@@ -720,7 +720,7 @@ const char* wioGetEngine(void) {
 
 static inline wio_t* __wio_get(wloop_t* loop, int fd) {
     if (fd >= (int)loop->ios.maxsize) {
-        int newsize = ceil2e(fd);
+        int newsize = (int) ceil2e(fd);
         newsize = max(newsize, IO_ARRAY_INIT_SIZE);
         io_array_resize(&loop->ios, newsize > fd ? newsize : 2 * fd);
     }
@@ -823,7 +823,7 @@ int wioDel(wio_t* io, int events) {
 
 static void wio_close_event_cb(wevent_t* ev) {
     wio_t* io = (wio_t*)ev->userdata;
-    uint32_t id = (uintptr_t)ev->privdata;
+    uint32_t id = (uint32_t)(uintptr_t)ev->privdata;
     if (io->id != id) return;
     wioClose(io);
 }

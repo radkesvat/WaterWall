@@ -199,7 +199,7 @@ char *stringNewWithoutSpace(const char *str)
         return NULL;
     }
 
-    int len = stringLength(str);
+    int len = (int) stringLength(str);
 
     int new_len = 0;
     for (int i = 0; i < len; i++)
@@ -433,6 +433,9 @@ size_t getFileSize(const char *filepath)
     stat(filepath, &st);
     return st.st_size;
 }
+#if defined(OS_DARWIN) // i cant believe mac has no header for this, afaik
+int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
+#endif
 
 char *getExecuteablePath(char *buf, int size)
 {
@@ -496,7 +499,7 @@ int randomRange(int min, int max)
 
     if (s_seed == 0)
     {
-        s_seed = time(NULL);
+        s_seed = (int) time(NULL);
         srand(s_seed);
     }
 
@@ -525,7 +528,7 @@ bool stringRepresenstsTrue(const char *str)
 {
     if (str == NULL)
         return false;
-    int len = strlen(str);
+    int len = (int) stringLength(str);
     if (len == 0)
         return false;
     switch (len)
@@ -738,6 +741,3 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
     fflush(NULL);
     abort();
 }
-
-
-

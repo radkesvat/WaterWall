@@ -248,7 +248,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     if (! tdev->up)
     {
         LOGE("TunDevice: device is already down");
-        return false;
+        return true;
     }
 
     atomicStoreRelaxed(&(tdev->running), false);

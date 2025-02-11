@@ -2,7 +2,6 @@
 #include "wmutex.h"
 #include "wplatform.h"
 
-
 // This implementation is based on of Jeff Preshing's "lightweight semaphore"
 // https://github.com/preshing/cpp11-on-multicore/blob/master/common/sema.h
 // zlib license:
@@ -30,7 +29,6 @@
 
     function names changed to camelBack
 */
-
 
 // #define USE_UNIX_SEMA
 
@@ -256,7 +254,7 @@ static bool semaSignal(wsem_t *sp, uint32_t count)
 
 static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_usecs)
 {
-#ifdef OS_WIN
+#if defined(OS_WIN) && ! defined(HAVE_STDATOMIC_H)
     intptr_t old_count;
 #else
     long old_count;
@@ -265,8 +263,8 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
     while (--spin >= 0)
     {
         old_count = atomicLoadExplicit(&s->count, memory_order_relaxed);
-        if (old_count > 0 && atomicCompareExchangeExplicit(&s->count, &old_count, old_count - 1,
-                                                            memory_order_acq_rel, memory_order_relaxed))
+        if (old_count > 0 && atomicCompareExchangeExplicit(&s->count, &old_count, old_count - 1, memory_order_acq_rel,
+                                                           memory_order_relaxed))
         {
             return true;
         }
@@ -304,8 +302,8 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
         {
             return true;
         }
-        if (old_count < 0 && atomicCompareExchangeExplicit(&s->count, &old_count, old_count + 1,
-                                                            memory_order_relaxed, memory_order_relaxed))
+        if (old_count < 0 && atomicCompareExchangeExplicit(&s->count, &old_count, old_count + 1, memory_order_relaxed,
+                                                           memory_order_relaxed))
         {
             return false;
         }
@@ -330,7 +328,7 @@ bool leightweightsemaphoreWait(wlsem_t *s)
 
 bool leightweightsemaphoreTryWait(wlsem_t *s)
 {
-#ifdef OS_WIN
+#if defined(OS_WIN) && ! defined(HAVE_STDATOMIC_H)
     intptr_t old_count;
 #else
     long old_count;
@@ -357,7 +355,7 @@ void leightweightsemaphoreSignal(wlsem_t *s, uint32_t count)
 {
     assert(count > 0);
 
-    long old_count  = atomicAddExplicit(&s->count, (long) count, memory_order_release);
+    long old_count = atomicAddExplicit(&s->count, (long) count, memory_order_release);
     long toRelease = -old_count < (long) count ? -old_count : (long) count;
     if (toRelease > 0)
     {
