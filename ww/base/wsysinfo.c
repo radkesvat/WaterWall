@@ -82,15 +82,17 @@ bool isSystemUnderLoad(double threshold)
     {
         if (PdhOpenQuery(NULL, 0, &cpu_query) != ERROR_SUCCESS)
         {
-            printError( "Failed to open PDH query\n");
-            return -1; // Error
+            printError("Failed to open PDH query\n");
+            // return -1; // Error
+            return 0;
         }
 
         if (PdhAddCounter(cpu_query, "\\Processor(_Total)\\% Processor Time", 0, &cpu_counter) != ERROR_SUCCESS)
         {
-            printError( "Failed to add counter\n");
+            printError("Failed to add counter\n");
             PdhCloseQuery(cpu_query);
-            return -1; // Error
+            // return -1; // Error
+            return 0;
         }
 
         initialized = 1;
@@ -99,17 +101,18 @@ bool isSystemUnderLoad(double threshold)
     // Collect the CPU data
     if (PdhCollectQueryData(cpu_query) != ERROR_SUCCESS)
     {
-        printError( "Failed to collect CPU query data\n");
-        return -1; // Error
+        printError("Failed to collect CPU query data\n");
+        // return -1; // Error
+        return 0;
     }
 
     // Retrieve the formatted CPU counter value
     PDH_FMT_COUNTERVALUE cpu_value;
     if (PdhGetFormattedCounterValue(cpu_counter, PDH_FMT_DOUBLE, NULL, &cpu_value) != ERROR_SUCCESS)
     {
-        printError( "Failed to get CPU counter value\n");
+        printError("Failed to get CPU counter value\n");
         // return -1; // Error
-        return 0; 
+        return 0;
     }
 
     // Check CPU usage against the threshold
@@ -124,9 +127,9 @@ bool isSystemUnderLoad(double threshold)
     mem_status.dwLength = sizeof(mem_status);
     if (! GlobalMemoryStatusEx(&mem_status))
     {
-        printError( "Failed to get memory status\n");
+        printError("Failed to get memory status\n");
         // return -1; // Error
-        return 0; 
+        return 0;
     }
 
     // Calculate memory usage as a percentage
