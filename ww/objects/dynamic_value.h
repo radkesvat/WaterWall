@@ -3,7 +3,7 @@
 
 /*
     This object is supposed to be kept on stack, but in can have allocated pointer,
-    therefore it is required to call dynamicvalueDestroy 
+    therefore it is required to call dynamicvalueDestroy
 */
 
 enum dynamic_value_status
@@ -16,18 +16,14 @@ enum dynamic_value_status
     kDvsMappedOption3,
     kDvsMappedOption4,
     kDvsMappedOption5
-
 };
 
 typedef struct dynamic_value_s
 {
-    enum dynamic_value_status status;
-    size_t                    value;
-    void                     *value_ptr;
+    int    status; // enum dynamic_value_status
+    size_t value;
+    void  *value_ptr;
 } dynamic_value_t;
-
-
-
 
 static void dynamicvalueDestroy(const dynamic_value_t dy)
 {
@@ -36,4 +32,3 @@ static void dynamicvalueDestroy(const dynamic_value_t dy)
         memoryFree(dy.value_ptr);
     }
 }
-
