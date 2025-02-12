@@ -1,0 +1,192 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  cpm-path: .cpm
+  cpm-key: waterwall-1.1.0-cpm
+
+jobs:
+  android:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [armeabi-v7a, arm64-v8a, x86, x86_64]
+    name: android-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -DANDROID_ABI=${{ matrix.arch }}
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake
+          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+  bsd:
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [freebsd, netbsd, openbsd]
+        arch: [arm64, x86_64]
+        include:
+          - preset: freebsd
+            version: "14.2"
+            install: sudo pkg install -y cmake perl5
+          - preset: netbsd
+            version: "10.1"
+            install: sudo pkgin -y install cmake perl
+          - preset: openbsd
+            version: "7.6"
+            install: sudo pkg_add cmake
+    name: ${{ matrix.preset }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - uses: cross-platform-actions/action@master
+        with:
+          operating_system: ${{ matrix.preset }}
+          architecture: ${{ matrix.arch }}
+          version: ${{ matrix.version }}
+          run: |
+            ${{ matrix.install }}
+            cmake -B build                           \
+              -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
+              -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+  cygwin:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - uses: cygwin/cygwin-install-action@v5
+        with:
+          packages: cmake gcc-core make perl
+      - name: Configure CMake
+        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
+        run: >
+          cmake -B build
+          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+  ios:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ios, ios_sim]
+    name: ${{ matrix.target }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - name: Configure CMake
+        run: >
+          cmake -B build -G Xcode
+          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/${{ matrix.target }}.cmake
+          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [clang, gcc]
+    name: linux-${{ matrix.cc }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - name: Configure CMake
+        run: >
+          cmake -B build
+          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+  msys2:
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [CLANG64, MINGW32, MINGW64, UCRT64]
+    name: msys2-${{ matrix.preset }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.preset }}
+          update: true
+          pacboy: >-
+            cmake:p
+            gcc:p
+            make:p
+      - name: Configure CMake
+        shell: msys2 {0}
+        run: >
+          cmake -B build
+          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ARM64, Win32, x64]
+    name: windows-${{ matrix.arch }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - name: Configure CMake
+        run: >
+          cmake -B build -A ${{ matrix.arch }}
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
+          -DOPENSSL_CONFIGURE_OPTIONS=no-asm
+          -DOPENSSL_CONFIGURE_VERBOSE=ON
