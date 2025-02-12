@@ -4,7 +4,7 @@
 #ifdef POOL_DEBUG
 #include "loggers/internal_logger.h"
 #endif
-#define GENERIC_POOL_DEFAULT_WIDTH ((unsigned long) ((RAM_PROFILE)))
+#define GENERIC_POOL_DEFAULT_WIDTH ((uint32_t) ((RAM_PROFILE)))
 
 /**
  * Creates a pool item using the provided create handler.
@@ -40,7 +40,7 @@ static void poolDestroyItemHandle(master_pool_t *pool, master_pool_item_t *item,
  */
 void genericpoolReCharge(generic_pool_t *pool)
 {
-    const size_t increase = min((pool->cap - pool->len), (pool->cap) / 2);
+    const uint32_t increase = min((pool->cap - pool->len), (pool->cap) / 2);
 
     masterpoolGetItems(pool->mp, (void const **) &(pool->available[pool->len]), increase, pool);
 
@@ -56,7 +56,7 @@ void genericpoolReCharge(generic_pool_t *pool)
  */
 void genericpoolShrink(generic_pool_t *pool)
 {
-    const size_t decrease = (pool->len < (pool->cap / 2) ? pool->len : (pool->cap / 2));
+    const uint32_t decrease = (pool->len < (pool->cap / 2) ? pool->len : (pool->cap / 2));
 
     masterpoolReuseItems(pool->mp, &(pool->available[pool->len - decrease]), decrease, pool);
 
