@@ -284,7 +284,7 @@ enum
 
 #define MUSTALIGN2(n, w)    assert(((w) & ((w) -1)) == 0); /* alignment w is not a power of two */
 
-#define ALIGN2(n, w)        (int64_t)(((uintptr_t)(n) + ((uintptr_t)(w) -1)) & ~(((uintptr_t)(w)) -1))
+#define ALIGN2(n, w)        (uintptr_t)(((uintptr_t)(n) + ((uintptr_t)(w) -1)) & ~(((uintptr_t)(w)) -1))
 
 #define memorySet           memset
 #define memoryMove          memmove
