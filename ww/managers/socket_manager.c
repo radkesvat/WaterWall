@@ -550,7 +550,7 @@ static void onAcceptTcpMultiPort(wio_t *io)
         return;
     }
 
-    distributeTcpSocket(io, (pbuf[2] << 8) | pbuf[3]);
+    distributeTcpSocket(io, (uint16_t)((pbuf[2] << 8) | pbuf[3]));
 #else
     onAcceptTcpSinglePort(io);
 #endif

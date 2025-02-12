@@ -91,7 +91,7 @@ int resolveAddr(const char *host, sockaddr_u *addr)
     }
     if (pai == NULL)
         pai = ais;
-    memoryCopy(addr, pai->ai_addr, pai->ai_addrlen);
+    memoryCopy(addr, pai->ai_addr, (size_t)pai->ai_addrlen);
     freeaddrinfo(ais);
     return 0;
 }
@@ -104,7 +104,7 @@ const char *sockaddrIp(sockaddr_u *addr, char *ip, int len)
     }
     else if (addr->sa.sa_family == AF_INET6)
     {
-        return inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip,  (unsigned int)len);
+        return inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip,  (socklen_t)len);
     }
     return ip;
 }
@@ -429,7 +429,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     listenfd = connfd = acceptfd = -1;
     struct sockaddr_in localaddr;
     socklen_t          addrlen = sizeof(localaddr);
-    memorySet(&localaddr, 0, addrlen);
+    memorySet(&localaddr, 0, (size_t)addrlen);
     localaddr.sin_family      = AF_INET;
     localaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     localaddr.sin_port        = 0;
