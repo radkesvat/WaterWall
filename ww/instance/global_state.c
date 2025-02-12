@@ -69,7 +69,7 @@ void globalStateSet(struct ww_global_state_s *state)
  */
 void globalstateUpdaeAllocationPadding(uint16_t padding)
 {
-    for (int wi = 0; wi < getWorkersCount(); wi++)
+    for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
         bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
     }
@@ -192,7 +192,7 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         initializeMasterPools();
 
-        for (unsigned int i = 0; i < WORKERS_COUNT; ++i)
+        for (wid_t i = 0; i < WORKERS_COUNT; ++i)
         {
             workerInit(getWorker(i), i);
         }

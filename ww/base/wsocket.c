@@ -1,5 +1,7 @@
 #include "wsocket.h"
+
 #include "loggers/internal_logger.h"
+#include "werr.h"
 
 #ifdef OS_WIN
 
@@ -136,11 +138,11 @@ void sockaddrSetPort(sockaddr_u *addr, int port)
 {
     if (addr->sa.sa_family == AF_INET)
     {
-        addr->sin.sin_port = htons(port);
+        addr->sin.sin_port = htons((unsigned short) port);
     }
     else if (addr->sa.sa_family == AF_INET6)
     {
-        addr->sin6.sin6_port = htons(port);
+        addr->sin6.sin6_port = htons((unsigned short) port);
     }
 }
 
@@ -211,7 +213,7 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
 #ifdef SOCK_CLOEXEC
     type |= SOCK_CLOEXEC;
 #endif
-    int sockfd = socket(localaddr->sa.sa_family, type, 0);
+    int sockfd = (int) socket(localaddr->sa.sa_family, type, 0);
     if (sockfd < 0)
     {
         printError("syscall return error, call: socket , value: %d\n", sockfd);
@@ -243,7 +245,7 @@ static int sockaddrConnect(sockaddr_u *peeraddr, int nonblock)
 {
     // socket -> nonblocking -> connect
     int ret    = 0;
-    int connfd = socket(peeraddr->sa.sa_family, SOCK_STREAM, 0);
+    int connfd = (int) socket(peeraddr->sa.sa_family, SOCK_STREAM, 0);
     if (connfd < 0)
     {
         printError("socket");
@@ -278,7 +280,7 @@ static int ListenFD(int sockfd)
         return sockfd;
     if (listen(sockfd, SOMAXCONN) < 0)
     {
-        
+
         printError("syscall return error, call: listen , value: %d\n", -1);
         return socketErrnoNegative(sockfd);
     }
@@ -432,7 +434,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     localaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     localaddr.sin_port        = 0;
     // listener
-    listenfd = socket(AF_INET, SOCK_STREAM, 0);
+    listenfd = (int) socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0)
     {
         printError("syscall return error , call: socket , value: %d\n", listenfd);
@@ -454,7 +456,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
         goto error;
     }
     // connector
-    connfd = socket(AF_INET, SOCK_STREAM, 0);
+    connfd = (int) socket(AF_INET, SOCK_STREAM, 0);
     if (connfd < 0)
     {
         printError("socket");
@@ -466,7 +468,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
         goto error;
     }
     // acceptor
-    acceptfd = accept(listenfd, (struct sockaddr *) &localaddr, &addrlen);
+    acceptfd = (int) accept(listenfd, (struct sockaddr *) &localaddr, &addrlen);
     if (acceptfd < 0)
     {
         printError("accept");
@@ -493,8 +495,9 @@ error:
     return -1;
 }
 
-bool verifyIPPort(const char *ipp){
-    char        *colon      = stringChr(ipp, ':');
+bool verifyIPPort(const char *ipp)
+{
+    char *colon = stringChr(ipp, ':');
     if (colon == NULL)
     {
         LOGE("verifyIPPort Error: could not find ':' in ip:port, value was: %s", ipp);
@@ -506,8 +509,8 @@ bool verifyIPPort(const char *ipp){
         LOGE("verifyIPPort Error: \"%s\" is not a valid ip address", ipp);
         return false;
     }
-    char *port_part   = colon + 1;
-    int   port = atoi(port_part);
+    char *port_part = colon + 1;
+    int   port      = atoi(port_part);
     if (port < 0 || port > 65535)
     {
         LOGE("verifyIPPort Error: \"%s\" is not a valid port number", port_part);
@@ -516,10 +519,9 @@ bool verifyIPPort(const char *ipp){
     return true;
 }
 
-
 bool verifyIPCdir(const char *ipc)
 {
-    unsigned int ipc_length = (unsigned int)stringLength(ipc);
+    unsigned int ipc_length = (unsigned int) stringLength(ipc);
     char        *slash      = stringChr(ipc, '/');
     if (slash == NULL)
     {

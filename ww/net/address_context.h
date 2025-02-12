@@ -311,7 +311,7 @@ static inline void addressContextClearIp(address_context_t *ctx)
  * @param host Pointer to host string.
  * @return IP type value (IPADDR_TYPE_V4 or IPADDR_TYPE_V6), or 0 if invalid.
  */
-static inline int getIpVersion(char *host)
+static inline uint8_t getIpVersion(char *host)
 {
     if (isIPVer4(host))
     {

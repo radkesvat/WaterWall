@@ -80,7 +80,7 @@ extern ww_global_state_t global_ww_state;
  */
 static inline wid_t getWorkersCount(void)
 {
-    return WORKERS_COUNT;
+    return (wid_t) WORKERS_COUNT;
 }
 
 /*!

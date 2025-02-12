@@ -2,7 +2,6 @@
 #include "watomic.h"
 #include "wmutex.h"
 
-
 // DEBUG_CHAN_LOG: define to enable debug logging of send and recv
 // #define DEBUG_CHAN_LOG
 
@@ -14,11 +13,11 @@
 // Note that Intel TBB uses 128 (max_nfs_size).
 // TODO: set value depending on target preprocessor information.
 
-typedef _Atomic(unsigned int) atomic_uint32_t;
+typedef _Atomic(unsigned int)       atomic_uint32_t;
 typedef _Atomic(unsigned long long) atomic_uint64_t;
 typedef _Atomic(unsigned long long) atomic_size_t_t;
-typedef _Atomic(long long) atomic_ssize_t;
-typedef _Atomic(unsigned char) atomic_uint8_t;
+typedef _Atomic(long long)          atomic_ssize_t;
+typedef _Atomic(unsigned char)      atomic_uint8_t;
 
 // ----------------------------------------------------------------------------
 // debugging
@@ -173,12 +172,12 @@ typedef struct Thr Thr;
 #ifdef COMPILER_MSVC
 struct Thr
 {
-    size_t                       id;
-    bool                         init;
-    atomic_bool                  closed;
-    wlsem_t                      sema;
+    size_t                            id;
+    bool                              init;
+    atomic_bool                       closed;
+    wlsem_t                           sema;
     MSVC_ATTR_ALIGNED_LINE_CACHE Thr *next; // list link
-    void                        *elemptr;
+    void                             *elemptr;
 };
 
 typedef struct WaitQ
@@ -403,7 +402,7 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
     if (atomicLoadExplicit(&c->qlen, memory_order_relaxed) < c->qcap)
     {
         // space available in message buffer -- enqueue
-        uint32_t i = atomicAddExplicit(&c->sendx, 1, memory_order_relaxed);
+        uint32_t i = (uint32_t) atomicAddExplicit(&c->sendx, 1, memory_order_relaxed);
         // copy *srcelemptr -> *dstelemptr
         void *dstelemptr = chan_bufptr(c, i);
         memoryCopy(dstelemptr, srcelemptr, c->elemsize);
@@ -508,7 +507,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
     if (atomicLoadExplicit(&c->qlen, memory_order_relaxed) > 0)
     {
         // Receive directly from queue
-        uint32_t i = atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
+        uint32_t i = (uint32_t)  atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
         if (i == c->qcap - 1)
             atomicStoreExplicit(&c->recvx, 0, memory_order_relaxed);
         atomicSubExplicit(&c->qlen, 1, memory_order_relaxed);
@@ -596,7 +595,7 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
         // assert_debug(atomicLoadExplicit(&c->qlen) == c->qcap); // queue is full
 
         // copy element from queue to receiver
-        uint32_t i = atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
+        uint32_t i = (uint32_t) atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
         if (i == c->qcap - 1)
         {
             atomicStoreExplicit(&c->recvx, 0, memory_order_relaxed);

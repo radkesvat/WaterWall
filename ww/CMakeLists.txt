@@ -480,7 +480,11 @@ if(NOT MSVC)
         -Wwrite-strings
         -Wunused-parameter
         -Wstrict-prototypes
-        
+        -Wconversion
+        -Wsign-conversion
+        -Wshorten-64-to-32
+
+
         -Wno-unused-function
         -Wno-unknown-pragmas
         -Wno-error=pragmas

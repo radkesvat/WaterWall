@@ -5,7 +5,6 @@
 #include "managers/node_manager.h"
 #include "tunnel.h"
 
-
 typedef struct pipetunnel_line_state_s
 {
     atomic_int   refc;
@@ -75,7 +74,7 @@ static void deinitializeLineState(pipetunnel_line_state_t *ls)
  */
 static void lock(pipetunnel_line_state_t *ls)
 {
-    int old_refc = atomicAddExplicit(&ls->refc, 1, memory_order_relaxed);
+    int old_refc = (int) atomicAddExplicit(&ls->refc, 1, memory_order_relaxed);
 
     (void) old_refc;
 }
@@ -87,7 +86,7 @@ static void lock(pipetunnel_line_state_t *ls)
  */
 static void unlock(pipetunnel_line_state_t *ls)
 {
-    int old_refc = atomicAddExplicit(&ls->refc, -1, memory_order_relaxed);
+    int old_refc = (int) atomicAddExplicit(&ls->refc, -1, memory_order_relaxed);
     if (old_refc == 1)
     {
         deinitializeLineState(ls);
@@ -122,12 +121,12 @@ static void onMsgReceivedUp(wevent_t *ev)
     pipetunnel_msg_event_t  *msg_ev = weventGetUserdata(ev);
     tunnel_t                *t      = msg_ev->tunnel;
     line_t                  *l      = msg_ev->ctx.line;
-    wid_t                    wid    = wloopGetWID(weventGetLoop(ev));
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l,t);
+    wid_t                    wid    = (wid_t) wloopGetWID(weventGetLoop(ev));
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
-    if (atomicLoadRelaxed(&(lstate->to_wid)) != wid)
+    if ((wid_t) atomicLoadRelaxed(&(lstate->to_wid)) != wid)
     {
-        sendMessageUp(lstate, msg_ev, atomicLoadRelaxed(&(lstate->to_wid)));
+        sendMessageUp(lstate, msg_ev, (wid_t) atomicLoadRelaxed(&(lstate->to_wid)));
         unlock(lstate);
         return;
     }
@@ -179,12 +178,12 @@ static void onMsgReceivedDown(wevent_t *ev)
     pipetunnel_msg_event_t  *msg_ev = weventGetUserdata(ev);
     tunnel_t                *t      = msg_ev->tunnel;
     line_t                  *l      = msg_ev->ctx.line;
-    wid_t                    wid    = wloopGetWID(weventGetLoop(ev));
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l,t);
+    wid_t                    wid    = (wid_t) wloopGetWID(weventGetLoop(ev));
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
-    if (atomicLoadRelaxed(&(lstate->from_wid)) != wid)
+    if ((wid_t) atomicLoadRelaxed(&(lstate->from_wid)) != wid)
     {
-        sendMessageDown(lstate, msg_ev, atomicLoadRelaxed(&(lstate->from_wid)));
+        sendMessageDown(lstate, msg_ev, (wid_t) atomicLoadRelaxed(&(lstate->from_wid)));
         unlock(lstate);
         return;
     }
@@ -233,7 +232,7 @@ static void sendMessageDown(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t 
 void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
 {
 
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -252,7 +251,7 @@ void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, lstate->to_wid);
+    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
 }
 
 /**
@@ -263,7 +262,7 @@ void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -282,7 +281,7 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, lstate->to_wid);
+    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
 }
 
 /**
@@ -293,7 +292,7 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -315,7 +314,7 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, lstate->to_wid);
+    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
     unlock(lstate);
 }
 
@@ -328,7 +327,7 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -348,7 +347,7 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, lstate->to_wid);
+    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
 }
 
 /**
@@ -359,7 +358,7 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload
  */
 void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -378,7 +377,7 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, lstate->to_wid);
+    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
 }
 
 /**
@@ -390,7 +389,7 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
 void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
 {
 
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -409,7 +408,7 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, lstate->to_wid);
+    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
 }
 
 /*
@@ -437,7 +436,7 @@ void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -457,7 +456,7 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, lstate->from_wid);
+    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
 }
 
 /**
@@ -468,7 +467,7 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -487,7 +486,7 @@ void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, lstate->from_wid);
+    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
     unlock(lstate);
 }
 
@@ -500,7 +499,7 @@ void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -520,7 +519,7 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *paylo
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, lstate->from_wid);
+    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
 }
 
 /**
@@ -531,7 +530,7 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *paylo
  */
 void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -550,7 +549,7 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, lstate->from_wid);
+    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
 }
 
 /**
@@ -561,7 +560,7 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
 {
-    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line,t);
+    pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
@@ -580,7 +579,7 @@ void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, lstate->from_wid);
+    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
 }
 
 /**
@@ -702,7 +701,7 @@ void pipetunnelDestroy(tunnel_t *t)
 void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 {
     tunnel_t                *parent_t = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
-    pipetunnel_line_state_t *ls     = (pipetunnel_line_state_t *) lineGetState(l,parent_t);
+    pipetunnel_line_state_t *ls       = (pipetunnel_line_state_t *) lineGetState(l, parent_t);
 
     if (ls->active)
     {

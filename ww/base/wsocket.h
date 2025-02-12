@@ -305,7 +305,7 @@ WW_INLINE int socketOptionLinger(int sockfd, int timeout DEFAULT(1))
     if (timeout >= 0)
     {
         linger.l_onoff  = 1;
-        linger.l_linger = timeout;
+        linger.l_linger = (unsigned short) timeout;
     }
     else
     {

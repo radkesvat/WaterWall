@@ -365,8 +365,8 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
 
     *ptr_pool = (buffer_pool_t)
     {
-        .cap = bufcount, .large_buffers_size = large_buffer_size, .small_buffers_size = small_buffer_size,
-        .free_threshold = max(bufcount / 2, (bufcount * 2) / 3),
+        .cap = (uint16_t) bufcount, .large_buffers_size = large_buffer_size, .small_buffers_size = small_buffer_size,
+        .free_threshold = (uint16_t) max(bufcount / 2, (bufcount * 2) / 3),
 
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
         .in_use = 0,

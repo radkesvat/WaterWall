@@ -648,7 +648,7 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
     if (ep)
     {
         // stURL->fields[WW_URL_SCHEME].off = sp - begin;
-        stURL->fields[WW_URL_SCHEME].len = ep - sp;
+        stURL->fields[WW_URL_SCHEME].len = (unsigned short)(ep - sp);
         sp                               = ep + 3;
     }
     // user:pswd@host:port
@@ -664,15 +664,15 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
         const char *pswd = stringChrLen(user, ':', pos - user);
         if (pswd)
         {
-            stURL->fields[WW_URL_PASSWORD].off = pswd + 1 - begin;
-            stURL->fields[WW_URL_PASSWORD].len = pos - pswd - 1;
+            stURL->fields[WW_URL_PASSWORD].off = (unsigned short) (pswd + 1 - begin);
+            stURL->fields[WW_URL_PASSWORD].len = (unsigned short) (pos - pswd - 1);
         }
         else
         {
             pswd = pos;
         }
-        stURL->fields[WW_URL_USERNAME].off = user - begin;
-        stURL->fields[WW_URL_USERNAME].len = pswd - user;
+        stURL->fields[WW_URL_USERNAME].off = (unsigned short) (user - begin);
+        stURL->fields[WW_URL_USERNAME].len = (unsigned short) (pswd - user);
         // @
         host = pos + 1;
     }
@@ -680,8 +680,8 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
     const char *port = stringChrLen(host, ':', ep - host);
     if (port)
     {
-        stURL->fields[WW_URL_PORT].off = port + 1 - begin;
-        stURL->fields[WW_URL_PORT].len = ep - port - 1;
+        stURL->fields[WW_URL_PORT].off = (unsigned short) (port + 1 - begin);
+        stURL->fields[WW_URL_PORT].len = (unsigned short) (ep - port - 1);
         // atoi
         for (unsigned short i = 1; i <= stURL->fields[WW_URL_PORT].len; ++i)
         {
@@ -702,8 +702,8 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
         }
     }
     // host
-    stURL->fields[WW_URL_HOST].off = host - begin;
-    stURL->fields[WW_URL_HOST].len = port - host;
+    stURL->fields[WW_URL_HOST].off = (unsigned short) (host - begin);
+    stURL->fields[WW_URL_HOST].len = (unsigned short) (port - host);
     if (ep == end)
         return 0;
     // /path
@@ -711,8 +711,8 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
     ep = strchr(sp, '?');
     if (ep == NULL)
         ep = end;
-    stURL->fields[WW_URL_PATH].off = sp - begin;
-    stURL->fields[WW_URL_PATH].len = ep - sp;
+    stURL->fields[WW_URL_PATH].off = (unsigned short) (sp - begin);
+    stURL->fields[WW_URL_PATH].len = (unsigned short) (ep - sp);
     if (ep == end)
         return 0;
     // ?query
@@ -720,15 +720,15 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
     ep = strchr(sp, '#');
     if (ep == NULL)
         ep = end;
-    stURL->fields[WW_URL_QUERY].off = sp - begin;
-    stURL->fields[WW_URL_QUERY].len = ep - sp;
+    stURL->fields[WW_URL_QUERY].off = (unsigned short) (sp - begin);
+    stURL->fields[WW_URL_QUERY].len = (unsigned short) (ep - sp);
     if (ep == end)
         return 0;
     // #fragment
     sp                                 = ep + 1;
     ep                                 = end;
-    stURL->fields[WW_URL_FRAGMENT].off = sp - begin;
-    stURL->fields[WW_URL_FRAGMENT].len = ep - sp;
+    stURL->fields[WW_URL_FRAGMENT].off = (unsigned short) (sp - begin);
+    stURL->fields[WW_URL_FRAGMENT].len = (unsigned short) (ep - sp);
     return 0;
 }
 

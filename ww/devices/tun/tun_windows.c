@@ -436,7 +436,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     WintunGetAdapterLUID(tdev->adapter_handle, &AddressRow->InterfaceLuid);
     AddressRow->Address.Ipv4.sin_family           = AF_INET;
     AddressRow->Address.Ipv4.sin_addr.S_un.S_addr = ip_binary;
-    AddressRow->OnLinkPrefixLength                = subnet;
+    AddressRow->OnLinkPrefixLength                = (uint8_t)subnet;
     AddressRow->DadState                          = IpDadStatePreferred;
     DWORD LastError                               = CreateUnicastIpAddressEntry(AddressRow);
     if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)

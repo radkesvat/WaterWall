@@ -13,7 +13,7 @@ void wireguarddeviceTunnelOnStart(tunnel_t *t)
     wgd_tstate_t *state = tunnelGetState(t);
 
     wireguard_device_t *device = (wireguard_device_t*) state;
-    for (int i = 0; i < WIREGUARD_MAX_PEERS; i++)
+    for (uint8_t i = 0; i < WIREGUARD_MAX_PEERS; i++)
     {
         wireguard_peer_t *peer = &device->peers[i];
         if (peer->valid)

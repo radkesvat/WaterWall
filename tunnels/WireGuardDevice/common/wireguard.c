@@ -378,7 +378,7 @@ bool wireguardCheckReplay(wireguard_keypair_t *keypair, uint64_t seq)
         if (seq > keypair->replay_counter)
         {
             // new larger sequence number
-            diff = seq - keypair->replay_counter;
+            diff = (uint32_t) (seq - keypair->replay_counter);
             if (diff < ReplayWindowSize)
             {
                 // In window
@@ -397,7 +397,7 @@ bool wireguardCheckReplay(wireguard_keypair_t *keypair, uint64_t seq)
         }
         else
         {
-            diff = keypair->replay_counter - seq;
+            diff = (uint32_t) (keypair->replay_counter - seq);
             if (diff < ReplayWindowSize)
             {
                 if (keypair->replay_bitmap & ((uint32_t) 1 << diff))

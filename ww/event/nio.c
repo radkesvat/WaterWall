@@ -81,7 +81,7 @@ static void nio_accept(wio_t *io)
     while (accept_cnt++ < 3)
     {
         addrlen = sizeof(sockaddr_u);
-        connfd  = accept(io->fd, io->peeraddr, &addrlen);
+        connfd  = (int) accept(io->fd, io->peeraddr, &addrlen);
         if (connfd < 0)
         {
             err = socketERRNO();

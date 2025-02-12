@@ -9,8 +9,8 @@ static void parsePortSection(tcplistener_tstate_t *state, const cJSON *settings)
     if ((cJSON_IsNumber(port_json) && (port_json->valuedouble != 0)))
     {
         // single port given as a number
-        state->listen_port_min = (int) port_json->valuedouble;
-        state->listen_port_max = (int) port_json->valuedouble;
+        state->listen_port_min = (uint16_t) port_json->valuedouble;
+        state->listen_port_max = (uint16_t) port_json->valuedouble;
     }
     else
     {
@@ -29,11 +29,11 @@ static void parsePortSection(tcplistener_tstate_t *state, const cJSON *settings)
                 }
                 if (i == 0)
                 {
-                    state->listen_port_min = (int) port_minmax->valuedouble;
+                    state->listen_port_min = (uint16_t) port_minmax->valuedouble;
                 }
                 else if (i == 1)
                 {
-                    state->listen_port_max = (int) port_minmax->valuedouble;
+                    state->listen_port_max = (uint16_t) port_minmax->valuedouble;
                 }
 
                 i++;

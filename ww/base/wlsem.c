@@ -262,7 +262,7 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
     int spin = LSEMA_MAX_SPINS;
     while (--spin >= 0)
     {
-        old_count = atomicLoadExplicit(&s->count, memory_order_relaxed);
+        old_count = (long) atomicLoadExplicit(&s->count, memory_order_relaxed);
         if (old_count > 0 && atomicCompareExchangeExplicit(&s->count, &old_count, old_count - 1, memory_order_acq_rel,
                                                            memory_order_relaxed))
         {
@@ -274,7 +274,7 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
         //__asm__ volatile("" ::: "memory");
         atomicThreadFence(memory_order_acquire);
     }
-    old_count = atomicSubExplicit(&s->count, 1, memory_order_acquire);
+    old_count = (long) atomicSubExplicit(&s->count, 1, memory_order_acquire);
     if (old_count > 0)
     {
         return true;
@@ -297,7 +297,7 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
     // need to release the semaphore too.
     while (1)
     {
-        old_count = atomicLoadExplicit(&s->count, memory_order_acquire);
+        old_count = (long) atomicLoadExplicit(&s->count, memory_order_acquire);
         if (old_count >= 0 && semaTryWait(&s->sema))
         {
             return true;
@@ -333,7 +333,7 @@ bool leightweightsemaphoreTryWait(wlsem_t *s)
 #else
     long old_count;
 #endif
-    old_count = atomicLoadExplicit(&s->count, memory_order_relaxed);
+    old_count = (long) atomicLoadExplicit(&s->count, memory_order_relaxed);
 
     while (old_count > 0)
     {
@@ -355,7 +355,7 @@ void leightweightsemaphoreSignal(wlsem_t *s, uint32_t count)
 {
     assert(count > 0);
 
-    long old_count = atomicAddExplicit(&s->count, (long) count, memory_order_release);
+    long old_count = (long) atomicAddExplicit(&s->count, (long) count, memory_order_release);
     long toRelease = -old_count < (long) count ? -old_count : (long) count;
     if (toRelease > 0)
     {
@@ -369,7 +369,7 @@ size_t leightweightsemaphoreApproxAvail(wlsem_t *s)
 #ifdef OS_UNIX
     ssize_t count = atomicLoadExplicit(&s->count, memory_order_relaxed);
 #else
-    long count = atomicLoadExplicit(&s->count, memory_order_relaxed);
+    long count = (long) atomicLoadExplicit(&s->count, memory_order_relaxed);
 #endif
     return count > 0 ? (size_t) (count) : 0;
 }

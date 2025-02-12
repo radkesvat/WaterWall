@@ -235,7 +235,7 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
             colon_ptr[0]                = '\0';
             char    *peer_endpoint_ip   = peer_endpoint;
             char    *peer_endpoint_port = colon_ptr + 1;
-            uint16_t port               = atoi(peer_endpoint_port);
+            uint16_t port               = (uint16_t) atoi(peer_endpoint_port);
             if (port == 0)
             {
                 LOGF("Error: peer_endpoint_port is not a valid port number");

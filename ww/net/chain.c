@@ -46,7 +46,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
         tc->packet_lines = memoryAllocate(sizeof(line_t) * tc->workers_count);
     }
 
-    for (uint32_t i = 0; i < tc->workers_count; i++)
+    for (wid_t i = 0; i < tc->workers_count; i++)
     {
         tc->line_pools[i] = genericpoolCreateWithDefaultAllocatorAndCapacity(
             tc->masterpool_line_pool, sizeof(line_t) + tc->sum_line_state_size, (8) + GSTATE.ram_profile);

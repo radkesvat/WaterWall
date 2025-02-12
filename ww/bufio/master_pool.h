@@ -91,7 +91,7 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
     if (atomicLoadExplicit(&(pool->len), memory_order_relaxed) > 0)
     {
         mutexLock(&(pool->mutex));
-        const uint32_t tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
+        const uint32_t tmp_len  = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
         const uint32_t consumed = min(tmp_len, count);
 
         if (consumed > 0)
@@ -141,7 +141,7 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
 
     mutexLock(&(pool->mutex));
 
-    const uint32_t tmp_len  = atomicLoadExplicit(&(pool->len), memory_order_relaxed);
+    const uint32_t tmp_len  = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
     const uint32_t consumed = min(pool->cap - tmp_len, count);
 
     atomicAddExplicit(&(pool->len), consumed, memory_order_relaxed);

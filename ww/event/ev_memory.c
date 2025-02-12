@@ -15,11 +15,11 @@ static atomic_long s_alloc_cnt = (0);
 static atomic_long s_free_cnt = (0);
 
 long eventloopAllocCount(void) {
-    return s_alloc_cnt;
+    return (long) s_alloc_cnt;
 }
 
 long eventloopFreeCount(void) {
-    return s_free_cnt;
+    return (long) s_free_cnt;
 }
 
 
