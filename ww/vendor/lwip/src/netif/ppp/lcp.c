@@ -2272,7 +2272,7 @@ endswitch:
 	/*
 	 * Copy the Nak'd options from the nak buffer to the caller's buffer.
 	 */
-	*lenp = int(nakoutp - (u_char*)nakp->payload);
+	*lenp = (int)(nakoutp - (u_char*)nakp->payload);
 	MEMCPY(inp, nakp->payload, *lenp);
 	break;
     case CONFREJ:
