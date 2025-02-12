@@ -48,11 +48,11 @@ unsigned long long getHRTimeUs(void)
 #elif HAVE_CLOCK_GETTIME
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * (unsigned long long) 1000000 + ts.tv_nsec / 1000;
+    return (unsigned long long) ((ts.tv_sec *  1000000) + (ts.tv_nsec / 1000));
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return tv.tv_sec * (unsigned long long) 1000000 + tv.tv_usec;
+    return (unsigned long long)((tv.tv_sec *  1000000) + tv.tv_usec);
 #endif
 }
 
@@ -74,7 +74,7 @@ datetime_t datetimeNow(void)
     struct timeval tv;
     gettimeofday(&tv, NULL);
     datetime_t dt = datetimeLocalTime(tv.tv_sec);
-    dt.ms         = tv.tv_usec / 1000;
+    dt.ms         = (int) (tv.tv_usec / 1000);
     return dt;
 #endif
 }
@@ -218,7 +218,7 @@ int monthATOI(const char *month)
 {
     for (size_t i = 0; i < 12; ++i)
     {
-        if (strnicmp(month, s_months[i], strlen(month)) == 0)
+        if (strnicmp(month, s_months[i], stringLength(month)) == 0)
             return (int) (i + 1);
     }
     return 0;
@@ -234,7 +234,7 @@ int weekdayATOI(const char *weekday)
 {
     for (size_t i = 0; i < 7; ++i)
     {
-        if (strnicmp(weekday, s_weekdays[i], strlen(weekday)) == 0)
+        if (strnicmp(weekday, s_weekdays[i], stringLength(weekday)) == 0)
             return (int) (i);
     }
     return 0;

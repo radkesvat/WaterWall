@@ -35,9 +35,9 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
     // The LWIP IP layer wants to send an IP packet out over the interface - we need to encrypt and send it to the peer
     message_transport_data_t *hdr;
     err_t                     result;
-    size_t                    unpadded_len;
-    size_t                    padded_len;
-    size_t                    header_len = 16;
+    uint32_t                  unpadded_len;
+    uint32_t                  padded_len;
+    uint32_t                  header_len = 16;
     uint8_t                  *dst;
     uint32_t                  now;
     wireguard_keypair_t      *keypair = &peer->curr_keypair;
@@ -68,8 +68,8 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
                 unpadded_len = 0;
             }
             padded_len = (unpadded_len + 15) & 0xFFFFFFF0; // Round up to next 16 byte boundary
-            assert(padded_len + WIREGUARD_AUTHTAG_LEN <= 1516); 
-            assert(padded_len + WIREGUARD_AUTHTAG_LEN <= SMALL_BUFFER_SIZE); 
+            assert(padded_len + WIREGUARD_AUTHTAG_LEN <= 1516);
+            assert(padded_len + WIREGUARD_AUTHTAG_LEN <= SMALL_BUFFER_SIZE);
             sbufSetLength(q, padded_len + WIREGUARD_AUTHTAG_LEN); // 1500 is the max packet size which is divided by 16
 
             // The buffer needs to be allocated from "transport" pool to leave room for LwIP generated IP headers
@@ -170,9 +170,9 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         return;
     }
-    wgd_tstate_t *state  = tunnelGetState(t);
-    wireguard_device_t *dev  = tunnelGetState(t);
-    uint8_t            *data = sbufGetMutablePtr(buf);
+    wgd_tstate_t       *state = tunnelGetState(t);
+    wireguard_device_t *dev   = tunnelGetState(t);
+    uint8_t            *data  = sbufGetMutablePtr(buf);
 
     mutexLock(&state->mutex);
 

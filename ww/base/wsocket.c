@@ -100,11 +100,11 @@ const char *sockaddrIp(sockaddr_u *addr, char *ip, int len)
 {
     if (addr->sa.sa_family == AF_INET)
     {
-        return inet_ntop(AF_INET, &addr->sin.sin_addr, ip, len);
+        return inet_ntop(AF_INET, &addr->sin.sin_addr, ip, (unsigned int) len);
     }
     else if (addr->sa.sa_family == AF_INET6)
     {
-        return inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip, len);
+        return inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip,  (unsigned int)len);
     }
     return ip;
 }
@@ -188,15 +188,15 @@ const char *sockaddrStr(sockaddr_u *addr, char *buf, int len)
     uint16_t port                = 0;
     if (addr->sa.sa_family == AF_INET)
     {
-        inet_ntop(AF_INET, &addr->sin.sin_addr, ip, len);
+        inet_ntop(AF_INET, &addr->sin.sin_addr, ip, (unsigned int) len);
         port = ntohs(addr->sin.sin_port);
-        snprintf(buf, len, "%s:%d", ip, port);
+        snprintf(buf, (size_t) len, "%s:%d", ip, port);
     }
     else if (addr->sa.sa_family == AF_INET6)
     {
-        inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip, len);
+        inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip, (unsigned int) len);
         port = ntohs(addr->sin6.sin6_port);
-        snprintf(buf, len, "[%s]:%d", ip, port);
+        snprintf(buf, (size_t) len, "[%s]:%d", ip, port);
     }
 #ifdef ENABLE_UDS
     else if (addr->sa.sa_family == AF_UNIX)

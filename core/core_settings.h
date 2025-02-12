@@ -31,9 +31,9 @@ struct core_settings_s
     bool  dns_log_console;
     char *dns_log_file_fullpath;
 
-    int   workers_count;
-    int   ram_profile;
-    char *libs_path;
+    unsigned int workers_count;
+    unsigned int ram_profile;
+    char        *libs_path;
 
     vec_config_path_t config_paths;
 };

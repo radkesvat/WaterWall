@@ -22,7 +22,7 @@ enum
 #define i_val  struct widle_item_s *
 #include "stc/hmap.h"
 
-typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct  widle_table_s
+typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct widle_table_s
 {
     wloop_t      *loop;
     wtimer_t     *idle_handle;
@@ -32,7 +32,7 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct  widle_table_s
     uint64_t      last_update_ms;
     uintptr_t     memptr;
 
-} GNU_ATTR_ALIGNED_LINE_CACHE widle_table_t ;
+} GNU_ATTR_ALIGNED_LINE_CACHE widle_table_t;
 
 void idleCallBack(wtimer_t *timer);
 
@@ -52,19 +52,19 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     }
 
     // allocate memory, placing widle_table_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate((size_t) memsize);
 
     // align c to line cache boundary
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 
     widle_table_t *newtable = (widle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    *newtable = (widle_table_t){.memptr         = ptr,
-                                .loop           = loop,
-                                .idle_handle    = wtimerAdd(loop, idleCallBack, 1000, INFINITE),
-                                .hqueue         = heapq_idles_t_with_capacity(kVecCap),
-                                .hmap           = hmap_idles_t_with_capacity(kVecCap),
-                                .last_update_ms = wloopNowMS(loop)};
+    *newtable = (widle_table_t) {.memptr         = ptr,
+                                 .loop           = loop,
+                                 .idle_handle    = wtimerAdd(loop, idleCallBack, 1000, INFINITE),
+                                 .hqueue         = heapq_idles_t_with_capacity(kVecCap),
+                                 .hmap           = hmap_idles_t_with_capacity(kVecCap),
+                                 .last_update_ms = wloopNowMS(loop)};
 
     mutexInit(&(newtable->mutex));
     weventSetUserData(newtable->idle_handle, newtable);
@@ -77,12 +77,12 @@ idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expire
     idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
     mutexLock(&(self->mutex));
 
-    *item = (idle_item_t){.expire_at_ms = wloopNowMS(getWorkerLoop(tid)) + age_ms,
-                          .hash         = key,
-                          .tid          = tid,
-                          .userdata     = userdata,
-                          .cb           = cb,
-                          .table        = self};
+    *item = (idle_item_t) {.expire_at_ms = wloopNowMS(getWorkerLoop(tid)) + age_ms,
+                           .hash         = key,
+                           .tid          = tid,
+                           .userdata     = userdata,
+                           .cb           = cb,
+                           .table        = self};
 
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
     {

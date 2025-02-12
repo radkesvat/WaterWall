@@ -312,7 +312,7 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     new_node->hash_name = hash_name;
     new_node->hash_type = hash_type;
     new_node->hash_next = hash_next;
-    new_node->version   = node_version;
+    new_node->version   = (uint32_t) node_version;
 
     new_node->node_json           = node_json;
     new_node->node_settings_json  = cJSON_GetObjectItemCaseSensitive(node_json, "settings");

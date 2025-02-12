@@ -50,8 +50,8 @@ bool isSystemUnderLoad(double threshold)
         sscanf(line, "cpu %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld", &user, &nice, &system, &idle, &iowait,
                &irq, &softirq, &steal, &guest, &guest_nice);
 
-        total_cpu_time = user + nice + system + idle + iowait + irq + softirq + steal;
-        idle_cpu_time  = idle + iowait;
+        total_cpu_time = (double) (user + nice + system + idle + iowait + irq + softirq + steal);
+        idle_cpu_time  = (double) (idle + iowait);
 
         load = 100.0 * (1.0 - (idle_cpu_time / total_cpu_time));
     }

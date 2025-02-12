@@ -302,15 +302,24 @@ endif()
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 
-target_include_directories(ww PUBLIC ${LWIP_INCLUDE_DIRS})
-target_compile_definitions(ww PUBLIC ${LWIP_DEFINITIONS})
-target_sources(ww PRIVATE ${lwipnoapps_SRCS})
+
+add_library(ww_lwip STATIC 
+    ${lwipnoapps_SRCS}
+)
+target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
+
+target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
 
 if(UNIX)
-    target_sources(ww PRIVATE  ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
+    target_sources(ww_lwip PRIVATE  ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
 else()
-    target_sources(ww PRIVATE  ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
+    target_sources(ww_lwip PRIVATE  ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
 endif()
+
+target_compile_options(ww_lwip PUBLIC ${LWIP_COMPILER_FLAGS})
+
+set(LIBS ${LIBS} ww_lwip)
+
 
 # ...existing commented lwip libs...
 
@@ -481,16 +490,20 @@ if(NOT MSVC)
         -Wunused-parameter
         -Wstrict-prototypes
         -Wconversion
-        -Wsign-conversion
-        -Wshorten-64-to-32
+
 
 
         -Wno-unused-function
-        -Wno-unknown-pragmas
+        -Wno-unknown-pragmas 
         -Wno-error=pragmas
         -Wno-unknown-warning-option
         -Wno-pragmas
     )
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(ww PRIVATE -Wshorten-64-to-32)
+endif()
+    
 endif()
 
 if(MSVC)

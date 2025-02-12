@@ -6,22 +6,22 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
 {
     // Send to last know port, not the connect port
     // TODO: Support DSCP and ECN - lwip requires this set on PCB globally, not per packet
-    wgd_tstate_t *ts = (wgd_tstate_t *) device;
-    tunnel_t* tunnel = ts->tunnel;
-    line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
+    wgd_tstate_t *ts     = (wgd_tstate_t *) device;
+    tunnel_t     *tunnel = ts->tunnel;
+    line_t       *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), &peer->ip, peer->port);
-    tunnelNextUpStreamPayload(tunnel,line,q);
+    tunnelNextUpStreamPayload(tunnel, line, q);
     return ERR_OK;
     // return udpSendTo(device->udp_pcb, q, &peer->ip, peer->port);
 }
 
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port)
 {
-    wgd_tstate_t *ts = (wgd_tstate_t *) device;
-    tunnel_t* tunnel = ts->tunnel;
-    line_t* line = tunnelchainGetPacketLine(tunnel->chain,getWID());
+    wgd_tstate_t *ts     = (wgd_tstate_t *) device;
+    tunnel_t     *tunnel = ts->tunnel;
+    line_t       *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), ipaddr, port);
-    tunnelNextUpStreamPayload(tunnel,line,q);
+    tunnelNextUpStreamPayload(tunnel, line, q);
     return ERR_OK;
     // return udpSendTo(device->udp_pcb, q, ipaddr, port);
 }
@@ -69,13 +69,12 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
     size_t            public_key_len = sizeof(public_key);
     wireguard_peer_t *peer           = NULL;
 
-
     if (stringLength((const char *) p->public_key) != BASE64_ENCODE_OUT_SIZE(public_key_len))
     {
         return ERR_ARG;
     }
 
-    wwBase64Decode((const char *) p->public_key, stringLength((const char *) p->public_key), public_key);
+    wwBase64Decode((const char *) p->public_key, (unsigned int) stringLength((const char *) p->public_key), public_key);
 
     // See if the peer is already registered
     peer = peerLookupByPubkey(device, public_key);

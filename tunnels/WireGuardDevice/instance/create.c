@@ -53,8 +53,8 @@ static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_ini
         exit(1);
     }
 
-    if (wwBase64Decode((char *) data->private_key, stringLength((char *) data->private_key), private_key) ==
-        WIREGUARD_PRIVATE_KEY_LEN)
+    if (wwBase64Decode((char *) data->private_key, (unsigned int) stringLength((char *) data->private_key),
+                       private_key) == WIREGUARD_PRIVATE_KEY_LEN)
     {
 
         // Per-wireguard ts/device setup
@@ -92,7 +92,7 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 
     state->tunnel = t;
     mutexInit(&state->mutex);
-    
+
     char *device_private_key = NULL;
 
     const cJSON *settings = node->node_settings_json;

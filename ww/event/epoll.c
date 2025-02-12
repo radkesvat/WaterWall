@@ -94,10 +94,10 @@ int iowatcherDelEvent(wloop_t* loop, int fd, int selected_events) {
     }
     // now events
     if (selected_events & WW_READ) {
-        ee.events &= ~EPOLLIN;
+        ee.events &= (uint32_t)~EPOLLIN;
     }
     if (selected_events & WW_WRITE) {
-        ee.events &= ~EPOLLOUT;
+        ee.events &= (uint32_t)~EPOLLOUT;
     }
     int op = ee.events == 0 ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;
     epoll_ctl(epoll_ctx->epfd, op, fd, &ee);
@@ -111,7 +111,7 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
     epoll_ctx_t* epoll_ctx = (epoll_ctx_t*)loop->iowatcher;
     if (epoll_ctx == NULL)  return 0;
     if (epoll_ctx->events.size == 0) return 0;
-    int nepoll = epoll_wait(epoll_ctx->epfd, epoll_ctx->events.ptr, epoll_ctx->events.size, timeout);
+    int nepoll = epoll_wait(epoll_ctx->epfd, epoll_ctx->events.ptr, (int)epoll_ctx->events.size, timeout);
     if (nepoll < 0) {
         if (errno == EINTR) {
             return 0;

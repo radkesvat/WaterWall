@@ -251,7 +251,7 @@ static void parseWhiteListOption(socket_filter_option_t *option)
 {
     assert(option->white_list_raddr != NULL);
 
-    int   len = 0;
+    unsigned int   len = 0;
     char *cur = NULL;
 
     cur = option->white_list_raddr[len];
@@ -263,7 +263,7 @@ static void parseWhiteListOption(socket_filter_option_t *option)
 
     option->white_list_parsed_length = len;
     option->white_list_parsed        = memoryAllocate(sizeof(option->white_list_parsed[0]) * len);
-    for (int i = 0; i < len; i++)
+    for (unsigned int i = 0; i < len; i++)
     {
         cur              = option->white_list_raddr[i];
         int parse_result = parseIPWithSubnetMask(cur,&(option->white_list_parsed[i].ip_bytes_buf), 
@@ -303,7 +303,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
 
     if (option.balance_group_name)
     {
-        hash_t         name_hash = calcHashBytes(option.balance_group_name, strlen(option.balance_group_name));
+        hash_t         name_hash = calcHashBytes(option.balance_group_name, stringLength(option.balance_group_name));
         widle_table_t *b_table   = NULL;
         mutexLock(&(state->mutex));
 
@@ -616,7 +616,7 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
                                       uint8_t *ports_overlapped, uint16_t port_max)
 {
     const int length           = (port_max - port_min);
-    filter->listen_ios         = (wio_t **) memoryAllocate(sizeof(wio_t *) * (length + 1));
+    filter->listen_ios         = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t)length + 1));
     filter->listen_ios[length] = 0x0;
     int i                      = 0;
     for (uint16_t p = port_min; p < port_max; p++)
@@ -824,7 +824,7 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
 {
     udpsock_t *socket     = weventGetUserdata(io);
     uint16_t   local_port = sockaddrPort((sockaddr_u *) wioGetLocaladdrU(io));
-    uint8_t    target_wid = local_port % getWorkersCount();
+    wid_t    target_wid = (wid_t) local_port % getWorkersCount();
 
     udp_payload_t item = (udp_payload_t){.sock           = socket,
                                          .buf            = buf,
@@ -906,7 +906,7 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
 static void writeUdpThisLoop(wevent_t *ev)
 {
     udp_payload_t *upl    = weventGetUserdata(ev);
-    size_t         nwrite = wioWrite(upl->sock->io, upl->buf);
+    int         nwrite = wioWrite(upl->sock->io, upl->buf);
     (void) nwrite;
     udppayloadDestroy(upl);
 }
@@ -915,7 +915,7 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
 {
     if (wid_from == state->wid)
     {
-        size_t nwrite = wioWrite(socket_io->io, buf);
+        int nwrite = wioWrite(socket_io->io, buf);
         (void) nwrite;
 
         return;

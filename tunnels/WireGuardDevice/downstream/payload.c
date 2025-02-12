@@ -66,7 +66,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     wireguard_keypair_t *keypair;
     uint64_t             nonce;
     uint8_t             *src;
-    size_t               src_len;
+    uint32_t             src_len;
     sbuf_t              *buf = NULL;
     ip4_hdr_t           *iphdr;
     ip_addr_t            dest;
@@ -88,7 +88,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
 
             nonce   = U8TO64_LITTLE(data_hdr->counter);
             src     = &data_hdr->enc_packet[0];
-            src_len = data_len;
+            src_len = (uint32_t) data_len;
 
             // We don't know the unpadded size until we have decrypted the packet and validated/inspected the IP header
             buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
@@ -217,7 +217,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     {
         // Could not locate valid keypair for remote index
     }
-    if(buf != NULL)
+    if (buf != NULL)
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
     }

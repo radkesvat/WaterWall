@@ -139,10 +139,10 @@ int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t
 		padded_len = (ad_len + 15) & 0xFFFFFFF0; // Round up to next 16 bytes
 		poly1305_update(&poly1305_state, zero, padded_len - ad_len);
 		// - The ciphertext (note the Poly1305 function is still run on the AAD and the ciphertext, not the plaintext)
-		poly1305_update(&poly1305_state, src, dst_len);
+		poly1305_update(&poly1305_state, src, (size_t) dst_len);
 		// - padding2 -- the padding is up to 15 zero bytes, and it brings the total length so far to an integral multiple of 16.
-		padded_len = (dst_len + 15) & 0xFFFFFFF0; // Round up to next 16 bytes
-		poly1305_update(&poly1305_state, zero, padded_len - dst_len);
+		padded_len = ((unsigned int)dst_len + 15) & 0xFFFFFFF0; // Round up to next 16 bytes
+		poly1305_update(&poly1305_state, zero, padded_len - (size_t)dst_len);
 		// - The length of the additional data in octets (as a 64-bit little-endian integer)
 		U64TO8_LITTLE(block, (uint64_t)ad_len);
 		poly1305_update(&poly1305_state, block, sizeof(block));
@@ -159,7 +159,7 @@ int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t
 		if (wCryptoEqual(mac, src + dst_len, POLY1305_MAC_SIZE)) {
 			// mac is correct - do the decryption
 			// Next, the ChaCha20 encryption function is called to decrypt the ciphertext, using the same key and nonce, and with the initial counter set to 1.
-			chacha20(&chacha20_state, dst, src, dst_len);
+			chacha20(&chacha20_state, dst, src, (uint32_t)dst_len);
 			result = true;
 		}
 	}
@@ -176,7 +176,7 @@ int xchacha20poly1305Encrypt(uint8_t *dst, const uint8_t *src, size_t src_len, c
 	uint64_t new_nonce;
 
 	new_nonce = U8TO64_LITTLE(nonce + 16);
-    uint32_t wireguard_way_of_nonce[8] = {new_nonce >> 32, new_nonce & 0xFFFFFFFF,0,0 };
+	uint32_t wireguard_way_of_nonce[8] = {(uint32_t)(new_nonce >> 32), (uint32_t)(new_nonce & 0xFFFFFFFF), 0, 0 };
 
 	
 	hchacha20(subkey, nonce, key);
@@ -193,7 +193,7 @@ int xchacha20poly1305Decrypt(uint8_t *dst, const uint8_t *src, size_t src_len, c
 
 	new_nonce = U8TO64_LITTLE(nonce + 16);
 
-    uint32_t wireguard_way_of_nonce[8] = {new_nonce >> 32, new_nonce & 0xFFFFFFFF,0,0 };
+	uint32_t wireguard_way_of_nonce[8] = {(uint32_t)(new_nonce >> 32), (uint32_t)(new_nonce & 0xFFFFFFFF),0,0 };
 	
 	hchacha20(subkey, nonce, key);
 	result = chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len,  ( const unsigned char *)wireguard_way_of_nonce, subkey);

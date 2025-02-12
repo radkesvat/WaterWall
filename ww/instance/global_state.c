@@ -88,14 +88,14 @@ static void initializeShortCuts(void)
 
     static const int kShourtcutsCount = 5;
 
-    const int total_workers = WORKERS_COUNT;
+    const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
 
-    void **space = (void **) memoryAllocate(sizeof(void *) * kShourtcutsCount * total_workers);
+    void **space = (void **) memoryAllocate(sizeof(void *) * (uintptr_t)kShourtcutsCount * total_workers);
 
-    GSTATE.shortcut_loops                = (wloop_t **) (space + (0ULL * total_workers));
-    GSTATE.shortcut_buffer_pools         = (buffer_pool_t **) (space + (1ULL * total_workers));
-    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (2ULL * total_workers));
-    GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (3ULL * total_workers));
+    GSTATE.shortcut_loops                = (wloop_t **) (space + (0 * total_workers));
+    GSTATE.shortcut_buffer_pools         = (buffer_pool_t **) (space + (1 * total_workers));
+    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (2 * total_workers));
+    GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (3 * total_workers));
 
     for (unsigned int tid = 0; tid < GSTATE.workers_count; tid++)
     {
@@ -192,7 +192,7 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         initializeMasterPools();
 
-        for (wid_t i = 0; i < WORKERS_COUNT; ++i)
+        for (wid_t i = 0; i < getWorkersCount(); ++i)
         {
             workerInit(getWorker(i), i);
         }
@@ -231,7 +231,7 @@ void createGlobalState(const ww_construction_data_t init_data)
     // Spawn all workers except main worker which is current thread
     {
         worker_t *worker      = getWorker(0);
-        GSTATE.main_thread_id = getTID();
+        GSTATE.main_thread_id = (uint64_t)getTID();
 #ifdef OS_WIN
         worker->thread = (wthread_t) GetCurrentThread();
 #else

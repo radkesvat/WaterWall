@@ -47,7 +47,7 @@ static inline int atype##_empty(atype* p) {\
 \
 static inline type* atype##_at(atype* p, int pos) {\
     if (pos < 0) {\
-        pos += p->size;\
+        pos += (int) p->size;\
     }\
     assert(pos >= 0 && (size_t) pos < p->size);\
     return p->ptr + pos;\
@@ -63,8 +63,8 @@ static inline type* atype##_back(atype* p) {\
 \
 static inline void atype##_init(atype* p, int maxsize) {\
     p->size = 0;\
-    p->maxsize = maxsize;\
-    EVENTLOOP_ALLOC(p->ptr, sizeof(type) * maxsize);\
+    p->maxsize = (size_t) maxsize;\
+    EVENTLOOP_ALLOC(p->ptr, sizeof(type) * (size_t)maxsize);\
 }\
 \
 static inline void atype##_clear(atype* p) {\
@@ -79,8 +79,8 @@ static inline void atype##_cleanup(atype* p) {\
 \
 static inline void atype##_resize(atype* p, int maxsize) {\
     if (maxsize == 0) maxsize = ARRAY_INIT_SIZE;\
-    p->ptr = (type*)eventloopRealloc(p->ptr, sizeof(type) * maxsize, sizeof(type) * p->maxsize);\
-    p->maxsize = maxsize;\
+    p->ptr = (type*)eventloopRealloc(p->ptr, sizeof(type) * (size_t) maxsize, sizeof(type) * p->maxsize);\
+    p->maxsize = (size_t) maxsize;\
 }\
 \
 static inline void atype##_double_resize(atype* p) {\
@@ -102,14 +102,14 @@ static inline void atype##_pop_back(atype* p) {\
 \
 static inline void atype##_add(atype* p, type* elem, int pos) {\
     if (pos < 0) {\
-        pos += p->size;\
+        pos += (int) p->size;\
     }\
     assert(pos >= 0 && (size_t)pos <= p->size);\
     if (p->size == p->maxsize) {\
         atype##_double_resize(p);\
     }\
     if ((size_t)pos < p->size) {\
-        memoryMove(p->ptr + pos+1, p->ptr + pos, sizeof(type) * (p->size - pos));\
+        memoryMove(p->ptr + pos+1, p->ptr + pos, sizeof(type) * (p->size - (size_t) pos));\
     }\
     p->ptr[pos] = *elem;\
     p->size++;\
@@ -117,18 +117,18 @@ static inline void atype##_add(atype* p, type* elem, int pos) {\
 \
 static inline void atype##_del(atype* p, int pos) {\
     if (pos < 0) {\
-        pos += p->size;\
+        pos += (int) p->size;\
     }\
     assert(pos >= 0 && (size_t)pos < p->size);\
     p->size--;\
     if ((size_t)pos < p->size) {\
-        memoryMove(p->ptr + pos, p->ptr + pos+1, sizeof(type) * (p->size - pos));\
+        memoryMove(p->ptr + pos, p->ptr + pos+1, sizeof(type) * (p->size - (size_t) pos));\
     }\
 }\
 \
 static inline void atype##_del_nomove(atype* p, int pos) {\
     if (pos < 0) {\
-        pos += p->size;\
+        pos += (int) p->size;\
     }\
     assert(pos >= 0 && (size_t) pos < p->size);\
     p->size--;\
@@ -139,10 +139,10 @@ static inline void atype##_del_nomove(atype* p, int pos) {\
 \
 static inline void atype##_swap(atype* p, int pos1, int pos2) {\
     if (pos1 < 0) {\
-        pos1 += p->size;\
+        pos1 += (int) p->size;\
     }\
     if (pos2 < 0) {\
-        pos2 += p->size;\
+        pos2 += (int) p->size;\
     }\
     type tmp = p->ptr[pos1];\
     p->ptr[pos1] = p->ptr[pos2];\

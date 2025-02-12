@@ -6,7 +6,7 @@
 #define DEFAULT_INTERNAL_LOG_FILE       ""
 #define DEFAULT_INTERNAL_ENABLE_CONSOLE true
 #define DEFAULT_CORE_LOG_LEVEL          "INFO"
-#define DEFAULT_CORE_LOG_FILE           "core.log"  // Changed from .json to .log
+#define DEFAULT_CORE_LOG_FILE           "core.log" // Changed from .json to .log
 #define DEFAULT_CORE_ENABLE_CONSOLE     true
 #define DEFAULT_NETWORK_LOG_LEVEL       "INFO"
 #define DEFAULT_NETWORK_LOG_FILE        "network.log"
@@ -129,7 +129,7 @@ static void parseLogPartOfJson(cJSON *log_obj)
         settings->dns_log_console      = DEFAULT_DNS_ENABLE_CONSOLE;
         settings->internal_log_console = DEFAULT_INTERNAL_ENABLE_CONSOLE;
     }
-    
+
     // Construct full paths
     settings->core_log_file_fullpath     = stringConcat(settings->log_path, settings->core_log_file);
     settings->network_log_file_fullpath  = stringConcat(settings->log_path, settings->network_log_file);
@@ -151,7 +151,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
         if (cJSON_IsString(path) && path->valuestring != NULL)
         {
             had_child          = true;
-            unsigned long size = strlen(path->valuestring) + 1;
+            unsigned long size = stringLength(path->valuestring) + 1;
             char         *buf  = memoryAllocate(size);
 #if defined(OS_UNIX)
             strcpy(buf, path->valuestring);
@@ -174,14 +174,14 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
-        if (! getIntFromJsonObjectOrDefault(&(settings->workers_count), misc_obj, "workers", getNCPU()))
+        if (! getIntFromJsonObjectOrDefault((int *) &(settings->workers_count), misc_obj, "workers", getNCPU()))
         {
             printf("workers unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
         }
         // user could just enter 0 as value
         if (settings->workers_count <= 0)
         {
-            settings->workers_count = getNCPU();
+            settings->workers_count = (unsigned int) getNCPU();
         }
 
         const cJSON *json_ram_profile = cJSON_GetObjectItemCaseSensitive(misc_obj, "ram-profile");
@@ -256,7 +256,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     else
     {
         settings->libs_path     = stringDuplicate(DEFAULT_LIBS_PATH);
-        settings->workers_count = getNCPU();
+        settings->workers_count = (unsigned int) getNCPU();
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
     }
 }

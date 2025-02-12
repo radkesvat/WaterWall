@@ -178,17 +178,17 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
         int64_t blocktime_us = blocktime_ms * 1000;
         if (loop->timers.root)
         {
-            int64_t min_timeout = TIMER_ENTRY(loop->timers.root)->next_timeout - loop->cur_hrtime;
-            blocktime_us        = min(blocktime_us, min_timeout);
+            uint64_t min_timeout = TIMER_ENTRY(loop->timers.root)->next_timeout - loop->cur_hrtime;
+            blocktime_us        = min(blocktime_us, (int64_t)min_timeout);
         }
         if (loop->realtimers.root)
         {
-            int64_t min_timeout = TIMER_ENTRY(loop->realtimers.root)->next_timeout - wloopNowUS(loop);
-            blocktime_us        = min(blocktime_us, min_timeout);
+            uint64_t min_timeout = TIMER_ENTRY(loop->realtimers.root)->next_timeout - wloopNowUS(loop);
+            blocktime_us        = min(blocktime_us, (int64_t)min_timeout);
         }
         if (blocktime_us < 0)
             goto process_timers;
-        blocktime_ms = (int32_t) (blocktime_us / 1000 + 1);
+        blocktime_ms = (int32_t) ((blocktime_us / 1000) + 1);
         blocktime_ms = min(blocktime_ms, timeout_ms);
     }
 
@@ -198,7 +198,7 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
     }
     else
     {
-        hv_msleep(blocktime_ms);
+        hv_msleep((unsigned int)blocktime_ms);
     }
     wloopUpdateTime(loop);
     // wakeup by wloopStop
@@ -213,7 +213,7 @@ process_timers:
         ntimers = wloopProcessTimers(loop);
     }
 
-    int npendings = loop->npendings;
+    uint32_t npendings = loop->npendings;
     if (npendings == 0)
     {
         if (loop->nidles)
@@ -347,7 +347,7 @@ void wloopPostEvent(wloop_t *loop, wevent_t *ev)
     }
 #if defined(OS_UNIX) && HAVE_EVENTFD
     uint64_t count = 1;
-    nwrite         = write(loop->eventfds[EVENTFDS_WRITE_INDEX], &count, sizeof(count));
+    nwrite         = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], &count, sizeof(count));
 #elif defined(OS_UNIX) && HAVE_PIPE
     nwrite = (int) write(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1);
 #else
@@ -472,7 +472,7 @@ wloop_t *wloopCreate(int flags, buffer_pool_t *swimmingpool, long wid)
     wloop_t *loop;
     EVENTLOOP_ALLOC_SIZEOF(loop);
     wloopInit(loop);
-    loop->flags |= flags;
+    loop->flags |= (uint32_t)flags;
     loop->bufpool = swimmingpool;
     loop->wid     = wid;
     // wlogd("wloopCreate tid=%ld", loop->tid);
@@ -613,17 +613,17 @@ void wloopUpdateTime(wloop_t *loop)
 
 uint64_t wloopNow(wloop_t *loop)
 {
-    return loop->start_ms / 1000 + (loop->cur_hrtime - loop->start_hrtime) / 1000000;
+    return (loop->start_ms / 1000) + ((loop->cur_hrtime - loop->start_hrtime) / 1000000);
 }
 
 uint64_t wloopNowMS(wloop_t *loop)
 {
-    return loop->start_ms + (loop->cur_hrtime - loop->start_hrtime) / 1000;
+    return loop->start_ms + ((loop->cur_hrtime - loop->start_hrtime) / 1000);
 }
 
 uint64_t wloopNowUS(wloop_t *loop)
 {
-    return loop->start_ms * 1000 + (loop->cur_hrtime - loop->start_hrtime);
+    return (loop->start_ms * 1000) + (loop->cur_hrtime - loop->start_hrtime);
 }
 
 uint64_t wloopNowLoopRunTime(wloop_t *loop)
@@ -634,13 +634,13 @@ uint64_t wloopNowLoopRunTime(wloop_t *loop)
 uint64_t wioGetLastReadTime(wio_t *io)
 {
     wloop_t *loop = io->loop;
-    return loop->start_ms + (io->last_read_hrtime - loop->start_hrtime) / 1000;
+    return loop->start_ms + ((io->last_read_hrtime - loop->start_hrtime) / 1000);
 }
 
 uint64_t wioGetLastWriteTime(wio_t *io)
 {
     wloop_t *loop = io->loop;
-    return loop->start_ms + (io->last_write_hrtime - loop->start_hrtime) / 1000;
+    return loop->start_ms + ((io->last_write_hrtime - loop->start_hrtime) / 1000);
 }
 
 long wloopPID(wloop_t *loop)
@@ -856,7 +856,7 @@ static inline wio_t *__wio_get(wloop_t *loop, int fd)
 {
     if (fd >= (int) loop->ios.maxsize)
     {
-        int newsize = (int) ceil2e(fd);
+        int newsize = (int) ceil2e((unsigned int)fd);
         newsize     = max(newsize, IO_ARRAY_INIT_SIZE);
         io_array_resize(&loop->ios, newsize > fd ? newsize : 2 * fd);
     }
@@ -1159,12 +1159,12 @@ wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e typ
     io->io_type = type;
     if (side == WIO_SERVER_SIDE)
     {
-        wioSetLocaladdr(io, &addr.sa, sockaddrLen(&addr));
+        wioSetLocaladdr(io, &addr.sa, (int)sockaddrLen(&addr));
         io->priority = WEVENT_HIGH_PRIORITY;
     }
     else
     {
-        wioSetPeerAddr(io, &addr.sa, sockaddrLen(&addr));
+        wioSetPeerAddr(io, &addr.sa, (int)sockaddrLen(&addr));
     }
     return io;
 }

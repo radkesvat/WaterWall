@@ -55,8 +55,8 @@ static inline type* qtype##_back(qtype* p) {\
 static inline void qtype##_init(qtype* p, int maxsize) {\
     p->_offset = 0;\
     p->size = 0;\
-    p->maxsize = maxsize;\
-    EVENTLOOP_ALLOC(p->ptr, sizeof(type) * maxsize);\
+    p->maxsize = (size_t)maxsize;\
+    EVENTLOOP_ALLOC(p->ptr, sizeof(type) * (size_t)maxsize);\
 }\
 \
 static inline void qtype##_clear(qtype* p) {\
@@ -72,8 +72,8 @@ static inline void qtype##_cleanup(qtype* p) {\
 \
 static inline void qtype##_resize(qtype* p, int maxsize) {\
     if (maxsize == 0) maxsize = QUEUE_INIT_SIZE;\
-    p->ptr = (type*)eventloopRealloc(p->ptr, sizeof(type) * maxsize, sizeof(type) * p->maxsize);\
-    p->maxsize = maxsize;\
+    p->ptr = (type*)eventloopRealloc(p->ptr, sizeof(type) * (size_t)maxsize, sizeof(type) * p->maxsize);\
+    p->maxsize = (size_t)maxsize;\
 }\
 \
 static inline void qtype##_double_resize(qtype* p) {\

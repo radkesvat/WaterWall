@@ -75,5 +75,5 @@ context_t *contextqueuePop(context_queue_t *self)
 */
 size_t contextqueueLen(context_queue_t *self)
 {
-    return queue_t_size(&self->q);
+    return (size_t) (queue_t_size(&self->q));
 }

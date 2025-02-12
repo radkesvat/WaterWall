@@ -109,11 +109,11 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     const cJSON *wlist          = cJSON_GetObjectItemCaseSensitive(settings, "whitelist");
     if (cJSON_IsArray(wlist))
     {
-        size_t len = cJSON_GetArraySize(wlist);
+        int len = cJSON_GetArraySize(wlist);
         if (len > 0)
         {
-            char **list = (char **) memoryAllocate(sizeof(char *) * (len + 1));
-            memorySet((void *) list, 0, sizeof(char *) * (len + 1));
+            char **list = (char **) memoryAllocate(sizeof(char *) * (((size_t)len) + 1));
+            memorySet((void *) list, 0, sizeof(char *) * ((size_t)len + 1));
             list[len]              = 0x0;
             int          i         = 0;
             const cJSON *list_item = NULL;

@@ -89,7 +89,7 @@ int blake2sInit(blake2s_ctx_t *ctx, size_t outlen, const unsigned char *key, siz
 
 	for (i = 0; i < 8; i++)             // state, "param block"
 		ctx->h[i] = blake2s_iv[i];
-	ctx->h[0] ^= 0x01010000 ^ (keylen << 8) ^ outlen;
+	ctx->h[0] ^= 0x01010000 ^ (((uint32_t) keylen) << 8) ^ ((uint32_t) outlen);
 
 	ctx->t[0] = 0;                      // input count low word
 	ctx->t[1] = 0;                      // input count high word
@@ -113,8 +113,8 @@ int blake2sUpdate(blake2s_ctx_t *ctx, const unsigned char *in, size_t inlen)
 
 	for (i = 0; i < inlen; i++) {
 		if (ctx->c == 64) {             // buffer full ?
-			ctx->t[0] += ctx->c;        // add counters
-			if (ctx->t[0] < ctx->c)     // carry overflow ?
+			ctx->t[0] += (uint32_t)ctx->c;        // add counters
+			if (ctx->t[0] < (uint32_t)ctx->c)     // carry overflow ?
 				ctx->t[1]++;            // high word
 			blake2s_compress(ctx, 0);   // compress (not last)
 			ctx->c = 0;                 // counter to zero
@@ -130,8 +130,8 @@ int blake2sFinal(blake2s_ctx_t *ctx, unsigned char *out)
 {
 	size_t i;
 
-	ctx->t[0] += ctx->c;                // mark last block offset
-	if (ctx->t[0] < ctx->c)             // carry overflow
+	ctx->t[0] += (uint32_t)ctx->c;                // mark last block offset
+	if (ctx->t[0] < (uint32_t)ctx->c)             // carry overflow
 		ctx->t[1]++;                    // high word
 
 	while (ctx->c < 64)                 // fill up with zeros

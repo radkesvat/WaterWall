@@ -91,7 +91,7 @@ void wwMD5Encode(unsigned char *output,unsigned int *input,unsigned int len) {
         output[j] = input[i] & 0xFF;
         output[j+1] = (input[i] >> 8) & 0xFF;
         output[j+2] = (input[i] >> 16) & 0xFF;
-        output[j+3] = (input[i] >> 24) & 0xFF;
+        output[j+3] = (unsigned char)(input[i] >> 24) & 0xFF;
         i++;
         j+=4;
     }
@@ -197,7 +197,11 @@ void wwMD5(unsigned char* input, unsigned int inputlen, unsigned char digest[16]
 }
 
 static inline char i2hex(unsigned char i) {
-    return i < 10 ? i + '0' : i - 10 + 'a';
+    if(i<10){
+        return (char) i+'0';
+    }else{
+        return (char) (i-(char)10)+'a';
+    }
 }
 
 void wwMD5Hex(unsigned char* input, unsigned int inputlen, char* output, unsigned int outputlen) {

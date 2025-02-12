@@ -11,7 +11,7 @@ node_t nodeTcpConnectorGet(void)
              .type                  = stringDuplicate(type_name),
              .next                  = NULL,
              .hash_name             = 0,
-             .hash_type             = calcHashBytes(type_name, strlen(type_name)),
+             .hash_type             = calcHashBytes(type_name, stringLength(type_name)),
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = tcpconnectorTunnelCreate,

@@ -62,7 +62,7 @@ char *stringReverse(char *str)
 
 char *stringConcat(const char *s1, const char *s2)
 {
-    char *result = memoryAllocate(strlen(s1) + strlen(s2) + 1); // +1 for the null-terminator
+    char *result = memoryAllocate(stringLength(s1) + stringLength(s2) + 1); // +1 for the null-terminator
     strcpy(result, s1);
     strcat(result, s2);
     return result;
@@ -75,7 +75,7 @@ char *stringDuplicate(const char *src)
         return NULL;
     }
 
-    size_t length = strlen(src) + 1;
+    size_t length = stringLength(src) + 1;
     char  *dup    = (char *) memoryAllocate(length);
     if (dup == NULL)
     {
@@ -210,7 +210,7 @@ char *stringNewWithoutSpace(const char *str)
         }
     }
 
-    char *result = (char *) memoryAllocate((new_len + 1) * sizeof(char));
+    char *result = (char *) memoryAllocate((size_t)(new_len + 1) * sizeof(char));
     if (result == NULL)
     {
         return NULL;
@@ -258,8 +258,8 @@ char *readFile(const char *const path)
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET); /* same as rewind(f); */
 
-    char  *string = memoryAllocate(fsize + 1);
-    size_t count  = fread(string, fsize, 1, f);
+    char  *string = memoryAllocate((size_t) (fsize + 1));
+    size_t count  = fread(string, (size_t) fsize, 1, f);
     if (count == 0)
     {
         memoryFree(string);
@@ -431,7 +431,7 @@ size_t getFileSize(const char *filepath)
     struct stat st;
     memorySet(&st, 0, sizeof(st));
     stat(filepath, &st);
-    return st.st_size;
+    return (size_t) st.st_size;
 }
 #if defined(OS_DARWIN) // i cant believe mac has no header for this, afaik
 int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
@@ -442,7 +442,7 @@ char *getExecuteablePath(char *buf, int size)
 #ifdef OS_WIN
     GetModuleFileName(NULL, buf, size);
 #elif defined(OS_LINUX)
-    if (readlink("/proc/self/exe", buf, size) == -1)
+    if (readlink("/proc/self/exe", buf, (size_t) size) == -1)
     {
         return NULL;
     }
@@ -462,7 +462,7 @@ char *getExecuteableDir(char *buf, int size)
         *pos = '\0';
 
 #if defined(OS_UNIX)
-        strncpy(buf, filepath, size);
+        strncpy(buf, filepath, (long unsigned int) size);
 #else
         strncpy_s(buf, size + 1, filepath, size);
 #endif
@@ -479,7 +479,7 @@ char *getExecuteableFile(char *buf, int size)
     {
 
 #if defined(OS_UNIX)
-        strncpy(buf, pos + 1, size);
+        strncpy(buf, pos + 1, (unsigned long) size);
 #else
         strncpy_s(buf, size + 1, pos + 1, size);
 #endif
@@ -489,7 +489,7 @@ char *getExecuteableFile(char *buf, int size)
 
 char *getRunDir(char *buf, int size)
 {
-    return getcwd(buf, size);
+    return getcwd(buf, (size_t) size);
 }
 
 int randomRange(int min, int max)
@@ -500,7 +500,7 @@ int randomRange(int min, int max)
     if (s_seed == 0)
     {
         s_seed = (int) time(NULL);
-        srand(s_seed);
+        srand((unsigned int) s_seed);
     }
 
     int _rand = rand();
@@ -558,7 +558,7 @@ size_t stringToSize(const char *str)
     {
         if (c >= '0' && c <= '9')
         {
-            n = n * 10 + c - '0';
+            n = n * 10 + (uint64_t) (c - '0');
         }
         else
         {
@@ -648,7 +648,7 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
     if (ep)
     {
         // stURL->fields[WW_URL_SCHEME].off = sp - begin;
-        stURL->fields[WW_URL_SCHEME].len = (unsigned short)(ep - sp);
+        stURL->fields[WW_URL_SCHEME].len = (unsigned short) (ep - sp);
         sp                               = ep + 3;
     }
     // user:pswd@host:port
@@ -657,11 +657,11 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
         ep = end;
     const char *user = sp;
     const char *host = sp;
-    const char *pos  = stringChrLen(sp, '@', ep - sp);
+    const char *pos  = stringChrLen(sp, '@', (size_t) (ep - sp));
     if (pos)
     {
         // user:pswd
-        const char *pswd = stringChrLen(user, ':', pos - user);
+        const char *pswd = stringChrLen(user, ':', (size_t) (pos - user));
         if (pswd)
         {
             stURL->fields[WW_URL_PASSWORD].off = (unsigned short) (pswd + 1 - begin);
@@ -677,7 +677,7 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
         host = pos + 1;
     }
     // port
-    const char *port = stringChrLen(host, ':', ep - host);
+    const char *port = stringChrLen(host, ':', (size_t) (ep - host));
     if (port)
     {
         stURL->fields[WW_URL_PORT].off = (unsigned short) (port + 1 - begin);
@@ -685,7 +685,7 @@ int stringToUrl(hurl_t *stURL, const char *strURL)
         // atoi
         for (unsigned short i = 1; i <= stURL->fields[WW_URL_PORT].len; ++i)
         {
-            stURL->port = stURL->port * 10 + (port[i] - '0');
+            stURL->port = (unsigned short) ((stURL->port * 10) + (port[i] - '0'));
         }
     }
     else

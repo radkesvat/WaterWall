@@ -293,7 +293,11 @@ void wwSHA1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]) {
 }
 
 static inline char i2hex(unsigned char i) {
-    return i < 10 ? i + '0' : i - 10 + 'a';
+    if(i<10){
+        return (char) i +'0';
+    }else{
+        return (char) (i-(char)10)+'a';
+    }
 }
 
 void wwSHA1Hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t outputlen) {

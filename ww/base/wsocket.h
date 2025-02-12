@@ -442,7 +442,7 @@ static inline int parseIPWithSubnetMask( const char *input,struct in6_addr *base
             printError("Invalid subnet mask length.\n");
             return -1;
         }
-        uint32_t       mask      = prefix_length > 0 ? htonl(~((1 << (32 - prefix_length)) - 1)) : 0;
+        uint32_t       mask      = prefix_length > 0 ? htonl((uint32_t)~((1 << (32 - prefix_length)) - 1)) : 0;
         struct in_addr mask_addr = {.s_addr = mask};
         memoryCopy(subnet_mask, &mask_addr, 4);
         return 4;
@@ -461,7 +461,7 @@ static inline int parseIPWithSubnetMask( const char *input,struct in6_addr *base
         for (int i = 0; i < 16; i++)
         {
             int bits                     = prefix_length >= 8 ? 8 : prefix_length;
-            ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (0xFF << (8 - bits));
+            ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (uint8_t)(0xFF << (8 - bits));
             prefix_length -= bits;
         }
 

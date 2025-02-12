@@ -37,7 +37,7 @@ static void defaultDestroyHandle(master_pool_t *pool, master_pool_item_t *item, 
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 {
 
-    pool_width = max(1, pool_width);
+    pool_width = max((uint32_t)1, pool_width);
     // half of the pool is used, other half is free at startup
     pool_width = 2 * pool_width;
 
@@ -56,7 +56,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     }
 
     // allocate memory, placing master_pool_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate((size_t) memsize);
 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 

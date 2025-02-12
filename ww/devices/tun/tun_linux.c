@@ -19,8 +19,6 @@ struct msg_event
     sbuf_t       *buf;
 };
 
-
-
 // Allocate memory for message pool handle
 static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
@@ -53,7 +51,7 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -69,14 +67,14 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     tun_device_t *tdev           = userdata;
     wid_t         distribute_tid = 0;
     sbuf_t       *buf;
-    ssize_t       nread;
+    int           nread;
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
         buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
         assert(sbufGetRightCapacity(buf) >= kReadPacketSize);
 
-        nread = read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
+        nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
 
         if (nread == 0)
         {
@@ -88,7 +86,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
         if (nread < 0)
         {
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-            LOGE("TunDevice: reading a packet from TUN device failed, code: %d", (int) nread);
+            LOGE("TunDevice: reading a packet from TUN device failed, code: %d",  nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             {
                 continue;
@@ -97,7 +95,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             return 0;
         }
 
-        sbufSetLength(buf, nread);
+        sbufSetLength(buf, (uint32_t)nread);
 
         if (TUN_LOG_EVERYTHING)
         {
@@ -324,27 +322,27 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                          bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
         );
-    
-    bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())), 
-    bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    bufferpoolUpdateAllocationPaddings(writer_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())), 
-    bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+    bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+
+    bufferpoolUpdateAllocationPaddings(writer_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
-                           .running               = false,
-                           .up                    = false,
-                           .routine_reader        = routineReadFromTun,
-                           .routine_writer        = routineWriteToTun,
-                           .handle                = fd,
-                           .read_event_callback   = cb,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = NULL,
-                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                           .reader_buffer_pool    = reader_bpool,
-                           .writer_buffer_pool    = writer_bpool};
+    *tdev = (tun_device_t) {.name                  = stringDuplicate(ifr.ifr_name),
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromTun,
+                            .routine_writer        = routineWriteToTun,
+                            .handle                = fd,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = NULL,
+                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                            .reader_buffer_pool    = reader_bpool,
+                            .writer_buffer_pool    = writer_bpool};
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 

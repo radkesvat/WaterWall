@@ -60,7 +60,7 @@ static void initLogger(logger_t *logger)
 logger_t *loggerCreate(void)
 {
     // init gmtoff here
-    time_t                         ts = time(NULL);
+    time_t                        ts = time(NULL);
     static thread_local struct tm local_tm;
 #ifdef OS_UNIX
     localtime_r(&ts, &local_tm);
@@ -196,12 +196,11 @@ void loggerEnableColor(logger_t *logger, int on)
 
 void loggerSetFile(logger_t *logger, const char *filepath)
 {
-    // when path ends with / means no log file 
+    // when path ends with / means no log file
 
-        
-    if(strrchr(filepath,'/') == filepath + strlen(filepath) - 1 || strlen(filepath) == 0)
+    if (strrchr(filepath, '/') == filepath + stringLength(filepath) - 1 || stringLength(filepath) == 0)
     {
-        if(logger->fp_)
+        if (logger->fp_)
         {
             fclose(logger->fp_);
             logger->fp_ = NULL;
@@ -246,7 +245,7 @@ void loggerSetMaxFileSizeByStr(logger_t *logger, const char *str)
         unit = *(e - 1);
     else
         unit = *e;
-    unsigned long long filesize = num;
+    unsigned long long filesize = (unsigned long long) num;
     switch (unit)
     {
     case 'K':
@@ -298,7 +297,7 @@ static void logfile_name(const char *filepath, time_t ts, char *buf, int len)
 #else
     localtime_s(&tm, &ts);
 #endif
-    snprintf(buf, len, "%s.%04d%02d%02d.log", filepath, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    snprintf(buf, (size_t) len, "%s.%04d%02d%02d.log", filepath, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
 }
 #if defined(__GNUC__) && ! defined(__clang__)
 #pragma GCC diagnostic pop
@@ -306,10 +305,11 @@ static void logfile_name(const char *filepath, time_t ts, char *buf, int len)
 
 static FILE *shiftLogFile(logger_t *logger)
 {
-    time_t ts_now        = time(NULL);
-    int    interval_days = logger->last_logfile_ts == 0 ? 0
-                                                        : (int) ((ts_now + s_gmtoff) / SECONDS_PER_DAY -
-                                                           (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY);
+    time_t ts_now = time(NULL);
+    int    interval_days =
+        logger->last_logfile_ts == 0
+               ? 0
+               : (int) ((ts_now + s_gmtoff) / SECONDS_PER_DAY - (logger->last_logfile_ts + s_gmtoff) / SECONDS_PER_DAY);
     if (logger->fp_ == NULL || interval_days > 0)
     {
         // close old logfile
@@ -363,7 +363,7 @@ static FILE *shiftLogFile(logger_t *logger)
     if (logger->fp_ && --logger->can_write_cnt < 0)
     {
         fseek(logger->fp_, 0, SEEK_END);
-        unsigned long long filesize = ftell(logger->fp_);
+        unsigned long long filesize = (unsigned long long) ftell(logger->fp_);
         if (filesize > logger->max_filesize)
         {
             fclose(logger->fp_);
@@ -388,7 +388,7 @@ static FILE *shiftLogFile(logger_t *logger)
         }
         else
         {
-            logger->can_write_cnt = (int)((logger->max_filesize - filesize) / logger->bufsize);
+            logger->can_write_cnt = (int) ((logger->max_filesize - filesize) / logger->bufsize);
         }
     }
 
@@ -400,7 +400,7 @@ void loggerWrite(logger_t *logger, const char *buf, int len)
     FILE *fp = shiftLogFile(logger);
     if (fp)
     {
-        fwrite(buf, 1, len, fp);
+        fwrite(buf, 1, (size_t) len, fp);
         if (logger->enable_fsync)
         {
             fflush(fp);
@@ -418,7 +418,7 @@ static int i2a(int i, char *buf, int len)
         }
         else
         {
-            buf[l] = i % 10 + '0';
+            buf[l] = (char) (i % 10) + '0';
             i /= 10;
         }
     }
@@ -442,7 +442,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     sec   = tm.wSecond;
     us    = tm.wMilliseconds * 1000;
 #else
-    struct timeval                 tv;
+    struct timeval                tv;
     static thread_local struct tm tm;
     getTimeOfDay(&tv, NULL);
     time_t tt = tv.tv_sec;
@@ -453,7 +453,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     hour  = tm.tm_hour;
     min   = tm.tm_min;
     sec   = tm.tm_sec;
-    us    = tv.tv_usec;
+    us    = (int) tv.tv_usec;
 #endif
 
     const char *pcolor = "";
@@ -474,12 +474,12 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     mutexLock(&logger->mutex_);
 
     char *buf     = logger->buf;
-    int   bufsize = logger->bufsize;
+    int   bufsize = (int)logger->bufsize;
     int   len     = 0;
 
     if (logger->enable_color)
     {
-        len = snprintf(buf, bufsize, "%s", pcolor);
+        len = snprintf(buf, (size_t) bufsize, "%s", pcolor);
     }
 
     const char *p = logger->format;
@@ -525,7 +525,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
                     }
                     break;
                 case 's': {
-                    len += vsnprintf(buf + len, bufsize - len, fmt, ap);
+                    len += vsnprintf(buf + len, (size_t)(bufsize - len), fmt, ap);
                 }
                 break;
                 case '%':
@@ -544,15 +544,15 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     }
     else
     {
-        len += snprintf(buf + len, bufsize - len, "%04d-%02d-%02d %02d:%02d:%02d.%03d %s ", year, month, day, hour, min,
+        len += snprintf(buf + len, (size_t)(bufsize - len), "%04d-%02d-%02d %02d:%02d:%02d.%03d %s ", year, month, day, hour, min,
                         sec, us / 1000, plevel);
 
-        len += vsnprintf(buf + len, bufsize - len, fmt, ap);
+        len += vsnprintf(buf + len, (size_t) (bufsize - len), fmt, ap);
     }
 
     if (logger->enable_color)
     {
-        len += snprintf(buf + len, bufsize - len, "%s", CLR_CLR);
+        len += snprintf(buf + len, (size_t) (bufsize - len), "%s", CLR_CLR);
     }
 
     if (len < bufsize)
@@ -598,16 +598,15 @@ void loggerDestroyDefaultLogger(void)
 void stdoutLogger(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    ssize_t count = write(fileno(stdout), buf, len);
+    ssize_t count = write(fileno(stdout), buf, (size_t) (len));
     (void) count;
 }
 
 void stderrLogger(int loglevel, const char *buf, int len)
 {
     (void) loglevel;
-    ssize_t count = write(fileno(stderr), buf, len);
+    ssize_t count = write(fileno(stderr), buf, (size_t) (len));
     (void) count;
-
 }
 
 void fileLogger(int loglevel, const char *buf, int len)

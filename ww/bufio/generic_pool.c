@@ -89,7 +89,7 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
                                            PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h)
 {
 
-    pool_width = max(1, pool_width);
+    pool_width = max((uint32_t)1, pool_width);
 
     // half of the pool is used, other half is free at startup
     pool_width = 2 * pool_width;

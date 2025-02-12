@@ -171,12 +171,12 @@ static int __nio_read(wio_t *io, void *buf, unsigned int len)
         //             nread = splice(io->fd, NULL,io->pfd_w,0, len, SPLICE_F_NONBLOCK);
         //         }else
         // #endif
-        nread = (int) recv(io->fd, buf, (int) len, 0);
+        nread = (int) recv(io->fd, buf, (size_t) len, 0);
         break;
     case WIO_TYPE_UDP: // udp can also be more than 1472 bytes
     case WIO_TYPE_IP: {
         socklen_t addrlen = sizeof(sockaddr_u);
-        nread             = (int) recvfrom(io->fd, buf, (int) len, 0, io->peeraddr, &addrlen);
+        nread             = (int) recvfrom(io->fd, buf, (size_t) len, 0, io->peeraddr, &addrlen);
     }
     break;
     default:
@@ -203,15 +203,15 @@ static int __nio_write(wio_t *io, const void *buf, int len)
 #ifdef MSG_NOSIGNAL
         flag |= MSG_NOSIGNAL;
 #endif
-        nwrite = (int) send(io->fd, buf, len, flag);
+        nwrite = (int) send(io->fd, buf, (size_t)len, flag);
     }
     break;
     case WIO_TYPE_UDP:
     case WIO_TYPE_IP:
-        nwrite = (int) sendto(io->fd, buf, len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
+        nwrite = (int) sendto(io->fd, buf, (size_t)len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
         break;
     default:
-        nwrite = (int) write(io->fd, buf, len);
+        nwrite = (int) write(io->fd, buf, (size_t)len);
         break;
     }
     // wlogd("write retval=%d", nwrite);
@@ -292,7 +292,7 @@ static void nio_read(wio_t *io)
     // }
     // #endif
 
-    sbufSetLength(buf, min(available, nread));
+    sbufSetLength(buf, min(available, (uint32_t)nread));
     __read_cb(io, buf);
     // user consumed buffer
     return;
@@ -344,8 +344,8 @@ write:
     {
         goto disconnect;
     }
-    sbufShiftRight(buf, nwrite);
-    io->write_bufsize -= nwrite;
+    sbufShiftRight(buf, (uint32_t)nwrite);
+    io->write_bufsize -= (uint32_t)nwrite;
     if (nwrite == len)
     {
         // NOTE: after write_cb, pbuf maybe invalid.
@@ -448,7 +448,7 @@ int wioConnect(wio_t *io)
         return 0;
     }
     int timeout                 = io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT;
-    io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, timeout, 1);
+    io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t)timeout, 1);
     io->connect_timer->privdata = io;
     io->connect                 = 1;
     return wioAdd(io, wio_handle_events, WW_WRITE);
@@ -512,13 +512,13 @@ int wioWrite(wio_t *io, sbuf_t *buf)
 
     if (nwrite < len)
     {
-        if (io->write_bufsize + len - nwrite > io->max_write_bufsize)
+        if (io->write_bufsize + (uint32_t)len - (uint32_t)nwrite > io->max_write_bufsize)
         {
             wloge("write bufsize > %u, close it!", io->max_write_bufsize);
             io->error = WERR_OVER_LIMIT;
             goto write_error;
         }
-        sbufShiftRight(buf, nwrite);
+        sbufShiftRight(buf, (uint32_t)nwrite);
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w != 0){
         //             remain.base = 0X0; // skips memoryFree()
@@ -595,7 +595,7 @@ int wioClose(wio_t *io)
 
         wlogd("write_queue not empty, close later.");
         int timeout_ms            = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
-        io->close_timer           = wtimerAdd(io->loop, __close_timeout_cb, timeout_ms, 1);
+        io->close_timer           = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t)timeout_ms, 1);
         io->close_timer->privdata = io;
         return 0;
     }

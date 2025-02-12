@@ -14,7 +14,7 @@ void tundeviceTunnelOnPrepair(tunnel_t *t)
         exit(1);
     }
 
-    tundeviceAssignIP(state->tdev, state->ip_present, state->subnet_mask);
+    tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int )state->subnet_mask);
 
     tundeviceBringUp(state->tdev);
 }

@@ -39,7 +39,7 @@ static void wireguard12byteTai64(uint8_t *output)
 
     // Split into seconds offset + nanos
     uint64_t seconds = 0x400000000000000aULL + (millis / 1000);
-    uint32_t nanos   = (millis % 1000) * 1000;
+    uint32_t nanos   = (uint32_t)((millis % 1000) * 1000);
     U64TO8_BIG(output + 0, seconds);
     U32TO8_BIG(output + 8, nanos);
 }
@@ -48,7 +48,7 @@ static bool chacha20poly1305EncryptWrapper(unsigned char *dst, const unsigned ch
                                            const unsigned char *ad, size_t adlen, uint64_t nonce,
                                            const unsigned char *key)
 {
-    uint32_t wireguard_way_of_nonce[4] = {nonce >> 32, nonce & 0xFFFFFFFF,0,0 };
+    uint32_t wireguard_way_of_nonce[4] = {(uint32_t)(nonce >> 32), (uint32_t)(nonce & 0xFFFFFFFF), 0, 0 };
     return 0 == chacha20poly1305Encrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce, key);
 }
 
@@ -56,7 +56,7 @@ static bool chacha20poly1305DecryptWrapper(unsigned char *dst, const unsigned ch
                                            const unsigned char *ad, size_t adlen, uint64_t nonce,
                                            const unsigned char *key)
 {
-    uint32_t wireguard_way_of_nonce[4] = {nonce >> 32, nonce & 0xFFFFFFFF,0,0 };
+    uint32_t wireguard_way_of_nonce[4] = {(uint32_t)(nonce >> 32), (uint32_t)(nonce & 0xFFFFFFFFULL), 0, 0 };
     return 0 == chacha20poly1305Decrypt(dst, src, srclen, ad, adlen, (unsigned char *) &wireguard_way_of_nonce[0], key);
 }
 

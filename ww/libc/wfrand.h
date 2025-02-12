@@ -37,7 +37,7 @@ static inline uint32_t fastRand32(void)
 
     frand_seed64        = frand_seed64 * 6364136223846793005ULL + 13971ULL;
     uint32_t xorshifted = (uint32_t) (((frand_seed64 >> 18U) ^ frand_seed64) >> 27U);
-    uint32_t rot        = frand_seed64 >> 59U;
+    uint32_t rot        = (uint32_t) (frand_seed64 >> 59U);
     return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
 }
 

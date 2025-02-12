@@ -123,7 +123,7 @@ static bool checkCommandAvailable(const char *app)
     char b[300];
     sprintf(b, "command -v %288s", app);
     cmd_result_t result = execCmd(b);
-    return (result.exit_code == 0 && strlen(result.output) > 0);
+    return (result.exit_code == 0 && stringLength(result.output) > 0);
 }
 
 /**

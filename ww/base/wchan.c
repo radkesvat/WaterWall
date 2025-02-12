@@ -639,8 +639,8 @@ wchan_t *chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity)
     }
 
     // allocate memory, placing wchan_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
-    memorySet((void *) ptr, 0, memsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate((size_t) memsize);
+    memorySet((void *) ptr, 0, (size_t)memsize);
 
     // align c to line cache boundary
     wchan_t *c = (wchan_t *) ALIGN2(ptr, kCpuLineCacheSize);

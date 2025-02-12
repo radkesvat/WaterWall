@@ -52,7 +52,7 @@ int wwBase64Encode(const unsigned char *in, unsigned int inlen, char *out) {
     unsigned int i = 0, j = 0;
 
     for (; i < inlen; i++) {
-        int s = i % 3;
+        int s = (int) (i % 3);
 
         switch (s) {
         case 0:
@@ -80,7 +80,7 @@ int wwBase64Encode(const unsigned char *in, unsigned int inlen, char *out) {
         out[j++] = BASE64_PAD;
     }
 
-    return j;
+    return (int) (j);
 }
 
 int wwBase64Decode(const char *in, unsigned int inlen, unsigned char *out) {
@@ -91,7 +91,8 @@ int wwBase64Decode(const char *in, unsigned int inlen, unsigned char *out) {
         int s = i % 4;
 
         if (in[i] == '=')
-            return j;
+            return (int) (j);
+
 
         if (in[i] < BASE64DE_FIRST || in[i] > BASE64DE_LAST ||
             (c = base64de[in[i] - BASE64DE_FIRST]) == -1)
@@ -120,5 +121,6 @@ int wwBase64Decode(const char *in, unsigned int inlen, unsigned char *out) {
         }
     }
 
-    return j;
+    return (int) (j);
+
 }

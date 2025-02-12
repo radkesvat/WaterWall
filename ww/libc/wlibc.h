@@ -158,7 +158,7 @@ WW_EXPORT char *stringCopyN(char *dest, const char *src, size_t n);
 
 #else
 
-// strncat n = sizeof(dest_buf)-1-strlen(dest)
+// strncat n = sizeof(dest_buf)-1-stringLength(dest)
 // stringCopyN n = sizeof(dest_buf)
 WW_EXPORT char *stringCat(char *dest, const char *src, size_t n);
 
