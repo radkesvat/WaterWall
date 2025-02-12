@@ -3,7 +3,7 @@ Waterwall!
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/radkesvat/WaterWall)
 [![CLang Static Analyzer](https://github.com/radkesvat/WaterWall/actions/workflows/clang_static_analyzer.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/clang_static_analyzer.yml)
 
-[![CL](https://github.com/radkesvat/WaterWall/actions/workflows/cl/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cl.yml)
+[![CL](https://github.com/radkesvat/WaterWall/actions/workflows/cl.yml/badge.svg)](https://github.com/radkesvat/WaterWall/actions/workflows/cl.yml)
 
 
 A simple core for tunneling and even direct user-server connections. based on high-performance, fully customizeable nodes for creating any kind of protocol without writing code for it.
