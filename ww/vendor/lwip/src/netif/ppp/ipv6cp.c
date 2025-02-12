@@ -1055,7 +1055,7 @@ endswitch:
 	eui64_put(wo->hisid, ucp);
     }
 
-    *len = ucp - inp;			/* Compute output length */
+    *len = (int)(ucp - inp);			/* Compute output length */
     IPV6CPDEBUG(("ipv6cp: returning Configure-%s", CODENAME(rc)));
     return (rc);			/* Return final code */
 }

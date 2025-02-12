@@ -155,7 +155,7 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
             continue;
         }
         ++nevents;
-        int fd = kqueue_ctx->events[i].ident;
+        int fd = (int) kqueue_ctx->events[i].ident;
         int revents = kqueue_ctx->events[i].filter;
         wio_t* io = loop->ios.ptr[fd];
         if (io) {
