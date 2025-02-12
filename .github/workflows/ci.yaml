@@ -28,6 +28,12 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
+      
+      - name: Build
+        run: cmake --build build
+
+      - name: Show ccache statistics
+        run: ccache -sv
 
   bsd:
     strategy:
@@ -45,6 +51,7 @@ jobs:
           - preset: openbsd
             version: "7.6"
             install: sudo pkg_add cmake git
+            
     name: ${{ matrix.preset }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
     steps:
@@ -64,6 +71,21 @@ jobs:
             cmake -B build                           \
               -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
               -DOPENSSL_CONFIGURE_VERBOSE=ON
+            - name: Build
+
+      - uses: cross-platform-actions/action@master
+        with:
+          operating_system: ${{ matrix.preset }}
+          architecture: ${{ matrix.arch }}
+          version: ${{ matrix.version }}
+          run: cmake --build build  
+
+      - uses: cross-platform-actions/action@master
+        with:
+          operating_system: ${{ matrix.preset }}
+          architecture: ${{ matrix.arch }}
+          version: ${{ matrix.version }}
+          run: ccache -sv
 
   cygwin:
     runs-on: windows-latest
@@ -83,6 +105,11 @@ jobs:
           cmake -B build
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
+      - name: Build
+        run: cmake --build build
+
+      - name: Show ccache statistics
+        run: ccache -sv
 
   ios:
     strategy:
@@ -105,6 +132,12 @@ jobs:
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
+      - name: Build
+        run: cmake --build build
+
+      - name: Show ccache statistics
+        run: ccache -sv
+
   linux:
     strategy:
       fail-fast: false
@@ -126,6 +159,12 @@ jobs:
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
+      - name: Build
+        run: cmake --build build
+
+      - name: Show ccache statistics
+        run: ccache -sv
+
   macos:
     runs-on: macos-latest
     steps:
@@ -140,6 +179,12 @@ jobs:
           cmake -B build
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+      - name: Build
+        run: cmake --build  build
+
+      - name: Show ccache statistics
+        run: ccache -sv
 
   msys2:
     strategy:
@@ -170,6 +215,12 @@ jobs:
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
+      - name: Build
+        run: cmake --build  build
+
+      - name: Show ccache statistics
+        run: ccache -sv
+
   windows:
     strategy:
       fail-fast: false
@@ -190,3 +241,9 @@ jobs:
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
           -DOPENSSL_CONFIGURE_OPTIONS=no-asm
           -DOPENSSL_CONFIGURE_VERBOSE=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Show ccache statistics
+        run: ccache -sv
