@@ -1,7 +1,8 @@
 #include "buffer_pool.h"
-#include "wplatform.h"
 #include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
+#include "wplatform.h"
+
 
 struct buffer_pool_s
 {
@@ -41,7 +42,6 @@ uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool)
     return pool->large_buffer_left_padding;
 }
 
-
 /**
  * Gets the size of small buffers in the buffer pool.
  * @param pool The buffer pool.
@@ -52,12 +52,10 @@ uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool)
     return pool->small_buffers_size;
 }
 
-
 uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool)
 {
     return pool->small_buffer_left_padding;
 }
-
 
 /**
  * Creates a large buffer using the provided create handler.
@@ -118,7 +116,7 @@ static void destroySmallBufHandle(master_pool_t *pool, master_pool_item_t *item,
  */
 static void reChargeLargeBuffers(buffer_pool_t *pool)
 {
-    const size_t increase = min((pool->cap - pool->large_buffers_container_len), pool->cap / 2);
+    const uint32_t increase = min((pool->cap - pool->large_buffers_container_len), pool->cap / 2);
 
     masterpoolGetItems(pool->large_buffers_mp,
                        (void const **) &(pool->large_buffers[pool->large_buffers_container_len]), increase, pool);
@@ -135,7 +133,7 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
  */
 static void reChargeSmallBuffers(buffer_pool_t *pool)
 {
-    const size_t increase = min((pool->cap - pool->small_buffers_container_len), pool->cap / 2);
+    const uint32_t increase = min((pool->cap - pool->small_buffers_container_len), pool->cap / 2);
 
     masterpoolGetItems(pool->small_buffers_mp,
                        (void const **) &(pool->small_buffers[pool->small_buffers_container_len]), increase, pool);
@@ -168,7 +166,7 @@ static void firstCharge(buffer_pool_t *pool)
  */
 static void shrinkLargeBuffers(buffer_pool_t *pool)
 {
-    const size_t decrease = min(pool->large_buffers_container_len, pool->cap / 2);
+    const uint32_t decrease = min(pool->large_buffers_container_len, pool->cap / 2);
 
     masterpoolReuseItems(pool->large_buffers_mp,
                          (void **) &(pool->large_buffers[pool->large_buffers_container_len - decrease]), decrease,
@@ -187,7 +185,7 @@ static void shrinkLargeBuffers(buffer_pool_t *pool)
  */
 static void shrinkSmallBuffers(buffer_pool_t *pool)
 {
-    const size_t decrease = min(pool->small_buffers_container_len, pool->cap / 2);
+    const uint32_t decrease = min(pool->small_buffers_container_len, pool->cap / 2);
 
     masterpoolReuseItems(pool->small_buffers_mp,
                          (void **) &(pool->small_buffers[pool->small_buffers_container_len - decrease]), decrease,
@@ -367,8 +365,8 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
 
     *ptr_pool = (buffer_pool_t)
     {
-        .cap = bufcount, .large_buffers_size = large_buffer_size,
-        .small_buffers_size = small_buffer_size, .free_threshold = max(bufcount / 2, (bufcount * 2) / 3),
+        .cap = bufcount, .large_buffers_size = large_buffer_size, .small_buffers_size = small_buffer_size,
+        .free_threshold = max(bufcount / 2, (bufcount * 2) / 3),
 
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
         .in_use = 0,
@@ -390,7 +388,8 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
     return ptr_pool;
 }
 
-void bufferpoolDestroy(buffer_pool_t *pool){
+void bufferpoolDestroy(buffer_pool_t *pool)
+{
     memoryFree(pool->large_buffers);
     memoryFree(pool->small_buffers);
     memoryFree(pool);
