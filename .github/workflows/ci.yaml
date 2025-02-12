@@ -38,13 +38,13 @@ jobs:
         include:
           - preset: freebsd
             version: "14.2"
-            install: sudo pkg install -y cmake perl5
+            install: sudo pkg install -y cmake perl5 git
           - preset: netbsd
             version: "10.1"
-            install: sudo pkgin -y install cmake perl
+            install: sudo pkgin -y install cmake perl git
           - preset: openbsd
             version: "7.6"
-            install: sudo pkg_add cmake
+            install: sudo pkg_add cmake git
     name: ${{ matrix.preset }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
     steps:
