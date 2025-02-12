@@ -1789,7 +1789,7 @@ endswitch:
 	PUTLONG(tl, ucp);
     }
 
-    *len = ucp - inp;			/* Compute output length */
+    *len = (int) (ucp - inp);			/* Compute output length */
     IPCPDEBUG(("ipcp: returning Configure-%s", CODENAME(rc)));
     return (rc);			/* Return final code */
 }
