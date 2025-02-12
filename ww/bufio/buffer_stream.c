@@ -102,7 +102,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
         if (available > bytes)
         {
             sbuf_t *slice = bufferpoolGetLargeBuffer(self->pool);
-            slice         = sbufMoveTo(slice, container, (int) bytes);
+            slice         = sbufMoveTo(slice, container, (uint32_t) bytes);
             queue_push_front(&self->q, container);
             return slice;
         }
