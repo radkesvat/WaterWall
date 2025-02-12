@@ -72,7 +72,7 @@ int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t
 	generate_poly1305_key(&poly1305_state, &chacha20_state, key, nonce);
 
 	// Next, the ChaCha20 encryption function is called to encrypt the plaintext, using the same key and nonce, and with the initial counter set to 1.
-	chacha20(&chacha20_state, dst, src, src_len);
+	chacha20(&chacha20_state, dst, src, (uint32_t) src_len);
 
 	// Finally, the Poly1305 function is called with the Poly1305 key calculated above, and a message constructed as a concatenation of the following:
 	// - The AAD
@@ -125,7 +125,7 @@ int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t
 	// - The calculated tag is bitwise compared to the received tag.  The message is authenticated if and only if the tags match.
 
 	if (src_len >= POLY1305_MAC_SIZE) {
-		dst_len = src_len - POLY1305_MAC_SIZE;
+		dst_len = (int)(src_len - POLY1305_MAC_SIZE);
 
 		// First, a Poly1305 one-time key is generated from the 256-bit key and nonce using the procedure described in Section 2.6.
 		generate_poly1305_key(&poly1305_state, &chacha20_state, key, nonce);
