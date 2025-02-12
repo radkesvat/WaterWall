@@ -588,7 +588,7 @@ size_t stringToSize(const char *str)
         }
         ++p;
     }
-    return size + n;
+    return (size_t)(size + n);
 }
 
 time_t stringToTime(const char *str)

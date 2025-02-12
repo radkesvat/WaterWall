@@ -61,7 +61,7 @@ static inline int getMemInfo(meminfo_t *mem)
     vm_statistics_data_t   info;
     mach_msg_type_number_t count = sizeof(info) / sizeof(integer_t);
     host_statistics(mach_host_self(), HOST_VM_INFO, (host_info_t) &info, &count);
-    mem->free = ((uint64_t) info.free_count * sysconf(_SC_PAGESIZE)) >> 10;
+    mem->free = ((uint64_t)info.free_count * (uint64_t)sysconf(_SC_PAGESIZE)) >> 10;
     return 0;
 #else
     (void) (mem);
