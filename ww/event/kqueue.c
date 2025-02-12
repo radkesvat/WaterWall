@@ -24,8 +24,8 @@ typedef struct kqueue_ctx_s {
 } kqueue_ctx_t;
 
 static void kqueue_ctx_resize(kqueue_ctx_t* kqueue_ctx, int size) {
-    int bytes = (int)(sizeof(struct kevent) * size);
-    int oldbytes = (int)(sizeof(struct kevent) * kqueue_ctx->capacity);
+    int bytes = (int)(sizeof(struct kevent) * (size_t)size);
+    int oldbytes = (int)(sizeof(struct kevent) * (size_t)kqueue_ctx->capacity);
     kqueue_ctx->changes = (struct kevent*)eventloopRealloc(kqueue_ctx->changes,(size_t) bytes, (size_t)oldbytes);
     kqueue_ctx->events = (struct kevent*)eventloopRealloc(kqueue_ctx->events,(size_t) bytes, (size_t)oldbytes);
     kqueue_ctx->capacity = size;
@@ -38,7 +38,7 @@ int iowatcherInit(wloop_t* loop) {
     kqueue_ctx->kqfd = kqueue();
     kqueue_ctx->capacity = EVENTS_INIT_SIZE;
     kqueue_ctx->nchanges = 0;
-    int bytes = (int) (sizeof(struct kevent) * kqueue_ctx->capacity);
+    int bytes = (int) (sizeof(struct kevent) * (size_t)kqueue_ctx->capacity);
     EVENTLOOP_ALLOC(kqueue_ctx->changes,(size_t) bytes);
     EVENTLOOP_ALLOC(kqueue_ctx->events, (size_t)bytes);
     loop->iowatcher = kqueue_ctx;
