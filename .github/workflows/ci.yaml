@@ -71,7 +71,6 @@ jobs:
             cmake -B build                           \
               -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
               -DOPENSSL_CONFIGURE_VERBOSE=ON
-            - name: Build
 
       - uses: cross-platform-actions/action@master
         with:
