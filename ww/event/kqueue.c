@@ -24,10 +24,10 @@ typedef struct kqueue_ctx_s {
 } kqueue_ctx_t;
 
 static void kqueue_ctx_resize(kqueue_ctx_t* kqueue_ctx, int size) {
-    int bytes = sizeof(struct kevent) * size;
-    int oldbytes = sizeof(struct kevent) * kqueue_ctx->capacity;
-    kqueue_ctx->changes = (struct kevent*)eventloopRealloc(kqueue_ctx->changes, bytes, oldbytes);
-    kqueue_ctx->events = (struct kevent*)eventloopRealloc(kqueue_ctx->events, bytes, oldbytes);
+    int bytes = (int)(sizeof(struct kevent) * size);
+    int oldbytes = (int)(sizeof(struct kevent) * kqueue_ctx->capacity);
+    kqueue_ctx->changes = (struct kevent*)eventloopRealloc(kqueue_ctx->changes,(size_t) bytes, (size_t)oldbytes);
+    kqueue_ctx->events = (struct kevent*)eventloopRealloc(kqueue_ctx->events,(size_t) bytes, (size_t)oldbytes);
     kqueue_ctx->capacity = size;
 }
 
@@ -38,9 +38,9 @@ int iowatcherInit(wloop_t* loop) {
     kqueue_ctx->kqfd = kqueue();
     kqueue_ctx->capacity = EVENTS_INIT_SIZE;
     kqueue_ctx->nchanges = 0;
-    int bytes = sizeof(struct kevent) * kqueue_ctx->capacity;
-    EVENTLOOP_ALLOC(kqueue_ctx->changes, bytes);
-    EVENTLOOP_ALLOC(kqueue_ctx->events, bytes);
+    int bytes = (int) (sizeof(struct kevent) * kqueue_ctx->capacity);
+    EVENTLOOP_ALLOC(kqueue_ctx->changes,(size_t) bytes);
+    EVENTLOOP_ALLOC(kqueue_ctx->events, (size_t)bytes);
     loop->iowatcher = kqueue_ctx;
     return 0;
 }
@@ -69,10 +69,10 @@ static int __add_event(wloop_t* loop, int fd, int event) {
             kqueue_ctx_resize(kqueue_ctx, kqueue_ctx->capacity*2);
         }
         memorySet(kqueue_ctx->changes+idx, 0, sizeof(struct kevent));
-        kqueue_ctx->changes[idx].ident = fd;
+        kqueue_ctx->changes[idx].ident = (uintptr_t)fd;
     }
     assert(kqueue_ctx->changes[idx].ident == fd);
-    kqueue_ctx->changes[idx].filter = event;
+    kqueue_ctx->changes[idx].filter = (int16_t)event;
     kqueue_ctx->changes[idx].flags = EV_ADD|EV_ENABLE;
     struct timespec ts;
     ts.tv_sec = 0;
