@@ -101,7 +101,7 @@ jobs:
       - name: Configure CMake
         run: >
           cmake -B build -G Xcode
-          -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain/${{ matrix.target }}.cmake
+          -DCMAKE_TOOLCHAIN_FILE=ww/cmake/toolchain/${{ matrix.target }}.cmake
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
