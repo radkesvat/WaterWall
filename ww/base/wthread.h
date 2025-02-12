@@ -21,7 +21,7 @@ static inline long getTID(void)
 {
     uint64_t tid = 0;
     pthread_threadid_np(NULL, &tid);
-    return tid;
+    return (long)tid;
 }
 #elif HAVE_PTHREAD_H
 #define getTID (long) pthread_self
