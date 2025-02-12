@@ -60,7 +60,7 @@ void workerInit(worker_t *worker, wid_t wid)
         GSTATE.masterpool_context_pools, sizeof(context_t), (16) + GSTATE.ram_profile);
 
     worker->pipetunnel_msg_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_pipetunnel_msg_pools, pipeTunnelGetMesageSize(), (8) + GSTATE.ram_profile);
+        GSTATE.masterpool_pipetunnel_msg_pools, (uint32_t) pipeTunnelGetMesageSize(), (8) + GSTATE.ram_profile);
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            (0) + GSTATE.ram_profile, LARGE_BUFFER_SIZE, SMALL_BUFFER_SIZE);
