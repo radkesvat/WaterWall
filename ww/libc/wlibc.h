@@ -12,9 +12,6 @@
 #include "whash.h"
 #include "wmath.h"
 
-#include "ww_lwip.h"
-
-
 void initWLibc(void);
 
 //--------------------Memory-------------------------------
@@ -32,10 +29,17 @@ void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
 /* STC lib will use our custom allocators*/
-#define c_malloc(sz) memoryAllocate((size_t)(sz))
-#define c_calloc(n, sz) memoryAllocateZero((size_t)((n)* (sz)))
-#define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t)(sz))
-#define c_free(ptr, sz) memoryFree(ptr)
+#define c_malloc(sz)               memoryAllocate((size_t) (sz))
+#define c_calloc(n, sz)            memoryAllocateZero((size_t) ((n) * (sz)))
+#define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t) (sz))
+#define c_free(ptr, sz)            memoryFree(ptr)
+
+/* STC lwip will use our custom allocators*/
+#define MEM_CUSTOM_FREE(ptr)     memoryFree(ptr)
+#define MEM_CUSTOM_MALLOC(sz)    memoryAllocate((size_t) (sz))
+#define MEM_CUSTOM_CALLOC(n, sz) memoryAllocateZero((size_t) ((n) * (sz)))
+#define MEM_CUSTOM_ALLOCATOR     1
+#include "ww_lwip.h"
 
 #ifdef DEBUG
 static inline void debugAssertZeroBuf(void *buf, size_t size)
@@ -46,6 +50,7 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
     }
 }
 #else
+
 static inline void debugAssertZeroBuf(void *buf, size_t size)
 {
     (void) buf;
@@ -135,8 +140,7 @@ WW_EXPORT bool stringEndsWith(const char *str, const char *end);
 WW_EXPORT bool stringContains(const char *str, const char *sub);
 WW_EXPORT bool stringWildCardMatch(const char *str, const char *pattern);
 
-
-WW_EXPORT char* stringNewWithoutSpace(const char *str);
+WW_EXPORT char *stringNewWithoutSpace(const char *str);
 
 #if HAVE_STRLCPY
 
@@ -149,8 +153,6 @@ WW_EXPORT char* stringNewWithoutSpace(const char *str);
 WW_EXPORT char *stringCopyN(char *dest, const char *src, size_t n);
 
 #endif
-
-
 
 #if HAVE_STRLCAT
 
@@ -235,27 +237,29 @@ WW_EXPORT int stringToUrl(hurl_t *stURL, const char *strURL);
 //-------------------------prints----------------------------------
 // #define printError perror
 
-
-static void printDebug(const char *format, ...) {
+static void printDebug(const char *format, ...)
+{
     va_list args;
     va_start(args, format);
     vfprintf(stdout, format, args);
     va_end(args);
 }
 
-static void printError(const char *format, ...) {
+static void printError(const char *format, ...)
+{
     va_list args;
     va_start(args, format);
     vfprintf(stderr, format, args);
     va_end(args);
 }
 
-static void printHex(const char *label, const unsigned char *data, size_t len) {
+static void printHex(const char *label, const unsigned char *data, size_t len)
+{
     printf("%s: ", label);
-    for (size_t i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++)
+    {
         printf("%02x", data[i]);
     }
     printf("\n");
     fflush(stdout);
 }
-
