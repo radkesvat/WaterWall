@@ -6,7 +6,7 @@
 // OS
 #if defined(__CYGWIN__)
     #define OS_CYGWIN
-    #define OS_WIN64
+    #define OS_LINUX
 #elif defined(WIN64) || defined(_WIN64)
     #define OS_WIN64
     #define OS_WIN32
@@ -196,7 +196,7 @@
     #define ww_delay(ms)    ww_msleep(ms)
     #define ww_mkdir(dir)   CreateDirectoryA(dir, NULL)
     #define rmdir(dir)      RemoveDirectoryA(dir)
-
+    
     // access
     #ifndef F_OK
     #define F_OK            0       /* test for existence of file */
