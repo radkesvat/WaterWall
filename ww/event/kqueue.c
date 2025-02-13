@@ -1,20 +1,6 @@
 #include "iowatcher.h"
 
 #ifdef EVENT_KQUEUE
-
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wshorten-64-to-32"
-#pragma clang diagnostic ignored "-Wsign-conversion"
-#pragma clang diagnostic ignored "-Wconversion"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#pragma GCC diagnostic ignored "-Wsign-conversion"
-
-// GCC does not have -Wshorten-64-to-32, so no need to handle it here
-#endif
-
 #include "wplatform.h"
 #include "wdef.h"
 
@@ -38,10 +24,10 @@ typedef struct kqueue_ctx_s {
 } kqueue_ctx_t;
 
 static void kqueue_ctx_resize(kqueue_ctx_t* kqueue_ctx, int size) {
-    int bytes = sizeof(struct kevent) * size;
-    int oldbytes = sizeof(struct kevent) * kqueue_ctx->capacity;
-    kqueue_ctx->changes = (struct kevent*)eventloopRealloc(kqueue_ctx->changes, bytes, oldbytes);
-    kqueue_ctx->events = (struct kevent*)eventloopRealloc(kqueue_ctx->events, bytes, oldbytes);
+    int bytes = (int)(sizeof(struct kevent) * (size_t)size);
+    int oldbytes = (int)(sizeof(struct kevent) * (size_t)kqueue_ctx->capacity);
+    kqueue_ctx->changes = (struct kevent*)eventloopRealloc(kqueue_ctx->changes,(size_t) bytes, (size_t)oldbytes);
+    kqueue_ctx->events = (struct kevent*)eventloopRealloc(kqueue_ctx->events,(size_t) bytes, (size_t)oldbytes);
     kqueue_ctx->capacity = size;
 }
 
@@ -52,9 +38,9 @@ int iowatcherInit(wloop_t* loop) {
     kqueue_ctx->kqfd = kqueue();
     kqueue_ctx->capacity = EVENTS_INIT_SIZE;
     kqueue_ctx->nchanges = 0;
-    int bytes = sizeof(struct kevent) * kqueue_ctx->capacity;
-    EVENTLOOP_ALLOC(kqueue_ctx->changes, bytes);
-    EVENTLOOP_ALLOC(kqueue_ctx->events, bytes);
+    int bytes = (int) (sizeof(struct kevent) * (size_t)kqueue_ctx->capacity);
+    EVENTLOOP_ALLOC(kqueue_ctx->changes,(size_t) bytes);
+    EVENTLOOP_ALLOC(kqueue_ctx->events, (size_t)bytes);
     loop->iowatcher = kqueue_ctx;
     return 0;
 }
@@ -83,10 +69,10 @@ static int __add_event(wloop_t* loop, int fd, int event) {
             kqueue_ctx_resize(kqueue_ctx, kqueue_ctx->capacity*2);
         }
         memorySet(kqueue_ctx->changes+idx, 0, sizeof(struct kevent));
-        kqueue_ctx->changes[idx].ident = fd;
+        kqueue_ctx->changes[idx].ident = (uintptr_t)fd;
     }
     assert(kqueue_ctx->changes[idx].ident == fd);
-    kqueue_ctx->changes[idx].filter = event;
+    kqueue_ctx->changes[idx].filter = (int16_t)event;
     kqueue_ctx->changes[idx].flags = EV_ADD|EV_ENABLE;
     struct timespec ts;
     ts.tv_sec = 0;
@@ -169,7 +155,7 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
             continue;
         }
         ++nevents;
-        int fd = kqueue_ctx->events[i].ident;
+        int fd = (int) kqueue_ctx->events[i].ident;
         int revents = kqueue_ctx->events[i].filter;
         wio_t* io = loop->ios.ptr[fd];
         if (io) {
@@ -185,12 +171,4 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
     }
     return nevents;
 }
-
-// Restore original diagnostic settings
-#if defined(__clang__)
-    #pragma clang diagnostic pop
-#elif defined(__GNUC__)
-    #pragma GCC diagnostic pop
-#endif
-
 #endif
