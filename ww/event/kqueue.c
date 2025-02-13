@@ -2,6 +2,16 @@
 
 #ifdef EVENT_KQUEUE
 #include "wplatform.h"
+
+#if defined(COMPILER_CLANG)
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wsign-compare"
+#elif defined(COMPILER_GCC)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Wsign-compare"
+#endif
+
+
 #include "wdef.h"
 
 #include <sys/event.h>
@@ -171,4 +181,11 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
     }
     return nevents;
 }
+
+#if defined(COMPILER_CLANG)
+    #pragma clang diagnostic pop
+#elif defined(COMPILER_GCC)
+    #pragma GCC diagnostic pop
+#endif
+
 #endif
