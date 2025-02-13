@@ -489,10 +489,9 @@ if(NOT MSVC)
         -Wwrite-strings
         -Wunused-parameter
         -Wstrict-prototypes
-        -Wconversion
+        # -Wconversion
 
 
-        -Wnosign-conversion
         -Wno-unused-function
         -Wno-unknown-pragmas 
         -Wno-error=pragmas
@@ -500,9 +499,9 @@ if(NOT MSVC)
         -Wno-pragmas
     )
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
-    target_compile_options(ww PRIVATE -Wshorten-64-to-32)
-endif()
+# if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+#     target_compile_options(ww PRIVATE -Wshorten-64-to-32)
+# endif()
     
 endif()
 
