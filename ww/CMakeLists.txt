@@ -139,12 +139,12 @@ set_target_properties(ww
 )
 
 # Platform-specific sources
-if(APPLE)
-    message(STATUS "No Tun device for MacOS yet")
-elseif(UNIX AND NOT CYGWIN)
+if(APPLE OR CYGWIN)
+    message(STATUS "No Tun device for This os yet")
+elseif(UNIX)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
     # ...existing commented raw/capture devices...
-elseif(WIN32 OR CYGWIN)
+elseif(WIN32)
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         message(STATUS "Including WinTun Target architecture: amd64")
         target_sources(ww PRIVATE devices/tun/wintun/amd64/wintun_bytes.c)
