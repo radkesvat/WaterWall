@@ -177,12 +177,11 @@ static inline void getTAI64N(tai64n_t *tai64n)
     // Query performance counter for nanoseconds
     if (QueryPerformanceFrequency(&freq) && QueryPerformanceCounter(&counter))
     {
-        // Calculate the fractional part in nanoseconds
-        ns_fraction = (double) (counter.QuadPart % freq.QuadPart) * 1e9 / freq.QuadPart;
+        long double tmp = (long double)(counter.QuadPart % freq.QuadPart) * 1e9L / (long double)freq.QuadPart;
+        ns_fraction = (double)tmp;
     }
     else
     {
-        // Fallback: Use zero nanoseconds if QPC is unavailable
         ns_fraction = 0.0;
     }
 

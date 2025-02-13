@@ -42,7 +42,7 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     int64_t memsize = (int64_t) sizeof(widle_table_t);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
-    memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    memsize = (int64_t) ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
     if (memsize < (int64_t) sizeof(widle_table_t))

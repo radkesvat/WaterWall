@@ -629,7 +629,7 @@ wchan_t *chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity)
     int64_t memsize = (int64_t) sizeof(wchan_t) + ((int64_t) sbufGetTotalCapacity * (int64_t) elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
-    memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    memsize = (int64_t) ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
     if (memsize < (int64_t) sizeof(wchan_t))

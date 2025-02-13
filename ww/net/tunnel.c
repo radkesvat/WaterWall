@@ -179,13 +179,13 @@ tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
     tstate_size = tunnelGetCorrectAllignedStateSize(tstate_size);
     lstate_size = tunnelGetCorrectAllignedLineStateSize(lstate_size);
 
-    size_t tsize = sizeof(tunnel_t) + tstate_size;
+    int64_t tsize = sizeof(tunnel_t) + tstate_size;
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
-    tsize = ALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    tsize = (int64_t) ALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // allocate memory, placing tunnel_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(tsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate((size_t)tsize);
     if (ptr == 0x0)
     {
         // Handle memory allocation failure

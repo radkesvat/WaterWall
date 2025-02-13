@@ -465,7 +465,7 @@ char *getExecuteableDir(char *buf, int size)
 #if defined(OS_UNIX)
         strncpy(buf, filepath, (long unsigned int) size);
 #else
-        strncpy_s(buf, size + 1, filepath, size);
+        strncpy_s(buf, ((size_t)size) + 1, filepath, (size_t)size);
 #endif
     }
     return buf;
@@ -482,7 +482,7 @@ char *getExecuteableFile(char *buf, int size)
 #if defined(OS_UNIX)
         strncpy(buf, pos + 1, (unsigned long) size);
 #else
-        strncpy_s(buf, size + 1, pos + 1, size);
+        strncpy_s(buf, ((size_t)size) + 1, pos + 1, (size_t)size);
 #endif
     }
     return buf;
@@ -490,7 +490,7 @@ char *getExecuteableFile(char *buf, int size)
 
 char *getRunDir(char *buf, int size)
 {
-    return getcwd(buf, (size_t) size);
+    return getcwd(buf, (size_t)size); // Or, if getcwd expects an int, use: (int)size
 }
 
 int randomRange(int min, int max)
