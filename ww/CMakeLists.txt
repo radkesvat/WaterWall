@@ -16,6 +16,7 @@ add_library(ww STATIC
     base/wsocket.c
     base/wsysinfo.c
     base/wproc.c
+    base/wthread.c
     bufio/buffer_pool.c
     bufio/buffer_stream.c
     bufio/context_queue.c

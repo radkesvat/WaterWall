@@ -9,7 +9,9 @@
 #define getProcessID (long) getpid
 #endif
 
-#ifdef OS_WIN
+#ifdef __CYGWIN__
+long gettid(void);
+#elif defined (OS_WIN)
 #define getTID (long) GetCurrentThreadId
 #elif HAVE_GETTID || defined(OS_ANDROID)
 #define getTID (long) gettid
