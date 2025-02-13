@@ -10,6 +10,8 @@
 #elif defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+
 // GCC does not have -Wshorten-64-to-32, so no need to handle it here
 #endif
 
