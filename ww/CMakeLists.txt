@@ -479,6 +479,7 @@ endif()
 
 # Compiler-specific options
 if(NOT MSVC)
+
     target_compile_options(ww PUBLIC 
         -Wall 
         -Wextra 
@@ -496,9 +497,8 @@ if(NOT MSVC)
         -Wwrite-strings
         -Wunused-parameter
         -Wstrict-prototypes
-        # -Wconversion
 
-
+        # disable warnings for unused functions un unkown pragmas
         -Wno-unused-function
         -Wno-unknown-pragmas 
         -Wno-error=pragmas
@@ -506,9 +506,16 @@ if(NOT MSVC)
         -Wno-pragmas
     )
 
-# if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
-#     target_compile_options(ww PRIVATE -Wshorten-64-to-32)
-# endif()
+    # we enable conversion warnings only for LINUX and APLLE AND WINDOWS where we develop
+    # for apple shorten-64-to-32 is enabled by default in clang
+    # for windows msvc it is enabled by /W4
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" AND (LINUX OR WIN32))
+        target_compile_options(ww PUBLIC -Wconversion)
+        
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
+            target_compile_options(ww PRIVATE -Wshorten-64-to-32)
+        endif()
+    endif()
     
 endif()
 
