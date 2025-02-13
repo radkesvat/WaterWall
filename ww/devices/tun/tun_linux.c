@@ -15,7 +15,7 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <linux/ipv6.h>
-#else
+#else // bsd
 #include <net/if.h>
 #include <net/if_tun.h>
 #endif
@@ -58,7 +58,7 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -191,7 +191,14 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
 {
     char command[128];
 
+#ifdef OS_LINUX
     snprintf(command, sizeof(command), "ip addr del %s/%d  dev %s", ip_presentation, subnet, tdev->name);
+#elif OS_BSD
+    // snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
+#else
+#error "Unsupported OS"
+#endif
+
     if (execCmd(command).exit_code != 0)
     {
         LOGE("TunDevice: error unassigning ip address");
@@ -206,7 +213,14 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
 {
     char command[128];
 
+#ifdef OS_LINUX
     snprintf(command, sizeof(command), "ip addr add %s/%d dev %s", ip_presentation, subnet, tdev->name);
+#elif OS_BSD
+    snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
+#else
+#error "Unsupported OS"
+#endif
+
     if (execCmd(command).exit_code != 0)
     {
         LOGE("TunDevice: error setting ip address");
@@ -304,7 +318,6 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         return NULL;
     }
 
-
     // Prepare the ifreq structure to configure the TUN device
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, name, IFNAMSIZ);
@@ -368,18 +381,18 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t) {.name                  = stringDuplicate(ifr.ifr_name),
-                            .running               = false,
-                            .up                    = false,
-                            .routine_reader        = routineReadFromTun,
-                            .routine_writer        = routineWriteToTun,
-                            .handle                = fd,
-                            .read_event_callback   = cb,
-                            .userdata              = userdata,
-                            .writer_buffer_channel = NULL,
-                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                            .reader_buffer_pool    = reader_bpool,
-                            .writer_buffer_pool    = writer_bpool};
+    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
+                           .running               = false,
+                           .up                    = false,
+                           .routine_reader        = routineReadFromTun,
+                           .routine_writer        = routineWriteToTun,
+                           .handle                = fd,
+                           .read_event_callback   = cb,
+                           .userdata              = userdata,
+                           .writer_buffer_channel = NULL,
+                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                           .reader_buffer_pool    = reader_bpool,
+                           .writer_buffer_pool    = writer_bpool};
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
