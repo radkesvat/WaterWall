@@ -292,7 +292,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     (void) offload; // todo (send/receive offloading)
 
     struct ifreq ifr;
-#ifdef BSDOS_BSD
+#ifdef OS_BSD
 
     // Open the TUN device
     char tun_path[64];
