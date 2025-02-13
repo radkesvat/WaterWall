@@ -30,7 +30,7 @@ WW_EXPORT const char *socketStrError(int err);
 
 #ifdef OS_WIN
 
-typedef SOCKET hsocket_t;
+typedef SOCKET wsocket_t;
 typedef int    socklen_t;
 
 void WSAInit(void);
@@ -65,7 +65,7 @@ WW_INLINE int nonBlocking(int sockfd)
 
 #else
 
-typedef int hsocket_t;
+typedef int wsocket_t;
 
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET -1
@@ -73,17 +73,17 @@ typedef int hsocket_t;
 
 WW_INLINE int blocking(int s)
 {
-    return fcntl(s, F_SETFL, fcntl(s, F_GETFL) & ~O_NONBLOCK);
+    return fcntl((wsocket_t) s, F_SETFL, fcntl(s, F_GETFL) & ~O_NONBLOCK);
 }
 
 WW_INLINE int nonBlocking(int s)
 {
-    return fcntl(s, F_SETFL, fcntl(s, F_GETFL) | O_NONBLOCK);
+    return fcntl((wsocket_t) s, F_SETFL, fcntl(s, F_GETFL) | O_NONBLOCK);
 }
 
 WW_INLINE int closesocket(int sockfd)
 {
-    return close(sockfd);
+    return close((wsocket_t) sockfd);
 }
 
 #endif

@@ -425,8 +425,8 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     (void) protocol;
     WSAInit();
 #endif
-    int listenfd, connfd, acceptfd;
-    listenfd = connfd = acceptfd = -1;
+    wsocket_t listenfd, connfd, acceptfd;
+    listenfd = connfd = acceptfd = (wsocket_t) -1;
     struct sockaddr_in localaddr;
     socklen_t          addrlen = sizeof(localaddr);
     memorySet(&localaddr, 0, (size_t)addrlen);
@@ -434,10 +434,10 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     localaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     localaddr.sin_port        = 0;
     // listener
-    listenfd = (int) socket(AF_INET, SOCK_STREAM, 0);
+    listenfd = socket(AF_INET, SOCK_STREAM, 0);
     if (listenfd < 0)
     {
-        printError("syscall return error , call: socket , value: %d\n", listenfd);
+        printError("syscall return error , call: socket , value: %d\n", (int) listenfd);
         goto error;
     }
     if (bind(listenfd, (struct sockaddr *) &localaddr, addrlen) < 0)
@@ -476,8 +476,8 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     }
 
     closesocket(listenfd);
-    sv[0] = connfd;
-    sv[1] = acceptfd;
+    sv[0] = (int) connfd;
+    sv[1] = (int) acceptfd;
     return 0;
 error:
     if (listenfd != -1)
