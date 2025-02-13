@@ -236,6 +236,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Install dependencies on Windows
         if: runner.os == 'Windows'
+        shell: bash
         run: |
           choco install -y jom nasm ccache
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
