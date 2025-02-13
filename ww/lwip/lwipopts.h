@@ -323,7 +323,8 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
 #endif
 
 
-
+#include <stddef.h> /* for size_t */
+ 
 void *memoryAllocate(size_t size);
 void *memoryAllocateZero(size_t size);
 void *memoryReAllocate(void *ptr, size_t size);
