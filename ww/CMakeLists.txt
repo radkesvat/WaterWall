@@ -492,7 +492,7 @@ if(NOT MSVC)
         -Wconversion
 
 
-
+        -Wnosign-conversion
         -Wno-unused-function
         -Wno-unknown-pragmas 
         -Wno-error=pragmas
