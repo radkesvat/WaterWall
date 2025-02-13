@@ -224,6 +224,9 @@ WW_INLINE int tcpKeepAlive(int sockfd, int on DEFAULT(1), int delay DEFAULT(60))
     // TCP_KEEPINTVL    => tcp_keepalive_intvl
     return setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, (const char *) &delay, sizeof(int));
 #else
+    (void) sockfd;
+    (void) delay;
+    
     return 0;
 #endif
 }
