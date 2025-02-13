@@ -181,7 +181,13 @@
 
     #include <windows.h>
     #include <process.h>    // for getpid,exec
+    #ifdef OS_CYGWIN
+    #include <sys/stat.h>  // For mkdir
+    #include <unistd.h>    // For chdir, getcwd
+    #else
     #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
+
+    #endif
     #include <io.h>         // for open,close,read,write,lseek,tell
 
     #define hv_sleep(s)     Sleep((s) * 1000)
