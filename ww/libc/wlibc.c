@@ -490,6 +490,7 @@ char *getExecuteableFile(char *buf, int size)
 
 char *getRunDir(char *buf, int size)
 {
+#ifdef OS_WIN
     // Use the native Windows API to get the current working directory
     DWORD result = GetCurrentDirectoryA((DWORD) size, buf);
 
@@ -507,6 +508,11 @@ char *getRunDir(char *buf, int size)
 
     // Return the buffer containing the current directory
     return buf;
+#else
+
+    return getcwd(buf, (size_t) size); // Or, if getcwd expects an int, use: (int)size
+
+#endif
 }
 
 int randomRange(int min, int max)
