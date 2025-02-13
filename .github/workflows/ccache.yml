@@ -49,6 +49,11 @@ jobs:
         run: |
           choco install -y jom nasm ccache
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
+          
+      - name: Install ninja on Windows
+        if: matrix.preset == 'windows_ninja'
+        run: |
+          choco install -y ninja
 
       - name: Configure CMake
         run: >
