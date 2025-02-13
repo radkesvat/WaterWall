@@ -28,18 +28,15 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
+#include "ww_lwip.h"
+
 /* STC lib will use our custom allocators*/
 #define c_malloc(sz)               memoryAllocate((size_t) (sz))
 #define c_calloc(n, sz)            memoryAllocateZero((size_t) ((n) * (sz)))
 #define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t) (sz))
 #define c_free(ptr, sz)            memoryFree(ptr)
 
-/* STC lwip will use our custom allocators*/
-#define MEM_CUSTOM_FREE(ptr)     memoryFree(ptr)
-#define MEM_CUSTOM_MALLOC(sz)    memoryAllocate((size_t) (sz))
-#define MEM_CUSTOM_CALLOC(n, sz) memoryAllocateZero((size_t) ((n) * (sz)))
-#define MEM_CUSTOM_ALLOCATOR     1
-#include "ww_lwip.h"
+
 
 #ifdef DEBUG
 static inline void debugAssertZeroBuf(void *buf, size_t size)

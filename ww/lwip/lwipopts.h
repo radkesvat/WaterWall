@@ -322,4 +322,17 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
 #define LWIP_PLATFORM_ASSERT(x) lwip_example_app_platform_assert(x, __LINE__, __FILE__)
 #endif
 
+
+
+
+
+/* lwip will use our custom allocators*/
+#define MEM_CUSTOM_FREE(ptr)     memoryFree(ptr)
+#define MEM_CUSTOM_MALLOC(sz)    memoryAllocate((size_t) (sz))
+#define MEM_CUSTOM_CALLOC(n, sz) memoryAllocateZero((size_t) ((n) * (sz)))
+#define MEM_CUSTOM_ALLOCATOR     1
+
+
+
+
 #endif /* LWIP_LWIPOPTS_H */
