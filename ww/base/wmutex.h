@@ -295,18 +295,18 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 
 // YIELD_CPU() yields for other work on a CPU core
 #if defined(__i386) || defined(__i386__) || defined(__x86_64__)
-#define YIELD_CPU() __asm__ volatile("pause")
+#define YIELD_CPU() asm volatile("pause")
 #elif defined(ARCH_ARM) || defined(ARCH_ARM64) 
-#define YIELD_CPU() __asm__ volatile("yield")
+#define YIELD_CPU() asm volatile("yield")
 #elif defined(mips) || defined(__mips__) || defined(MIPS) || defined(_MIPS_) || defined(__mips64)
 #if defined(_ABI64) && (_MIPS_SIM == _ABI64)
-#define YIELD_CPU() __asm__ volatile("pause")
+#define YIELD_CPU() asm volatile("pause")
 #else
 // comment from WebKit source:
 //   The MIPS32 docs state that the PAUSE instruction is a no-op on older
 //   architectures (first added in MIPS32r2). To avoid assembler errors when
 //   targeting pre-r2, we must encode the instruction manually.
-#define YIELD_CPU() __asm__ volatile(".word 0x00000140")
+#define YIELD_CPU() asm volatile(".word 0x00000140")
 #endif
 #elif (defined(WIN32) || defined(_WIN32))
 #include <immintrin.h>
