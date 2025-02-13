@@ -134,9 +134,9 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             LOGD("TunDevice: routine write will exit due to channel closed");
             return 0;
         }
-
+#if !defined(OS_BSD)
         assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
-
+#endif
         nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetBufLength(buf));
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
 
@@ -163,7 +163,9 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 // Write to TUN device
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
+#if !defined(OS_BSD)
     assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
+#endif
     if (atomicLoadRelaxed(&(tdev->running)) == false)
     {
         LOGE("Write failed, device is not running");
