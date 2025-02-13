@@ -21,6 +21,11 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+      - name: Install dependencies on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
       - name: Configure CMake
         run: >
           cmake -B build
@@ -61,6 +66,16 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+         
+      - uses: cross-platform-actions/action@master
+        with:
+          operating_system: ${{ matrix.preset }}
+          architecture: ${{ matrix.arch }}
+          version: ${{ matrix.version }}
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y ninja-build ccache
+
       - uses: cross-platform-actions/action@master
         with:
           operating_system: ${{ matrix.preset }}
@@ -95,6 +110,12 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+      - name: Install dependencies on Windows
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y jom nasm ccache
+          echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
+
       - uses: cygwin/cygwin-install-action@v5
         with:
           packages: cmake gcc-core gcc-g++ make perl
@@ -124,6 +145,12 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+      - name: Install dependencies on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install ccache
+          
       - name: Configure CMake
         run: >
           cmake -B build -G Xcode
@@ -151,6 +178,11 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+      - name: Install dependencies on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache
       - name: Configure CMake
         run: >
           cmake -B build
@@ -173,6 +205,11 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+      - name: Install dependencies on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install ccache
       - name: Configure CMake
         run: >
           cmake -B build
@@ -199,6 +236,12 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+      - name: Install dependencies on Windows
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y jom nasm ccache
+          echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
+
       - uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.preset }}
@@ -234,6 +277,12 @@ jobs:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
+      - name: Install dependencies on Windows
+        if: runner.os == 'Windows'
+        run: |
+          choco install -y jom nasm ccache
+          echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
+
       - name: Configure CMake
         run: >
           cmake -B build -A ${{ matrix.arch }}
