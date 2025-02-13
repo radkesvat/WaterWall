@@ -93,7 +93,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 #endif
 
-#ifdef OS_LINUX
+#if defined(SO_MARK)
     if (state->fwmark != kFwMarkInvalid)
     {
         if (setsockopt(sockfd, SOL_SOCKET, SO_MARK, &state->fwmark, sizeof(state->fwmark)) < 0)
