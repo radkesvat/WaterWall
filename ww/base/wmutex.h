@@ -308,7 +308,7 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 //   targeting pre-r2, we must encode the instruction manually.
 #define YIELD_CPU() __asm__ __volatile__(".word 0x00000140")
 #endif
-#elif (defined(WIN32) || defined(_WIN32)) && (!defined(ARCH_ARM) || !defined(ARCH_ARM64))
+#elif (defined(WIN32) || defined(_WIN32)) && (!defined(ARCH_ARM) && !defined(ARCH_ARM64))
 #include <immintrin.h>
 #define YIELD_CPU() _mm_pause()
 #else
