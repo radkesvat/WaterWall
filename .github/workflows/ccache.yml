@@ -22,6 +22,8 @@ jobs:
           - { os: ubuntu, preset: android }
           - { os: ubuntu, preset: linux }
           - { os: windows, preset: windows }
+          - { os: windows, preset: windows_ninja }
+
     name: ${{ matrix.preset }}
     runs-on: ${{ matrix.os }}-latest
     steps:

@@ -153,6 +153,7 @@
             "hidden": true,
             "generator": "Ninja Multi-Config",
             "cacheVariables": {
+
                 "CMAKE_COLOR_DIAGNOSTICS": true,
                 "CMAKE_EXPORT_COMPILE_COMMANDS": true
             }
@@ -191,6 +192,15 @@
         {
             "name": "gcc",
             "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        },
+        {
+            "name": "mingw",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++"

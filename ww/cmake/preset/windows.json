@@ -5,11 +5,11 @@
     ],
     "configurePresets": [
         {
-            "name": "windows vs2019",
+            "name": "windows_ninja",
             "inherits": [
                 "host-windows",
                 "target-windows",
-                "vs2019",
+                "mingw",
                 "default"
             ]
         },
