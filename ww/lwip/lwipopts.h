@@ -324,6 +324,10 @@ void lwip_example_app_platform_assert(const char *msg, int line, const char *fil
 
 
 
+void *memoryAllocate(size_t size);
+void *memoryAllocateZero(size_t size);
+void *memoryReAllocate(void *ptr, size_t size);
+void  memoryFree(void *ptr);
 
 
 /* lwip will use our custom allocators*/
