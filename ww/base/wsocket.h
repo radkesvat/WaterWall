@@ -67,10 +67,6 @@ WW_INLINE int nonBlocking(int sockfd)
 
 typedef int hsocket_t;
 
-#ifndef SOCKET
-#define SOCKET int
-#endif
-
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET -1
 #endif
