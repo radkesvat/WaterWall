@@ -29,7 +29,7 @@ bool isSystemUnderLoad(double threshold)
     return load > threshold ? 1 : 0;
 }
 
-#elif defined(OS_LINUX)
+#elif defined(OS_UNIX)
 
 bool isSystemUnderLoad(double threshold)
 {
