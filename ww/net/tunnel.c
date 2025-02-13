@@ -185,7 +185,7 @@ tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
     tsize = (int64_t) ALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // allocate memory, placing tunnel_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate(tsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate((size_t)tsize);
     if (ptr == 0x0)
     {
         // Handle memory allocation failure
