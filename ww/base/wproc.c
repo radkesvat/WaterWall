@@ -19,7 +19,7 @@ bool isAdmin(void)
         DWORD           dw_size;
         if (GetTokenInformation(h_token, TokenElevation, &elevation, sizeof(elevation), &dw_size))
         {
-            is_admin = elevation.TokenIsElevated;
+            is_admin = (BOOL)elevation.TokenIsElevated;
         }
     }
 
