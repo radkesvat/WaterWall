@@ -8,8 +8,7 @@
             "installDir": "${sourceDir}/install/${presetName}",
             "cmakeExecutable": "cmake",
             "cacheVariables": {
-                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache",
-                "OPENSSL_INSTALL": true
+                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache"
             }
         },
         {
