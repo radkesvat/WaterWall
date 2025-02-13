@@ -584,7 +584,7 @@ size_t stringToSize(const char *str)
             default:
                 break;
             }
-            size += n;
+            size += (size_t)n;
             n = 0;
         }
         ++p;
