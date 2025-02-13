@@ -1,6 +1,17 @@
 #include "iowatcher.h"
 
 #ifdef EVENT_KQUEUE
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#pragma clang diagnostic ignored "-Wconversion"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
+// GCC does not have -Wshorten-64-to-32, so no need to handle it here
+#endif
+
 #include "wplatform.h"
 #include "wdef.h"
 
@@ -171,4 +182,12 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
     }
     return nevents;
 }
+
+// Restore original diagnostic settings
+#if defined(__clang__)
+    #pragma clang diagnostic pop
+#elif defined(__GNUC__)
+    #pragma GCC diagnostic pop
+#endif
+
 #endif
