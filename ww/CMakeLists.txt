@@ -138,7 +138,9 @@ set_target_properties(ww
 )
 
 # Platform-specific sources
-if(LINUX OR ANDROID)
+if(APPLE)
+    message(STATUS "No Tun device for MacOS yet")
+elseif(UNIX)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
     # ...existing commented raw/capture devices...
 elseif(WIN32)
@@ -160,8 +162,6 @@ elseif(WIN32)
     
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
     # ...existing commented raw/capture devices...
-elseif(APPLE)
-    message(STATUS "No Tun device for MacOS yet")
     # ...existing commented devices for darwin...
 endif()
 
