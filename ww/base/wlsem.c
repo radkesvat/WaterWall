@@ -312,7 +312,7 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
 
 bool leightweightsemaphoreInit(wlsem_t *s, uint32_t initcount)
 {
-    s->count = (atomic_long)(initcount);
+    s->count = initcount;
     return semaInit(&s->sema, initcount);
 }
 
