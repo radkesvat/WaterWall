@@ -2,6 +2,10 @@ name: CI
 
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 env:
   cpm-path: .cpm
   cpm-key: waterwall-1.1.0-cpm
