@@ -440,7 +440,7 @@ int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
 char *getExecuteablePath(char *buf, int size)
 {
 #ifdef OS_WIN
-    GetModuleFileName(NULL, buf, size);
+    GetModuleFileName(NULL, buf, (DWORD)size);
 #elif defined(OS_DARWIN)
     _NSGetExecutablePath(buf, (uint32_t *) &size);
 #elif defined(OS_UNIX)

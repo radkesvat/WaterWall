@@ -18,7 +18,8 @@ unsigned int getTickMS(void)
     QueryPerformanceCounter(&count);
     QueryPerformanceFrequency(&s_freq);
     // Cast count and frequency to long double for precise division, then convert result to unsigned long long
-    return (unsigned int)((unsigned long long)(((long double)count.QuadPart / (long double)s_freq.QuadPart) * 1000000L));
+    return (unsigned int) ((unsigned long long) (((long double) count.QuadPart / (long double) s_freq.QuadPart) *
+                                                 1000000L));
 #elif HAVE_CLOCK_GETTIME
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -44,7 +45,7 @@ unsigned long long getHRTimeUs(void)
     {
         LARGE_INTEGER count;
         QueryPerformanceCounter(&count);
-        return (unsigned long long) (count.QuadPart / (double) s_freq * 1000000);
+        return (unsigned long long) ((double) count.QuadPart / (double) s_freq * 1000000);
     }
     return 0;
 #elif defined(OS_SOLARIS)
@@ -52,11 +53,11 @@ unsigned long long getHRTimeUs(void)
 #elif HAVE_CLOCK_GETTIME
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (unsigned long long) ((ts.tv_sec *  1000000) + (ts.tv_nsec / 1000));
+    return (unsigned long long) ((ts.tv_sec * 1000000) + (ts.tv_nsec / 1000));
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (unsigned long long)((tv.tv_sec *  1000000) + tv.tv_usec);
+    return (unsigned long long) ((tv.tv_sec * 1000000) + tv.tv_usec);
 #endif
 }
 
