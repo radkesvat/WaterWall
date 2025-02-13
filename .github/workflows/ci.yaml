@@ -235,16 +235,19 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: ${{ matrix.preset }}
+          msystem: MINGW64
           update: true
           pacboy: >-
+            ccache:p
             cmake:p
             gcc:p
             make:p
+            ninja:p
+      
       - name: Configure CMake
         shell: msys2 {0}
         run: >
-          cmake -B build
+          cmake -B build -G Ninja
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
