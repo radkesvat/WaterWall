@@ -22,7 +22,7 @@ jobs:
           - { os: ubuntu, preset: android }
           - { os: ubuntu, preset: linux }
           - { os: windows, preset: windows }
-          - { os: windows, preset: windows_ninja }
+          - { os: windows, preset: windows-ninja }
 
     name: ${{ matrix.preset }}
     runs-on: ${{ matrix.os }}-latest
@@ -51,7 +51,7 @@ jobs:
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
           
       - name: Install ninja on Windows
-        if: matrix.preset == 'windows_ninja'
+        if: matrix.preset == 'windows-ninja'
         run: |
           choco install -y ninja
 
