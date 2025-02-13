@@ -59,7 +59,7 @@ jobs:
             install: sudo pkgin -y install cmake perl git
           - preset: openbsd
             version: "7.6"
-            install: sudo pkg_add cmake git ccache
+            install: sudo pkg_add cmake git
             
     name: ${{ matrix.preset }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
@@ -89,12 +89,7 @@ jobs:
           version: ${{ matrix.version }}
           run: cmake --build build  
 
-      - uses: cross-platform-actions/action@master
-        with:
-          operating_system: ${{ matrix.preset }}
-          architecture: ${{ matrix.arch }}
-          version: ${{ matrix.version }}
-          run: ccache -sv
+
 
   cygwin:
     runs-on: windows-latest
