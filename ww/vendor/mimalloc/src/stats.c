@@ -19,92 +19,85 @@ terms of the MIT license. A copy of the license can be found in the file
   Statistics operations
 ----------------------------------------------------------- */
 
-static void mi_stat_update_mt(mi_stat_count_t* stat, int64_t amount) {
-  if (amount == 0) return;
-  // add atomically
-  int64_t current = mi_atomic_addi64_relaxed(&stat->current, amount);
-  mi_atomic_maxi64_relaxed(&stat->peak, current + amount);
-  if (amount > 0) {
-    mi_atomic_addi64_relaxed(&stat->allocated, amount);
-  }
-  else {
-    mi_atomic_addi64_relaxed(&stat->freed, -amount);
-  }
+static bool mi_is_in_main(void* stat) {
+  return ((uint8_t*)stat >= (uint8_t*)&_mi_stats_main
+         && (uint8_t*)stat < ((uint8_t*)&_mi_stats_main + sizeof(mi_stats_t)));
 }
 
 static void mi_stat_update(mi_stat_count_t* stat, int64_t amount) {
   if (amount == 0) return;
-  // add thread local
-  stat->current += amount;
-  if (stat->current > stat->peak) stat->peak = stat->current;
-  if (amount > 0) {
-    stat->allocated += amount;
+  if mi_unlikely(mi_is_in_main(stat))
+  {
+    // add atomically (for abandoned pages)
+    int64_t current = mi_atomic_addi64_relaxed(&stat->current, amount);
+    mi_atomic_maxi64_relaxed(&stat->peak, current + amount);
+    if (amount > 0) {
+      mi_atomic_addi64_relaxed(&stat->allocated,amount);
+    }
+    else {
+      mi_atomic_addi64_relaxed(&stat->freed, -amount);
+    }
   }
   else {
-    stat->freed += -amount;
+    // add thread local
+    stat->current += amount;
+    if (stat->current > stat->peak) stat->peak = stat->current;
+    if (amount > 0) {
+      stat->allocated += amount;
+    }
+    else {
+      stat->freed += -amount;
+    }
   }
 }
-
 
 // Adjust stats to compensate; for example before committing a range,
-// first adjust downwards with parts that were already committed so
+// first adjust downwards with parts that were already committed so 
 // we avoid double counting.
-static void mi_stat_adjust_mt(mi_stat_count_t* stat, int64_t amount, bool on_alloc) {
+static void mi_stat_adjust(mi_stat_count_t* stat, int64_t amount) {
   if (amount == 0) return;
-  // adjust atomically
-  mi_atomic_addi64_relaxed(&stat->current, amount);
-  mi_atomic_addi64_relaxed((on_alloc ? &stat->allocated : &stat->freed), amount);
-}
-
-static void mi_stat_adjust(mi_stat_count_t* stat, int64_t amount, bool on_alloc) {
-  if (amount == 0) return;
-  stat->current += amount;
-  if (on_alloc) {
-    stat->allocated += amount;
+  if mi_unlikely(mi_is_in_main(stat))
+  {
+    // adjust atomically 
+    mi_atomic_addi64_relaxed(&stat->current, amount);
+    mi_atomic_addi64_relaxed(&stat->allocated, amount);
+    mi_atomic_addi64_relaxed(&stat->freed, amount);
   }
   else {
-    stat->freed += amount;
+    // don't affect the peak
+    stat->current += amount;    
+    // add to both
+    stat->allocated += amount;
+    stat->freed += amount;    
   }
 }
 
-void __mi_stat_counter_increase_mt(mi_stat_counter_t* stat, size_t amount) {
-  mi_atomic_addi64_relaxed(&stat->count, 1);
-  mi_atomic_addi64_relaxed(&stat->total, (int64_t)amount);
+void _mi_stat_counter_increase(mi_stat_counter_t* stat, size_t amount) {
+  if (mi_is_in_main(stat)) {
+    mi_atomic_addi64_relaxed( &stat->count, 1 );
+    mi_atomic_addi64_relaxed( &stat->total, (int64_t)amount );
+  }
+  else {
+    stat->count++;
+    stat->total += amount;
+  }
 }
 
-void __mi_stat_counter_increase(mi_stat_counter_t* stat, size_t amount) {
-  stat->count++;
-  stat->total += amount;
-}
-
-void __mi_stat_increase_mt(mi_stat_count_t* stat, size_t amount) {
-  mi_stat_update_mt(stat, (int64_t)amount);
-}
-void __mi_stat_increase(mi_stat_count_t* stat, size_t amount) {
+void _mi_stat_increase(mi_stat_count_t* stat, size_t amount) {
   mi_stat_update(stat, (int64_t)amount);
 }
 
-void __mi_stat_decrease_mt(mi_stat_count_t* stat, size_t amount) {
-  mi_stat_update_mt(stat, -((int64_t)amount));
-}
-void __mi_stat_decrease(mi_stat_count_t* stat, size_t amount) {
+void _mi_stat_decrease(mi_stat_count_t* stat, size_t amount) {
   mi_stat_update(stat, -((int64_t)amount));
 }
 
-void __mi_stat_adjust_increase_mt(mi_stat_count_t* stat, size_t amount, bool on_alloc) {
-  mi_stat_adjust_mt(stat, (int64_t)amount, on_alloc);
-}
-void __mi_stat_adjust_increase(mi_stat_count_t* stat, size_t amount, bool on_alloc) {
-  mi_stat_adjust(stat, (int64_t)amount, on_alloc);
+void _mi_stat_adjust_increase(mi_stat_count_t* stat, size_t amount) {
+  mi_stat_adjust(stat, (int64_t)amount);
 }
 
-void __mi_stat_adjust_decrease_mt(mi_stat_count_t* stat, size_t amount, bool on_alloc) {
-  mi_stat_adjust_mt(stat, -((int64_t)amount), on_alloc);
+void _mi_stat_adjust_decrease(mi_stat_count_t* stat, size_t amount) {
+  mi_stat_adjust(stat, -((int64_t)amount));
 }
-void __mi_stat_adjust_decrease(mi_stat_count_t* stat, size_t amount, bool on_alloc) {
-  mi_stat_adjust(stat, -((int64_t)amount), on_alloc);
-}
-
 
 // must be thread safe as it is called from stats_merge
 static void mi_stat_add(mi_stat_count_t* stat, const mi_stat_count_t* src, int64_t unit) {
@@ -126,6 +119,7 @@ static void mi_stat_counter_add(mi_stat_counter_t* stat, const mi_stat_counter_t
 // must be thread safe as it is called from stats_merge
 static void mi_stats_add(mi_stats_t* stats, const mi_stats_t* src) {
   if (stats==src) return;
+  mi_stat_add(&stats->segments, &src->segments,1);
   mi_stat_add(&stats->pages, &src->pages,1);
   mi_stat_add(&stats->reserved, &src->reserved, 1);
   mi_stat_add(&stats->committed, &src->committed, 1);
@@ -134,9 +128,11 @@ static void mi_stats_add(mi_stats_t* stats, const mi_stats_t* src) {
   mi_stat_add(&stats->page_committed, &src->page_committed, 1);
 
   mi_stat_add(&stats->pages_abandoned, &src->pages_abandoned, 1);
+  mi_stat_add(&stats->segments_abandoned, &src->segments_abandoned, 1);
   mi_stat_add(&stats->threads, &src->threads, 1);
 
   mi_stat_add(&stats->malloc, &src->malloc, 1);
+  mi_stat_add(&stats->segments_cache, &src->segments_cache, 1);
   mi_stat_add(&stats->normal, &src->normal, 1);
   mi_stat_add(&stats->huge, &src->huge, 1);
   mi_stat_add(&stats->giant, &src->giant, 1);
@@ -150,7 +146,7 @@ static void mi_stats_add(mi_stats_t* stats, const mi_stats_t* src) {
   mi_stat_counter_add(&stats->page_no_retire, &src->page_no_retire, 1);
   mi_stat_counter_add(&stats->searches, &src->searches, 1);
   mi_stat_counter_add(&stats->normal_count, &src->normal_count, 1);
-  mi_stat_counter_add(&stats->huge_count, &src->huge_count, 1);
+  mi_stat_counter_add(&stats->huge_count, &src->huge_count, 1);  
   mi_stat_counter_add(&stats->guarded_alloc_count, &src->guarded_alloc_count, 1);
 #if MI_STAT>1
   for (size_t i = 0; i <= MI_BIN_HUGE; i++) {
@@ -169,7 +165,7 @@ static void mi_stats_add(mi_stats_t* stats, const mi_stats_t* src) {
 // unit == 0: count as decimal
 // unit < 0 : count in binary
 static void mi_printf_amount(int64_t n, int64_t unit, mi_output_fun* out, void* arg, const char* fmt) {
-  char buf[32]; _mi_memzero_var(buf);
+  char buf[32]; buf[0] = 0;
   int  len = 32;
   const char* suffix = (unit <= 0 ? " " : "B");
   const int64_t base = (unit == 0 ? 1000 : 1024);
@@ -334,7 +330,7 @@ static void mi_cdecl mi_buffered_out(const char* msg, void* arg) {
 
 static void _mi_stats_print(mi_stats_t* stats, mi_output_fun* out0, void* arg0) mi_attr_noexcept {
   // wrap the output function to be line buffered
-  char buf[256]; _mi_memzero_var(buf);
+  char buf[256];
   buffered_t buffer = { out0, arg0, NULL, 0, 255 };
   buffer.buf = buf;
   mi_output_fun* out = &mi_buffered_out;
@@ -347,7 +343,7 @@ static void _mi_stats_print(mi_stats_t* stats, mi_output_fun* out0, void* arg0) 
   #endif
   #if MI_STAT
   mi_stat_print(&stats->normal, "normal", (stats->normal_count.count == 0 ? 1 : -(stats->normal.allocated / stats->normal_count.count)), out, arg);
-  mi_stat_print(&stats->huge, "huge", (stats->huge_count.count == 0 ? 1 : -(stats->huge.allocated / stats->huge_count.count)), out, arg);
+  mi_stat_print(&stats->huge, "huge", (stats->huge_count.count == 0 ? 1 : -(stats->huge.allocated / stats->huge_count.count)), out, arg);  
   mi_stat_count_t total = { 0,0,0,0 };
   mi_stat_add(&total, &stats->normal, 1);
   mi_stat_add(&total, &stats->huge, 1);
@@ -361,24 +357,21 @@ static void _mi_stats_print(mi_stats_t* stats, mi_output_fun* out0, void* arg0) 
   mi_stat_print_ex(&stats->committed, "committed", 1, out, arg, "");
   mi_stat_peak_print(&stats->reset, "reset", 1, out, arg );
   mi_stat_peak_print(&stats->purged, "purged", 1, out, arg );
-  //mi_stat_print(&stats->segments, "segments", -1, out, arg);
-  //mi_stat_print(&stats->segments_abandoned, "-abandoned", -1, out, arg);
-  //mi_stat_print(&stats->segments_cache, "-cached", -1, out, arg);
-  mi_stat_print_ex(&stats->page_committed, "touched", 1, out, arg, "");
-  mi_stat_print_ex(&stats->pages, "pages", -1, out, arg, "");
+  mi_stat_print(&stats->page_committed, "touched", 1, out, arg);
+  mi_stat_print(&stats->segments, "segments", -1, out, arg);
+  mi_stat_print(&stats->segments_abandoned, "-abandoned", -1, out, arg);
+  mi_stat_print(&stats->segments_cache, "-cached", -1, out, arg);
+  mi_stat_print(&stats->pages, "pages", -1, out, arg);
   mi_stat_print(&stats->pages_abandoned, "-abandoned", -1, out, arg);
-  mi_stat_counter_print(&stats->pages_reclaim_on_alloc, "-reclaima", out, arg);
-  mi_stat_counter_print(&stats->pages_reclaim_on_free,  "-reclaimf", out, arg);
-  mi_stat_counter_print(&stats->pages_reabandon_full, "-reabandon", out, arg);
-  mi_stat_counter_print(&stats->pages_unabandon_busy_wait, "-waits", out, arg);
   mi_stat_counter_print(&stats->pages_extended, "-extended", out, arg);
   mi_stat_counter_print(&stats->page_no_retire, "-noretire", out, arg);
   mi_stat_counter_print(&stats->arena_count, "arenas", out, arg);
-  mi_stat_counter_print(&stats->arena_purges, "-purges", out, arg);
-  mi_stat_counter_print(&stats->mmap_calls, "mmap calls", out, arg);
-  mi_stat_counter_print(&stats->commit_calls, " -commit", out, arg);
-  mi_stat_counter_print(&stats->reset_calls, "-reset", out, arg);
-  mi_stat_counter_print(&stats->purge_calls, "-purge", out, arg);
+  mi_stat_counter_print(&stats->arena_crossover_count, "-crossover", out, arg);
+  mi_stat_counter_print(&stats->arena_rollback_count, "-rollback", out, arg);
+  mi_stat_counter_print(&stats->mmap_calls, "mmaps", out, arg);
+  mi_stat_counter_print(&stats->commit_calls, "commits", out, arg);
+  mi_stat_counter_print(&stats->reset_calls, "resets", out, arg);
+  mi_stat_counter_print(&stats->purge_calls, "purges", out, arg);
   mi_stat_counter_print(&stats->guarded_alloc_count, "guarded", out, arg);
   mi_stat_print(&stats->threads, "threads", -1, out, arg);
   mi_stat_counter_print_avg(&stats->searches, "searches", out, arg);
@@ -406,37 +399,36 @@ static void _mi_stats_print(mi_stats_t* stats, mi_output_fun* out0, void* arg0) 
 
 static mi_msecs_t mi_process_start; // = 0
 
-// return thread local stats
-static mi_stats_t* mi_get_tld_stats(void) {
-  return &mi_heap_get_default()->tld->stats;
+static mi_stats_t* mi_stats_get_default(void) {
+  mi_heap_t* heap = mi_heap_get_default();
+  return &heap->tld->stats;
 }
 
-void mi_stats_reset(void) mi_attr_noexcept {
-  mi_stats_t* stats = mi_get_tld_stats();
-  mi_subproc_t* subproc = _mi_subproc();
-  if (stats != &subproc->stats) { _mi_memzero(stats, sizeof(mi_stats_t)); }
-  _mi_memzero(&subproc->stats, sizeof(mi_stats_t));
-  if (mi_process_start == 0) { mi_process_start = _mi_clock_start(); };
-}
-
-void _mi_stats_merge_from(mi_stats_t* to, mi_stats_t* from) {
-  if (to != from) {
-    mi_stats_add(to, from);
-    _mi_memzero(from, sizeof(mi_stats_t));
+static void mi_stats_merge_from(mi_stats_t* stats) {
+  if (stats != &_mi_stats_main) {
+    mi_stats_add(&_mi_stats_main, stats);
+    memset(stats, 0, sizeof(mi_stats_t));
   }
 }
 
-void _mi_stats_done(mi_stats_t* stats) {  // called from `mi_thread_done`
-  _mi_stats_merge_from(&_mi_subproc()->stats, stats);
+void mi_stats_reset(void) mi_attr_noexcept {
+  mi_stats_t* stats = mi_stats_get_default();
+  if (stats != &_mi_stats_main) { memset(stats, 0, sizeof(mi_stats_t)); }
+  memset(&_mi_stats_main, 0, sizeof(mi_stats_t));
+  if (mi_process_start == 0) { mi_process_start = _mi_clock_start(); };
 }
 
 void mi_stats_merge(void) mi_attr_noexcept {
-  _mi_stats_done( mi_get_tld_stats() );
+  mi_stats_merge_from( mi_stats_get_default() );
+}
+
+void _mi_stats_done(mi_stats_t* stats) {  // called from `mi_thread_done`
+  mi_stats_merge_from(stats);
 }
 
 void mi_stats_print_out(mi_output_fun* out, void* arg) mi_attr_noexcept {
-  mi_stats_merge();
-  _mi_stats_print(&_mi_subproc()->stats, out, arg);
+  mi_stats_merge_from(mi_stats_get_default());
+  _mi_stats_print(&_mi_stats_main, out, arg);
 }
 
 void mi_stats_print(void* out) mi_attr_noexcept {
@@ -445,7 +437,7 @@ void mi_stats_print(void* out) mi_attr_noexcept {
 }
 
 void mi_thread_stats_print_out(mi_output_fun* out, void* arg) mi_attr_noexcept {
-  _mi_stats_print(mi_get_tld_stats(), out, arg);
+  _mi_stats_print(mi_stats_get_default(), out, arg);
 }
 
 
@@ -479,12 +471,11 @@ mi_msecs_t _mi_clock_end(mi_msecs_t start) {
 
 mi_decl_export void mi_process_info(size_t* elapsed_msecs, size_t* user_msecs, size_t* system_msecs, size_t* current_rss, size_t* peak_rss, size_t* current_commit, size_t* peak_commit, size_t* page_faults) mi_attr_noexcept
 {
-  mi_subproc_t* subproc = _mi_subproc();
   mi_process_info_t pinfo;
   _mi_memzero_var(pinfo);
   pinfo.elapsed        = _mi_clock_end(mi_process_start);
-  pinfo.current_commit = (size_t)(mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.committed.current)));
-  pinfo.peak_commit    = (size_t)(mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.committed.peak)));
+  pinfo.current_commit = (size_t)(mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)&_mi_stats_main.committed.current));
+  pinfo.peak_commit    = (size_t)(mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)&_mi_stats_main.committed.peak));
   pinfo.current_rss    = pinfo.current_commit;
   pinfo.peak_rss       = pinfo.peak_commit;
   pinfo.utime          = 0;
@@ -492,7 +483,7 @@ mi_decl_export void mi_process_info(size_t* elapsed_msecs, size_t* user_msecs, s
   pinfo.page_faults    = 0;
 
   _mi_prim_process_info(&pinfo);
-
+  
   if (elapsed_msecs!=NULL)  *elapsed_msecs  = (pinfo.elapsed < 0 ? 0 : (pinfo.elapsed < (mi_msecs_t)PTRDIFF_MAX ? (size_t)pinfo.elapsed : PTRDIFF_MAX));
   if (user_msecs!=NULL)     *user_msecs     = (pinfo.utime < 0 ? 0 : (pinfo.utime < (mi_msecs_t)PTRDIFF_MAX ? (size_t)pinfo.utime : PTRDIFF_MAX));
   if (system_msecs!=NULL)   *system_msecs   = (pinfo.stime < 0 ? 0 : (pinfo.stime < (mi_msecs_t)PTRDIFF_MAX ? (size_t)pinfo.stime : PTRDIFF_MAX));

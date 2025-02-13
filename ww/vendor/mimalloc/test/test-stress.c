@@ -40,19 +40,6 @@ static int ITER    = 20;
 static int THREADS = 8;
 static int SCALE   = 10;
 static int ITER    = 10;
-#elif 0
-static int THREADS = 4;
-static int SCALE   = 10;
-static int ITER    = 20;
-#elif 0
-static int THREADS = 32;
-static int SCALE   = 50;
-static int ITER    = 50;
-#elif 0
-static int THREADS = 32;
-static int SCALE   = 25;
-static int ITER    = 50;
-#define ALLOW_LARGE true
 #else
 static int THREADS = 32;      // more repeatable if THREADS <= #processors
 static int SCALE   = 50;      // scaling factor
@@ -63,12 +50,7 @@ static int ITER    = 50;      // N full iterations destructing and re-creating a
 
 #define STRESS                // undefine for leak test
 
-#ifndef ALLOW_LARGE
-#define ALLOW_LARGE  false
-#endif
-
-static bool   allow_large_objects = ALLOW_LARGE;    // allow very large objects? (set to `true` if SCALE>100)
-
+static bool   allow_large_objects = false;     // allow very large objects? (set to `true` if SCALE>100)
 static size_t use_one_size = 0;               // use single object size of `N * sizeof(uintptr_t)`?
 
 static bool   main_participates = false;       // main thread participates as a worker too
@@ -84,7 +66,7 @@ static bool   main_participates = false;       // main thread participates as a 
 #define custom_free(p)        mi_free(p)
 
 #ifndef NDEBUG
-#define xHEAP_WALK             // walk the heap objects?
+#define HEAP_WALK             // walk the heap objects?
 #endif
 #endif
 
@@ -259,20 +241,8 @@ static void test_stress(void) {
     //mi_debug_show_arenas(true);
     #endif
     #if !defined(NDEBUG) || defined(MI_TSAN)
-    if ((n + 1) % 10 == 0) {
-      printf("- iterations left: %3d\n", ITER - (n + 1));
-      mi_debug_show_arenas(true);
-      //mi_collect(true);
-      //mi_debug_show_arenas(true);
-    }
+    if ((n + 1) % 10 == 0) { printf("- iterations left: %3d\n", ITER - (n + 1)); }
     #endif
-  }
-  // clean up
-  for (int i = 0; i < TRANSFERS; i++) {
-    void* p = atomic_exchange_ptr(&transfer[i], NULL);
-    if (p != NULL) {
-      free_items(p);
-    }
   }
 }
 
@@ -304,10 +274,6 @@ int main(int argc, char** argv) {
   #endif
   #if !defined(NDEBUG) && !defined(USE_STD_MALLOC)
     mi_option_set(mi_option_arena_reserve, 32 * 1024 /* in kib = 32MiB */);
-    //mi_option_set(mi_option_purge_delay,10);
-  #endif
-  #if defined(NDEBUG) && !defined(USE_STD_MALLOC)
-    // mi_option_set(mi_option_purge_delay,-1);
   #endif
   #ifndef USE_STD_MALLOC
     mi_stats_reset();
@@ -352,7 +318,7 @@ int main(int argc, char** argv) {
   #ifndef NDEBUG
   mi_debug_show_arenas(true);
   mi_collect(true);
-  #endif
+  #endif  
 #endif
   mi_stats_print(NULL);
   //bench_end_program();
@@ -375,10 +341,9 @@ static void run_os_threads(size_t nthreads, void (*fun)(intptr_t)) {
   thread_entry_fun = fun;
   DWORD* tids = (DWORD*)custom_calloc(nthreads,sizeof(DWORD));
   HANDLE* thandles = (HANDLE*)custom_calloc(nthreads,sizeof(HANDLE));
-  thandles[0] = GetCurrentThread(); // avoid lint warning
   const size_t start = (main_participates ? 1 : 0);
   for (size_t i = start; i < nthreads; i++) {
-    thandles[i] = CreateThread(0, 8*1024L, &thread_entry, (void*)(i), 0, &tids[i]);
+    thandles[i] = CreateThread(0, 8*1024, &thread_entry, (void*)(i), 0, &tids[i]);
   }
   if (main_participates) fun(0); // run the main thread as well
   for (size_t i = start; i < nthreads; i++) {
