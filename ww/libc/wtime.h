@@ -135,7 +135,7 @@ static inline void getTAI64N(tai64n_t *timestamp)
     timestamp->nanoseconds = (uint32_t) (ts.tv_nsec);
 }
 
-#elif defined(OS_LINUX)
+#elif defined(OS_UNIX)
 
 static inline void getTAI64N(tai64n_t *timestamp)
 {
