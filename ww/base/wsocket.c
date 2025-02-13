@@ -39,7 +39,7 @@ const char *socketStrError(int err)
     static char buffer[128];
 
     FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, 0,
-                   ABS(err), 0, buffer, sizeof(buffer), NULL);
+                   ABS((DWORD) err), 0, buffer, sizeof(buffer), NULL);
 
     return buffer;
 #else
@@ -91,7 +91,7 @@ int resolveAddr(const char *host, sockaddr_u *addr)
     }
     if (pai == NULL)
         pai = ais;
-    memoryCopy(addr, pai->ai_addr, (size_t)pai->ai_addrlen);
+    memoryCopy(addr, pai->ai_addr, (size_t) pai->ai_addrlen);
     freeaddrinfo(ais);
     return 0;
 }
@@ -104,7 +104,7 @@ const char *sockaddrIp(sockaddr_u *addr, char *ip, int len)
     }
     else if (addr->sa.sa_family == AF_INET6)
     {
-        return inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip,  (socklen_t)len);
+        return inet_ntop(AF_INET6, &addr->sin6.sin6_addr, ip, (socklen_t) len);
     }
     return ip;
 }
@@ -425,11 +425,11 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     (void) protocol;
     WSAInit();
 #endif
-    wsocket_t listenfd, connfd, acceptfd;
-    listenfd = connfd = acceptfd = (wsocket_t) -1;
+    int listenfd, connfd, acceptfd;
+    listenfd = connfd = acceptfd = -1;
     struct sockaddr_in localaddr;
     socklen_t          addrlen = sizeof(localaddr);
-    memorySet(&localaddr, 0, (size_t)addrlen);
+    memorySet(&localaddr, 0, (size_t) addrlen);
     localaddr.sin_family      = AF_INET;
     localaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     localaddr.sin_port        = 0;
@@ -476,8 +476,8 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     }
 
     closesocket(listenfd);
-    sv[0] = (int) connfd;
-    sv[1] = (int) acceptfd;
+    sv[0] = connfd;
+    sv[1] = acceptfd;
     return 0;
 error:
     if (listenfd != -1)

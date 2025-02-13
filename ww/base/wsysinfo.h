@@ -17,7 +17,7 @@ static inline int getNCPU(void)
 #ifdef OS_WIN
     SYSTEM_INFO si;
     GetSystemInfo(&si);
-    return si.dwNumberOfProcessors;
+    return (int) si.dwNumberOfProcessors;
 #else
     // return get_nprocs();
     // return get_nprocs_conf();

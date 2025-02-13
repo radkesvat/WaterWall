@@ -39,13 +39,13 @@ void WSADeinit(void);
 WW_INLINE int blocking(int sockfd)
 {
     unsigned long nb = 0;
-    return ioctlsocket(sockfd, FIONBIO, &nb);
+    return ioctlsocket(sockfd, (long) FIONBIO, &nb);
 }
 
 WW_INLINE int nonBlocking(int sockfd)
 {
     unsigned long nb = 1;
-    return ioctlsocket(sockfd, FIONBIO, &nb);
+    return ioctlsocket(sockfd, (long) FIONBIO, &nb);
 }
 
 #undef EAGAIN
@@ -73,17 +73,17 @@ typedef int wsocket_t;
 
 WW_INLINE int blocking(int s)
 {
-    return fcntl((wsocket_t) s, F_SETFL, fcntl(s, F_GETFL) & ~O_NONBLOCK);
+    return fcntl(s, F_SETFL, fcntl(s, F_GETFL) & ~O_NONBLOCK);
 }
 
 WW_INLINE int nonBlocking(int s)
 {
-    return fcntl((wsocket_t) s, F_SETFL, fcntl(s, F_GETFL) | O_NONBLOCK);
+    return fcntl(s, F_SETFL, fcntl(s, F_GETFL) | O_NONBLOCK);
 }
 
 WW_INLINE int closesocket(int sockfd)
 {
-    return close((wsocket_t) sockfd);
+    return close(sockfd);
 }
 
 #endif
@@ -222,7 +222,7 @@ WW_INLINE int tcpKeepAlive(int sockfd, int on DEFAULT(1), int delay DEFAULT(60))
 #else
     (void) sockfd;
     (void) delay;
-    
+
     return 0;
 #endif
 }
@@ -325,7 +325,8 @@ static inline void sockaddrCopy(sockaddr_u *restrict dest, const sockaddr_u *res
         memoryCopy(&(dest->sin.sin_addr.s_addr), &(source->sin.sin_addr.s_addr), sizeof(source->sin.sin_addr.s_addr));
         return;
     }
-    memoryCopy(&(dest->sin6.sin6_addr.s6_addr), &(source->sin6.sin6_addr.s6_addr), sizeof(source->sin6.sin6_addr.s6_addr));
+    memoryCopy(&(dest->sin6.sin6_addr.s6_addr), &(source->sin6.sin6_addr.s6_addr),
+               sizeof(source->sin6.sin6_addr.s6_addr));
 }
 
 static inline bool sockaddrCmpIPV4(const sockaddr_u *restrict addr1, const sockaddr_u *restrict addr2)
@@ -413,7 +414,7 @@ static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
     return result;
 }
 
-static inline int parseIPWithSubnetMask( const char *input,struct in6_addr *base_addr, struct in6_addr *subnet_mask)
+static inline int parseIPWithSubnetMask(const char *input, struct in6_addr *base_addr, struct in6_addr *subnet_mask)
 {
     char *slash;
     char *ip_part;
@@ -441,7 +442,7 @@ static inline int parseIPWithSubnetMask( const char *input,struct in6_addr *base
             printError("Invalid subnet mask length.\n");
             return -1;
         }
-        uint32_t       mask      = prefix_length > 0 ? htonl((uint32_t)~((1 << (32 - prefix_length)) - 1)) : 0;
+        uint32_t       mask      = prefix_length > 0 ? htonl((uint32_t) ~((1 << (32 - prefix_length)) - 1)) : 0;
         struct in_addr mask_addr = {.s_addr = mask};
         memoryCopy(subnet_mask, &mask_addr, 4);
         return 4;
@@ -460,7 +461,7 @@ static inline int parseIPWithSubnetMask( const char *input,struct in6_addr *base
         for (int i = 0; i < 16; i++)
         {
             int bits                     = prefix_length >= 8 ? 8 : prefix_length;
-            ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (uint8_t)(0xFF << (8 - bits));
+            ((uint8_t *) subnet_mask)[i] = bits == 0 ? 0 : (uint8_t) (0xFF << (8 - bits));
             prefix_length -= bits;
         }
 
@@ -470,7 +471,6 @@ static inline int parseIPWithSubnetMask( const char *input,struct in6_addr *base
     printError("Invalid IP address.\n");
     return -1;
 }
-
 
 static inline int checkIPRange4(const struct in_addr test_addr, const struct in_addr base_addr,
                                 const struct in_addr subnet_mask)
@@ -515,6 +515,5 @@ static inline int checkIPRange6(const struct in6_addr test_addr, const struct in
 
 bool verifyIPPort(const char *ipc);
 bool verifyIPCdir(const char *ipc);
-
 
 #endif // WW_SOCKET_H_

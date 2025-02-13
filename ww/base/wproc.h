@@ -75,8 +75,8 @@ static inline int procSpawn(proc_ctx_t *ctx)
     {
         return -1;
     }
-    ctx->pid = GetThreadId(h); // tid in Windows
-    return ctx->pid;
+    ctx->pid = (pid_t) GetThreadId(h); // tid in Windows
+    return (int) ctx->pid;
 }
 #endif
 

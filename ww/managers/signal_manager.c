@@ -11,7 +11,7 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata)
     {
         if (state->handlers[i].handle == NULL)
         {
-            state->handlers[i] = (signal_handler_t) {.handle = handle, .userdata = userdata};
+            state->handlers[i] = (signal_handler_t){.handle = handle, .userdata = userdata};
             state->handlers_len++;
             mutexUnlock(&(state->mutex));
 
@@ -32,7 +32,7 @@ void removeAtExitCallBack(SignalHandler handle, void *userdata)
     {
         if (state->handlers[i].handle == handle && state->handlers[i].userdata == userdata)
         {
-            state->handlers[i] = (signal_handler_t) {.handle = NULL, .userdata = NULL};
+            state->handlers[i] = (signal_handler_t){.handle = NULL, .userdata = NULL};
             state->handlers_len--;
             mutexUnlock(&(state->mutex));
 
@@ -48,20 +48,20 @@ signal_manager_t *createSignalManager(void)
     assert(state == NULL);
     state = memoryAllocate(sizeof(signal_manager_t));
 
-    *state = (signal_manager_t) {.handlers_len   = 0,
-                                 .started        = false,
-                                 .handlers_ran   = false,
-                                 .raise_defaults = true,
-                                 .handle_sigint  = true,
-                                 .handle_sigquit = true,
-                                 .handle_sighup  = false, // exits after ssh closed even with nohup
-                                 .handle_sigill  = true,
-                                 .handle_sigfpe  = true,
-                                 .handle_sigabrt = true,
-                                 .handle_sigsegv = true,
-                                 .handle_sigterm = true,
-                                 .handle_sigpipe = true,
-                                 .handle_sigalrm = true};
+    *state = (signal_manager_t){.handlers_len   = 0,
+                                .started        = false,
+                                .handlers_ran   = false,
+                                .raise_defaults = true,
+                                .handle_sigint  = true,
+                                .handle_sigquit = true,
+                                .handle_sighup  = false, // exits after ssh closed even with nohup
+                                .handle_sigill  = true,
+                                .handle_sigfpe  = true,
+                                .handle_sigabrt = true,
+                                .handle_sigsegv = true,
+                                .handle_sigterm = true,
+                                .handle_sigpipe = true,
+                                .handle_sigalrm = true};
 
     mutexInit(&(state->mutex));
     return state;
@@ -84,7 +84,7 @@ static void exitHandler(void)
     if (state->handlers_ran)
     {
         const char *msg     = "SignalManager: Not running signal handlers again!, gracefully exiting\n";
-        int         written = (int) write(STDOUT_FILENO, msg, stringLength(msg));
+        int         written = write(STDOUT_FILENO, msg, stringLength(msg));
         (void) written;
         _Exit(1); // exit(1) will call the atexit handlers again
         return;
@@ -129,8 +129,8 @@ static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
 static void multiplexedSignalHandler(int signum)
 {
     char message[50];
-    int  length  = snprintf(message, (size_t) sizeof(message), "SignalManager: Received signal %d\n", signum);
-    int  written = (int) write(STDOUT_FILENO, message, (size_t) length);
+    int  length  = snprintf(message, sizeof(message), "SignalManager: Received signal %d\n", signum);
+    int  written = write(STDOUT_FILENO, message, length);
     (void) written;
 
     if (state->raise_defaults)

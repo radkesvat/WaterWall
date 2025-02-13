@@ -133,7 +133,7 @@ bool isSystemUnderLoad(double threshold)
     }
 
     // Calculate memory usage as a percentage
-    double memory_usage = (1.0 - ((double) mem_status.ullAvailPhys / mem_status.ullTotalPhys));
+    double memory_usage = (1.0 - ((double) mem_status.ullAvailPhys / (double)mem_status.ullTotalPhys));
     if (memory_usage > threshold)
     {
         return 1; // System is under heavy memory load

@@ -81,7 +81,7 @@ static void nio_accept(wio_t *io)
     while (accept_cnt++ < 3)
     {
         addrlen = sizeof(sockaddr_u);
-        connfd  = (int) accept(io->fd, io->peeraddr, &addrlen);
+        connfd  = accept(io->fd, io->peeraddr, &addrlen);
         if (connfd < 0)
         {
             err = socketERRNO();
@@ -171,16 +171,16 @@ static int __nio_read(wio_t *io, void *buf, unsigned int len)
         //             nread = splice(io->fd, NULL,io->pfd_w,0, len, SPLICE_F_NONBLOCK);
         //         }else
         // #endif
-        nread = (int) recv(io->fd, buf, (size_t) len, 0);
+        nread = recv(io->fd, buf, (size_t) len, 0);
         break;
     case WIO_TYPE_UDP: // udp can also be more than 1472 bytes
     case WIO_TYPE_IP: {
         socklen_t addrlen = sizeof(sockaddr_u);
-        nread             = (int) recvfrom(io->fd, buf, (size_t) len, 0, io->peeraddr, &addrlen);
+        nread             = recvfrom(io->fd, buf, (size_t) len, 0, io->peeraddr, &addrlen);
     }
     break;
     default:
-        nread = (int) read(io->fd, buf, len);
+        nread = read(io->fd, buf, len);
         break;
     }
     // wlogd("read retval=%d", nread);
@@ -203,15 +203,15 @@ static int __nio_write(wio_t *io, const void *buf, int len)
 #ifdef MSG_NOSIGNAL
         flag |= MSG_NOSIGNAL;
 #endif
-        nwrite = (int) send(io->fd, buf, (size_t)len, flag);
+        nwrite = send(io->fd, buf, (size_t)len, flag);
     }
     break;
     case WIO_TYPE_UDP:
     case WIO_TYPE_IP:
-        nwrite = (int) sendto(io->fd, buf, (size_t)len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
+        nwrite = sendto(io->fd, buf, (size_t)len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
         break;
     default:
-        nwrite = (int) write(io->fd, buf, (size_t)len);
+        nwrite = write(io->fd, buf, (size_t)len);
         break;
     }
     // wlogd("write retval=%d", nwrite);

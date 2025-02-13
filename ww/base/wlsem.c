@@ -86,7 +86,7 @@ static bool semaSignal(wsem_t *sp, uint32_t count)
     assert(count > 0);
     // while (!ReleaseSemaphore(*sp, count, NULL)) {
     // }
-    return ReleaseSemaphore(*sp, count, NULL);
+    return ReleaseSemaphore(*sp, (LONG)count, NULL);
 }
 
 //---------------------------------------------------------------------------------------------
@@ -312,7 +312,7 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
 
 bool leightweightsemaphoreInit(wlsem_t *s, uint32_t initcount)
 {
-    s->count = (initcount);
+    s->count = (atomic_long)(initcount);
     return semaInit(&s->sema, initcount);
 }
 
