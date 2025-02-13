@@ -85,11 +85,13 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         tcpNoDelay(sockfd, 1);
     }
 
+#ifdef TCP_FASTOPEN
     if (state->option_tcp_fast_open)
     {
         const int yes = 1;
         setsockopt(sockfd, IPPROTO_TCP, TCP_FASTOPEN, (const char *) &yes, sizeof(yes));
     }
+#endif
 
 #ifdef OS_LINUX
     if (state->fwmark != kFwMarkInvalid)
