@@ -220,6 +220,9 @@ jobs:
         preset: [CLANG64, MINGW32, MINGW64, UCRT64]
     name: msys2-${{ matrix.preset }}
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -235,7 +238,7 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: ${{ matrix.preset }}
           update: true
           pacboy: >-
             ccache:p
