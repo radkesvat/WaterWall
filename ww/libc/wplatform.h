@@ -6,7 +6,7 @@
 // OS
 #if defined(__CYGWIN__)
     #define OS_CYGWIN
-    #define OS_WIN32
+    #define OS_LINUX
 #elif defined(WIN64) || defined(_WIN64)
     #define OS_WIN64
     #define OS_WIN32
@@ -181,13 +181,13 @@
 
     #include <windows.h>
     #include <process.h>    // for getpid,exec
-    #ifdef OS_CYGWIN
-    #include <sys/stat.h>  // For mkdir
-    #include <unistd.h>    // For chdir, getcwd
-    #else
+    // #ifdef OS_CYGWIN
+    // #include <sys/stat.h>  // For mkdir
+    // #include <unistd.h>    // For chdir, getcwd
+    // #else
     #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
 
-    #endif
+    // #endif
     #include <io.h>         // for open,close,read,write,lseek,tell
 
     #define hv_sleep(s)     Sleep((s) * 1000)
