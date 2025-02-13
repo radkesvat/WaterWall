@@ -15,6 +15,12 @@ project(Waterwall
         LANGUAGES C
 )
 
+if(NOT CMAKE_BUILD_TYPE)
+    message(STATUS  "CMAKE_BUILD_TYPE not set - defaulting to Debug build.")
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build, options are: ${CMAKE_CONFIGURATION_TYPES}." FORCE)
+endif()
+message (STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 set(FINAL_EXECUTABLE_NAME "Waterwall" CACHE STRING "Final executable name" FORCE)
 
 set(CMAKE_C_STANDARD 11  CACHE INTERNAL  "C standard version" FORCE)
@@ -554,20 +560,22 @@ endif()
 
 #------------------------------------------------------------------------------------------
 if (BUILD_OPENSSL_GLOBALS)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
 endif()
 
 
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
+  target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
 endif()
 
 
 if(OPENSSL_VERSION)
   message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
 endif()
+
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
 # set output path to build/bin/
