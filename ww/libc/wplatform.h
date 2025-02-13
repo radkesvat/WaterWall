@@ -4,27 +4,19 @@
 #include "wconfig.h"
 
 // OS
-#if defined(WIN64) || defined(_WIN64)
+#if defined(__CYGWIN__)
+    #define OS_CYGWIN
+    #define OS_WIN32
+#elif defined(WIN64) || defined(_WIN64)
     #define OS_WIN64
     #define OS_WIN32
 #elif defined(WIN32) || defined(_WIN32)
-    #if defined(__CYGWIN__)
-        // Cygwin is a Unix-like environment running on Windows
-        #define OS_CYGWIN
-        #define OS_LINUX  // Cygwin behaves like Linux in many ways
-    #else
-        #define OS_WIN32
-    #endif
+    #define OS_WIN32
 #elif defined(ANDROID) || defined(__ANDROID__)
     #define OS_ANDROID
     #define OS_LINUX
 #elif defined(linux) || defined(__linux) || defined(__linux__)
-    #if defined(__CYGWIN__)
-        // Cygwin also defines __linux__, so handle it here
-        #define OS_CYGWIN
-    #else
-        #define OS_LINUX
-    #endif
+    #define OS_LINUX
 #elif defined(__APPLE__) && (defined(__GNUC__) || defined(__xlC__) || defined(__xlc__))
     #include <TargetConditionals.h>
     #if defined(TARGET_OS_MAC) && TARGET_OS_MAC
