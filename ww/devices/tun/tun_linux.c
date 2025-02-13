@@ -7,11 +7,19 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+
+
+#include <netinet/ip.h>
+#include <sys/ioctl.h>
+
+#ifdef OS_LINUX
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <linux/ipv6.h>
-#include <netinet/ip.h>
-#include <sys/ioctl.h>
+#else
+#include <net/if.h>
+#include <net/if_tun.h>
+#endif
 
 struct msg_event
 {
