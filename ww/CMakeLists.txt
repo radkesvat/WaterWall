@@ -277,7 +277,6 @@ set (LWIP_INCLUDE_DIRS
     "${LWIP_DIR}/src/include"
     "${LWIP_DIR}/contrib"
     "${LWIPOPTS_DIR}"
-    # lwipopts is located in ww/net
 )
 
 if(NOT APPLE)
