@@ -296,7 +296,7 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 // YIELD_CPU() yields for other work on a CPU core
 #if defined(__i386) || defined(__i386__) || defined(__x86_64__)
 #define YIELD_CPU() __asm__ __volatile__("pause")
-#elif defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
+#elif defined(ARCH_ARM) || defined(ARCH_ARM64) 
 #define YIELD_CPU() __asm__ __volatile__("yield")
 #elif defined(mips) || defined(__mips__) || defined(MIPS) || defined(_MIPS_) || defined(__mips64)
 #if defined(_ABI64) && (_MIPS_SIM == _ABI64)
@@ -308,7 +308,7 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 //   targeting pre-r2, we must encode the instruction manually.
 #define YIELD_CPU() __asm__ __volatile__(".word 0x00000140")
 #endif
-#elif (defined(WIN32) || defined(_WIN32)) && (!defined(ARCH_ARM) && !defined(ARCH_ARM64))
+#elif (defined(WIN32) || defined(_WIN32))
 #include <immintrin.h>
 #define YIELD_CPU() _mm_pause()
 #else
