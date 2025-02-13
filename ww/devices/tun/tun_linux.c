@@ -293,6 +293,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     struct ifreq ifr;
 #ifdef OS_BSD
+    int fd = -1;
 
     // Open the TUN device
     char tun_path[64];
