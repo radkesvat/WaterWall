@@ -125,6 +125,7 @@
 #pragma warning (disable: 4324) // structure was padded due to alignment specifier
 #pragma warning (disable: 4057) // long *' differs in indirection to slightly different base types from 'atomic_uint *'
 #pragma warning (disable: 4200) // nonstandard extension used: zero-sized array in struct/union
+#pragma warning (disable: 4244) // conversion stuff
 #pragma warning (disable: 4702) // unreachable code
 #pragma warning (disable: 4201) // nonstandard extension used: nameless struct/union
 
