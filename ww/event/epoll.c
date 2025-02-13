@@ -5,7 +5,7 @@
 #include "wdef.h"
 #include "wevent.h"
 
-#ifdef OS_WIN
+#if defined(OS_WIN) || defined(OS_CYGWIN) 
 #include "wepoll/wepoll.h"
 typedef HANDLE  epoll_handle_t;
 #else
