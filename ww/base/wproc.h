@@ -137,8 +137,4 @@ bool elevatePrivileges(const char *app_name, char *fail_msg);
 
 bool isAdmin(void);
 
-int getProcessId(proc_ctx_t *ctx) {
-    return (int)ctx->pid;
-}
-
 #endif // WW_PROC_H_
