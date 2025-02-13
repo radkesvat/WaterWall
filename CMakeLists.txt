@@ -71,7 +71,7 @@ option(INCLUDE_TEMPLATE "link Template staticly to the core"  TRUE)
 
 option(INCLUDE_WIREGUARD_DEVICE "link WireGuardDevice staticly to the core"  TRUE)
 
-if(NOT (APPLE OR CYGWIN))
+if(NOT APPLE)
 option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  TRUE)
 endif()
 

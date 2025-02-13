@@ -139,7 +139,7 @@ set_target_properties(ww
 )
 
 # Platform-specific sources
-if(APPLE OR CYGWIN)
+if(APPLE)
     message(STATUS "No Tun device for This os yet")
 elseif(UNIX)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
@@ -166,7 +166,7 @@ elseif(WIN32)
     # ...existing commented devices for darwin...
 endif()
 
-if(WIN32 OR CYGWIN)
+if(WIN32)
     set(WITH_WEPOLL 1)
     if(WITH_WEPOLL)
         target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)

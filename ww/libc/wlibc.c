@@ -500,7 +500,7 @@ char *getRunDir(char *buf, int size)
         // An error occurred, return NULL
         return NULL;
     }
-    else if (result > size)
+    else if (result > (DWORD) size)
     {
         // The buffer is too small to hold the directory path
         return NULL;

@@ -91,37 +91,6 @@ jobs:
 
 
 
-  cygwin:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ env.cpm-path }}
-          key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
-      - name: Install dependencies on Windows
-        if: runner.os == 'Windows'
-        run: |
-          choco install -y jom nasm ccache
-          echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
-
-      - uses: cygwin/cygwin-install-action@v5
-        with:
-          packages: cmake gcc-core gcc-g++ ninja perl git
-      - name: Configure CMake
-        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
-        run: >
-          cmake -B build -G Ninja
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
-      - name: Build
-        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
-        run: cmake --build build --parallel
-
-      - name: Show ccache statistics
-        run: ccache -sv
-
   ios:
     strategy:
       fail-fast: false
