@@ -108,7 +108,7 @@ jobs:
 
       - uses: cygwin/cygwin-install-action@v5
         with:
-          packages: cmake gcc-core gcc-g++ make perl
+          packages: cmake gcc-core gcc-g++ ninja perl
       - name: Configure CMake
         shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
         run: >
