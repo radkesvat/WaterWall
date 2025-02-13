@@ -46,7 +46,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     int64_t memsize = (int64_t) (sizeof(master_pool_t) + container_len);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
-    memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    memsize = (int64_t) ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
     if (memsize < (int64_t) sizeof(master_pool_t))
