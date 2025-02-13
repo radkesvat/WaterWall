@@ -108,15 +108,16 @@ jobs:
 
       - uses: cygwin/cygwin-install-action@v5
         with:
-          packages: cmake gcc-core gcc-g++ ninja perl
+          packages: cmake gcc-core gcc-g++ ninja perl git
       - name: Configure CMake
         shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
         run: >
-          cmake -B build
+          cmake -B build -G Ninja
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
       - name: Build
-        run: cmake --build build
+        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
+        run: cmake --build build --parallel
 
       - name: Show ccache statistics
         run: ccache -sv
