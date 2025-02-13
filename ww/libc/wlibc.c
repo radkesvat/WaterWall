@@ -441,13 +441,14 @@ char *getExecuteablePath(char *buf, int size)
 {
 #ifdef OS_WIN
     GetModuleFileName(NULL, buf, size);
-#elif defined(OS_LINUX)
+#elif defined(OS_DARWIN)
+    _NSGetExecutablePath(buf, (uint32_t *) &size);
+#elif defined(OS_UNIX)
     if (readlink("/proc/self/exe", buf, (size_t) size) == -1)
     {
         return NULL;
     }
-#elif defined(OS_DARWIN)
-    _NSGetExecutablePath(buf, (uint32_t *) &size);
+
 #endif
     return buf;
 }
