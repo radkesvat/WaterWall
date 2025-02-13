@@ -24,10 +24,10 @@ typedef struct kqueue_ctx_s {
 } kqueue_ctx_t;
 
 static void kqueue_ctx_resize(kqueue_ctx_t* kqueue_ctx, int size) {
-    int bytes = (int)(sizeof(struct kevent) * (size_t)size);
-    int oldbytes = (int)(sizeof(struct kevent) * (size_t)kqueue_ctx->capacity);
-    kqueue_ctx->changes = (struct kevent*)eventloopRealloc(kqueue_ctx->changes,(size_t) bytes, (size_t)oldbytes);
-    kqueue_ctx->events = (struct kevent*)eventloopRealloc(kqueue_ctx->events,(size_t) bytes, (size_t)oldbytes);
+    int bytes = sizeof(struct kevent) * size;
+    int oldbytes = sizeof(struct kevent) * kqueue_ctx->capacity;
+    kqueue_ctx->changes = (struct kevent*)eventloopRealloc(kqueue_ctx->changes, bytes, oldbytes);
+    kqueue_ctx->events = (struct kevent*)eventloopRealloc(kqueue_ctx->events, bytes, oldbytes);
     kqueue_ctx->capacity = size;
 }
 
@@ -38,9 +38,9 @@ int iowatcherInit(wloop_t* loop) {
     kqueue_ctx->kqfd = kqueue();
     kqueue_ctx->capacity = EVENTS_INIT_SIZE;
     kqueue_ctx->nchanges = 0;
-    int bytes = (int) (sizeof(struct kevent) * (size_t)kqueue_ctx->capacity);
-    EVENTLOOP_ALLOC(kqueue_ctx->changes,(size_t) bytes);
-    EVENTLOOP_ALLOC(kqueue_ctx->events, (size_t)bytes);
+    int bytes = sizeof(struct kevent) * kqueue_ctx->capacity;
+    EVENTLOOP_ALLOC(kqueue_ctx->changes, bytes);
+    EVENTLOOP_ALLOC(kqueue_ctx->events, bytes);
     loop->iowatcher = kqueue_ctx;
     return 0;
 }
@@ -69,24 +69,15 @@ static int __add_event(wloop_t* loop, int fd, int event) {
             kqueue_ctx_resize(kqueue_ctx, kqueue_ctx->capacity*2);
         }
         memorySet(kqueue_ctx->changes+idx, 0, sizeof(struct kevent));
-        kqueue_ctx->changes[idx].ident = (uintptr_t)fd;
+        kqueue_ctx->changes[idx].ident = fd;
     }
     assert(kqueue_ctx->changes[idx].ident == fd);
-#ifdef OS_BSD
-kqueue_ctx->changes[idx].filter = (uint32_t)event;
-#else
-kqueue_ctx->changes[idx].filter = (int16_t)event;
-#endif
+    kqueue_ctx->changes[idx].filter = event;
     kqueue_ctx->changes[idx].flags = EV_ADD|EV_ENABLE;
     struct timespec ts;
     ts.tv_sec = 0;
     ts.tv_nsec = 0;
-
-#ifdef OS_BSD
-kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, (size_t)kqueue_ctx->nchanges, NULL, 0, &ts);
-#else
-kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, NULL, 0, &ts);
-#endif
+    kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, NULL, 0, &ts);
     return 0;
 }
 
@@ -152,11 +143,7 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
         ts.tv_nsec = (timeout % 1000) * 1000000;
         tp = &ts;
     }
-    #ifdef OS_BSD
-    int nkqueue = kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, (uint32_t)kqueue_ctx->events, kqueue_ctx->nchanges, tp);
-    #else
     int nkqueue = kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, kqueue_ctx->events, kqueue_ctx->nchanges, tp);
-    #endif
     if (nkqueue < 0) {
         printError("kevent");
         return nkqueue;
@@ -168,18 +155,14 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
             continue;
         }
         ++nevents;
-        int fd = (int) kqueue_ctx->events[i].ident;
+        int fd = kqueue_ctx->events[i].ident;
         int revents = kqueue_ctx->events[i].filter;
         wio_t* io = loop->ios.ptr[fd];
         if (io) {
             if (revents & EVFILT_READ) {
                 io->revents |= WW_READ;
             }
-            #ifdef OS_BSD
-            if ((unsigned int) revents & EVFILT_WRITE) {
-            #else
             if (revents & EVFILT_WRITE) {
-            #endif
                 io->revents |= WW_WRITE;
             }
             EVENT_PENDING(io);
