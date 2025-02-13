@@ -341,12 +341,12 @@ int createDirIfNotExists(const char *dir)
         {
 #endif
             *p = '\0';
-            hv_mkdir(tmp);
+            ww_mkdir(tmp);
             *p = delim;
         }
         ++p;
     }
-    if (hv_mkdir(tmp) != 0)
+    if (ww_mkdir(tmp) != 0)
     {
         return EPERM;
     }

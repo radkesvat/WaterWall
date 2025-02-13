@@ -18,7 +18,7 @@ int iowatcherDelEvent(wloop_t* loop, int fd, int events) {
 }
 
 int iowatcherPollEvents(wloop_t* loop, int timeout) {
-    hv_delay(timeout);
+    ww_delay(timeout);
     return 0;
 }
 

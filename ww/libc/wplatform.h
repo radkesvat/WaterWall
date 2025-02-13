@@ -190,11 +190,11 @@
     // #endif
     #include <io.h>         // for open,close,read,write,lseek,tell
 
-    #define hv_sleep(s)     Sleep((s) * 1000)
-    #define hv_msleep(ms)   Sleep(ms)
-    #define hv_usleep(us)   Sleep((us) / 1000)
-    #define hv_delay(ms)    hv_msleep(ms)
-    #define hv_mkdir(dir)   mkdir(dir)
+    #define ww_sleep(s)     Sleep((s) * 1000)
+    #define ww_msleep(ms)   Sleep(ms)
+    #define ww_usleep(us)   Sleep((us) / 1000)
+    #define ww_delay(ms)    ww_msleep(ms)
+    #define ww_mkdir(dir)   mkdir(dir)
 
     // access
     #ifndef F_OK
@@ -230,11 +230,11 @@
     #include <netinet/udp.h>
     #include <netdb.h>  // for gethostbyname
 
-    #define hv_sleep(s)     sleep(s)
-    #define hv_msleep(ms)   usleep((ms) * 1000)
-    #define hv_usleep(us)   usleep(us)
-    #define hv_delay(ms)    hv_msleep(ms)
-    #define hv_mkdir(dir)   mkdir(dir, 0777)
+    #define ww_sleep(s)     sleep(s)
+    #define ww_msleep(ms)   usleep((ms) * 1000)
+    #define ww_usleep(us)   usleep(us)
+    #define ww_delay(ms)    ww_msleep(ms)
+    #define ww_mkdir(dir)   mkdir(dir, 0777)
 #endif
 
 #ifdef _MSC_VER

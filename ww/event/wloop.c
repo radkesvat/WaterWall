@@ -198,7 +198,7 @@ int wloopProcessEvents(wloop_t *loop, int timeout_ms)
     }
     else
     {
-        hv_msleep((unsigned int)blocktime_ms);
+        ww_msleep((unsigned int)blocktime_ms);
     }
     wloopUpdateTime(loop);
     // wakeup by wloopStop
@@ -529,7 +529,7 @@ int wloopRun(wloop_t *loop)
     {
         if (loop->status == WLOOP_STATUS_PAUSE)
         {
-            hv_msleep(WLOOP_PAUSE_TIME);
+            ww_msleep(WLOOP_PAUSE_TIME);
             wloopUpdateTime(loop);
             continue;
         }

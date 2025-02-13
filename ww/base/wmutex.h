@@ -153,7 +153,7 @@ static inline int timedmutexLockFor(wtimed_mutex_t *mutex, unsigned int ms)
         {
             break;
         }
-        hv_msleep(1);
+        ww_msleep(1);
     }
     return ret == 0;
 #endif
@@ -275,7 +275,7 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
         {
             break;
         }
-        hv_msleep(1);
+        ww_msleep(1);
     }
     return ret == 0;
 #endif
