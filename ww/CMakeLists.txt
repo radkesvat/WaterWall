@@ -324,7 +324,7 @@ set(LIBS ${LIBS} ww_lwip)
 # ...existing commented lwip libs...
 
 # Add mimalloc library
-if(ANDROID)
+if(ANDROID OR (WIN32 AND MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4))
     set(MI_OPT_ARCH OFF)
 endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
