@@ -62,7 +62,7 @@
     "buildPresets": [
         {
             "name": "windows_ninja",
-            "configurePreset": "windows",
+            "configurePreset": "windows_ninja",
             "inherits": [
                 "host-windows"
             ]
