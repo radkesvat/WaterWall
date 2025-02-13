@@ -5,7 +5,7 @@
 #ifdef __CYGWIN__
 #include <windows.h>
 
-long gettid(void){
+long getTID(void){
     return (long)GetCurrentThreadId();
 }
 

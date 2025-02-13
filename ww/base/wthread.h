@@ -10,7 +10,7 @@
 #endif
 
 #ifdef __CYGWIN__
-long gettid(void);
+long getTID(void);
 #elif defined (OS_WIN)
 #define getTID (long) GetCurrentThreadId
 #elif HAVE_GETTID || defined(OS_ANDROID)
