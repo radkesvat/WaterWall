@@ -72,12 +72,21 @@ static int __add_event(wloop_t* loop, int fd, int event) {
         kqueue_ctx->changes[idx].ident = (uintptr_t)fd;
     }
     assert(kqueue_ctx->changes[idx].ident == fd);
-    kqueue_ctx->changes[idx].filter = (int16_t)event;
+#ifdef OS_BSD
+kqueue_ctx->changes[idx].filter = (uint32_t)event;
+#else
+kqueue_ctx->changes[idx].filter = (int16_t)event;
+#endif
     kqueue_ctx->changes[idx].flags = EV_ADD|EV_ENABLE;
     struct timespec ts;
     ts.tv_sec = 0;
     ts.tv_nsec = 0;
-    kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, NULL, 0, &ts);
+
+#ifdef OS_BSD
+kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, (size_t)kqueue_ctx->nchanges, NULL, 0, &ts);
+#else
+kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, NULL, 0, &ts);
+#endif
     return 0;
 }
 
@@ -143,7 +152,11 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
         ts.tv_nsec = (timeout % 1000) * 1000000;
         tp = &ts;
     }
+    #ifdef OS_BSD
+    int nkqueue = kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, (uint32_t)kqueue_ctx->events, kqueue_ctx->nchanges, tp);
+    #else
     int nkqueue = kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, kqueue_ctx->events, kqueue_ctx->nchanges, tp);
+    #endif
     if (nkqueue < 0) {
         printError("kevent");
         return nkqueue;
@@ -162,7 +175,11 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
             if (revents & EVFILT_READ) {
                 io->revents |= WW_READ;
             }
+            #ifdef OS_BSD
+            if ((unsigned int) revents & EVFILT_WRITE) {
+            #else
             if (revents & EVFILT_WRITE) {
+            #endif
                 io->revents |= WW_WRITE;
             }
             EVENT_PENDING(io);
