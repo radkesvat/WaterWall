@@ -8,7 +8,6 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 
-
 #include <netinet/ip.h>
 #include <sys/ioctl.h>
 
@@ -94,7 +93,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
         if (nread < 0)
         {
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-            LOGE("TunDevice: reading a packet from TUN device failed, code: %d",  nread);
+            LOGE("TunDevice: reading a packet from TUN device failed, code: %d", nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             {
                 continue;
@@ -103,7 +102,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             return 0;
         }
 
-        sbufSetLength(buf, (uint32_t)nread);
+        sbufSetLength(buf, (uint32_t) nread);
 
         if (TUN_LOG_EVERYTHING)
         {
@@ -293,6 +292,34 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     (void) offload; // todo (send/receive offloading)
 
     struct ifreq ifr;
+#ifdef BSDOS_BSD
+
+    // Open the TUN device
+    char tun_path[64];
+    snprintf(tun_path, sizeof(tun_path), "/dev/%s", name);
+    if ((fd = open(tun_path, O_RDWR)) < 0)
+    {
+        LOGE("TunDevice: opening %s failed", tun_path);
+        return NULL;
+    }
+
+
+    // Prepare the ifreq structure to configure the TUN device
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, name, IFNAMSIZ);
+
+    // Set the interface flags (IFF_UP to bring the interface up)
+    ifr.ifr_flags = IFF_UP;
+
+    // Configure the TUN device using ioctl
+    if (ioctl(fd, SIOCSIFFLAGS, &ifr) < 0)
+    {
+        LOGE("TunDevice: ioctl(SIOCSIFFLAGS) failed");
+        close(fd);
+        return NULL;
+    }
+
+#else
 
     int fd = open("/dev/net/tun", O_RDWR);
     if (fd < 0)
@@ -316,6 +343,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         close(fd);
         return NULL;
     }
+#endif
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
