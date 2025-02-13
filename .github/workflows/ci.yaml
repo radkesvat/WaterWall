@@ -55,7 +55,7 @@ jobs:
             install: sudo pkgin -y install cmake perl git
           - preset: openbsd
             version: "7.6"
-            install: sudo pkg_add cmake git
+            install: sudo pkg_add cmake git ccache
             
     name: ${{ matrix.preset }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
@@ -67,15 +67,6 @@ jobs:
           key: ${{ env.cpm-key }}
           enableCrossOsArchive: true
          
-      - uses: cross-platform-actions/action@master
-        with:
-          operating_system: ${{ matrix.preset }}
-          architecture: ${{ matrix.arch }}
-          version: ${{ matrix.version }}
-          run: |
-            sudo apt-get update
-            sudo apt-get install -y ninja-build ccache
-
       - uses: cross-platform-actions/action@master
         with:
           operating_system: ${{ matrix.preset }}
@@ -150,7 +141,7 @@ jobs:
         run: |
           brew update
           brew install ccache
-          
+
       - name: Configure CMake
         run: >
           cmake -B build -G Xcode
