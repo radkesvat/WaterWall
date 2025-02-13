@@ -185,7 +185,7 @@
     // #include <sys/stat.h>  // For mkdir
     // #include <unistd.h>    // For chdir, getcwd
     // #else
-    #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
+    // #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
 
     // #endif
     #include <io.h>         // for open,close,read,write,lseek,tell
@@ -194,8 +194,9 @@
     #define ww_msleep(ms)   Sleep(ms)
     #define ww_usleep(us)   Sleep((us) / 1000)
     #define ww_delay(ms)    ww_msleep(ms)
-    #define ww_mkdir(dir)   mkdir(dir)
-
+    #define ww_mkdir(dir)   CreateDirectoryA(dir, NULL)
+    #define rmdir(dir)      RemoveDirectoryA(dir)
+    
     // access
     #ifndef F_OK
     #define F_OK            0       /* test for existence of file */

@@ -210,7 +210,7 @@ char *stringNewWithoutSpace(const char *str)
         }
     }
 
-    char *result = (char *) memoryAllocate((size_t)(new_len + 1) * sizeof(char));
+    char *result = (char *) memoryAllocate((size_t) (new_len + 1) * sizeof(char));
     if (result == NULL)
     {
         return NULL;
@@ -465,7 +465,7 @@ char *getExecuteableDir(char *buf, int size)
 #if defined(OS_UNIX)
         strncpy(buf, filepath, (long unsigned int) size);
 #else
-        strncpy_s(buf, ((size_t)size) + 1, filepath, (size_t)size);
+        strncpy_s(buf, ((size_t) size) + 1, filepath, (size_t) size);
 #endif
     }
     return buf;
@@ -482,7 +482,7 @@ char *getExecuteableFile(char *buf, int size)
 #if defined(OS_UNIX)
         strncpy(buf, pos + 1, (unsigned long) size);
 #else
-        strncpy_s(buf, ((size_t)size) + 1, pos + 1, (size_t)size);
+        strncpy_s(buf, ((size_t) size) + 1, pos + 1, (size_t) size);
 #endif
     }
     return buf;
@@ -490,7 +490,23 @@ char *getExecuteableFile(char *buf, int size)
 
 char *getRunDir(char *buf, int size)
 {
-    return getcwd(buf, (size_t)size); // Or, if getcwd expects an int, use: (int)size
+    // Use the native Windows API to get the current working directory
+    DWORD result = GetCurrentDirectoryA((DWORD) size, buf);
+
+    // Check if the function succeeded
+    if (result == 0)
+    {
+        // An error occurred, return NULL
+        return NULL;
+    }
+    else if (result > size)
+    {
+        // The buffer is too small to hold the directory path
+        return NULL;
+    }
+
+    // Return the buffer containing the current directory
+    return buf;
 }
 
 int randomRange(int min, int max)
@@ -584,12 +600,12 @@ size_t stringToSize(const char *str)
             default:
                 break;
             }
-            size += (size_t)n;
+            size += (size_t) n;
             n = 0;
         }
         ++p;
     }
-    return (size_t)(size + n);
+    return (size_t) (size + n);
 }
 
 time_t stringToTime(const char *str)
