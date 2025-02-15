@@ -26,7 +26,7 @@ poly1305_update(poly1305_context *ctx, const unsigned char *m, size_t bytes) {
 
 	/* process full blocks */
 	if (bytes >= poly1305_block_size) {
-		size_t want = (bytes & ~((size_t)poly1305_block_size - 1));
+		size_t want = (bytes & ~(poly1305_block_size - 1));
 		poly1305_blocks(st, m, want);
 		m += want;
 		bytes -= want;

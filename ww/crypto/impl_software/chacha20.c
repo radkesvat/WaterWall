@@ -159,7 +159,7 @@ void chacha20_init(struct chacha20_ctx *ctx, const uint8_t *key, const uint64_t 
 	ctx->state[12] = 0;
 	ctx->state[13] = 0;
 	ctx->state[14] = nonce & 0xFFFFFFFF;
-	ctx->state[15] = (uint32_t)(nonce >> 32);
+	ctx->state[15] = nonce >> 32;
 }
 
 // 2.2. HChaCha20
