@@ -65,8 +65,8 @@ int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t
 	struct chacha20_ctx chacha20_state;
 	uint8_t block[8];
 	size_t padded_len;
-	uint64_t nonce = *(uint64_t*)(&p_nonce[4]);
-
+	const uint32_t* p32_nonce = (uint32_t*)p_nonce;
+	uint64_t nonce = (((uint64_t)p32_nonce[0]) << 32) | p32_nonce[1];
 	// First, a Poly1305 one-time key is generated from the 256-bit key and nonce using the procedure described in Section 2.6.
 	generate_poly1305_key(&poly1305_state, &chacha20_state, key, nonce);
 
@@ -113,8 +113,8 @@ int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t
 	size_t padded_len;
 	int dst_len;
 	bool result = false;
-	uint64_t nonce = *(uint64_t*)(&p_nonce[4]);
-
+	const uint32_t* p32_nonce = (uint32_t*)p_nonce;
+	uint64_t nonce = ((uint64_t)p32_nonce[0] << 32) | p32_nonce[1];
 
 	// Decryption is similar [to encryption] with the following differences:
 	// - The roles of ciphertext and plaintext are reversed, so the ChaCha20 encryption function is applied to the ciphertext, producing the plaintext.
@@ -174,7 +174,7 @@ int xchacha20poly1305Encrypt(uint8_t *dst, const uint8_t *src, size_t src_len, c
 
 	new_nonce = U8TO64_LITTLE(nonce + 16);
 
-    uint64_t wireguard_way_of_nonce[2] = {0, new_nonce};
+    uint32_t wireguard_way_of_nonce[8] = {new_nonce >> 32, new_nonce & 0xFFFFFFFF,0,0 };
 	
 	hchacha20(subkey, nonce, key);
 	chacha20poly1305Encrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
@@ -189,7 +189,7 @@ int xchacha20poly1305Decrypt(uint8_t *dst, const uint8_t *src, size_t src_len, c
 	int result;
 
 	new_nonce = U8TO64_LITTLE(nonce + 16);
-    uint64_t wireguard_way_of_nonce[2] = {0, new_nonce};
+    uint32_t wireguard_way_of_nonce[8] = {new_nonce >> 32, new_nonce & 0xFFFFFFFF,0,0 };
 
 	hchacha20(subkey, nonce, key);
 	result = chacha20poly1305Decrypt(dst, src, src_len, ad, ad_len, (unsigned char *) &wireguard_way_of_nonce, subkey);
