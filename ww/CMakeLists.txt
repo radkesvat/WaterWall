@@ -1,9 +1,13 @@
-# Version settings
+################################################################################
+# Version Settings
+################################################################################
 set(WW_VERSION_MAJOR 1)
 set(WW_VERSION_MINOR 1)
 set(WW_VERSION_PATCH 0)
 
-# Build library configuration
+################################################################################
+# Library Build Configuration
+################################################################################
 add_library(ww STATIC
     libc/wlibc.c
     libc/wtime.c
@@ -70,13 +74,16 @@ add_library(ww STATIC
     loggers/internal_logger.c
 )
 
+################################################################################
+# Global Options & Definitions
+################################################################################
 option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
 option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
 
 # Crypto backend options
-option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" OFF)
+option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
 option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
-option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" ON)
+option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
 
 if(NOT DEFINED FINAL_EXECUTABLE_NAME OR MY_VARIABLE STREQUAL "")
     message(FATAL_ERROR "Error: FINAL_EXECUTABLE_NAME is not set! Please define FINAL_EXECUTABLE_NAME before configuring.")
@@ -86,11 +93,13 @@ if(WIN32)
     option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
     option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
     target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}.exe")
-
 else()
     target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}")
 endif()
 
+################################################################################
+# Crypto Backend Source Selection
+################################################################################
 # Ensure only one backend is selected
 if(WCRYPTO_BACKEND_SODIUM)
     set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
@@ -100,7 +109,6 @@ if(WCRYPTO_BACKEND_SODIUM)
     target_sources(ww PRIVATE crypto/impl_sodium/chacha20poly1305.c)
     target_sources(ww PRIVATE crypto/impl_sodium/xchacha20poly1305.c)
     target_sources(ww PRIVATE crypto/impl_sodium/x25519.c)
-
     target_sources(ww PRIVATE crypto/impl_software/blake2s.c)
     
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
@@ -128,8 +136,9 @@ elseif(WCRYPTO_BACKEND_SOFTWARE)
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SOFTWARE=1)
 endif()
 
-
-
+################################################################################
+# Target Properties & Platform-specific Sources
+################################################################################
 # Enforce C11 for this specific target
 set_target_properties(ww 
     PROPERTIES
@@ -162,8 +171,7 @@ elseif(WIN32)
     endif()
     
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
-    # ...existing commented raw/capture devices...
-    # ...existing commented devices for darwin...
+
 endif()
 
 if(WIN32)
@@ -174,7 +182,9 @@ if(WIN32)
     endif()
 endif()
 
-# Include directories
+################################################################################
+# Include Directories
+################################################################################
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/base)
 target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/base/internal_types)
@@ -187,10 +197,10 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libc)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
 
-# Add dependencies
+################################################################################
+# External Dependencies
+################################################################################
 include(cmake/GetCPM.cmake)
-
-
 
 # Add komihash library
 CPMAddPackage(
@@ -199,7 +209,6 @@ CPMAddPackage(
     GIT_TAG 5.10
     DOWNLOAD_ONLY True
 )
-
 if(komihash_ADDED)
     target_include_directories(ww PUBLIC ${komihash_SOURCE_DIR})
 endif()
@@ -211,13 +220,11 @@ CPMAddPackage(
     GIT_TAG HEAD
     DOWNLOAD_ONLY True
 )
-
 if(stc_ADDED)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         target_compile_options(ww PUBLIC /wd4310) # stc bug, hash -> cast truncates constant value
     endif()
-    # ...existing commented stc source...
 endif()
 
 # Add cJSON library
@@ -228,14 +235,12 @@ CPMAddPackage(
     OPTIONS "BUILD_SHARED_LIBS OFF" "BUILD_SHARED_AND_STATIC_LIBS On"
     DOWNLOAD_ONLY True
 )
-
 if(cjson_ADDED)
     target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
 
 # add openssl (default version is latest)
-
 # CPMAddPackage(
 #     NAME openssl-cmake
 #     URL https://github.com/radkesvat/openssl-cmake/archive/main.tar.gz
@@ -245,11 +250,9 @@ endif()
 #     "OPENSSL_CONFIGURE_VERBOSE OFF"
 #     "OPENSSL_BUILD_VERBOSE TRUE"
 # )
-
 # set(LIBS ${LIBS} OpenSSL::SSL)
 # set(LIBS ${LIBS} OpenSSL::Crypto)
 # set(LIBS ${LIBS} OpenSSL::applink)
-
 
 # Add libsodium as a static library
 CPMAddPackage(
@@ -267,82 +270,73 @@ CPMAddPackage(
 )
 set(LIBS ${LIBS} sodium)
 
-# Add LWIP library settings
+################################################################################
+# LWIP Library Settings
+################################################################################
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)
 set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 set(LWIP_CONTRIB_DIR ${LWIPOPTS_DIR}/contrib)
-
 set (LWIP_INCLUDE_DIRS
     "${LWIP_DIR}/src/include"
     "${LWIP_DIR}/contrib"
     "${LWIPOPTS_DIR}"
 )
-
 if(NOT APPLE)
     target_compile_definitions(ww PUBLIC )
     set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 endif()
-
 if(ANDROID)
     set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} SOCKLEN_T_DEFINED=1)
 endif()
-
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} LWIP_DEBUG=1)
 endif()
-
 if(WIN32)
     set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
     target_compile_definitions(ww PUBLIC LWIP_NO_UNISTD_H=1)
 else()
     set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/unix/port/include")
 endif()
-
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
-
-
 add_library(ww_lwip STATIC 
     ${lwipnoapps_SRCS}
 )
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
-
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
-
 if(UNIX)
     target_sources(ww_lwip PRIVATE  ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
 else()
     target_sources(ww_lwip PRIVATE  ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
 endif()
-
 target_compile_options(ww_lwip PUBLIC ${LWIP_COMPILER_FLAGS})
-
 set(LIBS ${LIBS} ww_lwip)
-
-
 # ...existing commented lwip libs...
 
+################################################################################
+# Mimalloc & Platform-specific Options
+################################################################################
 # Add mimalloc library
 # if(ANDROID OR (WIN32 AND MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4))
-    set(MI_OPT_ARCH OFF)
+    # set(MI_OPT_ARCH OFF)
 # endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
 set(LIBS ${LIBS} mimalloc-static)
-
 # Platform-specific options and settings
 message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
 message(STATUS "CMAKE_CURRENT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}")
-
 if(IOS)
     set(BUILD_SHARED OFF)
     set(BUILD_EXAMPLES OFF)
 endif()
-
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
 include(utils)
 include(vars)
 
+################################################################################
+# Header and Function Checks
+################################################################################
 # Header checks
 check_header("stdbool.h")
 check_header("stdint.h")
@@ -354,7 +348,6 @@ check_header("fcntl.h")
 check_header("pthread.h")
 check_header("endian.h")
 check_header("sys/endian.h")
-
 # Function checks
 if(NOT MSVC)
     set(CMAKE_REQUIRED_LIBRARIES "-pthread")
@@ -372,11 +365,12 @@ check_function("socketpair" "sys/socket.h")
 check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
+################################################################################
+# Configuration and Linking
+################################################################################
 # Configure file
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
-
 message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
-
 if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
     if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
@@ -388,32 +382,26 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         set(LIBS ${LIBS} mimalloc-static)
     endif()
 endif()
-
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     target_compile_definitions(ww PUBLIC WW_AVX=1)
     target_compile_options(ww PUBLIC -mavx)
 endif()
-
 if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     target_compile_definitions(ww PUBLIC DEBUG=1)
 else()
     target_compile_definitions(ww PUBLIC NDEBUG=1)
 endif()
-
 if(ENABLE_UDS)
     target_compile_definitions(ww PUBLIC -DENABLE_UDS)
 endif()
-
 if(USE_MULTIMAP)
     target_compile_definitions(ww PUBLIC -DUSE_MULTIMAP)
 endif()
-
 if(WW_STATICLIB)
     target_compile_definitions(ww PUBLIC -DWW_STATICLIB)
 else()
     target_compile_definitions(ww PUBLIC -DWW_DYNAMICLIB)
 endif()
-
 if(WIN32)
     target_compile_definitions(ww PUBLIC -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0600)
     set(LIBS ${LIBS} secur32 crypt32 winmm ntdll iphlpapi ws2_32 pdh)
@@ -422,7 +410,6 @@ if(WIN32)
         set(LIBS ${LIBS} dbghelp)
     endif()
 endif()
-
 if(ANDROID)
     set(LIBS ${LIBS} log)
 elseif(UNIX)
@@ -434,23 +421,22 @@ elseif(UNIX)
         set(LIBS ${LIBS} rt)
     endif()
 endif()
-
 if(APPLE)
     set(LIBS ${LIBS} "-framework CoreFoundation" "-framework Security")
 endif()
-
 target_link_libraries(ww PUBLIC ${LIBS})
-
 # Link options for Release build
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_link_options(ww PUBLIC -s)
 endif()
-
 # Link options for Debug build
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)
 endif()
 
+################################################################################
+# Sanitizer and Compiler-specific Options
+################################################################################
 # Enable sanitizers for non-Release builds
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     if(ENABLE_ASAN)
@@ -475,10 +461,8 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
         target_link_options(ww PUBLIC -fsanitize=undefined)
     endif()
 endif()
-
 # Compiler-specific options
 if(NOT MSVC)
-
     target_compile_options(ww PUBLIC 
         -Wall 
         -Wextra 
@@ -504,14 +488,10 @@ if(NOT MSVC)
         -Wno-unknown-warning-option
         -Wno-pragmas
     )
-
- 
 endif()
-
 if(APPLE)
     target_compile_options(ww PRIVATE -Wno-shorten-64-to-32)
 endif()
-
 if(MSVC)
     target_compile_options(ww PUBLIC 
         /W4
