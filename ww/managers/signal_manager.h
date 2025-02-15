@@ -13,7 +13,7 @@ typedef struct
 
 enum
 {
-    kMaxSigHandles = 48
+    kMaxSigHandles = 500
 };
 
 typedef struct signal_manager_s
