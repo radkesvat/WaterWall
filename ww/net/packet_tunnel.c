@@ -61,12 +61,15 @@ void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
     (void) self;
     (void) line;
-    assert(self->prev != NULL);
+    if (self->prev != NULL)
+    {
+        self->prev->fnEstD(self->prev, line);
+    }
     // if (! line->established)
     // {
     //     self->prev->fnEstD(self->prev, line);
     // }
-    LOGD("packet tunnel blocked down stream est");
+    // LOGD("packet tunnel blocked down stream est");
 }
 
 // Default downstream finalization function
@@ -76,11 +79,11 @@ void packettunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line)
     LOGD("packet tunnel received Finish, forcing line to recreate");
     // if (line->established)
     // {
-        self->next->fnInitU(self->next, line);
+    self->next->fnInitU(self->next, line);
     // }
     // else
     // {
-        // self->prev->fnEstD(self->prev, line);
+    // self->prev->fnEstD(self->prev, line);
     // }
 }
 
@@ -97,15 +100,19 @@ void packettunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *
 // Default downstream pause function
 void packettunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
 {
-    assert(self->prev != NULL);
-    self->next->fnPauseD(self->next, line);
+    if (self->prev != NULL)
+    {
+        self->next->fnPauseD(self->next, line);
+    }
 }
 
 // Default downstream resume function
 void packettunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
 {
-    assert(self->prev != NULL);
-    self->next->fnResumeD(self->next, line);
+    if (self->prev != NULL)
+    {
+        self->next->fnResumeD(self->next, line);
+    }
 }
 
 tunnel_t *packettunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
@@ -125,6 +132,6 @@ tunnel_t *packettunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate
     t->fnPayloadD = packettunnelDefaultdownStreamPayload;
     t->fnPauseD   = packettunnelDefaultDownStreamPause;
     t->fnResumeD  = packettunnelDefaultDownStreamResume;
-    
+
     return t;
 }
