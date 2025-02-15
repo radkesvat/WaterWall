@@ -44,14 +44,14 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
     // Get the system's temporary directory
     if (GetTempPath(MAX_PATH, tempPath) == 0)
     {
-        LOGE("Failed to get temporary path");
+        LOGE("TunDevice: Failed to get temporary path");
         return NULL;
     }
 
     // Generate a unique temporary file name
     if (GetTempFileName(tempPath, _T("dll"), 0, tempFileName) == 0)
     {
-        LOGE("Failed to create temporary filename");
+        LOGE("TunDevice: Failed to create temporary filename");
         return NULL;
     }
 
@@ -59,7 +59,7 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
     HANDLE hFile = CreateFile(tempFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
     {
-        LOGE("Failed to create temporary file");
+        LOGE("TunDevice: Failed to create temporary file");
         return NULL;
     }
 
@@ -67,7 +67,7 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
     DWORD bytesWritten;
     if (! WriteFile(hFile, dllBytes, (DWORD) dllSize, &bytesWritten, NULL))
     {
-        LOGE("Failed to write temporary file");
+        LOGE("TunDevice: Failed to write temporary file");
         CloseHandle(hFile);
         DeleteFile(tempFileName);
         return NULL;
@@ -90,7 +90,7 @@ static void tunWindowsStartup(void)
     TCHAR *tempDllPath = writeDllToTempFile(&wintun_dll[0], wintun_dll_len);
     if (! tempDllPath)
     {
-        LOGE("Failed to write DLL to temporary file");
+        LOGE("TunDevice: Failed to write DLL to temporary file");
         return;
     }
 
@@ -100,13 +100,13 @@ static void tunWindowsStartup(void)
     HMODULE hModule = LoadLibraryExW(widePath, NULL, 0);
     if (! hModule)
     {
-        LOGE("Failed to load DLL: error %lu", GetLastError());
+        LOGE("TunDevice: Failed to load DLL: error %lu", GetLastError());
         DeleteFile(tempDllPath);
         free(tempDllPath);
         return;
     }
 
-    LOGI("DLL loaded successfully");
+    LOGI("TunDevice: DLL loaded successfully");
 
     GSTATE.wintun_dll_handle = hModule;
 }
@@ -120,7 +120,7 @@ static void printPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
 {
     if (PacketSize < 20)
     {
-        LOGI("Packet received without IP header");
+        LOGI("TunDevice: Packet received without IP header");
         return;
     }
     BYTE  IpVersion = Packet[0] >> 4, Proto;
@@ -134,7 +134,7 @@ static void printPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
     }
     else if (IpVersion == 6 && PacketSize < 40)
     {
-        LOGI("Invalid packet size for IPv6 header");
+        LOGI("TunDevice: Invalid packet size for IPv6 header");
         return;
     }
     else if (IpVersion == 6)
@@ -146,13 +146,13 @@ static void printPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
     }
     else
     {
-        LOGI("Non-IP packet received");
+        LOGI("TunDevice: Non-IP packet received");
         return;
     }
     if (Proto == 1 && PacketSize >= 8 && Packet[0] == 0)
-        LOGI("IPv%d ICMP echo reply from %s to %s", IpVersion, Src, Dst);
+        LOGI("TunDevice: IPv%d ICMP echo reply from %s to %s", IpVersion, Src, Dst);
     else
-        LOGI("IPv%d protocol 0x%x packet from %s to %s", IpVersion, Proto, Src, Dst);
+        LOGI("TunDevice: IPv%d protocol 0x%x packet from %s to %s", IpVersion, Proto, Src, Dst);
 }
 
 /**
@@ -242,7 +242,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
             if (TUN_LOG_EVERYTHING)
             {
-                LOGD("Read %zd bytes from device %s", nread, tdev->name);
+                LOGD("TunDevice: ReadThread: Read %zd bytes from device %s", nread, tdev->name);
                 // printPacket(Packet, PacketSize);
             }
 
@@ -265,13 +265,13 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                     continue;
                 return ERROR_SUCCESS;
             default:
-                LOGE("ReadThread: Packet read failed: error %lu", LastError);
-                LOGE("ReadThread: Terminating");
+                LOGE("TunDevice: ReadThread: Packet read failed: error %lu", LastError);
+                LOGE("TunDevice: ReadThread: Terminating");
                 return LastError;
             }
         }
     }
-    LOGD("ReadThread: Terminating due to not running");
+    LOGD("TunDevice: ReadThread: Terminating due to not running");
 
     return 0;
 }
@@ -290,7 +290,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
     {
         if (! chanRecv(tdev->writer_buffer_channel, (void *) &buf))
         {
-            LOGD("WriteThread: Terminating due to closed channel");
+            LOGD("TunDevice: WriteThread: Terminating due to closed channel");
             return 0;
         }
 
@@ -301,12 +301,12 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
             if (GetLastError() != ERROR_BUFFER_OVERFLOW)
             {
-                LOGE("WriteThread: Failed to allocate memory for write packet, WinTun Ring Overflow");
+                LOGE("TunDevice: WriteThread: Failed to allocate memory for write packet, WinTun Ring Overflow");
             }
             else
             {
-                LOGE("WriteThread: Failed to allocate memory for write packet %lu", GetLastError());
-                LOGE("WriteThread: Terminating");
+                LOGE("TunDevice: WriteThread: Failed to allocate memory for write packet %lu", GetLastError());
+                LOGE("TunDevice: WriteThread: Terminating");
                 return 0;
             }
             continue;
@@ -319,7 +319,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
     }
 
-    LOGD("WriteThread: Terminating due to not running");
+    LOGD("TunDevice: WriteThread: Terminating due to not running");
 
     return 0;
 }
@@ -333,7 +333,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
 {
     if (tdev->up)
     {
-        LOGE("Device is already up");
+        LOGE("TunDevice: Device is already up");
         return false;
     }
 
@@ -344,7 +344,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
     if (! Session)
     {
         DWORD lastError = GetLastError();
-        LOGE("Failed to start session, code: %lu", lastError);
+        LOGE("TunDevice: Failed to start session, code: %lu", lastError);
         return false;
     }
 
@@ -372,7 +372,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
 {
     if (! tdev->up)
     {
-        LOGE("Device is already down");
+        LOGE("TunDevice: Device is already down");
         return true;
     }
 
@@ -397,7 +397,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     threadJoin(tdev->write_thread);
 
     assert(tdev->session_handle != NULL);
-    LOGD("Ending session");
+    LOGD("TunDevice: Ending WinTun session");
     WintunEndSession(tdev->session_handle);
     tdev->session_handle = NULL;
 
@@ -416,18 +416,18 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     ULONG ip_binary;
     if (! (inet_pton(AF_INET, ip_presentation, &ip_binary) == 1))
     {
-        LOGE("Cannot set IP -> Invalid IP address: %s", ip_presentation);
+        LOGE("TunDevice: Cannot set IP -> Invalid IP address: %s", ip_presentation);
     }
 
     if (tdev->adapter_handle == NULL)
     {
-        LOGE("Cannot set IP -> No Adapter!");
+        LOGE("TunDevice: Cannot set IP -> No Adapter!");
         return false;
     }
 
     if (tdev->session_handle != NULL)
     {
-        LOGE("Cannot set IP -> Session already started");
+        LOGE("TunDevice: Cannot set IP -> Session already started");
         return false;
     }
 
@@ -441,7 +441,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     DWORD LastError                               = CreateUnicastIpAddressEntry(AddressRow);
     if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
     {
-        LOGE("Failed to set IP address, code: %lu", LastError);
+        LOGE("TunDevice: Failed to set IP address, code: %lu", LastError);
         return false;
     }
     return true;
@@ -461,7 +461,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
 
     if (tdev->adapter_handle == NULL)
     {
-        LOGE("Cannot set IP -> No Adapter!");
+        LOGE("TunDevice: Cannot set IP -> No Adapter!");
         return false;
     }
 
@@ -473,7 +473,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
     DWORD LastError                               = CreateUnicastIpAddressEntry(AddressRow);
     if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
     {
-        LOGE("Failed to unassign IP address, code: %lu", LastError);
+        LOGE("TunDevice: Failed to unassign IP address, code: %lu", LastError);
         return false;
     }
     return true;
@@ -491,7 +491,7 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     assert(sbufGetBufLength(buf) > 20);
     if (atomicLoadRelaxed(&(tdev->running)) == false)
     {
-        LOGE("Write failed, device is not running");
+        LOGE("TunDevice: Write failed, device is not running");
         return false;
     }
 
@@ -500,11 +500,11 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     {
         if (closed)
         {
-            LOGE("Write failed, channel was closed");
+            LOGE("TunDevice: Write failed, channel was closed");
         }
         else
         {
-            LOGE("Write failed, ring is full");
+            LOGE("TunDevice: Write failed, ring is full");
         }
         return false;
     }
@@ -543,7 +543,7 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
     FARPROC proc = GetProcAddress(GSTATE.wintun_dll_handle, function_name);
     if (proc == NULL)
     {
-        LOGE("Error: Failed to load function '%s' from WinTun DLL.", function_name);
+        LOGE("TunDevice: Error: Failed to load function '%s' from WinTun DLL.", function_name);
         return false;
     }
     memoryCopy(target, &proc, sizeof(FARPROC));
@@ -571,7 +571,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     if (GSTATE.wintun_dll_handle == NULL)
     {
-        LOGE("Wintun DLL not loaded");
+        LOGE("TunDevice: Wintun DLL not loaded");
         return NULL;
     }
 
@@ -605,7 +605,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     if (! loadFunctionFromDLL("WintunSendPacket", &WintunSendPacket))
         return NULL;
 
-    LOGD("Wintun loaded successfully");
+    LOGD("TunDevice: Wintun loaded successfully");
 
     buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
                                                    GSTATE.masterpool_buffer_pools_small, (0) + GSTATE.ram_profile,
@@ -653,7 +653,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     tdev->name = (wchar_t *) malloc(wideSize * sizeof(wchar_t));
     if (! tdev->name)
     {
-        LOGE("Memory allocation failed!");
+        LOGE("TunDevice: Memory allocation failed!");
         return NULL;
     }
 
@@ -664,7 +664,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     if (! adapter)
     {
         LastError = GetLastError();
-        LOGE("Failed to create adapter, code: %lu", LastError);
+        LOGE("TunDevice: Failed to create adapter, code: %lu", LastError);
 
         return NULL;
     }
