@@ -119,16 +119,18 @@ static void testX25519(void)
 // Test ChaCha20-Poly1305 Encrypt/Decrypt
 static void testChaCha20Poly1305(void)
 {
-    const uint8_t plaintext[]                        = "This is a secret message!";
-    const uint8_t ad[]                               = "Additional authenticated data";
-    const uint8_t key[32]                            = {0x00};                                 // Example key
-    const uint8_t nonce[12]                          = {1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0x0}; // Example nonce
-    uint8_t       ciphertext[sizeof(plaintext) + 16] = {0};
-    uint8_t       decrypted[sizeof(plaintext)]       = {0};
-    uint8_t       expected[sizeof(plaintext) + 16] = {0x12, 0x90, 0xf3, 0x10, 0xc2, 0x3f, 0x79, 0xce, 0xac, 0xaf, 0x5f,
-                                                      0xc9, 0x91, 0x70, 0x4f, 0x43, 0xb8, 0xb4, 0xdb, 0xb1, 0x6d, 0x77,
-                                                      0x59, 0x8b, 0xe9, 0x13, 0x82, 0xf5, 0x00, 0x26, 0xc8, 0xee, 0x54,
-                                                      0x77, 0x84, 0xc8, 0xfe, 0x4a, 0xac, 0x78, 0x7d, 0x00};
+    const uint8_t plaintext[] = "This is a secret message!";
+    const uint8_t ad[]        = "Additional authenticated data";
+    const uint8_t key[32]     = {0x00}; // Example key
+    const uint8_t nonce[12]   = {
+        0, 0, 0, 0, 88, 90, 07, 1, 2, 3, 4, 8,
+    }; // Example nonce
+    uint8_t ciphertext[sizeof(plaintext) + 16] = {0};
+    uint8_t decrypted[sizeof(plaintext)]       = {0};
+    uint8_t expected[sizeof(plaintext) + 16]   = {0x88, 0x10, 0xcc, 0x6b, 0xc6, 0x12, 0xb2, 0xe3, 0x71, 0xf9, 0x9a,
+                                                  0x1e, 0xed, 0x2b, 0x87, 0x27, 0x50, 0x1d, 0x2a, 0xba, 0xf0, 0x77,
+                                                  0x03, 0xb6, 0x63, 0x16, 0x50, 0xd2, 0x52, 0x5b, 0x16, 0xb7, 0x18,
+                                                  0xd8, 0x8e, 0x24, 0x51, 0x67, 0x41, 0xb7, 0x1e, 0x00};
 
     size_t plaintext_len = sizeof(plaintext) - 1; // Exclude null terminator
     size_t ad_len        = sizeof(ad) - 1;
