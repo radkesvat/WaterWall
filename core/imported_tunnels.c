@@ -13,6 +13,10 @@
 #include "tunnels/TunDevice/include/interface.h"
 #endif
 
+#ifdef INCLUDE_PACKET_TO_CONNECTION
+#include "tunnels/PacketToConnection/include/interface.h"
+#endif
+
 #ifdef INCLUDE_RAWDEVICE
 #include "tunnels/adapters/device/raw/raw_device.h"
 #endif
@@ -195,6 +199,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_TUN_DEVICE
     USING(TunDevice);
+#endif
+
+#ifdef INCLUDE_PACKET_TO_CONNECTION
+    USING(PacketToConnection);
 #endif
 
 #ifdef INCLUDE_RAWDEVICE
