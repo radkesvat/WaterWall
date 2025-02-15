@@ -55,24 +55,24 @@ static const scalar_t sc_p              = {LIMB(0x5812631a5cf5d3ed), LIMB(0x14de
 
 static inline limb_t umaal(limb_t *carry, limb_t acc, limb_t mand, limb_t mier)
 {
-    dlimb_t tmp = (dlimb_t) (mand * mier) + acc + *carry;
-    *carry      = (limb_t)(tmp >> X25519_WBITS);
-    return (limb_t) tmp;
+    dlimb_t tmp = (dlimb_t) mand * mier + acc + *carry;
+    *carry      = tmp >> X25519_WBITS;
+    return tmp;
 }
 
 /* These functions are implemented in terms of umaal on ARM */
 static inline limb_t adc(limb_t *carry, limb_t acc, limb_t mand)
 {
     dlimb_t total = (dlimb_t) *carry + acc + mand;
-    *carry        = (limb_t)(total >> X25519_WBITS);
-    return (limb_t) total;
+    *carry        = total >> X25519_WBITS;
+    return total;
 }
 
 static inline limb_t adc0(limb_t *carry, limb_t acc)
 {
     dlimb_t total = (dlimb_t) *carry + acc;
-    *carry        = (limb_t)(total >> X25519_WBITS);
-    return (limb_t) total;
+    *carry        = total >> X25519_WBITS;
+    return total;
 }
 
 /* Precondition: carry is small.
@@ -110,11 +110,10 @@ static void sub(fe out, const fe a, const fe b)
     sdlimb_t carry = -38;
     for (i = 0; i < NLIMBS; i++)
     {
-        carry  = carry + a[i] - b[i];
-        out[i] = (limb_t) carry;
+        out[i] = carry = carry + a[i] - b[i];
         carry >>= X25519_WBITS;
     }
-    propagate(out, (limb_t) (1 + carry));
+    propagate(out, 1 + carry);
 }
 
 static void __attribute__((unused)) swapin(limb_t *x, const uint8_t *in)
@@ -221,10 +220,10 @@ static limb_t canon(fe x)
     limb_t   res   = 0;
     for (i = 0; i < NLIMBS; i++)
     {
-        res |= x[i] = (limb_t) (carry += x[i]);
+        res |= x[i] = carry += x[i];
         carry >>= X25519_WBITS;
     }
-    return (limb_t)(((dlimb_t) res - 1) >> X25519_WBITS);
+    return ((dlimb_t) res - 1) >> X25519_WBITS;
 }
 
 static const limb_t a24[1] = {121665};
@@ -288,7 +287,7 @@ static void x25519_core(fe xs[5], const uint8_t scalar[X25519_BYTES], const uint
         {
             if (i / 8 == 0)
             {
-                bytei &= (uint8_t)(~7);
+                bytei &= ~7;
             }
             else if (i / 8 == X25519_BYTES - 1)
             {
@@ -351,7 +350,7 @@ int performX25519(uint8_t out[X25519_BYTES], const uint8_t scalar[X25519_BYTES],
     /* x2 /= z2 */
 #if X25519_MEMCPY_PARAMS
     mul1(x2, z3);
-    int ret = (int) canon(x2);
+    int ret = canon(x2);
     swapout(out, x2);
 #else
     mul((limb_t *) out, x2, z3, NLIMBS);
