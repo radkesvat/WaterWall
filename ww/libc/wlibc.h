@@ -1,16 +1,23 @@
 #pragma once
 
 #include "wplatform.h"
-#include "wtime.h"
+
+#include "wdef.h"
 
 #include "watomic.h"
-#include "wdef.h"
 #include "wendian.h"
 #include "werr.h"
 #include "wexport.h"
 #include "wfrand.h"
 #include "whash.h"
 #include "wmath.h"
+#include "wtime.h"
+
+
+#include "ww_lwip.h"
+
+
+
 
 void initWLibc(void);
 
@@ -28,15 +35,12 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
-#include "ww_lwip.h"
 
 /* STC lib will use our custom allocators*/
 #define c_malloc(sz)               memoryAllocate((size_t) (sz))
 #define c_calloc(n, sz)            memoryAllocateZero((size_t) ((n) * (sz)))
 #define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t) (sz))
 #define c_free(ptr, sz)            memoryFree(ptr)
-
-
 
 #ifdef DEBUG
 static inline void debugAssertZeroBuf(void *buf, size_t size)
