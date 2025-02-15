@@ -175,6 +175,7 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint8_t            *data  = sbufGetMutablePtr(buf);
 
     mutexLock(&state->mutex);
+    state->locked = true;
 
     if (IP_HDR_GET_VERSION(data) == 6)
     {
@@ -201,5 +202,10 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         LOGE("WireguardDevice cannot route a packet with unknown IP version");
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
     }
-    mutexUnlock(&state->mutex);
+    if (state->locked)
+    {
+        state->locked = false;
+        mutexUnlock(&state->mutex);
+    
+    }
 }

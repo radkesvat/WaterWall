@@ -172,6 +172,11 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                                     // ip_input(buf, device->ts);
 
                                     wgd_tstate_t *ts     = (wgd_tstate_t *) device;
+                                    if (ts->locked)
+                                    {
+                                        ts->locked = false;
+                                        mutexUnlock(&ts->mutex);
+                                    }
                                     tunnel_t     *tunnel = ts->tunnel;
                                     line_t       *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
                                     tunnelPrevDownStreamPayload(tunnel, line, buf);
@@ -445,9 +450,15 @@ void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     wgd_tstate_t *state = tunnelGetState(t);
     mutexLock(&state->mutex);
+    state->locked = true;
 
     wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &l->routing_context.src_ctx.ip_address,
                          l->routing_context.src_ctx.port);
 
+    if (state->locked)
+    {
+        state->locked = false;
+        mutexUnlock(&state->mutex);
+    }
     mutexUnlock(&state->mutex);
 }

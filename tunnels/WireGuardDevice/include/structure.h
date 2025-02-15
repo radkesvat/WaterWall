@@ -13,7 +13,8 @@ typedef struct wgd_tstate_s
 
     tunnel_t *tunnel;
     wmutex_t  mutex;
-    
+    bool locked; // this variable is protected by mutex
+
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;
 

@@ -6,9 +6,15 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
 {
     // Send to last know port, not the connect port
     // TODO: Support DSCP and ECN - lwip requires this set on PCB globally, not per packet
-    wgd_tstate_t *ts     = (wgd_tstate_t *) device;
-    tunnel_t     *tunnel = ts->tunnel;
-    line_t       *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
+    wgd_tstate_t *ts = (wgd_tstate_t *) device;
+
+    if (ts->locked)
+    {
+        ts->locked = false;
+        mutexUnlock(&ts->mutex);
+    }
+    tunnel_t *tunnel = ts->tunnel;
+    line_t   *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), &peer->ip, peer->port);
     tunnelNextUpStreamPayload(tunnel, line, q);
     return ERR_OK;
@@ -17,9 +23,14 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
 
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port)
 {
-    wgd_tstate_t *ts     = (wgd_tstate_t *) device;
-    tunnel_t     *tunnel = ts->tunnel;
-    line_t       *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
+    wgd_tstate_t *ts = (wgd_tstate_t *) device;
+    if (ts->locked)
+    {
+        ts->locked = false;
+        mutexUnlock(&ts->mutex);
+    }
+    tunnel_t *tunnel = ts->tunnel;
+    line_t   *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), ipaddr, port);
     tunnelNextUpStreamPayload(tunnel, line, q);
     return ERR_OK;
