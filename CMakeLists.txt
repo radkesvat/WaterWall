@@ -28,6 +28,8 @@ set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL  "CXX standard version" FORCE)
 set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -m32")      for 32 bit build, note that ssl libs need tweaks
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
 
@@ -81,6 +83,8 @@ if(NOT APPLE)
 option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  TRUE)
 endif()
 
+option(INCLUDE_PACKET_TO_CONNECTION "link PacketToConnection staticly to the core"  TRUE)
+
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
@@ -100,7 +104,6 @@ option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the cor
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
 if(LINUX) # todo (other platforms)
-  option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  FALSE)
   option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  FALSE)
   option(INCLUDE_CAPTUREDEVICE "link CapTureDevice staticly to the core"  FALSE)
 endif()
@@ -170,8 +173,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin"
         XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"  # for test, later we need apple developer account
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""       # for test, later we need apple developer account
     )
-else()
-    message(STATUS "Not compiling for iOS on macOS")
+
 endif()
 
 
@@ -205,6 +207,14 @@ target_compile_definitions(Waterwall PUBLIC INCLUDE_TUN_DEVICE=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TunDevice)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TunDevice)
 target_link_libraries(Waterwall TunDevice)
+endif()
+
+#packet to connection
+if (INCLUDE_PACKET_TO_CONNECTION)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_PACKET_TO_CONNECTION=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketToConnection)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketToConnection)
+target_link_libraries(Waterwall PacketToConnection)
 endif()
 
 #raw device
