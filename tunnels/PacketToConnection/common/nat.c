@@ -47,7 +47,7 @@ void update_chksum(u16_t *_hc, const void *_orig, const void *_new, int n)
         s = (u32_t) hc + ((~*orig) & 0xffff) + *new;
         while (s & 0xffff0000)
             s = (s & 0xffff) + (s >> 16);
-        hc = s;
+        hc = (u16_t)s;
         orig++;
         new ++;
     }
