@@ -13,13 +13,13 @@ static const uint8_t s_days[] = //   1       3       5       7   8       10     
 
 unsigned int getTickMS(void)
 {
-#ifdef OS_WIN
+#ifdef  OS_WIN
     LARGE_INTEGER count, s_freq;
     QueryPerformanceCounter(&count);
     QueryPerformanceFrequency(&s_freq);
     // Cast count and frequency to long double for precise division, then convert result to unsigned long long
     return (unsigned int) ((unsigned long long) (((long double) count.QuadPart / (long double) s_freq.QuadPart) *
-                                                 1000000L));
+                                                 1000L));
 #elif HAVE_CLOCK_GETTIME
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
