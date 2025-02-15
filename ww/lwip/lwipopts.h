@@ -337,7 +337,9 @@ void  memoryFree(void *ptr);
 #define MEM_CUSTOM_CALLOC(n, sz) memoryAllocateZero((size_t) ((n) * (sz)))
 #define MEM_CUSTOM_ALLOCATOR     1
 
+#define LWIP_NAT 1
+#define LWIP_NAT_ICMP 1
 
-
+#define LWIP_TCPIP_CORE_LOCKING_INPUT 1
 
 #endif /* LWIP_LWIPOPTS_H */
