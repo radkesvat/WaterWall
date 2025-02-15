@@ -82,9 +82,7 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), sizeof(wgd_lstate_t));
 
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
-
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
-
     t->onPrepair = &wireguarddeviceTunnelOnPrepair;
     t->onStart   = &wireguarddeviceTunnelOnStart;
 
