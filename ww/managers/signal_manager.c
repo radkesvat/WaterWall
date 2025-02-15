@@ -89,7 +89,9 @@ static void exitHandler(void)
         _Exit(1); // exit(1) will call the atexit handlers again
         return;
     }
-    write(STDOUT_FILENO, "SignalManager: Application will exit now !\n", 43);
+    
+    int written = write(STDOUT_FILENO, "SignalManager: Application will exit now !\n", 43);
+    (void) written;
 
     state->handlers_ran = true;
 
