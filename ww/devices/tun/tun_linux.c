@@ -46,14 +46,14 @@ static void destroyTunMsgPoolHandle(master_pool_t *pool, master_pool_item_t *ite
 static void localThreadEventReceived(wevent_t *ev)
 {
     struct msg_event *msg = weventGetUserdata(ev);
-    wid_t             tid = (wid_t) (wloopTID(weventGetLoop(ev)));
+    wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-    msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, tid);
+    msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, wid);
     masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
 }
 
 // Distribute packet payload to the target thread
-static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t *buf)
+static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t *buf)
 {
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
@@ -62,17 +62,17 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_tid, sbuf_t
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_tid);
+    ev.loop = getWorkerLoop(target_wid);
     ev.cb   = localThreadEventReceived;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(target_tid), &ev);
+    wloopPostEvent(getWorkerLoop(target_wid), &ev);
 }
 
 // Routine to read from TUN device
 static WTHREAD_ROUTINE(routineReadFromTun)
 {
     tun_device_t *tdev           = userdata;
-    wid_t         distribute_tid = 0;
+    wid_t         distribute_wid = 0;
     sbuf_t       *buf;
     int           nread;
 
@@ -109,11 +109,11 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
         }
 
-        distributePacketPayload(tdev, distribute_tid++, buf);
+        distributePacketPayload(tdev, distribute_wid++, buf);
 
-        if (distribute_tid >= getWorkersCount())
+        if (distribute_wid >= getWorkersCount())
         {
-            distribute_tid = 0;
+            distribute_wid = 0;
         }
     }
 

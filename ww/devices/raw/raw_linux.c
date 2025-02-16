@@ -43,14 +43,14 @@ static void destroyRawMsgPoolHandle(master_pool_t *pool, master_pool_item_t *ite
 static void localThreadEventReceived(wevent_t *ev)
 {
     struct msg_event *msg = weventGetUserdata(ev);
-    wid_t             tid = (wid_t) (wloopTID(weventGetLoop(ev)));
+    wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
     msg->rdev->read_event_callback(msg->rdev, msg->rdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->rdev->reader_message_pool, (void **) &msg, 1, msg->rdev);
 }
 
-static void distributePacketPayload(raw_device_t *rdev, wid_t target_tid, sbuf_t *buf)
+static void distributePacketPayload(raw_device_t *rdev, wid_t target_wid, sbuf_t *buf)
 {
     struct msg_event *msg;
     masterpoolGetItems(rdev->reader_message_pool, (const void **) &(msg), 1, rdev);
@@ -59,10 +59,10 @@ static void distributePacketPayload(raw_device_t *rdev, wid_t target_tid, sbuf_t
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_tid);
+    ev.loop = getWorkerLoop(target_wid);
     ev.cb   = localThreadEventReceived;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(target_tid), &ev);
+    wloopPostEvent(getWorkerLoop(target_wid), &ev);
 }
 
 static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT

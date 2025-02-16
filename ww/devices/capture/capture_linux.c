@@ -48,14 +48,14 @@ static void destroyCaptureMsgPoolHandle(master_pool_t *pool, master_pool_item_t 
 static void localThreadEventReceived(wevent_t *ev)
 {
     struct msg_event *msg = weventGetUserdata(ev);
-    wid_t             tid = (wid_t) (wloopTID(weventGetLoop(ev)));
+    wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
 }
 
-static void distributePacketPayload(capture_device_t *cdev, wid_t target_tid, sbuf_t *buf)
+static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
 {
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
@@ -64,10 +64,10 @@ static void distributePacketPayload(capture_device_t *cdev, wid_t target_tid, sb
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_tid);
+    ev.loop = getWorkerLoop(target_wid);
     ev.cb   = localThreadEventReceived;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(target_tid), &ev);
+    wloopPostEvent(getWorkerLoop(target_wid), &ev);
 }
 
 /*
