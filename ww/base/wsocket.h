@@ -456,7 +456,7 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
         IP4_ADDR(&subnet_mask->u_addr.ip4, (subnet_mask_value >> 24) & 0xFF, (subnet_mask_value >> 16) & 0xFF,
                  (subnet_mask_value >> 8) & 0xFF, subnet_mask_value & 0xFF);
 
-        return ERR_OK; // Success
+        return 4; 
     }
     
     ip6_addr_t ip6;
@@ -483,7 +483,7 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
             subnet_mask->u_addr.ip6.addr[prefix_len / 32] = htonl(0xFFFFFFFF << (32 - remaining_bits));
         }
 
-        return ERR_OK; // Success
+        return 6;
     }
 
     return ERR_ARG;
