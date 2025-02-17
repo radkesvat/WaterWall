@@ -415,20 +415,36 @@ static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
     return result;
 }
 
+static inline int pareIpAddress(const char *ip_str, ip_addr_t *ip)
+{
+
+    if (ipaddr_aton(ip_str, ip))
+    {
+        if (IP_IS_V4(ip))
+        {
+            return 4;
+        }
+        if (IP_IS_V6(ip))
+        {
+            return 6;
+        }
+    }
+
+    return -1;
+}
+
 static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_addr_t *subnet_mask)
 {
-    char ip_part[40];    // Buffer for the IP address part
-    int  prefix_len = 0; // Prefix length
+    char ip_part[40];
+    int  prefix_len = 0;
 
     if (sscanf(ip_str, "%39[^/]/%d", ip_part, &prefix_len) != 2)
     {
-        return ERR_ARG; // Return error if parsing fails
+        return ERR_ARG;
     }
 
-    // Step 2: Try parsing as IPv4 first
     if (ipaddr_aton(ip_part, ip))
     {
-        // Validate the prefix length for IPv4
         if (prefix_len < 0 || prefix_len > 32)
         {
             return ERR_ARG;
@@ -442,48 +458,38 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
 
         return ERR_OK; // Success
     }
-    else
+    
+    ip6_addr_t ip6;
+    if (ip6addr_aton(ip_part, &ip6))
     {
-        // Step 3: Try parsing as IPv6
-        ip6_addr_t ip6;
-        if (ip6addr_aton(ip_part, &ip6))
+        if (prefix_len < 0 || prefix_len > 128)
         {
-            // Validate the prefix length for IPv6
-            if (prefix_len < 0 || prefix_len > 128)
-            {
-                printf("Invalid prefix length for IPv6: %d\n", prefix_len);
-                return ERR_ARG;
-            }
-
-            // Store the parsed IPv6 address
-            ip->type       = IPADDR_TYPE_V6;
-            ip->u_addr.ip6 = ip6;
-
-            // Construct the subnet mask for IPv6
-            subnet_mask->type = IPADDR_TYPE_V6;
-            memset(&subnet_mask->u_addr.ip6.addr, 0, sizeof(subnet_mask->u_addr.ip6.addr));
-
-            // Set the bits in the subnet mask based on the prefix length
-            for (int i = 0; i < prefix_len / 32; i++)
-            {
-                subnet_mask->u_addr.ip6.addr[i] = 0xFFFFFFFF;
-            }
-            int remaining_bits = prefix_len % 32;
-            if (remaining_bits > 0)
-            {
-                subnet_mask->u_addr.ip6.addr[prefix_len / 32] = htonl(0xFFFFFFFF << (32 - remaining_bits));
-            }
-
-            return ERR_OK; // Success
+            return ERR_ARG;
         }
+
+        ip->type       = IPADDR_TYPE_V6;
+        ip->u_addr.ip6 = ip6;
+
+        subnet_mask->type = IPADDR_TYPE_V6;
+        memset(&subnet_mask->u_addr.ip6.addr, 0, sizeof(subnet_mask->u_addr.ip6.addr));
+
+        for (int i = 0; i < prefix_len / 32; i++)
+        {
+            subnet_mask->u_addr.ip6.addr[i] = 0xFFFFFFFF;
+        }
+        int remaining_bits = prefix_len % 32;
+        if (remaining_bits > 0)
+        {
+            subnet_mask->u_addr.ip6.addr[prefix_len / 32] = htonl(0xFFFFFFFF << (32 - remaining_bits));
+        }
+
+        return ERR_OK; // Success
     }
 
-    // If neither IPv4 nor IPv6 parsing succeeds, return an error
     return ERR_ARG;
 }
 
-static inline int checkIPRange4(const ip4_addr_t test_addr, const ip4_addr_t base_addr,
-                                const ip4_addr_t subnet_mask)
+static inline int checkIPRange4(const ip4_addr_t test_addr, const ip4_addr_t base_addr, const ip4_addr_t subnet_mask)
 {
     if ((test_addr.addr & subnet_mask.addr) == (base_addr.addr & subnet_mask.addr))
     {
@@ -492,21 +498,10 @@ static inline int checkIPRange4(const ip4_addr_t test_addr, const ip4_addr_t bas
     return 0;
 }
 
-static inline int checkIPRange6(const ip6_addr_t test_addr, const ip6_addr_t base_addr,
-                                const ip6_addr_t subnet_mask)
+static inline int checkIPRange6(const ip6_addr_t test_addr, const ip6_addr_t base_addr, const ip6_addr_t subnet_mask)
 {
 
-    // uint64_t *test_addr_p   = (uint64_t *) &(test_addr.s6_addr[0]);
-    // uint64_t *base_addr_p   = (uint64_t *) &(base_addr.s6_addr[0]);
-    // uint64_t *subnet_mask_p = (uint64_t *) &(subnet_mask.s6_addr[0]);
-
-    // if ((base_addr_p[0] & subnet_mask_p[0]) != test_addr_p[0] || (base_addr_p[1] & subnet_mask_p[1]) !=
-    // test_addr_p[1])
-    // {
-    //     return 0;
-    // }
-    // return 1;
-
+    // way 1 , appropriate for all platform
     ip6_addr_t masked_test_addr;
     ip6_addr_t masked_base_addr;
 
@@ -521,6 +516,21 @@ static inline int checkIPRange6(const ip6_addr_t test_addr, const ip6_addr_t bas
         return 1;
     }
     return 0;
+
+    // way 2 , maybe dont use it
+    // uint64_t *test_addr_p   = (uint64_t *) &(test_addr.s6_addr[0]);
+    // uint64_t *base_addr_p   = (uint64_t *) &(base_addr.s6_addr[0]);
+    // uint64_t *subnet_mask_p = (uint64_t *) &(subnet_mask.s6_addr[0]);
+
+    // if ((base_addr_p[0] & subnet_mask_p[0]) != test_addr_p[0] || (base_addr_p[1] & subnet_mask_p[1]) !=
+    // test_addr_p[1])
+    // {
+    //     return 0;
+    // }
+    // return 1;
+
+    // way 3 , appropriate for all platform
+    // ip6_addr_net_eq( &test_addr, &base_addr, &subnet_mask);
 }
 
 /**
