@@ -23,6 +23,9 @@ typedef struct
 
 } logger_construction_data_t;
 
+typedef err_t (*LwipV4Hook)(struct pbuf *, struct netif *);
+typedef void (*WorkerMessageCalback)(worker_t *worker, void *arg1, void *arg2, void *arg3);
+
 typedef struct ww_global_state_s
 {
     wloop_t                  **shortcut_loops;
@@ -33,6 +36,7 @@ typedef struct ww_global_state_s
     master_pool_t             *masterpool_buffer_pools_small;
     master_pool_t             *masterpool_context_pools;
     master_pool_t             *masterpool_pipetunnel_msg_pools;
+    master_pool_t             *masterpool_messages;
     worker_t                  *workers;
     struct signal_manager_s   *signal_manager;
     struct socket_manager_s   *socekt_manager;
@@ -42,6 +46,7 @@ typedef struct ww_global_state_s
     struct logger_s           *dns_logger;
     struct logger_s           *internal_logger;
     struct dedicated_memory_s *openssl_dedicated_memory;
+    LwipV4Hook                 lwip_process_v4_hook;
     void                      *wintun_dll_handle;
     uint32_t                   workers_count;
     uint32_t                   ram_profile;
@@ -138,6 +143,17 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
 {
     return GSTATE.shortcut_loops[wid];
 }
+
+/*!
+ * @brief Send a worker message.
+ *
+ * @param wid The worker ID.
+ * @param cb The callback function.
+ * @param arg1 The first argument.
+ * @param arg2 The second argument.
+ * @param arg3 The third argument.
+ */
+void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3);
 
 /*!
  * @brief Runs the main thread.

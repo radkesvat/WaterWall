@@ -1,5 +1,7 @@
 #include "global_state.h"
 #include "buffer_pool.h"
+#include "bufio/buffer_pool.h"
+#include "bufio/master_pool.h"
 #include "loggers/core_logger.h"
 #include "loggers/dns_logger.h"
 #include "loggers/internal_logger.h"
@@ -7,6 +9,7 @@
 #include "managers/node_manager.h"
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
+
 
 #if defined(WCRYPTO_BACKEND_OPENSSL)
 
@@ -24,8 +27,101 @@
 
 #endif
 
+typedef struct worker_msg_s
+{
+    WorkerMessageCalback callback;
+    void                *arg1;
+    void                *arg2;
+    void                *arg3;
+} worker_msg_t;
+
 // Global instance of the ww_global_state_t structure.
 ww_global_state_t global_ww_state = {0};
+
+// --- Static helper functions ---
+
+static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
+{
+    (void) inp;
+    (void) p;
+    return 0;
+}
+
+static pool_item_t *allocWorkerMessage(master_pool_t *pool, void *userdata)
+{
+    (void) userdata;
+    (void) pool;
+    return memoryAllocate(sizeof(worker_msg_t));
+}
+
+static void destroyWorkerMessage(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+{
+    (void) pool;
+    (void) userdata;
+    memoryFree(item);
+}
+
+static void initializeMasterPools(void)
+{
+    assert(GSTATE.flag_initialized);
+
+    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
+    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
+    GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
+    GSTATE.masterpool_messages             = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
+
+    masterpoolInstallCallBacks(GSTATE.masterpool_messages, allocWorkerMessage, destroyWorkerMessage);
+}
+
+static void initializeShortCuts(void)
+{
+    assert(GSTATE.flag_initialized);
+
+    static const int kShourtcutsCount = 5;
+
+    const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
+
+    void **space = (void **) memoryAllocate(sizeof(void *) * (uintptr_t) kShourtcutsCount * total_workers);
+
+    GSTATE.shortcut_loops                = (wloop_t **) (space + (0 * total_workers));
+    GSTATE.shortcut_buffer_pools         = (buffer_pool_t **) (space + (1 * total_workers));
+    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (2 * total_workers));
+    GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (3 * total_workers));
+
+    for (unsigned int tid = 0; tid < GSTATE.workers_count; tid++)
+    {
+
+        GSTATE.shortcut_context_pools[tid]        = WORKERS[tid].context_pool;
+        GSTATE.shortcut_pipetunnel_msg_pools[tid] = WORKERS[tid].pipetunnel_msg_pool;
+        GSTATE.shortcut_buffer_pools[tid]         = WORKERS[tid].buffer_pool;
+        GSTATE.shortcut_loops[tid]                = WORKERS[tid].loop;
+    }
+}
+
+static void exitHandle(void *userdata, int signum)
+{
+    (void) signum;
+    (void) userdata;
+    mainThreadExitJoin();
+}
+
+static void workerMessageReceived(wevent_t *ev)
+{
+    worker_msg_t *msg = weventGetUserdata(ev);
+    wid_t         wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
+
+    msg->callback(getWorker(wid), msg->arg1, msg->arg2, msg->arg3);
+    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
+}
+
+// --- Public API functions ---
+
+err_t wwInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
+{
+
+    return GSTATE.lwip_process_v4_hook(p, inp);
+}
 
 /*!
  * @brief Retrieves the global state.
@@ -74,68 +170,6 @@ void globalstateUpdaeAllocationPadding(uint16_t padding)
         bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
     }
     GSTATE.flag_buffers_calculated = true;
-}
-
-/*!
- * @brief Initializes shortcut pointers for frequently accessed worker-related data.
- *
- * This function initializes shortcut pointers to worker loops, buffer pools, context pools, and pipe tunnel message
- * pools. These shortcuts provide faster access to these resources.
- */
-static void initializeShortCuts(void)
-{
-    assert(GSTATE.flag_initialized);
-
-    static const int kShourtcutsCount = 5;
-
-    const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
-
-    void **space = (void **) memoryAllocate(sizeof(void *) * (uintptr_t)kShourtcutsCount * total_workers);
-
-    GSTATE.shortcut_loops                = (wloop_t **) (space + (0 * total_workers));
-    GSTATE.shortcut_buffer_pools         = (buffer_pool_t **) (space + (1 * total_workers));
-    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (2 * total_workers));
-    GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (3 * total_workers));
-
-    for (unsigned int tid = 0; tid < GSTATE.workers_count; tid++)
-    {
-
-        GSTATE.shortcut_context_pools[tid]        = WORKERS[tid].context_pool;
-        GSTATE.shortcut_pipetunnel_msg_pools[tid] = WORKERS[tid].pipetunnel_msg_pool;
-        GSTATE.shortcut_buffer_pools[tid]         = WORKERS[tid].buffer_pool;
-        GSTATE.shortcut_loops[tid]                = WORKERS[tid].loop;
-    }
-}
-
-/*!
- * @brief Initializes master pools for different types of resources.
- *
- * This function initializes master pools for buffer pools (large and small), context pools, and pipe tunnel message
- * pools. Master pools are used for managing the allocation of these resources.
- */
-static void initializeMasterPools(void)
-{
-    assert(GSTATE.flag_initialized);
-
-    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
-    GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
-}
-
-/**
- * @brief Signal handler for mainthread exit.
- *
- * Invoked when a termination signal is received and calls mainThreadExitJoin.
- *
- * @param userdata Pointer to the worker structure.
- * @param signum Signal number.
- */
-static void exitHandle(void *userdata, int signum)
-{
-    (void) signum;
-    (void) userdata;
-    mainThreadExitJoin();
 }
 
 /*!
@@ -200,6 +234,8 @@ void createGlobalState(const ww_construction_data_t init_data)
         initializeShortCuts();
     }
 
+    GSTATE.lwip_process_v4_hook = wwDefaultInternalLwipIpv4Hook;
+
     // managers
     {
         GSTATE.signal_manager = createSignalManager();
@@ -231,7 +267,7 @@ void createGlobalState(const ww_construction_data_t init_data)
     // Spawn all workers except main worker which is current thread
     {
         worker_t *worker      = getWorker(0);
-        GSTATE.main_thread_id = (uint64_t)getTID();
+        GSTATE.main_thread_id = (uint64_t) getTID();
 #ifdef OS_WIN
         worker->thread = (wthread_t) GetCurrentThread();
 #else
@@ -246,6 +282,28 @@ void createGlobalState(const ww_construction_data_t init_data)
     }
 
     startSignalManager();
+}
+
+/*!
+ * @brief Send a worker message.
+ *
+ * @param wid The worker ID.
+ * @param cb The callback function.
+ * @param arg1 The first argument.
+ * @param arg2 The second argument.
+ * @param arg3 The third argument.
+ */
+void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3)
+{
+    worker_msg_t *msg;
+    masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
+    *msg = (worker_msg_t){.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
+    wevent_t ev;
+    memorySet(&ev, 0, sizeof(ev));
+    ev.loop = getWorkerLoop(wid);
+    ev.cb   = workerMessageReceived;
+    weventSetUserData(&ev, msg);
+    wloopPostEvent(getWorkerLoop(wid), &ev);
 }
 
 /*!
@@ -268,7 +326,7 @@ void runMainThread(void)
  */
 WW_EXPORT void mainThreadExitJoin(void)
 {
-    if ((uint64_t) getTID() ==  GSTATE.main_thread_id)
+    if ((uint64_t) getTID() == GSTATE.main_thread_id)
     {
         return; // incrorrect call, you are in main thread
     }
