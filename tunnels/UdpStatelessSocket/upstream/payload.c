@@ -15,7 +15,7 @@ void udpstatelesssocketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         goto normalexit;
     }
 
-    sockaddr_u addr = addresscontextToSockAddr(&(l->routing_context.dest_ctx));
+    sockaddr_u addr = connectioncontextToSockAddr(&(l->routing_context.dest_ctx));
 
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};

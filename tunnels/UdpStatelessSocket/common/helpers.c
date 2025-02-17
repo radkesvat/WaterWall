@@ -28,7 +28,7 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
     LOGD("UdpStatelessSocket: received %u bytes from [%s] <= [%s]", sbufGetBufLength(buf),
          SOCKADDR_STR(wioGetLocaladdrU(io), localaddrstr), SOCKADDR_STR(wioGetPeerAddrU(io), peeraddrstr));
    
-    line->routing_context.src_ctx = addresscontextFromSockAddr(wioGetPeerAddrU(io));
+    connectioncontextFromSockAddr(&line->routing_context.src_ctx, wioGetPeerAddrU(io));
 
     lineLock(line);
     tunnelPrevDownStreamPayload(t, line, buf);

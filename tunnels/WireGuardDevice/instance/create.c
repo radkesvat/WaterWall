@@ -220,8 +220,8 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
                 TODO
                 currently only supports ipv4
             */
-            parseIPWithSubnetMask(ipv4_part, (struct in6_addr *) &peer.allowed_ip,
-                                  (struct in6_addr *) &peer.allowed_mask);
+            parseIPWithSubnetMask(ipv4_part,  &peer.allowed_ip,
+                                  &peer.allowed_mask);
         }
         {
             char *colon_ptr = stringChr(peer_endpoint, ':');

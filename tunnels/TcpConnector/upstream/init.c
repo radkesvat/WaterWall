@@ -14,8 +14,8 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     lstate->write_paused = true;
 
     // findout how to deal with destination address
-    address_context_t *dest_ctx = &(l->routing_context.dest_ctx);
-    address_context_t *src_ctx  = &(l->routing_context.src_ctx);
+    connection_context_t *dest_ctx = &(l->routing_context.dest_ctx);
+    connection_context_t *src_ctx  = &(l->routing_context.src_ctx);
 
     switch ((tcpconnector_strategy_e) state->dest_addr_selected.status)
     {
@@ -107,7 +107,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     wio_t *upstream_io = wioGet(loop, sockfd);
     assert(upstream_io != NULL);
 
-    sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
+    sockaddr_u addr = connectioncontextToSockAddr(dest_ctx);
 
     wioSetPeerAddr(upstream_io, (struct sockaddr *) &(addr), (int) sockaddrLen(&(addr)));
     lstate->io = upstream_io;
