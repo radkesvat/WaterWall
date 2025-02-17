@@ -33,7 +33,9 @@ int versionATOI(const char* str) {
     while (1) {
         hex = (hex << 8) | atoi(pdot);
         pdot = strchr(pdot, '.');
-        if (pdot == NULL)   break;
+        if (pdot == NULL) {
+            break;
+        }
         ++pdot;
     }
 

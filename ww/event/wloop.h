@@ -152,7 +152,7 @@ WW_EXPORT uint64_t wloopNowLoopRunTime(wloop_t* loop); // us
 // @return pid of wloopRun
 WW_EXPORT long wloopPID(wloop_t* loop);
 // @return tid of wloopRun
-WW_EXPORT long wloopTID(wloop_t* loop);
+WW_EXPORT long wloopGetWid(wloop_t* loop);
 // @return count of loop
 WW_EXPORT uint64_t wloopCount(wloop_t* loop);
 // @return number of ios

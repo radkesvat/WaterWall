@@ -648,7 +648,7 @@ long wloopPID(wloop_t *loop)
     return loop->pid;
 }
 
-long wloopTID(wloop_t *loop)
+long wloopGetWid(wloop_t *loop)
 {
     return loop->wid;
 }

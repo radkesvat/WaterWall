@@ -5,9 +5,16 @@
 #include "lwip/ip_addr.h"
 #include "lwip/init.h"
 #include "lwip/tcpip.h"
+#include "lwip/pbuf.h"
 
 typedef struct ip_hdr  ip4_hdr_t;
 typedef struct ip6_hdr ip6_hdr_t;
+
+#define NETIF_FLAG_L3TO4         0x80U // our custom flag that indicates that the netif is for the PacketToConnection node
+
+// struct ww_netif_clientdata_first{
+//     uint64_t flags;
+// };
 
 //
 // ============================= Generic IP Functions =============================
@@ -45,11 +52,13 @@ typedef struct ip6_hdr ip6_hdr_t;
 //
 #define tcpipInit             tcpip_init                /**< Initialize the TCP/IP stack */
 
-
 //
 // ============================= Packet Buffer Functions =============================
 //
 #define pbufAlloc             pbuf_alloc                /**< Allocate a pbuf (packet buffer) */
 
-void printIPPacketInfo(const char *devname, const unsigned char *buffer);
+void printIPPacketInfo(const char *prefix, const unsigned char *buffer);
+
+
+
 

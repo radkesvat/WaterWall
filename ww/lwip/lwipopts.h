@@ -32,6 +32,8 @@
 #ifndef LWIP_LWIPOPTS_H
 #define LWIP_LWIPOPTS_H
 
+#include "../wconfig.h"
+
 #ifdef LWIP_OPTTEST_FILE
 #include "lwipopts_test.h"
 #else /* LWIP_OPTTEST_FILE */
@@ -341,5 +343,16 @@ void  memoryFree(void *ptr);
 #define LWIP_NAT_ICMP 1
 
 #define LWIP_TCPIP_CORE_LOCKING_INPUT 1
+
+
+struct pbuf;
+struct netif;
+typedef signed char err_t;
+err_t wwInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp);
+
+#define LWIP_HOOK_IP4_INPUT wwInternalLwipIpv4Hook
+
+
+
 
 #endif /* LWIP_LWIPOPTS_H */

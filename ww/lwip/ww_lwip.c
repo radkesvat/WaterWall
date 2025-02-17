@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void printIPPacketInfo(const char *devname, const unsigned char *buffer)
+void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
 {
     char  logbuf[256];
     int   rem = sizeof(logbuf);
@@ -19,7 +19,7 @@ void printIPPacketInfo(const char *devname, const unsigned char *buffer)
         memoryCopy(&dst_addr, &ip_header->dest, sizeof(ip4_addr_t));
         const char *src_ip = ip4addr_ntoa(&src_addr);
         const char *dst_ip = ip4addr_ntoa(&dst_addr);
-        ret = snprintf(ptr, (size_t)rem, "%s : Packet v4 From %s to %s, Data: ", devname, src_ip, dst_ip);
+        ret = snprintf(ptr, (size_t)rem, "%s : Packet v4 From %s to %s, Data: ", prefix, src_ip, dst_ip);
     }
     else if (version == 6)
     {
@@ -29,11 +29,11 @@ void printIPPacketInfo(const char *devname, const unsigned char *buffer)
         memoryCopy(&dst_addr, &ip6_header->dest, sizeof(ip6_addr_t));
         const char *src_ip = ip6addr_ntoa(&src_addr);
         const char *dst_ip = ip6addr_ntoa(&dst_addr);
-        ret = snprintf(ptr, (size_t)rem, "%s : Packet v6 From %s to %s, Data: ", devname, src_ip, dst_ip);
+        ret = snprintf(ptr, (size_t)rem, "%s : Packet v6 From %s to %s, Data: ", prefix, src_ip, dst_ip);
     }
     else
     {
-        ret = snprintf(ptr, (size_t)rem, "%s : Unknown IP version, Data: ", devname);
+        ret = snprintf(ptr, (size_t)rem, "%s : Unknown IP version, Data: ", prefix);
     }
 
     ptr += ret;
