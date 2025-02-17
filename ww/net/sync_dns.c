@@ -3,7 +3,7 @@
 #include "wlibc.h"
 #include "wsocket.h"
 
-bool resolveContextSync(address_context_t *sctx)
+bool resolveContextSync(connection_context_t *sctx)
 {
     // please check these before calling this function -> more performance
     assert(sctx->type_ip == false && sctx->domain != NULL);
@@ -21,7 +21,9 @@ bool resolveContextSync(address_context_t *sctx)
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
             return false;
         }
-        ipAddressFromSockAddr(&(sctx->ip_address), &temp);
+        sctx->type_ip = true;
+        
+        sockaddrToIpAddr(&temp, &(sctx->ip_address));
 
         if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_INFO))
         {

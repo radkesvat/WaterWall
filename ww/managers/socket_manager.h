@@ -44,8 +44,8 @@ typedef struct socket_filter_option_s
     unsigned int white_list_parsed_length;
     struct
     {
-        struct in6_addr ip_bytes_buf;
-        struct in6_addr mask_bytes_buf;
+        ip_addr_t ip;
+        ip_addr_t mask;
     } *white_list_parsed;
 
     widle_table_t *shared_balance_table;

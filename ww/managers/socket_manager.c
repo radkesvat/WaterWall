@@ -220,30 +220,25 @@ static void exitHook(void *userdata, int _)
     }
 }
 
-#ifndef IN6_IS_ADDR_V4MAPPED
-#define IN6_IS_ADDR_V4MAPPED(a)                                                                                        \
-    ((((a)->s6_words[0]) == 0) && (((a)->s6_words[1]) == 0) && (((a)->s6_words[2]) == 0) &&                            \
-     (((a)->s6_words[3]) == 0) && (((a)->s6_words[4]) == 0) && (((a)->s6_words[5]) == 0xFFFF))
+#ifndef IS_ADDR6_V4MAPPED
+#define IS_ADDR6_V4MAPPED(a)                                                                                           \
+    ((((a)[0]) == 0) && (((a)[1]) == 0) && (((a)[2]) == 0) && (((a)[3]) == 0) && (((a)[4]) == 0) &&                    \
+     (((a)[5]) == 0xFFFF))
 #endif
 
-static inline bool needsV4SocketStrategy(sockaddr_u *peer_addr)
+static inline bool needsV4SocketStrategy(const ip6_addr_t addr)
 {
     bool use_v4_strategy;
-    if (peer_addr->sa.sa_family == AF_INET)
+
+    if (IS_ADDR6_V4MAPPED((u16_t *) &(addr.addr[0])))
     {
         use_v4_strategy = true;
     }
     else
     {
-        if (IN6_IS_ADDR_V4MAPPED(&(peer_addr->sin6.sin6_addr)))
-        {
-            use_v4_strategy = true;
-        }
-        else
-        {
-            use_v4_strategy = false;
-        }
+        use_v4_strategy = false;
     }
+
     return use_v4_strategy;
 }
 
@@ -251,8 +246,8 @@ static void parseWhiteListOption(socket_filter_option_t *option)
 {
     assert(option->white_list_raddr != NULL);
 
-    unsigned int   len = 0;
-    char *cur = NULL;
+    unsigned int len = 0;
+    char        *cur = NULL;
 
     cur = option->white_list_raddr[len];
     while (cur != NULL)
@@ -266,8 +261,8 @@ static void parseWhiteListOption(socket_filter_option_t *option)
     for (unsigned int i = 0; i < len; i++)
     {
         cur              = option->white_list_raddr[i];
-        int parse_result = parseIPWithSubnetMask(cur,&(option->white_list_parsed[i].ip_bytes_buf), 
-                                                 &(option->white_list_parsed[i].mask_bytes_buf));
+        int parse_result = parseIPWithSubnetMask(cur, &(option->white_list_parsed[i].ip),
+                                                 &(option->white_list_parsed[i].mask));
 
         if (parse_result == -1)
         {
@@ -384,20 +379,20 @@ static void noTcpSocketConsumerFound(wio_t *io)
     wioClose(io);
 }
 
-static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t option)
+static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_t option)
 {
-    const bool     is_v4 = addr->sa.sa_family == AF_INET;
-    struct in_addr ipv4_addr;
+    const bool is_v4 = addr.type == IPADDR_TYPE_V4;
+    ip4_addr_t ipv4_addr;
 
     if (is_v4)
     {
-        ipv4_addr = addr->sin.sin_addr;
+        ip4_addr_copy(ipv4_addr, addr.u_addr.ip4);
     v4checks:
         for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
 
-            if (checkIPRange4(ipv4_addr, *(struct in_addr *) &(option.white_list_parsed[i].ip_bytes_buf),
-                              *(struct in_addr *) &(option.white_list_parsed[i].mask_bytes_buf)))
+            if (checkIPRange4(ipv4_addr, option.white_list_parsed[i].ip.u_addr.ip4,
+                              option.white_list_parsed[i].mask.u_addr.ip4))
             {
                 return true;
             }
@@ -405,17 +400,17 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
     }
     else
     {
-        if (needsV4SocketStrategy(addr))
+        if (needsV4SocketStrategy(addr.u_addr.ip6))
         {
-            memoryCopy(&ipv4_addr, &(addr->sin6.sin6_addr.s6_addr[12]), sizeof(ipv4_addr));
+            memoryCopy(&ipv4_addr, &(addr.u_addr.ip6.addr[3]), sizeof(ipv4_addr.addr));
             goto v4checks;
         }
 
         for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
         {
 
-            if (checkIPRange6(addr->sin6.sin6_addr, option.white_list_parsed[i].ip_bytes_buf,
-                              option.white_list_parsed[i].mask_bytes_buf))
+            if (checkIPRange6(addr.u_addr.ip6, option.white_list_parsed[i].ip.u_addr.ip6,
+                              option.white_list_parsed[i].mask.u_addr.ip6))
             {
                 return true;
             }
@@ -427,7 +422,9 @@ static bool checkIpIsWhiteList(sockaddr_u *addr, const socket_filter_option_t op
 
 static void distributeTcpSocket(wio_t *io, uint16_t local_port)
 {
-    sockaddr_u *paddr = (sockaddr_u *) wioGetPeerAddrU(io);
+    ip_addr_t paddr;
+
+    sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
@@ -467,7 +464,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockaddrCalcHashNoPort((sockaddr_u *) wioGetPeerAddrU(io));
+                    src_hash = ipaddrCalcHashNoPort(paddr);
                 }
                 idle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
 
@@ -527,7 +524,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
 
 static void onAcceptTcpSinglePort(wio_t *io)
 {
-    distributeTcpSocket(io, sockaddrPort((sockaddr_u *) wioGetLocaladdrU(io)));
+    distributeTcpSocket(io, sockaddrPort(wioGetLocaladdrU(io)));
 }
 
 static void onAcceptTcpMultiPort(wio_t *io)
@@ -550,7 +547,7 @@ static void onAcceptTcpMultiPort(wio_t *io)
         return;
     }
 
-    distributeTcpSocket(io, (uint16_t)((pbuf[2] << 8) | pbuf[3]));
+    distributeTcpSocket(io, (uint16_t) ((pbuf[2] << 8) | pbuf[3]));
 #else
     onAcceptTcpSinglePort(io);
 #endif
@@ -616,7 +613,7 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
                                       uint8_t *ports_overlapped, uint16_t port_max)
 {
     const int length           = (port_max - port_min);
-    filter->listen_ios         = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t)length + 1));
+    filter->listen_ios         = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
     filter->listen_ios[length] = 0x0;
     int i                      = 0;
     for (uint16_t p = port_min; p < port_max; p++)
@@ -726,7 +723,7 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
     wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
-    if(pl->wid == state->wid)
+    if (pl->wid == state->wid)
     {
         filter->cb(&ev);
         return;
@@ -737,7 +734,10 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
 static void distributeUdpPayload(const udp_payload_t pl)
 {
     // mutexLock(&(state->mutex)); new socket manager will not lock here
-    sockaddr_u *paddr      = (sockaddr_u *) wioGetPeerAddrU(pl.sock->io);
+    // sockaddr_u *paddr      = (sockaddr_u *) wioGetPeerAddrU(pl.sock->io);
+    ip_addr_t paddr;
+    sockaddrToIpAddr(wioGetPeerAddrU(pl.sock->io), &paddr);
+
     uint16_t    local_port = pl.real_localport;
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
@@ -777,7 +777,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
             {
                 if (! src_hashed)
                 {
-                    src_hash = sockaddrCalcHashNoPort((sockaddr_u *) wioGetPeerAddrU(pl.sock->io));
+                    src_hash = ipaddrCalcHashNoPort(paddr);
                 }
                 idle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
 
@@ -823,13 +823,13 @@ static void distributeUdpPayload(const udp_payload_t pl)
 static void onRecvFrom(wio_t *io, sbuf_t *buf)
 {
     udpsock_t *socket     = weventGetUserdata(io);
-    uint16_t   local_port = sockaddrPort((sockaddr_u *) wioGetLocaladdrU(io));
-    wid_t    target_wid = (wid_t) local_port % getWorkersCount();
+    uint16_t   local_port = sockaddrPort( wioGetLocaladdrU(io));
+    wid_t      target_wid = (wid_t) local_port % getWorkersCount();
 
     udp_payload_t item = (udp_payload_t){.sock           = socket,
                                          .buf            = buf,
                                          .wid            = target_wid,
-                                         .peer_addr      = *(sockaddr_u *) wioGetPeerAddrU(io),
+                                         .peer_addr      =  *wioGetPeerAddrU(io),
                                          .real_localport = local_port};
 
     distributeUdpPayload(item);
@@ -906,7 +906,7 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
 static void writeUdpThisLoop(wevent_t *ev)
 {
     udp_payload_t *upl    = weventGetUserdata(ev);
-    int         nwrite = wioWrite(upl->sock->io, upl->buf);
+    int            nwrite = wioWrite(upl->sock->io, upl->buf);
     (void) nwrite;
     udppayloadDestroy(upl);
 }
@@ -930,8 +930,6 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
     wloopPostEvent(weventGetLoop(socket_io->io), &ev);
 }
 
-
-
 struct socket_manager_s *socketmanagerGet(void)
 {
     return state;
@@ -946,7 +944,7 @@ void socketmanagerSet(struct socket_manager_s *new_state)
 void socketmanagerStart(void)
 {
     assert(state != NULL);
-    
+
     assert(state && state->worker->loop && ! state->started);
 
     frandInit();

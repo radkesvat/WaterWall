@@ -1,7 +1,7 @@
 #pragma once
 #include "wlibc.h"
 
-#include "address_context.h"
+#include "connection_context.h"
 #include "generic_pool.h"
 #include "global_state.h"
 #include "tunnel.h"
@@ -25,8 +25,8 @@ typedef uint32_t line_refc_t;
 
 typedef struct routing_context_s
 {
-    address_context_t src_ctx;
-    address_context_t dest_ctx;
+    connection_context_t src_ctx;
+    connection_context_t dest_ctx;
     wio_type_e        network_type;
     const char       *user_name;
     uint8_t           user_name_len;
@@ -66,8 +66,8 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
                   .pool     = pool,
                   // to set a port we need to know the AF family, default v4
                   .routing_context = (routing_context_t){.network_type = WIO_TYPE_UNKNOWN,
-                                                         .dest_ctx  = (address_context_t){.ip_address.type = IPADDR_TYPE_V4},
-                                                         .src_ctx   = (address_context_t){.ip_address.type = IPADDR_TYPE_V4},
+                                                         .dest_ctx  = (connection_context_t){.ip_address.type = IPADDR_TYPE_V4},
+                                                         .src_ctx   = (connection_context_t){.ip_address.type = IPADDR_TYPE_V4},
                                                          .user_name = NULL,
                                                          .user_name_len = 0
 

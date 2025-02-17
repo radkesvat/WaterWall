@@ -158,7 +158,7 @@ static void sendMessageUp(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t *m
 
     lock(ls);
     // struct msg_event *evdata = genericpoolGetItem(getWorkerPipeTunnelMsgPool(wid_from));
-    // *evdata = (struct msg_event){.ls = ls, .function = *(void **) (&fn), .arg = arg, .target_tid = wid_to};
+    // *evdata = (struct msg_event){.ls = ls, .function = *(void **) (&fn), .arg = arg, .target_wid = wid_to};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
