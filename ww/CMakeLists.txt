@@ -273,8 +273,18 @@ set(LIBS ${LIBS} sodium)
 ################################################################################
 # LWIP Library Settings
 ################################################################################
-set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip/WpdPack)
-set(LWIP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/lwip)
+CPMAddPackage(
+    NAME lwip
+    GIT_REPOSITORY https://github.com/lwip-tcpip/lwip.git
+    GIT_TAG STABLE-2_2_1_RELEASE
+    DOWNLOAD_ONLY True
+)
+if(NOT lwip_ADDED)
+    message(FATAL_ERROR "Error: LWIP library could not be downloaded")
+endif()
+set(LWIP_DIR ${lwip_SOURCE_DIR})
+
+set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 set(LWIP_CONTRIB_DIR ${LWIPOPTS_DIR}/contrib)
 set (LWIP_INCLUDE_DIRS
