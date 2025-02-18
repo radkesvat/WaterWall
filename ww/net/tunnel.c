@@ -124,7 +124,7 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 
     if (next == NULL)
     {
-        LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, next->name);
+        LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
         exit(1);
     }
 
