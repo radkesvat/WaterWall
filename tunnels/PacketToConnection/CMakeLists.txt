@@ -10,7 +10,7 @@ add_library(PacketToConnection STATIC
                     instance/index.c
                     common/helpers.c
                     common/line_state.c
-                    common/ip4_input_nat.c
+                    common/hookv4.c
                     common/ip4_prerouting_hook.c
                     common/nat_proto_icmp4.c
                     common/nat_proto_ip4.c
