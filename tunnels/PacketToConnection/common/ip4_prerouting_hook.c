@@ -59,12 +59,13 @@ int ip4_prerouting_hook(struct pbuf *p, struct netif *inp, struct netif *localp,
     struct nat_pcb *pcb;
 
     LWIP_DEBUGF(NAT_DEBUG, ("%s: Incoming packet on %c%c%u, ", __func__, inp->name[0], inp->name[1], inp->num));
-    if (forwardp)
+    if (forwardp) {
         LWIP_DEBUGF(NAT_DEBUG, ("forward destination %c%c%u\n", forwardp->name[0], forwardp->name[1], forwardp->num));
-    else if (localp)
+    } else if (localp) {
         LWIP_DEBUGF(NAT_DEBUG, ("local destination %c%c%u\n", localp->name[0], localp->name[1], localp->num));
-    else
+    } else {
         LWIP_DEBUGF(NAT_DEBUG, ("no destination\n"));
+    }
     ip4_debug_print(p);
 
     if (forwardp)
@@ -72,8 +73,7 @@ int ip4_prerouting_hook(struct pbuf *p, struct netif *inp, struct netif *localp,
         int ret = nat_rule_check(inp, forwardp);
         if (ret == 1)
         {
-            /*
-             * Packet is attempting to route in reverse direction
+            /* Packet is attempting to route in reverse direction
              * of existing NAT rule, eat it.
              */
             return 1;
@@ -86,17 +86,17 @@ int ip4_prerouting_hook(struct pbuf *p, struct netif *inp, struct netif *localp,
 
         if (IPH_TTL(iphdr) == 1)
         {
-            /*
-             * Packet cannot be forwarded. To allow LWIP to send
+            /* Packet cannot be forwarded. To allow LWIP to send
              * an expired message to the correct destination
              * don't modify anything.
              */
             return 0;
         }
 
-        if (forwardp->mtu && (p->tot_len > forwardp->mtu) && IPH_OFFSET(iphdr) & PP_NTOHS(IP_DF))
+        if (forwardp->mtu && (p->tot_len > forwardp->mtu) && (IPH_OFFSET(iphdr) & PP_NTOHS(IP_DF))) {
             /* Same as above, but for frag needed */
             return 0;
+        }
     }
     else if (localp && localp == inp)
     {
@@ -109,10 +109,9 @@ int ip4_prerouting_hook(struct pbuf *p, struct netif *inp, struct netif *localp,
     }
 
     pcb = ip4_prerouting_pcb(p, inp, forwardp);
-    if (! pcb)
+    if (!pcb)
     {
-        /*
-         * Drop outbound packets that did not get NAT'd, allow
+        /* Drop outbound packets that did not get NAT'd, allow
          * others to continue.
          */
         return forwardp ? 1 : 0;
@@ -121,25 +120,17 @@ int ip4_prerouting_hook(struct pbuf *p, struct netif *inp, struct netif *localp,
     if (localp)
     {
         struct netif *natp = netif_get_by_index(pcb->int_netif_idx);
-        /*
-         * For packets that were originally bound to be accepted
-         * on a local interface, we need to generate the ICMP
-         * errors ourselves. If we pass the packets on unmodified,
-         * they won't get forwarded and won't generate an error.
-         * If we pass them off modified, they will get forwarded and
-         * generate an error, but the information returned will have
-         * the modified NAT network, not the original external IP.
-         */
         if (IPH_TTL(iphdr) == 1)
         {
 #if LWIP_ICMP
-            if (IPH_PROTO(iphdr) != IP_PROTO_ICMP)
+            if (IPH_PROTO(iphdr) != IP_PROTO_ICMP) {
                 icmp_time_exceeded(p, ICMP_TE_TTL);
+            }
 #endif
             return 1;
         }
 
-        if (natp->mtu && (p->tot_len > natp->mtu) && IPH_OFFSET(iphdr) & PP_NTOHS(IP_DF))
+        if (natp->mtu && (p->tot_len > natp->mtu) && (IPH_OFFSET(iphdr) & PP_NTOHS(IP_DF)))
         {
 #if LWIP_ICMP
             icmp_dest_unreach(p, ICMP_DUR_FRAG);
