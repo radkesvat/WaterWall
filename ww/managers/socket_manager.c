@@ -530,8 +530,10 @@ static void onAcceptTcpSinglePort(wio_t *io)
 static void onAcceptTcpMultiPort(wio_t *io)
 {
 #ifdef OS_UNIX
+    ip_addr_t paddr;
+    sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
 
-    bool          use_v4_strategy = needsV4SocketStrategy((sockaddr_u *) wioGetPeerAddrU(io));
+    bool          use_v4_strategy = paddr.type == IPADDR_TYPE_V6? needsV4SocketStrategy(paddr.u_addr.ip6) : false;
     unsigned char pbuf[28]        = {0};
     socklen_t     size            = use_v4_strategy ? 16 : 24;
 
