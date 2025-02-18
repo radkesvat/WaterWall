@@ -37,26 +37,26 @@ static void defaultDestroyHandle(master_pool_t *pool, master_pool_item_t *item, 
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 {
 
-    pool_width = max((uint32_t)1, pool_width);
+    pool_width = max((uint32_t) 1, pool_width);
     // half of the pool is used, other half is free at startup
     pool_width = 2 * pool_width;
 
     const unsigned long container_len = pool_width * sizeof(master_pool_item_t *);
 
-    int64_t memsize = (int64_t) (sizeof(master_pool_t) + container_len);
+    size_t memsize = (sizeof(master_pool_t) + container_len);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
-    memsize = (int64_t) ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
-    if (memsize < (int64_t) sizeof(master_pool_t))
+    if (memsize < sizeof(master_pool_t))
     {
         printError("buffer size out of range");
         exit(1);
     }
 
     // allocate memory, placing master_pool_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate((size_t) memsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
 
     MUSTALIGN2(ptr, kCpuLineCacheSize);
 
@@ -67,7 +67,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     memorySet(pool_ptr, 0xEB, sizeof(master_pool_t) + container_len);
 #endif
 
-    master_pool_t pool = {.memptr              = (void*)ptr,
+    master_pool_t pool = {.memptr              = (void *) ptr,
                           .cap                 = pool_width,
                           .len                 = 0,
                           .create_item_handle  = defaultCreateHandle,
@@ -86,7 +86,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
  * @param destroy_h The handler to destroy pool items.
  */
 void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
-                                     MasterPoolItemDestroyHandle destroy_h)
+                                MasterPoolItemDestroyHandle destroy_h)
 {
     mutexLock(&(pool->mutex));
     pool->create_item_handle  = create_h;

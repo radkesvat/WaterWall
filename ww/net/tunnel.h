@@ -104,7 +104,7 @@ struct tunnel_s
  * @param lstate_size Size of the line state.
  * @return tunnel_t* Pointer to the created tunnel.
  */
-tunnel_t *tunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size);
+tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size);
 
 /**
  * @brief Destroys a tunnel instance.
@@ -339,7 +339,7 @@ static uint16_t tunnelGetLineStateSize(tunnel_t *self)
  * @param size Size to be aligned.
  * @return uint16_t Correctly aligned state size.
  */
-static uint16_t tunnelGetCorrectAllignedStateSize(uint16_t size)
+static uint16_t tunnelGetCorrectAllignedStateSize(uint32_t size)
 {
     return (size + kCpuLineCacheSize - 1) & ~(kCpuLineCacheSize - 1);
 }

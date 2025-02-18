@@ -507,7 +507,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
     if (atomicLoadExplicit(&c->qlen, memory_order_relaxed) > 0)
     {
         // Receive directly from queue
-        uint32_t i = (uint32_t)  atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
+        uint32_t i = (uint32_t) atomicAddExplicit(&c->recvx, 1, memory_order_relaxed);
         if (i == c->qcap - 1)
             atomicStoreExplicit(&c->recvx, 0, memory_order_relaxed);
         atomicSubExplicit(&c->qlen, 1, memory_order_relaxed);
@@ -626,21 +626,21 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
 
 wchan_t *chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity)
 {
-    int64_t memsize = (int64_t) sizeof(wchan_t) + ((int64_t) sbufGetTotalCapacity * (int64_t) elemsize);
+    size_t memsize = sizeof(wchan_t) + (sbufGetTotalCapacity * elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
-    memsize = (int64_t) ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
+    memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
-    if (memsize < (int64_t) sizeof(wchan_t))
+    if (memsize < sizeof(wchan_t))
     {
         printError("buffer size out of range");
         exit(1);
     }
 
     // allocate memory, placing wchan_t at a line cache address boundary
-    uintptr_t ptr = (uintptr_t) memoryAllocate((size_t) memsize);
-    memorySet((void *) ptr, 0, (size_t)memsize);
+    uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
+    memorySet((void *) ptr, 0, memsize);
 
     // align c to line cache boundary
     wchan_t *c = (wchan_t *) ALIGN2(ptr, kCpuLineCacheSize);
