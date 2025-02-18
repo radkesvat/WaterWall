@@ -4,7 +4,6 @@
 #include "loggers/internal_logger.h"
 #include "utils/json_helpers.h"
 
-
 enum
 {
     kVecCap     = 8,
@@ -189,7 +188,7 @@ static void runNodes(node_manager_config_t *cfg)
     {
         for (int i = 0; i < tunnels_count; i++)
         {
-            if(t_array_cpy[i]->chain == NULL && !(t_array_cpy[i]->node->flags & kNodeFlagNoChain))
+            if (t_array_cpy[i]->chain == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagNoChain))
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array_cpy[i]->node->name);
                 exit(1);
@@ -229,7 +228,13 @@ static void pathWalk(node_manager_config_t *cfg)
             }
             c++;
             node_t *n2 = nodemanagerGetNodeInstance(cfg, n1->hash_next);
-            n1         = n2;
+            if (n2 == NULL)
+            {
+                LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", cfg->config_file->file_path,cfg->config_file->name);
+                LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"", n1->name, n1->next);
+                exit(1);
+            }
+            n1 = n2;
             if (c > 200)
             {
                 LOGF("Node Map Failure: circular reference deteceted");
