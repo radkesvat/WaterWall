@@ -64,6 +64,20 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer);
 
 
 #ifdef OS_WIN
+
 #define LWIP_IPSTAT IP_STATS
 #undef IP_STATS
+
+#define LWIP_ICMPSTAT ICMP_STATS
+#undef ICMP_STATS
+
+#define LWIP_TCPSTAT TCP_STATS
+#undef TCP_STATS
+
+#define LWIP_UDPSTAT UDP_STATS
+#undef UDP_STATS
+
+#define LWIP_IP6STAT IP6_STATS
+#undef IP6_STATS
+
 #endif
