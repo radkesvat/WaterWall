@@ -61,3 +61,9 @@ typedef struct ip6_hdr ip6_hdr_t;
 #define pbufAlloc pbuf_alloc /**< Allocate a pbuf (packet buffer) */
 
 void printIPPacketInfo(const char *prefix, const unsigned char *buffer);
+
+
+#ifdef OS_WIN
+#define LWIP_IPSTAT IP_STATS
+#undef IP_STATS
+#endif
