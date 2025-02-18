@@ -14,6 +14,19 @@
             ]
         },
         {
+            "name": "windows-ninja-debug",
+            "cacheVariables": {
+                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache",
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "inherits": [
+                "host-windows",
+                "target-windows",
+                "mingw",
+                "default"
+            ]
+        },
+        {
             "name": "windows",
             "inherits": [
                 "host-windows",
