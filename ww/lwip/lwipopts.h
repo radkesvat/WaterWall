@@ -334,15 +334,23 @@ void  memoryFree(void *ptr);
 
 
 /* lwip will use our custom allocators*/
-#define MEM_CUSTOM_FREE(ptr)     memoryFree(ptr)
-#define MEM_CUSTOM_MALLOC(sz)    memoryAllocate((size_t) (sz))
-#define MEM_CUSTOM_CALLOC(n, sz) memoryAllocateZero((size_t) ((n) * (sz)))
-#define MEM_CUSTOM_ALLOCATOR     1
+// #define MEM_CUSTOM_FREE(ptr)     memoryFree(ptr)
+// #define MEM_CUSTOM_MALLOC(sz)    memoryAllocate((size_t) (sz))
+// #define MEM_CUSTOM_CALLOC(n, sz) memoryAllocateZero((size_t) ((n) * (sz)))
+// #define MEM_CUSTOM_ALLOCATOR     1
 
 #define LWIP_NAT 1
 #define LWIP_NAT_ICMP 1
 
+
+
 #define LWIP_TCPIP_CORE_LOCKING_INPUT 1
+
+
+#define MEMP_USE_CUSTOM_POOLS 1
+#define MEM_USE_POOLS 1
+#define MEM_USE_POOLS_TRY_BIGGER_POOL 1
+
 
 
 struct pbuf;
