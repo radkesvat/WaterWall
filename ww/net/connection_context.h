@@ -330,21 +330,22 @@ static inline uint8_t getIpVersion(char *host)
 // Address Conversion Functions
 // ============================================================================
 
-static inline  connectioncontextFromSockAddr(connection_context_t *dest,const sockaddr_u *src)
+static inline void connectioncontextFromSockAddr(connection_context_t *dest, const sockaddr_u *src)
 {
-    
+
     addressContextInit(dest);
     sockaddrToIpAddr(src, &dest->ip_address);
 
     if (src->sa.sa_family == AF_INET)
     {
-        dest->port = ntohs(src->sin.sin_port);
+        dest->port    = ntohs(src->sin.sin_port);
+        dest->type_ip = kCCTypeIp;
     }
     else if (src->sa.sa_family == AF_INET6)
     {
-        dest->port = ntohs(src->sin6.sin6_port);
+        dest->port    = ntohs(src->sin6.sin6_port);
+        dest->type_ip = kCCTypeIp;
     }
-    dest->type_ip = kCCTypeIp;
 }
 
 /**
