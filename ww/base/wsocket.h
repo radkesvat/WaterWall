@@ -505,7 +505,7 @@ static inline int checkIPRange6(const ip6_addr_t test_addr, const ip6_addr_t bas
     ip6_addr_t masked_test_addr;
     ip6_addr_t masked_base_addr;
 
-    for (int i = 0; i < 16; i++)
+    for (int i = 0; i < 4; i++)
     {
         masked_test_addr.addr[i] = test_addr.addr[i] & subnet_mask.addr[i];
         masked_base_addr.addr[i] = base_addr.addr[i] & subnet_mask.addr[i];

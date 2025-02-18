@@ -220,27 +220,16 @@ static void exitHook(void *userdata, int _)
     }
 }
 
-#ifndef IS_ADDR6_V4MAPPED
-#define IS_ADDR6_V4MAPPED(a)                                                                                           \
-    ((((a)[0]) == 0) && (((a)[1]) == 0) && (((a)[2]) == 0) && (((a)[3]) == 0) && (((a)[4]) == 0) &&                    \
-     (((a)[5]) == 0xFFFF))
-#endif
-
 static inline bool needsV4SocketStrategy(const ip6_addr_t addr)
 {
-    bool use_v4_strategy;
-
-    if (IS_ADDR6_V4MAPPED((u16_t *) &(addr.addr[0])))
-    {
-        use_v4_strategy = true;
-    }
-    else
-    {
-        use_v4_strategy = false;
-    }
-
-    return use_v4_strategy;
-}
+    uint16_t segments[8];
+    memoryCopy(segments,addr.addr, sizeof(segments));
+    return (segments[0] == 0 &&
+            segments[1] == 0 &&
+            segments[2] == 0 &&
+            segments[3] == 0 &&
+            segments[4] == 0 &&
+            segments[5] == 0xFFFF);}
 
 static void parseWhiteListOption(socket_filter_option_t *option)
 {
