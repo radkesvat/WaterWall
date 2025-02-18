@@ -80,8 +80,8 @@ struct tunnel_s
     TunnelStatusCb onStart;
     TunnelStatusCb onDestroy;
     
-    uint16_t tstate_size;
-    uint16_t lstate_size;
+    uint32_t tstate_size;
+    uint32_t lstate_size;
 
     uint16_t lstate_offset;
     uint16_t chain_index;
@@ -315,9 +315,9 @@ static node_t *tunnelGetNode(tunnel_t *self)
  * @brief Retrieves the state size of the tunnel.
  * 
  * @param self Pointer to the tunnel.
- * @return uint16_t State size of the tunnel.
+ * @return uint32_t State size of the tunnel.
  */
-static uint16_t tunnelGetStateSize(tunnel_t *self)
+static uint32_t tunnelGetStateSize(tunnel_t *self)
 {
     return self->tstate_size;
 }
@@ -326,9 +326,9 @@ static uint16_t tunnelGetStateSize(tunnel_t *self)
  * @brief Retrieves the line state size of the tunnel.
  * 
  * @param self Pointer to the tunnel.
- * @return uint16_t Line state size of the tunnel.
+ * @return uint32_t Line state size of the tunnel.
  */
-static uint16_t tunnelGetLineStateSize(tunnel_t *self)
+static uint32_t tunnelGetLineStateSize(tunnel_t *self)
 {
     return self->tstate_size;
 }
