@@ -234,7 +234,12 @@ void createGlobalState(const ww_construction_data_t init_data)
         initializeShortCuts();
     }
 
-    GSTATE.lwip_process_v4_hook = wwDefaultInternalLwipIpv4Hook;
+    // tcp ip
+    {
+        tcpipInit(NULL, NULL);
+        GSTATE.flag_lwip_initialized = 1;
+        GSTATE.lwip_process_v4_hook = wwDefaultInternalLwipIpv4Hook;
+    }
 
     // managers
     {
@@ -287,7 +292,7 @@ void createGlobalState(const ww_construction_data_t init_data)
 /*!
  * @brief Send a worker message.
  *
- * @param wid The worker ID.
+ * @param wid The worker ID. (that receives the message)
  * @param cb The callback function.
  * @param arg1 The first argument.
  * @param arg2 The second argument.

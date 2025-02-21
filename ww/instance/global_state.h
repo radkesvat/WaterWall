@@ -147,7 +147,7 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
 /*!
  * @brief Send a worker message.
  *
- * @param wid The worker ID.
+ * @param wid The worker ID. (that receives the message)
  * @param cb The callback function.
  * @param arg1 The first argument.
  * @param arg2 The second argument.
