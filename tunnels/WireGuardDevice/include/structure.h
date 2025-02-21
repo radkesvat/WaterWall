@@ -2,8 +2,8 @@
 
 #include "wwapi.h"
 
-#include "wireguard_endian_helpers.h"
-#include "wireguard_types.h"
+#include "common/wireguard_endian_helpers.h"
+#include "common/wireguard_types.h"
 
 typedef struct wgd_tstate_s
 {
