@@ -41,6 +41,7 @@ typedef struct ip6_hdr ip6_hdr_t;
 #define ip4AddrNetcmp ip4_addr_netcmp
 #define ip4AddrCopy   ip4_addr_copy
 #define ip4AddrNetworkToAaddress ip4addr_ntoa
+#define ip4AddrEqual  ip4_addr_eq
 
 // ------------------------------------------------------------------------
 // IPv6 Specific Function Macros

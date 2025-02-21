@@ -2,6 +2,15 @@
 
 #include "loggers/network_logger.h"
 
+#define IP_PROTO_STR(proto)                                                                                            \
+    (((proto) == IP_PROTO_TCP)    ? "TCP"                                                                              \
+     : ((proto) == IP_PROTO_UDP)  ? "UDP"                                                                              \
+     : ((proto) == IP_PROTO_ICMP) ? "ICMP"                                                                             \
+     : ((proto) == 58)            ? "ICMPv6"                                                                           \
+     : ((proto) == 0)             ? "Hop-by-Hop"                                                                       \
+     : ((proto) == IP_PROTO_IGMP) ? "IGMP"                                                                             \
+                                  : "UNKNOWN")
+
 void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
 {
     char  logbuf[256];
@@ -15,11 +24,16 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
     {
         struct ip_hdr *ip_header = (struct ip_hdr *) buffer;
         ip4_addr_t     src_addr, dst_addr;
-        memoryCopy(&src_addr, &ip_header->src, sizeof(ip4_addr_t));
-        memoryCopy(&dst_addr, &ip_header->dest, sizeof(ip4_addr_t));
-        const char *src_ip = ip4addr_ntoa(&src_addr);
-        const char *dst_ip = ip4addr_ntoa(&dst_addr);
-        ret = snprintf(ptr, (size_t) rem, "%s : Packet v4 From %s to %s, Data: ", prefix, src_ip, dst_ip);
+        memoryCopy(&src_addr, &ip_header->src.addr, sizeof(ip4_addr_t));
+        memoryCopy(&dst_addr, &ip_header->dest.addr, sizeof(ip4_addr_t));
+
+        char src_ip[40];
+        char dst_ip[40];
+
+        stringCopyN(src_ip, ip4addr_ntoa(&src_addr), 40);
+        stringCopyN(dst_ip, ip4addr_ntoa(&dst_addr), 40);
+        ret                = snprintf(ptr, (size_t) rem, "%s : Packet v4 %s From %s to %s, Data: ", prefix,
+                                      IP_PROTO_STR(ip_header->_proto), src_ip, dst_ip);
     }
     else if (version == 6)
     {
@@ -27,9 +41,13 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
         ip6_addr_t      src_addr, dst_addr;
         memoryCopy(&src_addr, &ip6_header->src, sizeof(ip6_addr_t));
         memoryCopy(&dst_addr, &ip6_header->dest, sizeof(ip6_addr_t));
-        const char *src_ip = ip6addr_ntoa(&src_addr);
-        const char *dst_ip = ip6addr_ntoa(&dst_addr);
-        ret = snprintf(ptr, (size_t) rem, "%s : Packet v6 From %s to %s, Data: ", prefix, src_ip, dst_ip);
+        char src_ip[40];
+        char dst_ip[40];
+
+        stringCopyN(src_ip, ip6addr_ntoa(&src_addr), 40);
+        stringCopyN(dst_ip, ip6addr_ntoa(&dst_addr), 40);
+        ret                = snprintf(ptr, (size_t) rem, "%s : Packet v6 %s From %s to %s, Data: ", prefix,
+                                      IP_PROTO_STR(ip6_header->_nexth), src_ip, dst_ip);
     }
     else
     {
