@@ -1,9 +1,13 @@
 #pragma once
 
-#include "wwapi.h"
 #include "devices/tun/tun.h"
+#include "wwapi.h"
+
 
 #define LOG_PACKET_INFO 1
+#define LOG_SSDP        0
+#define LOG_MDNS        0
+#define LOG_V6          0
 
 typedef struct tundevice_tstate_s
 {
@@ -55,4 +59,3 @@ void tundeviceLinestateInitialize(tundevice_lstate_t *ls);
 void tundeviceLinestateDestroy(tundevice_lstate_t *ls);
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid);
-
