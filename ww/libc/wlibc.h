@@ -174,6 +174,8 @@ WW_EXPORT char *stringChrLen(const char *s, char c, size_t n);
 #define stringChrDot(str) strrchr(str, '.')
 WW_EXPORT char *stringChrDir(const char *filepath);
 
+#define stringCopy strcpy
+
 //--------------------file-------------------------------
 
 char *readFile(const char *path);
