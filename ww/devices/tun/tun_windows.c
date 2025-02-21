@@ -340,6 +340,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
     tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
     MemoryBarrier();
 
+    LOGD("TunDevice: Starting WinTun session");
     WINTUN_SESSION_HANDLE Session = WintunStartSession(tdev->adapter_handle, 0x400000);
     if (! Session)
     {
@@ -659,12 +660,17 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     MultiByteToWideChar(CP_UTF8, 0, name, -1, (tdev->name), wideSize);
 
-    GUID                  example_guid = {0xdeadbabe, 0xcafe, 0xbeef, {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}};
+    GUID                  example_guid = {0xDEADC0DE, 0xFADE, 0xC01D , {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66}};
+    
+    LOGD("TunDevice: Creating adapter with GUID: %08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", example_guid.Data1,
+         example_guid.Data2, example_guid.Data3, example_guid.Data4[0], example_guid.Data4[1], example_guid.Data4[2],
+         example_guid.Data4[3], example_guid.Data4[4], example_guid.Data4[5], example_guid.Data4[6], example_guid.Data4[7]);
+
     WINTUN_ADAPTER_HANDLE adapter      = WintunCreateAdapter(tdev->name, L"Waterwall Adapter", &example_guid);
     if (! adapter)
     {
         LastError = GetLastError();
-        LOGE("TunDevice: Failed to create adapter, code: %lu", LastError);
+        LOGE("TunDevice: Failed to create adapter! code: %lu", LastError);
 
         return NULL;
     }
