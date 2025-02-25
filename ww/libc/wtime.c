@@ -13,21 +13,20 @@ static const uint8_t s_days[] = //   1       3       5       7   8       10     
 
 unsigned int getTickMS(void)
 {
-#ifdef  OS_WIN
+#ifdef OS_WIN
     LARGE_INTEGER count, s_freq;
     QueryPerformanceCounter(&count);
     QueryPerformanceFrequency(&s_freq);
     // Cast count and frequency to long double for precise division, then convert result to unsigned long long
-    return (unsigned int) ((unsigned long long) (((long double) count.QuadPart / (long double) s_freq.QuadPart) *
-                                                 1000L));
+    return (((count.QuadPart / s_freq.QuadPart) * 1000L));
 #elif HAVE_CLOCK_GETTIME
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (unsigned int) (ts.tv_sec * 1000) + (unsigned int) (ts.tv_nsec / 1000000);
+    return (ts.tv_sec * 1000) + (ts.tv_nsec / 1000000);
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (unsigned int) (tv.tv_sec * 1000) + (unsigned int) (tv.tv_usec / 1000);
+    return (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
 #endif
 }
 
@@ -45,7 +44,7 @@ unsigned long long getHRTimeUs(void)
     {
         LARGE_INTEGER count;
         QueryPerformanceCounter(&count);
-        return (unsigned long long) ((double) count.QuadPart / (double) s_freq * 1000000);
+        return ((double) count.QuadPart / (double) s_freq * 1000000);
     }
     return 0;
 #elif defined(OS_SOLARIS)
@@ -53,11 +52,11 @@ unsigned long long getHRTimeUs(void)
 #elif HAVE_CLOCK_GETTIME
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (unsigned long long) ((ts.tv_sec * 1000000) + (ts.tv_nsec / 1000));
+    return ((ts.tv_sec * 1000000) + (ts.tv_nsec / 1000));
 #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (unsigned long long) ((tv.tv_sec * 1000000) + tv.tv_usec);
+    return ((tv.tv_sec * 1000000) + tv.tv_usec);
 #endif
 }
 
