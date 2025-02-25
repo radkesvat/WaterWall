@@ -59,11 +59,7 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 #error "MEM128_BUF_OPTIMIZE must be defined to either 0 or 1"
 #endif
 
-#if MEM128_BUF_OPTIMIZE == 0
-
-#define memoryCopy128 memoryCopy
-
-#elif defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#if MEM128_BUF_OPTIMIZE != 0 && defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 
 #include <x86intrin.h>
 static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
@@ -108,22 +104,8 @@ static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
 
 #else
 
-static inline void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, intmax_t n)
-{
-
-    while (n >= 128)
-    {
-        memoryCopy(_dest, _src, 128);
-        n -= 128;
-        _dest += 128;
-        _src += 128;
-    }
-    if (n > 0)
-    {
-        memoryCopy((uint8_t *) d_vec, (const uint8_t *) s_vec, n);
-    }
-}
-
+#define memoryCopy    memcpy
+#define memoryCopy128 memoryCopy
 
 #endif
 

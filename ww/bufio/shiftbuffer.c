@@ -59,7 +59,7 @@ sbuf_t *sbufDuplicate(sbuf_t *b)
 {
     sbuf_t *newbuf = sbufNewWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
     sbufSetLength(newbuf, sbufGetBufLength(b));
-    memoryCopy128(sbufGetMutablePtr(newbuf), sbufGetRawPtr(b), sbufGetBufLength(b));
+    memoryCopy(sbufGetMutablePtr(newbuf), sbufGetRawPtr(b), sbufGetBufLength(b));
 
     return newbuf;
 }
@@ -77,7 +77,7 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
     root                   = sbufReserveSpace(root, root_length + append_length);
     sbufSetLength(root, root_length + append_length);
 
-    memoryCopy128(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
+    memoryCopy(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
 
     return root;
 }

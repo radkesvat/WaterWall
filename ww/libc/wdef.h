@@ -288,7 +288,6 @@ enum
 
 #define memorySet           memset
 #define memoryMove          memmove
-#define memoryCopy          memcpy
 #define memoryCompare       memcmp
 #define stringLength        strlen
 
