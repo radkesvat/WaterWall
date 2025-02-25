@@ -13,11 +13,7 @@
 #include "wmath.h"
 #include "wtime.h"
 
-
 #include "ww_lwip.h"
-
-
-
 
 void initWLibc(void);
 
@@ -34,7 +30,6 @@ void  memoryFree(void *ptr);
 void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
-
 
 /* STC lib will use our custom allocators*/
 #define c_malloc(sz)               memoryAllocate((size_t) (sz))
@@ -79,7 +74,7 @@ static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
     if ((uintptr_t) dest % 128 != 0 || (uintptr_t) src % 128 != 0)
     {
 
-        while (n > 0)
+        while (n >= 128)
         {
             _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
             _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
@@ -90,20 +85,24 @@ static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
             d_vec += 4;
             s_vec += 4;
         }
-
-        return;
     }
-
-    while (n > 0)
+    else
     {
-        _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
-        _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
-        _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
-        _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
+        while (n >= 128)
+        {
+            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
+            _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+            _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
+            _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
 
-        n -= 128;
-        d_vec += 4;
-        s_vec += 4;
+            n -= 128;
+            d_vec += 4;
+            s_vec += 4;
+        }
+    }
+    if (n > 0)
+    {
+        memoryCopy((uint8_t *) d_vec, (const uint8_t *) s_vec, n);
     }
 }
 
@@ -112,14 +111,19 @@ static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
 static inline void memoryCopy128(uint8_t *__restrict _dest, const uint8_t *__restrict _src, intmax_t n)
 {
 
-    while (n > 0)
+    while (n >= 128)
     {
         memoryCopy(_dest, _src, 128);
         n -= 128;
         _dest += 128;
         _src += 128;
     }
+    if (n > 0)
+    {
+        memoryCopy((uint8_t *) d_vec, (const uint8_t *) s_vec, n);
+    }
 }
+
 
 #endif
 
