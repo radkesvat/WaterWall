@@ -292,6 +292,8 @@ enum
 #define memoryCompare       memcmp
 #define stringLength        strlen
 
+#define discard  (void)
+
 #ifndef thread_local
 #if __STDC_VERSION__ >= 201112 && !defined __STDC_NO_THREADS__
 #define thread_local        _Thread_local
