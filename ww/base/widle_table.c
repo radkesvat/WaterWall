@@ -1,3 +1,11 @@
+/**
+ * @file widle_table.c
+ * @brief Implementation of a thread-safe idle table.
+ *
+ * This file implements a heap-based timer mechanism that periodically
+ * checks idle items for expiration and invokes their callbacks.
+ */
+
 #include "widle_table.h"
 
 #include "global_state.h"
@@ -36,6 +44,15 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct widle_table_s
 
 void idleCallBack(wtimer_t *timer);
 
+/**
+ * @brief Creates and initializes a new idle table.
+ *
+ * Allocates memory aligned to cache boundaries, initializes the internal heap and map,
+ * and starts the timer callback.
+ *
+ * @param loop Pointer to the event loop.
+ * @return Pointer to the newly created idle table.
+ */
 widle_table_t *idleTableCreate(wloop_t *loop)
 {
     // assert(sizeof(widle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
@@ -71,6 +88,17 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     return newtable;
 }
 
+/**
+ * @brief Creates a new idle item and inserts it into the table.
+ *
+ * @param self Pointer to the idle table.
+ * @param key Hash key used for the item.
+ * @param userdata User data pointer.
+ * @param cb Callback to be invoked upon expiration.
+ * @param tid Thread ID.
+ * @param age_ms Expiration delay in milliseconds.
+ * @return Pointer to the idle item; NULL if insertion fails.
+ */
 idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t tid, uint64_t age_ms)
 {
     assert(self);
@@ -96,6 +124,15 @@ idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expire
     return item;
 }
 
+/**
+ * @brief Keeps an idle item alive for at least the specified duration.
+ *
+ * Updates the item's expiration based on current loop time.
+ *
+ * @param self Pointer to the idle table.
+ * @param item Idle item to update.
+ * @param age_ms Time in milliseconds to extend the item.
+ */
 void idleTableKeepIdleItemForAtleast(widle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
     if (item->removed)
@@ -109,6 +146,14 @@ void idleTableKeepIdleItemForAtleast(widle_table_t *self, idle_item_t *item, uin
     mutexUnlock(&(self->mutex));
 }
 
+/**
+ * @brief Retrieves an idle item from the table by its hash key.
+ *
+ * @param tid Thread ID.
+ * @param self Pointer to the idle table.
+ * @param key Hash key of the idle item.
+ * @return Pointer to the idle item if found; NULL otherwise.
+ */
 idle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
@@ -123,6 +168,16 @@ idle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t k
     return (find_result.ref->second);
 }
 
+/**
+ * @brief Removes an idle item from the table by its hash key.
+ *
+ * Performs a lazy deletion by marking the item as removed.
+ *
+ * @param tid Thread ID.
+ * @param self Pointer to the idle table.
+ * @param key Hash key of the idle item.
+ * @return true if the item was found and removed; false otherwise.
+ */
 bool idleTableRemoveIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
@@ -141,6 +196,14 @@ bool idleTableRemoveIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
     return true;
 }
 
+/**
+ * @brief Callback invoked by the timer when an idle item is about to be closed.
+ *
+ * This function executes the expiration callback if applicable or removes
+ * the idle item.
+ *
+ * @param ev Pointer to the event structure.
+ */
 static void beforeCloseCallBack(wevent_t *ev)
 {
     idle_item_t *item = weventGetUserdata(ev);
@@ -181,6 +244,13 @@ static void beforeCloseCallBack(wevent_t *ev)
     }
 }
 
+/**
+ * @brief Timer callback for processing idle items.
+ *
+ * Iterates through idle items in the heap and processes those that have expired.
+ *
+ * @param timer Pointer to the timer.
+ */
 void idleCallBack(wtimer_t *timer)
 {
     widle_table_t *self  = weventGetUserdata(timer);
@@ -203,8 +273,7 @@ void idleCallBack(wtimer_t *timer)
             }
             else
             {
-                // destruction must happen on other thread
-                // hmap_idles_t_erase(&(self->hmap), item->hash);
+                // Post event to process item on its worker thread.
                 wevent_t ev;
                 memorySet(&ev, 0, sizeof(ev));
                 ev.loop = getWorkerLoop(item->tid);
@@ -221,6 +290,13 @@ void idleCallBack(wtimer_t *timer)
     mutexUnlock(&(self->mutex));
 }
 
+/**
+ * @brief Destroys the idle table and releases all resources.
+ *
+ * Deletes the timer handle, drops internal data structures, and frees allocated memory.
+ *
+ * @param self Pointer to the idle table.
+ */
 void idleTableDestroy(widle_table_t *self)
 {
     wtimerDelete(self->idle_handle);
