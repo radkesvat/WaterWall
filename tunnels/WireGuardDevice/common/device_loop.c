@@ -1,10 +1,13 @@
 #include "structure.h"
 
+
+#include "loggers/network_logger.h"
+
 static sbuf_t *wireguarddeviceCreateiateHandshake(wireguard_device_t *device, wireguard_peer_t *peer,
-                                            message_handshake_initiation_t *msg, err_t *error)
+                                                  message_handshake_initiation_t *msg, err_t *error)
 {
     sbuf_t *buf = NULL;
-    err_t   err  = ERR_OK;
+    err_t   err = ERR_OK;
     if (wireguardCreateHandshakeInitiation(device, peer, msg))
     {
         // Send this packet out!
@@ -39,7 +42,7 @@ static err_t wireguardStartHandshake(wireguard_device_t *device, wireguard_peer_
     buf = wireguarddeviceCreateiateHandshake(device, peer, &msg, &result);
     if (buf)
     {
-        result = wireguardifPeerOutput(device, buf, peer);
+        result                   = wireguardifPeerOutput(device, buf, peer);
         peer->send_handshake     = false;
         peer->last_initiation_tx = getTickMS();
         memoryCopy(peer->handshake_mac1, msg.mac1, WIREGUARD_COOKIE_LEN);
@@ -47,8 +50,6 @@ static err_t wireguardStartHandshake(wireguard_device_t *device, wireguard_peer_
     }
     return result;
 }
-
-
 
 static bool wireguardifCanSendInitiation(wireguard_peer_t *peer)
 {
@@ -61,7 +62,7 @@ static bool shouldSendInitiation(wireguard_peer_t *peer)
     if (wireguardifCanSendInitiation(peer))
     {
         if (peer->send_handshake)
-        { 
+        {
             result = true;
         }
         else if (peer->curr_keypair.valid && ! peer->curr_keypair.initiator &&
@@ -116,8 +117,8 @@ static bool shouldResetPeer(wireguard_peer_t *peer)
 
 void wireguarddeviceLoop(wireguard_device_t *device)
 {
-    wireguard_peer_t   *peer;
-    int                 x;
+    wireguard_peer_t *peer;
+    int               x;
 
     // Check periodic things
     bool link_up = false;
@@ -150,6 +151,8 @@ void wireguarddeviceLoop(wireguard_device_t *device)
             }
             if (shouldSendInitiation(peer))
             {
+                LOGD("Sending handshake to peer %d.%d.%d.%d", ip4_addr1(ip_2_ip4(&peer->ip)),
+                     ip4_addr2(ip_2_ip4(&peer->ip)), ip4_addr3(ip_2_ip4(&peer->ip)), ip4_addr4(ip_2_ip4(&peer->ip)));
                 wireguardStartHandshake(device, peer);
             }
 

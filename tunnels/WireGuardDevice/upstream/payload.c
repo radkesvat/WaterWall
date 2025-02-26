@@ -2,25 +2,44 @@
 
 #include "loggers/network_logger.h"
 
+
+
 static wireguard_peer_t *peerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr)
 {
     wireguard_peer_t *result = NULL;
     wireguard_peer_t *tmp;
-    int               x;
-    int               y;
-    for (x = 0; (! result) && (x < WIREGUARD_MAX_PEERS); x++)
+    int x, y;
+    for (x = 0; (!result) && (x < WIREGUARD_MAX_PEERS); x++)
     {
         tmp = &device->peers[x];
         if (tmp->valid)
         {
             for (y = 0; y < WIREGUARD_MAX_SRC_IPS; y++)
             {
-                if ((tmp->allowed_source_ips[y].valid) &&
-                    ip4AddrNetcmp(ip_2_ip4(ipaddr), ip_2_ip4(&tmp->allowed_source_ips[y].ip),
-                                  ip_2_ip4(&tmp->allowed_source_ips[y].mask)))
+                if (tmp->allowed_source_ips[y].valid)
                 {
-                    result = tmp;
-                    break;
+                    if ((ipaddr->type == IPADDR_TYPE_V4) &&
+                        (tmp->allowed_source_ips[y].ip.type == IPADDR_TYPE_V4))
+                    {
+                        if (ip4AddrNetcmp(ip_2_ip4(ipaddr),
+                                           ip_2_ip4(&tmp->allowed_source_ips[y].ip),
+                                           ip_2_ip4(&tmp->allowed_source_ips[y].mask)))
+                        {
+                            result = tmp;
+                            break;
+                        }
+                    }
+                    else if ((ipaddr->type == IPADDR_TYPE_V6) &&
+                             (tmp->allowed_source_ips[y].ip.type == IPADDR_TYPE_V6))
+                    {
+                        if (ip6AddrNetcmp(ip_2_ip6(ipaddr),
+                                           ip_2_ip6(&tmp->allowed_source_ips[y].ip),
+                                           ip_2_ip6(&tmp->allowed_source_ips[y].mask)))
+                        {
+                            result = tmp;
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -177,31 +196,34 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     mutexLock(&state->mutex);
     state->locked = true;
 
-    if (IP_HDR_GET_VERSION(data) == 6)
+    wireguard_peer_t *peer = NULL;
+    ip_addr_t dest;
+
+    if (IP_HDR_GET_VERSION(data) == 4)
     {
         ip4_hdr_t *header = (ip4_hdr_t *) data;
-        ip4_addr_t dest_ip4;
-        ip4AddrCopy(dest_ip4, header->dest);
-        ip_addr_t dest;
-        ipAddrCopyFromIp4(dest, dest_ip4);
-
-        wireguardifOutputToPeer(dev, buf, &dest, peerLookupByAllowedIp(dev, &dest));
+        ipAddrCopyFromIp4(dest, header->dest);
+        peer = peerLookupByAllowedIp(dev, &dest);
     }
-    else if (IP_HDR_GET_VERSION(data) == 4)
+    else if (IP_HDR_GET_VERSION(data) == 6)
     {
         ip6_hdr_t *header = (ip6_hdr_t *) data;
         ip6_addr_t dest_ip6;
         ip6AddrCopyFromPacket(dest_ip6, header->dest);
-        ip_addr_t dest;
         ipAddrCopyFromIp6(dest, dest_ip6);
+        peer = peerLookupByAllowedIp(dev, &dest);
+    }
 
-        wireguardifOutputToPeer(dev, buf, &dest, peerLookupByAllowedIp(dev, &dest));
+    if(peer)
+    {
+        wireguardifOutputToPeer(dev, buf, &dest, peer);
     }
     else
     {
-        LOGE("WireguardDevice cannot route a packet with unknown IP version");
+        LOGD("WireguardDevice cannot route a packet");
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
     }
+
     if (state->locked)
     {
         state->locked = false;
