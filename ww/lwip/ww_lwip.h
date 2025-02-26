@@ -2,6 +2,7 @@
 
 // Standard and library includes
 #include "wlibc.h"
+
 #include "lwip/autoip.h"
 #include "lwip/inet_chksum.h"
 #include "lwip/init.h"
@@ -11,6 +12,7 @@
 #include "lwip/pbuf.h"
 #include "lwip/prot/tcp.h"
 #include "lwip/tcpip.h"
+
 
 // ------------------------------------------------------------------------
 // Type definitions and aliases
@@ -27,8 +29,8 @@ typedef struct ip6_hdr ip6_hdr_t;
 #define ipAddrIsAny       ip_addr_isany         // Check if IP address is wildcard
 #define ipAddrCmp         ip_addr_cmp           // Compare two IP addresses
 #define ipAddrNetcmp      ip_addr_netcmp        // Compare two IP addresses with mask
-#define ipAddrCopyFromIp4 ip_addr_copy_from_ip4  // Copy IPv4 address to generic IP
-#define ipAddrCopyFromIp6 ip_addr_copy_from_ip6  // Copy IPv6 address to generic IP
+#define ipAddrCopyFromIp4 ip_addr_copy_from_ip4 // Copy IPv4 address to generic IP
+#define ipAddrCopyFromIp6 ip_addr_copy_from_ip6 // Copy IPv6 address to generic IP
 #define ipAddrCopy        ip_addr_copy          // Copy a generic IP address
 #define ipAddrIsV4        IP_IS_V4              // Check if IP address is IPv4
 #define ipAddrIsV6        IP_IS_V6              // Check if IP address is IPv6
@@ -36,19 +38,19 @@ typedef struct ip6_hdr ip6_hdr_t;
 // ------------------------------------------------------------------------
 // IPv4 Specific Function Macros
 // ------------------------------------------------------------------------
-#define ip4AddrSetAny ip4_addr_set_any
-#define ip4AddrGetU32 ip4_addr_get_u32
-#define ip4AddrNetcmp ip4_addr_netcmp
-#define ip4AddrCopy   ip4_addr_copy
+#define ip4AddrSetAny            ip4_addr_set_any
+#define ip4AddrGetU32            ip4_addr_get_u32
+#define ip4AddrNetcmp            ip4_addr_netcmp
+#define ip4AddrCopy              ip4_addr_copy
 #define ip4AddrNetworkToAaddress ip4addr_ntoa
-#define ip4AddrEqual  ip4_addr_eq
+#define ip4AddrEqual             ip4_addr_eq
 
 // ------------------------------------------------------------------------
 // IPv6 Specific Function Macros
 // ------------------------------------------------------------------------
-#define ip6AddrSetAny ip6_addr_set_any
-#define ip6AddrNetcmp ip6_addr_netcmp
-#define ip6AddrCopyFromPacket ip6_addr_copy_from_packed
+#define ip6AddrSetAny            ip6_addr_set_any
+#define ip6AddrNetcmp            ip6_addr_netcmp
+#define ip6AddrCopyFromPacket    ip6_addr_copy_from_packed
 #define ip6AddrNetworkToAaddress ip6addr_ntoa
 
 // ------------------------------------------------------------------------
@@ -72,18 +74,18 @@ void printTcpPacketFlagsInfo(u8_t flags);
 // OS-specific adjustments
 // ------------------------------------------------------------------------
 #ifdef OS_WIN
-    #define LWIP_IPSTAT IP_STATS
-    #undef IP_STATS
+#define LWIP_IPSTAT IP_STATS
+#undef IP_STATS
 
-    #define LWIP_ICMPSTAT ICMP_STATS
-    #undef ICMP_STATS
+#define LWIP_ICMPSTAT ICMP_STATS
+#undef ICMP_STATS
 
-    #define LWIP_TCPSTAT TCP_STATS
-    #undef TCP_STATS
+#define LWIP_TCPSTAT TCP_STATS
+#undef TCP_STATS
 
-    #define LWIP_UDPSTAT UDP_STATS
-    #undef UDP_STATS
+#define LWIP_UDPSTAT UDP_STATS
+#undef UDP_STATS
 
-    #define LWIP_IP6STAT IP6_STATS
-    #undef IP6_STATS
+#define LWIP_IP6STAT IP6_STATS
+#undef IP6_STATS
 #endif
