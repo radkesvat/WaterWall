@@ -2,17 +2,17 @@
 
 #include "wwapi.h"
 
-
 #include "lwip/priv/tcp_priv.h"
-
 
 #define i_type vec_ports_t // NOLINT
 #define i_key  uint16_t    // NOLINT
 #define i_use_cmp
 #include "stc/vec.h"
 
-#define LWIP_NAT_TCP_PCB_SZ offsetof(struct nat_pcb, nat_tcp.end)
-#define LWIP_NAT_UDP_PCB_SZ offsetof(struct nat_pcb, nat_udp.end)
+enum
+{
+    kTcpWriteRetryTime = 350
+};
 
 typedef struct route_context_s
 {
@@ -44,6 +44,7 @@ typedef struct ptc_lstate_s
         struct tcp_pcb *tcp_pcb;
         struct udp_pcb *udp_pcb;
     };
+    wtimer_t *timer; // this is used when tcpip stack cannot accept the data, we should query it again
 
     // using this mutex to guard fields of this struct, between the tcpip stack and the worker thread
     wmutex_t lock;
@@ -51,7 +52,8 @@ typedef struct ptc_lstate_s
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t *data_queue;
 
-    bool direct_stack : 1; // tcpip stack used the same worker thread 
+    bool is_tcp : 1;
+    bool direct_stack : 1; // tcpip stack used the same worker thread
     bool write_paused : 1;
     bool read_paused : 1;
     bool established : 1; // this flag is set when the connection is established (est recevied from upstream)
@@ -97,7 +99,6 @@ err_t ptcHandleTcpInput(struct pbuf *p, struct netif *inp);
 
 // Error callback: called when something goes wrong on the connection.
 void ptcTcpConnectionErrorCallback(void *arg, err_t err);
-
 
 // Accept callback: called when a new connection is accepted.
 err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err);
