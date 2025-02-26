@@ -120,18 +120,23 @@ enum ram_profiles_e
     small buffer size is used for small buffers that are allocated for Udp and Raw Ip packets
     going lower than 1500 bytes is not recommended, as it is the standard MTU size for Ethernet
 */
-/*
-    you may hurt wireguard implementation if you come below 1516 bytes, dont do that
-    adding 16 bytes to the standard MTU to make our wireguard implementation work zero copy
-*/
 
-#define SMALL_BUFFER_SIZE 1516
+#define SMALL_BUFFER_SIZE 1500
 
 /*
     large buffer size is used for large buffers that are allocated for Tcp Read/Write buffers
     going lower than 4096 bytes is not recommended, as it is the standard page size for most systems
+    and reduces throughput significantly
+
+    during tests with iperf, 32768 was the best record for throughput
 */
 
-#define LARGE_BUFFER_SIZE (GSTATE.ram_profile >= kRamProfileS2Memory ? 32768 : 4096)
+// Depending on memory profile, we can choose which is the best buffer size (core.json typically)
+#define LARGE_BUFFER_SIZE_RAM_LOW   4096
+#define LARGE_BUFFER_SIZE_RAM_HIGH  32768
+#define LARGE_RAM_PROFILE_THRESHOLD kRamProfileM1Memory
+
+#define PROPER_LARGE_BUFFER_SIZE(ram_prifle)                                                                           \
+    ((ram_prifle) >= LARGE_RAM_PROFILE_THRESHOLD ? LARGE_BUFFER_SIZE_RAM_HIGH : LARGE_BUFFER_SIZE_RAM_LOW)
 
 #endif // WW_CONFIG_H_
