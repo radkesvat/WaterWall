@@ -23,6 +23,12 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
     assert(ls->tcp_pcb == NULL);
     assert(ls->direct_stack == false);
     
+    if(ls->timer)
+    {
+        weventSetUserData(ls->timer, NULL);
+        wtimerDelete(ls->timer);
+    }
+
     bufferqueueDestory(ls->data_queue);
     memorySet(ls, 0, sizeof(ptc_lstate_t));
     mutexDestroy(&ls->lock);
