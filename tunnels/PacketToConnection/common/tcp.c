@@ -74,7 +74,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
 
     wid_t          wid = getWID();
     buffer_pool_t *bp  = getWorkerBufferPool(wid);
-    sbuf_t        *buf;
+    sbuf_t        *buf = NULL;
 
     // If p is NULL, it means the remote end closed the connection.
     if (err != ERR_OK || p == NULL)
@@ -149,8 +149,8 @@ static void localThreadPtcAcceptCallBack(struct worker_s *worker, void *arg1, vo
         char dst_ip[40];
 
         // Replace ipaddr_ntoa with ip4AddrNetworkToAaddress
-        stringCopyN(src_ip, ip4AddrNetworkToAaddress(&newpcb->local_ip), 40);
-        stringCopyN(dst_ip, ip4AddrNetworkToAaddress(&newpcb->remote_ip), 40);
+        stringCopyN(src_ip, ipAddrNetworkToAaddress(&newpcb->local_ip), 40);
+        stringCopyN(dst_ip, ipAddrNetworkToAaddress(&newpcb->remote_ip), 40);
 
         LOGI("PacketToConnection: new connection accepted  [%s:%d] <= [%s:%d]", src_ip, newpcb->local_port, dst_ip,
              newpcb->remote_port);
