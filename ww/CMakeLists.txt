@@ -491,12 +491,16 @@ if(NOT MSVC)
         -Wunused-parameter
         -Wstrict-prototypes
 
-        # disable warnings for unused functions un unkown pragmas
+        # disable warnings for unused functions and unkown pragmas
         -Wno-unused-function
         -Wno-unknown-pragmas 
         -Wno-error=pragmas
         -Wno-unknown-warning-option
         -Wno-pragmas
+
+        # disable warnings for int to pointer conversion
+        # -Wno-int-to-pointer-cast
+        # -Wno-pointer-to-int-cast
     )
 endif()
 if(APPLE)
