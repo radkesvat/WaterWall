@@ -286,6 +286,7 @@ enum
 
 #define ALIGN2(n, w)        (uintptr_t)(((uintptr_t)(n) + ((uintptr_t)(w) -1)) & ~(((uintptr_t)(w)) -1))
 
+#define memoryCopy          memcpy
 #define memorySet           memset
 #define memoryMove          memmove
 #define memoryCompare       memcmp

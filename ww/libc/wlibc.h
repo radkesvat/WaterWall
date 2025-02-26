@@ -55,6 +55,7 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 
 #endif
 
+
 #ifndef MEM128_BUF_OPTIMIZE
 #error "MEM128_BUF_OPTIMIZE must be defined to either 0 or 1"
 #endif
@@ -104,10 +105,11 @@ static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
 
 #else
 
-#define memoryCopy    memcpy
 #define memoryCopy128 memoryCopy
 
 #endif
+
+#define memoryCopyLarge memoryCopy128
 
 //--------------------string-------------------------------
 
@@ -248,6 +250,24 @@ static void printHex(const char *label, const unsigned char *data, size_t len)
     for (size_t i = 0; i < len; i++)
     {
         printf("%02x", data[i]);
+    }
+    printf("\n");
+    fflush(stdout);
+}
+
+static void printASCII(const char *label, const unsigned char *data, size_t len)
+{
+    printf("%s: ", label);
+    for (size_t i = 0; i < len; i++)
+    {
+        if (data[i] >= 32 && data[i] < 127)
+        {
+            printf("%c", data[i]);
+        }
+        else
+        {
+            printf("?");
+        }
     }
     printf("\n");
     fflush(stdout);
