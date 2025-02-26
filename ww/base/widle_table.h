@@ -7,7 +7,7 @@
 /*
     Thread safe idle table
 
-    What dose it mean "idle table?"
+    What does it mean "idle table?"
     in simple words, you put a object (idle_item) inside the table
     the idle_item has a timeout (or deadline), if the timeout expires
     the idle_item is removed from the table and the callback you provided is called.
