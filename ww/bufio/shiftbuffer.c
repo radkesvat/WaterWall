@@ -25,8 +25,7 @@ sbuf_t *sbufNewWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
     if (minimum_capacity != 0 && minimum_capacity % kCpuLineCacheSize != 0)
     {
-        minimum_capacity = (max((uint32_t) kCpuLineCacheSize, minimum_capacity) + kCpuLineCacheSizeMin1) &
-                           (uint32_t) ~kCpuLineCacheSizeMin1;
+        minimum_capacity = (max(kCpuLineCacheSize, minimum_capacity) + kCpuLineCacheSizeMin1) & (~kCpuLineCacheSizeMin1);
     }
 
     uint32_t real_cap = minimum_capacity + pad_left;
