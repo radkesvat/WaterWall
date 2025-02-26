@@ -15,7 +15,6 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
     {
         memoryFree(state->listen_address);
     }
-    mutexDestroy(&state->mutex);
 
     tunnelDestroy(t);
 }
