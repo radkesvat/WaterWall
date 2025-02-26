@@ -10,13 +10,8 @@ add_library(PacketToConnection STATIC
                     instance/index.c
                     common/helpers.c
                     common/line_state.c
-                    common/hookv4.c
-                    common/ip4_prerouting_hook.c
-                    common/nat_proto_icmp4.c
-                    common/nat_proto_ip4.c
-                    common/nat_proto_tcp.c
-                    common/nat_proto_udp.c
-                    common/nat.c
+                    common/tcp.c
+                    common/udp.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c
@@ -35,9 +30,10 @@ add_library(PacketToConnection STATIC
 )
 
 target_include_directories(PacketToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(PacketToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/)
 
 # in this moduel we get this warring, but we assert that the alignment is correct
-
+# it is also checkable with UBSAN
 if(NOT MSVC)
     target_compile_options(PacketToConnection PRIVATE -Wno-address-of-packed-member)
 endif()

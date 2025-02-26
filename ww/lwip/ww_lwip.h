@@ -13,6 +13,10 @@
 #include "lwip/prot/tcp.h"
 #include "lwip/tcpip.h"
 
+#include "lwip/tcp.h"
+#include "lwip/udp.h"
+
+
 
 // ------------------------------------------------------------------------
 // Type definitions and aliases
