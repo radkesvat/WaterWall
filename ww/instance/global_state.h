@@ -151,7 +151,8 @@ static inline wid_t getNextDistributionWID(void)
 {
     wid_t wid = atomicLoadRelaxed(&GSTATE.distribute_wid);
 
-    if (wid >= getWorkersCount())
+    // we dont consider lwip thread
+    if (wid >= getWorkersCount() - WORKER_ADDITIONS)
     {
         atomicStoreRelaxed(&GSTATE.distribute_wid, 0);
     }
