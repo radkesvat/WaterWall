@@ -19,7 +19,7 @@ enum
 };
 
 #define i_type                    heapq_idles_t
-#define i_key                     struct widle_item_s *
+#define i_key                     widle_item_t *
 #define i_cmp                     -c_default_cmp                                // NOLINT
 #define idletable_less_func(x, y) ((*(x))->expire_at_ms < (*(y))->expire_at_ms) // NOLINT
 #define i_less                    idletable_less_func                           // NOLINT
@@ -27,7 +27,7 @@ enum
 
 #define i_type hmap_idles_t
 #define i_key  uint64_t
-#define i_val  struct widle_item_s *
+#define i_val  widle_item_t *
 #include "stc/hmap.h"
 
 typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct widle_table_s
@@ -99,13 +99,13 @@ widle_table_t *idleTableCreate(wloop_t *loop)
  * @param age_ms Expiration delay in milliseconds.
  * @return Pointer to the idle item; NULL if insertion fails.
  */
-idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t tid, uint64_t age_ms)
+widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t tid, uint64_t age_ms)
 {
     assert(self);
-    idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
+    widle_item_t *item = memoryAllocate(sizeof(widle_item_t));
     mutexLock(&(self->mutex));
 
-    *item = (idle_item_t){.expire_at_ms = wloopNowMS(getWorkerLoop(tid)) + age_ms,
+    *item = (widle_item_t){.expire_at_ms = wloopNowMS(getWorkerLoop(tid)) + age_ms,
                           .hash         = key,
                           .tid          = tid,
                           .userdata     = userdata,
@@ -133,7 +133,7 @@ idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expire
  * @param item Idle item to update.
  * @param age_ms Time in milliseconds to extend the item.
  */
-void idleTableKeepIdleItemForAtleast(widle_table_t *self, idle_item_t *item, uint64_t age_ms)
+void idleTableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms)
 {
     if (item->removed)
     {
@@ -154,7 +154,7 @@ void idleTableKeepIdleItemForAtleast(widle_table_t *self, idle_item_t *item, uin
  * @param key Hash key of the idle item.
  * @return Pointer to the idle item if found; NULL otherwise.
  */
-idle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
+widle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
 
@@ -187,7 +187,7 @@ bool idleTableRemoveIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
         mutexUnlock(&(self->mutex));
         return false;
     }
-    idle_item_t *item = (find_result.ref->second);
+    widle_item_t *item = (find_result.ref->second);
     hmap_idles_t_erase_at(&(self->hmap), find_result);
     item->removed = true; // Note: The item remains in the heap (lazy deletion)
     // heapq_idles_t_make_heap(&self->hqueue);
@@ -206,7 +206,7 @@ bool idleTableRemoveIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
  */
 static void beforeCloseCallBack(wevent_t *ev)
 {
-    idle_item_t *item = weventGetUserdata(ev);
+    widle_item_t *item = weventGetUserdata(ev);
     if (! item->removed)
     {
         if (item->expire_at_ms > wloopNowMS(getWorkerLoop(item->tid)))
@@ -260,7 +260,7 @@ void idleCallBack(wtimer_t *timer)
 
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
-        idle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
+        widle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
 
         if (item->expire_at_ms <= now)
         {

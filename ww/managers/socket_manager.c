@@ -455,7 +455,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
                 {
                     src_hash = ipaddrCalcHashNoPort(paddr);
                 }
-                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
+                widle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
 
                 if (idle_item)
                 {
@@ -770,7 +770,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
                 {
                     src_hash = ipaddrCalcHashNoPort(paddr);
                 }
-                idle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
+                widle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
 
                 if (idle_item)
                 {

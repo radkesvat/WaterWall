@@ -2,7 +2,7 @@
  * @file widle_table.h
  * @brief Thread-safe idle table implementation.
  *
- * The idle table stores idle_item_t objects that each have an expiration timeout.
+ * The idle table stores widle_item_t objects that each have an expiration timeout.
  * When the timeout expires, the idle item is removed and its callback is invoked.
  * Items are thread-local, and operations must be performed on the same thread that created them.
  *
@@ -15,13 +15,14 @@
 #include "wloop.h"
 #include "worker.h"
 
+typedef struct widle_item_s widle_item_t;
 
 /**
  * @brief Callback type to be invoked on item expiration.
  *
- * @param item Pointer to the expired idle_item_t object.
+ * @param item Pointer to the expired widle_item_t object.
  */
-typedef void (*ExpireCallBack)(struct widle_item_s *);
+typedef void (*ExpireCallBack)(widle_item_t *);
 
 /**
  * @brief Idle item structure (thread-local).
@@ -38,7 +39,6 @@ struct widle_item_s
     uint8_t               tid;          ///< Thread ID that owns this item.
     bool                  removed;      ///< Flag indicating if the item is removed.
 };
-typedef struct widle_item_s  idle_item_t;
 typedef struct widle_table_s widle_table_t;
 
 /**
@@ -71,7 +71,7 @@ void idleTableDestroy(widle_table_t *self);
  * @param age_ms Expiration age (in milliseconds).
  * @return Pointer to the new idle item; NULL if key already exists.
  */
-idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t tid,
+widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t tid,
                          uint64_t age_ms);
 
 /**
@@ -82,7 +82,7 @@ idle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expire
  * @param key Hash key of the item.
  * @return Pointer to the idle item if found; otherwise, NULL.
  */
-idle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key);
+widle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key);
 
 /**
  * @brief Update the expiration of an idle item.
@@ -93,7 +93,7 @@ idle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t k
  * @param item The idle item to update.
  * @param age_ms Minimum age to keep the item.
  */
-void idleTableKeepIdleItemForAtleast(widle_table_t *self, idle_item_t *item, uint64_t age_ms);
+void idleTableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms);
 
 /**
  * @brief Remove an idle item by hash.
