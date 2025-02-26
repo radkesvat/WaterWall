@@ -22,7 +22,7 @@ typedef struct wgd_tstate_s
 
 typedef struct wgd_lstate_s
 {
-    int xxx;
+    int unused;
 } wgd_lstate_t;
 
 enum

@@ -4,12 +4,12 @@
 
 typedef struct template_tstate_s
 {
-    int xxx;
+    int unused;
 } template_tstate_t;
 
 typedef struct template_lstate_s
 {
-    int xxx;
+    int unused;
 } template_lstate_t;
 
 enum

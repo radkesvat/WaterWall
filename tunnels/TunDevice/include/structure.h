@@ -23,7 +23,7 @@ typedef struct tundevice_tstate_s
 
 typedef struct tundevice_lstate_s
 {
-    int xxx;
+    int unused;
 } tundevice_lstate_t;
 
 enum

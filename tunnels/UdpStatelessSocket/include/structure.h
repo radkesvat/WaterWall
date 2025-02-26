@@ -9,14 +9,13 @@ typedef struct udpstatelesssocket_tstate_s
     uint16_t listen_port;    // port to listen on
     int      fwmark;         // fwmark to set on the socket
 
-    wio_t   *io;    // socket file descriptor
-    wmutex_t mutex; // socket protection
-
+    wio_t *io;     // socket file descriptor
+    wid_t  io_wid; // the worker id that created the io
 } udpstatelesssocket_tstate_t;
 
 typedef struct udpstatelesssocket_lstate_s
 {
-    int xxx;
+    int unused;
 } udpstatelesssocket_lstate_t;
 
 enum
