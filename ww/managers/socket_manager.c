@@ -82,25 +82,25 @@ static socket_manager_state_t *state = NULL;
 
 static pool_item_t *allocTcpResultObjectPoolHandle(generic_pool_t *pool)
 {
-    (void) pool;
+    discard pool;
     return memoryAllocate(sizeof(socket_accept_result_t));
 }
 
 static void destroyTcpResultObjectPoolHandle(generic_pool_t *pool, pool_item_t *item)
 {
-    (void) pool;
+    discard pool;
     memoryFree(item);
 }
 
 static pool_item_t *allocUdpPayloadPoolHandle(generic_pool_t *pool)
 {
-    (void) pool;
+    discard pool;
     return memoryAllocate(sizeof(udp_payload_t));
 }
 
 static void destroyUdpPayloadPoolHandle(generic_pool_t *pool, pool_item_t *item)
 {
-    (void) pool;
+    discard pool;
     memoryFree(item);
 }
 
@@ -189,7 +189,7 @@ static bool resetIptables(bool safe_mode)
     {
         char    msg[] = "SocketManager: clearing iptables nat rules\n";
         ssize_t _     = write(STDOUT_FILENO, msg, sizeof(msg));
-        (void) _;
+        discard _;
     }
     else
     {
@@ -212,8 +212,8 @@ static bool resetIptables(bool safe_mode)
 
 static void exitHook(void *userdata, int _)
 {
-    (void) (userdata);
-    (void) _;
+    discard (userdata);
+    discard _;
     if (state->iptables_used)
     {
         resetIptables(true);
@@ -898,7 +898,7 @@ static void writeUdpThisLoop(wevent_t *ev)
 {
     udp_payload_t *upl    = weventGetUserdata(ev);
     int            nwrite = wioWrite(upl->sock->io, upl->buf);
-    (void) nwrite;
+    discard nwrite;
     udppayloadDestroy(upl);
 }
 
@@ -907,7 +907,7 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
     if (wid_from == state->wid)
     {
         int nwrite = wioWrite(socket_io->io, buf);
-        (void) nwrite;
+        discard nwrite;
 
         return;
     }

@@ -65,7 +65,7 @@ static struct
 
 static node_t dynLoadNodeLib(hash_t htype)
 {
-    (void) htype;
+    discard htype;
     LOGF("dynLoadNodeLib not implemented");
     return (node_t){0};
 }

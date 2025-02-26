@@ -78,7 +78,7 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     //     exit(1);
     // }
 #else
-    (void) fail_msg;
+    discard fail_msg;
 #endif
 
     return t;

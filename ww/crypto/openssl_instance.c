@@ -12,22 +12,22 @@
 
 static void *opennsl_dedicated_malloc(size_t num, const char *file, int line)
 {
-    (void) file;
-    (void) line;
+    discard file;
+    discard line;
     return memoryDedicatedAllocate(GSTATE.openssl_dedicated_memory, num);
 }
 
 static void *opennsl_dedicated_realloc(void *addr, size_t num, const char *file, int line)
 {
-    (void) file;
-    (void) line;
+    discard file;
+    discard line;
     return memoryDedicatedReallocate(GSTATE.openssl_dedicated_memory, addr, num);
 }
 
 static void opennsl_dedicated_free(void *addr, const char *file, int line)
 {
-    (void) file;
-    (void) line;
+    discard file;
+    discard line;
     memoryDedicatedFree(GSTATE.openssl_dedicated_memory, addr);
 }
 
@@ -141,7 +141,7 @@ ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
         BIO *bio = BIO_new(BIO_s_mem());
         int  n   = BIO_write(bio, cacert_bytes, (int) cacert_len);
         assert(n == (int) cacert_len);
-        (void) n;
+        discard n;
         X509 *x = NULL;
         while (true)
         {

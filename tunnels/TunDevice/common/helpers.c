@@ -4,7 +4,7 @@
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid)
 {
-    (void) tdev;
+    discard tdev;
     tunnel_t *t = userdata;
 
 #if LOG_PACKET_INFO

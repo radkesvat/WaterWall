@@ -40,8 +40,8 @@ bool isAdmin(void)
  */
 bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
-    (void) app_name;
-    (void) fail_msg;
+    discard app_name;
+    discard fail_msg;
     return false; // for now
 
     if (isAdmin())
@@ -108,8 +108,8 @@ bool isAdmin(void)
  */
 bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
-    (void) app_name;
-    (void) fail_msg;
+    discard app_name;
+    discard fail_msg;
     return true;
 }
 

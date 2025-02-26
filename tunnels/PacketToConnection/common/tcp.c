@@ -4,9 +4,9 @@
 
 static void localThreadSendFin(worker_t *worker, void *arg_lstate, void *arg2, void *arg3)
 {
-    (void) worker;
-    (void) arg2;
-    (void) arg3;
+    discard worker;
+    discard arg2;
+    discard arg3;
 
     ptc_lstate_t *lstate = (ptc_lstate_t *) arg_lstate;
     tunnel_t     *t      = lstate->tunnel;
@@ -40,8 +40,8 @@ void ptcTcpConnectionErrorCallback(void *arg, err_t err)
 
 static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
 {
-    (void) arg3;
-    (void) worker;
+    discard arg3;
+    discard worker;
     ptc_lstate_t *lstate = (ptc_lstate_t *) arg1;
     line_t       *l      = lstate->line;
     sbuf_t       *buf    = arg2;
@@ -125,9 +125,9 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
 
 static void localThreadPtcAcceptCallBack(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
 {
-    (void) worker;
-    (void) arg3;
-    (void) arg2;
+    discard worker;
+    discard arg3;
+    discard arg2;
 
     ptc_lstate_t *lstate = arg1;
 

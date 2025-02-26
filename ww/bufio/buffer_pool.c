@@ -65,7 +65,7 @@ uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool)
  */
 static master_pool_item_t *createLargeBufHandle(master_pool_t *pool, void *userdata)
 {
-    (void) pool;
+    discard pool;
 
     buffer_pool_t *bpool = userdata;
     return sbufNewWithPadding(bpool->large_buffers_size, bpool->large_buffer_left_padding);
@@ -79,7 +79,7 @@ static master_pool_item_t *createLargeBufHandle(master_pool_t *pool, void *userd
  */
 static master_pool_item_t *createSmallBufHandle(master_pool_t *pool, void *userdata)
 {
-    (void) pool;
+    discard pool;
     buffer_pool_t *bpool = userdata;
     return sbufNewWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
 }
@@ -92,8 +92,8 @@ static master_pool_item_t *createSmallBufHandle(master_pool_t *pool, void *userd
  */
 static void destroyLargeBufHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
+    discard pool;
+    discard userdata;
     sbufDestroy(item);
 }
 
@@ -105,8 +105,8 @@ static void destroyLargeBufHandle(master_pool_t *pool, master_pool_item_t *item,
  */
 static void destroySmallBufHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
+    discard pool;
+    discard userdata;
     sbufDestroy(item);
 }
 

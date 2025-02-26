@@ -422,7 +422,7 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
         return -1;
     }
 #ifdef OS_WIN
-    (void) protocol;
+    discard protocol;
     WSAInit();
 #endif
     int listenfd, connfd, acceptfd;

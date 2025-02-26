@@ -199,8 +199,8 @@ WW_INLINE int tcpNoPush(int sockfd, int on DEFAULT(1))
 #elif defined(TCP_CORK)
     return setsockopt(sockfd, IPPROTO_TCP, TCP_CORK, (const char *) &on, sizeof(int));
 #else
-    (void) sockfd;
-    (void) on;
+    discard sockfd;
+    discard on;
     return 0;
 #endif
 }
@@ -220,8 +220,8 @@ WW_INLINE int tcpKeepAlive(int sockfd, int on DEFAULT(1), int delay DEFAULT(60))
     // TCP_KEEPINTVL    => tcp_keepalive_intvl
     return setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, (const char *) &delay, sizeof(int));
 #else
-    (void) sockfd;
-    (void) delay;
+    discard sockfd;
+    discard delay;
 
     return 0;
 #endif
@@ -291,8 +291,8 @@ WW_INLINE int socketOptionReusePort(int sockfd, int on DEFAULT(1))
     // NOTE: SO_REUSEPORT allow multiple sockets to bind same port
     return setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, (const char *) &on, sizeof(int));
 #else
-    (void) sockfd;
-    (void) on;
+    discard sockfd;
+    discard on;
     return 0;
 #endif
 }

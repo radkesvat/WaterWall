@@ -64,7 +64,7 @@ static inline int getMemInfo(meminfo_t *mem)
     mem->free = ((uint64_t)info.free_count * (uint64_t)sysconf(_SC_PAGESIZE)) >> 10;
     return 0;
 #else
-    (void) (mem);
+    discard (mem);
     return -10;
 #endif
 }

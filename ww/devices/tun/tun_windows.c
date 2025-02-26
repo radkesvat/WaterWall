@@ -168,16 +168,16 @@ struct msg_event
 // Allocate memory for message pool handle
 static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
-    (void) userdata;
-    (void) pool;
+    discard userdata;
+    discard pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
 // Free memory for message pool handle
 static void destroyTunMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
+    discard pool;
+    discard userdata;
     memoryFree(item);
 }
 
@@ -457,8 +457,8 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
  */
 bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
-    (void) subnet;
-    (void) ip_presentation;
+    discard subnet;
+    discard ip_presentation;
 
     if (tdev->adapter_handle == NULL)
     {
@@ -521,7 +521,7 @@ static void exitHandle(void *userdata, int signum)
 {
     // Sleep(2200);
     // LOGW("called close handle");
-    (void) signum;
+    discard signum;
     tun_device_t *tdev = userdata;
     if (tdev->up)
     {
@@ -561,7 +561,7 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
  */
 tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb)
 {
-    (void) offload;
+    discard offload;
     DWORD LastError;
 
     if (! GSTATE.flag_tundev_windows_initialized)

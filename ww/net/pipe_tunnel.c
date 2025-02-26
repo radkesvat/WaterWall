@@ -76,7 +76,7 @@ static void lock(pipetunnel_line_state_t *ls)
 {
     int old_refc = (int) atomicAddExplicit(&ls->refc, 1, memory_order_relaxed);
 
-    (void) old_refc;
+    discard old_refc;
 }
 
 /**
@@ -423,8 +423,8 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
  */
 void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *line)
 {
-    (void) t;
-    (void) line;
+    discard t;
+    discard line;
     assert(false); // unreachable code
 }
 

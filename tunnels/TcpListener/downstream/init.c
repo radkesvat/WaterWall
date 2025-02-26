@@ -4,7 +4,7 @@
 
 void tcplistenerTunnelDownStreamInit(tunnel_t *t, line_t *l)
 {
-    (void) t;
-    (void) l;
+    discard t;
+    discard l;
     assert(false);
 }

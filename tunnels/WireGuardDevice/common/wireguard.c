@@ -871,7 +871,7 @@ bool wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_pee
 
 bool wireguardProcessCookieMessage(wireguard_device_t *device, wireguard_peer_t *peer, message_cookie_reply_t *src)
 {
-    (void) device;
+    discard device;
     uint8_t cookie[WIREGUARD_COOKIE_LEN];
     bool    result = false;
 

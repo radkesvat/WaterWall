@@ -4,8 +4,8 @@
 
 void tundeviceTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
-    (void) t;
-    (void) l;
+    discard t;
+    discard l;
     LOGF("This Function is not supported to be called for a down chain tunnel (TunDevice)");
     exit(1);
 }

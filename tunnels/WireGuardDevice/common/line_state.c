@@ -4,7 +4,7 @@
 
 void wireguarddeviceLinestateInitialize(wgd_lstate_t *ls)
 {
-    (void) ls;
+    discard ls;
 }
 
 void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls)

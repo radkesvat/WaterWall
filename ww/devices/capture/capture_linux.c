@@ -33,15 +33,15 @@ struct msg_event
 
 static pool_item_t *allocCaptureMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
-    (void) userdata;
-    (void) pool;
+    discard userdata;
+    discard pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
 static void destroyCaptureMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
+    discard pool;
+    discard userdata;
     memoryFree(item);
 }
 

@@ -42,22 +42,22 @@ ww_global_state_t global_ww_state = {0};
 
 static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
 {
-    (void) inp;
-    (void) p;
+    discard inp;
+    discard p;
     return 0;
 }
 
 static pool_item_t *allocWorkerMessage(master_pool_t *pool, void *userdata)
 {
-    (void) userdata;
-    (void) pool;
+    discard userdata;
+    discard pool;
     return memoryAllocate(sizeof(worker_msg_t));
 }
 
 static void destroyWorkerMessage(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
+    discard pool;
+    discard userdata;
     memoryFree(item);
 }
 
@@ -97,8 +97,8 @@ static void initializeShortCuts(void)
 
 static void exitHandle(void *userdata, int signum)
 {
-    (void) signum;
-    (void) userdata;
+    discard signum;
+    discard userdata;
     mainThreadExitJoin();
 }
 
@@ -113,7 +113,7 @@ static void workerMessageReceived(wevent_t *ev)
 
 static void tcpipInitDone(void *arg)
 {
-    (void) arg;
+    discard arg;
     GSTATE.flag_lwip_initialized = 1;
     GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
     // lwip thread worker id is set to invalid value (larger than workers 0 index)

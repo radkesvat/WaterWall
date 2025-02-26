@@ -4,7 +4,7 @@
 
 void tundeviceLinestateInitialize(tundevice_lstate_t *ls)
 {
-    (void) ls;
+    discard ls;
 }
 
 void tundeviceLinestateDestroy(tundevice_lstate_t *ls)

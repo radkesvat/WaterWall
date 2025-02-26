@@ -31,7 +31,7 @@ static void internalLoggerHandleWithStdStream(int loglevel, const char *buf, int
 
 static void internalLoggerHandle(int loglevel, const char *buf, int len)
 {
-    (void) loglevel;
+    discard loglevel;
     loggerWrite(logger, buf, len);
 }
 

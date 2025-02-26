@@ -54,8 +54,8 @@
 typedef void (*wonce_fn)(void);
 static inline BOOL WINAPI s_once_func(INIT_ONCE *once, PVOID arg, PVOID *_)
 {
-    (void) once;
-    (void) _;
+    discard once;
+    discard _;
     wonce_fn fn      = NULL;
     *(void **) (&fn) = arg;
     fn();

@@ -31,7 +31,7 @@ enum
 
 void memorymanagerSetState(dedicated_memory_t *new_state)
 {
-    (void) new_state;
+    discard new_state;
 
     // assert(state == NULL);
     // state = new_state;
@@ -77,7 +77,7 @@ void memoryFree(void *ptr)
 
 void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
 {
-    (void) dm;
+    discard dm;
 
     return memoryAllocate(size);
     // mutexLock(&dm->mut);
@@ -87,7 +87,7 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
 }
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 {
-    (void) dm;
+    discard dm;
 
     return memoryReAllocate(ptr, size);
 
@@ -98,7 +98,7 @@ void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 }
 void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
-    (void) dm;
+    discard dm;
 
     memoryFree(ptr);
 
@@ -142,21 +142,21 @@ dedicated_memory_t *memorymanagerCreateDedicatedMemory(void)
 
 void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size)
 {
-    (void) dm;
+    discard dm;
 
     return memoryAllocate(size);
 }
 
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size)
 {
-    (void) dm;
+    discard dm;
 
     return memoryReAllocate(ptr, size);
 }
 
 void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 {
-    (void) dm;
+    discard dm;
 
     memoryFree(ptr);
 }

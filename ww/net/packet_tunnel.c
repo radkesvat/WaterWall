@@ -26,9 +26,9 @@ void packettunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
 // Default upstream payload function
 void packettunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
-    (void) self;
-    (void) line;
-    (void) payload;
+    discard self;
+    discard line;
+    discard payload;
     LOGF("Unexpected call to default up stream payload for a packet tunnel, this function must be overridden");
     exit(1);
 }
@@ -50,8 +50,8 @@ void packettunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 // Default downstream initialization function
 void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 {
-    (void) self;
-    (void) line;
+    discard self;
+    discard line;
     LOGF("Unexpected call to default down stream init for a packet tunnel");
     exit(1);
 }
@@ -59,8 +59,8 @@ void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 // Default downstream establishment function
 void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
-    (void) self;
-    (void) line;
+    discard self;
+    discard line;
     if (self->prev != NULL)
     {
         self->prev->fnEstD(self->prev, line);
@@ -90,9 +90,9 @@ void packettunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line)
 // Default downstream payload function
 void packettunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
-    (void) self;
-    (void) line;
-    (void) payload;
+    discard self;
+    discard line;
+    discard payload;
     LOGF("Unexpected call to default down stream payload for a packet tunnel, this function must be overridden");
     exit(1);
 }

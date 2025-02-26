@@ -32,7 +32,7 @@ static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int 
 
 static void networkLoggerHandle(int loglevel, const char *buf, int len)
 {
-    (void) loglevel;
+    discard loglevel;
     loggerWrite(logger, buf, len);
 }
 

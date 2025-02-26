@@ -222,7 +222,7 @@ process_timers:
     int ncbs = wloopProcessPendings(loop);
     printd("blocktime=%d nios=%d/%u ntimers=%d/%u nidles=%d/%u nactives=%d npendings=%d ncbs=%d\n", blocktime, nios,
            loop->nios, ntimers, loop->ntimers, nidles, loop->nidles, loop->nactives, npendings, ncbs);
-    (void) nios;
+    discard nios;
     return ncbs;
 }
 
@@ -245,7 +245,7 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
     assert(sbufGetLength(buf) == sizeof(count));
     sbufReadUnAlignedUI64(buf, &count);
 #endif
-    (void) count;
+    discard count;
     for (uint64_t i = 0; i < count; ++i)
     {
         mutexLock(&loop->custom_events_mutex);

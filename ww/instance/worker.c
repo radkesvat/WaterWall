@@ -38,7 +38,7 @@ void workerExitJoin(worker_t *worker)
  */
 static void exitHandle(void *userdata, int signum)
 {
-    (void) signum;
+    discard signum;
     worker_t *worker = userdata;
     workerExitJoin(worker);
 }

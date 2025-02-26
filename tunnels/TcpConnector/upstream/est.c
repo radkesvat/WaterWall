@@ -4,8 +4,8 @@
 
 void tcpconnectorTunnelUpStreamEst(tunnel_t *t, line_t *l)
 {
-    (void) t;
-    (void) l;
+    discard t;
+    discard l;
     LOGF("TcpConnector: upStreamEst is not supposed to be called");
     exit(1);
 }

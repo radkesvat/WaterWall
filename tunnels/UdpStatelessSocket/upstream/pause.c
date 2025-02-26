@@ -5,6 +5,6 @@
 void udpstatelesssocketTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
     // discarding
-    (void) t;
-    (void) l;
+    discard t;
+    discard l;
 }

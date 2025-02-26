@@ -4,7 +4,7 @@
 
 void templateLinestateInitialize(template_lstate_t *ls)
 {
-    (void) ls;
+    discard ls;
 }
 
 void templateLinestateDestroy(template_lstate_t *ls)

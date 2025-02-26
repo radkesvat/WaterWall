@@ -31,5 +31,5 @@ void wireguarddeviceTunnelOnStart(tunnel_t *t)
 
     weventSetUserData(state->wg_device.loop_timer, state);
 
-    (void) t;
+    discard t;
 }

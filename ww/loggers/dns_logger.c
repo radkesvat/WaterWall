@@ -32,7 +32,7 @@ static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 
 static void dnsLoggerHandle(int loglevel, const char *buf, int len)
 {
-    (void) loglevel;
+    discard loglevel;
     loggerWrite(logger, buf, len);
 }
 

@@ -49,7 +49,7 @@ static wireguard_peer_t *peerLookupByAllowedIp(wireguard_device_t *device, const
 
 err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, wireguard_peer_t *peer)
 {
-    (void) ipaddr;
+    discard ipaddr;
 
     // The LWIP IP layer wants to send an IP packet out over the interface - we need to encrypt and send it to the peer
     message_transport_data_t *hdr;
@@ -182,7 +182,7 @@ static err_t wireguardifOutput(wireguard_device_t *device, sbuf_t *q, const ip_a
 
 void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    (void) l;
+    discard l;
 
     if (sbufGetLength(buf) < sizeof(ip4_hdr_t))
     {

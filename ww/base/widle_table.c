@@ -234,7 +234,7 @@ static void beforeCloseCallBack(wevent_t *ev)
         {
             bool removal_result = idleTableRemoveIdleItemByHash(item->tid, item->table, item->hash);
             assert(removal_result);
-            (void) removal_result;
+            discard removal_result;
             memoryFree(item);
         }
     }

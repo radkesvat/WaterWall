@@ -32,7 +32,7 @@ static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len
 
 static void coreLoggerHandle(int loglevel, const char *buf, int len)
 {
-    (void) loglevel;
+    discard loglevel;
     loggerWrite(logger, buf, len);
 }
 

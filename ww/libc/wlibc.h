@@ -49,8 +49,8 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 
 static inline void debugAssertZeroBuf(void *buf, size_t size)
 {
-    (void) buf;
-    (void) size;
+    discard buf;
+    discard size;
 }
 
 #endif

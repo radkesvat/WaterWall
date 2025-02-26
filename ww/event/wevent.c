@@ -86,7 +86,7 @@ static void wioSocketInit(wio_t *io)
     }
     socklen_t addrlen = sizeof(sockaddr_u);
     int       ret     = getsockname(io->fd, io->localaddr, &addrlen);
-    (void) ret;
+    discard ret;
     printd("getsockname fd=%d ret=%d errno=%d\n", io->fd, ret, socketERRNO());
     // NOTE: udp peeraddr set by recvfrom/sendto
     if (io->io_type & WIO_TYPE_SOCK_STREAM)
@@ -113,7 +113,7 @@ void wioInit(wio_t *io)
     // write_queue_init(&io->write_queue, 4);
 
     // recursivemutexInit(&io->write_mutex);
-    (void) io;
+    discard io;
 }
 
 void wioReady(wio_t *io)

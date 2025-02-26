@@ -106,7 +106,7 @@ static cmd_result_t execCmd(const char *str)
     }
 
     int read = fscanf(fp, "%2047s", buf);
-    (void) read;
+    discard read;
 #if defined(OS_UNIX)
     result.exit_code = pclose(fp);
 #else

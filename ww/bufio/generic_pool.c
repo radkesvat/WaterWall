@@ -14,7 +14,7 @@
  */
 static master_pool_item_t *poolCreateItemHandle(master_pool_t *pool, void *userdata)
 {
-    (void) pool;
+    discard pool;
     generic_pool_t *gpool = userdata;
 
     return gpool->create_item_handle(gpool);
@@ -28,7 +28,7 @@ static master_pool_item_t *poolCreateItemHandle(master_pool_t *pool, void *userd
  */
 static void poolDestroyItemHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
+    discard pool;
     generic_pool_t *gpool = userdata;
 
     gpool->destroy_item_handle(gpool, item);
@@ -127,7 +127,7 @@ static pool_item_t *poolDefaultAllocator(generic_pool_t *pool)
  */
 static void poolDefaultDeallocator(generic_pool_t *pool, pool_item_t *item)
 {
-    (void) pool;
+    discard pool;
     memoryFree(item);
 }
 

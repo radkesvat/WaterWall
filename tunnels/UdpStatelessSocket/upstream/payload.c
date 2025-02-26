@@ -4,7 +4,7 @@
 
 static inline void localThreadUdpStatelessSocketUpStream(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
 {
-    (void) worker;
+    discard worker;
     tunnel_t *t   = arg1;
     line_t   *l   = arg2;
     sbuf_t   *buf = arg3;

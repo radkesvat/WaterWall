@@ -4,7 +4,7 @@
 
 void udpstatelesssocketLinestateInitialize(udpstatelesssocket_lstate_t *ls)
 {
-    (void) ls;
+    discard ls;
 }
 
 void udpstatelesssocketLinestateDestroy(udpstatelesssocket_lstate_t *ls)

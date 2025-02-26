@@ -85,13 +85,13 @@ static void exitHandler(void)
     {
         const char *msg     = "SignalManager: Not running signal handlers again!, gracefully exiting\n";
         int         written = write(STDOUT_FILENO, msg, stringLength(msg));
-        (void) written;
+        discard written;
         _Exit(1); // exit(1) will call the atexit handlers again
         return;
     }
     
     int written = write(STDOUT_FILENO, "SignalManager: Application will exit now !\n", 43);
-    (void) written;
+    discard written;
 
     state->handlers_ran = true;
 
@@ -134,7 +134,7 @@ static void multiplexedSignalHandler(int signum)
     char message[50];
     int  length  = snprintf(message, sizeof(message), "SignalManager: Received signal %d\n", signum);
     int  written = write(STDOUT_FILENO, message, length);
-    (void) written;
+    discard written;
 
     if (state->raise_defaults)
     {
@@ -149,7 +149,7 @@ static void multiplexedSignalHandler(int signum)
 
         // written = write(STDOUT_FILENO,
         //                 "SignalManager: The program should have been terminated before this, exiting...\n", 75);
-        // (void) written;
+        // discard written;
         // _Exit(1);
     }
 }

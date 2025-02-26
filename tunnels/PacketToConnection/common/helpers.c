@@ -6,7 +6,7 @@ static void localThreadPacketReceived(worker_t *worker, void *arg1, void *arg2, 
 {
     tunnel_t *t   = (tunnel_t *) arg1;
     sbuf_t   *buf = (sbuf_t *) arg2;
-    (void) arg3;
+    discard arg3;
 
     tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), worker->wid), buf);
 }
@@ -47,9 +47,9 @@ void updateCheckSumUdp(u16_t *hc, const void *orig, const void *new, int n)
 
 err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr)
 {
-    (void) netif;
-    (void) ipaddr;
-    (void) p;
+    discard netif;
+    discard ipaddr;
+    discard p;
 
     // i this i should not play with the lock, i have no idea about the state of the tcpip thread
     // LWIP_ASSERT_CORE_LOCKED(); // test code , is it necessary?

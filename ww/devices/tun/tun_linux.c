@@ -29,16 +29,16 @@ struct msg_event
 // Allocate memory for message pool handle
 static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
-    (void) userdata;
-    (void) pool;
+    discard userdata;
+    discard pool;
     return memoryAllocate(sizeof(struct msg_event));
 }
 
 // Free memory for message pool handle
 static void destroyTunMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
+    discard pool;
+    discard userdata;
     memoryFree(item);
 }
 
@@ -305,7 +305,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
 // Create TUN device
 tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb)
 {
-    (void) offload; // todo (send/receive offloading)
+    discard offload; // todo (send/receive offloading)
 
     struct ifreq ifr;
 #ifdef OS_BSD

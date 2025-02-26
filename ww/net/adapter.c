@@ -40,17 +40,17 @@ void adapterDefaultOnIndexDownEnd(tunnel_t *t, tunnel_array_t *arr, uint16_t *in
 
 static void disabledPayloadRoutine(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
-    (void) t;
-    (void) line;
-    (void) payload;
+    discard t;
+    discard line;
+    discard payload;
     LOGF("Illegal call to payload routine on Adapter %s", t->node->name);
     exit(1);
 }
 
 static void disabledRoutine(tunnel_t *t, line_t *line)
 {
-    (void) t;
-    (void) line;
+    discard t;
+    discard line;
     LOGF("Illegal call to routine on Adapter %s", t->node->name);
     exit(1);
 }

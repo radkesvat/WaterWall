@@ -204,8 +204,8 @@ static inline void lineClearState(void *state, size_t size)
 #ifdef DEBUG
     memorySet(state, 0, size);
 #endif
-    (void) size;
-    (void) state;
+    discard size;
+    discard state;
 }
 
 static inline wid_t lineGetWID(const line_t *const line)

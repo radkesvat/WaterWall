@@ -8,8 +8,8 @@
  */
 static master_pool_item_t *defaultCreateHandle(master_pool_t *pool, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
+    discard pool;
+    discard userdata;
     printError("MasterPool CallBack is not set. this is a bug");
     exit(1);
 }
@@ -22,9 +22,9 @@ static master_pool_item_t *defaultCreateHandle(master_pool_t *pool, void *userda
  */
 static void defaultDestroyHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
 {
-    (void) pool;
-    (void) userdata;
-    (void) item;
+    discard pool;
+    discard userdata;
+    discard item;
     printError("MasterPool CallBack is not set. this is a bug");
     exit(1);
 }

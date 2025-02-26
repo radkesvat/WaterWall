@@ -161,7 +161,7 @@ void tunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uin
 // Default function to prepare the tunnel
 void tunnelDefaultOnPrepair(tunnel_t *t)
 {
-    (void) t;
+    discard t;
 }
 
 // Default function to start the tunnel
