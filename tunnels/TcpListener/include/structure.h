@@ -23,7 +23,6 @@ typedef struct tcplistener_lstate_s
 
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t *data_queue;
-    buffer_pool_t  *buffer_pool;
     bool            write_paused;
     bool            read_paused;
     // this flag is set when the connection is established (est recevied from upstream)
@@ -63,7 +62,7 @@ void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wid_t wid);
+void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wid_t wid, wio_t *io, tunnel_t *t, line_t *l);
 void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls);
 
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);

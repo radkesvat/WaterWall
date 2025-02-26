@@ -54,23 +54,18 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wioAttach(loop, io);
     wioSetKeepaliveTimeout(io, kDefaultKeepAliveTimeOutMs);
 
-    line_t               *line   = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
-    tcplistener_lstate_t *lstate = lineGetState(line, t);
+    line_t               *l   = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
+    tcplistener_lstate_t *lstate = lineGetState(l, t);
 
-    line->routing_context.src_ctx.type_ip = true; // we have a client ip
-    line->routing_context.src_ctx.proto_tcp = true; // tcp client
-    sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(io),&(line->routing_context.src_ctx.ip_address));
+    l->routing_context.src_ctx.type_ip = true; // we have a client ip
+    l->routing_context.src_ctx.proto_tcp = true; // tcp client
+    sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(io),&(l->routing_context.src_ctx.ip_address));
 
 
-    tcplistenerLinestateInitialize(lstate, wid);
+    tcplistenerLinestateInitialize(lstate, wid, io, t, l);
 
-    lstate->io           = io;
-    lstate->tunnel       = t;
-    lstate->line         = line;
-    lstate->write_paused = false;
-    lstate->established  = false;
-
-    line->routing_context.src_ctx.port = data->real_localport;
+    
+    l->routing_context.src_ctx.port = data->real_localport;
     weventSetUserData(io, lstate);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
@@ -92,15 +87,15 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     // send the init packet
 
-    lineLock(line);
-    tunnelNextUpStreamInit(t, line);
-    if (! lineIsAlive(line))
+    lineLock(l);
+    tunnelNextUpStreamInit(t, l);
+    if (! lineIsAlive(l))
     {
         LOGW("TcpListener: socket just got closed by upstream before anything happend");
-        lineUnlock(line);
+        lineUnlock(l);
         return;
     }
-    lineUnlock(line);
+    lineUnlock(l);
     wioRead(io);
 }
 
