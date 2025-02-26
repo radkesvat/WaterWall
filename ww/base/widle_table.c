@@ -102,7 +102,7 @@ void idleTableKeepIdleItemForAtleast(widle_table_t *self, idle_item_t *item, uin
     {
         return;
     }
-    item->expire_at_ms = self->last_update_ms + age_ms;
+    item->expire_at_ms = wloopNowMS(self->loop) + age_ms;
 
     mutexLock(&(self->mutex));
     heapq_idles_t_make_heap(&self->hqueue);
@@ -134,7 +134,7 @@ bool idleTableRemoveIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
     }
     idle_item_t *item = (find_result.ref->second);
     hmap_idles_t_erase_at(&(self->hmap), find_result);
-    item->removed = true;
+    item->removed = true; // Note: The item remains in the heap (lazy deletion)
     // heapq_idles_t_make_heap(&self->hqueue);
 
     mutexUnlock(&(self->mutex));
