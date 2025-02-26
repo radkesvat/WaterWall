@@ -16,8 +16,6 @@
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
 
-
-
 // ------------------------------------------------------------------------
 // Type definitions and aliases
 // ------------------------------------------------------------------------
@@ -29,15 +27,16 @@ typedef struct ip6_hdr ip6_hdr_t;
 // ------------------------------------------------------------------------
 // Generic IP Function Macros
 // ------------------------------------------------------------------------
-#define ipAddrSetAny      ip_addr_set_any       // Set IP address to wildcard
-#define ipAddrIsAny       ip_addr_isany         // Check if IP address is wildcard
-#define ipAddrCmp         ip_addr_cmp           // Compare two IP addresses
-#define ipAddrNetcmp      ip_addr_netcmp        // Compare two IP addresses with mask
-#define ipAddrCopyFromIp4 ip_addr_copy_from_ip4 // Copy IPv4 address to generic IP
-#define ipAddrCopyFromIp6 ip_addr_copy_from_ip6 // Copy IPv6 address to generic IP
-#define ipAddrCopy        ip_addr_copy          // Copy a generic IP address
-#define ipAddrIsV4        IP_IS_V4              // Check if IP address is IPv4
-#define ipAddrIsV6        IP_IS_V6              // Check if IP address is IPv6
+#define ipAddrSetAny            ip_addr_set_any       // Set IP address to wildcard
+#define ipAddrIsAny             ip_addr_isany         // Check if IP address is wildcard
+#define ipAddrCmp               ip_addr_cmp           // Compare two IP addresses
+#define ipAddrNetcmp            ip_addr_netcmp        // Compare two IP addresses with mask
+#define ipAddrCopyFromIp4       ip_addr_copy_from_ip4 // Copy IPv4 address to generic IP
+#define ipAddrCopyFromIp6       ip_addr_copy_from_ip6 // Copy IPv6 address to generic IP
+#define ipAddrCopy              ip_addr_copy          // Copy a generic IP address
+#define ipAddrIsV4              IP_IS_V4              // Check if IP address is IPv4
+#define ipAddrIsV6              IP_IS_V6              // Check if IP address is IPv6
+#define ipAddrNetworkToAaddress ipaddr_ntoa           // Convert IP address to string
 
 // ------------------------------------------------------------------------
 // IPv4 Specific Function Macros
