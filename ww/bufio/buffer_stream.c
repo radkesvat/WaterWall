@@ -64,13 +64,13 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
     if (self->size > 0 && queue_size(&self->q) == 1)
     {
         sbuf_t  *last       = *queue_front(&self->q);
-        uint32_t write_size = min(sbufGetRightCapacity(last), sbufGetBufLength(buf));
+        uint32_t write_size = min(sbufGetRightCapacity(last), sbufGetLength(buf));
 
         if (write_size > 0)
         {
             self->size += write_size;
             sbufWrite(last, buf, write_size);
-            if (sbufGetBufLength(buf) == write_size)
+            if (sbufGetLength(buf) == write_size)
             {
                 sbufDestroy(buf);
                 return;
@@ -80,7 +80,7 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
     }
 
     queue_push_back(&self->q, buf);
-    self->size += sbufGetBufLength(buf);
+    self->size += sbufGetLength(buf);
 }
 
 /**
@@ -98,7 +98,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
 
     while (true)
     {
-        size_t available = sbufGetBufLength(container);
+        size_t available = sbufGetLength(container);
         if (available > bytes)
         {
             sbuf_t *slice = bufferpoolGetLargeBuffer(self->pool);
@@ -129,7 +129,7 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
 
     while (true)
     {
-        size_t available = sbufGetBufLength(container);
+        size_t available = sbufGetLength(container);
         if (available >= bytes)
         {
             return container;
@@ -147,7 +147,7 @@ sbuf_t *bufferstreamIdealRead(buffer_stream_t *self)
 {
     assert(self->size > 0);
     sbuf_t *container = queue_pull_front(&self->q);
-    self->size -= sbufGetBufLength(container);
+    self->size -= sbufGetLength(container);
     return container;
 }
 
@@ -165,7 +165,7 @@ uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
     c_foreach(i, queue, self->q)
     {
         sbuf_t *b    = *i.ref;
-        size_t  blen = sbufGetBufLength(b);
+        size_t  blen = sbufGetLength(b);
 
         if (at < blen)
         {
@@ -194,7 +194,7 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
     {
 
         sbuf_t *b    = *qi.ref;
-        size_t  blen = sbufGetBufLength(b);
+        size_t  blen = sbufGetLength(b);
 
         if (len - buf_i <= blen - bufferstream_i)
         {

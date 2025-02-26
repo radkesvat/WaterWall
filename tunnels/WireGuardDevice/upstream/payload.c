@@ -79,7 +79,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             if (q)
             {
                 // This is actual transport data
-                unpadded_len = sbufGetBufLength(q);
+                unpadded_len = sbufGetLength(q);
             }
             else
             {
@@ -184,7 +184,7 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     (void) l;
 
-    if (sbufGetBufLength(buf) < sizeof(ip4_hdr_t))
+    if (sbufGetLength(buf) < sizeof(ip4_hdr_t))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
         return;

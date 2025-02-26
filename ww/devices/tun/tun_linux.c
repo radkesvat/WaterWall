@@ -135,9 +135,9 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             return 0;
         }
 #if !defined(OS_BSD)
-        assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
+        assert(sbufGetLength(buf) > sizeof(struct iphdr));
 #endif
-        nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetBufLength(buf));
+        nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetLength(buf));
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
 
         if (nwrite == 0)
@@ -164,7 +164,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
 #if !defined(OS_BSD)
-    assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
+    assert(sbufGetLength(buf) > sizeof(struct iphdr));
 #endif
     if (atomicLoadRelaxed(&(tdev->running)) == false)
     {

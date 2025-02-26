@@ -322,8 +322,8 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
     {
         return sbufDuplicate(b);
     }
-    sbufSetLength(bnew, sbufGetBufLength(b));
-    sbufWriteBuf(bnew, b, sbufGetBufLength(b));
+    sbufSetLength(bnew, sbufGetLength(b));
+    sbufWriteBuf(bnew, b, sbufGetLength(b));
     return bnew;
 }
 

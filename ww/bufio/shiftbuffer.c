@@ -57,8 +57,8 @@ sbuf_t *sbufNew(uint32_t minimum_capacity)
 sbuf_t *sbufDuplicate(sbuf_t *b)
 {
     sbuf_t *newbuf = sbufNewWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
-    sbufSetLength(newbuf, sbufGetBufLength(b));
-    memoryCopyLarge(sbufGetMutablePtr(newbuf), sbufGetRawPtr(b), sbufGetBufLength(b));
+    sbufSetLength(newbuf, sbufGetLength(b));
+    memoryCopyLarge(sbufGetMutablePtr(newbuf), sbufGetRawPtr(b), sbufGetLength(b));
 
     return newbuf;
 }
@@ -71,8 +71,8 @@ sbuf_t *sbufDuplicate(sbuf_t *b)
  */
 sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 {
-    uint32_t root_length   = sbufGetBufLength(root);
-    uint32_t append_length = sbufGetBufLength(buf);
+    uint32_t root_length   = sbufGetLength(root);
+    uint32_t append_length = sbufGetLength(buf);
     root                   = sbufReserveSpace(root, root_length + append_length);
     sbufSetLength(root, root_length + append_length);
 
@@ -90,8 +90,8 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
  */
 sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_t bytes)
 {
-    assert(bytes <= sbufGetBufLength(source));
-    assert(sbufGetBufLength(dest) == 0);
+    assert(bytes <= sbufGetLength(source));
+    assert(sbufGetLength(dest) == 0);
 
     dest = sbufReserveSpace(dest, bytes);
     sbufSetLength(dest, bytes);

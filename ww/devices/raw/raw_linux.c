@@ -129,13 +129,13 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             return 0;
         }
 
-        assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
+        assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
         struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
 
         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
-        nwrite = sendto(rdev->socket, ip_header, sbufGetBufLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+        nwrite = sendto(rdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
         bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
 
@@ -161,7 +161,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
 bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf)
 {
-    assert(sbufGetBufLength(buf) > sizeof(struct iphdr));
+    assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
     bool closed = false;
     if (! chanTrySend(rdev->writer_buffer_channel, &buf, &closed))

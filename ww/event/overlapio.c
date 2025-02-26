@@ -300,10 +300,10 @@ int wioWrite(wio_t* io, sbuf_t* buf) {
     int nwrite = 0;
 try_send:
     if (io->io_type == WIO_TYPE_TCP) {
-        nwrite = send(io->fd, sbufGetRawPtr(buf), sbufGetBufLength(buf), 0);
+        nwrite = send(io->fd, sbufGetRawPtr(buf), sbufGetLength(buf), 0);
     }
     else if (io->io_type == WIO_TYPE_UDP) {
-        nwrite = sendto(io->fd, sbufGetRawPtr(buf), sbufGetBufLength(buf), 0, io->peeraddr, sizeof(struct sockaddr_in6));
+        nwrite = sendto(io->fd, sbufGetRawPtr(buf), sbufGetLength(buf), 0, io->peeraddr, sizeof(struct sockaddr_in6));
     }
     else if (io->io_type == WIO_TYPE_IP) {
         goto WSASend;
@@ -331,7 +331,7 @@ try_send:
         io->write_cb(io, buf);
         //printd("try_write_cb======\n");
     }
-    if (nwrite == sbufGetBufLength(buf)) {
+    if (nwrite == sbufGetLength(buf)) {
         //goto write_done;
         bufferpoolReuseBuffer(io->loop->bufpool,buf);
         return nwrite;
@@ -343,7 +343,7 @@ WSASend:
         hovlp->fd = io->fd;
         hovlp->event = WW_WRITE;
         sbufShiftRight(buf,nwrite);
-        hovlp->buf.len = sbufGetBufLength(buf);
+        hovlp->buf.len = sbufGetLength(buf);
         // NOTE: free on_send_complete
         EVENTLOOP_ALLOC(hovlp->buf.buf, hovlp->buf.len);
         memoryCopy(hovlp->buf.buf, sbufGetRawPtr(buf), hovlp->buf.len);

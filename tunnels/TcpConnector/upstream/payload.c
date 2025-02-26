@@ -13,7 +13,7 @@ void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     else
     {
-        int bytes  = (int) sbufGetBufLength(buf);
+        int bytes  = (int) sbufGetLength(buf);
         int nwrite = wioWrite(lstate->io, buf);
 
 

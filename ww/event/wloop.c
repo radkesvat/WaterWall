@@ -240,9 +240,9 @@ static void eventFDReadCB(wio_t *io, sbuf_t *buf)
     wloop_t  *loop = io->loop;
     wevent_t *pev  = NULL;
     wevent_t  ev;
-    uint64_t  count = sbufGetBufLength(buf);
+    uint64_t  count = sbufGetLength(buf);
 #if defined(OS_UNIX) && HAVE_EVENTFD
-    assert(sbufGetBufLength(buf) == sizeof(count));
+    assert(sbufGetLength(buf) == sizeof(count));
     sbufReadUnAlignedUI64(buf, &count);
 #endif
     (void) count;

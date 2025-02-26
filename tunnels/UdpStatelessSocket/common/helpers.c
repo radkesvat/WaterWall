@@ -27,7 +27,7 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-    LOGD("UdpStatelessSocket: received %u bytes from [%s] <= [%s]", sbufGetBufLength(buf),
+    LOGD("UdpStatelessSocket: received %u bytes from [%s] <= [%s]", sbufGetLength(buf),
          SOCKADDR_STR(wioGetLocaladdrU(io), localaddrstr), SOCKADDR_STR(wioGetPeerAddrU(io), peeraddrstr));
 
     connectioncontextFromSockAddr(&line->routing_context.src_ctx, wioGetPeerAddrU(io));

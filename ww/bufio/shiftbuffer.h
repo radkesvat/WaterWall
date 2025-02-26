@@ -173,7 +173,7 @@ static inline void sbufSetLength(sbuf_t *const b, const uint32_t bytes)
  * @param b The buffer.
  * @return The length of the buffer.
  */
-static inline uint32_t sbufGetBufLength(const sbuf_t *const b)
+static inline uint32_t sbufGetLength(const sbuf_t *const b)
 {
     return b->len;
 }
@@ -185,7 +185,7 @@ static inline uint32_t sbufGetBufLength(const sbuf_t *const b)
  */
 static inline void sbufConsume(sbuf_t *const b, const uint32_t bytes)
 {
-    sbufSetLength(b, sbufGetBufLength(b) - bytes);
+    sbufSetLength(b, sbufGetLength(b) - bytes);
 }
 
 /**
@@ -263,9 +263,9 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
 {
     if (sbufGetRightCapacity(b) < bytes)
     {
-        sbuf_t *bigger_buf = sbufNewWithPadding(sbufGetBufLength(b) + bytes, b->l_pad);
-        sbufSetLength(bigger_buf, sbufGetBufLength(b));
-        sbufWriteBuf(bigger_buf, b, sbufGetBufLength(b));
+        sbuf_t *bigger_buf = sbufNewWithPadding(sbufGetLength(b) + bytes, b->l_pad);
+        sbufSetLength(bigger_buf, sbufGetLength(b));
+        sbufWriteBuf(bigger_buf, b, sbufGetLength(b));
         sbufDestroy(b);
         return bigger_buf;
     }
@@ -279,8 +279,8 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
  */
 static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restrict buf)
 {
-    uint32_t root_length   = sbufGetBufLength(root);
-    uint32_t append_length = sbufGetBufLength(buf);
+    uint32_t root_length   = sbufGetLength(root);
+    uint32_t append_length = sbufGetLength(buf);
     sbufSetLength(root, root_length + append_length);
     memoryCopy(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
 }

@@ -5,7 +5,7 @@
 static void passToTcpIp(sbuf_t *buf, wid_t wid, struct netif *inp)
 {
 
-    struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetBufLength(buf), PBUF_REF);
+    struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_REF);
 
     p->payload = &buf->buf[0];
     // LOCK_TCPIP_CORE();
@@ -214,6 +214,7 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     else
     {
+        // sad ipv6 packet
         bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
     }
 }

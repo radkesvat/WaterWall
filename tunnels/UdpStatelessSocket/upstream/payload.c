@@ -21,7 +21,7 @@ static inline void localThreadUdpStatelessSocketUpStream(struct worker_s *worker
 
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        LOGD("UdpStatelessSocket: %u bytes Packet to => [%s]", sbufGetBufLength(buf), SOCKADDR_STR(&addr, peeraddrstr));
+        LOGD("UdpStatelessSocket: %u bytes Packet to => [%s]", sbufGetLength(buf), SOCKADDR_STR(&addr, peeraddrstr));
     }
     // tunnelPrevDownStreamPayload(t, l, buf);
 

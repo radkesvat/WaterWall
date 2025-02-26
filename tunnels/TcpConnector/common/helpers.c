@@ -50,7 +50,7 @@ static bool resumeWriteQueue(tcpconnector_lstate_t *lstate)
     while (bufferqueueLen(data_queue) > 0)
     {
         sbuf_t *buf    = bufferqueuePop(data_queue);
-        int     bytes  = (int) sbufGetBufLength(buf);
+        int     bytes  = (int) sbufGetLength(buf);
         int     nwrite = wioWrite(io, buf);
 
         if (nwrite < bytes)

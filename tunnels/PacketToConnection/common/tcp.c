@@ -47,7 +47,7 @@ static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, v
     sbuf_t       *buf    = arg2;
     // p is impossible to be null, null is handled on tcpip thread before calling this function
 
-    printASCII("PacketToConnection: tcp packet received", sbufGetRawPtr(buf), sbufGetBufLength(buf));
+    printASCII("PacketToConnection: tcp packet received", sbufGetRawPtr(buf), sbufGetLength(buf));
 
     mutexLock(&lstate->lock);
 
@@ -192,10 +192,13 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     ptc_lstate_t *lstate = lineGetState(l, t);
 
     ptcLinestateInitialize(lstate, target_wid, t, l, newpcb);
+    lstate->is_tcp = true;
 
     l->routing_context.src_ctx.type_ip    = true; // we have a client ip
     l->routing_context.src_ctx.proto_tcp  = true; // tcp client
     l->routing_context.src_ctx.ip_address = newpcb->remote_ip;
+
+    l->routing_context.dest_ctx.ip_address = newpcb->local_ip;
 
     newpcb->callback_arg = lstate;
 

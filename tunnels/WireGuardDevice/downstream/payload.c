@@ -96,7 +96,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
             {
                 // Decrypt the packet
                 sbufSetLength(buf, src_len - WIREGUARD_AUTHTAG_LEN);
-                sbufWriteZeros(buf, sbufGetBufLength(buf));
+                sbufWriteZeros(buf, sbufGetLength(buf));
                 if (wireguardDecryptPacket(sbufGetMutablePtr(buf), src, src_len, nonce, keypair))
                 {
 
@@ -122,7 +122,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                     // Make sure that link is reported as up
                     device->status_connected = true;
 
-                    if (sbufGetBufLength(buf) > 0)
+                    if (sbufGetLength(buf) > 0)
                     {
                         // 4a. Once the packet payload is decrypted, the interface has a plaintext packet. If this is
                         // not an IP packet, it is dropped.
@@ -161,7 +161,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                                 dest_ok    = true;
                             }
 #endif /* LWIP_IPV6 */
-                            if (header_len <= sbufGetBufLength(buf))
+                            if (header_len <= sbufGetLength(buf))
                             {
 
                                 // 5. If the plaintext packet has not been dropped, it is inserted into the receive
@@ -366,7 +366,7 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
     // We have received a packet from the base_netif to our UDP port - process this as a possible Wireguard packet
     wireguard_peer_t *peer;
     uint8_t          *data = sbufGetMutablePtr(p);
-    size_t            len  = sbufGetBufLength(p); // This buf, not chained ones
+    size_t            len  = sbufGetLength(p); // This buf, not chained ones
 
     message_handshake_initiation_t *msg_initiation;
     message_handshake_response_t   *msg_response;

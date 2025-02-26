@@ -340,7 +340,7 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
-        nwrite = sendto(cdev->socket, ip_header, sbufGetBufLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+        nwrite = sendto(cdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
         bufferpoolReuseBuffer(cdev->writer_buffer_pool, buf);
 

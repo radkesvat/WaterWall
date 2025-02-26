@@ -321,7 +321,7 @@ write:
         return;
     }
     sbuf_t *buf = *write_queue_front(&io->write_queue);
-    int     len = (int) sbufGetBufLength(buf);
+    int     len = (int) sbufGetLength(buf);
     // char* base = pbuf->base;
     nwrite = __nio_write(io, sbufGetMutablePtr(buf), len);
     // printd("write retval=%d\n", nwrite);
@@ -476,7 +476,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     }
     int nwrite = 0, err = 0;
     //
-    int len = (int) sbufGetBufLength(buf);
+    int len = (int) sbufGetLength(buf);
     if (write_queue_empty(&io->write_queue))
     {
         //    try_write:
@@ -541,11 +541,11 @@ int wioWrite(wio_t *io, sbuf_t *buf)
             write_queue_init(&io->write_queue, 4);
         }
         write_queue_push_back(&io->write_queue, &buf);
-        io->write_bufsize += sbufGetBufLength(buf);
+        io->write_bufsize += sbufGetLength(buf);
         if (io->write_bufsize > WRITE_BUFSIZE_HIGH_WATER)
         {
             wlogw("write len=%u enqueue %u, bufsize=%u over high water %u", (unsigned int) len,
-                  (unsigned int) (sbufGetBufLength(buf)), (unsigned int) io->write_bufsize,
+                  (unsigned int) (sbufGetLength(buf)), (unsigned int) io->write_bufsize,
                   (unsigned int) WRITE_BUFSIZE_HIGH_WATER);
         }
     }

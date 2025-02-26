@@ -294,7 +294,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             return 0;
         }
 
-        BYTE *Packet = WintunAllocateSendPacket(Session, sbufGetBufLength(buf));
+        BYTE *Packet = WintunAllocateSendPacket(Session, sbufGetLength(buf));
         if (! Packet)
         {
             bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
@@ -312,7 +312,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             continue;
         }
 
-        memoryCopy(Packet, sbufGetRawPtr(buf), sbufGetBufLength(buf));
+        memoryCopy(Packet, sbufGetRawPtr(buf), sbufGetLength(buf));
 
         WintunSendPacket(Session, Packet);
 
@@ -489,7 +489,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     // minimum length of an IP header is 20 bytes
-    assert(sbufGetBufLength(buf) > 20);
+    assert(sbufGetLength(buf) > 20);
     if (atomicLoadRelaxed(&(tdev->running)) == false)
     {
         LOGE("TunDevice: Write failed, device is not running");
