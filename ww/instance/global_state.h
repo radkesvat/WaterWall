@@ -51,6 +51,8 @@ typedef struct ww_global_state_s
     uint32_t                   workers_count;
     uint32_t                   ram_profile;
     uint64_t                   main_thread_id;
+    wid_t                      lwip_wid;
+    atomic_wid_t               distribute_wid;
     uint16_t                   buffer_allocation_padding;
     uint8_t                    flag_initialized : 1;
     uint8_t                    flag_buffers_calculated : 1;
@@ -74,10 +76,11 @@ typedef struct
 
 extern ww_global_state_t global_ww_state;
 
-#define GSTATE        global_ww_state
-#define RAM_PROFILE   global_ww_state.ram_profile
-#define WORKERS       global_ww_state.workers
-#define WORKERS_COUNT global_ww_state.workers_count
+#define GSTATE           global_ww_state
+#define RAM_PROFILE      global_ww_state.ram_profile
+#define WORKERS          global_ww_state.workers
+#define WORKERS_COUNT    global_ww_state.workers_count
+#define WORKER_ADDITIONS 1 // 1 for lwip thread (included in workers_count)
 
 /*!
  * @brief Get the number of workers.
@@ -144,6 +147,21 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
     return GSTATE.shortcut_loops[wid];
 }
 
+static inline wid_t getNextDistributionWID(void)
+{
+    wid_t wid = atomicLoadRelaxed(&GSTATE.distribute_wid);
+
+    if (wid >= getWorkersCount())
+    {
+        atomicStoreRelaxed(&GSTATE.distribute_wid, 0);
+    }
+    else
+    {
+        atomicStoreRelaxed(&GSTATE.distribute_wid, wid + 1);
+    }
+    return wid;
+}
+
 /*!
  * @brief Send a worker message.
  *
@@ -190,4 +208,9 @@ WW_EXPORT void globalStateSet(ww_global_state_t *state);
  *
  * @param padding The padding value.
  */
-WW_EXPORT void globalstateUpdaeAllocationPadding(uint16_t padding);
+WW_EXPORT void globalstateUpdateAllocationPadding(uint16_t padding);
+
+/*!
+ * @brief Initializes the Lwip worker and spawn it.
+ */
+WW_EXPORT void initTcpIpStack(void);

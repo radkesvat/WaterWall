@@ -10,7 +10,6 @@
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
 
-
 #if defined(WCRYPTO_BACKEND_OPENSSL)
 
 #include "crypto/openssl_instance.h"
@@ -26,6 +25,7 @@
 #error "No crypto backend defined"
 
 #endif
+
 
 typedef struct worker_msg_s
 {
@@ -63,8 +63,6 @@ static void destroyWorkerMessage(master_pool_t *pool, master_pool_item_t *item, 
 
 static void initializeMasterPools(void)
 {
-    assert(GSTATE.flag_initialized);
-
     GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
     GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
     GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
@@ -76,8 +74,6 @@ static void initializeMasterPools(void)
 
 static void initializeShortCuts(void)
 {
-    assert(GSTATE.flag_initialized);
-
     static const int kShourtcutsCount = 5;
 
     const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
@@ -89,13 +85,13 @@ static void initializeShortCuts(void)
     GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (2 * total_workers));
     GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (3 * total_workers));
 
-    for (unsigned int tid = 0; tid < GSTATE.workers_count; tid++)
+    for (unsigned int wid = 0; wid < total_workers; wid++)
     {
 
-        GSTATE.shortcut_context_pools[tid]        = WORKERS[tid].context_pool;
-        GSTATE.shortcut_pipetunnel_msg_pools[tid] = WORKERS[tid].pipetunnel_msg_pool;
-        GSTATE.shortcut_buffer_pools[tid]         = WORKERS[tid].buffer_pool;
-        GSTATE.shortcut_loops[tid]                = WORKERS[tid].loop;
+        GSTATE.shortcut_context_pools[wid]        = WORKERS[wid].context_pool;
+        GSTATE.shortcut_pipetunnel_msg_pools[wid] = WORKERS[wid].pipetunnel_msg_pool;
+        GSTATE.shortcut_buffer_pools[wid]         = WORKERS[wid].buffer_pool;
+        GSTATE.shortcut_loops[wid]                = WORKERS[wid].loop;
     }
 }
 
@@ -113,6 +109,16 @@ static void workerMessageReceived(wevent_t *ev)
 
     msg->callback(getWorker(wid), msg->arg1, msg->arg2, msg->arg3);
     masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
+}
+
+static void tcpipInitDone(void *arg)
+{
+    (void) arg;
+    GSTATE.flag_lwip_initialized = 1;
+    GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
+    // lwip thread worker id is set to invalid value (larger than workers 0 index)
+    tl_wid          = getWorkersCount();
+    GSTATE.lwip_wid = tl_wid;
 }
 
 // --- Public API functions ---
@@ -163,7 +169,7 @@ void globalStateSet(struct ww_global_state_s *state)
  *
  * @param padding The padding value to be applied to the buffer pools.
  */
-void globalstateUpdaeAllocationPadding(uint16_t padding)
+void globalstateUpdateAllocationPadding(uint16_t padding)
 {
     for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
@@ -212,15 +218,17 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     // workers and pools creation
     {
-        WORKERS_COUNT      = init_data.workers_count;
-        GSTATE.ram_profile = init_data.ram_profile;
+        WORKERS_COUNT         = init_data.workers_count;
+        GSTATE.ram_profile    = init_data.ram_profile;
+        GSTATE.distribute_wid = 0;
 
         // this check was required to avoid overflow in older version when workers_count was limited to 254
-        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (255))
+        if (WORKERS_COUNT <= 0 || WORKERS_COUNT > (254))
         {
-            LOGW("workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (255));
-            WORKERS_COUNT = (255);
+            LOGW("workers count was not in valid range, value: %u range:[1 - %d]\n", WORKERS_COUNT, (254));
+            WORKERS_COUNT = (254);
         }
+        WORKERS_COUNT += WORKER_ADDITIONS;
 
         WORKERS = (worker_t *) memoryAllocate(sizeof(worker_t) * (WORKERS_COUNT));
 
@@ -232,13 +240,6 @@ void createGlobalState(const ww_construction_data_t init_data)
         }
 
         initializeShortCuts();
-    }
-
-    // tcp ip
-    {
-        tcpipInit(NULL, NULL);
-        GSTATE.flag_lwip_initialized = 1;
-        GSTATE.lwip_process_v4_hook = wwDefaultInternalLwipIpv4Hook;
     }
 
     // managers
@@ -301,6 +302,15 @@ void createGlobalState(const ww_construction_data_t init_data)
 void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3)
 {
     worker_msg_t *msg;
+
+    if (getWID() == wid)
+    {
+        cb(getWorker(wid), arg1, arg2, arg3);
+        return;
+    }
+
+    assert(wid < getWorkersCount());
+
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
     *msg = (worker_msg_t){.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
     wevent_t ev;
@@ -329,11 +339,22 @@ void runMainThread(void)
  *
  * This function exits the main thread, it is supposed to be called from other threads
  */
-WW_EXPORT void mainThreadExitJoin(void)
+void mainThreadExitJoin(void)
 {
     if ((uint64_t) getTID() == GSTATE.main_thread_id)
     {
         return; // incrorrect call, you are in main thread
     }
     workerExitJoin(getWorker(0));
+}
+
+void initTcpIpStack(void)
+{
+    assert(GSTATE.flag_initialized);
+    if(GSTATE.flag_lwip_initialized)
+    {
+        return;
+    }
+    GSTATE.flag_lwip_initialized = 1;
+    tcpipInit(tcpipInitDone, NULL);
 }
