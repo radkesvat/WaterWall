@@ -83,7 +83,7 @@ if(NOT APPLE)
 option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  TRUE)
 endif()
 
-option(INCLUDE_PACKET_TO_CONNECTION "link PacketToConnection staticly to the core"  FALSE)
+option(INCLUDE_PACKET_TO_CONNECTION "link PacketToConnection staticly to the core"  TRUE)
 
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
