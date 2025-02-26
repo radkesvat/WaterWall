@@ -27,8 +27,8 @@ typedef struct tcpconnector_lstate_s
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t *data_queue;
     buffer_pool_t  *buffer_pool;
-    bool            write_paused;
-    bool            read_paused;
+    bool            write_paused : 1;
+    bool            read_paused : 1;
 
 } tcpconnector_lstate_t;
 

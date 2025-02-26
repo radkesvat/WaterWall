@@ -23,10 +23,9 @@ typedef struct tcplistener_lstate_s
 
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t *data_queue;
-    bool            write_paused;
-    bool            read_paused;
-    // this flag is set when the connection is established (est recevied from upstream)
-    bool established;
+    bool            write_paused : 1;
+    bool            read_paused : 1;
+    bool            established : 1; // this flag is set when the connection is established (est recevied from upstream)
 
 } tcplistener_lstate_t;
 

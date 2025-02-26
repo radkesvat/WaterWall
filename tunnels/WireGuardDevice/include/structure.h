@@ -13,11 +13,10 @@ typedef struct wgd_tstate_s
 
     tunnel_t *tunnel;
     wmutex_t  mutex;
-    bool locked; // this variable is protected by mutex
+    bool      locked; // this variable is protected by mutex
 
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;
-
 
 } wgd_tstate_t;
 
@@ -62,7 +61,6 @@ void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
 
 /* wireguard device cycle is the heart of the device that is by defalut runs every 400 ms*/
 void wireguarddeviceLoop(wireguard_device_t *device);
-
 
 // Helper to initialise the peer struct with defaults
 void wireguardifPeerInit(wireguard_peer_init_data_t *peer);
