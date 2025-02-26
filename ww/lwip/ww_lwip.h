@@ -52,7 +52,7 @@ typedef struct ip6_hdr ip6_hdr_t;
 // IPv6 Specific Function Macros
 // ------------------------------------------------------------------------
 #define ip6AddrSetAny            ip6_addr_set_any
-#define ip6AddrNetcmp            ip6_addr_netcmp
+// #define ip6AddrNetcmp            ip6_addr_netcmp // Custom function is used instead, see below
 #define ip6AddrCopyFromPacket    ip6_addr_copy_from_packed
 #define ip6AddrNetworkToAaddress ip6addr_ntoa
 
@@ -72,6 +72,19 @@ typedef struct ip6_hdr ip6_hdr_t;
 void printIPPacketInfo(const char *prefix, const unsigned char *buffer);
 void printTcpPacketInfo(struct tcp_hdr *tcphdr);
 void printTcpPacketFlagsInfo(u8_t flags);
+
+
+
+// Helper function to compare two IPv6 addresses within a network mask
+static inline int ip6AddrNetcmp(const ip6_addr_t *a, const ip6_addr_t *b, const ip6_addr_t *mask)
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        if ((a->addr[i] & mask->addr[i]) != (b->addr[i] & mask->addr[i]))
+            return 0;
+    }
+    return 1;
+}
 
 // ------------------------------------------------------------------------
 // OS-specific adjustments
