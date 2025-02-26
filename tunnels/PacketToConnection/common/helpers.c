@@ -2,9 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-static void localPacketReceived(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static void localThreadPacketReceived(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-    (void) worker;
     tunnel_t *t   = (tunnel_t *) arg1;
     sbuf_t   *buf = (sbuf_t *) arg2;
     (void) arg3;
@@ -52,9 +51,13 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     (void) ipaddr;
     (void) p;
 
-    assert(p->next == NULL);
+    // i this i should not play with the lock, i have no idea about the state of the tcpip thread
+    // LWIP_ASSERT_CORE_LOCKED(); // test code , is it necessary?
+    // UNLOCK_TCPIP_CORE();
 
-    sbuf_t *buf;
+    tunnel_t *t   = netif->state;
+    wid_t     wid = getWID();
+    sbuf_t   *buf;
 
     if (p->len <= SMALL_BUFFER_SIZE)
     {
@@ -72,23 +75,12 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     //     memoryCopy128(sbufGetMutablePtr(buf), p->payload, p->len);
     // }
     // else
-    {
-        sbufWrite(buf, p->payload, p->len);
-    }
+    // {
+    pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->len, 0);
+    // }
 
-    static wid_t distributed_wid = 0;
-    if (distributed_wid < getWorkersCount() - 1)
-    {
-        distributed_wid++;
-    }
-    else
-    {
-        distributed_wid = 0;
-    }
-    tunnel_t *t = (tunnel_t *) netif->state;
-
-    sendWorkerMessage(distributed_wid, localPacketReceived, t, buf, NULL);
+    // localThreadPacketReceived(getNextDistributionWID(), localPacketReceived, t, buf, NULL);
+    tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), wid), buf);
 
     return ERR_OK;
 }
-
