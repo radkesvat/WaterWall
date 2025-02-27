@@ -254,8 +254,8 @@ static bool semaSignal(wsem_t *sp, uint32_t count)
 
 static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_usecs)
 {
-#if defined(OS_WIN) && ! defined(HAVE_STDATOMIC_H)
-    intptr_t old_count;
+#if defined(OS_WIN) && ! HAVE_STDATOMIC_H
+    atomic_long old_count;
 #else
     long old_count;
 #endif
@@ -328,8 +328,8 @@ bool leightweightsemaphoreWait(wlsem_t *s)
 
 bool leightweightsemaphoreTryWait(wlsem_t *s)
 {
-#if defined(OS_WIN) && ! defined(HAVE_STDATOMIC_H)
-    intptr_t old_count;
+#if defined(OS_WIN) && ! HAVE_STDATOMIC_H
+    atomic_long old_count;
 #else
     long old_count;
 #endif
