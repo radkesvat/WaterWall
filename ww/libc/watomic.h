@@ -165,8 +165,8 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 #define atomicLoadExplicit      atomic_load_explicit
 #define atomicStoreExplicit     atomic_store_explicit
 #define atomicSubExplicit       atomic_fetch_sub_explicit
-#define atomicIncExplicit(p, x) atomicAddExplicit(p, x, 1)
-#define atomicDecExplicit(p, x) atomicSubExplicit(p, x, 1)
+#define atomicIncExplicit(p, y) atomicAddExplicit(p, 1, y)
+#define atomicDecExplicit(p, y) atomicSubExplicit(p, 1, y)
 
 #define atomicCompareExchange         atomic_compare_exchange_strong
 #define atomicCompareExchangeExplicit atomic_compare_exchange_strong_explicit
@@ -177,6 +177,8 @@ static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *exp
 #define atomicThreadFence(x) atomic_thread_fence(x)
 #define atomicLoadRelaxed(x) atomic_load_explicit((x), memory_order_relaxed)
 #define atomicStoreRelaxed(x,y) atomic_store_explicit((x),(y), memory_order_relaxed)
+#define atomicIncRelaxed(x) atomicIncExplicit((x), memory_order_relaxed)
+#define atomicDecRelaxed(x) atomicDecExplicit((x), memory_order_relaxed)
 #define atomicExchangeExplicit(x,y,z) atomic_exchange_explicit(x,y,z) 
 
 #endif // WW_ATOMIC_H_
