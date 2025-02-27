@@ -17,7 +17,7 @@ static inline void localThreadUdpStatelessSocketUpStream(struct worker_s *worker
         return;
     }
 
-    sockaddr_u addr = connectioncontextToSockAddr(&(l->routing_context.dest_ctx));
+    sockaddr_u addr = addresscontextToSockAddr(&(l->routing_context.dest_ctx));
 
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};

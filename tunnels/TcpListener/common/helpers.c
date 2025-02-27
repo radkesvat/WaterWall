@@ -57,15 +57,14 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     line_t               *l   = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
     tcplistener_lstate_t *lstate = lineGetState(l, t);
 
+   
+    tcplistenerLinestateInitialize(lstate, wid, io, t, l);
+
     l->routing_context.src_ctx.type_ip = true; // we have a client ip
     l->routing_context.src_ctx.proto_tcp = true; // tcp client
     sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(io),&(l->routing_context.src_ctx.ip_address));
-
-
-    tcplistenerLinestateInitialize(lstate, wid, io, t, l);
-
-    
     l->routing_context.src_ctx.port = data->real_localport;
+
     weventSetUserData(io, lstate);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
