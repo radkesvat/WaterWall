@@ -84,3 +84,42 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     return ERR_OK;
 }
+
+void ptcFlushWriteQueue(ptc_lstate_t *lstate)
+{
+
+    struct tcp_pcb *tpcb = lstate->tcp_pcb;
+    while (bufferqueueLen(lstate->data_queue) > 0)
+    {
+        sbuf_t *buf = bufferqueueFront(lstate->data_queue);
+
+        if (sbufGetLength(buf) > tcp_sndbuf(tpcb))
+        {
+            //  still full
+            lstate->write_paused = true; // already is but whatever...
+            tcp_output(tpcb);
+
+            return;
+        }
+        err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), sbufGetLength(buf), TCP_WRITE_FLAG_COPY);
+
+        if (error_code != ERR_OK)
+        {
+            assert(false);
+            LOGW("PacketToConnection: tcp_write failed, this is unexpected since we checked the memory status! , code: "
+                 "%d",
+                 error_code);
+            return;
+        }
+
+        bufferqueuePop(lstate->data_queue); // pop to remove from queue
+        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(lstate->line)), buf);
+    }
+    /*
+      lwip says:
+       * To prompt the system to send data now, call tcp_output() after
+       * calling tcp_write().
+    */
+    tcp_output(tpcb);
+    lstate->write_paused = false;
+}

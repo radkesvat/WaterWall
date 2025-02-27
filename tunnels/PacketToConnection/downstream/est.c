@@ -4,8 +4,7 @@
 
 void ptcTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
+    // not important, dosent worth locking the sack here
     discard t;
     discard l;
-    LOGF("This Function is disabled, using the default PacketTunnel instead");
-    exit(1);
 }

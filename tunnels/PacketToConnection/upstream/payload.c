@@ -48,8 +48,8 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
     ipAddrCopyFromIp4(current_iphdr_dest, iphdr->dest);
     ipAddrCopyFromIp4(current_iphdr_src, iphdr->src);
 
-    route_context_t *prev = &state->route_context4;
-    route_context_t *cur  = state->route_context4.next;
+    interface_route_context_t *prev = &state->route_context4;
+    interface_route_context_t *cur  = state->route_context4.next;
 
     while (cur != NULL)
     {
@@ -67,10 +67,10 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
         // move node to head if not already at head
         if (state->route_context4.next != cur)
         {
-            route_context_t *tmp       = state->route_context4.next;
-            prev->next                 = cur->next;
-            state->route_context4.next = cur;
-            cur->next                  = tmp;
+            interface_route_context_t *tmp = state->route_context4.next;
+            prev->next                     = cur->next;
+            state->route_context4.next     = cur;
+            cur->next                      = tmp;
         }
     }
     else
@@ -79,8 +79,8 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
              ip4_addr2(&current_iphdr_dest.u_addr.ip4), ip4_addr3(&current_iphdr_dest.u_addr.ip4),
              ip4_addr4(&current_iphdr_dest.u_addr.ip4));
 
-        cur = (route_context_t *) memoryAllocate(sizeof(route_context_t));
-        memorySet(cur, 0, sizeof(route_context_t));
+        cur = (interface_route_context_t *) memoryAllocate(sizeof(interface_route_context_t));
+        memorySet(cur, 0, sizeof(interface_route_context_t));
 
         cur->tcp_ports = vec_ports_t_with_capacity(16);
         cur->udp_ports = vec_ports_t_with_capacity(16);
@@ -116,7 +116,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
             struct tcp_pcb *pcb;
 
             // Create a new TCP protocol control block.
-            
+
             pcb = tcp_new();
             if (pcb == NULL)
             {
@@ -132,7 +132,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
                 LOGW("PacketToConnection: tcp_bind failed");
                 goto fail;
             }
-            pcb->netif_idx = netif_get_index(&cur->netif);
+            pcb->netif_idx    = netif_get_index(&cur->netif);
             pcb->callback_arg = t;
             // Start listening for incoming connections.
             pcb = tcp_listen(pcb);
@@ -171,7 +171,6 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
             pcb->netif_idx = netif_get_index(&cur->netif);
 
             udp_recv(pcb, ptcUdpReceived, t);
-
         }
     }
 
@@ -210,7 +209,6 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         processV4(t, l, buf);
 
         UNLOCK_TCPIP_CORE();
-
     }
     else
     {

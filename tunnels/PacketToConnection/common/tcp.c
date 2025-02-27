@@ -11,7 +11,28 @@ static void localThreadSendFin(worker_t *worker, void *arg_lstate, void *arg2, v
     ptc_lstate_t *lstate = (ptc_lstate_t *) arg_lstate;
     tunnel_t     *t      = lstate->tunnel;
     line_t       *l      = lstate->line;
+    if (! lstate->stack_owned_locked)
+    {
+        // we are on a different worker thread, so we must lock the tcpip mutex
+        LOCK_TCPIP_CORE();
 
+        atomicDecRelaxed(&lstate->messages);
+
+        if (! lineIsAlive(l))
+        {
+            if (atomicLoadRelaxed(&lstate->messages) == 0)
+            {
+                lineUnlock(l);
+            }
+            UNLOCK_TCPIP_CORE();
+            return;
+        }
+        lstate->local_locked = true;
+    }
+    else
+    {
+        lstate->local_locked = false;
+    }
     lineLock(l);
     lineDestroy(l);
     ptcLinestateDestroy(lstate);
@@ -19,6 +40,12 @@ static void localThreadSendFin(worker_t *worker, void *arg_lstate, void *arg2, v
     tunnelNextUpStreamFinish(t, l);
 
     lineUnlock(l);
+
+    if (lstate->local_locked)
+    {
+        lstate->local_locked = false;
+        UNLOCK_TCPIP_CORE();
+    }
 }
 
 // Error callback: called when something goes wrong on the connection.
@@ -29,43 +56,87 @@ void ptcTcpConnectionErrorCallback(void *arg, err_t err)
         LOGD("PacketToConnection: tcp connection error %d", err);
     }
 
-    ptc_lstate_t *lstate = (ptc_lstate_t *) arg;
-    mutexLock(&lstate->lock);
+    ptc_lstate_t *lstate      = (ptc_lstate_t *) arg;
+    wid_t         target_wid  = lineGetWID(lstate->line);
+    wid_t         current_wid = getWID();
+
+    bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoadRelaxed(&lstate->messages) == 0);
+    lstate->stack_owned_locked = doing_direct_stack;
+    if (! doing_direct_stack)
+    {
+        atomicIncRelaxed(&lstate->messages);
+    }
+
     lstate->is_closing            = true;
     lstate->tcp_pcb->callback_arg = NULL;
     lstate->tcp_pcb               = NULL;
-    mutexUnlock(&lstate->lock);
+
     sendWorkerMessage(lineGetWID(lstate->line), localThreadSendFin, lstate, NULL, NULL);
+
+    lstate->stack_owned_locked = false;
 }
 
 static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard arg3;
-    discard worker;
+    discard       arg3;
+    discard       worker;
     ptc_lstate_t *lstate = (ptc_lstate_t *) arg1;
     line_t       *l      = lstate->line;
     sbuf_t       *buf    = arg2;
+
+    if (! lstate->stack_owned_locked)
+    {
+        // we are on a different worker thread, so we must lock the tcpip mutex
+        LOCK_TCPIP_CORE();
+
+        atomicDecRelaxed(&lstate->messages);
+
+        if (! lineIsAlive(l))
+        {
+            if (atomicLoadRelaxed(&lstate->messages) == 0)
+            {
+                lineUnlock(l);
+            }
+            UNLOCK_TCPIP_CORE();
+            return;
+        }
+        lstate->local_locked = true;
+    }
+    else
+    {
+        lstate->local_locked = false;
+    }
     // p is impossible to be null, null is handled on tcpip thread before calling this function
 
     printASCII("PacketToConnection: tcp packet received", sbufGetRawPtr(buf), sbufGetLength(buf));
 
-    mutexLock(&lstate->lock);
+    uint32_t len = sbufGetLength(buf);
 
     lineLock(l);
-    ptcTunnelUpStreamPayload(lstate->tunnel, lstate->line, buf);
+    tunnelNextUpStreamPayload(lstate->tunnel, lstate->line, buf);
     if (! lineIsAlive(l))
     {
-        LOGW("PacketToConnection: tcp socket just got closed by upstream before anything happend");
-
         lineUnlock(l);
-        mutexUnlock(&lstate->lock);
-        return;
+        goto return_unlockifneeded;
     }
-    lstate->direct_stack = false;
+
+    if (lstate->read_paused)
+    {
+        lstate->read_paused_len += len;
+    }
+    else
+    {
+        tcp_recved(lstate->tcp_pcb, len);
+    }
 
     lineUnlock(l);
+return_unlockifneeded:
 
-    mutexUnlock(&lstate->lock);
+    if (lstate->local_locked)
+    {
+        lstate->local_locked = false;
+        UNLOCK_TCPIP_CORE();
+    }
 }
 
 err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
@@ -106,7 +177,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
         }
 
         sbufSetLength(buf, p->tot_len);
-        pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len,0);
+        pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
     }
     else
     {
@@ -116,10 +187,20 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
 
     wid_t target_wid  = lineGetWID(lstate->line);
     wid_t current_wid = getWID();
-    mutexLock(&lstate->lock);
-    lstate->direct_stack = current_wid == target_wid;
-    mutexUnlock(&lstate->lock);
+
+    assert(! lstate->stack_owned_locked);
+
+    bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoadRelaxed(&lstate->messages) == 0);
+    lstate->stack_owned_locked = doing_direct_stack;
+    if (! doing_direct_stack)
+    {
+        atomicIncRelaxed(&lstate->messages);
+    }
+
     sendWorkerMessage(target_wid, localThreadPtcTcpRecvCallback, lstate, buf, NULL);
+
+    lstate->stack_owned_locked = false;
+
     return ERR_OK;
 }
 
@@ -131,11 +212,22 @@ static void localThreadPtcAcceptCallBack(struct worker_s *worker, void *arg1, vo
 
     ptc_lstate_t *lstate = arg1;
 
-    mutexLock(&lstate->lock);
+    if (! lstate->stack_owned_locked)
+    {
+        // we are on a different worker thread, so we must lock the tcpip mutex
+        LOCK_TCPIP_CORE();
+
+        atomicDecRelaxed(&lstate->messages);
+
+        lstate->local_locked = true;
+    }
+    else
+    {
+        lstate->local_locked = false;
+    }
 
     if (lstate->is_closing)
     {
-        mutexUnlock(&lstate->lock);
         return;
     }
 
@@ -164,14 +256,17 @@ static void localThreadPtcAcceptCallBack(struct worker_s *worker, void *arg1, vo
         LOGW("PacketToConnection: tcp socket just got closed by upstream before anything happend");
 
         lineUnlock(l);
-        mutexUnlock(&lstate->lock);
-        return;
+        goto return_unlockifneeded;
     }
-    lstate->direct_stack = false;
 
     lineUnlock(l);
 
-    mutexUnlock(&lstate->lock);
+return_unlockifneeded:
+    if (lstate->local_locked)
+    {
+        lstate->local_locked = false;
+        UNLOCK_TCPIP_CORE();
+    }
 }
 
 err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err)
@@ -207,9 +302,18 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     // Optionally, set the error callback.
     tcp_err(newpcb, ptcTcpConnectionErrorCallback);
 
-    lstate->direct_stack = current_wid == target_wid;
+    assert(! lstate->stack_owned_locked);
+
+    bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoadRelaxed(&lstate->messages) == 0);
+    lstate->stack_owned_locked = doing_direct_stack;
+    if (! doing_direct_stack)
+    {
+        atomicIncRelaxed(&lstate->messages);
+    }
 
     sendWorkerMessage(target_wid, localThreadPtcAcceptCallBack, lstate, NULL, NULL);
+
+    lstate->stack_owned_locked = false;
 
     return ERR_OK;
 }

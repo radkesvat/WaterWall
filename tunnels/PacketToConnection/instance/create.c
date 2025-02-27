@@ -15,17 +15,21 @@ static err_t interfaceInit(struct netif *netif)
     return ERR_OK;
 }
 
-
-
 tunnel_t *ptcTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
 
     t->fnPayloadU = &ptcTunnelUpStreamPayload;
     t->fnPayloadD = &ptcTunnelDownStreamPayload;
-    t->onPrepair  = &ptcTunnelOnPrepair;
-    t->onStart    = &ptcTunnelOnStart;
-    t->onDestroy  = &ptcTunnelDestroy;
+    t->fnFinD     = &ptcTunnelDownStreamFinish;
+    t->fnInitD    = &ptcTunnelDownStreamInit;
+    t->fnEstD     = &ptcTunnelDownStreamEst;
+    t->fnPauseD   = &ptcTunnelDownStreamPause;
+    t->fnResumeD  = &ptcTunnelDownStreamResume;
+
+    t->onPrepair = &ptcTunnelOnPrepair;
+    t->onStart   = &ptcTunnelOnStart;
+    t->onDestroy = &ptcTunnelDestroy;
 
     // ptc_tstate_t *state = tunnelGetState(t);
 
@@ -38,8 +42,6 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     // }
 
     initTcpIpStack();
-
-
 
     // GSTATE.lwip_process_v4_hook = ptcHookV4;
 

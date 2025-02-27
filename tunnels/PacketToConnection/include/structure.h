@@ -14,25 +14,25 @@ enum
     kTcpWriteRetryTime = 350
 };
 
-typedef struct route_context_s
+typedef struct interface_route_context_s
 {
-    struct route_context_s *next;
-    struct netif            netif;
-    uint32_t                last_tick;
-    bool                    tcp_map_overflow;
-    bool                    udp_map_overflow;
-    vec_ports_t             tcp_ports;
-    vec_ports_t             udp_ports;
+    struct interface_route_context_s *next;
+    struct netif                      netif;
+    uint32_t                          last_tick;
+    bool                              tcp_map_overflow;
+    bool                              udp_map_overflow;
+    vec_ports_t                       tcp_ports;
+    vec_ports_t                       udp_ports;
 
-} route_context_t;
+} interface_route_context_t;
 
 typedef struct ptc_tstate_s
 {
     /* Main network interface */
     // struct netif netif;
 
-    route_context_t route_context4;
-    route_context_t route_context6;
+    interface_route_context_t route_context4;
+    interface_route_context_t route_context6;
 
 } ptc_tstate_t;
 
@@ -46,17 +46,21 @@ typedef struct ptc_lstate_s
     };
     wtimer_t *timer; // this is used when tcpip stack cannot accept the data, we should query it again
 
-    // using this mutex to guard fields of this struct, between the tcpip stack and the worker thread
-    wmutex_t lock;
-
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t *data_queue;
 
+    atomic_ulong messages; // messages on the fly
+
+    uint32_t read_paused_len;
+    
+    bool stack_owned_locked; // tcpip stack used the same worker thread
+    bool local_locked;
+
     bool is_tcp : 1;
-    bool direct_stack : 1; // tcpip stack used the same worker thread
     bool write_paused : 1;
     bool read_paused : 1;
     bool established : 1; // this flag is set when the connection is established (est recevied from upstream)
+    bool init_sent : 1;
 
     atomic_bool is_closing;
 } ptc_lstate_t;
@@ -110,3 +114,5 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
 
 void updateCheckSumTcp(u16_t *_hc, const void *_orig, const void *_new, int n);
 void updateCheckSumUdp(u16_t *hc, const void *orig, const void *new, int n);
+
+void ptcFlushWriteQueue(ptc_lstate_t *lstate);
