@@ -155,6 +155,7 @@ static inline wid_t getNextDistributionWID(void)
     if (wid >= getWorkersCount() - WORKER_ADDITIONS)
     {
         atomicStoreRelaxed(&GSTATE.distribute_wid, 0);
+        wid = 0;
     }
     else
     {
@@ -173,6 +174,10 @@ static inline wid_t getNextDistributionWID(void)
  * @param arg3 The third argument.
  */
 void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3);
+
+// same as above but dose not do a dircet call if the wid is the same as the current worker
+void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3);
+
 
 /*!
  * @brief Runs the main thread.

@@ -26,7 +26,6 @@
 
 #endif
 
-
 typedef struct worker_msg_s
 {
     WorkerMessageCalback callback;
@@ -74,7 +73,7 @@ static void initializeMasterPools(void)
 
 static void initializeShortCuts(void)
 {
-    static const int kShourtcutsCount = 5;
+    static const int kShourtcutsCount = 4;
 
     const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
 
@@ -117,7 +116,7 @@ static void tcpipInitDone(void *arg)
     GSTATE.flag_lwip_initialized = 1;
     GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
     // lwip thread worker id is set to invalid value (larger than workers 0 index)
-    tl_wid          = getWorkersCount();
+    tl_wid          = getWorkersCount() - 1; // lwip is the last worker
     GSTATE.lwip_wid = tl_wid;
 }
 
@@ -301,13 +300,20 @@ void createGlobalState(const ww_construction_data_t init_data)
  */
 void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3)
 {
-    worker_msg_t *msg;
 
     if (getWID() == wid)
     {
         cb(getWorker(wid), arg1, arg2, arg3);
         return;
     }
+
+    assert(wid < getWorkersCount());
+    sendWorkerMessageForceQueue(wid, cb, arg1, arg2, arg3);
+}
+
+void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3)
+{
+    worker_msg_t *msg;
 
     assert(wid < getWorkersCount());
 
@@ -351,7 +357,7 @@ void mainThreadExitJoin(void)
 void initTcpIpStack(void)
 {
     assert(GSTATE.flag_initialized);
-    if(GSTATE.flag_lwip_initialized)
+    if (GSTATE.flag_lwip_initialized)
     {
         return;
     }
