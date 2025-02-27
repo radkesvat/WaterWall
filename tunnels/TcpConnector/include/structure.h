@@ -16,7 +16,7 @@ typedef struct tcpconnector_tstate_s
 
     // These options are evaluatde at start
     // constant destination address to avoid copy, can contain the domain name, used if possible
-    connection_context_t constant_dest_addr;
+    address_context_t constant_dest_addr;
 } tcpconnector_tstate_t;
 
 typedef struct tcpconnector_lstate_s
@@ -77,7 +77,7 @@ void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls, wid_t wid);
 void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
 
-bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t *self, connection_context_t *dest_ctx);
+bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t *self, address_context_t *dest_ctx);
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate);
 void tcpconnectorOnOutBoundConnected(wio_t *upstream_io);
 void tcpconnectorOnWriteComplete(wio_t *io);

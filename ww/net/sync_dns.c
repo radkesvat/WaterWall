@@ -3,7 +3,7 @@
 #include "wlibc.h"
 #include "wsocket.h"
 
-bool resolveContextSync(connection_context_t *sctx)
+bool resolveContextSync(address_context_t *sctx)
 {
     // please check these before calling this function -> more performance
     assert(sctx->type_ip == false && sctx->domain != NULL);

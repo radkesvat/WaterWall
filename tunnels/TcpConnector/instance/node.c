@@ -21,7 +21,7 @@ node_t nodeTcpConnectorGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagChainHead,
+             .flags                 = kNodeFlagNone,
              .required_padding_left = 0,
              .layer_group           = kNodeLayer4,
              .layer_group_next_node = kNodeLayerAnything,
