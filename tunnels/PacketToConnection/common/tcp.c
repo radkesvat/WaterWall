@@ -121,8 +121,13 @@ static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, v
     tunnelNextUpStreamPayload(lstate->tunnel, lstate->line, buf);
     if (! lineIsAlive(l))
     {
+        if (lstate->local_locked)
+        {
+            lstate->local_locked = false;
+            UNLOCK_TCPIP_CORE();
+        }
         lineUnlock(l);
-        goto return_unlockifneeded;
+        return;
     }
 
     if (lstate->read_paused)
@@ -135,7 +140,6 @@ static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, v
     }
 
     lineUnlock(l);
-return_unlockifneeded:
 
     if (lstate->local_locked)
     {
@@ -261,13 +265,16 @@ static void localThreadPtcAcceptCallBack(struct worker_s *worker, void *arg1, vo
     {
         LOGW("PacketToConnection: tcp socket just got closed by upstream before anything happend");
 
+        if (lstate->local_locked)
+        {
+            lstate->local_locked = false;
+            UNLOCK_TCPIP_CORE();
+        }
         lineUnlock(l);
-        goto return_unlockifneeded;
+        return;
     }
 
     lineUnlock(l);
-
-return_unlockifneeded:
     if (lstate->local_locked)
     {
         lstate->local_locked = false;
@@ -298,8 +305,9 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     l->routing_context.src_ctx.type_ip    = true; // we have a client ip
     l->routing_context.src_ctx.proto_tcp  = true; // tcp client
     l->routing_context.src_ctx.ip_address = newpcb->remote_ip;
+    addresscontextSetIpPort(&l->routing_context.src_ctx, &newpcb->remote_ip, newpcb->remote_port);
 
-    l->routing_context.dest_ctx.ip_address = newpcb->local_ip;
+    addresscontextSetIpPort(&l->routing_context.dest_ctx, &newpcb->local_ip, newpcb->local_port);
 
     newpcb->callback_arg = lstate;
 

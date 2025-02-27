@@ -33,7 +33,7 @@ tunnel_chain_t *tunnelchainCreate(wid_t workers_count)
     size_t          size = sizeof(tunnel_chain_t) + sizeof(void *) * getWorkersCount();
     tunnel_chain_t *tc   = memoryAllocate(size);
     memorySet(tc, 0, size);
-    tc->workers_count = workers_count + 1; // we consider 1 more thread (lwip thread)
+    tc->workers_count = workers_count;
     return tc;
 }
 
