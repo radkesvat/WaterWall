@@ -55,25 +55,30 @@ void ptcTcpConnectionErrorCallback(void *arg, err_t err)
     {
         LOGD("PacketToConnection: tcp connection error %d", err);
     }
+    if(arg == NULL)
+    {
+        return;
+    }
 
     ptc_lstate_t *lstate      = (ptc_lstate_t *) arg;
     wid_t         target_wid  = lineGetWID(lstate->line);
     wid_t         current_wid = getWID();
 
-    bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoadRelaxed(&lstate->messages) == 0);
-    lstate->stack_owned_locked = doing_direct_stack;
-    if (! doing_direct_stack)
-    {
-        atomicIncRelaxed(&lstate->messages);
-    }
-
     lstate->is_closing            = true;
     lstate->tcp_pcb->callback_arg = NULL;
     lstate->tcp_pcb               = NULL;
 
-    sendWorkerMessage(lineGetWID(lstate->line), localThreadSendFin, lstate, NULL, NULL);
-
-    lstate->stack_owned_locked = false;
+    bool doing_direct_stack       = (current_wid == target_wid) && (atomicLoadRelaxed(&lstate->messages) == 0);
+    lstate->stack_owned_locked    = doing_direct_stack;
+    if (! doing_direct_stack)
+    {
+        atomicIncRelaxed(&lstate->messages);
+        sendWorkerMessageForceQueue(target_wid, localThreadSendFin, lstate, NULL, NULL);
+    }
+    else
+    {
+        sendWorkerMessage(target_wid, localThreadSendFin, lstate, NULL, NULL);
+    }
 }
 
 static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
@@ -195,11 +200,12 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     if (! doing_direct_stack)
     {
         atomicIncRelaxed(&lstate->messages);
+        sendWorkerMessageForceQueue(target_wid, localThreadPtcTcpRecvCallback, lstate, buf, NULL);
     }
-
-    sendWorkerMessage(target_wid, localThreadPtcTcpRecvCallback, lstate, buf, NULL);
-
-    lstate->stack_owned_locked = false;
+    else
+    {
+        sendWorkerMessage(target_wid, localThreadPtcTcpRecvCallback, lstate, buf, NULL);
+    }
 
     return ERR_OK;
 }
@@ -309,11 +315,12 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     if (! doing_direct_stack)
     {
         atomicIncRelaxed(&lstate->messages);
+        sendWorkerMessageForceQueue(target_wid, localThreadPtcAcceptCallBack, lstate, NULL, NULL);
     }
-
-    sendWorkerMessage(target_wid, localThreadPtcAcceptCallBack, lstate, NULL, NULL);
-
-    lstate->stack_owned_locked = false;
+    else
+    {
+        sendWorkerMessage(target_wid, localThreadPtcAcceptCallBack, lstate, NULL, NULL);
+    }
 
     return ERR_OK;
 }

@@ -6,6 +6,5 @@ void ptcTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
-    LOGF("This Function is disabled, using the default PacketTunnel instead");
-    exit(1);
+    // init from packt to connection is blocking and is normally called from those nodes at startup
 }

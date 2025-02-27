@@ -19,6 +19,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(ptc_tstate_t), sizeof(ptc_lstate_t));
 
+    t->fnInitU    = &ptcTunnelUpStreamInit;
     t->fnPayloadU = &ptcTunnelUpStreamPayload;
     t->fnPayloadD = &ptcTunnelDownStreamPayload;
     t->fnFinD     = &ptcTunnelDownStreamFinish;

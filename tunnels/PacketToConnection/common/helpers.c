@@ -59,7 +59,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     wid_t     wid = getWID();
     sbuf_t   *buf;
 
-    if (p->len <= SMALL_BUFFER_SIZE)
+    if (p->tot_len <= SMALL_BUFFER_SIZE)
     {
         buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
     }
@@ -68,15 +68,15 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
         buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(getWID()));
     }
 
-    sbufSetLength(buf, p->len);
+    sbufSetLength(buf, p->tot_len);
 
     // if (p->tot_len - p->len >= 128)
     // {
-    //     memoryCopy128(sbufGetMutablePtr(buf), p->payload, p->len);
+    //     memoryCopy128(sbufGetMutablePtr(buf), p->payload, p->tot_len);
     // }
     // else
     // {
-    pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->len, 0);
+    pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
     // }
 
     // localThreadPacketReceived(getNextDistributionWID(), localPacketReceived, t, buf, NULL);
