@@ -324,7 +324,7 @@ static inline uint8_t getIpVersion(char *host)
     {
         return IPADDR_TYPE_V6;
     }
-    return 0; // Not a valid IP
+    return IPADDR_TYPE_ANY; // Not a valid IP
 }
 
 // ============================================================================
