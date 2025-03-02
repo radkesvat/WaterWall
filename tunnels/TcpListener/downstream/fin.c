@@ -11,7 +11,7 @@ void tcplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     weventSetUserData(lstate->io, NULL);
 
     tcplistenerFlushWriteQueue(lstate);
-
+    wioClose(lstate->io);
     tcplistenerLinestateDestroy(lstate);
     lineDestroy(l);
 }
