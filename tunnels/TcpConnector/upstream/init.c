@@ -73,8 +73,12 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     // sockaddr_set_ipport(&(dest_ctx.addr), "127.0.0.1", 443);
 
-    wloop_t *loop   = getWorkerLoop(getWID());
-    int      sockfd = (int) socket(dest_ctx->ip_address.type, SOCK_STREAM, 0);
+    wloop_t *loop = getWorkerLoop(getWID());
+
+    assert(dest_ctx->ip_address.type == IPADDR_TYPE_V4 || dest_ctx->ip_address.type == IPADDR_TYPE_V6);
+    int addr_type = dest_ctx->ip_address.type == IPADDR_TYPE_V4 ? AF_INET : AF_INET6;
+
+    int sockfd = (int) socket(addr_type, SOCK_STREAM, 0);
 
     if (sockfd < 0)
     {

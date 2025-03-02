@@ -6,7 +6,7 @@ static void localThreadPacketReceived(worker_t *worker, void *arg1, void *arg2, 
 {
     tunnel_t *t   = (tunnel_t *) arg1;
     sbuf_t   *buf = (sbuf_t *) arg2;
-    discard arg3;
+    discard   arg3;
 
     tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), worker->wid), buf);
 }
@@ -93,22 +93,36 @@ void ptcFlushWriteQueue(ptc_lstate_t *lstate)
     {
         sbuf_t *buf = bufferqueueFront(lstate->data_queue);
 
-        if (sbufGetLength(buf) > tcp_sndbuf(tpcb))
+        int diff = tcp_sndbuf(tpcb) - sbufGetLength(buf);
+        if (diff < 0)
         {
-            //  still full
-            lstate->write_paused = true; // already is but whatever...
-            tcp_output(tpcb);
+            unsigned int len = tcp_sndbuf(tpcb);
+#if SHOW_ALL_LOGS
+            LOGD("PacketToConnection: still full, writing %d bytes", len);
+#endif
 
+            if (len > 0)
+            {
+                err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), len, TCP_WRITE_FLAG_COPY);
+                if (error_code == ERR_OK)
+                {
+                    tcp_output(tpcb);
+                    sbufShiftRight(buf, len);
+                }
+            }
+            lstate->write_paused = true;
             return;
         }
+
+#if SHOW_ALL_LOGS
+        LOGD("PacketToConnection: after a time, written a full %d bytes", sbufGetLength(buf));
+#endif
         err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), sbufGetLength(buf), TCP_WRITE_FLAG_COPY);
 
         if (error_code != ERR_OK)
         {
-            assert(false);
-            LOGW("PacketToConnection: tcp_write failed, this is unexpected since we checked the memory status! , code: "
-                 "%d",
-                 error_code);
+
+            lstate->write_paused = true;
             return;
         }
 

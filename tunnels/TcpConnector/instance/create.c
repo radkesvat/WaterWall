@@ -47,7 +47,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     */
     state->constant_dest_addr.ip_address.type = getIpVersion(state->dest_addr_selected.value_ptr);
 
-    if (state->constant_dest_addr.ip_address.type == 0)
+    if (state->constant_dest_addr.ip_address.type == IPADDR_TYPE_ANY)
     {
         // its a domain
         state->constant_dest_addr.type_ip = false;
@@ -56,6 +56,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     {
         state->constant_dest_addr.type_ip = true;
     }
+
     // Free bind parsings
     if (state->dest_addr_selected.status == kDvsConstant)
     {

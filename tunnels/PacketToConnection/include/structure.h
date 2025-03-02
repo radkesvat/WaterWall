@@ -4,15 +4,20 @@
 
 #include "lwip/priv/tcp_priv.h"
 
+
+enum
+{
+    kTcpWriteRetryTime = 75
+};
+
+#define SHOW_ALL_LOGS 0
+
+
 #define i_type vec_ports_t // NOLINT
 #define i_key  uint16_t    // NOLINT
 #define i_use_cmp
 #include "stc/vec.h"
 
-enum
-{
-    kTcpWriteRetryTime = 350
-};
 
 typedef struct interface_route_context_s
 {
@@ -38,31 +43,32 @@ typedef struct ptc_tstate_s
 
 typedef struct ptc_lstate_s
 {
+
     tunnel_t *tunnel; // reference to the tunnel (TcpListener)
     line_t   *line;   // reference to the line
+
+    // this belongs to tcpip stack, hold the tcpip mutex before accessing this
     union {
         struct tcp_pcb *tcp_pcb;
         struct udp_pcb *udp_pcb;
     };
+
     wtimer_t *timer; // this is used when tcpip stack cannot accept the data, we should query it again
 
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t *data_queue;
 
-    atomic_ulong messages; // messages on the fly
+    atomic_ulong messages;
 
     uint32_t read_paused_len;
     
-    bool stack_owned_locked; // tcpip stack used the same worker thread
-    bool local_locked;
-
     bool is_tcp : 1;
     bool write_paused : 1;
     bool read_paused : 1;
     bool established : 1; // this flag is set when the connection is established (est recevied from upstream)
     bool init_sent : 1;
 
-    atomic_bool is_closing;
+
 } ptc_lstate_t;
 
 enum
@@ -102,7 +108,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 err_t ptcHandleTcpInput(struct pbuf *p, struct netif *inp);
 
 // Error callback: called when something goes wrong on the connection.
-void ptcTcpConnectionErrorCallback(void *arg, err_t err);
+void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err);
 
 // Accept callback: called when a new connection is accepted.
 err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err);

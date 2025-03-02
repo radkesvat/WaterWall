@@ -5,15 +5,15 @@
 static void passToTcpIp(sbuf_t *buf, wid_t wid, struct netif *inp)
 {
 
-    struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_REF);
+    struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_POOL);
 
-    p->payload = &buf->buf[0];
+    pbuf_take(p, sbufGetMutablePtr(buf), sbufGetLength(buf));
+
+    // p->payload = sbufGetMutablePtr(buf);
     // LOCK_TCPIP_CORE();
     inp->input(p, inp);
     // UNLOCK_TCPIP_CORE();
 
-    // since PBUF_REF is used, lwip wont delay this buffer after call stack, if it needs queue then it will be
-    // duplicated so we can free it now
     bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
 }
 
@@ -75,9 +75,12 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     else
     {
+
+#if SHOW_ALL_LOGS
         LOGD("PacketTocConnection: new ip %d.%d.%d.%d", ip4_addr1(&current_iphdr_dest.u_addr.ip4),
              ip4_addr2(&current_iphdr_dest.u_addr.ip4), ip4_addr3(&current_iphdr_dest.u_addr.ip4),
              ip4_addr4(&current_iphdr_dest.u_addr.ip4));
+#endif
 
         cur = (interface_route_context_t *) memoryAllocate(sizeof(interface_route_context_t));
         memorySet(cur, 0, sizeof(interface_route_context_t));
@@ -111,8 +114,9 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (vec_ports_t_find(&cur->tcp_ports, dest_port).ref == vec_ports_t_end(&cur->tcp_ports).ref)
         {
             vec_ports_t_push_back(&cur->tcp_ports, dest_port);
+#if SHOW_ALL_LOGS
             LOGD("PacketTocConnection: new tcp port %d", dest_port);
-
+#endif
             struct tcp_pcb *pcb;
 
             // Create a new TCP protocol control block.
@@ -149,7 +153,10 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (vec_ports_t_find(&cur->udp_ports, dest_port).ref == vec_ports_t_end(&cur->udp_ports).ref)
         {
             vec_ports_t_push_back(&cur->udp_ports, dest_port);
+
+#if SHOW_ALL_LOGS
             LOGD("PacketTocConnection: new udp port %d", dest_port);
+#endif
             struct udp_pcb *pcb;
             // Create a new TCP protocol control block.
 

@@ -11,7 +11,8 @@ void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     weventSetUserData(lstate->io, NULL);
 
     tcpconnectorFlushWriteQueue(lstate);
+    
+    wioClose(lstate->io);
 
     tcpconnectorLinestateDestroy(lstate);
-    lineDestroy(l);
 }

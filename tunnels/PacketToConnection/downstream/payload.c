@@ -2,27 +2,29 @@
 
 #include "loggers/network_logger.h"
 
-
-
 static void retryTcpWriteTimerCb(wtimer_t *timer)
 {
     ptc_lstate_t *lstate = weventGetUserdata(timer);
+    assert(lineIsAlive(lstate->line));
     if (lstate == NULL)
     {
         // timer is not valid, this should not be called AFAIK
         assert(false);
         return;
     }
+
     assert(lstate->write_paused);
     LOCK_TCPIP_CORE();
-    if (lstate->is_closing)
+
+    if (! lstate->tcp_pcb)
     {
-        // this means that the line is already closed, so we can safely ignore this
-        // soon the finish callback will be called and the resources will be freed
+        // connection is closed
         UNLOCK_TCPIP_CORE();
+        lstate->timer = NULL;
+        weventSetUserData(timer, NULL);
+        wtimerDelete(timer);
         return;
     }
-    assert(lineIsAlive(lstate->line));
 
     ptcFlushWriteQueue(lstate);
 
@@ -37,6 +39,10 @@ static void retryTcpWriteTimerCb(wtimer_t *timer)
         lstate->timer = NULL;
         weventSetUserData(timer, NULL);
         wtimerDelete(timer);
+
+        tunnel_t *t = lstate->tunnel;
+        line_t   *l = lstate->line;
+        tunnelNextUpStreamResume(t, l);
     }
     UNLOCK_TCPIP_CORE();
 }
@@ -46,35 +52,20 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ptc_lstate_t *lstate = (ptc_lstate_t *) lineGetState(l, t);
     wid_t         wid    = lineGetWID(l);
 
-    bool unlock_core = false;
-    if (! lstate->stack_owned_locked && ! lstate->local_locked)
+    assert(lineIsAlive(l));
+
+    LOCK_TCPIP_CORE();
+
+    if (! lstate->tcp_pcb)
     {
-        // we are on a different worker thread, so we must lock the tcpip mutex
-        LOCK_TCPIP_CORE();
-
-        if (! lineIsAlive(l))
-        {
-            assert(atomicLoadRelaxed(&lstate->messages) > 0);
-            bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
-            UNLOCK_TCPIP_CORE();
-            return;
-        }
-        unlock_core = true;
-    }
-
-    /*
-        when tcpip stack is locked, our line will not be closed, so we can safely use it
-        so, locking the line mutex is not necessary
-    */
-
-    if (lstate->is_closing)
-    {
-        assert(! lstate->stack_owned_locked); // impossible to be closing on direct stack
-
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         goto return_unlockifneeded;
-        return;
     }
+
+#if SHOW_ALL_LOGS
+    printDebug("PacketToConnection: received %d bytes\n", sbufGetLength(buf));
+#endif    
+
 
     if (lstate->is_tcp)
     {
@@ -86,10 +77,27 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             bufferqueuePush(lstate->data_queue, buf);
             goto return_unlockifneeded;
         }
-
-        if (sbufGetLength(buf) > tcp_sndbuf(tpcb))
+        int diff = tcp_sndbuf(tpcb) - sbufGetLength(buf);
+        if (diff < 0)
         {
-            //  tcp_sndbuf is full
+
+#if SHOW_ALL_LOGS
+            LOGD("PacketToConnection: tcp_sndbuf is full, only writing %d from %d", tcp_sndbuf(tpcb),
+                 sbufGetLength(buf));
+#endif
+            unsigned int len = tcp_sndbuf(tpcb);
+
+            if (len > 0)
+            {
+                err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), len, TCP_WRITE_FLAG_COPY);
+                if (error_code == ERR_OK)
+                {
+                    sbufShiftRight(buf, len);
+                    tcp_output(tpcb);
+                }
+            }
+
+        pause:
             lstate->write_paused = true;
             tunnelNextUpStreamPause(t, l);
             bufferqueuePush(lstate->data_queue, buf);
@@ -101,13 +109,7 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), sbufGetLength(buf), TCP_WRITE_FLAG_COPY);
         if (error_code != ERR_OK)
         {
-            assert(false);
-            LOGW("PacketToConnection: tcp_write failed, this is unexpected since we checked the memory status! , code: "
-                 "%d",
-                 error_code);
-            bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
-
-            goto return_unlockifneeded;
+            goto pause;
         }
 
         /*
@@ -120,16 +122,18 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     else
     {
-        struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_REF);
+        struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_POOL);
 
-        p->payload = &buf->buf[0];
+        pbuf_take(p, sbufGetMutablePtr(buf), sbufGetLength(buf));
 
-        // since PBUF_REF is used, lwip wont delay this buffer after call stack, if it needs queue then it will be
-        // duplicated so we can free it now
         err_t error_code = udp_sendto(lstate->udp_pcb, p, &lstate->udp_pcb->remote_ip, lstate->udp_pcb->remote_port);
         if (error_code != ERR_OK)
         {
+
+#if SHOW_ALL_LOGS
             LOGD("PacketToConnection: udp_sendto failed code: %d", error_code);
+#endif
+
             bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
 
             goto return_unlockifneeded;
@@ -138,8 +142,5 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
 return_unlockifneeded:
-    if (unlock_core)
-    {
-        UNLOCK_TCPIP_CORE();
-    }
+    UNLOCK_TCPIP_CORE();
 }
