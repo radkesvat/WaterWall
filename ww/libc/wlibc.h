@@ -234,6 +234,8 @@ static void printDebug(const char *format, ...)
     va_start(args, format);
     vfprintf(stdout, format, args);
     va_end(args);
+    fflush(stdout);
+
 }
 
 static void printError(const char *format, ...)
@@ -242,6 +244,7 @@ static void printError(const char *format, ...)
     va_start(args, format);
     vfprintf(stderr, format, args);
     va_end(args);
+    fflush(stderr);
 }
 
 static void printHex(const char *label, const unsigned char *data, size_t len)
