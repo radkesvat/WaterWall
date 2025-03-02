@@ -4,7 +4,7 @@
 #include "wwapi.h"
 
 
-#define LOG_PACKET_INFO 1
+#define LOG_PACKET_INFO 0
 #define LOG_SSDP        0
 #define LOG_MDNS        0
 #define LOG_V6          0

@@ -42,9 +42,10 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
 
     printIPPacketInfo("TunDevice recv", sbufGetRawPtr(buf));
 
+afterlog:;
+
 #endif
 
-afterlog:;
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
     lineLock(l);
