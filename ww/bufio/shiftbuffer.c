@@ -28,8 +28,8 @@ sbuf_t *sbufNewWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
         minimum_capacity = (max(kCpuLineCacheSize, minimum_capacity) + kCpuLineCacheSizeMin1) & (~kCpuLineCacheSizeMin1);
     }
 
-    uint32_t real_cap = minimum_capacity + pad_left + sizeof(sbuf_t);
-    sbuf_t  *b        = memoryAllocate(real_cap + 128);
+    uint32_t real_cap = minimum_capacity + pad_left;
+    sbuf_t  *b        = memoryAllocate(real_cap + sizeof(sbuf_t));
 
 #ifdef DEBUG
     memorySet(b, 0x55, real_cap);
