@@ -95,9 +95,7 @@ static inline uint32_t sbufGetTotalCapacity(sbuf_t *const b)
  */
 static inline uint32_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
 {
-    assert(((uint32_t) b->l_pad) >= b->capacity);
-
-    return b->capacity - ((uint32_t) b->l_pad);
+    return b->capacity - (b->l_pad);
 }
 
 /**
