@@ -5,6 +5,7 @@ set(WW_VERSION_MAJOR 1)
 set(WW_VERSION_MINOR 1)
 set(WW_VERSION_PATCH 0)
 
+
 ################################################################################
 # Library Build Configuration
 ################################################################################
@@ -74,6 +75,7 @@ add_library(ww STATIC
     loggers/internal_logger.c
 )
 
+
 ################################################################################
 # Global Options & Definitions
 ################################################################################
@@ -96,6 +98,7 @@ if(WIN32)
 else()
     target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}")
 endif()
+
 
 ################################################################################
 # Crypto Backend Source Selection
@@ -136,6 +139,7 @@ elseif(WCRYPTO_BACKEND_SOFTWARE)
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SOFTWARE=1)
 endif()
 
+
 ################################################################################
 # Target Properties & Platform-specific Sources
 ################################################################################
@@ -167,11 +171,10 @@ elseif(WIN32)
         message(STATUS "Including WinTun Target architecture: arm64")
         target_sources(ww PRIVATE devices/tun/wintun/arm64/wintun_bytes.c)
     else()
-        message(FATAL_ERROR  "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+        message(FATAL_ERROR "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
     endif()
     
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
-
 endif()
 
 if(WIN32)
@@ -181,6 +184,7 @@ if(WIN32)
         target_sources(ww PRIVATE event/wepoll/wepoll.c)
     endif()
 endif()
+
 
 ################################################################################
 # Include Directories
@@ -196,6 +200,7 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/instance)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libc)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
+
 
 ################################################################################
 # External Dependencies
@@ -270,6 +275,7 @@ CPMAddPackage(
 )
 set(LIBS ${LIBS} sodium)
 
+
 ################################################################################
 # LWIP Library Settings
 ################################################################################
@@ -287,42 +293,41 @@ set(LWIP_DIR ${lwip_SOURCE_DIR})
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 set(LWIP_CONTRIB_DIR ${LWIPOPTS_DIR}/contrib)
-set (LWIP_INCLUDE_DIRS
+set(LWIP_INCLUDE_DIRS
     "${LWIP_DIR}/src/include"
     "${LWIP_DIR}/contrib"
     "${LWIPOPTS_DIR}"
 )
 if(NOT APPLE)
     target_compile_definitions(ww PUBLIC )
-    set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
+    set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 endif()
 if(ANDROID)
-    set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} SOCKLEN_T_DEFINED=1)
-endif()
-if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    set (LWIP_DEFINITIONS  ${LWIP_DEFINITIONS} LWIP_DEBUG=1)
+    set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} SOCKLEN_T_DEFINED=1)
 endif()
 if(WIN32)
-    set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
+    set(LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
     target_compile_definitions(ww PUBLIC LWIP_NO_UNISTD_H=1)
 else()
-    set (LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/unix/port/include")
+    set(LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/unix/port/include")
 endif()
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 add_library(ww_lwip STATIC 
     ${lwipnoapps_SRCS}
 )
+target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
 if(UNIX)
-    target_sources(ww_lwip PRIVATE  ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
+    target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
 else()
-    target_sources(ww_lwip PRIVATE  ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
+    target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
 endif()
 target_compile_options(ww_lwip PUBLIC ${LWIP_COMPILER_FLAGS})
 set(LIBS ${LIBS} ww_lwip)
 # ...existing commented lwip libs...
+
 
 ################################################################################
 # Mimalloc & Platform-specific Options
@@ -343,6 +348,7 @@ endif()
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
 include(utils)
 include(vars)
+
 
 ################################################################################
 # Header and Function Checks
@@ -375,12 +381,14 @@ check_function("socketpair" "sys/socket.h")
 check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
+
 ################################################################################
 # Configuration and Linking
 ################################################################################
 # Configure file
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
 message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
+
 if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
     if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
@@ -392,15 +400,17 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         set(LIBS ${LIBS} mimalloc-static)
     endif()
 endif()
+
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     target_compile_definitions(ww PUBLIC WW_AVX=1)
     target_compile_options(ww PUBLIC -mavx)
 endif()
-if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-    target_compile_definitions(ww PUBLIC DEBUG=1)
-else()
-    target_compile_definitions(ww PUBLIC NDEBUG=1)
-endif()
+
+target_compile_definitions(ww PUBLIC 
+    $<$<CONFIG:Debug>:DEBUG=1;ALLOCATOR_BYPASS=1;BYPASS_BUFFERPOOL=1;BYPASS_GENERIC_POOL=1>
+    $<$<CONFIG:Release>:NDEBUG=1>
+)
+
 if(ENABLE_UDS)
     target_compile_definitions(ww PUBLIC -DENABLE_UDS)
 endif()
@@ -412,6 +422,7 @@ if(WW_STATICLIB)
 else()
     target_compile_definitions(ww PUBLIC -DWW_DYNAMICLIB)
 endif()
+
 if(WIN32)
     target_compile_definitions(ww PUBLIC -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0600)
     set(LIBS ${LIBS} secur32 crypt32 winmm ntdll iphlpapi ws2_32 pdh)
@@ -420,6 +431,7 @@ if(WIN32)
         set(LIBS ${LIBS} dbghelp)
     endif()
 endif()
+
 if(ANDROID)
     set(LIBS ${LIBS} log)
 elseif(UNIX)
@@ -431,47 +443,36 @@ elseif(UNIX)
         set(LIBS ${LIBS} rt)
     endif()
 endif()
+
 if(APPLE)
     set(LIBS ${LIBS} "-framework CoreFoundation" "-framework Security")
 endif()
+
 target_link_libraries(ww PUBLIC ${LIBS})
-# Link options for Release build
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_link_options(ww PUBLIC -s)
+target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
+
+# Sanitizer options (using generator expressions for multiconfig):
+if(ENABLE_ASAN)
+    target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
+    target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
 endif()
-# Link options for Debug build
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(ww PUBLIC DEBUG=1 ALLOCATOR_BYPASS=1 BYPASS_BUFFERPOOL=1 BYPASS_GENERIC_POOL=1)
+if(ENABLE_TSAN)
+    target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
+    target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=thread>)
 endif()
+if(ENABLE_LSAN)
+    target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=leak>)
+    target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=leak>)
+endif()
+if(ENABLE_USAN)
+    target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
+    target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
+endif()
+
 
 ################################################################################
 # Sanitizer and Compiler-specific Options
 ################################################################################
-# Enable sanitizers for non-Release builds
-if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(ENABLE_ASAN)
-        if(MSVC)
-            target_compile_options(ww PUBLIC /fsanitize=address)
-            target_link_options(ww PUBLIC /fsanitize=address)
-        else()
-            target_compile_options(ww PUBLIC -fsanitize=address)
-            target_link_options(ww PUBLIC -fsanitize=address)
-        endif()
-    endif()
-    if(ENABLE_TSAN)
-        target_compile_options(ww PUBLIC -fsanitize=thread)
-        target_link_options(ww PUBLIC -fsanitize=thread)
-    endif()
-    if(ENABLE_LSAN)
-        target_compile_options(ww PUBLIC -fsanitize=leak)
-        target_link_options(ww PUBLIC -fsanitize=leak)
-    endif()
-    if(ENABLE_USAN)
-        target_compile_options(ww PUBLIC -fsanitize=undefined)
-        target_link_options(ww PUBLIC -fsanitize=undefined)
-    endif()
-endif()
-# Compiler-specific options
 if(NOT MSVC)
     target_compile_options(ww PUBLIC 
         -Wall 

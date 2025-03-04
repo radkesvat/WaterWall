@@ -16,10 +16,11 @@ project(Waterwall
 )
 
 if(NOT CMAKE_BUILD_TYPE)
-    message(STATUS  "CMAKE_BUILD_TYPE not set - defaulting to Debug build.")
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build, options are: ${CMAKE_CONFIGURATION_TYPES}." FORCE)
+    message(STATUS  "CMAKE_BUILD_TYPE not set - defaulting to Release build, on multi-config generators this will be ignored")
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build, options are: ${CMAKE_CONFIGURATION_TYPES}." FORCE)
 endif()
-message (STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message (STATUS "Build type: ${CMAKE_BUILD_TYPE} (ignored on multi-config generators)")
+
 
 set(FINAL_EXECUTABLE_NAME "Waterwall" CACHE STRING "Final executable name" FORCE)
 
@@ -44,24 +45,19 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 #   [cmake]   in a future version.
 
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-  cmake_policy(SET CMP0069 NEW) 
-  set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-  include(CheckIPOSupported)
-  check_ipo_supported()
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+cmake_policy(SET CMP0069 NEW) 
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+include(CheckIPOSupported)
+check_ipo_supported()
 
-  # enabling lto for clang is done thisway, because thin-lto is the clang default 
-  if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    set(CMAKE_C_COMPILE_OPTIONS_IPO  "-flto")
-    set(CMAKE_CXX_COMPILE_OPTIONS_IPO  "-flto")
-    
-    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-generate")
-    # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-use=${CMAKE_CURRENT_SOURCE_DIR}/build/bin/code.profdata")
-    # add_compile_options(-Wno-profile-instr-unprofiled)
 
-  endif()
-endif()
+
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-generate")
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-use=${CMAKE_CURRENT_SOURCE_DIR}/build/bin/code.profdata")
+# add_compile_options(-Wno-profile-instr-unprofiled)
+
+
+
 
 # force link glibc ver 2.27
 # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread -include  ${CMAKE_CURRENT_SOURCE_DIR}/core/force_link_glibc_2.27.h")
@@ -577,9 +573,9 @@ endif()
 
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  target_compile_definitions(Waterwall PRIVATE  DEBUG=1)
-endif()
+target_compile_definitions(Waterwall PRIVATE 
+  $<$<CONFIG:Debug>:DEBUG=1>
+)
 
 
 if(OPENSSL_VERSION)
@@ -588,12 +584,24 @@ endif()
 
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
+# Set IPO only for the Release configuration on your target:
+set_target_properties(Waterwall PROPERTIES 
+  INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+)
+
+# For Clang, add the -flto compile option only in Release:
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  target_compile_options(Waterwall PRIVATE
+    $<$<CONFIG:Release>:-flto>
+  )
+endif()
+
 # set output path to build/bin/
 
-set_target_properties(Waterwall
-  PROPERTIES
-  OUTPUT_NAME ${FINAL_EXECUTABLE_NAME}
-  ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-)
+# set_target_properties(Waterwall
+#   PROPERTIES
+#   OUTPUT_NAME ${FINAL_EXECUTABLE_NAME}
+#   ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+#   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+#   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+# )
