@@ -65,7 +65,7 @@ void bufferqueuePush(buffer_queue_t *self, sbuf_t *b);
  * @param self A pointer to the buffer queue.
  * @return A pointer to the sbuf_t at the front of the queue, or NULL if the queue is empty.
  */
-sbuf_t *bufferqueuePop(buffer_queue_t *self);
+sbuf_t *bufferqueuePopFront(buffer_queue_t *self);
 
 /**
  * @brief Gets the sbuf_t pointer at the front of the queue without removing it.

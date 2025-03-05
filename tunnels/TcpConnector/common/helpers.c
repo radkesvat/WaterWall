@@ -49,7 +49,7 @@ static bool resumeWriteQueue(tcpconnector_lstate_t *lstate)
     wio_t          *io          = lstate->io;
     while (bufferqueueLen(pause_queue) > 0)
     {
-        sbuf_t *buf    = bufferqueuePop(pause_queue);
+        sbuf_t *buf    = bufferqueuePopFront(pause_queue);
         int     bytes  = (int) sbufGetLength(buf);
         int     nwrite = wioWrite(io, buf);
 
@@ -127,7 +127,7 @@ void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate)
         {
             return;
         }
-        sbuf_t *buf = bufferqueuePop(&lstate->pause_queue);
+        sbuf_t *buf = bufferqueuePopFront(&lstate->pause_queue);
         wioWrite(lstate->io, buf);
     }
 }
