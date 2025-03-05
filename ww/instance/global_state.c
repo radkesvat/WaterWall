@@ -122,6 +122,9 @@ static void tcpipInitDone(void *arg)
 
 // --- Public API functions ---
 
+// could be declared in lwipopts.h
+err_t wwInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp);
+
 err_t wwInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
 {
 
