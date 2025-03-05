@@ -324,9 +324,13 @@ if(UNIX)
 else()
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
 endif()
-target_compile_options(ww_lwip PUBLIC ${LWIP_COMPILER_FLAGS})
+
+if(NOT MSVC)        
+    set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-stringop-overread -Wno-stringop-overflow)
+endif()
+
+target_compile_options(ww_lwip PRIVATE ${LWIP_COMPILER_FLAGS})
 set(LIBS ${LIBS} ww_lwip)
-# ...existing commented lwip libs...
 
 
 ################################################################################
@@ -337,6 +341,11 @@ set(LIBS ${LIBS} ww_lwip)
     # set(MI_OPT_ARCH OFF)
 # endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
+
+if(NOT MSVC)        
+    target_compile_options(mimalloc-static PRIVATE -Wno-attributes -Wno-array-bounds)
+endif()
+
 set(LIBS ${LIBS} mimalloc-static)
 # Platform-specific options and settings
 message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
@@ -498,6 +507,7 @@ if(NOT MSVC)
         -Wno-error=pragmas
         -Wno-unknown-warning-option
         -Wno-pragmas
+
 
         # disable warnings for int to pointer conversion
         # -Wno-int-to-pointer-cast
