@@ -116,11 +116,11 @@
    byte alignment -> define MEM_ALIGNMENT to 2. */
 /* MSVC port: intel processors don't need 4-byte alignment,
    but are faster that way! */
-#define MEM_ALIGNMENT           4U
+#define MEM_ALIGNMENT           16U
 
 /* MEM_SIZE: the size of the heap memory. If the application will send
 a lot of data that needs to be copied, this should be set high. */
-#define MEM_SIZE               1000240
+#define MEM_SIZE               1000000
 
 /* MEMP_NUM_PBUF: the number of memp struct pbufs. If the application
    sends a lot of data out of ROM (or other static memory), this
@@ -140,7 +140,7 @@ a lot of data that needs to be copied, this should be set high. */
 #define MEMP_NUM_TCP_PCB_LISTEN 8
 /* MEMP_NUM_TCP_SEG: the number of simultaneously queued TCP
    segments. */
-#define MEMP_NUM_TCP_SEG        128
+#define MEMP_NUM_TCP_SEG        256
 /* MEMP_NUM_SYS_TIMEOUT: the number of simultaneously active
    timeouts. */
 #define MEMP_NUM_SYS_TIMEOUT    17
@@ -154,8 +154,8 @@ a lot of data that needs to be copied, this should be set high. */
 /* MEMP_NUM_TCPIP_MSG_*: the number of struct tcpip_msg, which is used
    for sequential API communication and incoming packets. Used in
    src/api/tcpip.c. */
-#define MEMP_NUM_TCPIP_MSG_API   16
-#define MEMP_NUM_TCPIP_MSG_INPKT 16
+#define MEMP_NUM_TCPIP_MSG_API    32 // 16
+#define MEMP_NUM_TCPIP_MSG_INPKT  32 // 16
 
 
 /* ---------- Pbuf options ---------- */
@@ -163,7 +163,7 @@ a lot of data that needs to be copied, this should be set high. */
 #define PBUF_POOL_SIZE          120
 
 /* PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool. */
-#define PBUF_POOL_BUFSIZE       256
+#define PBUF_POOL_BUFSIZE       1024
 
 /** SYS_LIGHTWEIGHT_PROT
  * define SYS_LIGHTWEIGHT_PROT in lwipopts.h if you want inter-task protection
@@ -191,7 +191,7 @@ a lot of data that needs to be copied, this should be set high. */
 /* TCP Maximum segment size. */
 #define LWIP_TCP_MSS                 1024
 /* TCP sender buffer space (bytes). */
-#define TCP_SND_BUF             32768
+#define TCP_SND_BUF             (8192)
 
 /* TCP sender buffer space (pbufs). This must be at least = 2 *
    TCP_SND_BUF/LWIP_TCP_MSS for things to work. */
@@ -351,15 +351,14 @@ void  memoryFree(void *ptr);
 #define MEM_USE_POOLS 1
 #define MEM_USE_POOLS_TRY_BIGGER_POOL 1
 
+#define LWIP_CHECKSUM_ON_COPY 1
 
+// struct pbuf;
+// struct netif;
+// typedef signed char err_t;
+// err_t wwInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp);
 
-struct pbuf;
-struct netif;
-typedef signed char err_t;
-err_t wwInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp);
-
-#define LWIP_HOOK_IP4_INPUT wwInternalLwipIpv4Hook
-
+// #define LWIP_HOOK_IP4_INPUT wwInternalLwipIpv4Hook
 
 
 
