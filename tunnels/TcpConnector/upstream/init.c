@@ -7,7 +7,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tcpconnector_tstate_t *state  = tunnelGetState(t);
     tcpconnector_lstate_t *lstate = lineGetState(l, t);
 
-    tcpconnectorLinestateInitialize(lstate, lineGetWID(l));
+    tcpconnectorLinestateInitialize(lstate);
 
     lstate->tunnel       = t;
     lstate->line         = l;

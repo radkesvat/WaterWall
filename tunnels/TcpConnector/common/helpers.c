@@ -45,11 +45,11 @@ static void onRecv(wio_t *io, sbuf_t *buf)
 
 static bool resumeWriteQueue(tcpconnector_lstate_t *lstate)
 {
-    buffer_queue_t *data_queue = lstate->data_queue;
-    wio_t          *io         = lstate->io;
-    while (bufferqueueLen(data_queue) > 0)
+    buffer_queue_t *pause_queue = &lstate->pause_queue;
+    wio_t          *io          = lstate->io;
+    while (bufferqueueLen(pause_queue) > 0)
     {
-        sbuf_t *buf    = bufferqueuePop(data_queue);
+        sbuf_t *buf    = bufferqueuePop(pause_queue);
         int     bytes  = (int) sbufGetLength(buf);
         int     nwrite = wioWrite(io, buf);
 
@@ -88,7 +88,7 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
     l->established = true;
     wioRead(lstate->io);
 
-    if (bufferqueueLen(lstate->data_queue) > 0)
+    if (bufferqueueLen(&lstate->pause_queue) > 0)
     {
         if (resumeWriteQueue(lstate))
         {
@@ -121,13 +121,13 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
 
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate)
 {
-    while (bufferqueueLen(lstate->data_queue) > 0)
+    while (bufferqueueLen(&lstate->pause_queue) > 0)
     {
         if (wioIsClosed(lstate->io))
         {
             return;
         }
-        sbuf_t *buf = bufferqueuePop(lstate->data_queue);
+        sbuf_t *buf = bufferqueuePop(&lstate->pause_queue);
         wioWrite(lstate->io, buf);
     }
 }
@@ -146,8 +146,8 @@ void tcpconnectorOnWriteComplete(wio_t *io)
 
     if (wioCheckWriteComplete(io))
     {
-        buffer_queue_t *data_queue = lstate->data_queue;
-        if (bufferqueueLen(data_queue) > 0 && ! resumeWriteQueue(lstate))
+        buffer_queue_t *pause_queue = &lstate->pause_queue;
+        if (bufferqueueLen(pause_queue) > 0 && ! resumeWriteQueue(lstate))
         {
             return;
         }

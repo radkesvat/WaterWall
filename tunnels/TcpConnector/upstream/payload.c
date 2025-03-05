@@ -9,7 +9,7 @@ void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (lstate->write_paused)
     {
         tunnelPrevDownStreamPause(t, l);
-        bufferqueuePush(lstate->data_queue, buf);
+        bufferqueuePush(&lstate->pause_queue, buf);
     }
     else
     {

@@ -22,10 +22,10 @@ typedef struct tcplistener_lstate_s
     wio_t    *io;     // IO handle for the connection (socket)
 
     // These fields are used internally for the queue implementation for TCP
-    buffer_queue_t *data_queue;
-    bool            write_paused : 1;
-    bool            read_paused : 1;
-    bool            established : 1; // this flag is set when the connection is established (est recevied from upstream)
+    buffer_queue_t pause_queue;
+    bool           write_paused : 1;
+    bool           read_paused : 1;
+    bool           established : 1; // this flag is set when the connection is established (est recevied from upstream)
 
 } tcplistener_lstate_t;
 
@@ -33,9 +33,10 @@ enum
 {
     kTunnelStateSize               = sizeof(tcplistener_tstate_t),
     kLineStateSize                 = sizeof(tcplistener_lstate_t),
-    kDefaultKeepAliveTimeOutMs     = 60 * 1000, // same as NGINX
-    kEstablishedKeepAliveTimeOutMs = 360 * 1000 // since the connection is established,
-                                                // other end timetout is probably shorter
+    kDefaultKeepAliveTimeOutMs     = 60 * 1000,  // same as NGINX
+    kEstablishedKeepAliveTimeOutMs = 360 * 1000, // since the connection is established,
+                                                 // other end timetout is probably shorter
+    kPauseQueueCapacity = 2
 };
 
 WW_EXPORT void         tcplistenerTunnelDestroy(tunnel_t *t);
@@ -61,7 +62,7 @@ void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wid_t wid, wio_t *io, tunnel_t *t, line_t *l);
+void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wio_t *io, tunnel_t *t, line_t *l);
 void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls);
 
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);

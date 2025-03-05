@@ -25,17 +25,18 @@ typedef struct tcpconnector_lstate_s
     line_t   *line;   // reference to the line
     wio_t    *io;     // IO handle for the connection (socket)
     // These fields are used internally for the queue implementation for TCP
-    buffer_queue_t *data_queue;
-    buffer_pool_t  *buffer_pool;
-    bool            write_paused : 1;
-    bool            read_paused : 1;
+    buffer_queue_t pause_queue;
+    buffer_pool_t *buffer_pool;
+    bool           write_paused : 1;
+    bool           read_paused : 1;
 
 } tcpconnector_lstate_t;
 
 enum
 {
-    kTunnelStateSize = sizeof(tcpconnector_tstate_t),
-    kLineStateSize   = sizeof(tcpconnector_lstate_t)
+    kTunnelStateSize    = sizeof(tcpconnector_tstate_t),
+    kLineStateSize      = sizeof(tcpconnector_lstate_t),
+    kPauseQueueCapacity = 2
 };
 
 typedef enum tcpconnector_strategy
@@ -74,7 +75,7 @@ void tcpconnectorTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tcpconnectorTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls, wid_t wid);
+void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
 void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
 
 bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t *self, address_context_t *dest_ctx);

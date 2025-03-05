@@ -58,7 +58,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     tcplistener_lstate_t *lstate = lineGetState(l, t);
 
    
-    tcplistenerLinestateInitialize(lstate, wid, io, t, l);
+    tcplistenerLinestateInitialize(lstate,io, t, l);
 
     l->routing_context.src_ctx.type_ip = true; // we have a client ip
     l->routing_context.src_ctx.proto_tcp = true; // tcp client
@@ -100,24 +100,24 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)
 {
-    while (bufferqueueLen(lstate->data_queue) > 0)
+    while (bufferqueueLen(&lstate->pause_queue) > 0)
     {
         if (wioIsClosed(lstate->io))
         {
             return;
         }
-        sbuf_t *buf = bufferqueuePop(lstate->data_queue);
+        sbuf_t *buf = bufferqueuePop(&lstate->pause_queue);
         wioWrite(lstate->io, buf);
     }
 }
 
 static bool resumeWriteQueue(tcplistener_lstate_t *lstate)
 {
-    buffer_queue_t *data_queue = lstate->data_queue;
+    buffer_queue_t *pause_queue = &lstate->pause_queue;
     wio_t          *io         = lstate->io;
-    while (bufferqueueLen(data_queue) > 0)
+    while (bufferqueueLen(pause_queue) > 0)
     {
-        sbuf_t *buf    = bufferqueuePop(data_queue);
+        sbuf_t *buf    = bufferqueuePop(pause_queue);
         int     bytes  = (int) sbufGetLength(buf);
         int     nwrite = wioWrite(io, buf);
 
@@ -144,8 +144,8 @@ void tcplistenerOnWriteComplete(wio_t *io)
 
     if (wioCheckWriteComplete(io))
     {
-        buffer_queue_t *data_queue = lstate->data_queue;
-        if (bufferqueueLen(data_queue) > 0 && ! resumeWriteQueue(lstate))
+        buffer_queue_t *pause_queue = &lstate->pause_queue;
+        if (bufferqueueLen(pause_queue) > 0 && ! resumeWriteQueue(lstate))
         {
             return;
         }
