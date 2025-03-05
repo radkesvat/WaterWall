@@ -2,19 +2,45 @@
 
 #include "loggers/network_logger.h"
 
-static void passToTcpIp(sbuf_t *buf, wid_t wid, struct netif *inp)
+LWIP_MEMPOOL_DECLARE(RX_POOL, 10, sizeof(my_custom_pbuf_t), "Zero-copy RX PBUF pool")
+
+
+static void my_pbuf_free_custom(struct pbuf  *p)
 {
 
-    struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_POOL);
+    my_custom_pbuf_t *custombuf = (my_custom_pbuf_t *) p;
 
-    pbuf_take(p, sbufGetMutablePtr(buf), sbufGetLength(buf));
+    bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), custombuf->sbuf);
+    LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
+}
+
+static void passToTcpIp(sbuf_t *buf, wid_t wid, struct netif *inp)
+{
+    discard wid;
+    discard inp;
+
+    my_custom_pbuf_t *custombuf       = (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
+    custombuf->p.custom_free_function = my_pbuf_free_custom;
+    custombuf->sbuf                   = buf;
+
+    struct pbuf *p = pbuf_alloced_custom(PBUF_RAW, sbufGetLength(buf), PBUF_REF, &custombuf->p, sbufGetMutablePtr(buf),
+                                         sbufGetLength(buf));
+
+    // struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_REF);
+
+    // p->payload = &buf->buf[0];
 
     // p->payload = sbufGetMutablePtr(buf);
     // LOCK_TCPIP_CORE();
-    inp->input(p, inp);
+    // inp->input(p, inp);
     // UNLOCK_TCPIP_CORE();
 
-    bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+    // bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+
+    if (inp->input(p, inp) != ERR_OK)
+    {
+        pbuf_free(p);
+    }
 }
 
 static err_t interfaceInit(struct netif *netif)

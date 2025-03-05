@@ -89,10 +89,11 @@ void ptcFlushWriteQueue(ptc_lstate_t *lstate)
 {
 
     struct tcp_pcb *tpcb = lstate->tcp_pcb;
-    while (bufferqueueLen(lstate->data_queue) > 0)
+    while (bufferqueueLen(&lstate->pause_queue) > 0)
     {
-        sbuf_t *buf = bufferqueueFront(lstate->data_queue);
+        sbuf_t *buf = bufferqueueFront(&lstate->pause_queue);
 
+        // assert(sbufGetLength(buf) <= TCP_SND_BUF);
         int diff = tcp_sndbuf(tpcb) - sbufGetLength(buf);
         if (diff < 0)
         {
@@ -103,31 +104,30 @@ void ptcFlushWriteQueue(ptc_lstate_t *lstate)
 
             if (len > 0)
             {
-                err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), len, TCP_WRITE_FLAG_COPY);
+                err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), len, 0);
                 if (error_code == ERR_OK)
                 {
-                    tcp_output(tpcb);
                     sbufShiftRight(buf, len);
                 }
             }
             lstate->write_paused = true;
+            tcp_output(tpcb);
             return;
         }
 
 #if SHOW_ALL_LOGS
         LOGD("PacketToConnection: after a time, written a full %d bytes", sbufGetLength(buf));
 #endif
-        err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), sbufGetLength(buf), TCP_WRITE_FLAG_COPY);
+        err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), sbufGetLength(buf), 0);
 
         if (error_code != ERR_OK)
         {
-
             lstate->write_paused = true;
+            tcp_output(tpcb);
             return;
         }
 
-        bufferqueuePop(lstate->data_queue); // pop to remove from queue
-        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(lstate->line)), buf);
+        bufferqueuePopFront(&lstate->pause_queue); // pop to remove from queue
     }
     /*
       lwip says:
@@ -136,4 +136,57 @@ void ptcFlushWriteQueue(ptc_lstate_t *lstate)
     */
     tcp_output(tpcb);
     lstate->write_paused = false;
+}
+
+err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len)
+{
+    // if(UNLIKELY(arg == NULL)){
+    //     return ERR_OK;
+    // }
+    discard len;
+
+    ptc_lstate_t *lstate = (ptc_lstate_t *) arg;
+
+    if (lstate == NULL || tpcb == NULL)
+    {
+        // is not valid, this should not be called AFAIK
+        assert(false);
+        return ERR_OK;
+    }
+    assert(lineIsAlive(lstate->line));
+
+    if (UNLIKELY(! lstate->tcp_pcb))
+    {
+        // connection is closed
+        return ERR_OK;
+    }
+    wid_t wid = getWID();
+
+    while (len > 0)
+    {
+        sbuf_ack_t *b_ack = (sbuf_ack_t *) sbuf_ack_queue_t_front(&lstate->ack_queue);
+        u16_t       cost  = min(b_ack->total - b_ack->written, len);
+
+        b_ack->written += cost;
+        assert(len >= cost);
+        len -= cost;
+
+        if (b_ack->total == b_ack->written)
+        {
+            bufferpoolReuseBuffer(getWorkerBufferPool(wid), b_ack->buf);
+            sbuf_ack_queue_t_pop_front(&lstate->ack_queue);
+        }
+    }
+
+    if (lstate->write_paused)
+    {
+
+        ptcFlushWriteQueue(lstate);
+        if (! lstate->write_paused)
+        {
+            tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
+        }
+    }
+
+    return ERR_OK;
 }

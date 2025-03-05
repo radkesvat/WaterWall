@@ -44,6 +44,8 @@ tunnel_t *ptcTunnelCreate(node_t *node)
 
     initTcpIpStack();
 
+    LWIP_MEMPOOL_INIT(RX_POOL);
+
     // GSTATE.lwip_process_v4_hook = ptcHookV4;
 
     // char *address = NULL;

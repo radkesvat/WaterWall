@@ -4,11 +4,14 @@
 
 void ptcLinestateInitialize(ptc_lstate_t *ls, wid_t wid, tunnel_t *t, line_t *l, void *pcb)
 {
+    discard wid;
+
     ls->messages = 0;
     // this 1 lock will be freed when messages are 0 and line is destroyed
     lineLock(l);
 
-    ls->data_queue = bufferqueueCreate(wid);
+    ls->pause_queue = bufferqueueCreate(8);
+    ls->ack_queue   = sbuf_ack_queue_t_with_capacity(8);
 
     ls->tunnel  = t;
     ls->line    = l;
@@ -24,12 +27,40 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
     // dont call this before line is destroyed
     assert(! lineIsAlive(ls->line));
 
+    wid_t wid = lineGetWID(ls->line);
+
     if (ls->timer)
     {
         weventSetUserData(ls->timer, NULL);
         wtimerDelete(ls->timer);
     }
-    bufferqueueDestory(ls->data_queue);
+
+    while (bufferqueueLen(&ls->pause_queue) > 0)
+    {
+        sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
+
+        c_foreach(i, sbuf_ack_queue_t, ls->ack_queue)
+        {
+            if ((*i.ref).buf == buf)
+            {
+                // lazy remove from ack queue
+                (*i.ref).buf = NULL;
+            }
+        }
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+    }
+    
+    bufferqueueDestory(&ls->pause_queue);
+
+    c_foreach(i, sbuf_ack_queue_t, ls->ack_queue)
+    {
+        if ((*i.ref).buf != NULL)
+        {
+            bufferpoolReuseBuffer(getWorkerBufferPool(wid), (*i.ref).buf);
+        }
+    }
+
+    sbuf_ack_queue_t_drop(&ls->ack_queue);
 
 #ifdef DEBUG
     LOCK_TCPIP_CORE();

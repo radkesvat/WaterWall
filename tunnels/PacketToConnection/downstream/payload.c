@@ -2,50 +2,50 @@
 
 #include "loggers/network_logger.h"
 
-static void retryTcpWriteTimerCb(wtimer_t *timer)
-{
-    ptc_lstate_t *lstate = weventGetUserdata(timer);
-    assert(lineIsAlive(lstate->line));
-    if (lstate == NULL)
-    {
-        // timer is not valid, this should not be called AFAIK
-        assert(false);
-        return;
-    }
+// static void retryTcpWriteTimerCb(wtimer_t *timer)
+// {
+//     ptc_lstate_t *lstate = weventGetUserdata(timer);
+//     assert(lineIsAlive(lstate->line));
+//     if (lstate == NULL)
+//     {
+//         // timer is not valid, this should not be called AFAIK
+//         assert(false);
+//         return;
+//     }
 
-    assert(lstate->write_paused);
-    LOCK_TCPIP_CORE();
+//     assert(lstate->write_paused);
+//     LOCK_TCPIP_CORE();
 
-    if (! lstate->tcp_pcb)
-    {
-        // connection is closed
-        UNLOCK_TCPIP_CORE();
-        lstate->timer = NULL;
-        weventSetUserData(timer, NULL);
-        wtimerDelete(timer);
-        return;
-    }
+//     if (! lstate->tcp_pcb)
+//     {
+//         // connection is closed
+//         UNLOCK_TCPIP_CORE();
+//         lstate->timer = NULL;
+//         weventSetUserData(timer, NULL);
+//         wtimerDelete(timer);
+//         return;
+//     }
 
-    ptcFlushWriteQueue(lstate);
+//     ptcFlushWriteQueue(lstate);
 
-    if (lstate->write_paused)
-    {
-        // see you soon
-        wtimerReset(timer, kTcpWriteRetryTime);
-    }
-    else
-    {
-        // bye bye
-        lstate->timer = NULL;
-        weventSetUserData(timer, NULL);
-        wtimerDelete(timer);
+//     if (lstate->write_paused)
+//     {
+//         // see you soon
+//         wtimerReset(timer, kTcpWriteRetryTime);
+//     }
+//     else
+//     {
+//         // bye bye
+//         lstate->timer = NULL;
+//         weventSetUserData(timer, NULL);
+//         wtimerDelete(timer);
 
-        tunnel_t *t = lstate->tunnel;
-        line_t   *l = lstate->line;
-        tunnelNextUpStreamResume(t, l);
-    }
-    UNLOCK_TCPIP_CORE();
-}
+//         tunnel_t *t = lstate->tunnel;
+//         line_t   *l = lstate->line;
+//         tunnelNextUpStreamResume(t, l);
+//     }
+//     // UNLOCK_TCPIP_CORE();
+// }
 
 void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -64,17 +64,18 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 #if SHOW_ALL_LOGS
     printDebug("PacketToConnection: received %d bytes\n", sbufGetLength(buf));
-#endif    
-
+#endif
 
     if (lstate->is_tcp)
     {
         struct tcp_pcb *tpcb = lstate->tcp_pcb;
 
+        sbuf_ack_queue_t_push_back(&lstate->ack_queue, ((sbuf_ack_t){buf, 0, sbufGetLength(buf)}));
+        
         if (lstate->write_paused)
         {
             tunnelNextUpStreamPause(t, l);
-            bufferqueuePush(lstate->data_queue, buf);
+            bufferqueuePush(&lstate->pause_queue, buf);
             goto return_unlockifneeded;
         }
         int diff = tcp_sndbuf(tpcb) - sbufGetLength(buf);
@@ -89,9 +90,9 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
             if (len > 0)
             {
-                err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), len, TCP_WRITE_FLAG_COPY);
+                err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), len, 0);
                 if (error_code == ERR_OK)
-                {
+                {                    
                     sbufShiftRight(buf, len);
                     tcp_output(tpcb);
                 }
@@ -100,14 +101,18 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         pause:
             lstate->write_paused = true;
             tunnelNextUpStreamPause(t, l);
-            bufferqueuePush(lstate->data_queue, buf);
-            assert(lstate->timer == NULL);
-            lstate->timer = wtimerAdd(getWorkerLoop(wid), retryTcpWriteTimerCb, kTcpWriteRetryTime, 0);
-            weventSetUserData(lstate->timer, lstate);
+            bufferqueuePush(&lstate->pause_queue, buf);
+            // assert(lstate->timer == NULL);
+            // lstate->timer = wtimerAdd(getWorkerLoop(wid), retryTcpWriteTimerCb, kTcpWriteRetryTime, 0);
+            // weventSetUserData(lstate->timer, lstate);
             goto return_unlockifneeded;
         }
-        err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), sbufGetLength(buf), TCP_WRITE_FLAG_COPY);
-        if (error_code != ERR_OK)
+        err_t error_code = tcp_write(tpcb, sbufGetMutablePtr(buf), sbufGetLength(buf), 0);
+        if (error_code == ERR_OK)
+        {
+            //nothing
+        }
+        else
         {
             goto pause;
         }
@@ -118,7 +123,6 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
            * calling tcp_write().
         */
         tcp_output(tpcb);
-        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
     }
     else
     {

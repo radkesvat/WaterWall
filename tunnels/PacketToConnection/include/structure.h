@@ -4,7 +4,6 @@
 
 #include "lwip/priv/tcp_priv.h"
 
-
 enum
 {
     kTcpWriteRetryTime = 75
@@ -12,12 +11,21 @@ enum
 
 #define SHOW_ALL_LOGS 0
 
-
 #define i_type vec_ports_t // NOLINT
 #define i_key  uint16_t    // NOLINT
 #define i_use_cmp
 #include "stc/vec.h"
 
+typedef struct sbuf_ack_s
+{
+    sbuf_t  *buf;
+    uint32_t written;
+    uint32_t total;
+} sbuf_ack_t;
+
+#define i_type sbuf_ack_queue_t
+#define i_key  sbuf_ack_t
+#include "stc/deque.h"
 
 typedef struct interface_route_context_s
 {
@@ -56,21 +64,28 @@ typedef struct ptc_lstate_s
     wtimer_t *timer; // this is used when tcpip stack cannot accept the data, we should query it again
 
     // These fields are used internally for the queue implementation for TCP
-    buffer_queue_t *data_queue;
+    buffer_queue_t   pause_queue;
+    sbuf_ack_queue_t ack_queue;
 
     atomic_ulong messages;
 
     uint32_t read_paused_len;
-    
+
     bool is_tcp : 1;
     bool write_paused : 1;
     bool read_paused : 1;
     bool established : 1; // this flag is set when the connection is established (est recevied from upstream)
     bool init_sent : 1;
 
-
 } ptc_lstate_t;
 
+typedef struct my_custom_pbuf
+{
+    struct pbuf_custom p;
+    sbuf_t            *sbuf;
+} my_custom_pbuf_t;
+
+LWIP_MEMPOOL_PROTOTYPE(RX_POOL);
 enum
 {
     kTunnelStateSize = sizeof(ptc_tstate_t),
@@ -121,4 +136,5 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
 void updateCheckSumTcp(u16_t *_hc, const void *_orig, const void *_new, int n);
 void updateCheckSumUdp(u16_t *hc, const void *orig, const void *new, int n);
 
-void ptcFlushWriteQueue(ptc_lstate_t *lstate);
+void  ptcFlushWriteQueue(ptc_lstate_t *lstate);
+err_t ptcTcpSendCompleteCallback(void *arg, struct tcp_pcb *tpcb, u16_t len);

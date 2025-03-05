@@ -37,7 +37,8 @@ static void localThreadSendFin(worker_t *worker, void *arg_lstate, void *arg2, v
     lineUnlock(l);
 
     LOCK_TCPIP_CORE();
-    if (lstate->messages == 0)
+    // we got the lock so we can load relaxed
+    if (atomicLoadRelaxed(&lstate->messages) == 0)
     {
         ptcLinestateDestroy(lstate);
     }
@@ -62,6 +63,7 @@ void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 
     // here we have the tcpip mutex locked
     lstate->tcp_pcb->callback_arg = NULL;
+    lstate->tcp_pcb->sent         = NULL;
     lstate->tcp_pcb               = NULL;
 
     atomicInc(&lstate->messages);
@@ -264,6 +266,8 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     addresscontextSetIpPort(&l->routing_context.dest_ctx, &newpcb->local_ip, newpcb->local_port);
 
     newpcb->callback_arg = lstate;
+    newpcb->sent = ptcTcpSendCompleteCallback;
+    tcp_nagle_disable(newpcb);
 
     // Set the receive callback for the new connection.
     tcp_recv(newpcb, lwipThreadPtcTcpRecvCallback);
@@ -271,7 +275,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     tcp_err(newpcb, lwipThreadPtcTcpConnectionErrorCallback);
 
     atomicInc(&lstate->messages);
-    // i think its better to offload it right away, direct calling will hold the tcpip stack for linger time
+    // i think its better to offload it right away, direct calling will hold the tcpip stack for longer time
     sendWorkerMessageForceQueue(target_wid, localThreadPtcAcceptCallBack, lstate, NULL, NULL);
 
     // bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoad(&lstate->messages) == 0);
