@@ -212,7 +212,7 @@ static bool resetIptables(bool safe_mode)
 
 static void exitHook(void *userdata, int _)
 {
-    discard (userdata);
+    discard(userdata);
     discard _;
     if (state->iptables_used)
     {
@@ -223,13 +223,10 @@ static void exitHook(void *userdata, int _)
 static inline bool needsV4SocketStrategy(const ip6_addr_t addr)
 {
     uint16_t segments[8];
-    memoryCopy(segments,addr.addr, sizeof(segments));
-    return (segments[0] == 0 &&
-            segments[1] == 0 &&
-            segments[2] == 0 &&
-            segments[3] == 0 &&
-            segments[4] == 0 &&
-            segments[5] == 0xFFFF);}
+    memoryCopy(segments, addr.addr, sizeof(segments));
+    return (segments[0] == 0 && segments[1] == 0 && segments[2] == 0 && segments[3] == 0 && segments[4] == 0 &&
+            segments[5] == 0xFFFF);
+}
 
 static void parseWhiteListOption(socket_filter_option_t *option)
 {
@@ -249,9 +246,9 @@ static void parseWhiteListOption(socket_filter_option_t *option)
     option->white_list_parsed        = memoryAllocate(sizeof(option->white_list_parsed[0]) * len);
     for (unsigned int i = 0; i < len; i++)
     {
-        cur              = option->white_list_raddr[i];
-        int parse_result = parseIPWithSubnetMask(cur, &(option->white_list_parsed[i].ip),
-                                                 &(option->white_list_parsed[i].mask));
+        cur = option->white_list_raddr[i];
+        int parse_result =
+            parseIPWithSubnetMask(cur, &(option->white_list_parsed[i].ip), &(option->white_list_parsed[i].mask));
 
         if (parse_result == -1)
         {
@@ -520,9 +517,14 @@ static void onAcceptTcpMultiPort(wio_t *io)
 {
 #ifdef OS_UNIX
     ip_addr_t paddr;
-    sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
+    if (! sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr))
+    {
+         LOGE("SocketManger: address parse failure");
+        wioClose(io);
+        return;
+    }
 
-    bool          use_v4_strategy = paddr.type == IPADDR_TYPE_V6? needsV4SocketStrategy(paddr.u_addr.ip6) : false;
+    bool          use_v4_strategy = paddr.type == IPADDR_TYPE_V6 ? needsV4SocketStrategy(paddr.u_addr.ip6) : false;
     unsigned char pbuf[28]        = {0};
     socklen_t     size            = use_v4_strategy ? 16 : 24;
 
@@ -729,7 +731,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     ip_addr_t paddr;
     sockaddrToIpAddr(wioGetPeerAddrU(pl.sock->io), &paddr);
 
-    uint16_t    local_port = pl.real_localport;
+    uint16_t local_port = pl.real_localport;
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
@@ -814,14 +816,11 @@ static void distributeUdpPayload(const udp_payload_t pl)
 static void onRecvFrom(wio_t *io, sbuf_t *buf)
 {
     udpsock_t *socket     = weventGetUserdata(io);
-    uint16_t   local_port = sockaddrPort( wioGetLocaladdrU(io));
+    uint16_t   local_port = sockaddrPort(wioGetLocaladdrU(io));
     wid_t      target_wid = (wid_t) local_port % getWorkersCount();
 
-    udp_payload_t item = (udp_payload_t){.sock           = socket,
-                                         .buf            = buf,
-                                         .wid            = target_wid,
-                                         .peer_addr      =  *wioGetPeerAddrU(io),
-                                         .real_localport = local_port};
+    udp_payload_t item = (udp_payload_t){
+        .sock = socket, .buf = buf, .wid = target_wid, .peer_addr = *wioGetPeerAddrU(io), .real_localport = local_port};
 
     distributeUdpPayload(item);
 }
@@ -898,7 +897,7 @@ static void writeUdpThisLoop(wevent_t *ev)
 {
     udp_payload_t *upl    = weventGetUserdata(ev);
     int            nwrite = wioWrite(upl->sock->io, upl->buf);
-    discard nwrite;
+    discard        nwrite;
     udppayloadDestroy(upl);
 }
 
@@ -906,7 +905,7 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
 {
     if (wid_from == state->wid)
     {
-        int nwrite = wioWrite(socket_io->io, buf);
+        int     nwrite = wioWrite(socket_io->io, buf);
         discard nwrite;
 
         return;
