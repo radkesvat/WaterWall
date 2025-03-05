@@ -322,7 +322,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     // Prepare the ifreq structure to configure the TUN device
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, name, IFNAMSIZ);
+    strncpy(ifr.ifr_name, name, IFNAMSIZ - 1);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
     // Set the interface flags (IFF_UP to bring the interface up)
     ifr.ifr_flags = IFF_UP;
