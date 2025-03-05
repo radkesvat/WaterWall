@@ -62,11 +62,11 @@ static void destroyWorkerMessage(master_pool_t *pool, master_pool_item_t *item, 
 
 static void initializeMasterPools(void)
 {
-    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * ((0) + GSTATE.ram_profile));
-    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
-    GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * ((8) + GSTATE.ram_profile));
-    GSTATE.masterpool_messages             = masterpoolCreateWithCapacity(2 * ((16) + GSTATE.ram_profile));
+    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
+    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
+    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
+    GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
+    GSTATE.masterpool_messages             = masterpoolCreateWithCapacity((16) + RAM_PROFILE);
 
     masterpoolInstallCallBacks(GSTATE.masterpool_messages, allocWorkerMessage, destroyWorkerMessage);
 }

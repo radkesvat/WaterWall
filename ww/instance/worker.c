@@ -57,13 +57,13 @@ void workerInit(worker_t *worker, wid_t wid)
     *worker = (worker_t){.wid = wid};
 
     worker->context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_context_pools, sizeof(context_t), (16) + GSTATE.ram_profile);
+        GSTATE.masterpool_context_pools, sizeof(context_t),RAM_PROFILE);
 
     worker->pipetunnel_msg_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_pipetunnel_msg_pools, (uint32_t) pipeTunnelGetMesageSize(), (8) + GSTATE.ram_profile);
+        GSTATE.masterpool_pipetunnel_msg_pools, (uint32_t) pipeTunnelGetMesageSize(),RAM_PROFILE);
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                           (0) + GSTATE.ram_profile, PROPER_LARGE_BUFFER_SIZE(GSTATE.ram_profile), SMALL_BUFFER_SIZE);
+                                            RAM_PROFILE, PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE), SMALL_BUFFER_SIZE);
 
     // note that loop depeneds on worker->buffer_pool
     worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, wid);
