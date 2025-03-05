@@ -30,7 +30,7 @@
         a += b; \
     }
 
-static void wwMD5Transform(unsigned int state[4],unsigned char block[64]);
+static void wwMD5Transform(unsigned int state[4],unsigned char *block);
 static void wwMD5Encode(unsigned char *output,unsigned int *input,unsigned int len);
 static void wwMD5Decode(unsigned int *output,unsigned char *input,unsigned int len);
 
@@ -106,7 +106,8 @@ void wwMD5Decode(unsigned int *output,unsigned char *input,unsigned int len) {
     }
 }
 
-void wwMD5Transform(unsigned int state[4],unsigned char block[64]) {
+//,unsigned char block[64]
+void wwMD5Transform(unsigned int state[4],unsigned char *block) {
     unsigned int a = state[0];
     unsigned int b = state[1];
     unsigned int c = state[2];

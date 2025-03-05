@@ -21,7 +21,7 @@ typedef struct {
 
 WW_EXPORT void wwSHA1Transform(
     uint32_t state[5],
-    const unsigned char buffer[64]
+    const unsigned char* buffer
     );
 
 WW_EXPORT void wwSHA1Init(
