@@ -8,8 +8,7 @@
             "installDir": "${sourceDir}/install/${presetName}",
             "cmakeExecutable": "cmake",
             "cacheVariables": {
-                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache",
-                "CMAKE_BUILD_TYPE": "Release"
+                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache"
             }
         },
         {
@@ -212,6 +211,7 @@
         {
             "name": "host-linux",
             "hidden": true,
+            "configuration": "Release",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
@@ -221,6 +221,7 @@
         {
             "name": "host-macos",
             "hidden": true,
+            "configuration": "Release",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
@@ -230,6 +231,7 @@
         {
             "name": "host-windows",
             "hidden": true,
+            "configuration": "Release",
             "condition": {
                 "type": "equals",
                 "lhs": "${hostSystemName}",
@@ -239,6 +241,7 @@
         {
             "name": "host-not-windows",
             "hidden": true,
+            "configuration": "Release",
             "condition": {
                 "type": "notEquals",
                 "lhs": "${hostSystemName}",
