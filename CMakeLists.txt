@@ -48,8 +48,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 cmake_policy(SET CMP0069 NEW) 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 include(CheckIPOSupported)
-check_ipo_supported()
+check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
 
+if(ipo_supported)
+    message(STATUS "IPO is supported")
+    # set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+else()
+    message(WARNING "IPO is not supported: ${ipo_output}")
+    # set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
+endif()
 
 
 # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-instr-generate")
@@ -584,10 +591,12 @@ endif()
 
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
-# Set IPO only for the Release configuration on your target:
-set_target_properties(Waterwall PROPERTIES 
-  INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
-)
+# Set IPO only for the Release configuration:
+if(ipo_supported)
+  set_target_properties(Waterwall PROPERTIES 
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+  )
+endif()
 
 # For Clang, add the -flto compile option only in Release:
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
