@@ -111,49 +111,7 @@ static void tunWindowsStartup(void)
     GSTATE.wintun_dll_handle = hModule;
 }
 
-/**
- * Prints details about a network packet for debugging
- * @param Packet Raw packet data
- * @param PacketSize Size of packet in bytes
- */
-static void printPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
-{
-    if (PacketSize < 20)
-    {
-        LOGI("TunDevice: Packet received without IP header");
-        return;
-    }
-    BYTE  IpVersion = Packet[0] >> 4, Proto;
-    WCHAR Src[46], Dst[46];
-    if (IpVersion == 4)
-    {
-        RtlIpv4AddressToStringW((struct in_addr *) &Packet[12], Src);
-        RtlIpv4AddressToStringW((struct in_addr *) &Packet[16], Dst);
-        Proto = Packet[9];
-        Packet += 20, PacketSize -= 20;
-    }
-    else if (IpVersion == 6 && PacketSize < 40)
-    {
-        LOGI("TunDevice: Invalid packet size for IPv6 header");
-        return;
-    }
-    else if (IpVersion == 6)
-    {
-        RtlIpv6AddressToStringW((struct in6_addr *) &Packet[8], Src);
-        RtlIpv6AddressToStringW((struct in6_addr *) &Packet[24], Dst);
-        Proto = Packet[6];
-        Packet += 40, PacketSize -= 40;
-    }
-    else
-    {
-        LOGI("TunDevice: Non-IP packet received");
-        return;
-    }
-    if (Proto == 1 && PacketSize >= 8 && Packet[0] == 0)
-        LOGI("TunDevice: IPv%d ICMP echo reply from %s to %s", IpVersion, Src, Dst);
-    else
-        LOGI("TunDevice: IPv%d protocol 0x%x packet from %s to %s", IpVersion, Proto, Src, Dst);
-}
+
 
 /**
  * Event message structure for TUN device communication
@@ -161,9 +119,9 @@ static void printPacket(_In_ const BYTE *Packet, _In_ DWORD PacketSize)
 struct msg_event
 {
     tun_device_t *tdev;
-    sbuf_t       *buf;
+    sbuf_t       *bufs[kMaxReadQueueSize];
+    uint8_t       count;
 };
-
 
 // Allocate memory for message pool handle
 static pool_item_t *allocTunMsgPoolHandle(master_pool_t *pool, void *userdata)
@@ -190,7 +148,11 @@ static void localThreadEventReceived(wevent_t *ev)
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-    msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, wid);
+    for (unsigned int i = 0; i < msg->count; i++)
+    {
+        msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->bufs[i], wid);
+    }
+
     masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
 }
 
@@ -200,45 +162,66 @@ static void localThreadEventReceived(wevent_t *ev)
  * @param target_wid Target thread ID
  * @param buf Buffer containing packet data
  */
-static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t *buf)
+static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_t **buf,unsigned int queued_count)
 {
-    struct msg_event *msg;
+    struct msg_event* msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
-
-    wevent_t ev;
-    memorySet(&ev, 0, sizeof(ev));
-    ev.loop = getWorkerLoop(target_wid);
-    ev.cb   = localThreadEventReceived;
-    weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(target_wid), &ev);
+    msg->tdev = tdev;
+    msg->count = queued_count;
+    for (unsigned int i = 0; i < queued_count; i++)
+    {
+        msg->bufs[i] = buf[i];
+    }
+   
+        wevent_t ev;
+        memorySet(&ev, 0, sizeof(ev));
+        ev.loop = getWorkerLoop(target_wid);
+        ev.cb   = localThreadEventReceived;
+        weventSetUserData(&ev, msg);
+        wloopPostEvent(getWorkerLoop(target_wid), &ev);    
+   
 }
+// {
+//     struct msg_event *msg;
+//     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
+
+//     *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+
+//     wevent_t ev;
+//     memorySet(&ev, 0, sizeof(ev));
+//     ev.loop = getWorkerLoop(target_wid);
+//     ev.cb   = localThreadEventReceived;
+//     weventSetUserData(&ev, msg);
+//     wloopPostEvent(getWorkerLoop(target_wid), &ev);
+// }
 
 /**
  * Reader thread routine - reads packets from TUN device
  */
 static WTHREAD_ROUTINE(routineReadFromTun)
 {
-    tun_device_t         *tdev           = userdata;
-    WINTUN_SESSION_HANDLE Session        = tdev->session_handle;
-    HANDLE                WaitHandles[]  = {WintunGetReadWaitEvent(Session), tdev->quit_event};
-    wid_t                 distribute_wid = 0;
-    sbuf_t               *buf;
-    ssize_t               nread;
+    tun_device_t             *tdev              = userdata;
+    WINTUN_SESSION_HANDLE     Session           = tdev->session_handle;
+    HANDLE                    WaitHandles[]     = {WintunGetReadWaitEvent(Session), tdev->quit_event};
+    wid_t                     distribute_wid    = 0;
+    sbuf_t                   *buf[kMaxReadQueueSize];
+    uint8_t                   queued_count = 0;
+    ssize_t                   nread;
 
     while (atomicLoadRelaxed(&(tdev->running)))
     {
-        buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        assert(sbufGetRightCapacity(buf) >= kReadPacketSize);
+        buf[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
+        assert(sbufGetRightCapacity(buf[queued_count]) >= kReadPacketSize);
 
-        DWORD PacketSize;
-        BYTE *Packet = WintunReceivePacket(Session, &PacketSize);
-        if (Packet)
+        DWORD packet_size;
+        BYTE *packet = WintunReceivePacket(Session, &packet_size);
+        if (packet)
         {
-            sbufSetLength(buf, PacketSize);
-            memoryCopy(sbufGetMutablePtr(buf), Packet, PacketSize);
-            WintunReleaseReceivePacket(Session, Packet);
+            sbufSetLength(buf[queued_count], packet_size);
+            memoryCopyLarge(sbufGetMutablePtr(buf[queued_count]), packet, packet_size);
+
+            WintunReleaseReceivePacket(Session, packet);
 
             if (TUN_LOG_EVERYTHING)
             {
@@ -246,28 +229,47 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 // printPacket(Packet, PacketSize);
             }
 
-            distributePacketPayload(tdev, distribute_wid++, buf);
-
-            if (distribute_wid >= getWorkersCount())
+            if (queued_count < kMaxReadQueueSize - 1)
             {
-                distribute_wid = 0;
+                queued_count++;
+            }
+            else
+            {
+                distributePacketPayloads(tdev, distribute_wid++, &buf[0], queued_count);
+                if (distribute_wid >= getWorkersCount())
+                {
+                    distribute_wid = 0;
+                }
+                queued_count = 0;
             }
         }
         else
         {
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
 
-            DWORD LastError = GetLastError();
-            switch (LastError)
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf[queued_count]);
+
+            DWORD last_error = GetLastError();
+            switch (last_error)
             {
             case ERROR_NO_MORE_ITEMS:
+                if(queued_count > 0)
+                {
+                    distributePacketPayloads(tdev, distribute_wid++, &buf[0], queued_count);
+                    if (distribute_wid >= getWorkersCount())
+                    {
+                        distribute_wid = 0;
+                    }
+                    queued_count = 0;
+                }
                 if (WaitForMultipleObjects(_countof(WaitHandles), WaitHandles, FALSE, INFINITE) == WAIT_OBJECT_0)
+                {
                     continue;
+                }
                 return ERROR_SUCCESS;
             default:
-                LOGE("TunDevice: ReadThread: Packet read failed: error %lu", LastError);
+                LOGE("TunDevice: ReadThread: Packet read failed: error %lu", last_error);
                 LOGE("TunDevice: ReadThread: Terminating");
-                return LastError;
+                return last_error;
             }
         }
     }
@@ -437,7 +439,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     WintunGetAdapterLUID(tdev->adapter_handle, &AddressRow->InterfaceLuid);
     AddressRow->Address.Ipv4.sin_family           = AF_INET;
     AddressRow->Address.Ipv4.sin_addr.S_un.S_addr = ip_binary;
-    AddressRow->OnLinkPrefixLength                = (uint8_t)subnet;
+    AddressRow->OnLinkPrefixLength                = (uint8_t) subnet;
     AddressRow->DadState                          = IpDadStatePreferred;
     DWORD LastError                               = CreateUnicastIpAddressEntry(AddressRow);
     if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
@@ -521,7 +523,7 @@ static void exitHandle(void *userdata, int signum)
 {
     // Sleep(2200);
     // LOGW("called close handle");
-    discard signum;
+    discard       signum;
     tun_device_t *tdev = userdata;
     if (tdev->up)
     {
@@ -562,7 +564,7 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
 tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb)
 {
     discard offload;
-    DWORD LastError;
+    DWORD   LastError;
 
     if (! GSTATE.flag_tundev_windows_initialized)
     {
@@ -608,21 +610,21 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     LOGD("TunDevice: Wintun loaded successfully");
 
-    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                                   GSTATE.masterpool_buffer_pools_small, (0) + GSTATE.ram_profile,
+    buffer_pool_t *reader_bpool =
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
 
-                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
-    );
+        );
 
-    buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                                   GSTATE.masterpool_buffer_pools_small, (0) + GSTATE.ram_profile,
+    buffer_pool_t *writer_bpool =
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
 
-                                                   bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                                                   bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
-    );
+        );
 
     bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
@@ -660,13 +662,14 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     MultiByteToWideChar(CP_UTF8, 0, name, -1, (tdev->name), wideSize);
 
-    GUID                  example_guid = {0xDEADC0DE, 0xFADE, 0xC01D , {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66}};
-    
+    GUID example_guid = {0xDEADC0DE, 0xFADE, 0xC01D, {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66}};
+
     LOGD("TunDevice: Creating adapter with GUID: %08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", example_guid.Data1,
          example_guid.Data2, example_guid.Data3, example_guid.Data4[0], example_guid.Data4[1], example_guid.Data4[2],
-         example_guid.Data4[3], example_guid.Data4[4], example_guid.Data4[5], example_guid.Data4[6], example_guid.Data4[7]);
+         example_guid.Data4[3], example_guid.Data4[4], example_guid.Data4[5], example_guid.Data4[6],
+         example_guid.Data4[7]);
 
-    WINTUN_ADAPTER_HANDLE adapter      = WintunCreateAdapter(tdev->name, L"Waterwall Adapter", &example_guid);
+    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(tdev->name, L"Waterwall Adapter", &example_guid);
     if (! adapter)
     {
         LastError = GetLastError();
