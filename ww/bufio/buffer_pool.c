@@ -68,7 +68,7 @@ static master_pool_item_t *createLargeBufHandle(master_pool_t *pool, void *userd
     discard pool;
 
     buffer_pool_t *bpool = userdata;
-    return sbufNewWithPadding(bpool->large_buffers_size, bpool->large_buffer_left_padding);
+    return sbufCreateWithPadding(bpool->large_buffers_size, bpool->large_buffer_left_padding);
 }
 
 /**
@@ -81,7 +81,7 @@ static master_pool_item_t *createSmallBufHandle(master_pool_t *pool, void *userd
 {
     discard pool;
     buffer_pool_t *bpool = userdata;
-    return sbufNewWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
+    return sbufCreateWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
 }
 
 /**
@@ -206,7 +206,7 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return sbufNewWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding);
+    return sbufCreateWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -231,7 +231,7 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
-    return sbufNewWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding);
+    return sbufCreateWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding);
 #endif
 #if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
@@ -255,6 +255,11 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
  */
 void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 {
+
+    if(UNLIKELY(b->is_temporary))
+    {
+        return;
+    }
 
 #if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
     sbufDestroy(b);

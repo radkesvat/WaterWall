@@ -12,6 +12,10 @@
  */
 void sbufDestroy(sbuf_t *b)
 {
+    if(UNLIKELY(b->is_temporary))
+    {
+        return;
+    }
     memoryFree(b);
 }
 
@@ -21,7 +25,7 @@ void sbufDestroy(sbuf_t *b)
  * @param pad_left The left padding of the buffer.
  * @return A pointer to the created shift buffer.
  */
-sbuf_t *sbufNewWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
     if (minimum_capacity != 0 && minimum_capacity % kCpuLineCacheSize != 0)
     {
@@ -48,9 +52,9 @@ sbuf_t *sbufNewWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
  * @param minimum_capacity The minimum capacity of the buffer.
  * @return A pointer to the created shift buffer.
  */
-sbuf_t *sbufNew(uint32_t minimum_capacity)
+sbuf_t *sbufCreate(uint32_t minimum_capacity)
 {
-    return sbufNewWithPadding(minimum_capacity, 0);
+    return sbufCreateWithPadding(minimum_capacity, 0);
 }
 
 /**
@@ -60,7 +64,7 @@ sbuf_t *sbufNew(uint32_t minimum_capacity)
  */
 sbuf_t *sbufDuplicate(sbuf_t *b)
 {
-    sbuf_t *newbuf = sbufNewWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
+    sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
     sbufSetLength(newbuf, sbufGetLength(b));
     memoryCopyLarge(sbufGetMutablePtr(newbuf), sbufGetRawPtr(b), sbufGetLength(b));
 
@@ -115,7 +119,7 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_
  */
 sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
 {
-    sbuf_t *newbuf = sbufNewWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
+    sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
     sbufMoveTo(newbuf, b, bytes);
     return newbuf;
 }

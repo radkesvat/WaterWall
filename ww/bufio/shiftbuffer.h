@@ -14,16 +14,29 @@
 
 */
 
+/*
+    the content of this struct is shared with lwip addition parts of pbuf see LWIP_PBUF_CUSTOM_DATA in (pbuf.h and our lwipopts.h)
+    
+    if size of this struct is changed, LWIP_PBUF_CUSTOM_DATA should be changed accordingly
+
+    size is assumed as 16 bytes
+*/
+
+
+
 struct sbuf_s
 {
     uint32_t                     curpos;
     uint32_t                     len;
     uint32_t                     capacity;
     uint16_t                     l_pad;
+    bool                         is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
     MSVC_ATTR_ALIGNED_16 uint8_t buf[] GNU_ATTR_ALIGNED_16;
 };
 
 typedef struct sbuf_s sbuf_t;
+
+static_assert(sizeof(struct sbuf_s) == 16, "sbuf_s size is not 16 bytes, see above comment");
 
 /**
  * Destroys the shift buffer and frees its memory.
@@ -37,14 +50,14 @@ void sbufDestroy(sbuf_t *b);
  * @param pad_left The left padding of the buffer.
  * @return A pointer to the created shift buffer.
  */
-sbuf_t *sbufNewWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
 
 /**
  * Creates a new shift buffer with specified minimum capacity.
  * @param minimum_capacity The minimum capacity of the buffer.
  * @return A pointer to the created shift buffer.
  */
-sbuf_t *sbufNew(uint32_t minimum_capacity);
+sbuf_t *sbufCreate(uint32_t minimum_capacity);
 
 /**
  * Concatenates two shift buffers.
@@ -261,7 +274,7 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
 {
     if (sbufGetRightCapacity(b) < bytes)
     {
-        sbuf_t *bigger_buf = sbufNewWithPadding(sbufGetLength(b) + bytes, b->l_pad);
+        sbuf_t *bigger_buf = sbufCreateWithPadding(sbufGetLength(b) + bytes, b->l_pad);
         sbufSetLength(bigger_buf, sbufGetLength(b));
         sbufWriteBuf(bigger_buf, b, sbufGetLength(b));
         sbufDestroy(b);
@@ -436,6 +449,9 @@ static inline void sbufWriteUI16(sbuf_t *const b, const uint16_t data)
 {
     *(uint16_t *) sbufGetMutablePtr(b) = data;
 }
+
+
+
 
 #ifdef DEBUG
 
