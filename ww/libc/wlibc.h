@@ -5,6 +5,7 @@
 #include "wdef.h"
 
 #include "watomic.h"
+#include "wmutex.h"
 #include "wendian.h"
 #include "werr.h"
 #include "wexport.h"
@@ -56,11 +57,12 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 #endif
 
 
-#ifndef MEM128_BUF_OPTIMIZE
-#error "MEM128_BUF_OPTIMIZE must be defined to either 0 or 1"
+#ifndef MEM128_OPTIMIZE
+#error "MEM128_OPTIMIZE must be defined to either 0 or 1"
 #endif
 
-#if MEM128_BUF_OPTIMIZE != 0 && defined(WW_AVX) && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#if MEM128_OPTIMIZE != 0 && HAVE_X86INTRIN_H && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+
 
 #include <x86intrin.h>
 static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
