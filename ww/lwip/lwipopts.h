@@ -34,6 +34,11 @@
 
 #include "../wconfig.h"
 
+// remove some duplicate definitions from lwip
+#ifdef TCP_MSS
+#undef TCP_MSS
+#endif
+
 #ifdef LWIP_OPTTEST_FILE
 #include "lwipopts_test.h"
 #else /* LWIP_OPTTEST_FILE */
