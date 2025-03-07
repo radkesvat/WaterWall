@@ -52,10 +52,11 @@ check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
 
 if(ipo_supported)
     message(STATUS "IPO is supported")
-    # set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+
 else()
     message(WARNING "IPO is not supported: ${ipo_output}")
-    # set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE FALSE)
 endif()
 
 
@@ -580,9 +581,12 @@ endif()
 
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
 
-target_compile_definitions(Waterwall PRIVATE 
-  $<$<CONFIG:Debug>:DEBUG=1>
-)
+# For Clang, add the -flto compile option only in Release:
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  target_compile_options(Waterwall PRIVATE
+    $<$<CONFIG:Release>:-flto>
+  )
+endif()
 
 
 if(OPENSSL_VERSION)
@@ -591,19 +595,8 @@ endif()
 
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
-# Set IPO only for the Release configuration:
-if(ipo_supported)
-  set_target_properties(Waterwall PROPERTIES 
-    INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
-  )
-endif()
 
-# For Clang, add the -flto compile option only in Release:
-if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  target_compile_options(Waterwall PRIVATE
-    $<$<CONFIG:Release>:-flto>
-  )
-endif()
+
 
 # set output path to build/bin/
 
