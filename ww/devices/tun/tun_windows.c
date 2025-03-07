@@ -111,8 +111,6 @@ static void tunWindowsStartup(void)
     GSTATE.wintun_dll_handle = hModule;
 }
 
-
-
 /**
  * Event message structure for TUN device communication
  */
@@ -162,25 +160,24 @@ static void localThreadEventReceived(wevent_t *ev)
  * @param target_wid Target thread ID
  * @param buf Buffer containing packet data
  */
-static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_t **buf,unsigned int queued_count)
+static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_t **buf, unsigned int queued_count)
 {
-    struct msg_event* msg;
+    struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    msg->tdev = tdev;
+    msg->tdev  = tdev;
     msg->count = queued_count;
     for (unsigned int i = 0; i < queued_count; i++)
     {
         msg->bufs[i] = buf[i];
     }
-   
-        wevent_t ev;
-        memorySet(&ev, 0, sizeof(ev));
-        ev.loop = getWorkerLoop(target_wid);
-        ev.cb   = localThreadEventReceived;
-        weventSetUserData(&ev, msg);
-        wloopPostEvent(getWorkerLoop(target_wid), &ev);    
-   
+
+    wevent_t ev;
+    memorySet(&ev, 0, sizeof(ev));
+    ev.loop = getWorkerLoop(target_wid);
+    ev.cb   = localThreadEventReceived;
+    weventSetUserData(&ev, msg);
+    wloopPostEvent(getWorkerLoop(target_wid), &ev);
 }
 // {
 //     struct msg_event *msg;
@@ -201,13 +198,12 @@ static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_
  */
 static WTHREAD_ROUTINE(routineReadFromTun)
 {
-    tun_device_t             *tdev              = userdata;
-    WINTUN_SESSION_HANDLE     Session           = tdev->session_handle;
-    HANDLE                    WaitHandles[]     = {WintunGetReadWaitEvent(Session), tdev->quit_event};
-    wid_t                     distribute_wid    = 0;
-    sbuf_t                   *buf[kMaxReadQueueSize];
-    uint8_t                   queued_count = 0;
-    ssize_t                   nread;
+    tun_device_t         *tdev           = userdata;
+    WINTUN_SESSION_HANDLE Session        = tdev->session_handle;
+    HANDLE                WaitHandles[]  = {WintunGetReadWaitEvent(Session), tdev->quit_event};
+    sbuf_t               *buf[kMaxReadQueueSize];
+    uint8_t               queued_count = 0;
+    ssize_t               nread;
 
     while (atomicLoadRelaxed(&(tdev->running)))
     {
@@ -235,11 +231,8 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             }
             else
             {
-                distributePacketPayloads(tdev, distribute_wid++, &buf[0], queued_count);
-                if (distribute_wid >= getWorkersCount())
-                {
-                    distribute_wid = 0;
-                }
+                distributePacketPayloads(tdev, getNextDistributionWID(), &buf[0], queued_count);
+           
                 queued_count = 0;
             }
         }
@@ -251,15 +244,14 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             DWORD last_error = GetLastError();
             switch (last_error)
             {
+            // case ERROR_NO_MORE_ITEMS:
             case ERROR_NO_MORE_ITEMS:
-                if(queued_count > 0)
+                if (queued_count > 0)
                 {
-                    distributePacketPayloads(tdev, distribute_wid++, &buf[0], queued_count);
-                    if (distribute_wid >= getWorkersCount())
-                    {
-                        distribute_wid = 0;
-                    }
+                    distributePacketPayloads(tdev, getNextDistributionWID(), &buf[0], queued_count);
+           
                     queued_count = 0;
+                    continue;
                 }
                 if (WaitForMultipleObjects(_countof(WaitHandles), WaitHandles, FALSE, INFINITE) == WAIT_OBJECT_0)
                 {
@@ -314,7 +306,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             continue;
         }
 
-        memoryCopy(Packet, sbufGetRawPtr(buf), sbufGetLength(buf));
+        memoryCopyLarge(Packet, sbufGetRawPtr(buf), sbufGetLength(buf));
 
         WintunSendPacket(Session, Packet);
 
