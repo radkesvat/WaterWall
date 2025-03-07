@@ -12,7 +12,7 @@
  */
 void sbufDestroy(sbuf_t *b)
 {
-    if(UNLIKELY(b->is_temporary))
+    if (UNLIKELY(b->is_temporary))
     {
         return;
     }
@@ -29,7 +29,8 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
     if (minimum_capacity != 0 && minimum_capacity % kCpuLineCacheSize != 0)
     {
-        minimum_capacity = (max(kCpuLineCacheSize, minimum_capacity) + kCpuLineCacheSizeMin1) & (~kCpuLineCacheSizeMin1);
+        minimum_capacity =
+            (max(kCpuLineCacheSize, minimum_capacity) + kCpuLineCacheSizeMin1) & (~kCpuLineCacheSizeMin1);
     }
 
     uint32_t real_cap = minimum_capacity + pad_left;
@@ -39,10 +40,11 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     memorySet(b, 0x55, real_cap);
 #endif
 
-    b->len      = 0;
-    b->curpos   = pad_left;
-    b->capacity = real_cap;
-    b->l_pad    = pad_left;
+    b->is_temporary = false;
+    b->len          = 0;
+    b->curpos       = pad_left;
+    b->capacity     = real_cap;
+    b->l_pad        = pad_left;
 
     return b;
 }

@@ -14,29 +14,22 @@
 
 */
 
-/*
-    the content of this struct is shared with lwip addition parts of pbuf see LWIP_PBUF_CUSTOM_DATA in (pbuf.h and our lwipopts.h)
-    
-    if size of this struct is changed, LWIP_PBUF_CUSTOM_DATA should be changed accordingly
-
-    size is assumed as 16 bytes
-*/
-
-
 
 struct sbuf_s
 {
-    uint32_t                     curpos;
-    uint32_t                     len;
-    uint32_t                     capacity;
-    uint16_t                     l_pad;
-    bool                         is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
+    uint32_t curpos;
+    uint32_t len;
+    uint32_t capacity;
+    uint16_t l_pad;
+    bool     is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
     MSVC_ATTR_ALIGNED_16 uint8_t buf[] GNU_ATTR_ALIGNED_16;
 };
 
 typedef struct sbuf_s sbuf_t;
 
-static_assert(sizeof(struct sbuf_s) == 16, "sbuf_s size is not 16 bytes, see above comment");
+#define SIZEOF_STRUCT_SBUF (sizeof(struct sbuf_s))
+
+static_assert(SIZEOF_STRUCT_SBUF == 16, "sbuf_s size is not 16 bytes, see above comment");
 
 /**
  * Destroys the shift buffer and frees its memory.
@@ -450,8 +443,29 @@ static inline void sbufWriteUI16(sbuf_t *const b, const uint16_t data)
     *(uint16_t *) sbufGetMutablePtr(b) = data;
 }
 
-
-
+/**
+ * Creates a Temporary buffer from a pbuf, make sure that dont call sbufDestroy on this buffer accidentally
+ * @param p The pbuf to create a view from
+ * @return A pointer to the created buffer.
+ */
+// static sbuf_t *sbufCreateViewFromPbuf(struct pbuf *p)
+// {
+//     if ((p->type_internal & PBUF_TYPE_FLAG_STRUCT_DATA_CONTIGUOUS) != PBUF_TYPE_FLAG_STRUCT_DATA_CONTIGUOUS)
+//     {
+//         return NULL;
+//     }
+//     // sbuf_t *temp_buf       = (sbuf_t *) (((uint8_t *) p->payload) - SIZEOF_STRUCT_SBUF);
+//     sbuf_t *temp_buf       = (sbuf_t *) (&p->custom_data[0]);
+//     temp_buf->is_temporary = true;
+//     temp_buf->l_pad        = 0;
+//     temp_buf->curpos       = ((uintptr_t) p->payload) - ((uintptr_t) temp_buf->buf);
+//     temp_buf->len          = p->len;
+//     temp_buf->capacity     = p->len;
+//     if(p->len > 256){
+//        printError("123132");
+//     }
+//     return temp_buf;
+// }
 
 #ifdef DEBUG
 
