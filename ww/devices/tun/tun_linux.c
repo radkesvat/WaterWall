@@ -72,7 +72,6 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t
 static WTHREAD_ROUTINE(routineReadFromTun)
 {
     tun_device_t *tdev           = userdata;
-    wid_t         distribute_wid = 0;
     sbuf_t       *buf;
     int           nread;
 
@@ -109,12 +108,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
         }
 
-        distributePacketPayload(tdev, distribute_wid++, buf);
-
-        if (distribute_wid >= getWorkersCount())
-        {
-            distribute_wid = 0;
-        }
+        distributePacketPayload(tdev, getNextDistributionWID(), buf);
     }
 
     return 0;
