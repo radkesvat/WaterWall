@@ -149,7 +149,7 @@ static inline struct wloop_s *getWorkerLoop(wid_t wid)
 
 static inline wid_t getNextDistributionWID(void)
 {
-    wid_t wid = atomicLoadRelaxed(&GSTATE.distribute_wid);
+    wid_t wid = atomicAddExplicit(&GSTATE.distribute_wid, 1, memory_order_relaxed);
 
     // we dont consider lwip thread
     if (wid >= getWorkersCount() - WORKER_ADDITIONS)
@@ -157,10 +157,7 @@ static inline wid_t getNextDistributionWID(void)
         atomicStoreRelaxed(&GSTATE.distribute_wid, 0);
         wid = 0;
     }
-    else
-    {
-        atomicStoreRelaxed(&GSTATE.distribute_wid, wid + 1);
-    }
+
     return wid;
 }
 
