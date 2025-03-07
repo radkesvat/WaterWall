@@ -108,7 +108,7 @@ static void exitHandler(void)
 
 static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
 {
-    printError("SignalManager: Received windows event %d", CtrlType);
+    printError("SignalManager: Received windows event %d\n", CtrlType);
 
     switch (CtrlType)
     {
