@@ -57,18 +57,46 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     tunnel_t *t   = netif->state;
     wid_t     wid = getWID();
-    sbuf_t   *buf;
+    //
 
+    // create sbuf from pbuf and send it
+
+    // if (UNLIKELY(p->next == NULL))
+    // {
+    //     sbuf_t *temp_buf = sbufCreateViewFromPbuf(p);
+    //     if (temp_buf == NULL)
+    //     {
+    //         goto slow_path;
+    //     }
+    //     tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), wid), temp_buf);
+    // }
+// slow_path:;
+
+    sbuf_t *buf;
     if (p->tot_len <= SMALL_BUFFER_SIZE)
     {
-        buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(getWID()));
+        buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(wid));
     }
     else
     {
-        buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(getWID()));
+        assert(false); // we send packet so this should not happen
+        buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(wid));
     }
+    // printDebug("len is %d of %d \n",p->len, p->tot_len);
 
     sbufSetLength(buf, p->tot_len);
+
+    // BENCH_BEGIN(ptcNetifOutput);
+    pbufLargeCopyToPtr(p, sbufGetMutablePtr(buf));
+    // BENCH_END(ptcNetifOutput);
+
+     
+    // BENCH_BEGIN(ptcNetifOutput2);
+    // pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
+    // BENCH_END(ptcNetifOutput2);
+
+    tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), wid), buf);
+    return ERR_OK;
 
     // if (p->tot_len - p->len >= 128)
     // {
@@ -76,11 +104,10 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     // }
     // else
     // {
-    pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
+    // pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
     // }
 
     // localThreadPacketReceived(getNextDistributionWID(), localPacketReceived, t, buf, NULL);
-    tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), wid), buf);
 
     return ERR_OK;
 }
