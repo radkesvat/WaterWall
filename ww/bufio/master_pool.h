@@ -88,7 +88,7 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
     // return;
     uint32_t i = 0;
 
-    if (atomicLoadExplicit(&(pool->len), memory_order_relaxed) > 0)
+    if (atomicLoadExplicit(&(pool->len), memory_order_acquire) > 0)
     {
         mutexLock(&(pool->mutex));
         const uint32_t tmp_len  = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
@@ -96,7 +96,7 @@ static inline void masterpoolGetItems(master_pool_t *const pool, master_pool_ite
 
         if (consumed > 0)
         {
-            atomicAddExplicit(&(pool->len), -consumed, memory_order_relaxed);
+            atomicAddExplicit(&(pool->len), -consumed, memory_order_release);
             const uint32_t pbase = (tmp_len - consumed);
             for (; i < consumed; i++)
             {
@@ -128,7 +128,7 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
     // }
     // return;
 
-    if (pool->cap == (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed))
+    if (pool->cap == (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_acquire))
     {
         for (uint32_t i = 0; i < count; i++)
         {
@@ -144,7 +144,7 @@ static inline void masterpoolReuseItems(master_pool_t *const pool, master_pool_i
     const uint32_t tmp_len  = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
     const uint32_t consumed = min(pool->cap - tmp_len, count);
 
-    atomicAddExplicit(&(pool->len), consumed, memory_order_relaxed);
+    atomicAddExplicit(&(pool->len), consumed, memory_order_release);
 
     for (; i < consumed; i++)
     {
