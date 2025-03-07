@@ -8,6 +8,7 @@
 #define SECONDS_PER_HOUR   3600
 #define SECONDS_PER_DAY    86400  // 24*3600
 #define SECONDS_PER_WEEK   604800 // 7*24*3600
+#define CLOCKS_PER_MSEC    (CLOCKS_PER_SEC / 1000)
 
 #define IS_LEAP_YEAR(year) (((year) % 4 == 0 && (year) % 100 != 0) || (year) % 400 == 0)
 
@@ -192,5 +193,18 @@ static inline void getTAI64N(tai64n_t *tai64n)
 #else
 #error cannot define getTAI64N
 #endif
+
+
+
+#define BENCH_BEGIN(name) \
+    struct timespec name##_start, name##_end; \
+    clock_gettime(CLOCK_MONOTONIC, &name##_start);
+
+#define BENCH_END(name) \
+clock_gettime(CLOCK_MONOTONIC, &name##_end); \
+    long name##_time = (name##_end.tv_sec - name##_start.tv_sec) * 1000000000L + \
+                       (name##_end.tv_nsec - name##_start.tv_nsec); \
+    printDebug("%s took %ld nanoseconds\n", #name, name##_time);
+
 
 #endif // WW_TIME_H_
