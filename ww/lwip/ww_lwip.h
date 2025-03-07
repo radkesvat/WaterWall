@@ -105,3 +105,16 @@ static inline int ip6AddrNetcmp(const ip6_addr_t *a, const ip6_addr_t *b, const 
 #define LWIP_IP6STAT IP6_STATS
 #undef IP6_STATS
 #endif
+
+// pbuf stuff
+
+/**
+ * @ingroup pbuf
+ * Copy (part of) the contents of a packet buffer
+ * to an application supplied buffer.
+ *
+ * @param buf the pbuf from which to copy data
+ * @param dataptr the application supplied buffer
+ * @return the number of bytes copied, or 0 on failure
+ */
+u16_t pbufLargeCopyToPtr(const struct pbuf *buf, void *dataptr);

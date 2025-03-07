@@ -32,8 +32,8 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
 
         stringCopyN(src_ip, ip4addr_ntoa(&src_addr), 40);
         stringCopyN(dst_ip, ip4addr_ntoa(&dst_addr), 40);
-        ret                = snprintf(ptr, (size_t) rem, "%s : Packet v4 %s From %s to %s, Data: ", prefix,
-                                      IP_PROTO_STR(ip_header->_proto), src_ip, dst_ip);
+        ret = snprintf(ptr, (size_t) rem, "%s : Packet v4 %s From %s to %s, Data: ", prefix,
+                       IP_PROTO_STR(ip_header->_proto), src_ip, dst_ip);
     }
     else if (version == 6)
     {
@@ -46,8 +46,8 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer)
 
         stringCopyN(src_ip, ip6addr_ntoa(&src_addr), 40);
         stringCopyN(dst_ip, ip6addr_ntoa(&dst_addr), 40);
-        ret                = snprintf(ptr, (size_t) rem, "%s : Packet v6 %s From %s to %s, Data: ", prefix,
-                                      IP_PROTO_STR(ip6_header->_nexth), src_ip, dst_ip);
+        ret = snprintf(ptr, (size_t) rem, "%s : Packet v6 %s From %s to %s, Data: ", prefix,
+                       IP_PROTO_STR(ip6_header->_nexth), src_ip, dst_ip);
     }
     else
     {
@@ -132,4 +132,43 @@ void printTcpPacketFlagsInfo(u8_t flags)
 {
     printTcpPacketFlagsInfoNoNewLIne(flags);
     printDebug("\n");
+}
+
+/**
+ * @ingroup pbuf
+ * Copy (part of) the contents of a packet buffer
+ * to an application supplied buffer.
+ *
+ * @param buf the pbuf from which to copy data
+ * @param dataptr the application supplied buffer
+ * @return the number of bytes copied, or 0 on failure
+ */
+u16_t pbufLargeCopyToPtr(const struct pbuf *buf, void *dataptr)
+{
+    const struct pbuf *p;
+    u16_t              left = 0;
+    u16_t              buf_copy_len;
+    u16_t              copied_total = 0;
+
+    LWIP_ERROR("pbuf_copy_partial: invalid buf", (buf != NULL), return 0;);
+    LWIP_ERROR("pbuf_copy_partial: invalid dataptr", (dataptr != NULL), return 0;);
+
+    /* Note some systems use byte copy if dataptr or one of the pbuf payload pointers are unaligned. */
+    for (p = buf; p != NULL; p = p->next)
+    {
+
+        buf_copy_len = (p->len);
+        if (buf_copy_len < 64)
+        {
+            memoryCopy(&((char *) dataptr)[left], &((char *) p->payload)[0], buf_copy_len);
+        }
+        else
+        {
+            /* copy the necessary parts of the buffer */
+            memoryCopyLarge(&((char *) dataptr)[left], &((char *) p->payload)[0], buf_copy_len);
+        }
+        copied_total = (u16_t) (copied_total + buf_copy_len);
+        left         = (u16_t) (left + buf_copy_len);
+    }
+    return copied_total;
 }
