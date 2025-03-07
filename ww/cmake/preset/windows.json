@@ -68,6 +68,14 @@
             ]
         },
         {
+            "name": "windows-ninja-rwd",
+            "configurePreset": "windows-ninja",
+            "configuration": "RelWithDebInfo",
+            "inherits": [
+                "host-windows"
+            ]
+        },
+        {
             "name": "windows-ninja-debug",
             "configurePreset": "windows-ninja",
             "configuration": "Debug",
