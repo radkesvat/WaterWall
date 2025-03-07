@@ -62,11 +62,11 @@ static void destroyWorkerMessage(master_pool_t *pool, master_pool_item_t *item, 
 
 static void initializeMasterPools(void)
 {
-    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
-    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
-    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
-    GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity((0) + RAM_PROFILE);
-    GSTATE.masterpool_messages             = masterpoolCreateWithCapacity((16) + RAM_PROFILE);
+    GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_messages             = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
 
     masterpoolInstallCallBacks(GSTATE.masterpool_messages, allocWorkerMessage, destroyWorkerMessage);
 }
@@ -283,7 +283,7 @@ void createGlobalState(const ww_construction_data_t init_data)
 #endif
         registerAtExitCallBack(exitHandle, worker);
 
-        for (unsigned int i = 1; i < WORKERS_COUNT; ++i)
+        for (unsigned int i = 1; i < WORKERS_COUNT - WORKER_ADDITIONS; ++i)
         {
             workerSpawn(&WORKERS[i]);
         }
