@@ -1,7 +1,8 @@
 #ifndef WW_MUTEX_H_
 #define WW_MUTEX_H_
 
-#include "wlibc.h"
+#include "watomic.h"
+#include "wplatform.h"
 
 #ifdef OS_WIN // Windows-specific definitions
 
@@ -54,8 +55,8 @@
 typedef void (*wonce_fn)(void);
 static inline BOOL WINAPI s_once_func(INIT_ONCE *once, PVOID arg, PVOID *_)
 {
-    discard once;
-    discard _;
+    discard  once;
+    discard  _;
     wonce_fn fn      = NULL;
     *(void **) (&fn) = arg;
     fn();
@@ -128,8 +129,8 @@ static inline void timespec_after(struct timespec *ts, unsigned int ms)
 {
     struct timeval tv;
     getTimeOfDay(&tv, NULL);
-    ts->tv_sec  = tv.tv_sec + ((long)ms / 1000);
-    ts->tv_nsec = tv.tv_usec * 1000 + (long)ms % 1000 * 1000000;
+    ts->tv_sec  = tv.tv_sec + ((long) ms / 1000);
+    ts->tv_nsec = tv.tv_usec * 1000 + (long) ms % 1000 * 1000000;
     if (ts->tv_nsec >= 1000000000)
     {
         ts->tv_nsec -= 1000000000;
@@ -317,7 +318,6 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 #define YIELD_CPU() _mm_pause()
 #endif
 
-
 #else
 // GCC & clang intrinsic
 #define YIELD_CPU() __builtin_ia32_pause()
@@ -330,8 +330,8 @@ static inline int semaphoreWaitFor(wsem_t *sem, unsigned int ms)
 // a short while before eventually falling back to Sema.
 typedef struct hlsem_s
 {
-    atomic_long count;
-    wsem_t      sema;
+    atomic_llong count;
+    wsem_t       sema;
 } wlsem_t;
 
 bool   leightweightsemaphoreInit(wlsem_t *, uint32_t initcount); // returns false if system impl failed (rare)
@@ -425,7 +425,7 @@ static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 // according to microsoft docs, windows mutex uses atomic operation by default
 // and our implementation cannt be beter than the system one
 
-#if ! defined (TEST_HELGRIND) && ! defined (COMPILER_MSVC)
+#if ! defined(TEST_HELGRIND) && ! defined(OS_WIN)
 
 #undef wmutex_t
 #undef mutexInit
