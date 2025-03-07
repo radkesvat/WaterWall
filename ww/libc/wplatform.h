@@ -106,8 +106,6 @@
 #endif
 
 
-#undef  HAVE_STDATOMIC_H
-#define HAVE_STDATOMIC_H        0
 #undef  HAVE_SYS_TIME_H
 #define HAVE_SYS_TIME_H         0
 #undef  HAVE_PTHREAD_H
