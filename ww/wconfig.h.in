@@ -41,6 +41,10 @@
 #define HAVE_ENDIAN_H @HAVE_ENDIAN_H@
 #endif
 
+#ifndef HAVE_X86INTRIN_H
+#define HAVE_X86INTRIN_H @HAVE_X86INTRIN_H@
+#endif
+
 #ifndef HAVE_SYS_ENDIAN_H
 #define HAVE_SYS_ENDIAN_H @HAVE_SYS_ENDIAN_H@
 #endif
@@ -93,6 +97,9 @@
 #define HAVE_SETPROCTITLE @HAVE_SETPROCTITLE@
 #endif
 
+
+#define MEM128_OPTIMIZE @WW_ENABLE_MEM128_OPTIMIZE@ 
+
 #cmakedefine ENABLE_UDS 1
 #cmakedefine USE_MULTIMAP 1
 
@@ -102,7 +109,6 @@
 #define KOMI_HASH 200
 #define WHASH_ALG KOMI_HASH
 
-#define MEM128_BUF_OPTIMIZE 0
 
 enum ram_profiles_e
 {

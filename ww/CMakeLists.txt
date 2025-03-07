@@ -79,8 +79,11 @@ add_library(ww STATIC
 ################################################################################
 # Global Options & Definitions
 ################################################################################
-option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
 option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
+
+option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
+option(MEM128_OPTIMIZE "implement 128 memcopy if x86 internal headers are found in this platform" ON)
+
 
 # Crypto backend options
 option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
@@ -273,6 +276,11 @@ CPMAddPackage(
         "SODIUM_BUILD_SHARED OFF"
         "SODIUM_STATIC ON"
 )
+
+if(NOT MSVC)        
+    target_compile_options(sodium PRIVATE -Wno-attributes)
+endif()
+
 set(LIBS ${LIBS} sodium)
 
 
@@ -373,6 +381,8 @@ check_header("fcntl.h")
 check_header("pthread.h")
 check_header("endian.h")
 check_header("sys/endian.h")
+check_header("x86intrin.h")
+
 # Function checks
 if(NOT MSVC)
     set(CMAKE_REQUIRED_LIBRARIES "-pthread")
@@ -390,6 +400,13 @@ check_function("socketpair" "sys/socket.h")
 check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
+
+if(HAVE_X86INTRIN_H AND MEM128_OPTIMIZE)
+    target_compile_options(ww PUBLIC $<$<NOT:$<CONFIG:Debug>>:-mavx>)
+    set(WW_ENABLE_MEM128_OPTIMIZE 1)
+else()
+    set(WW_ENABLE_MEM128_OPTIMIZE 0)
+endif()
 
 ################################################################################
 # Configuration and Linking
@@ -410,14 +427,13 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     endif()
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    target_compile_definitions(ww PUBLIC WW_AVX=1)
-    target_compile_options(ww PUBLIC -mavx)
-endif()
+
+
 
 target_compile_definitions(ww PUBLIC 
     $<$<CONFIG:Debug>:DEBUG=1;ALLOCATOR_BYPASS=1;BYPASS_BUFFERPOOL=1;BYPASS_GENERIC_POOL=1>
-    $<$<CONFIG:Release>:NDEBUG=1>
+    $<$<CONFIG:RelWithDebInfo>:NDEBUG=1;RELEASEWITHDEBUGINFO=1>
+    $<$<CONFIG:Release>:NDEBUG=1;RELEASE=1>
 )
 
 if(ENABLE_UDS)
