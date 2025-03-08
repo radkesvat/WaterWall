@@ -38,6 +38,10 @@
 #ifdef TCP_MSS
 #undef TCP_MSS
 #endif
+       
+#ifdef TCP_STATS
+#undef TCP_STATS
+#endif
 
 #ifdef LWIP_OPTTEST_FILE
 #include "lwipopts_test.h"
