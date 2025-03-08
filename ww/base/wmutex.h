@@ -3,6 +3,7 @@
 
 #include "watomic.h"
 #include "wplatform.h"
+#include "wtime.h"
 
 #ifdef OS_WIN // Windows-specific definitions
 
