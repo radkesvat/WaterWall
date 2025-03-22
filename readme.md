@@ -11,7 +11,9 @@ A simple core for tunneling and even direct user-server connections. based on hi
 
 To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (The documents are currently only in Persian language.)
 
+---
 
+The development of this project is currently paused for approximately one month.
 
 <!-- # Plan
 
