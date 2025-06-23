@@ -55,6 +55,14 @@
             "inherits": [
                 "host-linux"
             ]
+        },
+         {
+            "name": "linux-gcc-debug",
+            "configurePreset": "linux-gcc",
+            "configuration": "Debug",
+            "inherits": [
+                "host-linux"
+            ]
         }
     ],
     "testPresets": [
