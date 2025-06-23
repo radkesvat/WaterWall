@@ -20,7 +20,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     (void) cdev;
     tunnel_t           *t  = userdata;
     // rawsocket_tstate_t *state = tunnelGetState(t);
-    //  printIPPacketInfo("RawSocket received: ", sbufGetRawPtr(buf));
+     printIPPacketInfo("RawSocket received: ", sbufGetRawPtr(buf));
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
     lineLock(l);
     tunnelPrevDownStreamPayload(t, l, buf);
