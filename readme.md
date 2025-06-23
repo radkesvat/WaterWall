@@ -13,7 +13,6 @@ To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (T
 
 ---
 
-The development of this project is currently paused for approximately one month.
 
 <!-- # Plan
 
