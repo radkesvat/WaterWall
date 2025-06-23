@@ -1,5 +1,6 @@
 #include "capture.h"
 #include "generic_pool.h"
+#include "global_state.h"
 #include "wchan.h"
 #include "loggers/internal_logger.h"
 #include "worker.h"
@@ -463,11 +464,19 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
         LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kQueueLen);
     }
 
-    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-                                                   GSTATE.masterpool_buffer_pools_small, GSTATE.ram_profile);
+    buffer_pool_t *reader_bpool =
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                         RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+
+        );
 
     buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, 1);
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                         RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+
+        );
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
