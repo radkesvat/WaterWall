@@ -8,7 +8,7 @@ void rawsocketUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     // discard t;
     rawsocket_tstate_t *state = tunnelGetState(t);
 
-    printIPPacketInfo("RawSocket sending: ", sbufGetRawPtr(buf));
+    // printIPPacketInfo("RawSocket sending: ", sbufGetRawPtr(buf));
 
     if (! writeToRawDevce(state->raw_device, buf))
     {
