@@ -93,7 +93,7 @@ option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
 option(INCLUDE_IP_OVERRIDER "link IpOverrider staticly to the core"  TRUE)
-option(INCLUDE_LAYER3_IP_MANIPULATOR "link Layer3IPManipulator staticly to the core"  FALSE)
+option(INCLUDE_IP_MANIPULATOR "link IPManipulator staticly to the core"  TRUE)
 option(INCLUDE_LAYER3_TCP_MANIPULATOR "link Layer3TcpManipulator staticly to the core"  FALSE)
 
 option(INCLUDE_TCP_LISTENER "link TcpListener staticly to the core"  TRUE)
@@ -283,7 +283,7 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/lay
 target_link_libraries(Waterwall Layer3IpRoutingTable)
 endif()
 
-#layer3 ip overrider
+#ip overrider
 if (INCLUDE_IP_OVERRIDER)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_IP_OVERRIDER=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpOverrider)
@@ -291,12 +291,12 @@ target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpO
 target_link_libraries(Waterwall IpOverrider)
 endif()
 
-#layer3 ip manipulator
-if (INCLUDE_LAYER3_IP_MANIPULATOR)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_IP_MANIPULATOR=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip/manipulator)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/ip/manipulator)
-target_link_libraries(Waterwall Layer3IpManipulator)
+#ip manipulator
+if (INCLUDE_IP_MANIPULATOR)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_IP_MANIPULATOR=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpManipulator)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpManipulator)
+target_link_libraries(Waterwall IpManipulator)
 endif()
 
 #layer3 tcp manipulator
