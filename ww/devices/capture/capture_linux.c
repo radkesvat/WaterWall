@@ -284,7 +284,6 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
     capture_device_t *cdev           = userdata;
-    wid_t             distribute_tid = 0;
     sbuf_t   *buf;
     ssize_t           nread;
 
@@ -312,12 +311,9 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         sbufSetLength(buf, nread);
 
-        distributePacketPayload(cdev, distribute_tid++, buf);
+        distributePacketPayload(cdev, getNextDistributionWID(), buf);
 
-        if (distribute_tid >= getWorkersCount())
-        {
-            distribute_tid = 0;
-        }
+     
     }
 
     return 0;

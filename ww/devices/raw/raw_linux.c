@@ -69,7 +69,6 @@ static void distributePacketPayload(raw_device_t *rdev, wid_t target_wid, sbuf_t
 static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 {
     raw_device_t   *rdev           = userdata;
-    wid_t           distribute_tid = 0;
     sbuf_t         *buf;
     ssize_t         nread;
     struct sockaddr saddr;
@@ -105,12 +104,9 @@ static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 
         sbufSetLength(buf, nread);
 
-        distributePacketPayload(rdev, distribute_tid++, buf);
+        distributePacketPayload(rdev, getNextDistributionWID(), buf);
 
-        if (distribute_tid >= getWorkersCount())
-        {
-            distribute_tid = 0;
-        }
+      
     }
 
     return 0;
