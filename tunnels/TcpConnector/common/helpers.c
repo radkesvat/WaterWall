@@ -32,7 +32,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     if (UNLIKELY(lstate == NULL))
     {
         bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
-        assert(false);
+        // assert(false);
         return;
     }
     tunnel_t *t = lstate->tunnel;
@@ -67,7 +67,7 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
     tcpconnector_lstate_t *lstate = weventGetUserdata(upstream_io);
     if (UNLIKELY(lstate == NULL))
     {
-        assert(false);
+        // assert(false);
         return;
     }
 

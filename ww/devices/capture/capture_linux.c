@@ -1,8 +1,8 @@
 #include "capture.h"
 #include "generic_pool.h"
 #include "global_state.h"
-#include "wchan.h"
 #include "loggers/internal_logger.h"
+#include "wchan.h"
 #include "worker.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -19,17 +19,17 @@
 
 enum
 {
-    kReadPacketSize              = 1500,
-    kEthDataLen                  = 1500,
-    kMasterMessagePoosbufGetLeftCapacity        = 64,
-    kQueueLen                    = 512,
-    kCaptureWriteChannelQueueMax = 128
+    kReadPacketSize                      = 1500,
+    kEthDataLen                          = 1500,
+    kMasterMessagePoosbufGetLeftCapacity = 64,
+    kQueueLen                            = 512,
+    kCaptureWriteChannelQueueMax         = 128
 };
 
 struct msg_event
 {
     capture_device_t *cdev;
-    sbuf_t   *buf;
+    sbuf_t           *buf;
 };
 
 static pool_item_t *allocCaptureMsgPoolHandle(master_pool_t *pool, void *userdata)
@@ -283,8 +283,8 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
 
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
-    capture_device_t *cdev           = userdata;
-    sbuf_t   *buf;
+    capture_device_t *cdev = userdata;
+    sbuf_t           *buf;
     ssize_t           nread;
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
@@ -312,8 +312,6 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
         sbufSetLength(buf, nread);
 
         distributePacketPayload(cdev, getNextDistributionWID(), buf);
-
-     
     }
 
     return 0;
@@ -322,7 +320,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 {
     capture_device_t *cdev = userdata;
-    sbuf_t   *buf;
+    sbuf_t           *buf;
     ssize_t           nwrite;
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
@@ -337,7 +335,8 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
-        nwrite = sendto(cdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+        nwrite =
+            sendto(cdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
         bufferpoolReuseBuffer(cdev->writer_buffer_pool, buf);
 
@@ -382,6 +381,14 @@ bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf)
 bool bringCaptureDeviceUP(capture_device_t *cdev)
 {
     assert(! cdev->up);
+
+    bufferpoolUpdateAllocationPaddings(cdev->writer_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+
+    bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     cdev->up      = true;
     cdev->running = true;
@@ -461,34 +468,35 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
     }
 
     buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                         RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
+                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
                          bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
         );
 
     buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                         RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
+                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
                          bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
         );
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
-    *cdev = (capture_device_t) {.name                  = stringDuplicate(name),
-                                .running               = false,
-                                .up                    = false,
-                                .routine_reader        = routineReadFromCapture,
-                                .routine_writer        = routineWriteToCapture,
-                                .socket                = socket_netfilter,
-                                .queue_number          = queue_number,
-                                .read_event_callback   = cb,
-                                .userdata              = userdata,
-                                .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
-                                .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                                .reader_buffer_pool    = reader_bpool,
-                                .writer_buffer_pool    = writer_bpool};
+    *cdev =
+        (capture_device_t) {.name                  = stringDuplicate(name),
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromCapture,
+                            .routine_writer        = routineWriteToCapture,
+                            .socket                = socket_netfilter,
+                            .queue_number          = queue_number,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
+                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                            .reader_buffer_pool    = reader_bpool,
+                            .writer_buffer_pool    = writer_bpool};
 
     masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 

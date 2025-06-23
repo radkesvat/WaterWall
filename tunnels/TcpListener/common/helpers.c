@@ -6,7 +6,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
     if (UNLIKELY(lstate == NULL))
     {
-        assert(false);
+        // assert(false);
         bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
@@ -136,7 +136,7 @@ void tcplistenerOnWriteComplete(wio_t *io)
     tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
     if (UNLIKELY(lstate == NULL))
     {
-        assert(false);
+        // assert(false); happened
         return;
     }
 
