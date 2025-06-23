@@ -57,6 +57,7 @@ add_library(ww STATIC
     net/tunnel.c
     net/chain.c
     net/context.c
+    net/socket_filter_option.c
     lwip/ww_lwip.c
     node_builder/config_file.c
     node_builder/node_loader.c
@@ -159,6 +160,8 @@ if(APPLE)
     message(STATUS "No Tun device for This os yet")
 elseif(UNIX)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
+    target_sources(ww PRIVATE devices/capture/capture_linux.c)
+    target_sources(ww PRIVATE devices/raw/raw_linux.c)
     # ...existing commented raw/capture devices...
 elseif(WIN32)
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
@@ -208,7 +211,8 @@ target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
 ################################################################################
 # External Dependencies
 ################################################################################
-include(cmake/GetCPM.cmake)
+# include(cmake/GetCPM.cmake)
+include(cmake/CPM.cmake)
 
 # Add komihash library
 CPMAddPackage(
@@ -225,7 +229,7 @@ endif()
 CPMAddPackage(
     NAME stc
     GIT_REPOSITORY https://github.com/radkesvat/STC
-    GIT_TAG HEAD
+    GIT_TAG 45f264db9d282719d192bf4f541bd6ea48142aef
     DOWNLOAD_ONLY True
 )
 if(stc_ADDED)
@@ -266,7 +270,7 @@ endif()
 CPMAddPackage(
     NAME libsodium
     GITHUB_REPOSITORY robinlinden/libsodium-cmake
-    GIT_TAG HEAD
+    GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
     OPTIONS
         "SODIUM_MINIMAL ON"
         "SODIUM_DISABLE_TESTS ON"

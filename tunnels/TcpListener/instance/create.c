@@ -2,7 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-
 static void parsePortSection(tcplistener_tstate_t *state, const cJSON *settings)
 {
     const cJSON *port_json = cJSON_GetObjectItemCaseSensitive(settings, "port");
@@ -50,8 +49,7 @@ static void parsePortSection(tcplistener_tstate_t *state, const cJSON *settings)
 tunnel_t *tcplistenerTunnelCreate(node_t *node)
 {
 
-    tunnel_t *t = adapterCreate(node, sizeof(tcplistener_tstate_t), sizeof(tcplistener_lstate_t),false);
-
+    tunnel_t *t = adapterCreate(node, sizeof(tcplistener_tstate_t), sizeof(tcplistener_lstate_t), false);
 
     t->fnInitD    = &tcplistenerTunnelDownStreamInit;
     t->fnEstD     = &tcplistenerTunnelDownStreamEst;
@@ -59,7 +57,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     t->fnPayloadD = &tcplistenerTunnelDownStreamPayload;
     t->fnPauseD   = &tcplistenerTunnelDownStreamPause;
     t->fnResumeD  = &tcplistenerTunnelDownStreamResume;
-    
+
     t->onPrepair = &tcplistenerTunnelOnPrepair;
     t->onStart   = &tcplistenerTunnelOnStart;
     t->onDestroy = &tcplistenerTunnelDestroy;
@@ -82,7 +80,9 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
         return NULL;
     }
 
-    socket_filter_option_t filter_opt = {.no_delay = state->option_tcp_no_delay};
+    socket_filter_option_t filter_opt;
+    socketfilteroptionInit(&filter_opt);
+    filter_opt.no_delay = state->option_tcp_no_delay;
 
     getStringFromJsonObject(&(filter_opt.balance_group_name), settings, "balance-group");
     getIntFromJsonObject((int *) &(filter_opt.balance_group_interval), settings, "balance-interval");
@@ -105,21 +105,21 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
         }
     }
 
-    filter_opt.white_list_raddr = NULL;
     const cJSON *wlist          = cJSON_GetObjectItemCaseSensitive(settings, "whitelist");
     if (cJSON_IsArray(wlist))
     {
         int len = cJSON_GetArraySize(wlist);
         if (len > 0)
         {
-            char **list = (char **) memoryAllocate(sizeof(char *) * (((size_t)len) + 1));
-            memorySet((void *) list, 0, sizeof(char *) * ((size_t)len + 1));
-            list[len]              = 0x0;
+
             int          i         = 0;
             const cJSON *list_item = NULL;
             cJSON_ArrayForEach(list_item, wlist)
             {
-                if (! getStringFromJson(&(list[i]), list_item) || ! verifyIPCdir(list[i]))
+                char    *ip_str = NULL;
+                ipmask_t ipmask;
+
+                if (! getStringFromJson(&(ip_str), list_item) || ! verifyIPCdir(ip_str))
                 {
                     LOGF("JSON Error: TcpListener->settings->whitelist (array of strings field) index %d : The data "
                          "was empty or invalid",
@@ -127,10 +127,17 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
                     exit(1);
                 }
 
+                int parse_result = parseIPWithSubnetMask(ip_str, &(ipmask.ip), &(ipmask.mask));
+
+                if (parse_result == -1)
+                {
+                    LOGF("TcpListener: stopping due to whitelist address [%d] \"%s\" parse failure", i, ip_str);
+                    exit(1);
+                }
+                vec_ipmask_t_push(&filter_opt.white_list, ipmask);
+
                 i++;
             }
-
-            filter_opt.white_list_raddr = list;
         }
     }
 
@@ -138,8 +145,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     filter_opt.port_min         = state->listen_port_min;
     filter_opt.port_max         = state->listen_port_max;
     filter_opt.protocol         = kSocketProtocolTcp;
-    filter_opt.black_list_raddr = NULL;
-
+   
     socketacceptorRegister(t, filter_opt, tcplistenerOnInboundConnected);
 
     return t;

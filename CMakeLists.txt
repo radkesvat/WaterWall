@@ -107,6 +107,8 @@ option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the cor
 
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
+option(INCLUDE_RAWSOCKET "link RawSocket staticly to the core"  TRUE)
+
 if(LINUX) # todo (other platforms)
   option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  FALSE)
   option(INCLUDE_CAPTUREDEVICE "link CapTureDevice staticly to the core"  FALSE)
@@ -220,6 +222,17 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketToConnection)
 target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketToConnection)
 target_link_libraries(Waterwall PacketToConnection)
 endif()
+
+
+
+#raw socket
+if (INCLUDE_RAWSOCKET)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_RAWSOCKET=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/RawSocket)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/RawSocket)
+target_link_libraries(Waterwall RawSocket)
+endif()
+
 
 #raw device
 if (INCLUDE_RAWDEVICE)

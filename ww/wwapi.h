@@ -8,6 +8,7 @@
 #include "global_state.h"
 #include "managers/node_manager.h"
 #include "managers/socket_manager.h"
+#include "managers/signal_manager.h"
 #include "node_builder/config_file.h"
 #include "node_builder/node.h"
 #include "packet_tunnel.h"

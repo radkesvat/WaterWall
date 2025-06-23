@@ -1,7 +1,8 @@
 #pragma once
 
-#include "devices/tun/tun.h"
 #include "wwapi.h"
+
+#include "devices/tun/tun.h"
 
 
 #define LOG_PACKET_INFO 0

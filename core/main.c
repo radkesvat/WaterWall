@@ -14,9 +14,9 @@
 int main(void)
 {
 
-// #ifdef COMPILER_MSVC
-//     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
-// #endif
+    // #ifdef COMPILER_MSVC
+    //     _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+    // #endif
 
     // check address sanitizer works properly
     // int test[3] = {0};
@@ -77,9 +77,12 @@ int main(void)
             config_file_t *cfile = parseConfigFile(*k.ref);
 
             /*
-                in case of error in config file, the details are already printed out and the
-                program will not reach this line.
+                in case of error in config file, the details are already printed out
             */
+            if (! cfile)
+            {
+                exit(1);
+            }
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);
             nodemanagerRunConfigFile(cfile);
