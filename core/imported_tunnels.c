@@ -42,8 +42,8 @@
 #include "tunnels/layer3/ip/routing_table/ip_routing_table.h"
 #endif
 
-#ifdef INCLUDE_LAYER3_IP_OVERRIDER
-#include "tunnels/layer3/ip/overrider/ip_overrider.h"
+#ifdef INCLUDE_IP_OVERRIDER
+#include "tunnels/IpOverrider/include/interface.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_MANIPULATOR
@@ -233,8 +233,8 @@ void loadImportedTunnelsIntoCore(void)
     USING(Layer3IpRoutingTable);
 #endif
 
-#ifdef INCLUDE_LAYER3_IP_OVERRIDER
-    USING(Layer3IpOverrider);
+#ifdef INCLUDE_IP_OVERRIDER
+    USING(IpOverrider);
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_MANIPULATOR
