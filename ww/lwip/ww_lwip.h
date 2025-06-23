@@ -22,6 +22,24 @@
 typedef struct ip_hdr  ip4_hdr_t;
 typedef struct ip6_hdr ip6_hdr_t;
 
+typedef struct
+{
+    ip_addr_t ip;
+    ip_addr_t mask;
+} ipmask4_t;
+
+typedef struct
+{
+    ip6_addr_t ip;
+    ip6_addr_t mask;
+} ipmask6_t;
+
+typedef struct
+{
+    ip_addr_t ip;
+    ip_addr_t mask;
+} ipmask_t;
+
 #define NETIF_FLAG_L3TO4 0x80U // Custom flag for PacketToConnection node
 
 // ------------------------------------------------------------------------
@@ -51,7 +69,7 @@ typedef struct ip6_hdr ip6_hdr_t;
 // ------------------------------------------------------------------------
 // IPv6 Specific Function Macros
 // ------------------------------------------------------------------------
-#define ip6AddrSetAny            ip6_addr_set_any
+#define ip6AddrSetAny ip6_addr_set_any
 // #define ip6AddrNetcmp            ip6_addr_netcmp // Custom function is used instead, see below
 #define ip6AddrCopyFromPacket    ip6_addr_copy_from_packed
 #define ip6AddrNetworkToAaddress ip6addr_ntoa
@@ -73,13 +91,12 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer);
 void printTcpPacketInfo(struct tcp_hdr *tcphdr);
 void printTcpPacketFlagsInfo(u8_t flags);
 
-
-
 // Helper function to compare two IPv6 addresses within a network mask
 static inline int ip6AddrNetcmp(const ip6_addr_t *a, const ip6_addr_t *b, const ip6_addr_t *mask)
 {
     int i;
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++)
+    {
         if ((a->addr[i] & mask->addr[i]) != (b->addr[i] & mask->addr[i]))
             return 0;
     }

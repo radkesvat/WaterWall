@@ -1,6 +1,7 @@
 #include "config_file.h"
-#include "utils/json_helpers.h"
 #include "loggers/internal_logger.h"
+#include "utils/json_helpers.h"
+
 
 void destroyConfigFile(config_file_t *state)
 {
@@ -86,7 +87,7 @@ config_file_t *parseConfigFile(const char *const file_path)
     if (! data_json)
     {
         LOGF("File Error: config file \"%s\" could not be read", file_path);
-        exit(1);
+        return NULL;
     }
     state->file_prebuffer_size = strlen(data_json);
 
@@ -101,14 +102,14 @@ config_file_t *parseConfigFile(const char *const file_path)
         {
             LOGF("JSON Error: before: %s\n", error_ptr);
         }
-        exit(1);
+        return NULL;
     }
     memoryFree(data_json);
 
     if (! getStringFromJsonObject((&state->name), json, "name"))
     {
         LOGF("JSON Error: config file \"%s\" -> name (string field) the value was empty or invalid", file_path);
-        exit(1);
+        return NULL;
     }
 
     getStringFromJsonObjectOrDefault(&(state->author), json, "author", "EMPTY_AUTHOR");

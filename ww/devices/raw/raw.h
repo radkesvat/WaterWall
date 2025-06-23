@@ -1,10 +1,13 @@
 #pragma once
+
+#include "wlibc.h"
+
 #include "buffer_pool.h"
+#include "master_pool.h"
 #include "wloop.h"
+#include "worker.h"
 #include "wplatform.h"
 #include "wthread.h"
-#include "master_pool.h"
-#include <stdint.h>
 
 struct raw_device_s;
 
@@ -22,9 +25,9 @@ typedef struct raw_device_s
     wthread_routine routine_reader;
     wthread_routine routine_writer;
 
-    master_pool_t  *reader_message_pool;
-    buffer_pool_t  *reader_buffer_pool;
-    buffer_pool_t  *writer_buffer_pool;
+    master_pool_t *reader_message_pool;
+    buffer_pool_t *reader_buffer_pool;
+    buffer_pool_t *writer_buffer_pool;
 
     RawReadEventHandle read_event_callback;
 
@@ -36,7 +39,6 @@ typedef struct raw_device_s
 
 bool bringRawDeviceUP(raw_device_t *rdev);
 bool bringRawDeviceDown(raw_device_t *rdev);
+bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf);
 
 raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb);
-
-bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf);

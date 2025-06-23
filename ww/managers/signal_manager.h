@@ -38,7 +38,7 @@ typedef struct signal_manager_s
 } signal_manager_t;
 
 signal_manager_t *createSignalManager(void);
-void             destroySignalManager(signal_manager_t *sm);
+void              destroySignalManager(signal_manager_t *sm);
 signal_manager_t *getSignalManager(void);
 void              registerAtExitCallBack(SignalHandler handle, void *userdata);
 void              removeAtExitCallBack(SignalHandler handle, void *userdata);

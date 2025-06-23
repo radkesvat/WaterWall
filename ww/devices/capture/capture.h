@@ -1,10 +1,13 @@
 #pragma once
+
+#include "wlibc.h"
+
 #include "buffer_pool.h"
+#include "master_pool.h"
 #include "wloop.h"
+#include "worker.h"
 #include "wplatform.h"
 #include "wthread.h"
-#include "master_pool.h"
-#include <stdint.h>
 
 struct capture_device_s;
 
@@ -23,9 +26,9 @@ typedef struct capture_device_s
     wthread_routine routine_reader;
     wthread_routine routine_writer;
 
-    master_pool_t  *reader_message_pool;
-    buffer_pool_t  *reader_buffer_pool;
-    buffer_pool_t  *writer_buffer_pool;
+    master_pool_t *reader_message_pool;
+    buffer_pool_t *reader_buffer_pool;
+    buffer_pool_t *writer_buffer_pool;
 
     CaptureReadEventHandle read_event_callback;
 
@@ -37,7 +40,7 @@ typedef struct capture_device_s
 
 bool bringCaptureDeviceUP(capture_device_t *cdev);
 bool bringCaptureDeviceDown(capture_device_t *cdev);
+bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf);
 
 capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, void *userdata,
                                       CaptureReadEventHandle cb);
-bool              writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf);

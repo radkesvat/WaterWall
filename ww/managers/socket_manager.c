@@ -228,36 +228,6 @@ static inline bool needsV4SocketStrategy(const ip6_addr_t addr)
             segments[5] == 0xFFFF);
 }
 
-static void parseWhiteListOption(socket_filter_option_t *option)
-{
-    assert(option->white_list_raddr != NULL);
-
-    unsigned int len = 0;
-    char        *cur = NULL;
-
-    cur = option->white_list_raddr[len];
-    while (cur != NULL)
-    {
-        len++;
-        cur = option->white_list_raddr[len];
-    }
-
-    option->white_list_parsed_length = len;
-    option->white_list_parsed        = memoryAllocate(sizeof(option->white_list_parsed[0]) * len);
-    for (unsigned int i = 0; i < len; i++)
-    {
-        cur = option->white_list_raddr[i];
-        int parse_result =
-            parseIPWithSubnetMask(cur, &(option->white_list_parsed[i].ip), &(option->white_list_parsed[i].mask));
-
-        if (parse_result == -1)
-        {
-            LOGF("SocketManager: stopping due to whitelist address [%d] \"%s\" parse failure", i, cur);
-            exit(1);
-        }
-    }
-}
-
 void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
     if (state->started)
@@ -271,13 +241,12 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     {
         pirority++;
     }
-    if (option.white_list_raddr != NULL)
+    if (vec_ipmask_t_size(&option.white_list) > 0)
     {
         pirority++;
-        parseWhiteListOption(&option);
     }
 
-    if (option.black_list_raddr != NULL)
+    if (vec_ipmask_t_size(&option.black_list))
     {
         pirority++;
     }
@@ -374,11 +343,11 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
     {
         ip4_addr_copy(ipv4_addr, addr.u_addr.ip4);
     v4checks:
-        for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
+        for (unsigned int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
         {
 
-            if (checkIPRange4(ipv4_addr, option.white_list_parsed[i].ip.u_addr.ip4,
-                              option.white_list_parsed[i].mask.u_addr.ip4))
+            if (checkIPRange4(ipv4_addr, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip4,
+                              vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip4))
             {
                 return true;
             }
@@ -392,11 +361,11 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
             goto v4checks;
         }
 
-        for (unsigned int i = 0; i < option.white_list_parsed_length; i++)
+        for (unsigned int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
         {
 
-            if (checkIPRange6(addr.u_addr.ip6, option.white_list_parsed[i].ip.u_addr.ip6,
-                              option.white_list_parsed[i].mask.u_addr.ip6))
+            if (checkIPRange6(addr.u_addr.ip6, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip6,
+                              vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip6))
             {
                 return true;
             }
@@ -438,7 +407,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
                 continue;
             }
 
-            if (option.white_list_raddr != NULL)
+            if (vec_ipmask_t_size(&option.white_list) > 0)
             {
                 if (! checkIpIsWhiteList(paddr, option))
                 {
@@ -519,7 +488,7 @@ static void onAcceptTcpMultiPort(wio_t *io)
     ip_addr_t paddr;
     if (! sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr))
     {
-         LOGE("SocketManger: address parse failure");
+        LOGE("SocketManger: address parse failure");
         wioClose(io);
         return;
     }
@@ -759,7 +728,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
             {
                 continue;
             }
-            if (option.white_list_raddr != NULL)
+            if ( vec_ipmask_t_size(&option.white_list) > 0)
             {
                 if (! checkIpIsWhiteList(paddr, option))
                 {

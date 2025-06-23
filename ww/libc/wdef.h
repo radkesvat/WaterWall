@@ -291,6 +291,8 @@ enum
 #define memoryMove          memmove
 #define memoryCompare       memcmp
 #define stringLength        strlen
+#define stringNPrintf       snprintf        
+
 
 #define discard  (void)
 

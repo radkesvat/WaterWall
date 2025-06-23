@@ -61,7 +61,7 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 #error "MEM128_OPTIMIZE must be defined to either 0 or 1"
 #endif
 
-#if MEM128_OPTIMIZE != 0 && HAVE_X86INTRIN_H && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#if defined(NDEBUG) && MEM128_OPTIMIZE != 0 && HAVE_X86INTRIN_H && defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 
 
 #include <x86intrin.h>
