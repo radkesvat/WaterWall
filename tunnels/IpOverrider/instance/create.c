@@ -63,8 +63,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
         memoryFree(ipbuf);
         ipbuf = NULL;
     }
-
-    if (getStringFromJsonObject(&ipbuf, settings, "ipv6"))
+    else if (getStringFromJsonObject(&ipbuf, settings, "ipv6"))
     {
         state->support6 = true;
         sockaddr_u sa;
@@ -73,6 +72,11 @@ tunnel_t *ipoverriderCreate(node_t *node)
         memoryCopy(&(state->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
         memoryFree(ipbuf);
         ipbuf = NULL;
+    }
+    else
+    {
+        LOGF("RawSocket: please give the  ip, use ipv4 or ipv6 json keys");
+        return NULL;
     }
 
     return t;
