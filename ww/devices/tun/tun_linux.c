@@ -236,10 +236,10 @@ bool tundeviceBringUp(tun_device_t *tdev)
     }
 
     
-    bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+    bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    bufferpoolUpdateAllocationPaddings(writer_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+    bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
                                        
