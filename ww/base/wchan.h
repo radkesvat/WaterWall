@@ -1,62 +1,96 @@
-#pragma once
+#ifndef chan_h
+#define chan_h
+
 #include "wlibc.h"
 
+#include "chan_queue.h"
 
-// wchan_t is an optionally-buffered messaging channel for CSP-like processing.
-// Example:
-//
-//   wchan_t* c = wchannel_open(mem, sizeof(int), 4);
-//
-//   int send_messages[] = { 123, 456 };
-//   chanSend(c, &send_messages[0]);
-//   chanSend(c, &send_messages[1]);
-//
-//   int recv_messages[] = { 0, 0 };
-//   chanRecv(c, &recv_messages[0]);
-//   chanRecv(c, &recv_messages[1]);
-//
-//   assert(recv_messages[0] == send_messages[0]);
-//   assert(recv_messages[1] == send_messages[1]);
-//
-//   wchan_close(c);
-//   wchan_free(c);
-//
-typedef struct wchan_s wchan_t; // opaque
+// Defines a thread-safe communication pipe. Channels are either buffered or
+// unbuffered. An unbuffered channel is synchronized. Receiving on either type
+// of channel will block until there is data to receive. If the channel is
+// unbuffered, the sender blocks until the receiver has received the value. If
+// the channel is buffered, the sender only blocks until the value has been
+// copied to the buffer, meaning it will block if the channel is full.
+typedef struct wchan_s
+{
+    // Buffered channel properties
+    queue_t *queue;
 
-// chan_open creates and initializes a new channel which holds elements of elemsize byte.
-// If sbufGetTotalCapacity>0 then a buffered channel with the capacity to hold sbufGetTotalCapacity elements is created.
-wchan_t* chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity);
+    // Unbuffered channel properties
+    wmutex_t r_mu;
+    wmutex_t w_mu;
+    void    *data;
 
-// chanClose cancels any waiting senders and receivers.
-// Messages sent before this call are guaranteed to be delivered, assuming there are
-// active receivers. Once a channel is closed it can not be reopened nor sent to.
-// wchan_close must only be called once per channel.
-void chanClose(wchan_t*);
+    // Shared properties
+    wmutex_t   m_mu;
+    wcondvar_t r_cond;
+    wcondvar_t w_cond;
+    int        closed;
+    int        r_waiting;
+    int        w_waiting;
+} wchan_t;
 
-// chanFree frees memory of a channel
-void chanFree(wchan_t*);
+// Allocates and returns a new channel. The capacity specifies whether the
+// channel should be buffered or not. A capacity of 0 will create an unbuffered
+// channel. Sets errno and returns NULL if initialization failed.
+wchan_t *chanInit(size_t capacity);
 
-// chanCap returns the channel's buffer capacity
-uint32_t chanCap(const wchan_t* c);
+// Releases the channel resources.
+void chanDispose(wchan_t *chan);
 
-// chanSend enqueues a message to a channel by copying the value at elemptr to the channel.
-// Blocks until the message is sent or the channel is closed.
-// Returns false if the channel closed.
-bool chanSend(wchan_t*, void* elemptr);
+// Once a channel is closed, data cannot be sent into it. If the channel is
+// buffered, data can be read from it until it is empty, after which reads will
+// return an error code. Reading from a closed channel that is unbuffered will
+// return an error code. Closing a channel does not release its resources. This
+// must be done with a call to chanDispose. Returns 0 if the channel was
+// successfully closed, -1 otherwise.
+int chanClose(wchan_t *chan);
 
-// chanRecv dequeues a message from a channel by copying a received value to elemptr.
-// Blocks until there's a message available or the channel is closed.
-// Returns true if a message was received, false if the channel is closed.
-bool chanRecv(wchan_t*, void* elemptr);
+// Returns 0 if the channel is open and 1 if it is closed.
+int chanIsClosed(wchan_t *chan);
 
-// chanTrySend attempts to sends a message without blocking.
-// It returns true if the message was sent, false if not.
-// Unlike chanSend, this function does not return false to indicate that the channel
-// is closed, but instead it returns false if the message was not sent and sets *closed
-// to false if the reason for the failure was a closed channel.
-bool chanTrySend(wchan_t*, void* elemptr, bool* closed);
+// Sends a value into the channel. If the channel is unbuffered, this will
+// block until a receiver receives the value. If the channel is buffered and at
+// capacity, this will block until a receiver receives a value. Returns 0 if
+// the send succeeded or -1 if it failed.
+int chanSend(wchan_t *chan, void *data);
 
-// chanTryRecv works like chanRecv but does not block.
-// Returns true if a message was received.
-// This function does not block/wait.
-bool chanTryRecv(wchan_t* ch, void* elemptr, bool* closed);
+// Receives a value from the channel. This will block until there is data to
+// receive. Returns 0 if the receive succeeded or -1 if it failed.
+int chanRecv(wchan_t *chan, void **data);
+
+// Returns the number of items in the channel buffer. If the channel is
+// unbuffered, this will return 0.
+int chanSize(wchan_t *chan);
+
+// A select statement chooses which of a set of possible send or receive
+// operations will proceed. The return value indicates which channel's
+// operation has proceeded. If more than one operation can proceed, one is
+// selected randomly. If none can proceed, -1 is returned. Select is intended
+// to be used in conjunction with a switch statement. In the case of a receive
+// operation, the received value will be pointed to by the provided pointer. In
+// the case of a send, the value at the same index as the channel will be sent.
+int chanSelect(wchan_t *recvChans[], int recvCount, void **recvOut, wchan_t *sendChans[], int sendCount,
+               void *sendMsgs[]);
+
+// Typed interface to send/recv chan.
+int chanSendInt32(wchan_t *, int32_t);
+int chanSendInt64(wchan_t *, int64_t);
+#if ULONG_MAX == 4294967295UL
+#define chanSendInt(c, d) chanSendInt64(c, d)
+#else
+#define chanSendInt(c, d) chanSendInt32(c, d)
+#endif
+int chanSendDouble(wchan_t *, double);
+int chanSendBuf(wchan_t *, void *, size_t);
+int chanRecvInt32(wchan_t *, int32_t *);
+int chanRecvInt64(wchan_t *, int64_t *);
+#if ULONG_MAX == 4294967295UL
+#define chanRecvInt(c, d) chanRecvInt64(c, d)
+#else
+#define chanRecvInt(c, d) chanRecvInt32(c, d)
+#endif
+int chanRecvDouble(wchan_t *, double *);
+int chanRecvBuf(wchan_t *, void *, size_t);
+
+#endif

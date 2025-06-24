@@ -61,14 +61,15 @@ void commitChangesHard(config_file_t *state)
 // will not write if the mutex is locked
 void commitChangesSoft(config_file_t *state)
 {
+    discard state;
 #ifdef OS_WIN
     commitChangesHard(state);
 #else
-    if (mutexTryLock(&(state->guard)))
-    {
-        unsafeCommitChanges(state);
-        releaseUpdateLock(state);
-    }
+    // if (mutexTryLock(&(state->guard)))
+    // {
+    //     unsafeCommitChanges(state);
+    //     releaseUpdateLock(state);
+    // }
 
 #endif
 }

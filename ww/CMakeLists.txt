@@ -14,6 +14,7 @@ add_library(ww STATIC
     libc/wtime.c
     libc/werr.c
     libc/wfrand.c
+    base/internal_types/chan_queue.c
     base/wchan.c
     base/widle_table.c
     base/wlog.c

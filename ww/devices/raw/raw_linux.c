@@ -122,7 +122,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
     while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
     {
-        if (! chanRecv(rdev->writer_buffer_channel, &buf))
+        if (-1 == chanRecv(rdev->writer_buffer_channel, (void **) &buf))
         {
             LOGD("RawDevice: routine write will exit due to channel closed");
             return 0;
@@ -165,17 +165,11 @@ bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
-    bool closed = false;
-    if (! chanTrySend(rdev->writer_buffer_channel, &buf, &closed))
+    if (-1 == chanSend(rdev->writer_buffer_channel, (void**)&buf))
     {
-        if (closed)
-        {
-            LOGE("RawDevice: write failed, channel was closed");
-        }
-        else
-        {
-            LOGE("RawDevice: write failed, ring is full");
-        }
+
+        LOGE("RawDevice: write failed, ring is full");
+
         return false;
     }
     return true;
@@ -220,7 +214,7 @@ bool bringRawDeviceDown(raw_device_t *rdev)
     threadJoin(rdev->write_thread);
 
     sbuf_t *buf;
-    while (chanRecv(rdev->writer_buffer_channel, &buf))
+    while (0 == chanRecv(rdev->writer_buffer_channel, (void**)&buf))
     {
         bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
     }
@@ -278,7 +272,7 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
                             .mark                  = mark,
                             .read_event_callback   = cb,
                             .userdata              = userdata,
-                            .writer_buffer_channel = chanOpen(sizeof(void *), kRawWriteChannelQueueMax),
+                            .writer_buffer_channel = chanInit(kRawWriteChannelQueueMax),
                             .reader_message_pool   = reader_message_pool,
                             .reader_buffer_pool    = reader_bpool,
                             .writer_buffer_pool    = writer_bpool};

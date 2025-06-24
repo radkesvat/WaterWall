@@ -58,7 +58,7 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -71,7 +71,7 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t
 // Routine to read from TUN device
 static WTHREAD_ROUTINE(routineReadFromTun)
 {
-    tun_device_t *tdev           = userdata;
+    tun_device_t *tdev = userdata;
     sbuf_t       *buf;
     int           nread;
 
@@ -123,12 +123,12 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        if (! chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+        if (-1 == chanRecv(tdev->writer_buffer_channel, (void**)&buf))
         {
             LOGD("TunDevice: routine write will exit due to channel closed");
             return 0;
         }
-#if !defined(OS_BSD)
+#if ! defined(OS_BSD)
         assert(sbufGetLength(buf) > sizeof(struct iphdr));
 #endif
         nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetLength(buf));
@@ -157,7 +157,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 // Write to TUN device
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
-#if !defined(OS_BSD)
+#if ! defined(OS_BSD)
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 #endif
     if (atomicLoadRelaxed(&(tdev->running)) == false)
@@ -166,17 +166,11 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
         return false;
     }
 
-    bool closed = false;
-    if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
+    if (-1 == chanSend(tdev->writer_buffer_channel, (void *) &buf))
     {
-        if (closed)
-        {
-            LOGE("TunDevice: write failed, channel was closed");
-        }
-        else
-        {
-            LOGE("TunDevice: write failed, ring is full");
-        }
+
+        LOGE("TunDevice: write failed, ring is full");
+
         return false;
     }
     return true;
@@ -190,7 +184,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
 #ifdef OS_LINUX
     snprintf(command, sizeof(command), "ip addr del %s/%d  dev %s", ip_presentation, subnet, tdev->name);
 #elif defined(OS_BSD)
-     snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
+    snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
 #else
 #error "Unsupported OS"
 #endif
@@ -235,18 +229,18 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    
-    bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+    bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+    bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-                                       
     tdev->up = true;
     atomicStoreRelaxed(&(tdev->running), true);
 
-    tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
+    tdev->writer_buffer_channel = chanInit(kTunWriteChannelQueueMax);
 
     char command[128];
     snprintf(command, sizeof(command), "ip link set dev %s up", tdev->name);
@@ -280,7 +274,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     chanClose(tdev->writer_buffer_channel);
     sbuf_t *buf;
 
-    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+    while (0 == chanRecv(tdev->writer_buffer_channel, (void**) &buf))
     {
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }
@@ -365,33 +359,33 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 #endif
 
     buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                         RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
+                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
                          bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
         );
 
     buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                         RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
+                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
                          bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
         );
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
-                           .running               = false,
-                           .up                    = false,
-                           .routine_reader        = routineReadFromTun,
-                           .routine_writer        = routineWriteToTun,
-                           .handle                = fd,
-                           .read_event_callback   = cb,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = NULL,
-                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                           .reader_buffer_pool    = reader_bpool,
-                           .writer_buffer_pool    = writer_bpool};
+    *tdev = (tun_device_t) {.name                  = stringDuplicate(ifr.ifr_name),
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromTun,
+                            .routine_writer        = routineWriteToTun,
+                            .handle                = fd,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = NULL,
+                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                            .reader_buffer_pool    = reader_bpool,
+                            .writer_buffer_pool    = writer_bpool};
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 

@@ -426,22 +426,22 @@ static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 // according to microsoft docs, windows mutex uses atomic operation by default
 // and our implementation cannt be beter than the system one
 
-#if ! defined(TEST_HELGRIND) && ! defined(OS_WIN)
+// #if ! defined(TEST_HELGRIND) && ! defined(OS_WIN)
 
-#undef wmutex_t
-#undef mutexInit
-#undef mutexDestroy
-#undef mutexLock
-#undef mutexTryLock
-#undef mutexUnlock
+// #undef wmutex_t
+// #undef mutexInit
+// #undef mutexDestroy
+// #undef mutexLock
+// #undef mutexTryLock
+// #undef mutexUnlock
 
-#define wmutex_t     whybrid_mutex_t
-#define mutexInit    hybridmutexInit
-#define mutexDestroy hybridmutexDestroy
-#define mutexLock    hybridmutexLock
-#define mutexTryLock hybridmutexTryLock
-#define mutexUnlock  hybridmutexUnlock
+// #define wmutex_t     whybrid_mutex_t
+// #define mutexInit    hybridmutexInit
+// #define mutexDestroy hybridmutexDestroy
+// #define mutexLock    hybridmutexLock
+// #define mutexTryLock hybridmutexTryLock
+// #define mutexUnlock  hybridmutexUnlock
 
-#endif // TEST_HELGRIND
+// #endif // TEST_HELGRIND
 
 #endif // WW_MUTEX_H_
