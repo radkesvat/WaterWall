@@ -83,6 +83,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     wioSetCallBackRead(io, onRecv);
     wioSetCallBackClose(io, onClose);
+    wioSetReadTimeout(io, 1600);
 
     // send the init packet
 

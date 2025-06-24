@@ -123,7 +123,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        if (-1 == chanRecv(tdev->writer_buffer_channel, (void**)&buf))
+        if (!chanRecv(tdev->writer_buffer_channel, (void**)&buf))
         {
             LOGD("TunDevice: routine write will exit due to channel closed");
             return 0;
@@ -166,11 +166,17 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
         return false;
     }
 
-    if (-1 == chanSend(tdev->writer_buffer_channel, buf))
+    bool closed = false;
+    if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
     {
-
-        LOGE("TunDevice: write failed, ring is full");
-
+        if (closed)
+        {
+            LOGE("TunDevice: write failed, channel was closed");
+        }
+        else
+        {
+            LOGE("TunDevice: write failed, ring is full");
+        }
         return false;
     }
     return true;
@@ -240,7 +246,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
     tdev->up = true;
     atomicStoreRelaxed(&(tdev->running), true);
 
-    tdev->writer_buffer_channel = chanInit(kTunWriteChannelQueueMax);
+    tdev->writer_buffer_channel = chanOpen(sizeof(void*),kTunWriteChannelQueueMax);
 
     char command[128];
     snprintf(command, sizeof(command), "ip link set dev %s up", tdev->name);
@@ -274,7 +280,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     chanClose(tdev->writer_buffer_channel);
     sbuf_t *buf;
 
-    while (0 == chanRecv(tdev->writer_buffer_channel, (void**) &buf))
+    while (chanRecv(tdev->writer_buffer_channel, (void**) &buf))
     {
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }

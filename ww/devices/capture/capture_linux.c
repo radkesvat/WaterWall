@@ -325,7 +325,7 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        if (-1== chanRecv(cdev->writer_buffer_channel, (void**)&buf))
+        if (!chanRecv(cdev->writer_buffer_channel, (void**)&buf))
         {
             LOGD("CaptureDevice: routine write will exit due to channel closed");
             return 0;
@@ -360,13 +360,20 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
     return 0;
 }
 
+
 bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf)
 {
-    if (-1 == chanSend(cdev->writer_buffer_channel, buf))
+    bool closed = false;
+    if (! chanTrySend(cdev->writer_buffer_channel, &buf, &closed))
     {
-
-        LOGE("CaptureDevice:write failed, ring is full");
-
+        if (closed)
+        {
+            LOGE("CaptureDevice: write failed, channel was closed");
+        }
+        else
+        {
+            LOGE("CaptureDevice:write failed, ring is full");
+        }
         return false;
     }
     return true;
@@ -409,7 +416,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     threadJoin(cdev->write_thread);
 
     sbuf_t *buf;
-    while (0 == chanRecv(cdev->writer_buffer_channel, (void**) &buf))
+    while (chanRecv(cdev->writer_buffer_channel, (void**) &buf))
     {
         bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
     }
@@ -487,7 +494,7 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
                             .queue_number          = queue_number,
                             .read_event_callback   = cb,
                             .userdata              = userdata,
-                            .writer_buffer_channel = chanInit(kCaptureWriteChannelQueueMax),
+                            .writer_buffer_channel = chanOpen(sizeof(void*),kCaptureWriteChannelQueueMax),
                             .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
                             .reader_buffer_pool    = reader_bpool,
                             .writer_buffer_pool    = writer_bpool};

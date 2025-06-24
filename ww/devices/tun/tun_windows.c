@@ -282,7 +282,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
     while (atomicLoadRelaxed(&(tdev->running)))
     {
-        if (-1 == chanRecv(tdev->writer_buffer_channel, (void**)&buf))
+        if (!chanRecv(tdev->writer_buffer_channel, (void**)&buf))
         {
             LOGD("TunDevice: WriteThread: Terminating due to closed channel");
             return 0;
@@ -331,7 +331,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    tdev->writer_buffer_channel = chanInit(kTunWriteChannelQueueMax);
+    tdev->writer_buffer_channel = chanOpen(sizeof(void*),kTunWriteChannelQueueMax);
     MemoryBarrier();
 
     LOGD("TunDevice: Starting WinTun session");
@@ -379,7 +379,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     chanClose(tdev->writer_buffer_channel);
     sbuf_t *buf;
 
-    while (0 == chanRecv(tdev->writer_buffer_channel, (void *) &buf))
+    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
     {
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }
@@ -490,10 +490,17 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
         return false;
     }
 
-    if (-1 == chanSend(tdev->writer_buffer_channel, buf))
+    bool closed = false;
+    if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
     {
-        LOGE("TunDevice: Write failed, ring is full");
-
+        if (closed)
+        {
+            LOGE("TunDevice: Write failed, channel was closed");
+        }
+        else
+        {
+            LOGE("TunDevice: Write failed, ring is full");
+        }
         return false;
     }
     return true;
@@ -626,7 +633,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .routine_writer        = routineWriteToTun,
                             .read_event_callback   = cb,
                             .userdata              = userdata,
-                            .writer_buffer_channel = chanInit(kTunWriteChannelQueueMax),
+                            .writer_buffer_channel = chanOpen(sizeof(void*),kTunWriteChannelQueueMax),
                             .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
                             .reader_buffer_pool    = reader_bpool,
                             .writer_buffer_pool    = writer_bpool,

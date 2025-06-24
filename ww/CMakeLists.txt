@@ -14,7 +14,6 @@ add_library(ww STATIC
     libc/wtime.c
     libc/werr.c
     libc/wfrand.c
-    base/internal_types/chan_queue.c
     base/wchan.c
     base/widle_table.c
     base/wlog.c
@@ -436,7 +435,7 @@ endif()
 
 
 target_compile_definitions(ww PUBLIC 
-    $<$<CONFIG:Debug>:DEBUG=1;ALLOCATOR_BYPASS=1;BYPASS_BUFFERPOOL=1;BYPASS_GENERIC_POOL=1>
+    $<$<CONFIG:Debug>:DEBUG=1>
     $<$<CONFIG:RelWithDebInfo>:NDEBUG=1;RELEASEWITHDEBUGINFO=1>
     $<$<CONFIG:Release>:NDEBUG=1;RELEASE=1>
 )
