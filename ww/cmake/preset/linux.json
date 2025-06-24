@@ -56,10 +56,18 @@
                 "host-linux"
             ]
         },
-         {
+        {
             "name": "linux-gcc-debug",
             "configurePreset": "linux-gcc",
             "configuration": "Debug",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-gcc-rwd",
+            "configurePreset": "linux-gcc",
+            "configuration": "RelWithDebInfo",
             "inherits": [
                 "host-linux"
             ]
