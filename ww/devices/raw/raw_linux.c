@@ -142,13 +142,15 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         if (nwrite < 0)
         {
-            LOGW("RawDevice: writing a packet to RAW  device failed, code: %d", (int) nwrite);
-            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-            {
-                continue;
-            }
-            LOGE("RawDevice: Exit write routine due to critical error");
-            return 0;
+            LOGW("RawDevice: writing a packet to RAW  device failed, code: %d ", (int) nwrite);
+            // if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            // {
+            //     continue;
+            // }
+            // LOGE("RawDevice: Exit write routine due to critical error");
+            continue;
+
+            // return 0;
         }
     }
     return 0;
@@ -180,11 +182,13 @@ bool bringRawDeviceUP(raw_device_t *rdev)
 
     if (rdev->reader_buffer_pool)
     {
-        bufferpoolUpdateAllocationPaddings(rdev->reader_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+        bufferpoolUpdateAllocationPaddings(rdev->reader_buffer_pool,
+                                           bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                            bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
     }
 
-    bufferpoolUpdateAllocationPaddings(rdev->writer_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+    bufferpoolUpdateAllocationPaddings(rdev->writer_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     rdev->up      = true;
