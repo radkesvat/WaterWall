@@ -127,7 +127,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
 
-        struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
+        volatile struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
         nwrite =
             sendto(rdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
@@ -142,7 +142,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         if (nwrite < 0)
         {
-            LOGW("RawDevice: writing a packet to RAW  device failed, code: %d ", (int) nwrite);
+            LOGW("RawDevice: writing a packet to RAW  device failed, code: %d ", strerror(errno));
             // if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             // {
             //     continue;
