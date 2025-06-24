@@ -100,6 +100,11 @@ static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
             LOGE("RawDevice: Exit read routine due to critical error");
             return 0;
         }
+        if (rdev->read_event_callback == NULL)
+        {
+            bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
+            continue;
+        }
 
         sbufSetLength(buf, nread);
 
@@ -180,12 +185,9 @@ bool bringRawDeviceUP(raw_device_t *rdev)
 {
     assert(! rdev->up);
 
-    if (rdev->reader_buffer_pool)
-    {
-        bufferpoolUpdateAllocationPaddings(rdev->reader_buffer_pool,
-                                           bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                           bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
-    }
+    bufferpoolUpdateAllocationPaddings(rdev->reader_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     bufferpoolUpdateAllocationPaddings(rdev->writer_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
@@ -196,10 +198,8 @@ bool bringRawDeviceUP(raw_device_t *rdev)
 
     LOGD("RawDevice: device %s is now up", rdev->name);
 
-    if (rdev->read_event_callback != NULL)
-    {
-        rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
-    }
+    rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
+
     rdev->write_thread = threadCreate(rdev->routine_writer, rdev);
     return true;
 }
@@ -215,10 +215,8 @@ bool bringRawDeviceDown(raw_device_t *rdev)
 
     LOGD("RawDevice: device %s is now down", rdev->name);
 
-    if (rdev->read_event_callback != NULL)
-    {
-        threadJoin(rdev->read_thread);
-    }
+    threadJoin(rdev->read_thread);
+
     threadJoin(rdev->write_thread);
 
     sbuf_t *buf;
@@ -253,19 +251,16 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
 
     buffer_pool_t *reader_bpool        = NULL;
     master_pool_t *reader_message_pool = NULL;
-    if (cb != NULL)
-    {
-        // if the user really wanted to read from raw socket
+    // if the user really wanted to read from raw socket
 
-        reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                        RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                                        bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+    reader_bpool        = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
+                                           RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
+                                           bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
-        );
-        reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity);
+           );
+    reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity);
 
-        masterpoolInstallCallBacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
-    }
+    masterpoolInstallCallBacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
 
     buffer_pool_t *writer_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
