@@ -92,7 +92,6 @@ static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
         {
             bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
 
-            LOGE("RawDevice: reading a packet from RAW device failed, code: %d", (int) nread);
             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             {
                 continue;
@@ -147,15 +146,14 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
         if (nwrite < 0)
         {
-            LOGW("RawDevice: writing a packet to RAW  device failed, code: %d ", strerror(errno));
-            // if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-            // {
-            //     continue;
-            // }
-            // LOGE("RawDevice: Exit write routine due to critical error");
-            continue;
+            int err = errno;
+            if (err == EINTR || err == EAGAIN || err == EWOULDBLOCK)
+            {
+                continue;
+            }
 
-            // return 0;
+            LOGW("RawDevice: sendto() failed permanently: %s", strerror(err));
+            continue; // or break, if you want to stop on hard error
         }
     }
     return 0;
@@ -214,7 +212,7 @@ bool bringRawDeviceDown(raw_device_t *rdev)
     threadJoin(rdev->write_thread);
 
     sbuf_t *buf;
-    while (0 == chanRecv(rdev->writer_buffer_channel, (void**)&buf))
+    while (0 == chanRecv(rdev->writer_buffer_channel, (void **) &buf))
     {
         bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
     }
@@ -240,6 +238,12 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
             return NULL;
         }
     }
+    int one = 1;
+    if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0) {
+        perror("setsockopt IP_HDRINCL");
+        exit(1);
+    }
+    // fcntl(rsocket, F_SETFL, O_NONBLOCK);
 
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
 
