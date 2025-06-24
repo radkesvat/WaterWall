@@ -90,7 +90,7 @@ static void exitHandler(void)
         return;
     }
     
-    int written = write(STDOUT_FILENO, "SignalManager: Application will exit now !\n", 43);
+    int written = write(STDOUT_FILENO, "SignalManager: Application will exit now !\n", 44);
     discard written;
 
     state->handlers_ran = true;
