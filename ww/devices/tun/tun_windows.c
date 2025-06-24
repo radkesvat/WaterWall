@@ -490,7 +490,7 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
         return false;
     }
 
-    if (-1 == chanSend(tdev->writer_buffer_channel, (void *) &buf))
+    if (-1 == chanSend(tdev->writer_buffer_channel, buf))
     {
         LOGE("TunDevice: Write failed, ring is full");
 

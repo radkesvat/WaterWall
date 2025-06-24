@@ -165,7 +165,7 @@ bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
-    if (-1 == chanSend(rdev->writer_buffer_channel, (void**)&buf))
+    if (-1 == chanSend(rdev->writer_buffer_channel, buf))
     {
 
         LOGE("RawDevice: write failed, ring is full");

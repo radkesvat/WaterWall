@@ -362,7 +362,7 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
 bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf)
 {
-    if (-1 == chanSend(cdev->writer_buffer_channel, (void**)&buf))
+    if (-1 == chanSend(cdev->writer_buffer_channel, buf))
     {
 
         LOGE("CaptureDevice:write failed, ring is full");
