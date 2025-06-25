@@ -120,7 +120,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     weventSetUserData(upstream_io, lstate);
     wioSetCallBackConnect(upstream_io, tcpconnectorOnOutBoundConnected);
     wioSetCallBackClose(upstream_io, tcpconnectorOnClose);
-    wioSetReadTimeout(upstream_io, 1600);
+    wioSetReadTimeout(upstream_io, 1600 * 1000);
 
     // issue connect on the socket
     wioConnect(upstream_io);
