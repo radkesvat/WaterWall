@@ -41,8 +41,8 @@ Checks: >
   -readability-identifier-length,
   -misc-no-recursion,
   -misc-include-cleaner,
-  -bugprone-easily-swappable-parameters
-
+  -bugprone-easily-swappable-parameters,
+  -modernize-*
 
 # Turn all the warnings from the checks above into errors.
 WarningsAsErrors: "*"
