@@ -54,15 +54,14 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wioAttach(loop, io);
     wioSetKeepaliveTimeout(io, kDefaultKeepAliveTimeOutMs);
 
-    line_t               *l   = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
+    line_t               *l      = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
     tcplistener_lstate_t *lstate = lineGetState(l, t);
 
-   
-    tcplistenerLinestateInitialize(lstate,io, t, l);
+    tcplistenerLinestateInitialize(lstate, io, t, l);
 
-    l->routing_context.src_ctx.type_ip = true; // we have a client ip
+    l->routing_context.src_ctx.type_ip   = true; // we have a client ip
     l->routing_context.src_ctx.proto_tcp = true; // tcp client
-    sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(io),&(l->routing_context.src_ctx.ip_address));
+    sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(io), &(l->routing_context.src_ctx.ip_address));
     l->routing_context.src_ctx.port = data->real_localport;
 
     weventSetUserData(io, lstate);
@@ -83,7 +82,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     wioSetCallBackRead(io, onRecv);
     wioSetCallBackClose(io, onClose);
-    wioSetReadTimeout(io,1600 * 1000));
+    wioSetReadTimeout(io, 1600 * 1000);
 
     // send the init packet
 
@@ -115,7 +114,7 @@ void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate)
 static bool resumeWriteQueue(tcplistener_lstate_t *lstate)
 {
     buffer_queue_t *pause_queue = &lstate->pause_queue;
-    wio_t          *io         = lstate->io;
+    wio_t          *io          = lstate->io;
     while (bufferqueueLen(pause_queue) > 0)
     {
         sbuf_t *buf    = bufferqueuePopFront(pause_queue);
