@@ -244,12 +244,12 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
             return NULL;
         }
     }
-    int one = 1;
-    if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
-    {
-        perror("setsockopt IP_HDRINCL");
-        exit(1);
-    }
+    // int one = 1;
+    // if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
+    // {
+    //     perror("setsockopt IP_HDRINCL");
+    //     exit(1);
+    // }
     // fcntl(rsocket, F_SETFL, O_NONBLOCK);
 
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
