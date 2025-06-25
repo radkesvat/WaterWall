@@ -68,7 +68,6 @@ typedef struct socket_manager_s
     worker_t               *worker;
     wid_t                   wid;
 
-    wid_t last_round_wid;
     bool  iptables_installed;
     bool  ip6tables_installed;
     bool  lsof_installed;
@@ -281,24 +280,24 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     mutexUnlock(&(state->mutex));
 }
 
-static inline uint16_t getCurrentDistributeTid(void)
-{
-    return state->last_round_wid;
-}
+// static inline uint16_t getCurrentDistributeTid(void)
+// {
+//     return state->last_round_wid;
+// }
 
-static inline void incrementDistributeTid(void)
-{
-    state->last_round_wid++;
-    if (state->last_round_wid >= getWorkersCount())
-    {
-        state->last_round_wid = 0;
-    }
-}
+// static inline void incrementDistributeTid(void)
+// {
+//     state->last_round_wid++;
+//     if (state->last_round_wid >= getWorkersCount())
+//     {
+//         state->last_round_wid = 0;
+//     }
+// }
 
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
 
-    wid_t wid = (uint8_t) getCurrentDistributeTid();
+    wid_t wid =  getNextDistributionWID();
 
     mutexLock(&(state->tcp_pools[wid].mutex));
     socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[wid].pool);
@@ -312,7 +311,6 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     result->io           = io;
     result->tunnel       = filter->tunnel;
     ev.userdata          = result;
-    incrementDistributeTid();
 
     if (wid == state->wid)
     {
