@@ -624,9 +624,9 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
     return ok;
 }
 
-wchan_t *chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity)
+wchan_t *chanOpen(size_t elemsize, uint32_t cap)
 {
-    size_t memsize = sizeof(wchan_t) + (sbufGetTotalCapacity * elemsize);
+    size_t memsize = sizeof(wchan_t) + (cap * elemsize);
 
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
@@ -647,7 +647,7 @@ wchan_t *chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity)
 
     c->memptr   = ptr;
     c->elemsize = elemsize;
-    c->qcap     = sbufGetTotalCapacity;
+    c->qcap     = cap;
     chan_lock_init(&c->lock);
 
 // make sure that the thread setting up the channel gets a low thread_id

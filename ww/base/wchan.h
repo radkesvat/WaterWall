@@ -24,8 +24,8 @@
 typedef struct wchan_s wchan_t; // opaque
 
 // chan_open creates and initializes a new channel which holds elements of elemsize byte.
-// If sbufGetTotalCapacity>0 then a buffered channel with the capacity to hold sbufGetTotalCapacity elements is created.
-wchan_t* chanOpen(size_t elemsize, uint32_t sbufGetTotalCapacity);
+// If cap>0 then a buffered channel with the capacity to hold cap elements is created.
+wchan_t* chanOpen(size_t elemsize, uint32_t cap);
 
 // chanClose cancels any waiting senders and receivers.
 // Messages sent before this call are guaranteed to be delivered, assuming there are
