@@ -59,6 +59,7 @@ typedef struct tun_device_s
     TunReadEventHandle read_event_callback;
 
     struct wchan_s *writer_buffer_channel;
+    atomic_int     packets_queued;
 
     atomic_bool running;
     bool        up;

@@ -51,6 +51,8 @@ static void localThreadEventReceived(wevent_t *ev)
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
+    atomicSub(&(msg->cdev->packets_queued),1);
+    
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
@@ -58,10 +60,13 @@ static void localThreadEventReceived(wevent_t *ev)
 
 static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
 {
+    atomicAdd(&(cdev->packets_queued),1);
+
+
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
-    *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
+    *msg = (struct msg_event){.cdev = cdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -289,6 +294,10 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
+        if(atomicLoad(&(cdev->packets_queued)) > 256){
+            ww_msleep(1);
+            continue;
+        }
         buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
 
         buf = sbufReserveSpace(buf, kReadPacketSize);
@@ -325,7 +334,7 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        if (!chanRecv(cdev->writer_buffer_channel, (void**)&buf))
+        if (! chanRecv(cdev->writer_buffer_channel, (void **) &buf))
         {
             LOGD("CaptureDevice: routine write will exit due to channel closed");
             return 0;
@@ -359,7 +368,6 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
     }
     return 0;
 }
-
 
 bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf)
 {
@@ -416,7 +424,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     threadJoin(cdev->write_thread);
 
     sbuf_t *buf;
-    while (chanRecv(cdev->writer_buffer_channel, (void**) &buf))
+    while (chanRecv(cdev->writer_buffer_channel, (void **) &buf))
     {
         bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
     }
@@ -485,19 +493,20 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
     *cdev =
-        (capture_device_t) {.name                  = stringDuplicate(name),
-                            .running               = false,
-                            .up                    = false,
-                            .routine_reader        = routineReadFromCapture,
-                            .routine_writer        = routineWriteToCapture,
-                            .socket                = socket_netfilter,
-                            .queue_number          = queue_number,
-                            .read_event_callback   = cb,
-                            .userdata              = userdata,
-                            .writer_buffer_channel = chanOpen(sizeof(void*),kCaptureWriteChannelQueueMax),
-                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                            .reader_buffer_pool    = reader_bpool,
-                            .writer_buffer_pool    = writer_bpool};
+        (capture_device_t){.name                  = stringDuplicate(name),
+                           .running               = false,
+                           .up                    = false,
+                           .routine_reader        = routineReadFromCapture,
+                           .routine_writer        = routineWriteToCapture,
+                           .socket                = socket_netfilter,
+                           .queue_number          = queue_number,
+                           .read_event_callback   = cb,
+                           .userdata              = userdata,
+                           .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
+                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                           .packets_queued        = 0,
+                           .reader_buffer_pool    = reader_bpool,
+                           .writer_buffer_pool    = writer_bpool};
 
     masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 

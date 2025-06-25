@@ -33,6 +33,7 @@ typedef struct capture_device_s
     CaptureReadEventHandle read_event_callback;
 
     struct wchan_s *writer_buffer_channel;
+    atomic_int      packets_queued;
     atomic_bool     running;
     atomic_bool     up;
 
