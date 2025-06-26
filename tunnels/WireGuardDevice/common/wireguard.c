@@ -13,15 +13,25 @@
 
 // 5.4 Messages
 // Constants
-static const uint8_t CONSTRUCTION[37] =
-    "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"; // The UTF-8 string literal "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s", 37
+static const uint8_t CONSTRUCTION[37] = {
+    'N','o','i','s','e','_','I','K','p','s','k','2','_','2','5','5','1','9','_',    
+    'C','h','a','C','h','a','P','o','l','y','_','B','L','A','K','E','2','s'
+};                                      // The UTF-8 string literal "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s", 37
                                              // bytes of output
-static const uint8_t IDENTIFIER[34] =
-    "WireGuard v1 zx2c4 Jason@zx2c4.com"; // The UTF-8 string literal "WireGuard v1 zx2c4 Jason@zx2c4.com", 34 bytes of
+
+static const uint8_t IDENTIFIER[34] = {
+    'W','i','r','e','G','u','a','r','d',' ','v','1',' ','z','x','2','c','4',' ',
+    'J','a','s','o','n','@','z','x','2','c','4','.','c','o','m'
+}; // The UTF-8 string literal "WireGuard v1 zx2c4 Jason@zx2c4.com", 34 bytes of
                                           // output
-static const uint8_t LABEL_MAC1[8] = "mac1----"; // Label-Mac1 The UTF-8 string literal "mac1----", 8 bytes of output.
-static const uint8_t LABEL_COOKIE[8] =
-    "cookie--"; // Label-Cookie The UTF-8 string literal "cookie--", 8 bytes of output
+
+static const uint8_t LABEL_MAC1[8] = {
+    'm','a','c','1','-','-','-','-'
+}; // Label-Mac1 The UTF-8 string literal "mac1----", 8 bytes of output.
+
+static const uint8_t LABEL_COOKIE[8] = {
+    'c','o','o','k','i','e','-','-'
+};// Label-Cookie The UTF-8 string literal "cookie--", 8 bytes of output
 
 static const uint8_t zero_key[WIREGUARD_PUBLIC_KEY_LEN] = {0};
 
