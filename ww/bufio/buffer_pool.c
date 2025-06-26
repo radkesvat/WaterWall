@@ -17,7 +17,7 @@ struct buffer_pool_s
     uint32_t small_buffers_size;
     uint16_t small_buffer_left_padding;
 
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     atomic_size_t in_use;
 #endif
 
@@ -122,7 +122,7 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
                        (void const **) &(pool->large_buffers[pool->large_buffers_container_len]), increase, pool);
 
     pool->large_buffers_container_len += increase;
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     LOGD("BufferPool: allocated %d new large buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
@@ -139,7 +139,7 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
                        (void const **) &(pool->small_buffers[pool->small_buffers_container_len]), increase, pool);
 
     pool->small_buffers_container_len += increase;
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     LOGD("BufferPool: allocated %d new small buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
@@ -174,7 +174,7 @@ static void shrinkLargeBuffers(buffer_pool_t *pool)
 
     pool->large_buffers_container_len -= decrease;
 
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     LOGD("BufferPool: freed %d large buffers, %zu are in use", decrease, pool->in_use);
 #endif
 }
@@ -193,7 +193,7 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 
     pool->small_buffers_container_len -= decrease;
 
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     LOGD("BufferPool: freed %d small buffers, %zu are in use", decrease, pool->in_use);
 #endif
 }
@@ -205,10 +205,10 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
  */
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 {
-#if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
+#if defined(BYPASS_BUFFERPOOL)
     return sbufCreateWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding);
 #endif
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
 #endif
 
@@ -230,10 +230,10 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
  */
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
-#if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
+#if defined(BYPASS_BUFFERPOOL)
     return sbufCreateWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding);
 #endif
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     pool->in_use += 1;
 #endif
 
@@ -261,15 +261,16 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
         return;
     }
 
-#if defined(DEBUG) && defined(BYPASS_BUFFERPOOL)
+#if defined(BYPASS_BUFFERPOOL)
     sbufDestroy(b);
     return;
 #endif
 
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
     pool->in_use -= 1;
 #endif
-
+    sbufReset(b);
+    
     if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size)
     {
         if (UNLIKELY(pool->large_buffers_container_len > pool->free_threshold))
@@ -373,7 +374,7 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
         .cap = (uint16_t) bufcount, .large_buffers_size = large_buffer_size, .small_buffers_size = small_buffer_size,
         .free_threshold = (uint16_t) max(bufcount / 2, (bufcount * 2) / 3),
 
-#if defined(DEBUG) && defined(BUFFER_POOL_DEBUG)
+#if defined(BUFFER_POOL_DEBUG)
         .in_use = 0,
 #endif
 

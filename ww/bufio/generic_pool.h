@@ -31,7 +31,7 @@ typedef void pool_item_t;
 typedef pool_item_t *(*PoolItemCreateHandle)(generic_pool_t *pool);
 typedef void (*PoolItemDestroyHandle)(generic_pool_t *pool, pool_item_t *item);
 
-#if defined(DEBUG) && defined(POOL_DEBUG)
+#if defined(POOL_DEBUG)
 #define GENERIC_POOL_FIELDS                                                                                            \
     uint32_t              len;                                                                                         \
     uint32_t              cap;                                                                                         \
@@ -80,11 +80,11 @@ void genericpoolShrink(generic_pool_t *pool);
  */
 static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
 {
-#if defined(DEBUG) && defined(BYPASS_GENERIC_POOL)
+#if defined(BYPASS_GENERIC_POOL)
     return pool->create_item_handle(pool);
 #endif
 
-#if defined(DEBUG) && defined(POOL_DEBUG)
+#if defined(POOL_DEBUG)
     pool->in_use += 1;
 #endif
 
@@ -106,12 +106,12 @@ static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
  */
 static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
 {
-#if defined(DEBUG) && defined(BYPASS_GENERIC_POOL)
+#if defined(BYPASS_GENERIC_POOL)
     pool->destroy_item_handle(pool, b);
     return;
 #endif
 
-#if defined(DEBUG) && defined(POOL_DEBUG)
+#if defined(POOL_DEBUG)
     pool->in_use -= 1;
 #endif
     if (pool->len > pool->free_threshold)

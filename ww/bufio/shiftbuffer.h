@@ -38,6 +38,20 @@ static_assert(SIZEOF_STRUCT_SBUF == 16, "sbuf_s size is not 16 bytes, see above 
 void sbufDestroy(sbuf_t *b);
 
 /**
+ * Resets the shift buffer to its initial state.
+ * useful when you are done with the buffer and want to reuse it (storing in pool again)
+ * @param b The shift buffer to reset.
+ */
+static inline void sbufReset(sbuf_t *b)
+{
+    assert(!b->is_temporary);
+    b->len          = 0;
+    b->curpos       = b->l_pad;
+    //capacity and left padding are fixed, so no need to reset them
+    
+}
+
+/**
  * Creates a new shift buffer with specified minimum capacity and left padding.
  * @param minimum_capacity The minimum capacity of the buffer.
  * @param pad_left The left padding of the buffer.

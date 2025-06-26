@@ -98,7 +98,7 @@ static inline context_t *contextSwitchLine(context_t *const c, line_t *const lin
 
 static inline void contextDropPayload(context_t *const c)
 {
-#if defined(RELEASE)
+#if defined(NDEBUG)
     discard (c);
 #else
     assert(c->payload != NULL);

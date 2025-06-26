@@ -83,7 +83,6 @@ add_library(ww STATIC
 option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
 
 option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
-option(MEM128_OPTIMIZE "implement 128 memcopy if x86 internal headers are found in this platform" ON)
 
 
 # Crypto backend options
@@ -405,11 +404,11 @@ check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
 
-if(HAVE_X86INTRIN_H AND MEM128_OPTIMIZE)
-    target_compile_options(ww PUBLIC $<$<NOT:$<CONFIG:Debug>>:-mavx>)
-    set(WW_ENABLE_MEM128_OPTIMIZE 1)
+if(HAVE_X86INTRIN_H)
+    target_compile_options(ww PUBLIC -mavx)
+    set(WW_SUPPORTED_MEM128_OPTIMIZE 1)
 else()
-    set(WW_ENABLE_MEM128_OPTIMIZE 0)
+    set(WW_SUPPORTED_MEM128_OPTIMIZE 0)
 endif()
 
 ################################################################################

@@ -98,7 +98,6 @@
 #endif
 
 
-#define MEM128_OPTIMIZE @WW_ENABLE_MEM128_OPTIMIZE@ 
 
 #cmakedefine ENABLE_UDS 1
 #cmakedefine USE_MULTIMAP 1
@@ -146,9 +145,10 @@ enum ram_profiles_e
     ((ram_prifle) >= LARGE_RAM_PROFILE_THRESHOLD ? LARGE_BUFFER_SIZE_RAM_HIGH : LARGE_BUFFER_SIZE_RAM_LOW)
 
 
-#define ALLOCATOR_BYPASS    0
-#define BYPASS_BUFFERPOOL   0
-#define BYPASS_GENERIC_POOL 0
+#define ALLOCATOR_BYPASS    0  
+#define BYPASS_BUFFERPOOL   0 
+#define BYPASS_GENERIC_POOL 0 
+#define MEM128_OPTIMIZE 0 && (@WW_SUPPORTED_MEM128_OPTIMIZE@ && defined(NDEBUG) &&  defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__)))
 
 
 #endif // WW_CONFIG_H_

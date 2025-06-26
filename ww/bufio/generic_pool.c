@@ -45,7 +45,7 @@ void genericpoolReCharge(generic_pool_t *pool)
     masterpoolGetItems(pool->mp, (void const **) &(pool->available[pool->len]), increase, pool);
 
     pool->len += increase;
-#if defined(DEBUG) && defined(POOL_DEBUG)
+#if defined(POOL_DEBUG)
     wlogd("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
@@ -62,7 +62,7 @@ void genericpoolShrink(generic_pool_t *pool)
 
     pool->len -= decrease;
 
-#if defined(DEBUG) && defined(POOL_DEBUG)
+#if defined(POOL_DEBUG)
     wlogd("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
 }
