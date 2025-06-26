@@ -72,7 +72,7 @@ endif()
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include  ${CMAKE_CURRENT_SOURCE_DIR}/core/force_link_glibc_2.27.h")
 
 
-set(ENABLE_ASAN OFF CACHE BOOL "enable address sanitizer" FORCE)
+set(ENABLE_ASAN ON CACHE BOOL "enable address sanitizer" FORCE)
 set(ENABLE_TSAN OFF CACHE BOOL "enable thread sanitizer" FORCE)
 set(ENABLE_LSAN OFF CACHE BOOL "enable leak sanitizer" FORCE)
 set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
@@ -108,7 +108,8 @@ option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the cor
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
 
-if(LINUX) # todo (other platforms)
+if(UNIX AND NOT ANDROID)
+   # todo (other platforms)
   option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  FALSE)
   option(INCLUDE_CAPTUREDEVICE "link CapTureDevice staticly to the core"  FALSE)
   option(INCLUDE_RAWSOCKET "link RawSocket staticly to the core"  TRUE)
