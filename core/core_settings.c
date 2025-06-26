@@ -3,10 +3,10 @@
 
 // Default logging configurations
 #define DEFAULT_INTERNAL_LOG_LEVEL      "INFO"
-#define DEFAULT_INTERNAL_LOG_FILE       ""
+#define DEFAULT_INTERNAL_LOG_FILE       "internal.log" 
 #define DEFAULT_INTERNAL_ENABLE_CONSOLE true
 #define DEFAULT_CORE_LOG_LEVEL          "INFO"
-#define DEFAULT_CORE_LOG_FILE           "core.log" // Changed from .json to .log
+#define DEFAULT_CORE_LOG_FILE           "core.log" 
 #define DEFAULT_CORE_ENABLE_CONSOLE     true
 #define DEFAULT_NETWORK_LOG_LEVEL       "INFO"
 #define DEFAULT_NETWORK_LOG_FILE        "network.log"
