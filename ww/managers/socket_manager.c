@@ -336,12 +336,12 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
 {
     const bool is_v4 = addr.type == IPADDR_TYPE_V4;
     ip4_addr_t ipv4_addr;
-
+    
     if (is_v4)
     {
         ip4_addr_copy(ipv4_addr, addr.u_addr.ip4);
     v4checks:
-        for (unsigned int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
+        for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
         {
 
             if (checkIPRange4(ipv4_addr, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip4,
