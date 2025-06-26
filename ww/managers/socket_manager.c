@@ -68,12 +68,12 @@ typedef struct socket_manager_s
     worker_t               *worker;
     wid_t                   wid;
 
-    bool  iptables_installed;
-    bool  ip6tables_installed;
-    bool  lsof_installed;
-    bool  iptable_cleaned;
-    bool  iptables_used;
-    bool  started;
+    bool iptables_installed;
+    bool ip6tables_installed;
+    bool lsof_installed;
+    bool iptable_cleaned;
+    bool iptables_used;
+    bool started;
 
 } socket_manager_state_t;
 
@@ -273,7 +273,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         option.shared_balance_table = b_table;
     }
 
-    *filter = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
+    *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
     mutexLock(&(state->mutex));
     filters_t_push(&(state->filters[pirority]), filter);
@@ -297,7 +297,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
 
-    wid_t wid =  getNextDistributionWID();
+    wid_t wid = getNextDistributionWID();
 
     mutexLock(&(state->tcp_pools[wid].mutex));
     socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[wid].pool);
@@ -306,7 +306,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     result->real_localport = local_port;
 
     wloop_t *worker_loop = getWorkerLoop(wid);
-    wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
+    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
     result->wid          = wid;
     result->io           = io;
     result->tunnel       = filter->tunnel;
@@ -336,7 +336,7 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
 {
     const bool is_v4 = addr.type == IPADDR_TYPE_V4;
     ip4_addr_t ipv4_addr;
-    
+
     if (is_v4)
     {
         ip4_addr_copy(ipv4_addr, addr.u_addr.ip4);
@@ -359,7 +359,7 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
             goto v4checks;
         }
 
-        for (unsigned int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
+        for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
         {
 
             if (checkIPRange6(addr.u_addr.ip6, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip6,
@@ -680,7 +680,7 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
 
     pl->tunnel           = filter->tunnel;
     wloop_t *worker_loop = getWorkerLoop(pl->wid);
-    wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
+    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
     if (pl->wid == state->wid)
@@ -726,7 +726,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
             {
                 continue;
             }
-            if ( vec_ipmask_t_size(&option.white_list) > 0)
+            if (vec_ipmask_t_size(&option.white_list) > 0)
             {
                 if (! checkIpIsWhiteList(paddr, option))
                 {
@@ -786,7 +786,7 @@ static void onRecvFrom(wio_t *io, sbuf_t *buf)
     uint16_t   local_port = sockaddrPort(wioGetLocaladdrU(io));
     wid_t      target_wid = (wid_t) local_port % getWorkersCount();
 
-    udp_payload_t item = (udp_payload_t){
+    udp_payload_t item = (udp_payload_t) {
         .sock = socket, .buf = buf, .wid = target_wid, .peer_addr = *wioGetPeerAddrU(io), .real_localport = local_port};
 
     distributeUdpPayload(item);
@@ -809,7 +809,7 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         exit(1);
     }
     udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
-    *socket           = (udpsock_t){.io = filter->listen_io, .table = idleTableCreate(loop)};
+    *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
     weventSetUserData(filter->listen_io, socket);
     wioSetCallBackRead(filter->listen_io, onRecvFrom);
     wioRead(filter->listen_io);
@@ -880,9 +880,9 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
 
     udp_payload_t *item = newUpdPayload(wid_from);
 
-    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .wid = wid_from};
+    *item = (udp_payload_t) {.sock = socket_io, .buf = buf, .wid = wid_from};
 
-    wevent_t ev = (wevent_t){.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
+    wevent_t ev = (wevent_t) {.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
 
     wloopPostEvent(weventGetLoop(socket_io->io), &ev);
 }
