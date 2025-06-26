@@ -19,6 +19,16 @@ void tundeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     printIPPacketInfo("TunDevice write", (const unsigned char *) ip_header);
 #endif
 
+    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+
+    if (l->recalculate_checksum)
+    {
+        IPH_CHKSUM_SET(ipheader, 0);
+        IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, IPH_HL_BYTES(ipheader)));
+        l->recalculate_checksum = false;
+    }
+
+    
     if (! tundeviceWrite(tdev, buf))
     {
         LOGW("TunDevice: Write failed! worker %d ", lineGetWID(l));

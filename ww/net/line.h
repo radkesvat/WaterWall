@@ -39,7 +39,8 @@ typedef struct line_s
     bool        alive;
     wid_t       wid;
     uint8_t     auth_cur;
-    bool        established;
+    uint8_t     established : 1;
+    uint8_t     recalculate_checksum : 1; // used for packet tunnels
 
     routing_context_t routing_context;
 
@@ -59,19 +60,20 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
 {
     line_t *l = genericpoolGetItem(pool);
 
-    *l = (line_t){.refc     = 1,
-                  .auth_cur = 0,
-                  .wid      = wid,
-                  .alive    = true,
-                  .pool     = pool,
-                  // to set a port we need to know the AF family, default v4
-                  .routing_context = (routing_context_t){.network_type = WIO_TYPE_UNKNOWN,
-                                                         .dest_ctx  = (address_context_t){.ip_address.type = IPADDR_TYPE_V4},
-                                                         .src_ctx   = (address_context_t){.ip_address.type = IPADDR_TYPE_V4},
-                                                         .user_name = NULL,
-                                                         .user_name_len = 0
+    *l = (line_t) {.refc     = 1,
+                   .auth_cur = 0,
+                   .wid      = wid,
+                   .alive    = true,
+                   .pool     = pool,
+                   // to set a port we need to know the AF family, default v4
+                   .routing_context =
+                       (routing_context_t) {.network_type  = WIO_TYPE_UNKNOWN,
+                                            .dest_ctx      = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
+                                            .src_ctx       = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
+                                            .user_name     = NULL,
+                                            .user_name_len = 0
 
-                  }};
+                       }};
 
     memorySet(&l->tunnels_line_state[0], 0, genericpoolGetItemSize(l->pool) - sizeof(line_t));
 

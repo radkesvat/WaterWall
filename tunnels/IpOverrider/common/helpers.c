@@ -17,11 +17,12 @@ void ipoverriderReplacerDestModeUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *
     if (state->support4 && IPH_V(ipheader) == 4)
     {
         memoryCopy(&(ipheader->dest.addr), &state->ov_4, 4);
-        IPH_CHKSUM_SET(ipheader, 0);
+        l->recalculate_checksum = true;
+        // IPH_CHKSUM_SET(ipheader, 0);
 
-        u16_t new_chksum = inet_chksum(ipheader, IPH_HL_BYTES(ipheader));
+        // u16_t new_chksum = inet_chksum(ipheader, IPH_HL_BYTES(ipheader));
 
-        IPH_CHKSUM_SET(ipheader, new_chksum);
+        // IPH_CHKSUM_SET(ipheader, new_chksum);
     }
     // else if (state->support6 && IPH_V(ipheader) == 6)
     // {
@@ -42,11 +43,7 @@ void ipoverriderReplacerSrcModeUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b
     if (state->support4 && IPH_V(ipheader) == 4)
     {
         memoryCopy(&(ipheader->src.addr), &state->ov_4, 4);
-        IPH_CHKSUM_SET(ipheader, 0);
-
-        u16_t new_chksum = inet_chksum(ipheader, IPH_HL_BYTES(ipheader));
-
-        IPH_CHKSUM_SET(ipheader, new_chksum);
+        l->recalculate_checksum = true;
     }
     // else if (state->support6 && IPH_V(ipheader) == 6)
     // {
@@ -67,11 +64,7 @@ void ipoverriderReplacerDestModeDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t
     if (state->support4 && IPH_V(ipheader) == 4)
     {
         memoryCopy(&(ipheader->dest.addr), &state->ov_4, 4);
-        IPH_CHKSUM_SET(ipheader, 0);
-
-        u16_t new_chksum = inet_chksum(ipheader, IPH_HL_BYTES(ipheader));
-
-        IPH_CHKSUM_SET(ipheader, new_chksum);
+        l->recalculate_checksum = true;
     }
     // else if (state->support6 && IPH_V(ipheader) == 6)
     // {
@@ -92,11 +85,7 @@ void ipoverriderReplacerSrcModeDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
     if (state->support4 && IPH_V(ipheader) == 4)
     {
         memoryCopy(&(ipheader->src.addr), &state->ov_4, 4);
-        IPH_CHKSUM_SET(ipheader, 0);
-
-        u16_t new_chksum = inet_chksum(ipheader, IPH_HL_BYTES(ipheader));
-
-        IPH_CHKSUM_SET(ipheader, new_chksum);
+        l->recalculate_checksum = true;
     }
     // else if (state->support6 && IPH_V(ipheader) == 6)
     // {
