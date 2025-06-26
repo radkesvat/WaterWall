@@ -18,9 +18,11 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 {
     // packet is correctly filtered based on src/dest ip since we told net filter system
     (void) cdev;
-    tunnel_t           *t  = userdata;
-    // rawsocket_tstate_t *state = tunnelGetState(t);
-    printIPPacketInfo("RawSocket received: ", sbufGetRawPtr(buf));
+    tunnel_t *t = userdata;
+
+    //rawsocket_tstate_t *state = tunnelGetState(t);
+    //printIPPacketInfo("RawSocket received: ", sbufGetRawPtr(buf));
+
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
     lineLock(l);
     tunnelPrevDownStreamPayload(t, l, buf);
