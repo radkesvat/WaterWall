@@ -108,7 +108,7 @@ option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the cor
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
 
-if(UNIX AND NOT ANDROID)
+if(LINUX AND NOT ANDROID)
    # todo (other platforms)
   option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  FALSE)
   option(INCLUDE_CAPTUREDEVICE "link CapTureDevice staticly to the core"  FALSE)
