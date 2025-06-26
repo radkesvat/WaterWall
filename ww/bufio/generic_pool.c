@@ -1,7 +1,7 @@
 #include "generic_pool.h"
 #include "global_state.h"
 
-#ifdef POOL_DEBUG
+#if POOL_DEBUG == 1
 #include "loggers/internal_logger.h"
 #endif
 #define GENERIC_POOL_DEFAULT_WIDTH ((uint32_t) ((RAM_PROFILE)))
@@ -45,7 +45,7 @@ void genericpoolReCharge(generic_pool_t *pool)
     masterpoolGetItems(pool->mp, (void const **) &(pool->available[pool->len]), increase, pool);
 
     pool->len += increase;
-#if defined(POOL_DEBUG)
+#if POOL_DEBUG == 1
     wlogd("BufferPool: allocated %d new buffers, %zu are in use", increase, pool->in_use);
 #endif
 }
@@ -62,7 +62,7 @@ void genericpoolShrink(generic_pool_t *pool)
 
     pool->len -= decrease;
 
-#if defined(POOL_DEBUG)
+#if POOL_DEBUG == 1
     wlogd("BufferPool: freed %d buffers, %zu are in use", decrease, pool->in_use);
 #endif
 }

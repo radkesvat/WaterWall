@@ -148,6 +148,8 @@ enum ram_profiles_e
 #define ALLOCATOR_BYPASS    0  
 #define BYPASS_BUFFERPOOL   0 
 #define BYPASS_GENERIC_POOL 0 
+#define POOL_DEBUG          0
+
 #define MEM128_OPTIMIZE 0 && (@WW_SUPPORTED_MEM128_OPTIMIZE@ && defined(NDEBUG) &&  defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__)))
 
 

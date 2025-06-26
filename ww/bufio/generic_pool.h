@@ -14,14 +14,10 @@
 
     when DEBUG is true, you can:
 
-        define POOL_DEBUG to view debug logs about how many itmes are in use or in pool
-
-        define BYPASS_GENERIC_POOL to bypass the pool for your debug goals or leak finding
 
 */
 
-// #define POOL_DEBUG
-// #define BYPASS_GENERIC_POOL
+
 
 typedef struct generic_pool_s generic_pool_t;
 
@@ -31,7 +27,7 @@ typedef void pool_item_t;
 typedef pool_item_t *(*PoolItemCreateHandle)(generic_pool_t *pool);
 typedef void (*PoolItemDestroyHandle)(generic_pool_t *pool, pool_item_t *item);
 
-#if defined(POOL_DEBUG)
+#if POOL_DEBUG == 1
 #define GENERIC_POOL_FIELDS                                                                                            \
     uint32_t              len;                                                                                         \
     uint32_t              cap;                                                                                         \
@@ -80,11 +76,11 @@ void genericpoolShrink(generic_pool_t *pool);
  */
 static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
 {
-#if defined(BYPASS_GENERIC_POOL)
+#if BYPASS_GENERIC_POOL == 1
     return pool->create_item_handle(pool);
 #endif
 
-#if defined(POOL_DEBUG)
+#if POOL_DEBUG == 1
     pool->in_use += 1;
 #endif
 
@@ -106,12 +102,12 @@ static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
  */
 static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
 {
-#if defined(BYPASS_GENERIC_POOL)
+#if BYPASS_GENERIC_POOL == 1
     pool->destroy_item_handle(pool, b);
     return;
 #endif
 
-#if defined(POOL_DEBUG)
+#if POOL_DEBUG == 1
     pool->in_use -= 1;
 #endif
     if (pool->len > pool->free_threshold)
@@ -186,5 +182,3 @@ generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *
  */
 void genericpoolDestroy(generic_pool_t *pool);
 
-#undef BYPASS_GENERIC_POOL
-#undef POOL_DEBUG
