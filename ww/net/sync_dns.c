@@ -19,6 +19,7 @@ bool resolveContextSync(address_context_t *sctx)
         if (sockaddrSetIp(&temp, sctx->domain) != 0)
         {
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
+            sctx->type_ip = false;
             return false;
         }
         sctx->type_ip = true;
@@ -38,6 +39,5 @@ bool resolveContextSync(address_context_t *sctx)
     LOGD("SyncDns: dns resolve took %lf sec", time_spent);
 #endif
 
-    sctx->type_ip = false;
     return true;
 }
