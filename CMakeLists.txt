@@ -107,11 +107,8 @@ option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the cor
 
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
-
-if(LINUX AND NOT ANDROID)
+if(LINUX AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
    # todo (other platforms)
-  option(INCLUDE_RAWDEVICE "link RawDevice staticly to the core"  FALSE)
-  option(INCLUDE_CAPTUREDEVICE "link CapTureDevice staticly to the core"  FALSE)
   option(INCLUDE_RAWSOCKET "link RawSocket staticly to the core"  TRUE)
 endif()
 
@@ -235,21 +232,7 @@ target_link_libraries(Waterwall RawSocket)
 endif()
 
 
-#raw device
-if (INCLUDE_RAWDEVICE)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_RAWDEVICE=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/raw)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/raw)
-target_link_libraries(Waterwall RawDevice)
-endif()
 
-#capture device
-if (INCLUDE_CAPTUREDEVICE)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_CAPTUREDEVICE=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/capture)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/device/capture)
-target_link_libraries(Waterwall CaptureDevice)
-endif()
 
 #layer3 receiver
 if (INCLUDE_WIREGUARD_DEVICE)
