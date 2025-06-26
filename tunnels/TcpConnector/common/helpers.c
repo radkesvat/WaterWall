@@ -146,8 +146,7 @@ void tcpconnectorOnWriteComplete(wio_t *io)
 
     if (wioCheckWriteComplete(io))
     {
-        buffer_queue_t *pause_queue = &lstate->pause_queue;
-        if (bufferqueueLen(pause_queue) > 0 && ! resumeWriteQueue(lstate))
+        if (! resumeWriteQueue(lstate))
         {
             return;
         }

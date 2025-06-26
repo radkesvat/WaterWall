@@ -136,7 +136,7 @@ void tcplistenerOnWriteComplete(wio_t *io)
     tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
     if (UNLIKELY(lstate == NULL))
     {
-        // assert(false); happened
+        // assert(false);
         return;
     }
 
@@ -144,8 +144,7 @@ void tcplistenerOnWriteComplete(wio_t *io)
 
     if (wioCheckWriteComplete(io))
     {
-        buffer_queue_t *pause_queue = &lstate->pause_queue;
-        if (bufferqueueLen(pause_queue) > 0 && ! resumeWriteQueue(lstate))
+        if (! resumeWriteQueue(lstate))
         {
             return;
         }
