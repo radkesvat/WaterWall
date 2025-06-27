@@ -41,6 +41,12 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
+          path: ${{ github.workspace }}/build/
+
       - name: Show ccache statistics
         run: ccache -sv
 
@@ -89,7 +95,11 @@ jobs:
           version: ${{ matrix.version }}
           run: cmake --build build  
 
-
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
+          path: ${{ github.workspace }}/build/
 
   ios:
     strategy:
@@ -120,6 +130,12 @@ jobs:
 
       - name: Build
         run: cmake --build build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ matrix.target }}_${{ github.run_id }}_${{ github.run_attempt }}
+          path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -153,6 +169,12 @@ jobs:
       - name: Build
         run: cmake --build build
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ matrix.cc }}_${{ github.run_id }}_${{ github.run_attempt }}
+          path: ${{ github.workspace }}/build/
+
       - name: Show ccache statistics
         run: ccache -sv
 
@@ -178,6 +200,12 @@ jobs:
 
       - name: Build
         run: cmake --build  build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ github.run_id }}_${{ github.run_attempt }}
+          path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -227,6 +255,12 @@ jobs:
       - name: Build
         run: cmake --build  build
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ github.run_id }}_${{ github.run_attempt }}
+          path: ${{ github.workspace }}/build/
+
       - name: Show ccache statistics
         run: ccache -sv
 
@@ -263,7 +297,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ runner.arch }}_${{ matrix.c_compiler }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
           path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
