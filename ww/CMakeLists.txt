@@ -157,10 +157,12 @@ set_target_properties(ww
 # Platform-specific sources
 if(APPLE)
     message(STATUS "No Tun device for This os yet")
-elseif(LINUX AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
+elseif(LINUX)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
-    target_sources(ww PRIVATE devices/capture/capture_linux.c)
-    target_sources(ww PRIVATE devices/raw/raw_linux.c)
+    if(NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
+        target_sources(ww PRIVATE devices/capture/capture_linux.c)
+        target_sources(ww PRIVATE devices/raw/raw_linux.c)
+    endif()
     # ...existing commented raw/capture devices...
 elseif(WIN32)
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
