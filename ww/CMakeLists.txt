@@ -157,9 +157,9 @@ set_target_properties(ww
 # Platform-specific sources
 if(APPLE)
     message(STATUS "No Tun device for This os yet")
-elseif(LINUX OR FREEBSD OR OPENBSD OR NETBSD)
+elseif(UNIX AND NOT ANDROID)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
-    if(NOT (FREEBSD OR OPENBSD OR NETBSD))
+    if(LINUX)
         target_sources(ww PRIVATE devices/capture/capture_linux.c)
         target_sources(ww PRIVATE devices/raw/raw_linux.c)
     endif()
