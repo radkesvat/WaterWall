@@ -280,20 +280,6 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     mutexUnlock(&(state->mutex));
 }
 
-// static inline uint16_t getCurrentDistributeTid(void)
-// {
-//     return state->last_round_wid;
-// }
-
-// static inline void incrementDistributeTid(void)
-// {
-//     state->last_round_wid++;
-//     if (state->last_round_wid >= getWorkersCount())
-//     {
-//         state->last_round_wid = 0;
-//     }
-// }
-
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
 
@@ -303,14 +289,17 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[wid].pool);
     mutexUnlock(&(state->tcp_pools[wid].mutex));
 
-    result->real_localport = local_port;
+    *result = (socket_accept_result_t) {
+        .io             = io,
+        .tunnel         = filter->tunnel,
+        .real_localport = local_port,
+        .wid            = wid,
+    };
 
     wloop_t *worker_loop = getWorkerLoop(wid);
     wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
-    result->wid          = wid;
-    result->io           = io;
-    result->tunnel       = filter->tunnel;
-    ev.userdata          = result;
+
+    ev.userdata = result;
 
     if (wid == state->wid)
     {
@@ -576,6 +565,7 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
     filter->listen_ios         = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
     filter->listen_ios[length] = 0x0;
     int i                      = 0;
+
     for (uint16_t p = port_min; p < port_max; p++)
     {
         if (ports_overlapped[p] == 1)
@@ -670,7 +660,12 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
          SOCKADDR_STR(wioGetPeerAddrU(upl.sock->io), peeraddrstr));
 }
 
-static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
+/*
+ * @brief Post udp payload to the worker loop
+ * @param post_pl: udp payload to post
+ * @param filter: socket filter to use
+ */
+static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
 {
 
     mutexLock(&(state->udp_pools[post_pl.wid].mutex));
@@ -691,10 +686,13 @@ static void postPayload(udp_payload_t post_pl, socket_filter_t *filter)
     wloopPostEvent(worker_loop, &ev);
 }
 
+/**
+ * @brief Distribute udp payload to the appropriate socket filter
+ * @param pl: udp payload to distribute
+ */
 static void distributeUdpPayload(const udp_payload_t pl)
 {
-    // mutexLock(&(state->mutex)); new socket manager will not lock here
-    // sockaddr_u *paddr      = (sockaddr_u *) wioGetPeerAddrU(pl.sock->io);
+
     ip_addr_t paddr;
     sockaddrToIpAddr(wioGetPeerAddrU(pl.sock->io), &paddr);
 
@@ -747,7 +745,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
                     idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
                                                     option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                                        : option.balance_group_interval);
-                    postPayload(pl, target_filter);
+                    postUdpPayload(pl, target_filter);
                     return;
                 }
 
@@ -762,7 +760,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
                 continue;
             }
 
-            postPayload(pl, filter);
+            postUdpPayload(pl, filter);
             return;
         }
     }
@@ -772,7 +770,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
         idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_wid,
                     filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                : filter->option.balance_group_interval);
-        postPayload(pl, filter);
+        postUdpPayload(pl, filter);
     }
     else
     {
@@ -780,7 +778,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
     }
 }
 
-static void onRecvFrom(wio_t *io, sbuf_t *buf)
+static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
 {
     udpsock_t *socket     = weventGetUserdata(io);
     uint16_t   local_port = sockaddrPort(wioGetLocaladdrU(io));
@@ -809,9 +807,9 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         exit(1);
     }
     udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
-    *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
+    *socket           = (udpsock_t) {.io = filter->listen_io, .table = onUdpPacketReceived(loop)};
     weventSetUserData(filter->listen_io, socket);
-    wioSetCallBackRead(filter->listen_io, onRecvFrom);
+    wioSetCallBackRead(filter->listen_io, onUdpRecvFrom);
     wioRead(filter->listen_io);
 }
 
@@ -926,18 +924,6 @@ socket_manager_state_t *socketmanagerCreate(void)
     state = memoryAllocate(sizeof(socket_manager_state_t));
     memorySet(state, 0, sizeof(socket_manager_state_t));
 
-    // worker_t *worker = memoryAllocate(sizeof(worker_t));
-
-    // *worker = (worker_t){.wid = 255};
-
-    // worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
-    // GSTATE.masterpool_buffer_pools_small,
-    //                                        GSTATE.ram_profile, SMALL_BUFFER_SIZE, LARGE_BUFFER_SIZE);
-
-    // worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, worker->wid);
-
-    // state->worker = worker;
-
     assert(getWID() == 0);
     state->worker = getWorker(0);
     state->wid    = 0;
@@ -954,8 +940,10 @@ socket_manager_state_t *socketmanagerCreate(void)
 
     state->tcp_pools = memoryAllocate(sizeof(*state->tcp_pools) * getWorkersCount());
     memorySet(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
+
     master_pool_t *mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
     master_pool_t *mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
 
@@ -1003,7 +991,7 @@ void socketmanagerDestroy(void)
 
     memoryFree(state->udp_pools);
     memoryFree(state->tcp_pools);
-
     memoryFree(state);
+
     state = NULL;
 }
