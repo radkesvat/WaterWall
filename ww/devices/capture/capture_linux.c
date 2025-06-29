@@ -455,8 +455,8 @@ bool caputredeviceBringDown(capture_device_t *cdev)
     }
     if (cdev->read_event_callback != NULL)
     {
-        write(cdev->linux_pipe_fds[1], "x", 1);
-
+        ssize_t _unused = write(cdev->linux_pipe_fds[1], "x", 1);
+        (void) _unused;
         threadJoin(cdev->read_thread);
     }
 
@@ -567,7 +567,19 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                             .bringdown_command      = bringdown_cmd,
                             .reader_buffer_pool     = reader_bpool,
                             .writer_buffer_pool     = writer_bpool};
-    pipe(cdev->linux_pipe_fds);
+    if (pipe(cdev->linux_pipe_fds) != 0)
+    {
+        LOGE("CaptureDevice: failed to create pipe for linux_pipe_fds");
+        memoryFree(cdev->name);
+        memoryFree(cdev->bringup_command);
+        memoryFree(cdev->bringdown_command);
+        bufferpoolDestroy(cdev->reader_buffer_pool);
+        bufferpoolDestroy(cdev->writer_buffer_pool);
+        masterpoolDestroy(cdev->reader_message_pool);
+        close(cdev->handle);
+        memoryFree(cdev);
+        return NULL;
+    }
 
     masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 

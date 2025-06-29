@@ -328,7 +328,8 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     if (tdev->read_event_callback != NULL)
     {
-        write(tdev->linux_pipe_fds[1], "x", 1);
+        ssize_t _unused = write(tdev->linux_pipe_fds[1], "x", 1);
+        (void)_unused;
 
         threadJoin(tdev->read_thread);
     }
@@ -431,7 +432,17 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .reader_buffer_pool  = reader_bpool,
                             .writer_buffer_pool  = writer_bpool};
 
-    pipe(tdev->linux_pipe_fds);
+     if (pipe(tdev->linux_pipe_fds) != 0)
+    {
+        LOGE("TunDevice: failed to create pipe for linux_pipe_fds");
+        memoryFree(tdev->name);
+        bufferpoolDestroy(tdev->reader_buffer_pool);
+        bufferpoolDestroy(tdev->writer_buffer_pool);
+        masterpoolDestroy(tdev->reader_message_pool);
+        close(tdev->handle);
+        memoryFree(tdev);
+        return NULL;
+    }
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
     return tdev;
