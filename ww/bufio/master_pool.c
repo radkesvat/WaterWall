@@ -95,15 +95,32 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
 }
 
 /**
+ * Makes the master pool empty without destroying it.
+ * @param pool The master pool to make empty.
+ * @param userdata User data passed to the destroy handler.
+ */
+void masterpoolMakeEmpty(master_pool_t *pool, void *userdata)
+{
+    mutexLock(&(pool->mutex));
+    for (uint32_t i = 0; i < pool->len; i++)
+    {
+        pool->destroy_item_handle(pool, pool->available[i], userdata);
+    }
+    pool->len = 0;
+    mutexUnlock(&(pool->mutex));
+}
+
+/**
  * Destroys the master pool and frees its resources.
  * @param pool The master pool to destroy.
  */
 void masterpoolDestroy(master_pool_t *pool)
 {
     mutexLock(&(pool->mutex));
-    for (uint32_t i = 0; i < pool->len; i++)
+    if (pool->len != 0)
     {
-        pool->destroy_item_handle(pool, pool->available[i], NULL);
+        printError("MasterPool: Destroying pool with items in it, this is a bug");
+        exit(1);
     }
     mutexUnlock(&(pool->mutex));
 

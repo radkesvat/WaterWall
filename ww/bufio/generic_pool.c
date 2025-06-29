@@ -191,5 +191,6 @@ void genericpoolDestroy(generic_pool_t *pool)
     {
         pool->destroy_item_handle(pool, pool->available[i]);
     }
+    masterpoolMakeEmpty(pool->mp, pool);
     memoryFree(pool);
 }

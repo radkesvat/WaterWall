@@ -20,7 +20,6 @@ void rawsocketDestroy(tunnel_t *t)
         {
             memoryFree(state->raw_device_name);
         }
-        execCmd(state->onexit_command);
 
         capturedeviceDestroy(state->capture_device);
         rawdeviceDestroy(state->raw_device);

@@ -406,6 +406,8 @@ void bufferpoolDestroy(buffer_pool_t *pool)
     {
         sbufDestroy(pool->large_buffers[l_i]);
     }
+    masterpoolMakeEmpty(pool->large_buffers_mp, pool);
+    masterpoolMakeEmpty(pool->small_buffers_mp, pool);
     memoryFree(pool->large_buffers);
     memoryFree(pool->small_buffers);
     memoryFree(pool);

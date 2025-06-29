@@ -13,6 +13,9 @@ void tundeviceTunnelDestroy(tunnel_t *t)
     }
     tundeviceDestroy(tdev);
 
+    memoryFree(state->name);
+    memoryFree(state->ip_subnet);
+    memoryFree(state->ip_present);
     tunnelDestroy(t);
 }
 

@@ -175,6 +175,11 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
  */
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width);
 
+/*
+* remove everything from the pool, but does not destroy it
+*/
+void masterpoolMakeEmpty(master_pool_t *pool,void *userdata);
+
 /**
  * Destroys the master pool and frees its resources.
  * @param pool The master pool to destroy.

@@ -28,7 +28,6 @@ typedef struct rawsocket_tstate_s
     char         *raw_device_name;
     raw_device_t *raw_device;
 
-    char *onexit_command;
 
     int  firewall_mark;
     bool write_direction_upstream; // this means we write to upstream when receiving packets
