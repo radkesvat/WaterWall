@@ -31,4 +31,6 @@ void commitChangesHard(config_file_t *state);
 // will not write if the mutex is locked
 void commitChangesSoft(config_file_t *state);
 
-config_file_t *parseConfigFile(const char *file_path);
+config_file_t *configfileParse(const char *file_path);
+
+void configfileDestroy(config_file_t * cf);

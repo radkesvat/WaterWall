@@ -48,7 +48,7 @@ static void localThreadEventReceived(wevent_t *ev)
 
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
-    atomicSub(&(msg->tdev->packets_queued),1);
+    atomicSubExplicit(&(msg->tdev->packets_queued), 1, memory_order_release);
 
     msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, wid);
     masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
@@ -57,13 +57,12 @@ static void localThreadEventReceived(wevent_t *ev)
 // Distribute packet payload to the target thread
 static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t *buf)
 {
-    atomicAdd(&(tdev->packets_queued),1);
-
+    atomicAddExplicit(&(tdev->packets_queued), 1, memory_order_release);
 
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -82,7 +81,8 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-         if(atomicLoad(&(tdev->packets_queued)) > 256){
+        if (atomicLoadExplicit(&(tdev->packets_queued),memory_order_acquire) > 256)
+        {
             ww_msleep(1);
             continue;
         }
@@ -390,19 +390,19 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
-                           .running               = false,
-                           .up                    = false,
-                           .routine_reader        = routineReadFromTun,
-                           .routine_writer        = routineWriteToTun,
-                           .handle                = fd,
-                           .read_event_callback   = cb,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = NULL,
-                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                           .packets_queued        = 0,
-                           .reader_buffer_pool    = reader_bpool,
-                           .writer_buffer_pool    = writer_bpool};
+    *tdev = (tun_device_t) {.name                  = stringDuplicate(ifr.ifr_name),
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromTun,
+                            .routine_writer        = routineWriteToTun,
+                            .handle                = fd,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = NULL,
+                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+                            .packets_queued      = 0,
+                            .reader_buffer_pool  = reader_bpool,
+                            .writer_buffer_pool  = writer_bpool};
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 

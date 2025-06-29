@@ -2,6 +2,7 @@
 #include "chain.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "node.h"
 #include "utils/json_helpers.h"
 
 enum
@@ -15,10 +16,15 @@ enum
 #define i_val  node_t *   // NOLINT
 #include "stc/hmap.h"
 
+#define i_type vec_chains_t     // NOLINT
+#define i_key  tunnel_chain_t * // NOLINT
+#include "stc/vec.h"
+
 typedef struct node_manager_config_s
 {
     config_file_t *config_file;
     map_node_t     node_map;
+    vec_chains_t   chains;
 
 } node_manager_config_t;
 
@@ -32,50 +38,6 @@ typedef struct node_manager_s
 } node_manager_t;
 
 static node_manager_t *state;
-
-// void nodemanagerRunNode(node_manager_config_t *cfg, node_t *n1, uint8_t chain_index)
-// {
-//     if (n1 == NULL)
-//     {
-//         LOGF("Node Map Failure: please check the graph");
-//         exit(1);
-//     }
-
-//     if (n1->hash_next != 0)
-//     {
-//         node_t *n2 = nodemanagerGetNodeInstance(cfg, n1->hash_next);
-
-//         if (n2->instance == NULL)
-//         {
-//             nodemanagerRunNode(cfg, n2, chain_index + 1);
-//         }
-
-//         LOGD("NodeManager: starting node \"%s\"", n1->name);
-//         n1->instance = n1->createHandle(n1);
-
-//         if (n1->instance == NULL)
-//         {
-//             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
-//             exit(1);
-//         }
-
-//         memoryCopy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
-
-//         tunnelBind(n1->instance, n2->instance);
-//     }
-//     else
-//     {
-//         LOGD("NodeManager: starting node \"%s\"", n1->name);
-//         n1->instance = n1->createHandle(n1);
-//         atomic_thread_fence(memory_order_release);
-//         if (n1->instance == NULL)
-//         {
-//             LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
-//             exit(1);
-//         }
-//         memoryCopy((uint8_t *) &(n1->instance->chain_index), &chain_index, sizeof(uint8_t));
-//     }
-// }
 
 static void runNodes(node_manager_config_t *cfg)
 {
@@ -125,7 +87,7 @@ static void runNodes(node_manager_config_t *cfg)
     }
 
     tunnel_t *t_array_cpy[kMaxTarraySize];
-    memoryCopy(t_array_cpy, t_array, sizeof(t_array_cpy));
+    memoryCopy((void *) t_array_cpy, (const void *) t_array, sizeof(t_array_cpy));
 
     {
         for (int i = 0; i < tunnels_count; i++)
@@ -138,6 +100,7 @@ static void runNodes(node_manager_config_t *cfg)
             }
 
             tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount());
+            vec_chains_t_push(&cfg->chains, tc);
             tunnel->onChain(tunnel, tc);
 
             tunnelchainFinalize(tc);
@@ -230,7 +193,8 @@ static void pathWalk(node_manager_config_t *cfg)
             node_t *n2 = nodemanagerGetNodeInstance(cfg, n1->hash_next);
             if (n2 == NULL)
             {
-                LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", cfg->config_file->file_path,cfg->config_file->name);
+                LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", cfg->config_file->file_path,
+                     cfg->config_file->name);
                 LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"", n1->name, n1->next);
                 exit(1);
             }
@@ -378,7 +342,8 @@ void nodemanagerSetState(struct node_manager_s *new_state)
 void nodemanagerRunConfigFile(config_file_t *config_file)
 {
 
-    node_manager_config_t cfg = {.config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap)};
+    node_manager_config_t cfg = {
+        .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
     startInstallingConfigFile(&cfg);
     vec_configs_t_push(&(state->configs), cfg);
 }
@@ -393,4 +358,50 @@ node_manager_t *nodemanagerCreate(void)
     state->configs = vec_configs_t_with_capacity(kVecCap);
 
     return state;
+}
+
+void nodemanagerDestroyNode(node_t *node)
+{
+    tunnel_t *t = node->instance;
+    if (t)
+    {
+        node->destroyHandle(t);
+        node->instance = NULL;
+    }
+    memoryFree(node->name);
+    memoryFree(node->type);
+    memoryFree(node->next);
+    memoryFree(node);
+}
+
+void nodemanagerDestroyConfig(node_manager_config_t *cfg)
+{
+
+    c_foreach(node_key_pair, map_node_t, cfg->node_map)
+    {
+        node_t *node = (node_key_pair.ref)->second;
+        nodemanagerDestroyNode(node);
+    }
+    c_foreach(chain, vec_chains_t, cfg->chains)
+    {
+        tunnelchainDestroy(*chain.ref);
+    }
+    map_node_t_drop(&cfg->node_map);
+    vec_chains_t_drop(&cfg->chains);
+    configfileDestroy(cfg->config_file);
+}
+
+void nodemanagerDestroy(void)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+    c_foreach(conf, vec_configs_t, state->configs)
+    {
+        nodemanagerDestroyConfig(conf.ref);
+    }
+    vec_configs_t_drop(&state->configs);
+    memoryFree(state);
+    state = NULL;
 }

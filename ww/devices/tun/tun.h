@@ -27,7 +27,7 @@ typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sb
 enum
 {
     kReadPacketSize                      = 1500,
-    kMasterMessagePoosbufGetLeftCapacity = 8,
+    kMasterMessagePoolsbufGetLeftCapacity = 8,
     kTunWriteChannelQueueMax             = 256,
     kMaxReadQueueSize                    = 100
 };

@@ -22,7 +22,6 @@ typedef struct signal_manager_s
     unsigned int     handlers_len;
     wmutex_t         mutex;
     uint32_t         started : 1;
-    uint32_t         handlers_ran : 1;
     uint32_t         raise_defaults : 1;
     uint32_t         handle_sigint : 1;
     uint32_t         handle_sigquit : 1;
@@ -37,10 +36,11 @@ typedef struct signal_manager_s
 
 } signal_manager_t;
 
-signal_manager_t *createSignalManager(void);
-void              destroySignalManager(signal_manager_t *sm);
-signal_manager_t *getSignalManager(void);
-void              registerAtExitCallBack(SignalHandler handle, void *userdata);
-void              removeAtExitCallBack(SignalHandler handle, void *userdata);
-void              setSignalManager(signal_manager_t *sm);
-void              startSignalManager(void);
+signal_manager_t *signalmanagerCreate(void);
+void              signalmanagerDestroy(void);
+signal_manager_t *signalmanagerGet(void);
+void              signalmanagerSet(signal_manager_t *sm);
+void              signalmanagerStart(void);
+
+void registerAtExitCallBack(SignalHandler handle, void *userdata);
+void removeAtExitCallBack(SignalHandler handle, void *userdata);

@@ -64,6 +64,7 @@ int main(void)
     // core logger is available after ww setup
     createGlobalState(runtime_data);
 
+
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
     increaseFileLimit();
@@ -74,7 +75,7 @@ int main(void)
         c_foreach(k, vec_config_path_t, getCoreSettings()->config_paths)
         {
             LOGD("Core: begin parsing config file \"%s\"", *k.ref);
-            config_file_t *cfile = parseConfigFile(*k.ref);
+            config_file_t *cfile = configfileParse(*k.ref);
 
             /*
                 in case of error in config file, the details are already printed out
@@ -88,6 +89,7 @@ int main(void)
             nodemanagerRunConfigFile(cfile);
         }
     }
+    destroyCoreSettings();
 
     LOGD("Core: starting workers ...");
     socketmanagerStart();

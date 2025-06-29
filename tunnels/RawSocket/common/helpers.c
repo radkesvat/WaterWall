@@ -10,8 +10,8 @@ static void something(void)
 void rawsocketExitHook(void *userdata, int sig)
 {
     (void) sig;
-    rawsocket_tstate_t *state = tunnelGetState(userdata);
-    execCmd(state->onexit_command);
+    char* cmdbuf = userdata;
+    execCmd(cmdbuf);
 }
 
 void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t wid)
@@ -33,4 +33,26 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
         exit(1);
     }
     lineUnlock(l);
+}
+
+void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    (void) l;
+    // discard t;
+    rawsocket_tstate_t *state = tunnelGetState(t);
+
+    // printIPPacketInfo("RawSocket sending: ", sbufGetRawPtr(buf));
+    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+
+    if (l->recalculate_checksum)
+    {
+        IPH_CHKSUM_SET(ipheader, 0);
+        IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, IPH_HL_BYTES(ipheader)));
+        l->recalculate_checksum = false;
+    }
+
+    if (! rawdeviceWrite(state->raw_device, buf))
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+    }
 }

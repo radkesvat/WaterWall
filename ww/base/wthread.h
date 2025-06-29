@@ -3,30 +3,36 @@
 
 #include "wlibc.h"
 
-#ifdef OS_WIN
-#define getProcessID (long) GetCurrentProcessId
-#else
-#define getProcessID (long) getpid
+typedef long tid_t;
+
+#ifndef __pid_t_defined
+typedef long pid_t;
 #endif
 
-#ifdef __CYGWIN__
-long getTID(void);
-#elif defined (OS_WIN)
-#define getTID (long) GetCurrentThreadId
+#ifdef OS_WIN
+#define getProcessID (pid_t) GetCurrentProcessId
+#else
+#define getProcessID (pid_t) getpid
+#endif
+
+
+
+#if defined (OS_WIN)
+#define getTID (tid_t) GetCurrentThreadId
 #elif HAVE_GETTID || defined(OS_ANDROID)
-#define getTID (long) gettid
+#define getTID (tid_t) gettid
 #elif defined(OS_LINUX)
 #include <sys/syscall.h>
-#define getTID(void) (long) syscall(SYS_gettid)
+#define getTID(void) (tid_t) syscall(SYS_gettid)
 #elif defined(OS_DARWIN)
-static inline long getTID(void)
+static inline tid_t getTID(void)
 {
     uint64_t tid = 0;
     pthread_threadid_np(NULL, &tid);
-    return (long)tid;
+    return (tid_t)tid;
 }
 #elif HAVE_PTHREAD_H
-#define getTID (long) pthread_self
+#define getTID (tid_t) pthread_self
 #else
 #define getTID getProcessID
 #endif

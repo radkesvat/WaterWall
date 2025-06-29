@@ -45,3 +45,4 @@ typedef struct socket_filter_option_s
 
 
 void socketfilteroptionInit(socket_filter_option_t* sfo);
+void socketfilteroptionDeInit(socket_filter_option_t* sfo);

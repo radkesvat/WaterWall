@@ -3,7 +3,6 @@
 #include "shiftbuffer.h"
 #include "wplatform.h"
 
-
 struct buffer_pool_s
 {
 
@@ -79,7 +78,7 @@ static master_pool_item_t *createLargeBufHandle(master_pool_t *pool, void *userd
  */
 static master_pool_item_t *createSmallBufHandle(master_pool_t *pool, void *userdata)
 {
-    discard pool;
+    discard        pool;
     buffer_pool_t *bpool = userdata;
     return sbufCreateWithPadding(bpool->small_buffers_size, bpool->small_buffer_left_padding);
 }
@@ -205,7 +204,7 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
  */
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 {
-#if BYPASS_BUFFERPOOL== 1
+#if BYPASS_BUFFERPOOL == 1
     return sbufCreateWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding);
 #endif
 #if BUFFER_POOL_DEBUG == 1
@@ -230,7 +229,7 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
  */
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
-#if BYPASS_BUFFERPOOL== 1
+#if BYPASS_BUFFERPOOL == 1
     return sbufCreateWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding);
 #endif
 #if BUFFER_POOL_DEBUG == 1
@@ -256,12 +255,12 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 {
 
-    if(UNLIKELY(b->is_temporary))
+    if (UNLIKELY(b->is_temporary))
     {
         return;
     }
 
-#if BYPASS_BUFFERPOOL== 1
+#if BYPASS_BUFFERPOOL == 1
     sbufDestroy(b);
     return;
 #endif
@@ -369,17 +368,20 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
 
     buffer_pool_t *ptr_pool = memoryAllocate(sizeof(buffer_pool_t));
 
-    *ptr_pool = (buffer_pool_t)
-    {
-        .cap = (uint16_t) bufcount, .large_buffers_size = large_buffer_size, .small_buffers_size = small_buffer_size,
-        .free_threshold = (uint16_t) max(bufcount / 2, (bufcount * 2) / 3),
+    *ptr_pool = (buffer_pool_t) {
+        .cap                = (uint16_t) bufcount,
+        .large_buffers_size = large_buffer_size,
+        .small_buffers_size = small_buffer_size,
+        .free_threshold     = (uint16_t) max(bufcount / 2, (bufcount * 2) / 3),
 
 #if BUFFER_POOL_DEBUG == 1
         .in_use = 0,
 #endif
 
-        .large_buffers_mp = mp_large, .large_buffers = (sbuf_t **) memoryAllocate(container_len),
-        .small_buffers_mp = mp_small, .small_buffers = (sbuf_t **) memoryAllocate(container_len),
+        .large_buffers_mp = mp_large,
+        .large_buffers    = (sbuf_t **) memoryAllocate(container_len),
+        .small_buffers_mp = mp_small,
+        .small_buffers    = (sbuf_t **) memoryAllocate(container_len),
     };
 
     masterpoolInstallCallBacks(ptr_pool->large_buffers_mp, createLargeBufHandle, destroyLargeBufHandle);
@@ -396,6 +398,14 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
 
 void bufferpoolDestroy(buffer_pool_t *pool)
 {
+    for (uint32_t s_i = 0; s_i < pool->small_buffers_container_len; s_i++)
+    {
+        sbufDestroy(pool->small_buffers[s_i]);
+    }
+    for (uint32_t l_i = 0; l_i < pool->large_buffers_container_len; l_i++)
+    {
+        sbufDestroy(pool->large_buffers[l_i]);
+    }
     memoryFree(pool->large_buffers);
     memoryFree(pool->small_buffers);
     memoryFree(pool);

@@ -2,7 +2,6 @@
 #include "loggers/internal_logger.h"
 #include "utils/json_helpers.h"
 
-
 void destroyConfigFile(config_file_t *state)
 {
     cJSON_Delete(state->root);
@@ -74,7 +73,7 @@ void commitChangesSoft(config_file_t *state)
 #endif
 }
 
-config_file_t *parseConfigFile(const char *const file_path)
+config_file_t *configfileParse(const char *const file_path)
 {
     config_file_t *state = memoryAllocate(sizeof(config_file_t));
     memorySet(state, 0, sizeof(config_file_t));
@@ -125,4 +124,13 @@ config_file_t *parseConfigFile(const char *const file_path)
     }
     state->nodes = nodes;
     return state;
+}
+
+void configfileDestroy(config_file_t *cf)
+{
+    cJSON_Delete(cf->root);
+    memoryFree(cf->name);
+    memoryFree(cf->author);
+    memoryFree(cf->file_path);
+    memoryFree(cf);
 }

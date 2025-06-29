@@ -64,8 +64,16 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
 {
     for (uint32_t i = 0; i < tc->workers_count; i++)
     {
+        if (tc->contains_packet_node)
+        {
+            lineDestroy(tc->packet_lines[i]);
+        }
         genericpoolDestroy(tc->line_pools[i]);
+
     }
+
+    masterpoolDestroy(tc->masterpool_line_pool);
+    memoryFree((void *) tc->packet_lines);
     memoryFree(tc);
 }
 

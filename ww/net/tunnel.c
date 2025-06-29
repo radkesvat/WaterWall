@@ -225,5 +225,5 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 // Destroys a tunnel instance
 void tunnelDestroy(tunnel_t *self)
 {
-    memoryFree(self);
+    memoryFree((void*)self->memptr);
 }

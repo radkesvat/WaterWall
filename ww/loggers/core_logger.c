@@ -47,7 +47,7 @@ void setCoreLogger(logger_t *newlogger)
 }
 
 logger_t *createCoreLogger(const char *log_file, bool console)
-{
+{   
     assert(logger == NULL);
     logger = loggerCreate();
     loggerSetFile(logger, log_file);

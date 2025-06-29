@@ -18,20 +18,20 @@ enum capturedevice_filter_type_dynamic_value_status
     kDvsDestIp
 };
 
-
-
 typedef struct rawsocket_tstate_s
 {
     capture_device_t *capture_device;
     char             *capture_ip;
     char             *capture_device_name;
-    uint32_t          queue_number;
     uint32_t          except_fwmark;
 
     char         *raw_device_name;
     raw_device_t *raw_device;
 
     char *onexit_command;
+
+    int  firewall_mark;
+    bool write_direction_upstream; // this means we write to upstream when receiving packets
 
 } rawsocket_tstate_t;
 
@@ -74,3 +74,5 @@ void rawsocketLinestateDestroy(rawsocket_lstate_t *ls);
 
 void rawsocketExitHook(void *userdata, int sig);
 void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, sbuf_t *buf, wid_t wid);
+// bi-directional stream payload (upstream / downstream) to write to raw device
+void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);

@@ -4,6 +4,8 @@
 
 void initWLibc(void)
 {
+    frandInit();
+
     memorymanagerInit();
 }
 

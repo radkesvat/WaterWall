@@ -16,7 +16,7 @@ typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *user
 typedef struct capture_device_s
 {
     char     *name;
-    int       socket;
+    int       handle;
     uint32_t  queue_number;
     bool      drop_captured_packet;
     void     *userdata;
@@ -33,15 +33,21 @@ typedef struct capture_device_s
     CaptureReadEventHandle read_event_callback;
 
     struct wchan_s *writer_buffer_channel;
+    char           *bringup_command;
+    char           *bringdown_command;
+    int             netfilter_queue_number;
+    
     atomic_int      packets_queued;
     atomic_bool     running;
     atomic_bool     up;
 
 } capture_device_t;
 
-bool bringCaptureDeviceUP(capture_device_t *cdev);
-bool bringCaptureDeviceDown(capture_device_t *cdev);
-bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf);
+bool caputredeviceBringUp(capture_device_t *cdev);
+bool caputredeviceBringDown(capture_device_t *cdev);
+bool caputredeviceWrite(capture_device_t *cdev, sbuf_t *buf);
 
-capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, void *userdata,
+capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
                                       CaptureReadEventHandle cb);
+
+void capturedeviceDestroy(capture_device_t *cdev);

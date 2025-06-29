@@ -40,3 +40,5 @@ struct core_settings_s
 
 void                    parseCoreSettings(const char *data_json);
 struct core_settings_s *getCoreSettings(void);
+
+void destroyCoreSettings(void);

@@ -15,9 +15,9 @@
 
 enum
 {
-    kReadPacketSize                      = 1500,
-    kMasterMessagePoosbufGetLeftCapacity = 64,
-    kRawWriteChannelQueueMax             = 256
+    kReadPacketSize                       = 1500,
+    kMasterMessagePoolsbufGetLeftCapacity = 64,
+    kRawWriteChannelQueueMax              = 256
 };
 
 struct msg_event
@@ -79,7 +79,7 @@ static WTHREAD_ROUTINE(routineReadFromRaw) // NOLINT
 
         buf = sbufReserveSpace(buf, kReadPacketSize);
 
-        nread = recvfrom(rdev->socket, sbufGetMutablePtr(buf), kReadPacketSize, 0, &saddr, (socklen_t *) &saddr_len);
+        nread = recvfrom(rdev->handle, sbufGetMutablePtr(buf), kReadPacketSize, 0, &saddr, (socklen_t *) &saddr_len);
 
         if (nread == 0)
         {
@@ -134,7 +134,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
         volatile struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
         nwrite =
-            sendto(rdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+            sendto(rdev->handle, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
         bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
 
@@ -159,7 +159,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
     return 0;
 }
 
-bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf)
+bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
 {
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
@@ -179,7 +179,7 @@ bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf)
     return true;
 }
 
-bool bringRawDeviceUP(raw_device_t *rdev)
+bool rawdeviceBringUp(raw_device_t *rdev)
 {
     assert(! rdev->up);
 
@@ -202,12 +202,14 @@ bool bringRawDeviceUP(raw_device_t *rdev)
     return true;
 }
 
-bool bringRawDeviceDown(raw_device_t *rdev)
+bool rawdeviceBringDown(raw_device_t *rdev)
 {
     assert(rdev->up);
 
     rdev->running = false;
     rdev->up      = false;
+
+    atomicThreadFence(memory_order_release);
 
     chanClose(rdev->writer_buffer_channel);
 
@@ -226,13 +228,13 @@ bool bringRawDeviceDown(raw_device_t *rdev)
     return true;
 }
 
-raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb)
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb)
 {
 
     int rsocket = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);
     if (rsocket < 0)
     {
-        LOGE("RawDevice: unable to open a raw socket");
+        LOGE("RawDevice: unable to open a raw handle");
         return NULL;
     }
 
@@ -240,7 +242,7 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
     {
         if (setsockopt(rsocket, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0)
         {
-            LOGE("RawDevice:  unable to set raw socket mark to %u", mark);
+            LOGE("RawDevice:  unable to set raw handle mark to %u", mark);
             return NULL;
         }
     }
@@ -256,14 +258,14 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
 
     buffer_pool_t *reader_bpool        = NULL;
     master_pool_t *reader_message_pool = NULL;
-    // if the user really wanted to read from raw socket
+    // if the user really wanted to read from raw handle
 
     reader_bpool        = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
                                            RAM_PROFILE, bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
                                            bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
            );
-    reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity);
+    reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity);
 
     masterpoolInstallCallBacks(reader_message_pool, allocRawMsgPoolHandle, destroyRawMsgPoolHandle);
 
@@ -279,7 +281,7 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
                             .up                    = false,
                             .routine_reader        = routineReadFromRaw,
                             .routine_writer        = routineWriteToRaw,
-                            .socket                = rsocket,
+                            .handle                = rsocket,
                             .mark                  = mark,
                             .read_event_callback   = cb,
                             .userdata              = userdata,
@@ -289,4 +291,19 @@ raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, R
                             .writer_buffer_pool    = writer_bpool};
 
     return rdev;
+}
+
+void rawdeviceDestroy(raw_device_t *rdev)
+{
+
+    if (rdev->up)
+    {
+        rawdeviceBringDown(rdev);
+    }
+    memoryFree(rdev->name);
+    bufferpoolDestroy(rdev->reader_buffer_pool);
+    bufferpoolDestroy(rdev->writer_buffer_pool);
+    masterpoolDestroy(rdev->reader_message_pool);
+    close(rdev->handle);
+    memoryFree(rdev);
 }

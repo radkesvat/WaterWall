@@ -32,3 +32,13 @@ void                   nodemanagerRunConfigFile(config_file_t *config_file);
 struct node_manager_s *nodemanagerGetState(void);
 void                   nodemanagerSetState(struct node_manager_s *state);
 struct node_manager_s *nodemanagerCreate(void);
+
+
+void nodemanagerDestroyNode(node_t* node);
+
+
+// stop workers that running config files before calling this
+void nodemanagerDestroyConfig(node_manager_config_t *cfg);
+
+// stop workers that running config files before calling this
+void nodemanagerDestroy(void);

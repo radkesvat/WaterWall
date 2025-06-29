@@ -100,5 +100,13 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
  */
 void masterpoolDestroy(master_pool_t *pool)
 {
+    mutexLock(&(pool->mutex));
+    for (uint32_t i = 0; i < pool->len; i++)
+    {
+        pool->destroy_item_handle(pool, pool->available[i], NULL);
+    }
+    mutexUnlock(&(pool->mutex));
+
+    mutexDestroy(&pool->mutex);
     memoryFree(pool->memptr);
 }

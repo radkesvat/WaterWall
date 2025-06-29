@@ -3,10 +3,10 @@
 
 // Default logging configurations
 #define DEFAULT_INTERNAL_LOG_LEVEL      "INFO"
-#define DEFAULT_INTERNAL_LOG_FILE       "internal.log" 
+#define DEFAULT_INTERNAL_LOG_FILE       "internal.log"
 #define DEFAULT_INTERNAL_ENABLE_CONSOLE true
 #define DEFAULT_CORE_LOG_LEVEL          "INFO"
-#define DEFAULT_CORE_LOG_FILE           "core.log" 
+#define DEFAULT_CORE_LOG_FILE           "core.log"
 #define DEFAULT_CORE_ENABLE_CONSOLE     true
 #define DEFAULT_NETWORK_LOG_LEVEL       "INFO"
 #define DEFAULT_NETWORK_LOG_FILE        "network.log"
@@ -302,4 +302,39 @@ void parseCoreSettings(const char *data_json)
 struct core_settings_s *getCoreSettings(void)
 {
     return settings;
+}
+
+void destroyCoreSettings(void)
+{
+    if (settings == NULL)
+    {
+        return;
+    }
+    c_foreach(k, vec_config_path_t, settings->config_paths){
+        memoryFree(*k.ref);
+    }
+
+    // Free all strings
+    memoryFree(settings->log_path);
+    memoryFree(settings->internal_log_file);
+    memoryFree(settings->internal_log_level);
+    memoryFree(settings->core_log_file);
+    memoryFree(settings->core_log_level);
+    memoryFree(settings->network_log_file);
+    memoryFree(settings->network_log_level);
+    memoryFree(settings->dns_log_file);
+    memoryFree(settings->dns_log_level);
+    memoryFree(settings->libs_path);
+
+    // Free full paths
+    memoryFree(settings->internal_log_file_fullpath);
+    memoryFree(settings->core_log_file_fullpath);
+    memoryFree(settings->network_log_file_fullpath);
+    memoryFree(settings->dns_log_file_fullpath);
+
+    vec_config_path_t_drop(&settings->config_paths);
+
+    // Free the settings structure itself
+    memoryFree(settings);
+    settings = NULL;
 }

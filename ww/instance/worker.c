@@ -22,26 +22,49 @@ thread_local wid_t tl_wid;
  */
 void workerExitJoin(worker_t *worker)
 {
-    worker->loop->flags = worker->loop->flags | WLOOP_FLAG_RUN_ONCE;
-    atomicThreadFence(memory_order_release);
+    if (worker->tid == getTID())
+    {
+        if (worker->loop)
+        {
+            wloopDestroy(&worker->loop);
+        }
 
-    threadJoin(worker->thread);
+        genericpoolDestroy(worker->context_pool);
+        genericpoolDestroy(worker->pipetunnel_msg_pool);
+        bufferpoolDestroy(worker->buffer_pool);
+    }
+    else
+    {
+        if (worker->loop)
+        {
+            worker->loop->flags = worker->loop->flags | WLOOP_FLAG_RUN_ONCE;
+            atomicThreadFence(memory_order_release);
+            threadJoin(worker->thread);
+        }
+        else
+        {
+            // lwip thread
+            genericpoolDestroy(worker->context_pool);
+            genericpoolDestroy(worker->pipetunnel_msg_pool);
+            bufferpoolDestroy(worker->buffer_pool);
+        }
+    }
 }
 
-/**
- * @brief Signal handler for worker exit.
- *
- * Invoked when a termination signal is received and calls workerExitJoin.
- *
- * @param userdata Pointer to the worker structure.
- * @param signum Signal number.
- */
-static void exitHandle(void *userdata, int signum)
-{
-    discard signum;
-    worker_t *worker = userdata;
-    workerExitJoin(worker);
-}
+// /**
+//  * @brief Signal handler for worker exit.
+//  *
+//  * Invoked when a termination signal is received and calls workerExitJoin.
+//  *
+//  * @param userdata Pointer to the worker structure.
+//  * @param signum Signal number.
+//  */
+// static void exitHandle(void *userdata, int signum)
+// {
+//     discard   signum;
+//     worker_t *worker = userdata;
+//     workerExitJoin(worker);
+// }
 
 /**
  * @brief Initializes a worker.
@@ -51,22 +74,30 @@ static void exitHandle(void *userdata, int signum)
  *
  * @param worker Pointer to the worker to initialize.
  * @param wid  Worker ID.
+ * @param eventloop  create eventloop for this thread
  */
-void workerInit(worker_t *worker, wid_t wid)
+void workerInit(worker_t *worker, wid_t wid, bool eventloop)
 {
-    *worker = (worker_t){.wid = wid};
+    *worker = (worker_t) {.wid = wid};
 
-    worker->context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_context_pools, sizeof(context_t),RAM_PROFILE);
+    worker->context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_context_pools,
+                                                                            sizeof(context_t), RAM_PROFILE);
 
     worker->pipetunnel_msg_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(
-        GSTATE.masterpool_pipetunnel_msg_pools, (uint32_t) pipeTunnelGetMesageSize(),RAM_PROFILE);
+        GSTATE.masterpool_pipetunnel_msg_pools, (uint32_t) pipeTunnelGetMesageSize(), RAM_PROFILE);
 
     worker->buffer_pool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small,
-                                            RAM_PROFILE, PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE), SMALL_BUFFER_SIZE);
+                                           RAM_PROFILE, PROPER_LARGE_BUFFER_SIZE(RAM_PROFILE), SMALL_BUFFER_SIZE);
 
-    // note that loop depeneds on worker->buffer_pool
-    worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, wid);
+    if (eventloop)
+    {
+        // note that loop depeneds on worker->buffer_pool
+        worker->loop = wloopCreate(WLOOP_FLAG_AUTO_FREE, worker->buffer_pool, wid);
+    }
+    else
+    {
+        worker->loop = NULL;
+    }
 }
 
 /**
@@ -82,12 +113,12 @@ void workerRun(worker_t *worker)
     tl_wid    = worker->wid;
     wid_t wid = worker->wid;
 
-    frandInit();
     wloopRun(worker->loop);
 
     genericpoolDestroy(worker->context_pool);
     genericpoolDestroy(worker->pipetunnel_msg_pool);
     bufferpoolDestroy(worker->buffer_pool);
+    wloopDestroy(&worker->loop);
 
     LOGD("Worker %d cleanly exited !", wid);
 }
@@ -103,7 +134,7 @@ void workerRun(worker_t *worker)
 static WTHREAD_ROUTINE(worker_thread) // NOLINT
 {
     worker_t *worker = userdata;
-
+    worker->tid      = getTID();
     workerRun(worker);
 
     return 0;
@@ -119,5 +150,4 @@ static WTHREAD_ROUTINE(worker_thread) // NOLINT
 void workerSpawn(worker_t *worker)
 {
     worker->thread = threadCreate(worker_thread, worker);
-    registerAtExitCallBack(exitHandle, worker);
 }

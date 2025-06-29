@@ -54,6 +54,7 @@ typedef struct ww_global_state_s
     wid_t                      lwip_wid;
     atomic_wid_t               distribute_wid;
     uint16_t                   buffer_allocation_padding;
+    uint16_t                   capturedevice_queue_start_number;
     uint8_t                    flag_initialized : 1;
     uint8_t                    flag_buffers_calculated : 1;
     uint8_t                    flag_tundev_windows_initialized : 1;
@@ -184,7 +185,7 @@ WW_EXPORT void runMainThread(void);
 /*!
  * @brief Exits the main thread.
  *
- * This function exits the main thread, it is supposed to be called from other threads
+ * This function exits the main thread
  */
 WW_EXPORT void mainThreadExitJoin(void);
 
@@ -199,13 +200,13 @@ WW_EXPORT void createGlobalState(ww_construction_data_t data);
  *
  * @return A pointer to the global state.
  */
-WW_EXPORT ww_global_state_t *globalStateGet(void);
+WW_EXPORT ww_global_state_t *getGlobalState(void);
 /*!
  * @brief Sets the global state.
  *
  * @param state A pointer to the global state.
  */
-WW_EXPORT void globalStateSet(ww_global_state_t *state);
+WW_EXPORT void setGlobalState(ww_global_state_t *state);
 /*!
  * @brief Updates the allocation padding for the global state.
  *
@@ -217,3 +218,8 @@ WW_EXPORT void globalstateUpdateAllocationPadding(uint16_t padding);
  * @brief Initializes the Lwip worker and spawn it.
  */
 WW_EXPORT void initTcpIpStack(void);
+
+/*!
+ * @brief Destroys global state, all threads must be stopped before doing this
+ */
+WW_EXPORT void destroyGlobalState(void);

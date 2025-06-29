@@ -5,13 +5,11 @@
 
 #include "loggers/internal_logger.h"
 
-
-
-#include <stdlib.h> 
+#include <stdlib.h>
 #include <string.h>
 
 #define i_type vec_static_libs // NOLINT
-#define i_key  node_t    // NOLINT
+#define i_key  node_t          // NOLINT
 #include "stc/vec.h"
 
 static struct
@@ -19,7 +17,6 @@ static struct
     const char     *search_path;
     vec_static_libs slibs;
 } *state;
-
 
 // #ifdef OS_WIN
 // #include <windows.h> // for Windows LoadLibrary/GetProcAddress
@@ -61,13 +58,11 @@ static struct
 //     return lib;
 // }
 
-
-
 static node_t dynLoadNodeLib(hash_t htype)
 {
     discard htype;
     LOGF("dynLoadNodeLib not implemented");
-    return (node_t){0};
+    return (node_t) {0};
 }
 
 node_t nodelibraryLoadByTypeHash(hash_t htype)
@@ -92,7 +87,6 @@ node_t nodelibraryLoadByTypeName(const char *name)
     return nodelibraryLoadByTypeHash(htype);
 }
 
-
 void nodelibraryRegister(node_t lib)
 {
     if (state == NULL)
@@ -105,6 +99,21 @@ void nodelibraryRegister(node_t lib)
     vec_static_libs_push(&(state->slibs), lib);
 }
 
-bool nodeHasFlagChainHead(node_t* node){
+bool nodeHasFlagChainHead(node_t *node)
+{
     return (node->flags & kNodeFlagChainHead) == kNodeFlagChainHead;
+}
+
+void nodelibraryCleanup(void)
+{
+    if (state != NULL)
+    {
+        c_foreach(k, vec_static_libs, state->slibs)
+        {
+            memoryFree((k.ref)->type);
+        }
+        vec_static_libs_drop(&(state->slibs));
+    }
+    memoryFree(state);
+    state = NULL;
 }

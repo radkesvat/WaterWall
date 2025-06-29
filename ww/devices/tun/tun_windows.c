@@ -506,31 +506,32 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
     return true;
 }
 
-/**
- * Handles exit signal and cleans up TUN device
- * @param userdata User data (TUN device handle)
- * @param signum Signal number
- */
-static void exitHandle(void *userdata, int signum)
-{
-    // Sleep(2200);
-    // LOGW("called close handle");
-    discard       signum;
-    tun_device_t *tdev = userdata;
-    if (tdev->up)
-    {
-        tundeviceBringDown(tdev);
-    }
+// just destroy this device on tunnel destroy handle
+// /**
+//  * Handles exit signal and cleans up TUN device
+//  * @param userdata User data (TUN device handle)
+//  * @param signum Signal number
+//  */
+// static void exitHandle(void *userdata, int signum)
+// {
+//     // Sleep(2200);
+//     // LOGW("called close handle");
+//     discard       signum;
+//     tun_device_t *tdev = userdata;
+//     if (tdev->up)
+//     {
+//         tundeviceBringDown(tdev);
+//     }
 
-    assert(tdev->session_handle == NULL);
+//     assert(tdev->session_handle == NULL);
 
-    if (tdev->adapter_handle)
-    {
-        WintunCloseAdapter(tdev->adapter_handle);
-        tdev->adapter_handle = NULL;
-    }
-    // Sleep(2200);
-}
+//     if (tdev->adapter_handle)
+//     {
+//         WintunCloseAdapter(tdev->adapter_handle);
+//         tdev->adapter_handle = NULL;
+//     }
+//     // Sleep(2200);
+// }
 
 // Function to load a function pointer from a DLL
 static bool loadFunctionFromDLL(const char *function_name, void *target)
@@ -634,7 +635,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .read_event_callback   = cb,
                             .userdata              = userdata,
                             .writer_buffer_channel = chanOpen(sizeof(void*),kTunWriteChannelQueueMax),
-                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
+                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
                             .reader_buffer_pool    = reader_bpool,
                             .writer_buffer_pool    = writer_bpool,
                             .adapter_handle        = NULL,
@@ -671,7 +672,6 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     }
     tdev->adapter_handle = adapter;
 
-    registerAtExitCallBack(exitHandle, tdev);
     return tdev;
 }
 
@@ -692,7 +692,6 @@ void tundeviceDestroy(tun_device_t *tdev)
 
     if (tdev->adapter_handle)
     {
-        removeAtExitCallBack(exitHandle, tdev);
 
         WintunCloseAdapter(tdev->adapter_handle);
         tdev->adapter_handle = NULL;

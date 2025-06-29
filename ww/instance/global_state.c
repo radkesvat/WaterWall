@@ -98,6 +98,10 @@ static void exitHandle(void *userdata, int signum)
 {
     discard signum;
     discard userdata;
+    for (unsigned int wid = 0; wid < WORKERS_COUNT; ++wid)
+    {
+        workerExitJoin(getWorker(wid));
+    }
     mainThreadExitJoin();
 }
 
@@ -136,7 +140,7 @@ err_t wwInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
  *
  * @return A pointer to the global state structure.
  */
-ww_global_state_t *globalStateGet(void)
+ww_global_state_t *getGlobalState(void)
 {
     return &GSTATE;
 }
@@ -149,7 +153,7 @@ ww_global_state_t *globalStateGet(void)
  *
  * @param state A pointer to the global state structure to be set.
  */
-void globalStateSet(struct ww_global_state_s *state)
+void setGlobalState(struct ww_global_state_s *state)
 {
     assert(! GSTATE.flag_initialized && state->flag_initialized);
     GSTATE = *state;
@@ -158,7 +162,7 @@ void globalStateSet(struct ww_global_state_s *state)
     setNetworkLogger(GSTATE.network_logger);
     setDnsLogger(GSTATE.dns_logger);
     setInternalLogger(GSTATE.internal_logger);
-    setSignalManager(GSTATE.signal_manager);
+    signalmanagerSet(GSTATE.signal_manager);
     socketmanagerSet(GSTATE.socekt_manager);
     nodemanagerSetState(GSTATE.node_manager);
 }
@@ -236,19 +240,26 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         initializeMasterPools();
 
-        for (wid_t i = 0; i < getWorkersCount(); ++i)
+        for (wid_t i = 0; i < getWorkersCount() - WORKER_ADDITIONS; ++i)
         {
-            workerInit(getWorker(i), i);
+            workerInit(getWorker(i), i, true);
         }
+
+        // WORKER_ADDITIONS 1 : lwip worker dose not have event loop
+        workerInit(getWorker(getWorkersCount() - 1), getWorkersCount() - 1, false);
 
         initializeShortCuts();
     }
 
     // managers
     {
-        GSTATE.signal_manager = createSignalManager();
+        GSTATE.signal_manager = signalmanagerCreate();
         GSTATE.socekt_manager = socketmanagerCreate();
         GSTATE.node_manager   = nodemanagerCreate();
+    }
+    // misc
+    {
+        GSTATE.capturedevice_queue_start_number = fastRand() % 2000;
     }
 
     // SSL
@@ -281,15 +292,17 @@ void createGlobalState(const ww_construction_data_t init_data)
 #else
         worker->thread = pthread_self();
 #endif
+        worker->tid = getTID();
         registerAtExitCallBack(exitHandle, worker);
 
+        // lwip worker dose not need spawn, it runs its own eventloop
         for (unsigned int i = 1; i < WORKERS_COUNT - WORKER_ADDITIONS; ++i)
         {
             workerSpawn(&WORKERS[i]);
         }
     }
 
-    startSignalManager();
+    signalmanagerStart();
 }
 
 /*!
@@ -321,7 +334,7 @@ void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1,
     assert(wid < getWorkersCount());
 
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-    *msg = (worker_msg_t){.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
+    *msg = (worker_msg_t) {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(wid);
@@ -346,15 +359,14 @@ void runMainThread(void)
 /*!
  * @brief Exits the main thread.
  *
- * This function exits the main thread, it is supposed to be called from other threads
+ * This function exits the main thread
  */
 void mainThreadExitJoin(void)
 {
-    if ((uint64_t) getTID() == GSTATE.main_thread_id)
-    {
-        return; // incrorrect call, you are in main thread
-    }
-    workerExitJoin(getWorker(0));
+    // its not important which thread called this, at this point only 1 thread is running
+    atomicThreadFence(memory_order_seq_cst);
+    destroyGlobalState();
+    exit(0);
 }
 
 void initTcpIpStack(void)
@@ -366,4 +378,29 @@ void initTcpIpStack(void)
     }
     GSTATE.flag_lwip_initialized = 1;
     tcpipInit(tcpipInitDone, NULL);
+}
+
+WW_EXPORT void destroyGlobalState(void)
+{
+
+    memoryFree((void *) GSTATE.shortcut_loops);
+
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
+    masterpoolDestroy(GSTATE.masterpool_context_pools);
+    masterpoolDestroy(GSTATE.masterpool_pipetunnel_msg_pools);
+    masterpoolDestroy(GSTATE.masterpool_messages);
+
+    memoryFree(WORKERS);
+    WORKERS = NULL;
+    nodemanagerDestroy();
+    socketmanagerDestroy();
+    signalmanagerDestroy();
+
+    loggerDestroy(getInternalLogger());
+    loggerDestroy(getCoreLogger());
+    loggerDestroy(getNetworkLogger());
+    loggerDestroy(getDnsLogger());
+
+    nodelibraryCleanup();
 }

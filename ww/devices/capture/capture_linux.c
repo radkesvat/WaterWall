@@ -4,6 +4,7 @@
 #include "loggers/internal_logger.h"
 #include "wchan.h"
 #include "worker.h"
+#include "wproc.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <linux/if_ether.h>
@@ -19,12 +20,15 @@
 
 enum
 {
-    kReadPacketSize                      = 1500,
-    kEthDataLen                          = 1500,
-    kMasterMessagePoosbufGetLeftCapacity = 64,
-    kQueueLen                            = 512,
-    kCaptureWriteChannelQueueMax         = 128
+    kReadPacketSize                       = 1500,
+    kEthDataLen                           = 1500,
+    kMasterMessagePoolsbufGetLeftCapacity = 64,
+    kQueueLen                             = 512,
+    kCaptureWriteChannelQueueMax          = 128
 };
+
+static const char *ip_tables_enable_queue_mi  = "iptables -I INPUT -s %s -j NFQUEUE --queue-num %d";
+static const char *ip_tables_disable_queue_mi = "iptables -D INPUT -s %s -j NFQUEUE --queue-num %d";
 
 struct msg_event
 {
@@ -51,8 +55,8 @@ static void localThreadEventReceived(wevent_t *ev)
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-    atomicSub(&(msg->cdev->packets_queued),1);
-    
+    atomicSubExplicit(&(msg->cdev->packets_queued), 1, memory_order_release);
+
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
@@ -60,13 +64,12 @@ static void localThreadEventReceived(wevent_t *ev)
 
 static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
 {
-    atomicAdd(&(cdev->packets_queued),1);
-
+    atomicAddExplicit(&(cdev->packets_queued), 1, memory_order_release);
 
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
-    *msg = (struct msg_event){.cdev = cdev, .buf = buf};
+    *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -294,7 +297,8 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        if(atomicLoad(&(cdev->packets_queued)) > 256){
+        if (atomicLoadExplicit(&(cdev->packets_queued), memory_order_acquire) > 256)
+        {
             ww_msleep(1);
             continue;
         }
@@ -302,7 +306,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         buf = sbufReserveSpace(buf, kReadPacketSize);
 
-        nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
+        nread = netfilterGetPacket(cdev->handle, cdev->queue_number, buf);
 
         if (nread == 0)
         {
@@ -345,7 +349,7 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
         nwrite =
-            sendto(cdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+            sendto(cdev->handle, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
         bufferpoolReuseBuffer(cdev->writer_buffer_pool, buf);
 
@@ -369,7 +373,7 @@ static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
     return 0;
 }
 
-bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf)
+bool caputredeviceWrite(capture_device_t *cdev, sbuf_t *buf)
 {
     bool closed = false;
     if (! chanTrySend(cdev->writer_buffer_channel, &buf, &closed))
@@ -387,10 +391,15 @@ bool writeToCaptureDevce(capture_device_t *cdev, sbuf_t *buf)
     return true;
 }
 
-bool bringCaptureDeviceUP(capture_device_t *cdev)
+bool caputredeviceBringUp(capture_device_t *cdev)
 {
     assert(! cdev->up);
 
+    if (execCmd(cdev->bringup_command).exit_code != 0)
+    {
+        LOGE("CaptureDevicer: command failed: %s", cdev->bringup_command);
+        return false;
+    }
     bufferpoolUpdateAllocationPaddings(cdev->writer_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
@@ -409,14 +418,21 @@ bool bringCaptureDeviceUP(capture_device_t *cdev)
     return true;
 }
 
-bool bringCaptureDeviceDown(capture_device_t *cdev)
+bool caputredeviceBringDown(capture_device_t *cdev)
 {
     assert(cdev->up);
 
     cdev->running = false;
     cdev->up      = false;
 
+    atomicThreadFence(memory_order_release);
+
     chanClose(cdev->writer_buffer_channel);
+
+    if (execCmd(cdev->bringdown_command).exit_code != 0)
+    {
+        LOGE("CaptureDevicer: command failed: %s", cdev->bringdown_command);
+    }
 
     LOGD("CaptureDevice: device %s is now down", cdev->name);
 
@@ -432,7 +448,7 @@ bool bringCaptureDeviceDown(capture_device_t *cdev)
     return true;
 }
 
-capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, void *userdata,
+capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
                                       CaptureReadEventHandle cb)
 {
 
@@ -440,6 +456,7 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
     if (socket_netfilter < 0)
     {
         LOGE("CaptureDevice: unable to create a netfilter socket");
+        return NULL;
     }
 
     struct sockaddr_nl nl_addr;
@@ -450,30 +467,52 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
     if (bind(socket_netfilter, (struct sockaddr *) &nl_addr, sizeof(nl_addr)) != 0)
     {
         LOGE("CaptureDevice: unable to bind netfilter socket to current process");
+        close(socket_netfilter);
+        return NULL;
     }
 
     if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_PF_UNBIND, 0, PF_INET))
     {
         LOGE("CaptureDevice: unable to unbind netfilter from PF_INET");
+        close(socket_netfilter);
+        return NULL;
     }
     if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_PF_BIND, 0, PF_INET))
     {
         LOGE("CaptureDevice: unable to bind netfilter to PF_INET");
+        close(socket_netfilter);
+        return NULL;
     }
+    int queue_number = GSTATE.capturedevice_queue_start_number++;
+
+    char *bringup_cmd   = memoryAllocate(100);
+    char *bringdown_cmd = memoryAllocate(100);
+    stringNPrintf(bringup_cmd, 100, ip_tables_enable_queue_mi, capture_ip, queue_number);
+    stringNPrintf(bringdown_cmd, 100, ip_tables_disable_queue_mi, capture_ip, queue_number);
+
     if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_BIND, queue_number, 0))
     {
         LOGE("CaptureDevice: unable to bind netfilter to queue number %u", queue_number);
+        close(socket_netfilter);
+        return NULL;
     }
+
     uint32_t range = kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr);
     if (! netfilterSetParams(socket_netfilter, queue_number, NFQNL_COPY_PACKET, range))
     {
         LOGE("CaptureDevice: unable to set netfilter into copy packet mode with maximum "
              "buffer size %u",
              range);
+
+        close(socket_netfilter);
+        return NULL;
     }
     if (! netfilterSetQueueLength(socket_netfilter, queue_number, kQueueLen))
     {
         LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kQueueLen);
+
+        close(socket_netfilter);
+        return NULL;
     }
 
     buffer_pool_t *reader_bpool =
@@ -493,22 +532,39 @@ capture_device_t *createCaptureDevice(const char *name, uint32_t queue_number, v
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
     *cdev =
-        (capture_device_t){.name                  = stringDuplicate(name),
-                           .running               = false,
-                           .up                    = false,
-                           .routine_reader        = routineReadFromCapture,
-                           .routine_writer        = routineWriteToCapture,
-                           .socket                = socket_netfilter,
-                           .queue_number          = queue_number,
-                           .read_event_callback   = cb,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
-                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoosbufGetLeftCapacity),
-                           .packets_queued        = 0,
-                           .reader_buffer_pool    = reader_bpool,
-                           .writer_buffer_pool    = writer_bpool};
+        (capture_device_t) {.name                  = stringDuplicate(name),
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromCapture,
+                            .routine_writer        = routineWriteToCapture,
+                            .handle                = socket_netfilter,
+                            .queue_number          = queue_number,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = chanOpen(sizeof(void *), kCaptureWriteChannelQueueMax),
+                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+                            .packets_queued      = 0,
+                            .netfilter_queue_number = queue_number,
+                            .bringup_command        = bringup_cmd,
+                            .bringdown_command      = bringdown_cmd,
+                            .reader_buffer_pool     = reader_bpool,
+                            .writer_buffer_pool     = writer_bpool};
 
     masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 
     return cdev;
+}
+
+void capturedeviceDestroy(capture_device_t *cdev)
+{
+    if (cdev->up)
+    {
+        caputredeviceBringDown(cdev);
+    }
+    memoryFree(cdev->name);
+    bufferpoolDestroy(cdev->reader_buffer_pool);
+    bufferpoolDestroy(cdev->writer_buffer_pool);
+    masterpoolDestroy(cdev->reader_message_pool);
+    close(cdev->handle);
+    memoryFree(cdev);
 }

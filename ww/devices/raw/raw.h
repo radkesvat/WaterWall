@@ -16,7 +16,7 @@ typedef void (*RawReadEventHandle)(struct raw_device_s *rdev, void *userdata, sb
 typedef struct raw_device_s
 {
     char     *name;
-    int       socket;
+    int       handle;
     uint32_t  mark;
     void     *userdata;
     wthread_t read_thread;
@@ -37,8 +37,10 @@ typedef struct raw_device_s
 
 } raw_device_t;
 
-bool bringRawDeviceUP(raw_device_t *rdev);
-bool bringRawDeviceDown(raw_device_t *rdev);
-bool writeToRawDevce(raw_device_t *rdev, sbuf_t *buf);
+bool rawdeviceBringUp(raw_device_t *rdev);
+bool rawdeviceBringDown(raw_device_t *rdev);
+bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf);
 
-raw_device_t *createRawDevice(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb);
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb);
+
+void rawdeviceDestroy(raw_device_t* rdev);

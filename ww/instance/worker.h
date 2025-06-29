@@ -14,23 +14,25 @@ typedef _Atomic(wid_t) atomic_wid_t;
  */
 typedef struct worker_s
 {
-    wloop_t        *loop;                /**< Event loop associated with the worker. */
-    buffer_pool_t  *buffer_pool;         /**< Buffer pool for managing memory buffers. */
-    generic_pool_t *context_pool;        /**< Generic pool for managing context objects. */
-    generic_pool_t *pipetunnel_msg_pool; /**< Generic pool for managing pipe tunnel messages. */
-    wthread_t       thread;              /**< Thread associated with the worker. */
-    wid_t           wid;                 /**< Worker ID. */
+    wloop_t        *loop;                // Event loop associated with the worker.
+    buffer_pool_t  *buffer_pool;         // Buffer pool for managing memory buffers.
+    generic_pool_t *context_pool;        // Generic pool for managing context objects.
+    generic_pool_t *pipetunnel_msg_pool; // Generic pool for managing pipe tunnel messages.
+    wthread_t       thread;              // Thread associated with the worker.
+    tid_t           tid;                 // Os Thread Id
+    wid_t           wid;                 // Worker ID.
 
 } worker_t;
 
-extern thread_local wid_t tl_wid; /**< Thread-local worker ID. */
+extern thread_local wid_t tl_wid; // Thread-local worker ID. */
 
 /**
  * @brief Initializes a worker.
  * @param worker Pointer to the worker to initialize.
  * @param tid Worker ID.
+ * @param eventloop  create eventloop for this thread
  */
-void workerInit(worker_t *worker, wid_t tid);
+void workerInit(worker_t *worker, wid_t wid, bool eventloop);
 
 /**
  * @brief Runs the worker.

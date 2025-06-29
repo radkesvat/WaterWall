@@ -63,6 +63,9 @@ typedef struct socket_manager_s
 
     } *tcp_pools;
 
+    master_pool_t *mp_udp;
+    master_pool_t *mp_tcp;
+
     wmutex_t                mutex;
     balancegroup_registry_t balance_groups;
     worker_t               *worker;
@@ -207,16 +210,6 @@ static bool resetIptables(bool safe_mode)
 #endif
 
     return result;
-}
-
-static void exitHook(void *userdata, int _)
-{
-    discard(userdata);
-    discard _;
-    if (state->iptables_used)
-    {
-        resetIptables(true);
-    }
 }
 
 static inline bool needsV4SocketStrategy(const ip6_addr_t addr)
@@ -807,9 +800,9 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         exit(1);
     }
     udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
-    *socket           = (udpsock_t) {.io = filter->listen_io, .table = onUdpPacketReceived(loop)};
+    *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
     weventSetUserData(filter->listen_io, socket);
-    wioSetCallBackRead(filter->listen_io, onUdpRecvFrom);
+    wioSetCallBackRead(filter->listen_io, onUdpPacketReceived);
     wioRead(filter->listen_io);
 }
 
@@ -902,8 +895,6 @@ void socketmanagerStart(void)
 
     assert(state && state->worker->loop && ! state->started);
 
-    frandInit();
-
     mutexLock(&(state->mutex));
 
     {
@@ -941,18 +932,18 @@ socket_manager_state_t *socketmanagerCreate(void)
     state->tcp_pools = memoryAllocate(sizeof(*state->tcp_pools) * getWorkersCount());
     memorySet(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
 
-    master_pool_t *mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
-    master_pool_t *mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    state->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    state->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
 
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
 
-        state->udp_pools[i].pool = genericpoolCreateWithCapacity(mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle,
-                                                                 destroyUdpPayloadPoolHandle);
+        state->udp_pools[i].pool = genericpoolCreateWithCapacity(
+            state->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
         mutexInit(&(state->udp_pools[i].mutex));
 
         state->tcp_pools[i].pool = genericpoolCreateWithCapacity(
-            mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
+            state->mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
         mutexInit(&(state->tcp_pools[i].mutex));
     }
 
@@ -966,8 +957,6 @@ socket_manager_state_t *socketmanagerCreate(void)
 
 #endif
 
-    registerAtExitCallBack(exitHook, NULL);
-
     return state;
 }
 
@@ -975,11 +964,20 @@ void socketmanagerDestroy(void)
 {
     assert(state != NULL);
 
+    if (state->iptables_used)
+    {
+        resetIptables(true);
+    }
     for (size_t i = 0; i < kFilterLevels; i++)
     {
+        c_foreach(filter, filters_t, state->filters[i])
+        {
+            socketfilteroptionDeInit(&((*filter.ref)->option));
+            memoryFree(*filter.ref);
+        }
+
         filters_t_drop(&(state->filters[i]));
     }
-    memoryFree(state->filters);
 
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
@@ -991,6 +989,8 @@ void socketmanagerDestroy(void)
 
     memoryFree(state->udp_pools);
     memoryFree(state->tcp_pools);
+    masterpoolDestroy(state->mp_tcp);
+    masterpoolDestroy(state->mp_udp);
     memoryFree(state);
 
     state = NULL;
