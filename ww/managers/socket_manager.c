@@ -491,7 +491,7 @@ static void onAcceptTcpMultiPort(wio_t *io)
         return;
     }
 
-    bool          use_v4_strategy = paddr.type == IPADDR_TYPE_V6 ? needsV4SocketStrategy(paddr.u_addr.ip6) : false;
+    bool          use_v4_strategy = paddr.type == IPADDR_TYPE_V6 ? needsV4SocketStrategy(paddr.u_addr.ip6) : true;
     unsigned char pbuf[28]        = {0};
     socklen_t     size            = use_v4_strategy ? 16 : 24;
 
