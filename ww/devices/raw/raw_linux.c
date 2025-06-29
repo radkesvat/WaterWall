@@ -193,10 +193,11 @@ bool rawdeviceBringUp(raw_device_t *rdev)
 
     rdev->up      = true;
     rdev->running = true;
+    rdev->writer_buffer_channel = chanOpen(sizeof(void *), kRawWriteChannelQueueMax);
 
     LOGD("RawDevice: device %s is now up", rdev->name);
 
-    rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
+    // rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
 
     rdev->write_thread = threadCreate(rdev->routine_writer, rdev);
     return true;
@@ -215,7 +216,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
 
     LOGD("RawDevice: device %s is now down", rdev->name);
 
-    threadJoin(rdev->read_thread);
+    // threadJoin(rdev->read_thread);
 
     threadJoin(rdev->write_thread);
 
@@ -224,6 +225,9 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     {
         bufferpoolReuseBuffer(rdev->reader_buffer_pool, buf);
     }
+
+    chanFree(rdev->writer_buffer_channel);
+    rdev->writer_buffer_channel = NULL;
 
     return true;
 }
@@ -279,13 +283,13 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata, R
     *rdev = (raw_device_t) {.name                  = stringDuplicate(name),
                             .running               = false,
                             .up                    = false,
-                            .routine_reader        = routineReadFromRaw,
+                            .routine_reader        = NULL,
                             .routine_writer        = routineWriteToRaw,
                             .handle                = rsocket,
                             .mark                  = mark,
                             .read_event_callback   = cb,
                             .userdata              = userdata,
-                            .writer_buffer_channel = chanOpen(sizeof(void *), kRawWriteChannelQueueMax),
+                            .writer_buffer_channel = NULL,
                             .reader_message_pool   = reader_message_pool,
                             .reader_buffer_pool    = reader_bpool,
                             .writer_buffer_pool    = writer_bpool};

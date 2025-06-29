@@ -2,7 +2,6 @@
 
 #include "wlibc.h"
 
-
 #include "buffer_pool.h"
 #include "master_pool.h"
 #include "wloop.h"
@@ -26,10 +25,10 @@ typedef void (*TunReadEventHandle)(struct tun_device_s *tdev, void *userdata, sb
 
 enum
 {
-    kReadPacketSize                      = 1500,
+    kReadPacketSize                       = 1500,
     kMasterMessagePoolsbufGetLeftCapacity = 8,
-    kTunWriteChannelQueueMax             = 256,
-    kMaxReadQueueSize                    = 100
+    kTunWriteChannelQueueMax              = 256,
+    kMaxReadQueueSize                     = 100
 };
 
 typedef struct tun_device_s
@@ -43,6 +42,7 @@ typedef struct tun_device_s
 #else
     char *name;
     int   handle;
+    int   linux_pipe_fds[2]; // used for signaling read thread to stop
 #endif
 
     void     *userdata;
@@ -59,7 +59,7 @@ typedef struct tun_device_s
     TunReadEventHandle read_event_callback;
 
     struct wchan_s *writer_buffer_channel;
-    atomic_int     packets_queued;
+    atomic_int      packets_queued;
 
     atomic_bool running;
     bool        up;

@@ -9,6 +9,7 @@
 #include <fcntl.h>
 
 #include <netinet/ip.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 
 #ifdef OS_LINUX
@@ -79,9 +80,15 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     sbuf_t       *buf;
     int           nread;
 
+    struct pollfd fds[2];
+    fds[0].fd     = tdev->handle;
+    fds[0].events = POLL_IN;
+    fds[1].fd     = tdev->linux_pipe_fds[0];
+    fds[1].events = POLL_IN;
+
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        if (atomicLoadExplicit(&(tdev->packets_queued),memory_order_acquire) > 256)
+        if (atomicLoadExplicit(&(tdev->packets_queued), memory_order_acquire) > 256)
         {
             ww_msleep(1);
             continue;
@@ -90,35 +97,50 @@ static WTHREAD_ROUTINE(routineReadFromTun)
         buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
         assert(sbufGetRightCapacity(buf) >= kReadPacketSize);
 
-        nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
-
-        if (nread == 0)
+        int ret = poll(fds, 2, -1);
+        if (ret > 0)
         {
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-            LOGW("TunDevice: Exit read routine due to End Of File");
-            return 0;
-        }
-
-        if (nread < 0)
-        {
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-            LOGE("TunDevice: reading a packet from TUN device failed, code: %d", nread);
-            if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            if (fds[1].revents & POLLIN)
             {
-                continue;
+                bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+
+                LOGW("TunDevice: Exit read routine due to pipe event");
+                break;
             }
-            LOGE("TunDevice: Exit read routine due to critical error");
-            return 0;
+            if (fds[0].revents & POLLIN)
+            {
+
+                nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
+
+                if (nread == 0)
+                {
+                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+                    LOGW("TunDevice: Exit read routine due to End Of File");
+                    return 0;
+                }
+
+                if (nread < 0)
+                {
+                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+                    LOGE("TunDevice: reading a packet from TUN device failed, code: %d", nread);
+                    if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+                    {
+                        continue;
+                    }
+                    LOGE("TunDevice: Exit read routine due to critical error");
+                    return 0;
+                }
+
+                sbufSetLength(buf, (uint32_t) nread);
+
+                if (TUN_LOG_EVERYTHING)
+                {
+                    LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
+                }
+
+                distributePacketPayload(tdev, getNextDistributionWID(), buf);
+            }
         }
-
-        sbufSetLength(buf, (uint32_t) nread);
-
-        if (TUN_LOG_EVERYTHING)
-        {
-            LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
-        }
-
-        distributePacketPayload(tdev, getNextDistributionWID(), buf);
     }
 
     return 0;
@@ -294,7 +316,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     {
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }
-    tdev->writer_buffer_channel = NULL;
 
     char command[128];
     snprintf(command, sizeof(command), "ip link set dev %s down", tdev->name);
@@ -307,9 +328,15 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     if (tdev->read_event_callback != NULL)
     {
+        write(tdev->linux_pipe_fds[1], "x", 1);
+
         threadJoin(tdev->read_thread);
     }
     threadJoin(tdev->write_thread);
+
+    chanFree(tdev->writer_buffer_channel);
+
+    tdev->writer_buffer_channel = NULL;
 
     return true;
 }
@@ -404,6 +431,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .reader_buffer_pool  = reader_bpool,
                             .writer_buffer_pool  = writer_bpool};
 
+    pipe(tdev->linux_pipe_fds);
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
     return tdev;
@@ -420,5 +448,7 @@ void tundeviceDestroy(tun_device_t *tdev)
     bufferpoolDestroy(tdev->writer_buffer_pool);
     masterpoolDestroy(tdev->reader_message_pool);
     close(tdev->handle);
+    close(tdev->linux_pipe_fds[0]);
+    close(tdev->linux_pipe_fds[1]);
     memoryFree(tdev);
 }

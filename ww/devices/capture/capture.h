@@ -17,6 +17,8 @@ typedef struct capture_device_s
 {
     char     *name;
     int       handle;
+    int   linux_pipe_fds[2]; // used for signaling read thread to stop
+
     uint32_t  queue_number;
     bool      drop_captured_packet;
     void     *userdata;
