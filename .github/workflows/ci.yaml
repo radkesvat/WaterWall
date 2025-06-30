@@ -305,14 +305,14 @@ jobs:
 
   release:
       needs:
-        - android
-        - bsd
-        - ios
+        # - android
+        # - bsd
+        # - ios
         - linux
-        - macos
-        - msys2
-        - windows
-        
+        # - macos
+        # - msys2
+        # - windows
+
       runs-on: ubuntu-latest
       steps:
         - uses: actions/checkout@v4
