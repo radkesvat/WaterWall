@@ -36,9 +36,11 @@
         {
             "name": "linux-gcc-old-cpu",
             "cacheVariables": {
-                "CMAKE_C_FLAGS": "-march=x86-64 -mtune=generic",
-                "CMAKE_CXX_FLAGS": "-march=x86-64 -mtune=generic"
+                "DISABLE_AVX": "ON",
+                "CMAKE_C_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx",
+                "CMAKE_CXX_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx"
             },
+            
             "inherits": [
                 "host-linux",
                 "target-linux",
