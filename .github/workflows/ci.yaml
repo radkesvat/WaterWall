@@ -355,17 +355,25 @@ jobs:
             git tag -a "v${{ env.VERSION }}" -m "Release v${{ env.VERSION }}"
             git push origin "v${{ env.VERSION }}"
 
-        - name: List Files
+        - name: Zip release files
           run: |
             ls -ln downloaded_artifacts
-            
+            mkdir -p zipped_artifacts
+            for dir in downloaded_artifacts/*; do
+              if [ -d "$dir" ]; then
+                base=$(basename "$dir")
+                zip -r "zipped_artifacts/${base}.zip" "$dir"
+              fi
+            done
+
+
         - name: Create GitHub Release
           if: steps.check_tag.outputs.exists == 'false'
           uses: softprops/action-gh-release@v2
           with:
             tag_name: v${{ env.VERSION }}
             files: |
-              ./downloaded_artifacts/Waterwall_Linux_gcc_${{ github.run_id }}_${{ github.run_attempt }}
-              ./downloaded_artifacts/Waterwall_Linux_clang_${{ github.run_id }}_${{ github.run_attempt }}
-            #  Waterwall_Windows_x64_
+              zipped_artifacts/*.zip
+
+
 
