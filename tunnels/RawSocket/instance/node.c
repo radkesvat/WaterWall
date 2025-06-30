@@ -17,7 +17,7 @@ node_t nodeRawSocketGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagChainEnd | kNodeFlagChainHead,
+             .flags                 = kNodeFlagChainEnd,
              .required_padding_left = 0,
              .layer_group           = kNodeLayer3,
              .layer_group_next_node = kNodeLayerAnything,
