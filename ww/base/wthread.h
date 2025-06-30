@@ -5,8 +5,8 @@
 
 typedef long tid_t;
 
-#ifndef __pid_t_defined
-typedef long pid_t;
+#ifdef OS_WIN
+typedef int pid_t;
 #endif
 
 #ifdef OS_WIN
@@ -15,9 +15,7 @@ typedef long pid_t;
 #define getProcessID (pid_t) getpid
 #endif
 
-
-
-#if defined (OS_WIN)
+#if defined(OS_WIN)
 #define getTID (tid_t) GetCurrentThreadId
 #elif HAVE_GETTID || defined(OS_ANDROID)
 #define getTID (tid_t) gettid
@@ -29,7 +27,7 @@ static inline tid_t getTID(void)
 {
     uint64_t tid = 0;
     pthread_threadid_np(NULL, &tid);
-    return (tid_t)tid;
+    return (tid_t) tid;
 }
 #elif HAVE_PTHREAD_H
 #define getTID (tid_t) pthread_self
