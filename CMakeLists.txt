@@ -15,6 +15,8 @@ project(Waterwall
         LANGUAGES C
 )
 
+file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/version.txt" "${PROJECT_VERSION}\n")
+
 if(NOT CMAKE_BUILD_TYPE)
     message(STATUS  "CMAKE_BUILD_TYPE not set - defaulting to Release build, on multi-config generators this will be ignored")
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build, options are: ${CMAKE_CONFIGURATION_TYPES}." FORCE)
