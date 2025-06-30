@@ -173,48 +173,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.cc }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/
+          path: ${{ github.workspace }}/build/Waterwall
 
       - name: Show ccache statistics
         run: ccache -sv
 
-  linux-ubuntu20:
-    strategy:
-      fail-fast: false
-      matrix:
-        cc: [clang, gcc]
-    name: linux-ubuntu20-${{ matrix.cc }}
-    runs-on: ubuntu-20.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ env.cpm-path }}
-          key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
-      - name: Install dependencies on Linux
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache
-      - name: Configure CMake
-        run: >
-          cmake -B build
-          -DCMAKE_C_COMPILER=${{ matrix.cc }}
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
-
-      - name: Build
-        run: cmake --build build
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Waterwall_ubuntu20_${{ matrix.cc }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/
-
-      - name: Show ccache statistics
-        run: ccache -sv
+  
 
   macos:
     runs-on: macos-latest
@@ -243,7 +207,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/
+          path: ${{ github.workspace }}/build/Waterwall
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -297,7 +261,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/
+          path: ${{ github.workspace }}/build/Waterwall
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -336,7 +300,55 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/
+          path: ${{ github.workspace }}/build/Waterwall
 
       - name: Show ccache statistics
         run: ccache -sv
+
+  release:
+      needs: build
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Configure CMake
+          run: |
+            cmake -B build
+
+        - name: Download artifacts
+          uses: actions/download-artifact@v4
+          with:
+            path: downloaded_artifacts
+
+        - name: Extract version
+          run: |
+            VERSION=$(cat build/version.txt)
+            echo "Project version: $VERSION"
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+
+        - name: Check if tag exists
+          id: check_tag
+          run: |
+            if git rev-parse "v${{ env.VERSION }}" >/dev/null 2>&1; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+            fi
+
+        - name: Create Git Tag
+          if: steps.check_tag.outputs.exists == 'false'
+          run: |
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "v${{ env.VERSION }}" -m "Release v${{ env.VERSION }}"
+            git push origin "v${{ env.VERSION }}"
+
+        - name: Create GitHub Release
+          if: steps.check_tag.outputs.exists == 'false'
+          uses: softprops/action-gh-release@v2
+          with:
+            tag_name: v${{ env.VERSION }}
+            files: downloaded_artifacts/**/*
+
+
