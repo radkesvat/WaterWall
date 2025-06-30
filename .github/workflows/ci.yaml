@@ -364,7 +364,7 @@ jobs:
           with:
             tag_name: v${{ env.VERSION }}
             files: |
-              downloaded_artifacts/Waterwall_Linux_gcc_${{ github.run_id }}_${{ github.run_attempt }}.zip
-              downloaded_artifacts/Waterwall_Linux_clang_${{ github.run_id }}_${{ github.run_attempt }}.zip
+              ./downloaded_artifacts/Waterwall_Linux_gcc_${{ github.run_id }}_${{ github.run_attempt }}
+              ./downloaded_artifacts/Waterwall_Linux_clang_${{ github.run_id }}_${{ github.run_attempt }}
             #  Waterwall_Windows_x64_
 
