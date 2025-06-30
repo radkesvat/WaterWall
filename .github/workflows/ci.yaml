@@ -49,7 +49,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_android؛${{ matrix.arch }}
+          name: Waterwall_android_${{ matrix.arch }}
           path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
@@ -139,49 +139,49 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.target }}
+          name: Waterwall_${{ matrix.target }}
           path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
         run: ccache -sv
 
-  linux:
-    strategy:
-      fail-fast: false
-      matrix:
-        cc: [clang, gcc]
-    name: linux-${{ matrix.cc }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ env.cpm-path }}
-          key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
-      - name: Install dependencies on Linux
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache
-      - name: Configure CMake
-        run: >
-          cmake -B build
-          -DCMAKE_C_COMPILER=${{ matrix.cc }}
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          linux:
+            strategy:
+              fail-fast: false
+              matrix:
+                cc: [clang, gcc]
+            name: linux-${{ matrix.cc }}
+            runs-on: ubuntu-22.04
+            steps:
+              - uses: actions/checkout@v4
+              - uses: actions/cache@v4
+                with:
+                  path: ${{ env.cpm-path }}
+                  key: ${{ env.cpm-key }}
+                  enableCrossOsArchive: true
+              - name: Install dependencies on Linux
+                if: runner.os == 'Linux'
+                run: |
+                  sudo apt-get update
+                  sudo apt-get install -y ninja-build ccache
+              - name: Configure CMake
+                run: >
+                  cmake -B build
+                  -DCMAKE_C_COMPILER=${{ matrix.cc }}
+                  -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
+                  -DOPENSSL_CONFIGURE_VERBOSE=ON
 
-      - name: Build
-        run: cmake --build build --config Release
+              - name: Build
+                run: cmake --build build --config Release
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Waterwall_${{ runner.os }}_X64_${{ matrix.cc }}
-          path: ${{ github.workspace }}/build/Waterwall
+              - name: Upload artifact
+                uses: actions/upload-artifact@v4
+                with:
+                  name: Waterwall_${{ runner.os }}_X64_${{ matrix.cc }}
+                  path: ${{ github.workspace }}/build/Waterwall
 
-      - name: Show ccache statistics
-        run: ccache -sv
+              - name: Show ccache statistics
+                run: ccache -sv
 
   macos:
     runs-on: macos-latest
