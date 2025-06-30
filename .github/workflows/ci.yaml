@@ -357,7 +357,8 @@ jobs:
 
         - name: List Files
           run: |
-            ls downloaded_artifacts
+            ls -ln downloaded_artifacts
+            
         - name: Create GitHub Release
           if: steps.check_tag.outputs.exists == 'false'
           uses: softprops/action-gh-release@v2
