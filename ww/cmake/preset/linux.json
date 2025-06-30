@@ -32,6 +32,20 @@
                 "gcc",
                 "default"
             ]
+        },
+        {
+            "name": "linux-gcc-old-cpu",
+            "cacheVariables": {
+                "CMAKE_C_FLAGS": "-march=x86-64 -mtune=generic",
+                "CMAKE_CXX_FLAGS": "-march=x86-64 -mtune=generic"
+            },
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "gcc",
+                "default"
+            ]
         }
     ],
     "buildPresets": [
@@ -68,6 +82,13 @@
             "name": "linux-gcc-rwd",
             "configurePreset": "linux-gcc",
             "configuration": "RelWithDebInfo",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-gcc-old-cpu",
+            "configurePreset": "linux-gcc-old-cpu",
             "inherits": [
                 "host-linux"
             ]
