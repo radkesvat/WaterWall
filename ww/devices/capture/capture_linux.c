@@ -429,6 +429,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     if (execCmd(cdev->bringup_command).exit_code != 0)
     {
         LOGE("CaptureDevicer: command failed: %s", cdev->bringup_command);
+        exit(1);
         return false;
     }
     bufferpoolUpdateAllocationPaddings(cdev->writer_buffer_pool,
@@ -460,6 +461,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
     if (execCmd(cdev->bringdown_command).exit_code != 0)
     {
         LOGE("CaptureDevicer: command failed: %s", cdev->bringdown_command);
+        exit(1);
     }
     if (cdev->read_event_callback != NULL)
     {
@@ -489,7 +491,7 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
     struct sockaddr_nl nl_addr;
     memorySet(&nl_addr, 0x0, sizeof(nl_addr));
     nl_addr.nl_family = AF_NETLINK;
-    nl_addr.nl_pid    = getpid();
+    nl_addr.nl_pid    = 0;
 
     if (bind(socket_netfilter, (struct sockaddr *) &nl_addr, sizeof(nl_addr)) != 0)
     {
