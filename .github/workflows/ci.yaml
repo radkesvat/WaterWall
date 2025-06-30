@@ -44,7 +44,7 @@ jobs:
           -DOPENSSL_CONFIGURE_VERBOSE=ON
       
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --config Release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -172,7 +172,7 @@ jobs:
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --config Release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -258,7 +258,7 @@ jobs:
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
       - name: Build
-        run: cmake --build  build
+        run: cmake --build  build --config Release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -297,7 +297,7 @@ jobs:
           -DOPENSSL_CONFIGURE_VERBOSE=ON
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --config Release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
