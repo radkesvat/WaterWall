@@ -60,7 +60,6 @@ logger_t *createNetworkLogger(const char *log_file, bool console)
         loggerSetHandler(logger, networkLoggerHandle);
     }
 
-    atexit(destroyNetworkLogger);
     return logger;
 }
 

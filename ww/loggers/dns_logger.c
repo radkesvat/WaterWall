@@ -60,7 +60,6 @@ logger_t *createDnsLogger(const char *log_file, bool console)
         loggerSetHandler(logger, dnsLoggerHandle);
     }
 
-    atexit(destroyDnsLogger);
     return logger;
 }
 

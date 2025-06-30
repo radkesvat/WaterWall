@@ -60,7 +60,6 @@ logger_t *createCoreLogger(const char *log_file, bool console)
         loggerSetHandler(logger, coreLoggerHandle);
     }
 
-    atexit(destroyCoreLogger);
     return logger;
 }
 

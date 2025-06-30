@@ -580,7 +580,7 @@ logger_t        *loggerGetDefaultLogger(void)
     if (s_logger == NULL)
     {
         s_logger = loggerCreate();
-        atexit(loggerDestroyDefaultLogger);
+        // atexit(loggerDestroyDefaultLogger);
     }
     return s_logger;
 }
