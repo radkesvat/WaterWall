@@ -355,13 +355,16 @@ jobs:
             git tag -a "v${{ env.VERSION }}" -m "Release v${{ env.VERSION }}"
             git push origin "v${{ env.VERSION }}"
 
+        - name: List Files
+          run: |
+            ls downloaded_artifacts
         - name: Create GitHub Release
           if: steps.check_tag.outputs.exists == 'false'
           uses: softprops/action-gh-release@v2
           with:
             tag_name: v${{ env.VERSION }}
             files: |
-              downloaded_artifacts/Waterwall_Linux_gcc_${{ github.run_id }}_${{ github.run_attempt }}
-              downloaded_artifacts/Waterwall_Linux_clang_${{ github.run_id }}_${{ github.run_attempt }}
+              downloaded_artifacts/Waterwall_Linux_gcc_${{ github.run_id }}_${{ github.run_attempt }}.zip
+              downloaded_artifacts/Waterwall_Linux_clang_${{ github.run_id }}_${{ github.run_attempt }}.zip
             #  Waterwall_Windows_x64_
 
