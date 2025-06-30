@@ -363,6 +363,7 @@ jobs:
               if [ -d "$dir" ]; then
                 base=$(basename "$dir")
                 cd "$dir" && zip -r "../../zipped_artifacts/${base}.zip" .
+                cd ../..
               fi
             done
 
