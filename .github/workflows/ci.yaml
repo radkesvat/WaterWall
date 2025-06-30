@@ -259,7 +259,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/Waterwall
+          path: ${{ github.workspace }}/build/Waterwall.exe
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -298,7 +298,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/Waterwall
+          path: ${{ github.workspace }}/build/Waterwall.exe
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -328,7 +328,7 @@ jobs:
 
         - name: Extract version
           run: |
-            VERSION=$(cat build/version.txt)
+            VERSION=$(cat ww/cmake/version.txt)
             echo "Project version: $VERSION"
             echo "VERSION=$VERSION" >> $GITHUB_ENV
 
