@@ -82,9 +82,17 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
     struct pollfd fds[2];
     fds[0].fd     = tdev->handle;
+#if defined (OS_OPENBSD)
+    fds[0].events = POLLIN;
+#else
     fds[0].events = POLL_IN;
+#endif
     fds[1].fd     = tdev->linux_pipe_fds[0];
+#if defined (OS_OPENBSD)
+    fds[1].events = POLLIN;
+#else
     fds[1].events = POLL_IN;
+#endif
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
@@ -160,9 +168,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             LOGD("TunDevice: routine write will exit due to channel closed");
             return 0;
         }
-#if ! defined(OS_BSD)
-        assert(sbufGetLength(buf) > sizeof(struct iphdr));
-#endif
+
         nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetLength(buf));
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
 

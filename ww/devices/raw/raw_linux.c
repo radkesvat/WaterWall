@@ -127,7 +127,6 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             return 0;
         }
 
-        assert(sbufGetLength(buf) > sizeof(struct iphdr));
 
         struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
 

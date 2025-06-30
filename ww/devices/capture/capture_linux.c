@@ -298,9 +298,17 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     struct pollfd fds[2];
     fds[0].fd     = cdev->handle;
+#if defined (OS_OPENBSD)
+    fds[0].events = POLLIN;
+#else
     fds[0].events = POLL_IN;
+#endif
     fds[1].fd     = cdev->linux_pipe_fds[0];
+#if defined (OS_OPENBSD)
+    fds[1].events = POLLIN;
+#else
     fds[1].events = POLL_IN;
+#endif
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
