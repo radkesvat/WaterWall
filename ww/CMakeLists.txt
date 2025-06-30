@@ -406,7 +406,7 @@ check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
 
-if(HAVE_X86INTRIN_H)
+if(HAVE_X86INTRIN_H AND NOT DISABLE_AVX)
     target_compile_options(ww PUBLIC -mavx)
     set(WW_SUPPORTED_MEM128_OPTIMIZE 1)
 else()
