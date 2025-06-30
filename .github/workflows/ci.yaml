@@ -49,7 +49,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_android؛${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}_android؛${{ matrix.arch }}
           path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
@@ -103,7 +103,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ matrix.arch }}
           path: ${{ github.workspace }}/build/
 
   ios:
@@ -139,7 +139,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.target }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}_${{ matrix.target }}
           path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
@@ -177,7 +177,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.cc }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}_X64_${{ matrix.cc }}
           path: ${{ github.workspace }}/build/Waterwall
 
       - name: Show ccache statistics
@@ -209,7 +209,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}
           path: ${{ github.workspace }}/build/Waterwall
 
       - name: Show ccache statistics
@@ -263,7 +263,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}
           path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
@@ -302,7 +302,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
+          name: Waterwall_${{ runner.os }}_${{ matrix.arch }}
           path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
@@ -315,8 +315,8 @@ jobs:
         # - ios
         - linux
         # - macos
-        # - msys2
-        # - windows
+        - msys2
+        - windows
 
       runs-on: ubuntu-latest
       steps:
@@ -362,7 +362,7 @@ jobs:
             for dir in downloaded_artifacts/*; do
               if [ -d "$dir" ]; then
                 base=$(basename "$dir")
-                zip -r "zipped_artifacts/${base}.zip" "$dir"
+                cd "$dir" && zip -r "../../zipped_artifacts/${base}.zip" .
               fi
             done
 
