@@ -264,7 +264,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/Waterwall.exe
+          path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -303,7 +303,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.arch }}_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ${{ github.workspace }}/build/Waterwall.exe
+          path: ${{ github.workspace }}/build/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -360,6 +360,6 @@ jobs:
           uses: softprops/action-gh-release@v2
           with:
             tag_name: v${{ env.VERSION }}
-            files: downloaded_artifacts/**/*
+            files: downloaded_artifacts/
 
 
