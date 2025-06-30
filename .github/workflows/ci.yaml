@@ -178,8 +178,6 @@ jobs:
       - name: Show ccache statistics
         run: ccache -sv
 
-  
-
   macos:
     runs-on: macos-latest
     steps:
@@ -306,7 +304,15 @@ jobs:
         run: ccache -sv
 
   release:
-      needs: build
+      needs:
+        - android
+        - bsd
+        - ios
+        - linux
+        - macos
+        - msys2
+        - windows
+        
       runs-on: ubuntu-latest
       steps:
         - uses: actions/checkout@v4
