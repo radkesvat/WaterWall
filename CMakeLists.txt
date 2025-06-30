@@ -9,7 +9,7 @@ endif()
 
 
 project(Waterwall 
-        VERSION 1.34.2
+        VERSION 1.34.3
         DESCRIPTION "A fast and secure VPN tunnel"
         HOMEPAGE_URL "https://github.com/radkesvat/waterwall"
         LANGUAGES C
