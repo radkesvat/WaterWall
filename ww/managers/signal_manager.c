@@ -140,6 +140,13 @@ static void multiplexedSignalHandler(int signum)
     {
         signal(signum, SIG_DFL);
     }
+    if (signum == SIGABRT)
+    {
+        // assert fails in the handler, so we need to exit here
+        signal(signum, SIG_DFL);
+        raise(signum);
+        
+    }
 
     exitHandler();
 
@@ -269,7 +276,7 @@ void signalmanagerStart(void)
 
 #endif
 
-    atexit(exitHandler);
+    // atexit(exitHandler);
 }
 
 void signalmanagerDestroy(void)
