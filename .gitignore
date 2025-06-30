@@ -4,6 +4,7 @@ node_modules
 
 /tunnels/shared/protobuf/generator
 /core/texts
+ww/cmake/version.txt
 gen.py
 cacert.pem
 todo.txt
