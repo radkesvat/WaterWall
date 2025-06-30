@@ -5,7 +5,7 @@
 
 typedef long tid_t;
 
-#ifdef OS_WIN
+#if defined(OS_WIN) && ! HAVE_SYS_TYPES_H
 typedef int pid_t;
 #endif
 
