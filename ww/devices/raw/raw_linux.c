@@ -306,6 +306,7 @@ void rawdeviceDestroy(raw_device_t *rdev)
     memoryFree(rdev->name);
     bufferpoolDestroy(rdev->reader_buffer_pool);
     bufferpoolDestroy(rdev->writer_buffer_pool);
+    masterpoolMakeEmpty(rdev->reader_message_pool,NULL);
     masterpoolDestroy(rdev->reader_message_pool);
     close(rdev->handle);
     memoryFree(rdev);

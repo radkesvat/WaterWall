@@ -607,6 +607,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     memoryFree(cdev->bringdown_command);
     bufferpoolDestroy(cdev->reader_buffer_pool);
     bufferpoolDestroy(cdev->writer_buffer_pool);
+    masterpoolMakeEmpty(cdev->reader_message_pool,NULL);
     masterpoolDestroy(cdev->reader_message_pool);
     close(cdev->handle);
     memoryFree(cdev);

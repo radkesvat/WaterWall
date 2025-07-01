@@ -701,6 +701,7 @@ void tundeviceDestroy(tun_device_t *tdev)
     memoryFree(tdev->name);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
+    masterpoolMakeEmpty(tdev->reader_message_pool,NULL);
     masterpoolDestroy(tdev->reader_message_pool);
     chanFree(tdev->writer_buffer_channel);
 
