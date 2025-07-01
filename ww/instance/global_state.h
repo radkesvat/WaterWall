@@ -61,6 +61,7 @@ typedef struct ww_global_state_s
     uint8_t                    flag_openssl_initialized : 1;
     uint8_t                    flag_libsodium_initialized : 1;
     uint8_t                    flag_lwip_initialized : 1;
+    atomic_bool                application_stopping_flag; // prevent threads sending messages to each other
 
 } ww_global_state_t;
 
@@ -175,7 +176,6 @@ void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg
 
 // same as above but dose not do a dircet call if the wid is the same as the current worker
 void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3);
-
 
 /*!
  * @brief Runs the main thread.

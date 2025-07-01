@@ -1,4 +1,5 @@
 #include "wloop.h"
+#include "global_state.h"
 #include "iowatcher.h"
 #include "wevent.h"
 
@@ -321,6 +322,11 @@ static void wloopDestroyEventFDS(wloop_t *loop)
 
 void wloopPostEvent(wloop_t *loop, wevent_t *ev)
 {
+    if(atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
+    {
+        return;
+    }
+
     if (ev->loop == NULL)
     {
         ev->loop = loop;

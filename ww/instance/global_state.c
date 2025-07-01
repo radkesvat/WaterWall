@@ -98,6 +98,8 @@ static void exitHandle(void *userdata, int signum)
 {
     discard signum;
     discard userdata;
+    atomicStoreExplicit(&GSTATE.application_stopping_flag, true, memory_order_release);
+
     for (unsigned int wid = 0; wid < WORKERS_COUNT; ++wid)
     {
         workerExitJoin(getWorker(wid));
@@ -194,7 +196,10 @@ void globalstateUpdateAllocationPadding(uint16_t padding)
  */
 void createGlobalState(const ww_construction_data_t init_data)
 {
+    GSTATE = (ww_global_state_t) {0};
+
     GSTATE.flag_initialized = true;
+    atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
 
     // [Section] loggers
     {
@@ -385,14 +390,6 @@ WW_EXPORT void destroyGlobalState(void)
 
     memoryFree((void *) GSTATE.shortcut_loops);
 
-    masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
-    masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
-    masterpoolDestroy(GSTATE.masterpool_context_pools);
-    masterpoolDestroy(GSTATE.masterpool_pipetunnel_msg_pools);
-    masterpoolDestroy(GSTATE.masterpool_messages);
-
-    memoryFree(WORKERS);
-    WORKERS = NULL;
     nodemanagerDestroy();
     socketmanagerDestroy();
     signalmanagerDestroy();
@@ -401,6 +398,15 @@ WW_EXPORT void destroyGlobalState(void)
     loggerDestroy(getCoreLogger());
     loggerDestroy(getNetworkLogger());
     loggerDestroy(getDnsLogger());
+
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
+    masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
+    masterpoolDestroy(GSTATE.masterpool_context_pools);
+    masterpoolDestroy(GSTATE.masterpool_pipetunnel_msg_pools);
+    masterpoolDestroy(GSTATE.masterpool_messages);
+
+    memoryFree(WORKERS);
+    WORKERS = NULL;
 
     nodelibraryCleanup();
 }
