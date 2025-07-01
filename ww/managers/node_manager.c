@@ -28,8 +28,8 @@ typedef struct node_manager_config_s
 
 } node_manager_config_t;
 
-#define i_type vec_configs_t         // NOLINT
-#define i_key  node_manager_config_t*// NOLINT
+#define i_type vec_configs_t           // NOLINT
+#define i_key  node_manager_config_t * // NOLINT
 #include "stc/vec.h"
 
 typedef struct node_manager_s
@@ -342,11 +342,12 @@ void nodemanagerSetState(struct node_manager_s *new_state)
 void nodemanagerRunConfigFile(config_file_t *config_file)
 {
 
-    node_manager_config_t cfg = {
-        .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
-    vec_configs_t_push(&(state->configs), &cfg);
-    startInstallingConfigFile(&cfg);
+    node_manager_config_t *cfg = memoryAllocate(sizeof(node_manager_config_t));
 
+    *cfg = (node_manager_config_t) {
+        .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
+    vec_configs_t_push(&(state->configs), cfg);
+    startInstallingConfigFile(cfg);
 }
 
 node_manager_t *nodemanagerCreate(void)
@@ -390,6 +391,7 @@ void nodemanagerDestroyConfig(node_manager_config_t *cfg)
     map_node_t_drop(&cfg->node_map);
     vec_chains_t_drop(&cfg->chains);
     configfileDestroy(cfg->config_file);
+    memoryFree(cfg);
 }
 
 void nodemanagerDestroy(void)
