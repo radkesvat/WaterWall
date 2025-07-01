@@ -299,7 +299,10 @@ _Noreturn void terminateProgram(int exit_code)
     }
     double_terminated = true;
 
-    printError("SignalManager: Terminating program with exit-code %d, read above logs to understand why\n", exit_code);
-    exitHandler();
+    printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n", exit_code);
+    if (state)
+    {
+        exitHandler();
+    }
     exit(exit_code);
 }
