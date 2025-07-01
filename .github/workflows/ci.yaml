@@ -208,7 +208,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_X64_${{ matrix.cc }}_OLD_CPU
-          path: ${{ github.workspace }}/build/Waterwall
+          path: ${{ github.workspace }}/build/linux-gcc-old-cpu/Release/Waterwall
       - name: Show ccache statistics
         run: ccache -sv
   macos:
