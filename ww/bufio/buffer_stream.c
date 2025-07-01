@@ -17,7 +17,7 @@ enum
 buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool)
 {
     buffer_stream_t *bs = memoryAllocate(sizeof(buffer_stream_t));
-    bs->q               = queue_with_capacity(kQCap);
+    bs->q               = bs_doublequeue_t_with_capacity(kQCap);
     bs->pool            = pool;
     bs->size            = 0;
     return bs;
@@ -29,11 +29,11 @@ buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool)
  */
 void bufferstreamEmpty(buffer_stream_t *self)
 {
-    c_foreach(i, queue, self->q)
+    c_foreach(i, bs_doublequeue_t, self->q)
     {
         bufferpoolReuseBuffer(self->pool, *i.ref);
     }
-    queue_clear(&self->q);
+    bs_doublequeue_t_clear(&self->q);
     self->size = 0;
 }
 
@@ -43,11 +43,11 @@ void bufferstreamEmpty(buffer_stream_t *self)
  */
 void bufferstreamDestroy(buffer_stream_t *self)
 {
-    c_foreach(i, queue, self->q)
+    c_foreach(i, bs_doublequeue_t, self->q)
     {
         bufferpoolReuseBuffer(self->pool, *i.ref);
     }
-    queue_drop(&self->q);
+    bs_doublequeue_t_drop(&self->q);
     memoryFree(self);
 }
 
@@ -61,9 +61,9 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 
     BUFFER_WONT_BE_REUSED(buf);
 
-    if (self->size > 0 && queue_size(&self->q) == 1)
+    if (self->size > 0 && bs_doublequeue_t_size(&self->q) == 1)
     {
-        sbuf_t  *last       = *queue_front(&self->q);
+        sbuf_t  *last       = *bs_doublequeue_t_front(&self->q);
         uint32_t write_size = min(sbufGetRightCapacity(last), sbufGetLength(buf));
 
         if (write_size > 0)
@@ -79,7 +79,7 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
         }
     }
 
-    queue_push_back(&self->q, buf);
+    bs_doublequeue_t_push_back(&self->q, buf);
     self->size += sbufGetLength(buf);
 }
 
@@ -94,7 +94,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
     assert(self->size >= bytes && bytes > 0);
     self->size -= bytes;
 
-    sbuf_t *container = queue_pull_front(&self->q);
+    sbuf_t *container = bs_doublequeue_t_pull_front(&self->q);
 
     while (true)
     {
@@ -103,14 +103,14 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
         {
             sbuf_t *slice = bufferpoolGetLargeBuffer(self->pool);
             slice         = sbufMoveTo(slice, container, (uint32_t) bytes);
-            queue_push_front(&self->q, container);
+            bs_doublequeue_t_push_front(&self->q, container);
             return slice;
         }
         if (available == bytes)
         {
             return container;
         }
-        container = sbufAppendMerge(self->pool, container, queue_pull_front(&self->q));
+        container = sbufAppendMerge(self->pool, container, bs_doublequeue_t_pull_front(&self->q));
     }
 }
 
@@ -125,7 +125,7 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
     assert(self->size >= bytes && bytes > 0);
     self->size -= bytes;
 
-    sbuf_t *container = queue_pull_front(&self->q);
+    sbuf_t *container = bs_doublequeue_t_pull_front(&self->q);
 
     while (true)
     {
@@ -134,7 +134,7 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
         {
             return container;
         }
-        container = sbufAppendMerge(self->pool, container, queue_pull_front(&self->q));
+        container = sbufAppendMerge(self->pool, container, bs_doublequeue_t_pull_front(&self->q));
     }
 }
 
@@ -146,7 +146,7 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
 sbuf_t *bufferstreamIdealRead(buffer_stream_t *self)
 {
     assert(self->size > 0);
-    sbuf_t *container = queue_pull_front(&self->q);
+    sbuf_t *container = bs_doublequeue_t_pull_front(&self->q);
     self->size -= sbufGetLength(container);
     return container;
 }
@@ -162,7 +162,7 @@ uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
     assert(self->size > at && self->size != 0);
 
     uint8_t result = 0;
-    c_foreach(i, queue, self->q)
+    c_foreach(i, bs_doublequeue_t, self->q)
     {
         sbuf_t *b    = *i.ref;
         size_t  blen = sbufGetLength(b);
@@ -190,7 +190,7 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
     size_t bufferstream_i = at;
     assert(self->size >= (bufferstream_i + len) && self->size != 0);
     uint32_t buf_i = 0;
-    c_foreach(qi, queue, self->q)
+    c_foreach(qi, bs_doublequeue_t, self->q)
     {
 
         sbuf_t *b    = *qi.ref;

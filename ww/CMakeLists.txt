@@ -230,7 +230,7 @@ endif()
 CPMAddPackage(
     NAME stc
     GIT_REPOSITORY https://github.com/radkesvat/STC
-    GIT_TAG 45f264db9d282719d192bf4f541bd6ea48142aef
+    GIT_TAG d367e5403a27cde2dc64fbd34293fcbc60f5669f
     DOWNLOAD_ONLY True
 )
 if(stc_ADDED)

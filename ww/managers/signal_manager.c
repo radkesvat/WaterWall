@@ -287,7 +287,7 @@ void signalmanagerDestroy(void)
 }
 
 _Noreturn void terminateProgram(int exit_code){
-    printError("SignalManager: Terminating program with exit-code %d, read above logs to understand why", exit_code);
+    printError("SignalManager: Terminating program with exit-code %d, read above logs to understand why\n", exit_code);
     exitHandler();
     exit(exit_code);
 }

@@ -1,7 +1,6 @@
 #pragma once
 #include "wlibc.h"
 
-
 #include "buffer_pool.h"
 #include "shiftbuffer.h"
 
@@ -15,16 +14,15 @@
 
 */
 
-#define i_type queue
-#define i_key sbuf_t *
+#define i_type bs_doublequeue_t
+#define i_key  sbuf_t *
 #include "stc/deque.h"
 
 struct buffer_stream_s
 {
-    buffer_pool_t *pool;
-    queue          q;
-    size_t         size;
-
+    buffer_pool_t   *pool;
+    bs_doublequeue_t q;
+    size_t           size;
 };
 
 typedef struct buffer_stream_s buffer_stream_t;
@@ -114,4 +112,3 @@ static inline sbuf_t *bufferstreamFullRead(buffer_stream_t *self)
 {
     return bufferstreamReadExact(self, bufferstreamLen(self));
 }
-
