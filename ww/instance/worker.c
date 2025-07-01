@@ -122,7 +122,11 @@ void workerRun(worker_t *worker)
     genericpoolDestroy(worker->context_pool);
     genericpoolDestroy(worker->pipetunnel_msg_pool);
     bufferpoolDestroy(worker->buffer_pool);
-    wloopDestroy(&worker->loop);
+
+    worker->loop                = NULL;
+    worker->context_pool        = NULL;
+    worker->pipetunnel_msg_pool = NULL;
+    worker->buffer_pool         = NULL;
 
     LOGD("Worker %d cleanly exited !", wid);
 }
