@@ -50,7 +50,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_android_${{ matrix.arch }}
-          path: ${{ github.workspace }}/build/
+          path: ${{ github.workspace }}/build/Waterwall
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -103,8 +103,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}_${{ matrix.arch }}
-          path: ${{ github.workspace }}/build/
+          name: Waterwall_BSD_${{ matrix.preset }}_${{ matrix.arch }}
+          path: ${{ github.workspace }}/build/Waterwall
 
   ios:
     strategy:
@@ -140,7 +140,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ matrix.target }}
-          path: ${{ github.workspace }}/build/
+          path: ${{ github.workspace }}/build/Debug-iphoneos/Waterwall.app/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -291,8 +291,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.preset }}
-          path: ${{ github.workspace }}/build/
+          name: Waterwall_${{ runner.os }}_MSYS2_${{ matrix.preset }}
+          path: ${{ github.workspace }}/build/Waterwall.exe
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -331,7 +331,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}_${{ matrix.arch }}
-          path: ${{ github.workspace }}/build/
+          path: ${{ github.workspace }}/build/Release/Waterwall.exe
 
       - name: Show ccache statistics
         run: ccache -sv
