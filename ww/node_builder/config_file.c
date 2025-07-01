@@ -80,13 +80,15 @@ config_file_t *configfileParse(const char *const file_path)
     mutexInit(&(state->guard));
 
     state->file_path = memoryAllocate(strlen(file_path) + 1);
-    strcpy(state->file_path, file_path);
+    stringCopy(state->file_path, file_path);
 
     char *data_json = readFile(file_path);
 
     if (! data_json)
     {
         LOGF("File Error: config file \"%s\" could not be read", file_path);
+        memoryFree(state->file_path);
+        memoryFree(state);
         return NULL;
     }
     state->file_prebuffer_size = strlen(data_json);
@@ -102,6 +104,8 @@ config_file_t *configfileParse(const char *const file_path)
         {
             LOGF("JSON Error: before: %s\n", error_ptr);
         }
+        memoryFree(state->file_path);
+        memoryFree(state);
         return NULL;
     }
     memoryFree(data_json);
@@ -109,6 +113,8 @@ config_file_t *configfileParse(const char *const file_path)
     if (! getStringFromJsonObject((&state->name), json, "name"))
     {
         LOGF("JSON Error: config file \"%s\" -> name (string field) the value was empty or invalid", file_path);
+        memoryFree(state->file_path);
+        memoryFree(state);
         return NULL;
     }
 
@@ -120,7 +126,11 @@ config_file_t *configfileParse(const char *const file_path)
     if (! (cJSON_IsArray(nodes) && nodes->child != NULL))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes (array field) the array was empty or invalid", file_path);
-        exit(1);
+        memoryFree(state->name);
+        memoryFree(state->author);
+        memoryFree(state->file_path);
+        memoryFree(state);
+        return NULL;
     }
     state->nodes = nodes;
     return state;
