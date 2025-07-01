@@ -370,6 +370,7 @@ jobs:
         - name: Check if tag exists
           id: check_tag
           run: |
+            git fetch --tags
             if git rev-parse "v${{ env.VERSION }}" >/dev/null 2>&1; then
               echo "exists=true" >> $GITHUB_OUTPUT
             else
@@ -385,6 +386,7 @@ jobs:
             git push origin "v${{ env.VERSION }}"
 
         - name: Zip release files
+          if: steps.check_tag.outputs.exists == 'false'
           run: |
             ls -ln downloaded_artifacts
             mkdir -p zipped_artifacts
