@@ -145,7 +145,7 @@ static void multiplexedSignalHandler(int signum)
     //     // assert fails in the handler, so we need to exit here
     //     signal(signum, SIG_DFL);
     //     raise(signum);
-        
+
     // }
 
     exitHandler();
@@ -286,7 +286,19 @@ void signalmanagerDestroy(void)
     memoryFree(state);
 }
 
-_Noreturn void terminateProgram(int exit_code){
+static bool    double_terminated = false;
+_Noreturn void terminateProgram(int exit_code)
+{
+    if (double_terminated)
+    {
+        assert(false);
+        const char msg[]   = "double terminated.\n";
+        int        written = write(STDOUT_FILENO, msg, stringLength(msg));
+        discard    written;
+        exit(exit_code);
+    }
+    double_terminated = true;
+
     printError("SignalManager: Terminating program with exit-code %d, read above logs to understand why\n", exit_code);
     exitHandler();
     exit(exit_code);

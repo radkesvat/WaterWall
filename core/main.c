@@ -11,6 +11,13 @@
 // #include <crtdbg.h>
 // #endif
 
+static void exitHandle(void *userdata, int signum)
+{
+    discard signum;
+    discard userdata;
+    destroyCoreSettings();
+}
+
 int main(void)
 {
 
@@ -43,30 +50,30 @@ int main(void)
         .workers_count = getCoreSettings()->workers_count,
         .ram_profile   = getCoreSettings()->ram_profile,
         .internal_logger_data =
-            (logger_construction_data_t){.log_file_path = getCoreSettings()->internal_log_file_fullpath,
-                                         .log_level     = getCoreSettings()->internal_log_level,
-                                         .log_console   = getCoreSettings()->internal_log_console},
+            (logger_construction_data_t) {.log_file_path = getCoreSettings()->internal_log_file_fullpath,
+                                          .log_level     = getCoreSettings()->internal_log_level,
+                                          .log_console   = getCoreSettings()->internal_log_console},
 
-        .core_logger_data = (logger_construction_data_t){.log_file_path = getCoreSettings()->core_log_file_fullpath,
-                                                         .log_level     = getCoreSettings()->core_log_level,
-                                                         .log_console   = getCoreSettings()->core_log_console},
+        .core_logger_data = (logger_construction_data_t) {.log_file_path = getCoreSettings()->core_log_file_fullpath,
+                                                          .log_level     = getCoreSettings()->core_log_level,
+                                                          .log_console   = getCoreSettings()->core_log_console},
 
         .network_logger_data =
-            (logger_construction_data_t){.log_file_path = getCoreSettings()->network_log_file_fullpath,
-                                         .log_level     = getCoreSettings()->network_log_level,
-                                         .log_console   = getCoreSettings()->network_log_console},
+            (logger_construction_data_t) {.log_file_path = getCoreSettings()->network_log_file_fullpath,
+                                          .log_level     = getCoreSettings()->network_log_level,
+                                          .log_console   = getCoreSettings()->network_log_console},
 
-        .dns_logger_data = (logger_construction_data_t){.log_file_path = getCoreSettings()->dns_log_file_fullpath,
-                                                        .log_level     = getCoreSettings()->dns_log_level,
-                                                        .log_console   = getCoreSettings()->dns_log_console},
+        .dns_logger_data = (logger_construction_data_t) {.log_file_path = getCoreSettings()->dns_log_file_fullpath,
+                                                         .log_level     = getCoreSettings()->dns_log_level,
+                                                         .log_console   = getCoreSettings()->dns_log_console},
     };
 
     // core logger is available after ww setup
     createGlobalState(runtime_data);
 
-
     LOGI("Starting Waterwall version %s", TOSTRING(WATERWALL_VERSION));
     LOGI("Parsing core file complete");
+    registerAtExitCallBack(exitHandle, NULL);
     increaseFileLimit();
     loadImportedTunnelsIntoCore();
 
@@ -89,7 +96,6 @@ int main(void)
             nodemanagerRunConfigFile(cfile);
         }
     }
-    destroyCoreSettings();
 
     LOGD("Core: starting workers ...");
     socketmanagerStart();

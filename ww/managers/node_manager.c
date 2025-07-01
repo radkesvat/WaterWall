@@ -29,7 +29,7 @@ typedef struct node_manager_config_s
 } node_manager_config_t;
 
 #define i_type vec_configs_t         // NOLINT
-#define i_key  node_manager_config_t // NOLINT
+#define i_key  node_manager_config_t*// NOLINT
 #include "stc/vec.h"
 
 typedef struct node_manager_s
@@ -99,7 +99,7 @@ static void runNodes(node_manager_config_t *cfg)
                 continue;
             }
 
-            tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount());
+            tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount() - WORKER_ADDITIONS);
             vec_chains_t_push(&cfg->chains, tc);
             tunnel->onChain(tunnel, tc);
 
@@ -344,8 +344,9 @@ void nodemanagerRunConfigFile(config_file_t *config_file)
 
     node_manager_config_t cfg = {
         .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
+    vec_configs_t_push(&(state->configs), &cfg);
     startInstallingConfigFile(&cfg);
-    vec_configs_t_push(&(state->configs), cfg);
+
 }
 
 node_manager_t *nodemanagerCreate(void)
@@ -399,7 +400,7 @@ void nodemanagerDestroy(void)
     }
     c_foreach(conf, vec_configs_t, state->configs)
     {
-        nodemanagerDestroyConfig(conf.ref);
+        nodemanagerDestroyConfig(*conf.ref);
     }
     vec_configs_t_drop(&state->configs);
     memoryFree(state);

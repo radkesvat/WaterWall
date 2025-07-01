@@ -288,6 +288,7 @@ void createGlobalState(const ww_construction_data_t init_data)
         }
 #endif
     }
+
     // Spawn all workers except main worker which is current thread
     {
         worker_t *worker      = getWorker(0);
@@ -298,7 +299,6 @@ void createGlobalState(const ww_construction_data_t init_data)
         worker->thread = pthread_self();
 #endif
         worker->tid = getTID();
-        registerAtExitCallBack(exitHandle, worker);
 
         // lwip worker dose not need spawn, it runs its own eventloop
         for (unsigned int i = 1; i < WORKERS_COUNT - WORKER_ADDITIONS; ++i)
@@ -307,6 +307,7 @@ void createGlobalState(const ww_construction_data_t init_data)
         }
     }
 
+    registerAtExitCallBack(exitHandle, NULL);
     signalmanagerStart();
 }
 
