@@ -13,7 +13,7 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         if (! lineIsAlive(l))
         {
             LOGF("TunDevice: line is not alive, rule of packet tunnels is violated during line initialization");
-            exit(1);
+            terminateProgram(1);
         }
         lineUnlock(l);
     }

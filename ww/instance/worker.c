@@ -49,6 +49,10 @@ void workerExitJoin(worker_t *worker)
             bufferpoolDestroy(worker->buffer_pool);
         }
     }
+    worker->loop                = NULL;
+    worker->context_pool        = NULL;
+    worker->pipetunnel_msg_pool = NULL;
+    worker->buffer_pool         = NULL;
 }
 
 // /**

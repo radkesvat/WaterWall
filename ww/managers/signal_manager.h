@@ -44,3 +44,5 @@ void              signalmanagerStart(void);
 
 void registerAtExitCallBack(SignalHandler handle, void *userdata);
 void removeAtExitCallBack(SignalHandler handle, void *userdata);
+
+// void terminateProgram(int exit_code); in wlibc.h

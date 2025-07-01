@@ -389,7 +389,7 @@ static inline hash_t ipaddrCalcHashNoPort(const ip_addr_t addr)
     {
         assert(false);
         printError("ipaddrCalcHashNoPort");
-        exit(1);
+        terminateProgram(1);
     }
 
     return result;
@@ -410,7 +410,7 @@ static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
     {
         assert(false);
         printError("sockaddrCalcHashWithPort");
-        exit(1);
+        terminateProgram(1);
     }
     return result;
 }

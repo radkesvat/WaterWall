@@ -50,7 +50,7 @@ static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_ini
     if (BASE64_ENCODE_OUT_SIZE(private_key_len) != stringLength((char *) data->private_key))
     {
         LOGE("Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
-        exit(1);
+        terminateProgram(1);
     }
 
     if (wwBase64Decode((char *) data->private_key, (unsigned int) stringLength((char *) data->private_key),
@@ -67,13 +67,13 @@ static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_ini
         else
         {
             memoryFree(device);
-            exit(1);
+            terminateProgram(1);
         }
     }
     else
     {
         memoryFree(device);
-        exit(1);
+        terminateProgram(1);
     }
 }
 

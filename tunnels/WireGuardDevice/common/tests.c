@@ -23,7 +23,7 @@ static void testBlake2s(void)
         if (0 != blake2s(output, sizeof(output), NULL, 0, input, input_len))
         {
             printError("BLAKE2s failed\n");
-            exit(1);
+            terminateProgram(1);
         }
 
         printHex("BLAKE2s Output", output, sizeof(output));
@@ -32,7 +32,7 @@ static void testBlake2s(void)
         if (! compareBuffers(output, expected, sizeof(output)))
         {
             printError("BLAKE2s known output test failed\n");
-            exit(1);
+            terminateProgram(1);
         }
         else
         {
@@ -57,7 +57,7 @@ static void testBlake2s(void)
         if (0 != blake2s(output, sizeof(output), key, key_len, input, input_len))
         {
             printError("BLAKE2s failed\n");
-            exit(1);
+            terminateProgram(1);
         }
 
         printHex("BLAKE2s Output", output, sizeof(output));
@@ -66,7 +66,7 @@ static void testBlake2s(void)
         if (! compareBuffers(output, expected, sizeof(output)))
         {
             printError("BLAKE2s known output test failed\n");
-            exit(1);
+            terminateProgram(1);
         }
         else
         {
@@ -99,7 +99,7 @@ static void testX25519(void)
     if (0 != performX25519(shared_secret, scalar, point))
     {
         printError("X25519 failed\n");
-        exit(1);
+        terminateProgram(1);
     }
 
     printHex("X25519 Shared Secret", shared_secret, sizeof(shared_secret));
@@ -108,7 +108,7 @@ static void testX25519(void)
     if (! compareBuffers(shared_secret, expected, sizeof(shared_secret)))
     {
         printError("X25519 known output test failed\n");
-        exit(1);
+        terminateProgram(1);
     }
     else
     {
@@ -139,7 +139,7 @@ static void testChaCha20Poly1305(void)
     if (0 != chacha20poly1305Encrypt(ciphertext, plaintext, plaintext_len, ad, ad_len, nonce, key))
     {
         printError("ChaCha20-Poly1305 encryption failed\n");
-        exit(1);
+        terminateProgram(1);
     }
 
     printHex("ChaCha20-Poly1305 Ciphertext", ciphertext, sizeof(ciphertext));
@@ -148,7 +148,7 @@ static void testChaCha20Poly1305(void)
     if (! compareBuffers(ciphertext, expected, sizeof(ciphertext)))
     {
         printError("ChaCha20-Poly1305 known output test failed\n");
-        exit(1);
+        terminateProgram(1);
     }
     else
     {
@@ -159,13 +159,13 @@ static void testChaCha20Poly1305(void)
     if (0 != chacha20poly1305Decrypt(decrypted, ciphertext, sizeof(ciphertext) - 1, ad, ad_len, nonce, key))
     {
         printError("ChaCha20-Poly1305 decryption failed\n");
-        exit(1);
+        terminateProgram(1);
     }
 
     if (! compareBuffers(decrypted, plaintext, plaintext_len))
     {
         printError("ChaCha20-Poly1305 round-trip test failed\n");
-        exit(1);
+        terminateProgram(1);
     }
     else
     {
@@ -195,7 +195,7 @@ static void testXChaCha20Poly1305(void)
     if (0 != xchacha20poly1305Encrypt(ciphertext, plaintext, plaintext_len, ad, ad_len, nonce, key))
     {
         printError("XChaCha20-Poly1305 encryption failed\n");
-        exit(1);
+        terminateProgram(1);
     }
 
     printHex("XChaCha20-Poly1305 Ciphertext", ciphertext, sizeof(ciphertext));
@@ -204,7 +204,7 @@ static void testXChaCha20Poly1305(void)
     if (! compareBuffers(ciphertext, expected, sizeof(ciphertext)))
     {
         printError("XChaCha20-Poly1305 known output test failed\n");
-        exit(1);
+        terminateProgram(1);
     }
     else
     {
@@ -215,13 +215,13 @@ static void testXChaCha20Poly1305(void)
     if (0 != xchacha20poly1305Decrypt(decrypted, ciphertext, sizeof(ciphertext) - 1, ad, ad_len, nonce, key))
     {
         printError("XChaCha20-Poly1305 decryption failed\n");
-        exit(1);
+        terminateProgram(1);
     }
 
     if (! compareBuffers(decrypted, plaintext, plaintext_len))
     {
         printError("XChaCha20-Poly1305 round-trip test failed\n");
-        exit(1);
+        terminateProgram(1);
     }
     else
     {

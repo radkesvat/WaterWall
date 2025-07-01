@@ -9,7 +9,7 @@ void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
     if (t->chain_index == kMaxChainLen)
     {
         LOGF("tunnelarrayInsert overflow!");
-        exit(1);
+        terminateProgram(1);
     }
 
     tc->tuns[tc->len++] = t;

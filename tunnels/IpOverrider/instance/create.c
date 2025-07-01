@@ -26,7 +26,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
     if (directon_dv.status != kDvsUp && directon_dv.status != kDvsDown)
     {
         LOGF("Layer3IpOverrider: Layer3IpOverrider->settings->direction (string field)  must be either up or down ");
-        exit(1);
+        terminateProgram(1);
     }
 
     dynamic_value_t mode_dv = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "source-ip", "dest-ip");
@@ -35,7 +35,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
     {
         LOGF("Layer3IpOverrider: Layer3IpOverrider->settings->mode (string field)  mode is not set or invalid, do you "
              "want to override source ip or dest ip?");
-        exit(1);
+        terminateProgram(1);
     }
 
     if (directon_dv.status == kDvsUp)

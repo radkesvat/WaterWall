@@ -69,13 +69,13 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     if (! isAdmin())
     {
         MessageBox(NULL, fail_msg, "Error", MB_OK | MB_ICONERROR);
-        exit(1);
+        terminateProgram(1);
     }
     // if (! elevatePrivileges(
     //         FINAL_EXECUTABLE_NAME,
     //         fail_msg))
     // {
-    //     exit(1);
+    //     terminateProgram(1);
     // }
 #else
     discard fail_msg;

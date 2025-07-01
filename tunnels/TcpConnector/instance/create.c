@@ -69,7 +69,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
             if (prefix_length < 0)
             {
                 LOGF("TcpConnector: outbound ip/subnet range is invalid");
-                exit(1);
+                terminateProgram(1);
             }
 
             if (state->constant_dest_addr.ip_address.type == AF_INET)
@@ -77,7 +77,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
                 if (prefix_length > 32)
                 {
                     LOGF("TcpConnector: outbound ip/subnet range is invalid");
-                    exit(1);
+                    terminateProgram(1);
                 }
                 else if (prefix_length == 32)
                 {
@@ -106,7 +106,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
                 if (64 > prefix_length) // limit to 64
                 {
                     LOGF("TcpConnector: outbound ip/subnet range is invalid");
-                    exit(1);
+                    terminateProgram(1);
                 }
                 else if (prefix_length == 64)
                 {

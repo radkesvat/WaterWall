@@ -38,7 +38,7 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
     if (! lineIsAlive(line))
     {
         LOGF("UdpStatelessSocket: line is not alive, rule of packet tunnels is violated");
-        exit(1);
+        terminateProgram(1);
     }
     lineUnlock(line);
 }

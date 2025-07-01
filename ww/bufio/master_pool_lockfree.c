@@ -17,7 +17,7 @@ static master_pool_item_t *defaultCreateHandle(master_pool_t *pool, void *userda
     discard pool;
     discard userdata;
     printError("MasterPool CallBack is not set. this is a bug");
-    exit(1);
+    terminateProgram(1);
 }
 
 /**
@@ -32,7 +32,7 @@ static void defaultDestroyHandle(master_pool_t *pool, master_pool_item_t *item, 
     discard userdata;
     discard item;
     printError("MasterPool CallBack is not set. this is a bug");
-    exit(1);
+    terminateProgram(1);
 }
 
 /**
@@ -57,7 +57,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     if (total_size < sizeof(master_pool_t))
     {
         printError("buffer size out of range");
-        exit(1);
+        terminateProgram(1);
     }
 
     // Allocate memory

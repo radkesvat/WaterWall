@@ -7,5 +7,5 @@ void ptcTunnelDownStreamInit(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("Impossible call");
-    exit(1);
+    terminateProgram(1);
 }

@@ -8,6 +8,6 @@ void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     discard t;
     discard chain;
     LOGF("This Function is disabled, using the default PacketTunnel instead");
-    exit(1);
+    terminateProgram(1);
     
 }

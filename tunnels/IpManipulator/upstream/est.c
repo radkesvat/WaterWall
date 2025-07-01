@@ -7,5 +7,5 @@ void ipmanipulatorUpStreamEst(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("This Function is not supported to be called for a down chain tunnel (IpManipulator)");
-    exit(1);
+    terminateProgram(1);
 }

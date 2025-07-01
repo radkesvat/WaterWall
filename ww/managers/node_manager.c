@@ -63,7 +63,7 @@ static void runNodes(node_manager_config_t *cfg)
             if (n1->instance == NULL)
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") create() returned NULL handle", n1->name);
-                exit(1);
+                terminateProgram(1);
             }
 
             if (nodeHasFlagChainHead(n1))
@@ -73,7 +73,7 @@ static void runNodes(node_manager_config_t *cfg)
             if (index == kMaxTarraySize + 1)
             {
                 LOGF("NodeManager: too many nodes in config");
-                exit(1);
+                terminateProgram(1);
             }
         }
         tunnels_count         = index;
@@ -154,7 +154,7 @@ static void runNodes(node_manager_config_t *cfg)
             if (t_array_cpy[i]->chain == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagNoChain))
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array_cpy[i]->node->name);
-                exit(1);
+                terminateProgram(1);
             }
         }
     }
@@ -196,13 +196,13 @@ static void pathWalk(node_manager_config_t *cfg)
                 LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", cfg->config_file->file_path,
                      cfg->config_file->name);
                 LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"", n1->name, n1->next);
-                exit(1);
+                terminateProgram(1);
             }
             n1 = n2;
             if (c > 200)
             {
                 LOGF("Node Map Failure: circular reference deteceted");
-                exit(1);
+                terminateProgram(1);
             }
         }
     }
@@ -231,7 +231,7 @@ static void cycleProcess(node_manager_config_t *cfg)
             }
         }
         LOGF("NodeMap: detecetd 0 chainhead nodes");
-        exit(1);
+        terminateProgram(1);
     }
 }
 
@@ -246,14 +246,14 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
              cfg->config_file->file_path);
-        exit(1);
+        terminateProgram(1);
     }
 
     if (! getStringFromJsonObject(&(node_type), node_json, "type"))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
              cfg->config_file->file_path);
-        exit(1);
+        terminateProgram(1);
     }
     getStringFromJsonObject(&(node_next), node_json, "next");
     getIntFromJsonObjectOrDefault(&(node_version), node_json, "version", 0);
@@ -269,7 +269,7 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     {
         LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", node_type,
              hash_type);
-        exit(1);
+        terminateProgram(1);
     }
     else
     {
@@ -292,7 +292,7 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     if (map_node_t_contains(map, new_node->hash_name))
     {
         LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", new_node->name, new_node->hash_name);
-        exit(1);
+        terminateProgram(1);
     }
     map_node_t_insert(map, new_node->hash_name, new_node);
 }

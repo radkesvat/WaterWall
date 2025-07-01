@@ -65,7 +65,7 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     if (memsize < sizeof(widle_table_t))
     {
         printError("buffer size out of range");
-        exit(1);
+        terminateProgram(1);
     }
 
     // allocate memory, placing widle_table_t at a line cache address boundary

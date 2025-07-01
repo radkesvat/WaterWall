@@ -24,7 +24,7 @@ static void parsePortSection(tcplistener_tstate_t *state, const cJSON *settings)
                 {
                     LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or "
                          "invalid");
-                    exit(1);
+                    terminateProgram(1);
                 }
                 if (i == 0)
                 {
@@ -41,7 +41,7 @@ static void parsePortSection(tcplistener_tstate_t *state, const cJSON *settings)
         else
         {
             LOGF("JSON Error: TcpListener->settings->port (number-or-array field) : The data was empty or invalid");
-            exit(1);
+            terminateProgram(1);
         }
     }
 }
@@ -124,7 +124,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
                     LOGF("JSON Error: TcpListener->settings->whitelist (array of strings field) index %d : The data "
                          "was empty or invalid",
                          i);
-                    exit(1);
+                    terminateProgram(1);
                 }
 
                 int parse_result = parseIPWithSubnetMask(ip_str, &(ipmask.ip), &(ipmask.mask));
@@ -132,7 +132,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
                 if (parse_result == -1)
                 {
                     LOGF("TcpListener: stopping due to whitelist address [%d] \"%s\" parse failure", i, ip_str);
-                    exit(1);
+                    terminateProgram(1);
                 }
                 vec_ipmask_t_push(&filter_opt.white_list, ipmask);
 

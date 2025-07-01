@@ -125,7 +125,7 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     if (next == NULL)
     {
         LOGF("Node Map Failure: node (\"%s\")->next (\"%s\") not found", node->name, node->next);
-        exit(1);
+        terminateProgram(1);
     }
 
     assert(next->instance); // every node in node map is created before chaining

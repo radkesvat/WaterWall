@@ -284,7 +284,7 @@ void createGlobalState(const ww_construction_data_t init_data)
         if (! (GSTATE.flag_libsodium_initialized))
         {
             printError("Failed to initialize libsodium\n");
-            exit(1);
+            terminateProgram(1);
         }
 #endif
     }

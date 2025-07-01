@@ -30,7 +30,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     if (! lineIsAlive(l))
     {
         LOGF("RawSocket: line is not alive, rule of packet tunnels is violated");
-        exit(1);
+        terminateProgram(1);
     }
     lineUnlock(l);
 }

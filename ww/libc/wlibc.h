@@ -23,6 +23,10 @@ void initWLibc(void);
 struct dedicated_memory_s;
 typedef struct dedicated_memory_s dedicated_memory_t;
 
+_Noreturn void terminateProgram(int exit_code); // in signal_manager.c
+
+
+
 void *memoryAllocate(size_t size);
 void *memoryAllocateZero(size_t size);
 void *memoryReAllocate(void *ptr, size_t size);

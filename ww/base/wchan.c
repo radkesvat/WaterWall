@@ -379,7 +379,7 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
         if (block)
         {
             printError("send on closed channel");
-            exit(1);
+            terminateProgram(1);
         }
         else
         {
@@ -635,7 +635,7 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
     if (memsize < sizeof(wchan_t))
     {
         printError("buffer size out of range");
-        exit(1);
+        terminateProgram(1);
     }
 
     // allocate memory, placing wchan_t at a line cache address boundary
@@ -668,7 +668,7 @@ void chanClose(wchan_t *c)
     if (atomicExchangeExplicit(&c->closed, 1, memory_order_acquire) != 0)
     {
         printError("close of closed channel");
-        exit(1);
+        terminateProgram(1);
     }
     atomic_thread_fence(memory_order_seq_cst);
 

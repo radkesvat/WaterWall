@@ -31,7 +31,7 @@ int main(void)
     {
         printError("Waterwall version %s\nCould not read core settings file \"%s\" \n", TOSTRING(WATERWALL_VERSION),
                    core_file_name);
-        exit(1);
+        terminateProgram(1);
     }
     parseCoreSettings(core_file_content);
     memoryFree(core_file_content);
@@ -82,7 +82,7 @@ int main(void)
             */
             if (! cfile)
             {
-                exit(1);
+                terminateProgram(1);
             }
 
             LOGI("Core: parsing config file \"%s\" complete", *k.ref);

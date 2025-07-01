@@ -225,7 +225,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
     if (state->started)
     {
         LOGF("SocketManager: cannot register after accept thread starts");
-        exit(1);
+        terminateProgram(1);
     }
     socket_filter_t *filter   = memoryAllocate(sizeof(socket_filter_t));
     unsigned int     pirority = 0;
@@ -510,7 +510,7 @@ static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
     if (! state->iptables_installed)
     {
         LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
-        exit(1);
+        terminateProgram(1);
     }
     state->iptables_used = true;
     if (! state->iptable_cleaned)
@@ -518,7 +518,7 @@ static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
         if (! resetIptables(false))
         {
             LOGF("SocketManager: could not clear iptables rules");
-            exit(1);
+            terminateProgram(1);
         }
         state->iptable_cleaned = true;
     }
@@ -544,7 +544,7 @@ static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
         if (filter->listen_io == NULL)
         {
             LOGF("SocketManager: stopping due to null socket handle");
-            exit(1);
+            terminateProgram(1);
         }
     }
     redirectPortRangeTcp(port_min, port_max, main_port);
@@ -596,7 +596,7 @@ static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     if (filter->listen_io == NULL)
     {
         LOGF("SocketManager: stopping due to null socket handle");
-        exit(1);
+        terminateProgram(1);
     }
     filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
 }
@@ -619,7 +619,7 @@ static void listenTcp(wloop_t *loop, uint8_t *ports_overlapped)
             if (port_min > port_max)
             {
                 LOGF("SocketManager: port min must be lower than port max");
-                exit(1);
+                terminateProgram(1);
             }
             else if (port_min == port_max)
             {
@@ -797,7 +797,7 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     if (filter->listen_io == NULL)
     {
         LOGF("SocketManager: stopping due to null socket handle");
-        exit(1);
+        terminateProgram(1);
     }
     udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
     *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
@@ -825,7 +825,7 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
             if (port_min > port_max)
             {
                 LOGF("SocketManager: port min must be lower than port max");
-                exit(1);
+                terminateProgram(1);
             }
             else if (port_min == port_max)
             {

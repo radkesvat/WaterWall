@@ -46,7 +46,7 @@ void opensslGlobalInit(void)
         {
             LOGF("OpenSSl Global: could not swap openssl allocators (almost always because allocations have already "
                  "happened)");
-            exit(1);
+            terminateProgram(1);
         }
 
         SSL_library_init();

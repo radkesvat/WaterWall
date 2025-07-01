@@ -13,7 +13,7 @@ void rawsocketOnPrepair(tunnel_t *t)
     if (state->capture_device == NULL)
     {
         LOGF("CaptureDevice: could not create device");
-        exit(1);
+        terminateProgram(1);
     }
 
     // we are not going to read, so pass read call back as null therfore no buffers for read will be allocated

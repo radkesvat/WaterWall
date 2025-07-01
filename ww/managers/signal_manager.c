@@ -86,7 +86,7 @@ static void exitHandler(void)
         const char *msg     = "SignalManager: Finished\n";
         int         written = write(STDOUT_FILENO, msg, stringLength(msg));
         discard     written;
-        _Exit(1); // exit(1) will call the atexit handlers again
+        exit(1);
         return;
     }
 
@@ -140,20 +140,20 @@ static void multiplexedSignalHandler(int signum)
     {
         signal(signum, SIG_DFL);
     }
-    if (signum == SIGABRT)
-    {
-        // assert fails in the handler, so we need to exit here
-        signal(signum, SIG_DFL);
-        raise(signum);
+    // if (signum == SIGABRT)
+    // {
+    //     // assert fails in the handler, so we need to exit here
+    //     signal(signum, SIG_DFL);
+    //     raise(signum);
         
-    }
+    // }
 
     exitHandler();
 
     // allowing normal exit
     // if (state->raise_defaults)
     // {
-    //     raise(signum); // maybe this later calls our handler again (atexit call) but its already guarded
+    //     raise(signum)
 
     //     // written = write(STDOUT_FILENO,
     //     //                 "SignalManager: The program should have been terminated before this, exiting...\n", 75);
@@ -284,4 +284,10 @@ void signalmanagerDestroy(void)
     assert(state != NULL);
     mutexDestroy(&(state->mutex));
     memoryFree(state);
+}
+
+_Noreturn void terminateProgram(int exit_code){
+    printError("SignalManager: Terminating program with exit-code %d, read above logs to understand why", exit_code);
+    exitHandler();
+    exit(exit_code);
 }

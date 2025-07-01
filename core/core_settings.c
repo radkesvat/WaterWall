@@ -142,7 +142,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
     if (! cJSON_IsArray(config_array) || (config_array->child == NULL))
     {
         printError("Error: \"configs\" array in core json is empty or invalid \n");
-        exit(1);
+        terminateProgram(1);
     }
     const cJSON *path      = NULL;
     bool         had_child = false;
@@ -165,7 +165,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
     if (! had_child)
     {
         printError("Error: \"configs\" array in core json is empty or invalid \n");
-        exit(1);
+        terminateProgram(1);
     }
 }
 
@@ -212,7 +212,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
                 break;
             default:
                 printError("CoreSettings: ram-profile must be in range [1 - 5]\n");
-                exit(1);
+                terminateProgram(1);
                 break;
             }
         }
@@ -244,7 +244,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
                 printError("CoreSettings: ram-profile can hold \"server\" or \"client\" "
                            "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
 
-                exit(1);
+                terminateProgram(1);
             }
             memoryFree(string_ram_profile);
         }
@@ -276,7 +276,7 @@ void parseCoreSettings(const char *data_json)
         {
             printError("JSON Error before: %s\n", error_ptr);
         }
-        exit(1);
+        terminateProgram(1);
     }
 
     parseLogPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "log"));
@@ -286,7 +286,7 @@ void parseCoreSettings(const char *data_json)
     if (settings->workers_count <= 0)
     {
         printError("CoreSettings: the workers count is invalid");
-        exit(1);
+        terminateProgram(1);
     }
     if (settings->workers_count > 254)
     {

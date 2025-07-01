@@ -253,7 +253,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata, R
     // if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
     // {
     //     perror("setsockopt IP_HDRINCL");
-    //     exit(1);
+    //     terminateProgram(1);
     // }
     // fcntl(rsocket, F_SETFL, O_NONBLOCK);
 

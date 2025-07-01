@@ -21,7 +21,7 @@ void wireguarddeviceTunnelOnStart(tunnel_t *t)
             if (wireguardifConnect(device, i) != ERR_OK)
             {
                 LOGF("Error: wireguardifConnect failed");
-                exit(1);
+                terminateProgram(1);
             }
         }
     }

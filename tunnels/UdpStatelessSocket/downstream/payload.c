@@ -8,5 +8,5 @@ void udpstatelesssocketTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b
     discard l;
     discard buf;
     LOGF("This Function is disabled, this node is up end adapter");
-    exit(1);
+    terminateProgram(1);
 }

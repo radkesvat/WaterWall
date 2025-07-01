@@ -11,7 +11,7 @@ void tundeviceTunnelOnPrepair(tunnel_t *t)
     if (state->tdev == NULL)
     {
         LOGF("TunDevice: could not create device");
-        exit(1);
+        terminateProgram(1);
     }
 
     tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int )state->subnet_mask);
