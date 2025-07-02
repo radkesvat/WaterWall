@@ -135,11 +135,23 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     {
         LOGF("Node Map Failure: Node (%s) wanted to bind to (%s) which is already bounded by %s", t->node->name,
              tnext->node->name, tnext->prev->node->name);
+        terminateProgram(1);
     }
 
     tunnelBind(t, tnext);
 
-    assert(tnext->chain == NULL);
+    if (tnext->chain != NULL)
+    {
+        if ((next->flags & kNodeFlagChainEnd) != kNodeFlagChainEnd)
+        {
+            LOGF("Node Map Failure: node (\"%s\") cannot chain to node (\"%s\") because it is a chain ", node->name, node->next);
+            terminateProgram(1);
+        }
+        assert(tnext->chain->tunnels.len == 1);
+        tunnelchainDestroy(tnext->chain);
+        tnext->chain = NULL;
+    }
+
     tunnelchainInsert(tc, t);
     tnext->onChain(tnext, tc);
 }
@@ -196,28 +208,28 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
     // align pointer to line cache boundary
     tunnel_t *tunnel_ptr = (tunnel_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    memorySet(tunnel_ptr, 0,  sizeof(tunnel_t) + tstate_size);
+    memorySet(tunnel_ptr, 0, sizeof(tunnel_t) + tstate_size);
 
-    *tunnel_ptr = (tunnel_t){.memptr      = ptr,
-                             .fnInitU     = &tunnelDefaultUpStreamInit,
-                             .fnInitD     = &tunnelDefaultdownStreamInit,
-                             .fnPayloadU  = &tunnelDefaultUpStreamPayload,
-                             .fnPayloadD  = &tunnelDefaultdownStreamPayload,
-                             .fnEstU      = &tunnelDefaultUpStreamEst,
-                             .fnEstD      = &tunnelDefaultdownStreamEst,
-                             .fnFinU      = &tunnelDefaultUpStreamFin,
-                             .fnFinD      = &tunnelDefaultdownStreamFinish,
-                             .fnPauseU    = &tunnelDefaultUpStreamPause,
-                             .fnPauseD    = &tunnelDefaultDownStreamPause,
-                             .fnResumeU   = &tunnelDefaultUpStreamResume,
-                             .fnResumeD   = &tunnelDefaultDownStreamResume,
-                             .onChain     = &tunnelDefaultOnChain,
-                             .onIndex     = &tunnelDefaultOnIndex,
-                             .onPrepair   = &tunnelDefaultOnPrepair,
-                             .onStart     = &tunnelDefaultOnStart,
-                             .tstate_size = tstate_size,
-                             .lstate_size = lstate_size,
-                             .node        = node};
+    *tunnel_ptr = (tunnel_t) {.memptr      = ptr,
+                              .fnInitU     = &tunnelDefaultUpStreamInit,
+                              .fnInitD     = &tunnelDefaultdownStreamInit,
+                              .fnPayloadU  = &tunnelDefaultUpStreamPayload,
+                              .fnPayloadD  = &tunnelDefaultdownStreamPayload,
+                              .fnEstU      = &tunnelDefaultUpStreamEst,
+                              .fnEstD      = &tunnelDefaultdownStreamEst,
+                              .fnFinU      = &tunnelDefaultUpStreamFin,
+                              .fnFinD      = &tunnelDefaultdownStreamFinish,
+                              .fnPauseU    = &tunnelDefaultUpStreamPause,
+                              .fnPauseD    = &tunnelDefaultDownStreamPause,
+                              .fnResumeU   = &tunnelDefaultUpStreamResume,
+                              .fnResumeD   = &tunnelDefaultDownStreamResume,
+                              .onChain     = &tunnelDefaultOnChain,
+                              .onIndex     = &tunnelDefaultOnIndex,
+                              .onPrepair   = &tunnelDefaultOnPrepair,
+                              .onStart     = &tunnelDefaultOnStart,
+                              .tstate_size = tstate_size,
+                              .lstate_size = lstate_size,
+                              .node        = node};
 
     return tunnel_ptr;
 }
@@ -225,5 +237,5 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 // Destroys a tunnel instance
 void tunnelDestroy(tunnel_t *self)
 {
-    memoryFree((void*)self->memptr);
+    memoryFree((void *) self->memptr);
 }
