@@ -175,7 +175,7 @@
 #endif
 
 #ifdef INCLUDE_HALFDUPLEX_CLIENT
-#include "tunnels/client/halfduplex/halfduplex_client.h"
+#include "tunnels/HalfDuplexClient/include/interface.h"
 #endif
 
 #ifdef INCLUDE_BGP4_SERVER
