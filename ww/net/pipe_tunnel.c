@@ -42,10 +42,10 @@ size_t pipeTunnelGetMesageSize(void)
  */
 static void initializeLineState(pipetunnel_line_state_t *ls, wid_t wid_from, wid_t wid_to)
 {
-    atomicStoreExplicit(&ls->refc, 0, memory_order_relaxed);
-    atomicStoreExplicit(&ls->closed, false, memory_order_relaxed);
-    atomicStoreExplicit(&ls->from_wid, wid_from, memory_order_relaxed);
-    atomicStoreExplicit(&ls->to_wid, wid_to, memory_order_relaxed);
+    atomicStoreExplicit(&ls->refc, 1, memory_order_release);
+    atomicStoreExplicit(&ls->closed, false, memory_order_release);
+    atomicStoreExplicit(&ls->from_wid, wid_from, memory_order_release);
+    atomicStoreExplicit(&ls->to_wid, wid_to, memory_order_release);
     ls->active     = true;
     ls->left_open  = true;
     ls->right_open = true;
@@ -58,10 +58,10 @@ static void initializeLineState(pipetunnel_line_state_t *ls, wid_t wid_from, wid
  */
 static void deinitializeLineState(pipetunnel_line_state_t *ls)
 {
-    atomicStoreExplicit(&ls->refc, 0, memory_order_relaxed);
-    atomicStoreExplicit(&ls->closed, false, memory_order_relaxed);
-    atomicStoreExplicit(&ls->from_wid, 0, memory_order_relaxed);
-    atomicStoreExplicit(&ls->to_wid, 0, memory_order_relaxed);
+    atomicStoreExplicit(&ls->refc, 0, memory_order_release);
+    atomicStoreExplicit(&ls->closed, false, memory_order_release);
+    atomicStoreExplicit(&ls->from_wid, 0, memory_order_release);
+    atomicStoreExplicit(&ls->to_wid, 0, memory_order_release);
     ls->active     = false;
     ls->left_open  = false;
     ls->right_open = false;
@@ -74,8 +74,13 @@ static void deinitializeLineState(pipetunnel_line_state_t *ls)
  */
 static void lock(pipetunnel_line_state_t *ls)
 {
-    int old_refc = (int) atomicAddExplicit(&ls->refc, 1, memory_order_relaxed);
+    int old_refc = atomicAddExplicit(&ls->refc, 1, memory_order_relaxed);
 
+    if (old_refc == 0)
+    {
+        LOGF("Pipetunnel implemnetd incorrectly, raised refrence count form zero!");
+        terminateProgram(1);
+    }
     discard old_refc;
 }
 
@@ -86,7 +91,7 @@ static void lock(pipetunnel_line_state_t *ls)
  */
 static void unlock(pipetunnel_line_state_t *ls)
 {
-    int old_refc = (int) atomicAddExplicit(&ls->refc, -1, memory_order_relaxed);
+    int old_refc = atomicAddExplicit(&ls->refc, -1, memory_order_relaxed);
     if (old_refc == 1)
     {
         deinitializeLineState(ls);
@@ -121,12 +126,12 @@ static void onMsgReceivedUp(wevent_t *ev)
     pipetunnel_msg_event_t  *msg_ev = weventGetUserdata(ev);
     tunnel_t                *t      = msg_ev->tunnel;
     line_t                  *l      = msg_ev->ctx.line;
-    wid_t                    wid    = (wid_t) wloopGetWID(weventGetLoop(ev));
+    wid_t                    wid    = wloopGetWID(weventGetLoop(ev));
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
-    if ((wid_t) atomicLoadRelaxed(&(lstate->to_wid)) != wid)
+    if (atomicLoadExplicit(&(lstate->to_wid), memory_order_acquire) != wid)
     {
-        sendMessageUp(lstate, msg_ev, (wid_t) atomicLoadRelaxed(&(lstate->to_wid)));
+        sendMessageUp(lstate, msg_ev, atomicLoadExplicit(&(lstate->to_wid), memory_order_acquire));
         unlock(lstate);
         return;
     }
@@ -178,12 +183,12 @@ static void onMsgReceivedDown(wevent_t *ev)
     pipetunnel_msg_event_t  *msg_ev = weventGetUserdata(ev);
     tunnel_t                *t      = msg_ev->tunnel;
     line_t                  *l      = msg_ev->ctx.line;
-    wid_t                    wid    = (wid_t) wloopGetWID(weventGetLoop(ev));
+    wid_t                    wid    = wloopGetWID(weventGetLoop(ev));
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
-    if ((wid_t) atomicLoadRelaxed(&(lstate->from_wid)) != wid)
+    if (atomicLoadExplicit(&(lstate->from_wid), memory_order_acquire) != wid)
     {
-        sendMessageDown(lstate, msg_ev, (wid_t) atomicLoadRelaxed(&(lstate->from_wid)));
+        sendMessageDown(lstate, msg_ev, atomicLoadExplicit(&(lstate->from_wid), memory_order_acquire));
         unlock(lstate);
         return;
     }
@@ -218,7 +223,7 @@ static void sendMessageDown(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(wid_to);
-    ev.cb   = onMsgReceivedUp;
+    ev.cb   = onMsgReceivedDown;
     weventSetUserData(&ev, msg);
     wloopPostEvent(getWorkerLoop(wid_to), &ev);
 }
@@ -241,17 +246,18 @@ void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
+
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .init = true};
 
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
+    sendMessageUp(lstate, msg, atomicLoadExplicit(&lstate->to_wid, memory_order_acquire));
 }
 
 /**
@@ -271,7 +277,7 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
@@ -281,7 +287,7 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
+    sendMessageUp(lstate, msg, atomicLoadExplicit(&lstate->to_wid, memory_order_acquire));
 }
 
 /**
@@ -303,10 +309,11 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
 
     lstate->left_open = false;
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
+    atomicStoreExplicit(&lstate->closed, true, memory_order_release);
 
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .fin = true};
@@ -314,7 +321,7 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
+    sendMessageUp(lstate, msg, atomicLoadExplicit(&lstate->to_wid, memory_order_acquire));
     unlock(lstate);
 }
 
@@ -336,7 +343,7 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(line)), payload);
         return;
@@ -347,7 +354,7 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
+    sendMessageUp(lstate, msg, atomicLoadExplicit(&lstate->to_wid, memory_order_acquire));
 }
 
 /**
@@ -367,7 +374,7 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
@@ -377,7 +384,7 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
+    sendMessageUp(lstate, msg, atomicLoadExplicit(&lstate->to_wid, memory_order_acquire));
 }
 
 /**
@@ -398,7 +405,7 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
@@ -408,7 +415,7 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageUp(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->to_wid));
+    sendMessageUp(lstate, msg, atomicLoadExplicit(&lstate->to_wid, memory_order_acquire));
 }
 
 /*
@@ -445,7 +452,7 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
@@ -456,7 +463,7 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
+    sendMessageDown(lstate, msg, atomicLoadExplicit(&lstate->from_wid, memory_order_acquire));
 }
 
 /**
@@ -476,17 +483,21 @@ void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    lstate->right_open = false;
+
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
+    atomicStoreExplicit(&lstate->closed, true, memory_order_release);
+
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(line)));
     context_t               ctx = {.line = line, .fin = true};
 
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
+    sendMessageDown(lstate, msg, atomicLoadExplicit(&lstate->from_wid, memory_order_acquire));
     unlock(lstate);
 }
 
@@ -508,7 +519,7 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *paylo
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(line)), payload);
         return;
@@ -519,7 +530,7 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *paylo
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
+    sendMessageDown(lstate, msg, atomicLoadExplicit(&lstate->from_wid, memory_order_acquire));
 }
 
 /**
@@ -539,7 +550,7 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
@@ -549,7 +560,7 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
+    sendMessageDown(lstate, msg, atomicLoadExplicit(&lstate->from_wid, memory_order_acquire));
 }
 
 /**
@@ -569,7 +580,7 @@ void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
         return;
     }
 
-    if (atomicLoadExplicit(&lstate->closed, memory_order_relaxed))
+    if (atomicLoadExplicit(&lstate->closed, memory_order_acquire))
     {
         return;
     }
@@ -579,7 +590,7 @@ void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
     msg->tunnel = t;
     msg->ctx    = ctx;
 
-    sendMessageDown(lstate, msg, (wid_t) atomicLoadRelaxed(&lstate->from_wid));
+    sendMessageDown(lstate, msg, atomicLoadExplicit(&lstate->from_wid, memory_order_acquire));
 }
 
 /**
@@ -700,22 +711,23 @@ void pipetunnelDestroy(tunnel_t *t)
  */
 void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 {
-    tunnel_t                *parent_t = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
-    pipetunnel_line_state_t *ls       = (pipetunnel_line_state_t *) lineGetState(l, parent_t);
+    tunnel_t                *parent_tunneln = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
+    pipetunnel_line_state_t *ls             = (pipetunnel_line_state_t *) lineGetState(l, parent_tunneln);
 
     if (ls->active)
     {
-        LOGW("double pipe (beta)");
 
-        if (atomicLoadExplicit(&ls->closed, memory_order_relaxed))
+        if (atomicLoadExplicit(&ls->closed, memory_order_acquire))
         {
             return;
         }
-        atomicStoreExplicit(&ls->to_wid, wid_to, memory_order_relaxed);
+        LOGW("double pipe (beta)");
+
+        atomicStoreExplicit(&ls->to_wid, wid_to, memory_order_release);
     }
     else
     {
         initializeLineState(ls, lineGetWID(l), wid_to);
     }
-    t->fnInitU(t, l);
+    parent_tunneln->fnInitU(parent_tunneln, l);
 }
