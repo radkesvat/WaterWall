@@ -140,8 +140,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ matrix.target }}
-          path: ${{ github.workspace }}/build/Debug-iphoneos/Waterwall.app/
-
+          path: ${{ matrix.target == 'ios_sim' && format('{0}/build/Debug-iphonesimulator/Waterwall.app/', github.workspace) || format('{0}/build/Debug-iphoneos/Waterwall.app/', github.workspace) }}
       - name: Show ccache statistics
         run: ccache -sv
 
