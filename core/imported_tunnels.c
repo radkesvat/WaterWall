@@ -171,7 +171,7 @@
 #endif
 
 #ifdef INCLUDE_HALFDUPLEX_SERVER
-#include "tunnels/server/halfduplex/halfduplex_server.h"
+#include "tunnels/HalfDuplexServer/include/interface.h"
 #endif
 
 #ifdef INCLUDE_HALFDUPLEX_CLIENT
