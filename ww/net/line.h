@@ -214,3 +214,7 @@ static inline wid_t lineGetWID(const line_t *const line)
 {
     return line->wid;
 }
+
+static inline buffer_pool_t* lineGetBufferPool(const line_t *const line){
+    return getWorkerBufferPool(lineGetWID(line));
+}
