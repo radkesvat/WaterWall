@@ -79,7 +79,7 @@ static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_ini
 
 tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 {
-    tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), sizeof(wgd_lstate_t));
+    tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), 0);
 
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;

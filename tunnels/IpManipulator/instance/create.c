@@ -4,7 +4,7 @@
 
 tunnel_t *ipmanipulatorCreate(node_t *node)
 {
-    tunnel_t *t = packettunnelCreate(node, sizeof(ipmanipulator_tstate_t), sizeof(ipmanipulator_lstate_t));
+    tunnel_t *t = packettunnelCreate(node, sizeof(ipmanipulator_tstate_t), 0);
 
     t->fnPayloadU = &ipmanipulatorUpStreamPayload;
     t->fnPayloadD = &ipmanipulatorDownStreamPayload;
