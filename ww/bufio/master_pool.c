@@ -45,7 +45,6 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 
     size_t memsize = (sizeof(master_pool_t) + container_len);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
-    MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
     memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
@@ -58,7 +57,6 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     // allocate memory, placing master_pool_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
 
-    MUSTALIGN2(ptr, kCpuLineCacheSize);
 
     // align pointer to line cache boundary
     master_pool_t *pool_ptr = (master_pool_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT

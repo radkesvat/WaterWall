@@ -193,7 +193,6 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 
     size_t tsize = sizeof(tunnel_t) + tstate_size;
     // ensure we have enough space to offset the allocation by line cache (for alignment)
-    MUSTALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
     tsize = ALIGN2(tsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // allocate memory, placing tunnel_t at a line cache address boundary
@@ -203,7 +202,6 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
         // Handle memory allocation failure
         return NULL;
     }
-    MUSTALIGN2(ptr, kCpuLineCacheSize);
 
     // align pointer to line cache boundary
     tunnel_t *tunnel_ptr = (tunnel_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT

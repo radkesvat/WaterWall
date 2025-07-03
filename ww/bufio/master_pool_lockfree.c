@@ -50,7 +50,6 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
     size_t total_size = sizeof(master_pool_t) + items_size + next_size;
     
     // Ensure alignment
-    MUSTALIGN2(total_size + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
     total_size = ALIGN2(total_size + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // Check for overflow
@@ -62,7 +61,6 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t capacity)
 
     // Allocate memory
     uintptr_t ptr = (uintptr_t)memoryAllocate(total_size);
-    MUSTALIGN2(ptr, kCpuLineCacheSize);
     master_pool_t *pool = (master_pool_t *)ALIGN2(ptr, kCpuLineCacheSize);
 
     // Initialize the pool structure

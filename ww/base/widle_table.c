@@ -58,7 +58,6 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     // assert(sizeof(widle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
     size_t memsize = sizeof(widle_table_t);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
-    MUSTALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
     memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
@@ -71,8 +70,6 @@ widle_table_t *idleTableCreate(wloop_t *loop)
     // allocate memory, placing widle_table_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
 
-    // align c to line cache boundary
-    MUSTALIGN2(ptr, kCpuLineCacheSize);
 
     widle_table_t *newtable = (widle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
