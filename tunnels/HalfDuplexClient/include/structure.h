@@ -2,6 +2,12 @@
 
 #include "wwapi.h"
 
+enum
+{
+    kHLFDCmdUpload   = 127,
+    kHLFDCmdDownload = 128
+};
+
 // in tunnel create we said the size is 0 , change if you added state
 typedef struct halfduplexclient_tstate_s
 {
