@@ -13,9 +13,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     line_t   *l = lstate->line;
     tunnel_t *t = lstate->tunnel;
 
-    lineLock(l);
     tunnelNextUpStreamPayload(t, l, buf);
-    lineUnlock(l);
 }
 
 static void onClose(wio_t *io)
@@ -29,13 +27,9 @@ static void onClose(wio_t *io)
         line_t   *l = lstate->line;
         tunnel_t *t = lstate->tunnel;
 
-        lineLock(l);
-        lineDestroy(l);
         tcplistenerLinestateDestroy(lstate);
-
         tunnelNextUpStreamFinish(t, l);
-
-        lineUnlock(l);
+        lineDestroy(l);
     }
     else
     {
@@ -151,8 +145,6 @@ void tcplistenerOnWriteComplete(wio_t *io)
         wioSetCallBackWrite(lstate->io, NULL);
         lstate->write_paused = false;
 
-        lineLock(l);
         tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
-        lineUnlock(l);
     }
 }

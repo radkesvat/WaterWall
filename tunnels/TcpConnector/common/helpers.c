@@ -13,12 +13,10 @@ void tcpconnectorOnClose(wio_t *io)
         line_t   *l = lstate->line;
         tunnel_t *t = lstate->tunnel;
 
-        lineLock(l);
         tcpconnectorLinestateDestroy(lstate);
 
         tunnelPrevdownStreamFinish(t, l);
 
-        lineUnlock(l);
     }
     else
     {
@@ -38,9 +36,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tunnel_t *t = lstate->tunnel;
     line_t   *l = lstate->line;
 
-    lineLock(l);
     tunnelPrevDownStreamPayload(t, l, buf);
-    lineUnlock(l);
 }
 
 static bool resumeWriteQueue(tcpconnector_lstate_t *lstate)
@@ -95,9 +91,7 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
             wioSetCallBackWrite(lstate->io, NULL);
             lstate->write_paused = false;
 
-            lineLock(l);
             tunnelPrevDownStreamResume(t, l);
-            lineUnlock(l);
         }
         else
         {
@@ -114,9 +108,7 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
         lstate->write_paused = false;
     }
 
-    lineLock(l);
     tunnelPrevDownStreamEst(t, l);
-    lineUnlock(l);
 }
 
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate)
@@ -153,8 +145,6 @@ void tcpconnectorOnWriteComplete(wio_t *io)
         wioSetCallBackWrite(lstate->io, NULL);
         lstate->write_paused = false;
 
-        lineLock(l);
         tunnelPrevDownStreamResume(lstate->tunnel, lstate->line);
-        lineUnlock(l);
     }
 }

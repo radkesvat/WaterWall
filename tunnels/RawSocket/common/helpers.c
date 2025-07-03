@@ -24,15 +24,10 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     //printIPPacketInfo("RawSocket received: ", sbufGetRawPtr(buf));
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
-    lineLock(l);
+
     tunnelPrevDownStreamPayload(t, l, buf);
 
-    if (! lineIsAlive(l))
-    {
-        LOGF("RawSocket: line is not alive, rule of packet tunnels is violated");
-        terminateProgram(1);
-    }
-    lineUnlock(l);
+
 }
 
 void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
