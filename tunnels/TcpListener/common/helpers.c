@@ -134,7 +134,6 @@ void tcplistenerOnWriteComplete(wio_t *io)
         return;
     }
 
-    line_t *l = lstate->line;
 
     if (wioCheckWriteComplete(io))
     {
