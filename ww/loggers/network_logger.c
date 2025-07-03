@@ -14,7 +14,7 @@ static void destroyNetworkLogger(void)
     }
 }
 
-static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+static void networkLoggerHandleOnlyStdStream(int loglevel, const char *buf, int len)
 {
     switch (loglevel)
     {
@@ -27,8 +27,14 @@ static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int 
         stdoutLogger(loglevel, buf, len);
         break;
     }
+}
+
+static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+{
+    networkLoggerHandleOnlyStdStream(loglevel, buf, len);
     loggerWrite(logger, buf, len);
 }
+
 
 static void networkLoggerHandle(int loglevel, const char *buf, int len)
 {
@@ -50,16 +56,23 @@ logger_t *createNetworkLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
     logger = loggerCreate();
-    loggerSetFile(logger, log_file);
+    bool path_accepted = loggerSetFile(logger, log_file);
     if (console)
     {
-        loggerSetHandler(logger, networkLoggerHandleWithStdStream);
+        if (path_accepted)
+        {
+            loggerSetHandler(logger, networkLoggerHandleWithStdStream);
+        }
+        else
+        {
+
+            loggerSetHandler(logger, networkLoggerHandleOnlyStdStream);
+        }
     }
-    else
+    else if (path_accepted)
     {
         loggerSetHandler(logger, networkLoggerHandle);
     }
-
     return logger;
 }
 

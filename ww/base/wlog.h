@@ -118,7 +118,7 @@ static inline int loggerPrint(logger_t *logger, int level, const char *fmt, ...)
 }
 
 // below for file logger
-WW_EXPORT void loggerSetFile(logger_t *logger, const char *filepath);
+WW_EXPORT bool loggerSetFile(logger_t *logger, const char *filepath);
 WW_EXPORT void loggerSetMaxFileSize(logger_t *logger, unsigned long long filesize);
 // 16, 16M, 16MB
 WW_EXPORT void        loggerSetMaxFileSizeByStr(logger_t *logger, const char *filesize);

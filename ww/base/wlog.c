@@ -194,7 +194,7 @@ void loggerEnableColor(logger_t *logger, int on)
     logger->enable_color = on;
 }
 
-void loggerSetFile(logger_t *logger, const char *filepath)
+bool loggerSetFile(logger_t *logger, const char *filepath)
 {
     // when path ends with / means no log file
 
@@ -573,27 +573,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
     return len;
 }
 
-static logger_t *s_logger = NULL;
-logger_t        *loggerGetDefaultLogger(void)
-{
-    assert(false); // default logger disabled
-    if (s_logger == NULL)
-    {
-        s_logger = loggerCreate();
-        // atexit(loggerDestroyDefaultLogger);
-    }
-    return s_logger;
-}
 
-void loggerDestroyDefaultLogger(void)
-{
-    if (s_logger)
-    {
-        loggerSyncFile(s_logger);
-        loggerDestroy(s_logger);
-        s_logger = NULL;
-    }
-}
 
 void stdoutLogger(int loglevel, const char *buf, int len)
 {

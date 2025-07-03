@@ -399,6 +399,7 @@ WW_EXPORT void destroyGlobalState(void)
     loggerDestroy(getCoreLogger());
     loggerDestroy(getNetworkLogger());
     loggerDestroy(getDnsLogger());
+    loggerDestroyDefaultLogger();
 
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);

@@ -14,7 +14,7 @@ static void destroyCoreLogger(void)
     }
 }
 
-static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+static void coreLoggerHandleOnlyStdStream(int loglevel, const char *buf, int len)
 {
     switch (loglevel)
     {
@@ -27,6 +27,11 @@ static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len
         stdoutLogger(loglevel, buf, len);
         break;
     }
+}
+
+static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+{
+    coreLoggerHandleOnlyStdStream(loglevel, buf, len);
     loggerWrite(logger, buf, len);
 }
 
@@ -50,12 +55,20 @@ logger_t *createCoreLogger(const char *log_file, bool console)
 {   
     assert(logger == NULL);
     logger = loggerCreate();
-    loggerSetFile(logger, log_file);
+    bool path_accepted = loggerSetFile(logger, log_file);
     if (console)
     {
-        loggerSetHandler(logger, coreLoggerHandleWithStdStream);
+        if (path_accepted)
+        {
+            loggerSetHandler(logger, coreLoggerHandleWithStdStream);
+        }
+        else
+        {
+
+            loggerSetHandler(logger, coreLoggerHandleOnlyStdStream);
+        }
     }
-    else
+    else if (path_accepted)
     {
         loggerSetHandler(logger, coreLoggerHandle);
     }

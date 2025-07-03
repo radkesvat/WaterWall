@@ -14,7 +14,7 @@ static void destroyDnsLogger(void)
     }
 }
 
-static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+static void dnsLoggerHandleOnlyStdStream(int loglevel, const char *buf, int len)
 {
     switch (loglevel)
     {
@@ -27,8 +27,14 @@ static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
         stdoutLogger(loglevel, buf, len);
         break;
     }
+}
+
+static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
+{
+    dnsLoggerHandleOnlyStdStream(loglevel, buf, len);
     loggerWrite(logger, buf, len);
 }
+
 
 static void dnsLoggerHandle(int loglevel, const char *buf, int len)
 {
@@ -50,16 +56,23 @@ logger_t *createDnsLogger(const char *log_file, bool console)
 {
     assert(logger == NULL);
     logger = loggerCreate();
-    loggerSetFile(logger, log_file);
+    bool path_accepted = loggerSetFile(logger, log_file);
     if (console)
     {
-        loggerSetHandler(logger, dnsLoggerHandleWithStdStream);
+        if (path_accepted)
+        {
+            loggerSetHandler(logger, dnsLoggerHandleWithStdStream);
+        }
+        else
+        {
+
+            loggerSetHandler(logger, dnsLoggerHandleOnlyStdStream);
+        }
     }
-    else
+    else if (path_accepted)
     {
         loggerSetHandler(logger, dnsLoggerHandle);
     }
-
     return logger;
 }
 
