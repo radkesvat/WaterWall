@@ -584,7 +584,7 @@ static inline void tunnelPrevDownStreamEst(tunnel_t *self, line_t *line)
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-static inline void tunnelPrevdownStreamFinish(tunnel_t *self, line_t *line)
+static inline void tunnelPrevDownStreamFinish(tunnel_t *self, line_t *line)
 {
     self->prev->fnFinD(self->prev, line);
 }

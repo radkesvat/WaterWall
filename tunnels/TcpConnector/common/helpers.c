@@ -15,7 +15,7 @@ void tcpconnectorOnClose(wio_t *io)
 
         tcpconnectorLinestateDestroy(lstate);
 
-        tunnelPrevdownStreamFinish(t, l);
+        tunnelPrevDownStreamFinish(t, l);
 
     }
     else

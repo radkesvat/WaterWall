@@ -28,7 +28,7 @@ void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->main_line)
     {
-        tunnelPrevdownStreamFinish(t, ls->main_line);
+        tunnelPrevDownStreamFinish(t, ls->main_line);
         halfduplexclientLinestateDestroy(lineGetState(ls->main_line, t));
     }
     

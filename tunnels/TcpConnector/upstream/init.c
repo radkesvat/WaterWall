@@ -128,5 +128,5 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     return;
 fail:
     tcpconnectorLinestateDestroy(lstate);
-    tunnelPrevdownStreamFinish(t, l);
+    tunnelPrevDownStreamFinish(t, l);
 }
