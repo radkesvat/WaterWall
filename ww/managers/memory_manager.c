@@ -15,7 +15,7 @@ void memorymanagerInit(void)
     // return state;
 }
 
-#ifndef ALLOCATOR_BYPASS
+#if !ALLOCATOR_BYPASS
 
 struct dedicated_memory_s
 {
