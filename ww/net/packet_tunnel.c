@@ -118,6 +118,7 @@ void packettunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
 tunnel_t *packettunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
 {
     assert(lstate_size == 0); // packet tunnels dont have lines
+    discard lstate_size;
     tunnel_t *t = tunnelCreate(node, tstate_size, 0);
 
     t->fnInitU    = packettunnelDefaultUpStreamInit;
