@@ -206,7 +206,7 @@ bool loggerSetFile(logger_t *logger, const char *filepath)
             logger->fp_ = NULL;
         }
         logger->filepath[0] = 0X0;
-        return;
+        return false;
     }
 
 #if defined(OS_UNIX)
@@ -221,6 +221,7 @@ bool loggerSetFile(logger_t *logger, const char *filepath)
     {
         *suffix = '\0';
     }
+    return true;
 }
 
 void loggerSetMaxFileSize(logger_t *logger, unsigned long long filesize)
