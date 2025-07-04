@@ -14,7 +14,7 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     halfduplexclientLinestateInitialize(ls_upline, l);
     ls_upline->upload_line = ls->upload_line;
     lineLock(ls->upload_line);
-    tunnelUpStreamInit(t, ls->upload_line);
+    tunnelNextUpStreamInit(t, ls->upload_line);
     if (! lineIsAlive(ls->upload_line))
     {
         lineUnlock(ls->upload_line);
@@ -31,7 +31,7 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls_dwline->download_line = ls->download_line;
 
     lineLock(ls->download_line);
-    tunnelUpStreamInit(t, ls->download_line);
+    tunnelNextUpStreamInit(t, ls->download_line);
     if (! lineIsAlive(ls->download_line))
     {
         lineUnlock(ls->download_line);

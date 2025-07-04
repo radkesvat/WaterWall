@@ -2,6 +2,21 @@
 
 #include "loggers/network_logger.h"
 
+static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+
+    discard worker;
+    discard arg3;
+
+    tunnel_t                  *t  = arg1;
+    line_t                    *l  = arg2;
+    halfduplexclient_lstate_t *ls = lineGetState(l, t);
+
+    halfduplexclientLinestateDestroy(ls);
+    tunnelNextUpStreamFinish(t, l);
+    lineUnlock(l);
+}
+
 void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
     halfduplexclient_lstate_t *ls = lineGetState(l, t);
@@ -11,27 +26,31 @@ void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
         if (ls->upload_line)
         {
-            tunnelNextUpStreamFinish(t, ls->upload_line);
-            halfduplexclientLinestateDestroy(lineGetState(ls->upload_line, t));
-            lineDestroy(ls->upload_line);
+            halfduplexclient_lstate_t *ls_upload_line = lineGetState(ls->upload_line, t);
+            ls_upload_line->download_line             = NULL;
+            ls_upload_line->main_line                 = NULL;
+            lineLock(ls->upload_line);
+            sendWorkerMessageForceQueue(lineGetWID(ls->upload_line), localAsyncCloseLine, t, ls->upload_line, NULL);
         }
     }
     else
     {
         if (ls->download_line)
         {
-            tunnelNextUpStreamFinish(t, ls->download_line);
-            halfduplexclientLinestateDestroy(lineGetState(ls->download_line, t));
-            lineDestroy(ls->download_line);
+            halfduplexclient_lstate_t *ls_download_line = lineGetState(ls->download_line, t);
+            ls_download_line->download_line             = NULL;
+            ls_download_line->main_line                 = NULL;
+            lineLock(ls->download_line);
+            sendWorkerMessageForceQueue(lineGetWID(ls->download_line), localAsyncCloseLine, t, ls->download_line, NULL);
         }
     }
 
     if (ls->main_line)
     {
-        tunnelPrevDownStreamFinish(t, ls->main_line);
         halfduplexclientLinestateDestroy(lineGetState(ls->main_line, t));
+        tunnelPrevDownStreamFinish(t, ls->main_line);
     }
-    
+
     halfduplexclientLinestateDestroy(ls);
     lineDestroy(l);
 }

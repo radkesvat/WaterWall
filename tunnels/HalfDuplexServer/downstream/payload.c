@@ -6,7 +6,6 @@ void halfduplexserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 {
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
-    assert(ls->state == kCsDownloadDirect);
     
     if (LIKELY(ls->download_line != NULL))
     {

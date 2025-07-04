@@ -34,6 +34,7 @@ void halfduplexserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     ls_upload_line->download_line = NULL;
     ls_upload_line->main_line     = NULL;
 
+    halfduplexserverLinestateDestroy(ls_download_line);
     tunnelPrevDownStreamFinish(t, ls_main_line->download_line);
 
     halfduplexserverLinestateDestroy(ls_main_line);

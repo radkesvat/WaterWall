@@ -76,17 +76,20 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
         ls_download_line->download_line = NULL;
 
-        if (ls_download_line->main_line)
+        line_t *main_line = ls_download_line->main_line;    
+        if (main_line)
         {
-            halfduplexserver_lstate_t *ls_main_line = ls;
-            tunnelNextUpStreamFinish(t, ls_download_line->main_line);
+            halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);
 
             halfduplexserverLinestateDestroy(ls_main_line);
-            lineDestroy(ls_download_line->main_line);
+            tunnelNextUpStreamFinish(t, main_line);
+            lineDestroy(main_line);
             ls_download_line->main_line = NULL;
         }
 
         line_t *upload_line = ls_download_line->upload_line;
+        ls_download_line->upload_line = NULL;
+
         if (upload_line)
         {
             halfduplexserver_lstate_t *ls_upload_line = lineGetState(upload_line, t);
@@ -107,16 +110,18 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
         ls_upload_line->upload_line = NULL;
 
-        if (ls_upload_line->main_line)
+        line_t *main_line = ls_upload_line->main_line;
+
+        if (main_line)
         {
-            halfduplexserver_lstate_t *ls_main_line = ls;
-            tunnelNextUpStreamFinish(t, ls_upload_line->main_line);
+            halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);;
 
             halfduplexserverLinestateDestroy(ls_main_line);
-            lineDestroy(ls_upload_line->main_line);
+            tunnelNextUpStreamFinish(t, main_line);
+            lineDestroy(main_line);
             ls_upload_line->main_line = NULL;
         }
-        line_t *download_line = ls_upload_line->upload_line;
+        line_t *download_line = ls_upload_line->download_line;
 
         if (download_line)
         {
