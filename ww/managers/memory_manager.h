@@ -1,7 +1,6 @@
 #pragma once
 #include "wlibc.h"
 
-// #define ALLOCATOR_BYPASS // switch to stdlib allocators
 
 struct dedicated_memory_s;
 typedef struct dedicated_memory_s dedicated_memory_t;
