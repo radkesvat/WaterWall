@@ -25,7 +25,6 @@ typedef struct tcplistener_lstate_s
     buffer_queue_t pause_queue;
     bool           write_paused : 1;
     bool           read_paused : 1;
-    bool           established : 1; // this flag is set when the connection is established (est recevied from upstream)
 
 } tcplistener_lstate_t;
 

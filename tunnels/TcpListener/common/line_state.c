@@ -8,7 +8,6 @@ void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wio_t *io, tunnel_
     ls->tunnel       = t;
     ls->line         = l;
     ls->write_paused = false;
-    ls->established  = false;
     ls->pause_queue   = bufferqueueCreate(kPauseQueueCapacity);
 }
 
