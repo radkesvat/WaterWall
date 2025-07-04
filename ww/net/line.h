@@ -218,3 +218,22 @@ static inline wid_t lineGetWID(const line_t *const line)
 static inline buffer_pool_t* lineGetBufferPool(const line_t *const line){
     return getWorkerBufferPool(lineGetWID(line));
 }
+
+static inline void lineMarkEstabliched(line_t *const line)
+{
+    assert(! line->established);
+    line->established = true;
+}
+static inline bool lineIsEstablished(const line_t *const line)
+{
+    return line->established;
+}
+
+static inline void lineSetRecalculateChecksum(line_t *const line, bool recalculate)
+{
+    line->recalculate_checksum = recalculate;
+}
+static inline bool lineGetRecalculateChecksum(const line_t *const line)
+{
+    return line->recalculate_checksum;
+}
