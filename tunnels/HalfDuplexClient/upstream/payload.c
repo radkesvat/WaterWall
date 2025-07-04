@@ -41,6 +41,8 @@ void halfduplexclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         sbufShiftLeft(intro_upload_payload, sizeof(cids));
         sbufWrite(intro_upload_payload, cid_bytes, sizeof(cids));
 
+        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+
         line_t *upload_line = ls->upload_line;
         tunnelNextUpStreamPayload(t, upload_line, intro_upload_payload);
     }
