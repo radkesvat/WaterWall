@@ -117,6 +117,8 @@ void masterpoolDestroy(master_pool_t *pool)
     mutexLock(&(pool->mutex));
     if (pool->len != 0)
     {
+        // wmutex_t* wbs = NULL; some bullshit code that was used to debug
+        // mutexUnlock(wbs);
         printError("MasterPool: Destroying pool with items in it, this is a bug");
         terminateProgram(1);
     }

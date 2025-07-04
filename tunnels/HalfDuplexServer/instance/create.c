@@ -5,6 +5,8 @@
 tunnel_t *halfduplexserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(halfduplexserver_tstate_t), sizeof(halfduplexserver_lstate_t));
+
+    
     halfduplexserver_tstate_t* ts = tunnelGetState(t);
 
     t->fnInitU    = &halfduplexserverTunnelUpStreamInit;
@@ -29,5 +31,7 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
     mutexInit(&ts->download_line_map_mutex);
     ts->download_line_map = hmap_cons_t_with_capacity(kHmapCap);
     ts->upload_line_map   = hmap_cons_t_with_capacity(kHmapCap);
-    return t;
+
+    tunnel_t* pipe_tunnel = pipetunnelCreate(t);
+    return pipe_tunnel;
 }

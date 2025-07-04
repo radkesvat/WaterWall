@@ -145,7 +145,7 @@ static void onMsgReceivedUp(wevent_t *ev)
     }
     else
     {
-        contextApplyOnTunnelU(&msg_ev->ctx, (tunnel_t *) tunnelGetState(t));
+        contextApplyOnTunnelU(&msg_ev->ctx, t->next);
     }
     genericpoolReuseItem(getWorkerPipeTunnelMsgPool(wid), msg_ev);
     unlock(lstate);
@@ -234,7 +234,7 @@ static void sendMessageDown(pipetunnel_line_state_t *ls, pipetunnel_msg_event_t 
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
 {
 
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
@@ -266,7 +266,7 @@ void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
@@ -296,7 +296,7 @@ void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
@@ -332,7 +332,7 @@ void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
  * @param line Pointer to the line.
  * @param payload Pointer to the payload.
  */
-void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
+static void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
@@ -363,7 +363,7 @@ void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
     tunnel_t                *child  = tunnelGetState(t);
@@ -393,7 +393,7 @@ void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
 {
 
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
@@ -428,7 +428,7 @@ void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *line)
 {
     discard t;
     discard line;
@@ -441,14 +441,13 @@ void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
-    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
-        child->fnEstD(child, line);
+        tunnelPrevDownStreamEst(t, line);
         return;
     }
 
@@ -472,14 +471,13 @@ void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
-    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
-        child->fnFinD(child, line);
+        tunnelPrevDownStreamFinish(t, line);
         return;
     }
 
@@ -508,14 +506,13 @@ void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *line)
  * @param line Pointer to the line.
  * @param payload Pointer to the payload.
  */
-void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
+static void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
-    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
-        child->fnPayloadD(child, line, payload);
+        tunnelPrevDownStreamPayload(t, line, payload);
         return;
     }
 
@@ -539,14 +536,13 @@ void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *line, sbuf_t *paylo
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
-    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
-        child->fnPauseD(child, line);
+        tunnelPrevDownStreamPause(t, line);
         return;
     }
 
@@ -569,14 +565,13 @@ void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
+static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(line, t);
-    tunnel_t                *child  = tunnelGetState(t);
 
     if (! lstate->active)
     {
-        child->fnResumeD(child, line);
+        tunnelPrevDownStreamPause(t, line);
         return;
     }
 
@@ -599,7 +594,7 @@ void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
  * @param t Pointer to the tunnel.
  * @param tc Pointer to the tunnel chain.
  */
-void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
+static void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 {
     tunnel_t *child = tunnelGetState(t);
 
@@ -616,7 +611,7 @@ void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
  * @param index Pointer to the index.
  * @param mem_offset Pointer to the memory offset.
  */
-void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
+static void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
 {
     tunnelarrayInsert(arr, t);
     tunnel_t *child = tunnelGetState(t);
@@ -635,7 +630,7 @@ void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index,
  *
  * @param t Pointer to the tunnel.
  */
-void pipetunnelDefaultOnPrepair(tunnel_t *t)
+static void pipetunnelDefaultOnPrepair(tunnel_t *t)
 {
     tunnel_t *child = tunnelGetState(t);
     child->onStart(child);
@@ -646,7 +641,7 @@ void pipetunnelDefaultOnPrepair(tunnel_t *t)
  *
  * @param t Pointer to the tunnel.
  */
-void pipetunnelDefaultOnStart(tunnel_t *t)
+static void pipetunnelDefaultOnStart(tunnel_t *t)
 {
     tunnel_t *child = tunnelGetState(t);
     child->onStart(child);
@@ -686,6 +681,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
     pt->onPrepair = &pipetunnelDefaultOnPrepair;
     pt->onStart   = &pipetunnelDefaultOnStart;
 
+    pt->onDestroy = &pipetunnelDestroy;
     tunnelSetState(pt, child);
 
     return pt;
@@ -711,8 +707,8 @@ void pipetunnelDestroy(tunnel_t *t)
  */
 void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 {
-    tunnel_t                *parent_tunneln = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
-    pipetunnel_line_state_t *ls             = (pipetunnel_line_state_t *) lineGetState(l, parent_tunneln);
+    tunnel_t                *parent_tunnel = (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
+    pipetunnel_line_state_t *ls             = (pipetunnel_line_state_t *) lineGetState(l, parent_tunnel);
 
     if (ls->active)
     {
@@ -729,5 +725,5 @@ void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     {
         initializeLineState(ls, lineGetWID(l), wid_to);
     }
-    parent_tunneln->fnInitU(parent_tunneln, l);
+    parent_tunnel->fnInitU(parent_tunnel, l);
 }
