@@ -15,8 +15,6 @@ node_t nodeHalfDuplexClientGet(void)
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = halfduplexclientTunnelCreate,
-             .destroyHandle         = halfduplexclientTunnelDestroy,
-             .apiHandle             = halfduplexclientTunnelApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,

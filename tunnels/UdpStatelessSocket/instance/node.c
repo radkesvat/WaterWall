@@ -15,8 +15,6 @@ node_t nodeUdpStatelessSocketGet(void)
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = udpstatelesssocketTunnelCreate,
-             .destroyHandle         = udpstatelesssocketTunnelDestroy,
-             .apiHandle             = udpstatelesssocketTunnelApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,

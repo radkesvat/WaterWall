@@ -15,8 +15,6 @@ node_t nodeTemplateGet(void)
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = templateTunnelCreate,
-             .destroyHandle         = templateTunnelDestroy,
-             .apiHandle             = templateTunnelApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,

@@ -11,8 +11,6 @@ node_t nodeRawSocketGet(void)
              .hash_type             = calcHashBytes(type_name, stringLength(type_name)),
              .version               = 0001,
              .createHandle          = rawsocketCreate,
-             .destroyHandle         = rawsocketDestroy,
-             .apiHandle             = rawsocketApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,

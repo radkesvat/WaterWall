@@ -367,7 +367,7 @@ void nodemanagerDestroyNode(node_t *node)
     tunnel_t *t = node->instance;
     if (t)
     {
-        node->destroyHandle(t);
+        t->onDestroy(t);
         node->instance = NULL;
     }
     memoryFree(node->name);

@@ -15,8 +15,6 @@ node_t nodeIpOverriderGet(void)
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = ipoverriderCreate,
-             .destroyHandle         = ipoverriderDestroy,
-             .apiHandle             = ipoverriderApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,

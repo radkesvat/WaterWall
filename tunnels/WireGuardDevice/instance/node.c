@@ -15,8 +15,6 @@ node_t nodeWireGuardDeviceGet(void)
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = wireguarddeviceTunnelCreate,
-             .destroyHandle         = wireguarddeviceTunnelDestroy,
-             .apiHandle             = wireguarddeviceTunnelApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,

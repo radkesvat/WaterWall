@@ -15,8 +15,6 @@ node_t nodeTcpConnectorGet(void)
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = tcpconnectorTunnelCreate,
-             .destroyHandle         = tcpconnectorTunnelDestroy,
-             .apiHandle             = tcpconnectorTunnelApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,

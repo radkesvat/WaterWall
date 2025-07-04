@@ -40,8 +40,6 @@ enum node_layer_group
 typedef struct node_s node_t;
 
 typedef tunnel_t *(*TunnelCreateHandle)(node_t *node);
-typedef void (*TunnelDestroyHandle)(tunnel_t *instance);
-typedef api_result_t (*TunnelApiHandle)(tunnel_t *instance, sbuf_t *message);
 
 struct node_s
 {
@@ -56,8 +54,7 @@ struct node_s
     uint16_t        required_padding_left;
 
     TunnelCreateHandle  createHandle;
-    TunnelDestroyHandle destroyHandle;
-    TunnelApiHandle     apiHandle;
+
 
     struct cJSON                 *node_json;
     struct cJSON                 *node_settings_json; // node_json -> settings

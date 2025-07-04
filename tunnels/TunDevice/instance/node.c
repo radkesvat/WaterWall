@@ -15,8 +15,6 @@ node_t nodeTunDeviceGet(void)
              .hash_next             = 0,
              .version               = 0001,
              .createHandle          = tundeviceTunnelCreate,
-             .destroyHandle         = tundeviceTunnelDestroy,
-             .apiHandle             = tundeviceTunnelApi,
              .node_json             = NULL,
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
