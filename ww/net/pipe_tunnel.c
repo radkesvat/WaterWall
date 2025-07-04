@@ -694,7 +694,8 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
  */
 void pipetunnelDestroy(tunnel_t *t)
 {
-    tunnelDestroy(tunnelGetState(t));
+    tunnel_t* child = tunnelGetState(t);
+    child->onDestroy(child);
     tunnelDestroy(t);
 }
 
