@@ -28,3 +28,5 @@ static inline void setDnsLoggerLevelByStr(const char *log_level)
 }
 
 logger_handler getDnsLoggerHandle(void);
+
+void dnsloggerDestroy(void);

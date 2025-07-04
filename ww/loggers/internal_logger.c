@@ -3,7 +3,7 @@
 struct logger_s;
 static logger_t *logger = NULL;
 
-static void destroyInternalLogger(void)
+void internaloggerDestroy(void)
 {
     if (logger)
     {

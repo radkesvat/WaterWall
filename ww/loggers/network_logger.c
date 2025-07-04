@@ -4,7 +4,7 @@ struct logger_s;
 
 static logger_t *logger = NULL;
 
-static void destroyNetworkLogger(void)
+void networkloggerDestroy(void)
 {
     if (logger)
     {

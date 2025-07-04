@@ -395,10 +395,10 @@ WW_EXPORT void destroyGlobalState(void)
     socketmanagerDestroy();
     signalmanagerDestroy();
 
-    loggerDestroy(getInternalLogger());
-    loggerDestroy(getCoreLogger());
-    loggerDestroy(getNetworkLogger());
-    loggerDestroy(getDnsLogger());
+    coreloggerDestroy();
+    networkloggerDestroy();
+    dnsloggerDestroy();
+    internaloggerDestroy();
     loggerDestroyDefaultLogger();
 
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);

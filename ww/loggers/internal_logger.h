@@ -28,3 +28,5 @@ static inline void setInternalLoggerLevelByStr(const char *log_level)
 }
 
 logger_handler getInternalLoggerHandle(void);
+
+void internaloggerDestroy(void);

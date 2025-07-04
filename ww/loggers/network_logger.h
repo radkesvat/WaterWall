@@ -30,3 +30,5 @@ static inline void setNetworkLoggerLevelByStr(const char *log_level)
 }
 
 logger_handler getNetworkLoggerHandle(void);
+
+void networkloggerDestroy(void);

@@ -28,3 +28,5 @@ static inline void setCoreLoggerLevelByStr(const char *log_level)
 }
 
 logger_handler getCoreLoggerHandle(void);
+
+void coreloggerDestroy(void);
