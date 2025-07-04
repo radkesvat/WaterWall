@@ -405,6 +405,9 @@ WW_EXPORT void destroyGlobalState(void)
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
     masterpoolDestroy(GSTATE.masterpool_context_pools);
     masterpoolDestroy(GSTATE.masterpool_pipetunnel_msg_pools);
+
+    // this pool belongs to us and we are rosponsible for making it empty
+    masterpoolMakeEmpty(GSTATE.masterpool_messages, NULL);
     masterpoolDestroy(GSTATE.masterpool_messages);
 
     memoryFree(WORKERS);
