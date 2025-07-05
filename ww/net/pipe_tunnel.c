@@ -160,7 +160,14 @@ static void onMsgReceivedDown(wevent_t *ev)
             lineUnlock(lstate->pair_line);
             lstate->pair_line = NULL;
         }
-        contextApplyOnTunnelD(&msg_ev->ctx, parent_tun->prev);
+        if (msg_ev->ctx.est && lineIsEstablished(line_to))
+        {
+            ;
+        }
+        else
+        {
+            contextApplyOnTunnelD(&msg_ev->ctx, parent_tun->prev);
+        }
     }
     lineUnlock(line_to);
 
@@ -250,6 +257,8 @@ static void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *l)
  */
 static void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *l)
 {
+    assert(lineIsAlive(l));
+
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
     if (lstate->pair_line == NULL)
@@ -379,11 +388,10 @@ static void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *l)
 static void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *l)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
-    tunnel_t                *child  = tunnelGetState(t);
 
     if (lstate->pair_line == NULL)
     {
-        child->fnEstD(child, l);
+        tunnelPrevDownStreamEst(t, l);
         return;
     }
 
@@ -406,6 +414,8 @@ static void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *l)
  */
 static void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *l)
 {
+    assert(lineIsAlive(l));
+
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
     if (lstate->pair_line == NULL)
@@ -628,18 +638,20 @@ void pipetunnelDestroy(tunnel_t *t)
  * @param l Pointer to the line.
  * @param wid_to WID to pipe to.
  */
-void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
+bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
 {
     tunnel_t                *parent_tunnel = getParentTunnel(t);
     pipetunnel_line_state_t *ls            = (pipetunnel_line_state_t *) lineGetState(l, parent_tunnel);
 
     if (ls->pair_line)
     {
-
-        parent_tunnel->fnFinU(parent_tunnel, l);
+        return false;
+        // assert(false);
+        // parent_tunnel->fnFinU(parent_tunnel, l);
     }
     assert(ls->pair_line == NULL);
     ls->pair_line = lineCreate(tunnelchainGetLinePool(tunnelGetChain(parent_tunnel), getWID()), wid_to);
+    ls->pair_line->pool = tunnelchainGetLinePool(tunnelGetChain(parent_tunnel), wid_to);
 
     pipetunnel_line_state_t *ls_lineto = lineGetState(ls->pair_line, parent_tunnel);
     ls_lineto->pair_line               = l;
@@ -648,4 +660,5 @@ void pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     lineLock(ls->pair_line);
 
     parent_tunnel->fnInitU(parent_tunnel, l);
+    return true;
 }

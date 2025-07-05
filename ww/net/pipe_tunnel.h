@@ -32,4 +32,4 @@ void pipetunnelDestroy(tunnel_t *t);
  * @param l Pointer to the line.
  * @param wid_to WID to pipe to.
  */
-void pipeTo(tunnel_t *t, line_t* l, wid_t wid_to);
+bool pipeTo(tunnel_t *t, line_t* l, wid_t wid_to);
