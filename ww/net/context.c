@@ -2,6 +2,11 @@
 
 void contextApplyOnTunnelU(context_t *c, tunnel_t *t)
 {
+    if (c->payload)
+    {
+        t->fnPayloadU(t, c->line, c->payload);
+        return;
+    }
     if (c->init)
     {
         t->fnInitU(t, c->line);
@@ -36,6 +41,11 @@ void contextApplyOnTunnelU(context_t *c, tunnel_t *t)
 
 void contextApplyOnTunnelD(context_t *c, tunnel_t *t)
 {
+    if (c->payload)
+    {
+        t->fnPayloadD(t, c->line, c->payload);
+        return;
+    }
     if (c->init)
     {
         t->fnInitD(t, c->line);
