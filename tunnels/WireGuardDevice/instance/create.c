@@ -66,13 +66,11 @@ static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_ini
         }
         else
         {
-            memoryFree(device);
             terminateProgram(1);
         }
     }
     else
     {
-        memoryFree(device);
         terminateProgram(1);
     }
 }
