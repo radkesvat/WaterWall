@@ -130,7 +130,7 @@ void tcpconnectorOnWriteComplete(wio_t *io)
     tcpconnector_lstate_t *lstate = (tcpconnector_lstate_t *) (weventGetUserdata(io));
     if (UNLIKELY(lstate == NULL))
     {
-        assert(false);
+        // assert(false);
         return;
     }
 
