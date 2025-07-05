@@ -7,7 +7,7 @@
 #include "tunnel.h"
 #include "worker.h"
 
-typedef uint32_t line_refc_t;
+typedef atomic_uint line_refc_t;
 
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
@@ -60,11 +60,13 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
 {
     line_t *l = genericpoolGetItem(pool);
 
-    *l = (line_t) {.refc     = 1,
-                   .auth_cur = 0,
-                   .wid      = wid,
-                   .alive    = true,
-                   .pool     = pool,
+    *l = (line_t) {.refc                 = 1,
+                   .auth_cur             = 0,
+                   .wid                  = wid,
+                   .alive                = true,
+                   .pool                 = pool,
+                   .established          = false,
+                   .recalculate_checksum = false,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
                        (routing_context_t) {.network_type  = WIO_TYPE_UNKNOWN,
@@ -99,7 +101,7 @@ static inline bool lineIsAlive(const line_t *const line)
  */
 static inline void lineUnRefInternal(line_t *const l)
 {
-    if (--(l->refc) > 0)
+    if (atomicDecRelaxed(&l->refc) > 0)
     {
         return;
     }
@@ -130,11 +132,14 @@ static inline void lineUnRefInternal(line_t *const l)
  */
 static inline void lineLock(line_t *const line)
 {
-    assert(line->alive || line->refc > 0);
+    assert(line->alive);
     // basic overflow protection
     assert(line->refc < (((0x1ULL << ((sizeof(line->refc) * 8ULL) - 1ULL)) - 1ULL) |
                          (0xFULL << ((sizeof(line->refc) * 8ULL) - 4ULL))));
-    line->refc++;
+    if (0 == atomicIncRelaxed(&line->refc))
+    {
+        assert(false);
+    }
 }
 
 /**
@@ -215,7 +220,8 @@ static inline wid_t lineGetWID(const line_t *const line)
     return line->wid;
 }
 
-static inline buffer_pool_t* lineGetBufferPool(const line_t *const line){
+static inline buffer_pool_t *lineGetBufferPool(const line_t *const line)
+{
     return getWorkerBufferPool(lineGetWID(line));
 }
 
