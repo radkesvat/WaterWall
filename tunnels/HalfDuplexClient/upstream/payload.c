@@ -4,13 +4,17 @@
 
 void halfduplexclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    halfduplexclient_tstate_t* state = tunnelGetState(t);
+
     halfduplexclient_lstate_t *ls = lineGetState(l, t);
     if (UNLIKELY(! ls->first_packet_sent))
     {
         ls->first_packet_sent = true;
-        // 63 bits of random is enough and is better than hashing sender addr on halfduplex server, i believe so...
-        uint32_t cids[2]   = {fastRand(), fastRand()};
+        uint64_t identifier = atomicIncRelaxed(&state->identifier);
+        uint32_t cids[2]   = {0};
         uint8_t *cid_bytes = (uint8_t *) &(cids[0]);
+
+        PUT_BE64(cid_bytes,identifier);
 
         sbuf_t *intro_download_payload = bufferpoolGetSmallBuffer(getWorkerBufferPool(lineGetWID(ls->download_line)));
         sbufSetLength(intro_download_payload, sizeof(cids));

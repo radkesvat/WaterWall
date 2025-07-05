@@ -12,8 +12,12 @@ static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *
     line_t                    *l  = arg2;
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
-    halfduplexserverLinestateDestroy(ls);
-    tunnelPrevDownStreamFinish(t, l);
+    if (! (ls->upload_line == NULL && ls->download_line == NULL))
+    {
+        halfduplexserverLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+    }
+
     lineUnlock(l);
 }
 
@@ -47,7 +51,10 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
 
         mutexUnlock(&(ts->upload_line_map_mutex));
-        bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
+        if (ls->buffering)
+        {
+            bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
+        }
         halfduplexserverLinestateDestroy(ls);
     }
     break;
@@ -76,7 +83,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
         ls_download_line->download_line = NULL;
 
-        line_t *main_line = ls_download_line->main_line;    
+        line_t *main_line = ls_download_line->main_line;
         if (main_line)
         {
             halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);
@@ -87,7 +94,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_download_line->main_line = NULL;
         }
 
-        line_t *upload_line = ls_download_line->upload_line;
+        line_t *upload_line           = ls_download_line->upload_line;
         ls_download_line->upload_line = NULL;
 
         if (upload_line)
@@ -97,8 +104,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_upload_line->download_line             = NULL;
 
             lineLock(upload_line);
-            sendWorkerMessageForceQueue(lineGetWID(upload_line), localAsyncCloseLine, t, upload_line, NULL);
-
+            sendWorkerMessageForceQueue(getWID(), localAsyncCloseLine, t, upload_line, NULL);
         }
 
         halfduplexserverLinestateDestroy(ls_download_line);
@@ -114,7 +120,8 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
         if (main_line)
         {
-            halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);;
+            halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);
+            ;
 
             halfduplexserverLinestateDestroy(ls_main_line);
             tunnelNextUpStreamFinish(t, main_line);
@@ -130,12 +137,10 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_download_line->upload_line               = NULL;
 
             lineLock(download_line);
-            sendWorkerMessageForceQueue(lineGetWID(download_line), localAsyncCloseLine, t, download_line, NULL);
+            sendWorkerMessageForceQueue(getWID(), localAsyncCloseLine, t, download_line, NULL);
         }
- 
 
         halfduplexserverLinestateDestroy(ls_upload_line);
-
     }
     break;
 
@@ -145,4 +150,3 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         break;
     }
 }
-

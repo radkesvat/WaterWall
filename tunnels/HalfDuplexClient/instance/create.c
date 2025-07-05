@@ -4,7 +4,7 @@
 
 tunnel_t *halfduplexclientTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, 0, sizeof(halfduplexclient_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(halfduplexclient_tstate_t), sizeof(halfduplexclient_lstate_t));
 
     t->fnInitU    = &halfduplexclientTunnelUpStreamInit;
     t->fnEstU     = &halfduplexclientTunnelUpStreamEst;
@@ -23,6 +23,8 @@ tunnel_t *halfduplexclientTunnelCreate(node_t *node)
     t->onPrepair = &halfduplexclientTunnelOnPrepair;
     t->onStart   = &halfduplexclientTunnelOnStart;
     t->onDestroy = &halfduplexclientTunnelDestroy;
-    
+
+    halfduplexclient_tstate_t* state = tunnelGetState(t);
+    state->identifier = 0;
     return t;
 }

@@ -8,10 +8,10 @@ enum
     kHLFDCmdDownload = 128
 };
 
-// in tunnel create we said the size is 0 , change if you added state
+
 typedef struct halfduplexclient_tstate_s
 {
-    int unused;
+    atomic_ullong identifier;
 } halfduplexclient_tstate_t;
 
 typedef struct halfduplexclient_lstate_s

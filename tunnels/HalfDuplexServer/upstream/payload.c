@@ -25,11 +25,14 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             buf           = NULL;
             return;
         }
-        const bool is_upload                    = (((uint8_t *) sbufGetRawPtr(buf))[0] & kHLFDCmdDownload) == 0x0;
-        ((uint8_t *) sbufGetMutablePtr(buf))[0] = (((uint8_t *) sbufGetRawPtr(buf))[0] & kHLFDCmdUpload);
+        const bool is_upload = (((uint8_t *) sbufGetRawPtr(buf))[0] & kHLFDCmdDownload) == 0x0;
 
         hash_t hash = 0x0;
         sbufReadUnAlignedUI64(buf, (uint64_t *) &hash);
+
+        uint8_t *hptr = (uint8_t *)&hash;
+        (hptr)[0]     = ((hptr)[0] & kHLFDCmdUpload);
+
         ls->hash = hash;
 
         if (is_upload)
@@ -42,9 +45,9 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (found)
             {
                 // pair is found
-                uint8_t tid_download_line = lineGetWID((*f_iter.ref).second->download_line);
+                uint8_t wid_download_line = lineGetWID((*f_iter.ref).second->download_line);
 
-                if (tid_download_line == getWID())
+                if (wid_download_line == getWID())
                 {
                     line_t *download_line = ((halfduplexserver_lstate_t *) ((*f_iter.ref).second))->download_line;
                     ls->download_line     = download_line;
@@ -96,17 +99,26 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     mutexUnlock(&(ts->download_line_map_mutex));
 
                     halfduplexserverLinestateDestroy(ls);
-                    pipeTo(t, l, tid_download_line);
-                    tunnel_t *prev_tun = t->prev;
-                    // wirte to pipe
-                    tunnelNextUpStreamPayload(prev_tun, l, buf);
+                    if (pipeTo(t, l, wid_download_line))
+                    {
+                        tunnel_t *prev_tun = t->prev;
+                        // wirte to pipe
+                        tunnelUpStreamPayload(prev_tun, l, buf);
+                    }
+                    else
+                    {
+                        bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
+                        tunnelPrevDownStreamFinish(t, l);
+                    }
+
                     return; // piped to another worker which has waiting connections
                 }
             }
             else
             {
                 mutexUnlock(&(ts->download_line_map_mutex));
-                ls->state = kCsUploadInTable;
+                ls->state     = kCsUploadInTable;
+                ls->buffering = buf;
 
                 mutexLock(&(ts->upload_line_map_mutex));
                 bool push_succeed = hmap_cons_t_insert(&(ts->upload_line_map), hash, ls).inserted;
@@ -114,16 +126,14 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
                 if (! push_succeed)
                 {
-                    LOGW("HalfDuplexServer: duplicate upload connection closed");
+                    LOGW("HalfDuplexServer: duplicate upload connection closed, hash:%lu", hash);
+                    bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
                     halfduplexserverLinestateDestroy(ls);
-                    bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
 
                     tunnelPrevDownStreamFinish(t, l);
                     return;
                 }
 
-                ls->buffering = buf;
-                buf           = NULL;
                 // upload connection is waiting in the pool
             }
         }
@@ -199,10 +209,17 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     mutexUnlock(&(ts->upload_line_map_mutex));
 
                     halfduplexserverLinestateDestroy(ls);
-                    pipeTo(t, l, wid_upload_line);
-                    tunnel_t *prev_tun = t->prev;
-                    // wirte to pipe
-                    tunnelNextUpStreamPayload(prev_tun, l, buf);
+                    if (pipeTo(t, l, wid_upload_line))
+                    {
+                        tunnel_t *prev_tun = t->prev;
+                        // wirte to pipe
+                        tunnelUpStreamPayload(prev_tun, l, buf);
+                    }
+                    else
+                    {
+                        tunnelPrevDownStreamFinish(t, l);
+                    }
+
                     return; // piped to another worker which has waiting connections
                 }
             }
@@ -242,15 +259,28 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         if (sbufGetLength(ls->buffering) >= kMaxBuffering)
         {
+            mutexLock(&(ts->upload_line_map_mutex));
+
+            hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->hash);
+            bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
+            if (! found)
+            {
+                LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
+                exit(1);
+            }
+            hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
+
+            mutexUnlock(&(ts->upload_line_map_mutex));
             bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
-            ls->buffering = NULL;
+            halfduplexserverLinestateDestroy(ls);
+            tunnelPrevDownStreamFinish(t, l);
         }
         break;
 
     case kCsUploadDirect:
         if (LIKELY(ls->main_line != NULL))
         {
-            // on asyc closeing download line, for a very low chance 
+            // on asyc closeing download line, for a very low chance
             tunnelNextUpStreamPayload(t, ls->main_line, buf);
         }
         else
@@ -261,7 +291,6 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     case kCsDownloadDirect:
     case kCsDownloadInTable:
-        bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
         break;
     }
 }
