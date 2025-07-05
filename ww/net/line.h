@@ -101,7 +101,7 @@ static inline bool lineIsAlive(const line_t *const line)
  */
 static inline void lineUnRefInternal(line_t *const l)
 {
-    if (atomicDecRelaxed(&l->refc) > 0)
+    if (atomicDecRelaxed(&l->refc) > 1)
     {
         return;
     }
@@ -159,6 +159,7 @@ static inline void lineUnlock(line_t *const line)
  */
 static inline void lineDestroy(line_t *const l)
 {
+    assert(l->alive);
     l->alive = false;
     lineUnlock(l);
 }
