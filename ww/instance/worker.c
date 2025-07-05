@@ -116,6 +116,7 @@ void workerRun(worker_t *worker)
 {
     tl_wid    = worker->wid;
     wid_t wid = worker->wid;
+    frandInit();
 
     wloopRun(worker->loop);
 

@@ -1,5 +1,5 @@
 #pragma once
-#include "wplatform.h"
+#include "wlibc.h"
 
 #ifdef COMPILER_MSVC
 #pragma warning(disable : 4146) // unary minus operator applied to unsigned type, result still unsigned
@@ -10,8 +10,8 @@
 */
 
 // access to correctly aligned variables are atomic
-extern uint32_t frand_seed32;
-extern uint64_t frand_seed64;
+extern thread_local uint32_t frand_seed32;
+extern thread_local uint64_t frand_seed64;
 
 /*
 
