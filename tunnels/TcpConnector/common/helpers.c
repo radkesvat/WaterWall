@@ -81,7 +81,6 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
              SOCKADDR_STR(wioGetPeerAddr(upstream_io), peeraddrstr));
     }
 
-    l->established = true;
     wioRead(lstate->io);
 
     if (bufferqueueLen(&lstate->pause_queue) > 0)

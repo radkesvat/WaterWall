@@ -11,7 +11,7 @@ enum
 {
     kHLFDCmdUpload   = 127,
     kHLFDCmdDownload = 128,
-    kHmapCap         = 16 * 40,
+    kHmapCap         = 16 * 4,
     kMaxBuffering    = (65535 * 2)
 };
 

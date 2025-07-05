@@ -14,7 +14,8 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (ls->buffering)
         {
-            buf = sbufConcat(ls->buffering, buf);
+            
+            buf = sbufAppendMerge(lineGetBufferPool(l),ls->buffering, buf);
 
             ls->buffering = NULL;
         }
@@ -30,7 +31,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         hash_t hash = 0x0;
         sbufReadUnAlignedUI64(buf, (uint64_t *) &hash);
 
-        uint8_t *hptr = (uint8_t *)&hash;
+        uint8_t *hptr = (uint8_t *) &hash;
         (hptr)[0]     = ((hptr)[0] & kHLFDCmdUpload);
 
         ls->hash = hash;
@@ -107,7 +108,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     }
                     else
                     {
-                        bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
+                        bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
                         tunnelPrevDownStreamFinish(t, l);
                     }
 
@@ -217,6 +218,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     }
                     else
                     {
+                        bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
                         tunnelPrevDownStreamFinish(t, l);
                     }
 
@@ -251,7 +253,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     case kCsUploadInTable:
         if (ls->buffering)
         {
-            ls->buffering = sbufConcat(ls->buffering, buf);
+            ls->buffering = sbufAppendMerge(lineGetBufferPool(l),ls->buffering, buf);
         }
         else
         {
@@ -291,6 +293,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     case kCsDownloadDirect:
     case kCsDownloadInTable:
+        bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
         break;
     }
 }
