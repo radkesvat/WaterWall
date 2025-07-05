@@ -11,6 +11,7 @@ void halfduplexserverTunnelDestroy(tunnel_t *t)
     c_foreach(k, hmap_cons_t, ts->download_line_map)
     {
         halfduplexserver_lstate_t *ls = k.ref->second;
+        discard ls;
         assert(ls->buffering == NULL);
     }
     c_foreach(k, hmap_cons_t, ts->upload_line_map)
