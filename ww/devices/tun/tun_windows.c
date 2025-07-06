@@ -5,7 +5,7 @@
 #include "managers/signal_manager.h"
 #include "master_pool.h"
 #include "wchan.h"
-#include "wintun/wintun.h"
+#include "wintun.h"
 #include <tchar.h>
 
 #include "loggers/internal_logger.h"

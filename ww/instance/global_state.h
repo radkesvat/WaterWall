@@ -48,6 +48,7 @@ typedef struct ww_global_state_s
     struct dedicated_memory_s *openssl_dedicated_memory;
     LwipV4Hook                 lwip_process_v4_hook;
     void                      *wintun_dll_handle;
+    void                      *windivert_dll_handle;
     uint32_t                   workers_count;
     uint32_t                   ram_profile;
     uint64_t                   main_thread_id;

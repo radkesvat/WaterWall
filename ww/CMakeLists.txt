@@ -165,23 +165,37 @@ elseif(UNIX AND NOT ANDROID)
     endif()
     # ...existing commented raw/capture devices...
 elseif(WIN32)
+
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        message(STATUS "Including WinDivert Target architecture: amd64")
+        target_sources(ww PRIVATE vendor/windivert/x64/windivert.dll.x64.bytes.c)
+        target_sources(ww PRIVATE vendor/windivert/x64/windivert.sys.x64.bytes.c)
+        target_sources(ww PRIVATE devices/raw/raw_windows.c)
+
+    endif()
+
+
+    target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/wintun/)
+
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         message(STATUS "Including WinTun Target architecture: amd64")
-        target_sources(ww PRIVATE devices/tun/wintun/amd64/wintun_bytes.c)
+        target_sources(ww PRIVATE vendor/wintun/amd64/wintun_bytes.c)
     elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "i386")
         message(STATUS "Including WinTun Target architecture: x86")
-        target_sources(ww PRIVATE devices/tun/wintun/x86/wintun_bytes.c)
+        target_sources(ww PRIVATE vendor/wintun/x86/wintun_bytes.c)
     elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM")
         message(STATUS "Including WinTun Target architecture: arm")
-        target_sources(ww PRIVATE devices/tun/wintun/arm/wintun_bytes.c)
+        target_sources(ww PRIVATE vendor/wintun/arm/wintun_bytes.c)
     elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
         message(STATUS "Including WinTun Target architecture: arm64")
-        target_sources(ww PRIVATE devices/tun/wintun/arm64/wintun_bytes.c)
+        target_sources(ww PRIVATE vendor/wintun/arm64/wintun_bytes.c)
     else()
         message(FATAL_ERROR "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
     endif()
     
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
+
+
 endif()
 
 if(WIN32)
