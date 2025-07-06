@@ -30,11 +30,9 @@ typedef struct capture_device_s
 
     master_pool_t *reader_message_pool;
     buffer_pool_t *reader_buffer_pool;
-    buffer_pool_t *writer_buffer_pool;
 
     CaptureReadEventHandle read_event_callback;
 
-    struct wchan_s *writer_buffer_channel;
     char           *bringup_command;
     char           *bringdown_command;
     int             netfilter_queue_number;
@@ -47,7 +45,6 @@ typedef struct capture_device_s
 
 bool caputredeviceBringUp(capture_device_t *cdev);
 bool caputredeviceBringDown(capture_device_t *cdev);
-bool caputredeviceWrite(capture_device_t *cdev, sbuf_t *buf);
 
 capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
                                       CaptureReadEventHandle cb);

@@ -70,7 +70,7 @@ static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sb
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
-    *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
+    *msg = (struct msg_event){.cdev = cdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -297,14 +297,14 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     ssize_t           nread;
 
     struct pollfd fds[2];
-    fds[0].fd     = cdev->handle;
-#if defined (OS_OPENBSD)
+    fds[0].fd = cdev->handle;
+#if defined(OS_OPENBSD)
     fds[0].events = POLLIN;
 #else
     fds[0].events = POLL_IN;
 #endif
-    fds[1].fd     = cdev->linux_pipe_fds[0];
-#if defined (OS_OPENBSD)
+    fds[1].fd = cdev->linux_pipe_fds[0];
+#if defined(OS_OPENBSD)
     fds[1].events = POLLIN;
 #else
     fds[1].events = POLL_IN;
@@ -358,70 +358,6 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     return 0;
 }
 
-// static WTHREAD_ROUTINE(routineWriteToCapture) // NOLINT
-// {
-//     capture_device_t *cdev = userdata;
-//     sbuf_t           *buf;
-//     ssize_t           nwrite;
-
-//     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
-//     {
-//         if (! chanRecv(cdev->writer_buffer_channel, (void **) &buf))
-//         {
-//             LOGD("CaptureDevice: routine write will exit due to channel closed");
-//             return 0;
-//         }
-
-//         struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
-
-//         struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
-
-//         nwrite =
-//             sendto(cdev->handle, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
-
-//         bufferpoolReuseBuffer(cdev->writer_buffer_pool, buf);
-
-//         if (nwrite == 0)
-//         {
-//             LOGW("CaptureDevice: Exit write routine due to End Of File");
-//             return 0;
-//         }
-
-//         if (nwrite < 0)
-//         {
-//             LOGW("CaptureDevice: writing a packet to Capture device failed, code: %d", (int) nwrite);
-//             if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-//             {
-//                 continue;
-//             }
-//             LOGE("CaptureDevice: Exit write routine due to critical error");
-//             return 0;
-//         }
-//     }
-//     return 0;
-// }
-
-bool caputredeviceWrite(capture_device_t *cdev, sbuf_t *buf)
-{
-    discard cdev;
-    discard buf;
-    return false;
-    //     bool closed = false;
-    //     if (! chanTrySend(cdev->writer_buffer_channel, &buf, &closed))
-    //     {
-    //         if (closed)
-    //         {
-    //             LOGE("CaptureDevice: write failed, channel was closed");
-    //         }
-    //         else
-    //         {
-    //             LOGE("CaptureDevice:write failed, ring is full");
-    //         }
-    //         return false;
-    //     }
-    //     return true;
-}
-
 bool caputredeviceBringUp(capture_device_t *cdev)
 {
     assert(! cdev->up);
@@ -432,9 +368,6 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         terminateProgram(1);
         return false;
     }
-    bufferpoolUpdateAllocationPaddings(cdev->writer_buffer_pool,
-                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
@@ -551,32 +484,24 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
 
         );
 
-    buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
-
-        );
-
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
     *cdev =
-        (capture_device_t) {.name                = stringDuplicate(name),
-                            .running             = false,
-                            .up                  = false,
-                            .routine_reader      = routineReadFromCapture,
-                            .routine_writer      = NULL,
-                            .handle              = socket_netfilter,
-                            .queue_number        = queue_number,
-                            .read_event_callback = cb,
-                            .userdata            = userdata,
-                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                            .packets_queued      = 0,
-                            .netfilter_queue_number = queue_number,
-                            .bringup_command        = bringup_cmd,
-                            .bringdown_command      = bringdown_cmd,
-                            .reader_buffer_pool     = reader_bpool,
-                            .writer_buffer_pool     = writer_bpool};
+        (capture_device_t){.name                = stringDuplicate(name),
+                           .running             = false,
+                           .up                  = false,
+                           .routine_reader      = routineReadFromCapture,
+                           .routine_writer      = NULL,
+                           .handle              = socket_netfilter,
+                           .queue_number        = queue_number,
+                           .read_event_callback = cb,
+                           .userdata            = userdata,
+                           .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+                           .packets_queued      = 0,
+                           .netfilter_queue_number = queue_number,
+                           .bringup_command        = bringup_cmd,
+                           .bringdown_command      = bringdown_cmd,
+                           .reader_buffer_pool     = reader_bpool};
     if (pipe(cdev->linux_pipe_fds) != 0)
     {
         LOGE("CaptureDevice: failed to create pipe for linux_pipe_fds");
@@ -584,7 +509,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         memoryFree(cdev->bringup_command);
         memoryFree(cdev->bringdown_command);
         bufferpoolDestroy(cdev->reader_buffer_pool);
-        bufferpoolDestroy(cdev->writer_buffer_pool);
         masterpoolDestroy(cdev->reader_message_pool);
         close(cdev->handle);
         memoryFree(cdev);
@@ -606,8 +530,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
     memoryFree(cdev->bringup_command);
     memoryFree(cdev->bringdown_command);
     bufferpoolDestroy(cdev->reader_buffer_pool);
-    bufferpoolDestroy(cdev->writer_buffer_pool);
-    masterpoolMakeEmpty(cdev->reader_message_pool,NULL);
+    masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
     masterpoolDestroy(cdev->reader_message_pool);
     close(cdev->handle);
     memoryFree(cdev);

@@ -20,11 +20,6 @@ enum
     kRawWriteChannelQueueMax              = 256
 };
 
-struct msg_event
-{
-    raw_device_t *rdev;
-    sbuf_t       *buf;
-};
 
 
 static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
@@ -122,9 +117,13 @@ bool rawdeviceBringDown(raw_device_t *rdev)
 
     chanClose(rdev->writer_buffer_channel);
 
-
     threadJoin(rdev->write_thread);
 
+    sbuf_t *buf;
+    while (chanRecv(rdev->writer_buffer_channel, (void **) &buf))
+    {
+        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
+    }
 
     chanFree(rdev->writer_buffer_channel);
     rdev->writer_buffer_channel = NULL;
@@ -163,7 +162,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
 
     buffer_pool_t *reader_bpool = NULL;
-    // if the user really wanted to read from raw socket
 
     buffer_pool_t *writer_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,

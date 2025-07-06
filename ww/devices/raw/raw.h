@@ -13,8 +13,12 @@ struct raw_device_s;
 
 typedef struct raw_device_s
 {
-    char     *name;
-    int       socket;
+    char *name;
+#ifdef OS_WIN
+    HANDLE handle;
+#else
+    int socket;
+#endif
     uint32_t  mark;
     void     *userdata;
     wthread_t read_thread;
@@ -22,7 +26,7 @@ typedef struct raw_device_s
 
     wthread_routine routine_writer;
 
-    buffer_pool_t *writer_buffer_pool;
+    buffer_pool_t  *writer_buffer_pool;
     struct wchan_s *writer_buffer_channel;
     atomic_bool     running;
     atomic_bool     up;
@@ -35,4 +39,4 @@ bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf);
 
 raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata);
 
-void rawdeviceDestroy(raw_device_t* rdev);
+void rawdeviceDestroy(raw_device_t *rdev);
