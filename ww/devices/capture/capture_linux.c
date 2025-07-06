@@ -396,15 +396,11 @@ bool caputredeviceBringDown(capture_device_t *cdev)
         LOGE("CaptureDevicer: command failed: %s", cdev->bringdown_command);
         terminateProgram(1);
     }
-    if (cdev->read_event_callback != NULL)
-    {
-        ssize_t _unused = write(cdev->linux_pipe_fds[1], "x", 1);
-        (void) _unused;
-        threadJoin(cdev->read_thread);
-    }
 
+    ssize_t _unused = write(cdev->linux_pipe_fds[1], "x", 1);
+    (void) _unused;
     threadJoin(cdev->read_thread);
-    threadJoin(cdev->write_thread);
+
     LOGD("CaptureDevice: device %s is now down", cdev->name);
 
     return true;
@@ -491,7 +487,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                            .running             = false,
                            .up                  = false,
                            .routine_reader      = routineReadFromCapture,
-                           .routine_writer      = NULL,
                            .handle              = socket_netfilter,
                            .queue_number        = queue_number,
                            .read_event_callback = cb,

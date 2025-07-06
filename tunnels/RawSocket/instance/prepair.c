@@ -17,7 +17,7 @@ void rawsocketOnPrepair(tunnel_t *t)
     }
 
     // we are not going to read, so pass read call back as null therfore no buffers for read will be allocated
-    state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, t, NULL);
+    state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, t);
 
     caputredeviceBringUp(state->capture_device);
     rawdeviceBringUp(state->raw_device);
