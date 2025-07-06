@@ -16,10 +16,18 @@ typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *user
 typedef struct capture_device_s
 {
     char *name;
-    int   socket;
-    int   linux_pipe_fds[2]; // used for signaling read thread to stop
+#ifdef OS_WIN
+    HANDLE handle;
+    char filter[128];
 
-    uint32_t  queue_number;
+#else
+    int      socket;
+    int      linux_pipe_fds[2]; // used for signaling read thread to stop
+    uint32_t queue_number;
+    char    *bringup_command;
+    char    *bringdown_command;
+    int      netfilter_queue_number;
+#endif
     bool      drop_captured_packet;
     void     *userdata;
     wthread_t read_thread;
@@ -30,10 +38,6 @@ typedef struct capture_device_s
     buffer_pool_t *reader_buffer_pool;
 
     CaptureReadEventHandle read_event_callback;
-
-    char *bringup_command;
-    char *bringdown_command;
-    int   netfilter_queue_number;
 
     atomic_int  packets_queued;
     atomic_bool running;

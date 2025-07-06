@@ -163,14 +163,15 @@ elseif(UNIX AND NOT ANDROID)
         target_sources(ww PRIVATE devices/capture/capture_linux.c)
         target_sources(ww PRIVATE devices/raw/raw_linux.c)
     endif()
-    # ...existing commented raw/capture devices...
 elseif(WIN32)
 
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         message(STATUS "Including WinDivert Target architecture: amd64")
         target_sources(ww PRIVATE vendor/windivert/x64/windivert.dll.x64.bytes.c)
         target_sources(ww PRIVATE vendor/windivert/x64/windivert.sys.x64.bytes.c)
+
         target_sources(ww PRIVATE devices/raw/raw_windows.c)
+        target_sources(ww PRIVATE devices/capture/capture_windows.c)
 
     endif()
 

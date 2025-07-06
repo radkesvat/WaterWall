@@ -1,4 +1,4 @@
-#include "raw.h"
+#include "capture.h"
 
 #include "buffer_pool.h"
 #include "global_state.h"
@@ -21,9 +21,31 @@ extern unsigned int  windivert_sys_len;
 enum
 {
     kReadPacketSize                       = 1500,
+    kEthDataLen                           = 1500,
     kMasterMessagePoolsbufGetLeftCapacity = 64,
-    kRawWriteChannelQueueMax              = 256
+    kQueueLen                             = 512,
+    kCaptureWriteChannelQueueMax          = 128
 };
+
+struct msg_event
+{
+    capture_device_t *cdev;
+    sbuf_t           *buf;
+};
+
+static pool_item_t *allocCaptureMsgPoolHandle(master_pool_t *pool, void *userdata)
+{
+    discard userdata;
+    discard pool;
+    return memoryAllocate(sizeof(struct msg_event));
+}
+
+static void destroyCaptureMsgPoolHandle(master_pool_t *pool, master_pool_item_t *item, void *userdata)
+{
+    discard pool;
+    discard userdata;
+    memoryFree(item);
+}
 
 /*
  * WinDivert flags.
@@ -144,6 +166,7 @@ typedef struct
 #pragma warning(pop)
 #endif
 
+static BOOL (*WinDivertRecv)(HANDLE handle, VOID *pPacket, UINT packetLen, UINT *pRecvLen, WINDIVERT_ADDRESS *pAddr);
 static HANDLE (*WinDivertOpen)(const char *filter, WINDIVERT_LAYER layer, INT16 priority, UINT64 flags);
 static BOOL (*WinDivertSend)(HANDLE handle, const VOID *pPacket, UINT packetLen, UINT *pSendLen,
                              const WINDIVERT_ADDRESS *pAddr);
@@ -164,14 +187,14 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
     // Get the system's temporary directory
     if (GetTempPath(MAX_PATH, tempPath) == 0)
     {
-        LOGE("RawDevice: Failed to get temporary path");
+        LOGE("CaptureDevice: Failed to get temporary path");
         return NULL;
     }
 
     // Generate a unique temporary file name
     if (GetTempFileName(tempPath, _T("dll"), 0, tempFileName) == 0)
     {
-        LOGE("RawDevice: Failed to create dll filename");
+        LOGE("CaptureDevice: Failed to create dll filename");
         return NULL;
     }
 
@@ -179,7 +202,7 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
     HANDLE hFile = CreateFile(tempFileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
     {
-        LOGE("RawDevice: Failed to create dll file");
+        LOGE("CaptureDevice: Failed to create dll file");
         return NULL;
     }
 
@@ -187,7 +210,7 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
     DWORD bytesWritten;
     if (! WriteFile(hFile, dllBytes, (DWORD) dllSize, &bytesWritten, NULL))
     {
-        LOGE("RawDevice: Failed to write dll file");
+        LOGE("CaptureDevice: Failed to write dll file");
         CloseHandle(hFile);
         DeleteFile(tempFileName);
         return NULL;
@@ -214,7 +237,7 @@ static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
     // Get the system's temporary directory
     if (GetTempPath(MAX_PATH, tempPath) == 0)
     {
-        LOGE("RawDevice: Failed to get temporary path");
+        LOGE("CaptureDevice: Failed to get temporary path");
         return NULL;
     }
 
@@ -233,7 +256,7 @@ static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
     if (hFile == INVALID_HANDLE_VALUE)
     {
         // maybe already exsits
-        LOGD("RawDevice: the sys file may already exists");
+        LOGD("CaptureDevice: the sys file may already exists");
         return _tcsdup(tempFileName);
     }
 
@@ -241,7 +264,7 @@ static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
     DWORD bytesWritten;
     if (! WriteFile(hFile, sysBytes, (DWORD) sysSize, &bytesWritten, NULL))
     {
-        LOGE("RawDevice: Failed to write sys file");
+        LOGE("CaptureDevice: Failed to write sys file");
         CloseHandle(hFile);
         DeleteFile(tempFileName);
         return NULL;
@@ -262,7 +285,7 @@ static void rawWindowsStartup(void)
 {
     if (GSTATE.windivert_dll_handle != NULL)
     {
-        LOGD("RawDevice: WinDivert DLL already loaded");
+        LOGD("CaptureDevice: WinDivert DLL already loaded");
         return;
     }
 
@@ -270,7 +293,7 @@ static void rawWindowsStartup(void)
     TCHAR *tempSysPath = writeSYSToTempFile(&windivert_sys[0], windivert_sys_len);
     if (! tempSysPath)
     {
-        LOGE("RawDevice: Failed to write SYS file to temporary file");
+        LOGE("CaptureDevice: Failed to write SYS file to temporary file");
         return;
     }
 
@@ -278,7 +301,7 @@ static void rawWindowsStartup(void)
     TCHAR *tempDllPath = writeDllToTempFile(&windivert_dll[0], windivert_dll_len);
     if (! tempDllPath)
     {
-        LOGE("RawDevice: Failed to write DLL to temporary file");
+        LOGE("CaptureDevice: Failed to write DLL to temporary file");
         return;
     }
 
@@ -288,7 +311,7 @@ static void rawWindowsStartup(void)
     HMODULE hModule = LoadLibraryExW(widePath, NULL, 0);
     if (! hModule)
     {
-        LOGE("RawDevice: Failed to load DLL: error %lu", GetLastError());
+        LOGE("CaptureDevice: Failed to load DLL: error %lu", GetLastError());
         DeleteFile(tempDllPath);
         free(tempDllPath);
         return;
@@ -297,99 +320,118 @@ static void rawWindowsStartup(void)
     GSTATE.windivert_dll_handle = hModule;
 }
 
-static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
+static void localThreadEventReceived(wevent_t *ev)
 {
-    raw_device_t     *rdev = userdata;
+    struct msg_event *msg = weventGetUserdata(ev);
+    wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
+
+    atomicSubExplicit(&(msg->cdev->packets_queued), 1, memory_order_release);
+
+    msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
+
+    masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
+}
+
+static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
+{
+    atomicAddExplicit(&(cdev->packets_queued), 1, memory_order_release);
+
+    struct msg_event *msg;
+    masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
+
+    *msg = (struct msg_event){.cdev = cdev, .buf = buf};
+
+    wevent_t ev;
+    memorySet(&ev, 0, sizeof(ev));
+    ev.loop = getWorkerLoop(target_wid);
+    ev.cb   = localThreadEventReceived;
+    weventSetUserData(&ev, msg);
+    wloopPostEvent(getWorkerLoop(target_wid), &ev);
+}
+static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
+{
+    capture_device_t *cdev = userdata;
     sbuf_t           *buf;
-    WINDIVERT_ADDRESS addr;
-    addr.Layer    = WINDIVERT_LAYER_NETWORK; // Set the layer to NETWORK
-    addr.Outbound = 1;                       // Set outbound flag to true
+    UINT              read_packet_len = 0;
 
-    addr.IPChecksum  = 1; // Enable not recalculating IP checksum
-    addr.TCPChecksum = 1; // Enable not recalculating TCP checksum
-    addr.UDPChecksum = 1; // Enable not recalculating UDP checksum
-
-    while (atomicLoadExplicit(&(rdev->running), memory_order_relaxed))
+    while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        if (! chanRecv(rdev->writer_buffer_channel, (void **) &buf))
+        if (atomicLoadExplicit(&(cdev->packets_queued), memory_order_acquire) > 256)
         {
-            LOGD("RawDevice: routine write will exit due to channel closed");
-            return 0;
-        }
-
-        if (! WinDivertSend(rdev->handle, sbufGetRawPtr(buf), sbufGetLength(buf), NULL, &addr))
-        {
-            LOGW("RawDevice: WinDivertSend failed: error %lu", GetLastError());
-            bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
+            ww_msleep(1);
             continue;
         }
-        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
+
+        buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
+
+        buf = sbufReserveSpace(buf, kReadPacketSize);
+
+        if (! WinDivertRecv(cdev->handle, sbufGetMutablePtr(buf), kReadPacketSize, &read_packet_len, NULL))
+        {
+            LOGE("CaptureDevice: failed to read packet from capture device: error %lu", GetLastError());
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+
+            if (ERROR_NO_DATA == GetLastError())
+            {
+                // No data available, continue to next iteration
+                LOGE("CaptureDevice: Handle shutdown or no data available, exiting read routine...");
+                break;
+            }
+            continue;
+        }
+
+        if (UNLIKELY(read_packet_len == 0))
+        {
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+            LOGW("CaptureDevice: read packet with length 0");
+            continue;
+        }
+
+        sbufSetLength(buf, read_packet_len);
+
+        distributePacketPayload(cdev, getNextDistributionWID(), buf);
     }
+
     return 0;
 }
 
-bool rawdeviceWrite(raw_device_t *rdev, sbuf_t *buf)
+bool caputredeviceBringUp(capture_device_t *cdev)
 {
-    assert(sbufGetLength(buf) > sizeof(struct ip_hdr));
+    assert(! cdev->up);
 
-    bool closed = false;
-    if (! chanTrySend(rdev->writer_buffer_channel, &buf, &closed))
+    cdev->handle = WinDivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
+    if (cdev->handle == INVALID_HANDLE_VALUE)
     {
-        if (closed)
-        {
-            LOGE("RawDevice: write failed, channel was closed");
-        }
-        else
-        {
-            LOGE("RawDevice: write failed, ring is full");
-        }
-        return false;
+        // Handle error
+        LOGE("CaptureDevice: Failed to open WinDivert handle: error %lu", GetLastError());
+        return FALSE;
     }
-    return true;
-}
 
-bool rawdeviceBringUp(raw_device_t *rdev)
-{
-    assert(! rdev->up);
-
-    bufferpoolUpdateAllocationPaddings(rdev->writer_buffer_pool,
+    bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    rdev->up                    = true;
-    rdev->running               = true;
-    rdev->writer_buffer_channel = chanOpen(sizeof(void *), kRawWriteChannelQueueMax);
+    cdev->up      = true;
+    cdev->running = true;
 
-    // rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
-    LOGD("RawDevice: device %s is now up", rdev->name);
+    LOGD("CaptureDevice: device %s is now up", cdev->name);
 
-    rdev->write_thread = threadCreate(rdev->routine_writer, rdev);
+    cdev->read_thread = threadCreate(cdev->routine_reader, cdev);
     return true;
 }
 
-bool rawdeviceBringDown(raw_device_t *rdev)
+bool caputredeviceBringDown(capture_device_t *cdev)
 {
-    assert(rdev->up);
+    assert(cdev->up);
 
-    rdev->running = false;
-    rdev->up      = false;
+    cdev->running = false;
+    cdev->up      = false;
 
-    atomicThreadFence(memory_order_release);
+    WinDivertShutdown(cdev->handle, WINDIVERT_SHUTDOWN_BOTH);
+    WinDivertClose(cdev->handle);
 
-    chanClose(rdev->writer_buffer_channel);
-
-    threadJoin(rdev->write_thread);
-
-    sbuf_t *buf;
-    while (chanRecv(rdev->writer_buffer_channel, (void **) &buf))
-    {
-        bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
-    }
-
-    chanFree(rdev->writer_buffer_channel);
-    rdev->writer_buffer_channel = NULL;
-
-    LOGD("RawDevice: device %s is now down", rdev->name);
+    threadJoin(cdev->read_thread);
+    LOGD("CaptureDevice: device %s is now down", cdev->name);
 
     return true;
 }
@@ -400,20 +442,21 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
     FARPROC proc = GetProcAddress(GSTATE.windivert_dll_handle, function_name);
     if (proc == NULL)
     {
-        LOGE("RawDevice: Error: Failed to load function '%s' from WinDivert DLL.", function_name);
+        LOGE("CaptureDevice: Error: Failed to load function '%s' from WinDivert DLL.", function_name);
         return false;
     }
     memoryCopy(target, &proc, sizeof(FARPROC));
-    return true;
+    return false;
 }
-
-raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
+capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
+                                      CaptureReadEventHandle cb)
 {
+
     if (GSTATE.windivert_dll_handle == NULL)
     {
         rawWindowsStartup();
     }
-    if (! loadFunctionFromDLL("WinDivertOpen", &WinDivertOpen))
+    if (! loadFunctionFromDLL("WinDivertRecv", &WinDivertRecv))
         return NULL;
     if (! loadFunctionFromDLL("WinDivertSend", &WinDivertSend))
         return NULL;
@@ -422,46 +465,52 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     if (! loadFunctionFromDLL("WinDivertClose", &WinDivertClose))
         return NULL;
 
-    HANDLE handle = WinDivertOpen("false", WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_SEND_ONLY);
-    if (handle == INVALID_HANDLE_VALUE)
-    {
-        // Handle error
-        LOGE("RawDevice: Failed to open WinDivert handle: error %lu", GetLastError());
-        return FALSE;
-    }
+   
+  
 
-    raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
-
-    buffer_pool_t *writer_bpool =
+    buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
                          bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
                          bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
 
         );
 
-    *rdev = (raw_device_t){.name                  = stringDuplicate(name),
-                           .running               = false,
-                           .up                    = false,
-                           .routine_writer        = routineWriteToRaw,
-                           .handle                = handle,
-                           .mark                  = mark,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = NULL,
-                           .writer_buffer_pool    = writer_bpool};
+    capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
-    return rdev;
+    *cdev =
+        (capture_device_t){.name                = stringDuplicate(name),
+                           .running             = false,
+                           .up                  = false,
+                           .routine_reader      = routineReadFromCapture,
+                           .handle              = NULL,
+                           .read_event_callback = cb,
+                           .userdata            = userdata,
+                           .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+                           .packets_queued      = 0,
+                           .reader_buffer_pool  = reader_bpool};
+
+                           
+    memorySet(cdev->filter, 0, sizeof(cdev->filter));
+    stringNPrintf(cdev->filter, sizeof(cdev->filter), "ip.SrcAddr == %s", capture_ip);
+
+
+    masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
+
+    return cdev;
 }
 
-void rawdeviceDestroy(raw_device_t *rdev)
+void capturedeviceDestroy(capture_device_t *cdev)
 {
-
-    if (rdev->up)
+    if (cdev->up)
     {
-        rawdeviceBringDown(rdev);
+        caputredeviceBringDown(cdev);
     }
-    memoryFree(rdev->name);
-    bufferpoolDestroy(rdev->writer_buffer_pool);
-    WinDivertShutdown(rdev->handle, WINDIVERT_SHUTDOWN_BOTH);
-    WinDivertClose(rdev->handle);
-    memoryFree(rdev);
+    memoryFree(cdev->name);
+    bufferpoolDestroy(cdev->reader_buffer_pool);
+    masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
+    masterpoolDestroy(cdev->reader_message_pool);
+
+    WinDivertShutdown(cdev->handle, WINDIVERT_SHUTDOWN_BOTH);
+    WinDivertClose(cdev->handle);
+    memoryFree(cdev);
 }
