@@ -28,14 +28,14 @@ enum
 /*
  * WinDivert flags.
  */
-#define WINDIVERT_FLAG_SNIFF            0x0001
-#define WINDIVERT_FLAG_DROP             0x0002
-#define WINDIVERT_FLAG_RECV_ONLY        0x0004
-#define WINDIVERT_FLAG_READ_ONLY        WINDIVERT_FLAG_RECV_ONLY
-#define WINDIVERT_FLAG_SEND_ONLY        0x0008
-#define WINDIVERT_FLAG_WRITE_ONLY       WINDIVERT_FLAG_SEND_ONLY
-#define WINDIVERT_FLAG_NO_INSTALL       0x0010
-#define WINDIVERT_FLAG_FRAGMENTS        0x0020
+#define WINDIVERT_FLAG_SNIFF      0x0001
+#define WINDIVERT_FLAG_DROP       0x0002
+#define WINDIVERT_FLAG_RECV_ONLY  0x0004
+#define WINDIVERT_FLAG_READ_ONLY  WINDIVERT_FLAG_RECV_ONLY
+#define WINDIVERT_FLAG_SEND_ONLY  0x0008
+#define WINDIVERT_FLAG_WRITE_ONLY WINDIVERT_FLAG_SEND_ONLY
+#define WINDIVERT_FLAG_NO_INSTALL 0x0010
+#define WINDIVERT_FLAG_FRAGMENTS  0x0020
 
 /*
  * WinDivert layers.
@@ -54,9 +54,9 @@ typedef enum
  */
 typedef enum
 {
-    WINDIVERT_SHUTDOWN_RECV = 0x1,      /* Shutdown recv. */
-    WINDIVERT_SHUTDOWN_SEND = 0x2,      /* Shutdown send. */
-    WINDIVERT_SHUTDOWN_BOTH = 0x3,      /* Shutdown recv and send. */
+    WINDIVERT_SHUTDOWN_RECV = 0x1, /* Shutdown recv. */
+    WINDIVERT_SHUTDOWN_SEND = 0x2, /* Shutdown send. */
+    WINDIVERT_SHUTDOWN_BOTH = 0x3, /* Shutdown recv and send. */
 } WINDIVERT_SHUTDOWN, *PWINDIVERT_SHUTDOWN;
 
 /*
@@ -148,10 +148,10 @@ static HANDLE (*WinDivertOpen)(const char *filter, WINDIVERT_LAYER layer, INT16 
 static BOOL (*WinDivertSend)(HANDLE handle, const VOID *pPacket, UINT packetLen, UINT *pSendLen,
                              const WINDIVERT_ADDRESS *pAddr);
 static BOOL (*WinDivertShutdown)(HANDLE handle, WINDIVERT_SHUTDOWN how);
-static BOOL (*WinDivertCLose)(HANDLE handle);
+static BOOL (*WinDivertClose)(HANDLE handle);
 
 /**
- * Writes the Wintun DLL bytes to a temporary file on disk
+ * Writes the WinDivert DLL bytes to a temporary file on disk
  * @param dllBytes Pointer to the DLL binary data
  * @param dllSize Size of the DLL data in bytes
  * @return Path to the temporary file or NULL on failure
@@ -201,7 +201,7 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
 }
 
 /**
- * Writes the Wintun SYS bytes to a temporary file on disk
+ * Writes the WinDivert SYS bytes to a temporary file on disk
  * @param sysBytes Pointer to the SYS binary data
  * @param sysSize Size of the SYS data in bytes
  * @return Path to the temporary file or NULL on failure
@@ -256,11 +256,11 @@ static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
 
 /**
  * Initializes the Windows TUN device system
- * Loads the Wintun DLL and required functions
+ * Loads the WinDivert DLL and required functions
  */
 static void rawWindowsStartup(void)
 {
-    if(GSTATE.windivert_dll_handle != NULL)
+    if (GSTATE.windivert_dll_handle != NULL)
     {
         LOGD("RawDevice: WinDivert DLL already loaded");
         return;
@@ -305,7 +305,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
     addr.Layer    = WINDIVERT_LAYER_NETWORK; // Set the layer to NETWORK
     addr.Outbound = 1;                       // Set outbound flag to true
 
-    addr.IPChecksum  = 1; //  Enable not recalculating IP checksum
+    addr.IPChecksum  = 1; // Enable not recalculating IP checksum
     addr.TCPChecksum = 1; // Enable not recalculating TCP checksum
     addr.UDPChecksum = 1; // Enable not recalculating UDP checksum
 
@@ -394,12 +394,33 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     return true;
 }
 
+// Function to load a function pointer from a DLL
+static bool loadFunctionFromDLL(const char *function_name, void *target)
+{
+    FARPROC proc = GetProcAddress(GSTATE.windivert_dll_handle, function_name);
+    if (proc == NULL)
+    {
+        LOGE("RawDevice: Error: Failed to load function '%s' from WinDivert DLL.", function_name);
+        return false;
+    }
+    memoryCopy(target, &proc, sizeof(FARPROC));
+    return true;
+}
+
 raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 {
     if (GSTATE.windivert_dll_handle == NULL)
     {
         rawWindowsStartup();
     }
+    if (! loadFunctionFromDLL("WinDivertOpen", &WinDivertOpen))
+        return NULL;
+    if (! loadFunctionFromDLL("WinDivertSend", &WinDivertSend))
+        return NULL;
+    if (! loadFunctionFromDLL("WinDivertShutdown", &WinDivertShutdown))
+        return NULL;
+    if (! loadFunctionFromDLL("WinDivertClose", &WinDivertClose))
+        return NULL;
 
     HANDLE handle = WinDivertOpen("false", WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_SEND_ONLY);
     if (handle == INVALID_HANDLE_VALUE)
@@ -441,7 +462,7 @@ void rawdeviceDestroy(raw_device_t *rdev)
     memoryFree(rdev->name);
     bufferpoolDestroy(rdev->writer_buffer_pool);
     WinDivertShutdown(rdev->handle, WINDIVERT_SHUTDOWN_BOTH);
-    WinDivertCLose(rdev->handle);
+    WinDivertClose(rdev->handle);
     // close(rdev->handle);
     memoryFree(rdev);
 }
