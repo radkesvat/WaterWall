@@ -161,7 +161,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
 
-    buffer_pool_t *reader_bpool = NULL;
 
     buffer_pool_t *writer_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
