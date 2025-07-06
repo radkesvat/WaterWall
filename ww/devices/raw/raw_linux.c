@@ -178,7 +178,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                            .routine_writer        = routineWriteToRaw,
                            .handle                = rsocket,
                            .mark                  = mark,
-                           .read_event_callback   = cb,
                            .userdata              = userdata,
                            .writer_buffer_channel = NULL,
                            .writer_buffer_pool    = writer_bpool};
