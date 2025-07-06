@@ -14,7 +14,7 @@ struct raw_device_s;
 typedef struct raw_device_s
 {
     char     *name;
-    int       handle;
+    int       socket;
     uint32_t  mark;
     void     *userdata;
     wthread_t read_thread;

@@ -46,7 +46,7 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
         volatile struct sockaddr_in to_addr = {.sin_family = AF_INET, .sin_addr.s_addr = ip_header->daddr};
 
         nwrite =
-            sendto(rdev->handle, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
+            sendto(rdev->socket, ip_header, sbufGetLength(buf), 0, (struct sockaddr *) (&to_addr), sizeof(to_addr));
 
         bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
 
@@ -140,7 +140,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     int rsocket = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);
     if (rsocket < 0)
     {
-        LOGE("RawDevice: unable to open a raw handle");
+        LOGE("RawDevice: unable to open a raw socket");
         return NULL;
     }
 
@@ -148,7 +148,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     {
         if (setsockopt(rsocket, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0)
         {
-            LOGE("RawDevice:  unable to set raw handle mark to %u", mark);
+            LOGE("RawDevice:  unable to set raw socket mark to %u", mark);
             return NULL;
         }
     }
@@ -163,7 +163,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
 
     buffer_pool_t *reader_bpool = NULL;
-    // if the user really wanted to read from raw handle
+    // if the user really wanted to read from raw socket
 
     buffer_pool_t *writer_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
@@ -176,7 +176,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
                            .running               = false,
                            .up                    = false,
                            .routine_writer        = routineWriteToRaw,
-                           .handle                = rsocket,
+                           .socket                = rsocket,
                            .mark                  = mark,
                            .userdata              = userdata,
                            .writer_buffer_channel = NULL,
@@ -194,6 +194,6 @@ void rawdeviceDestroy(raw_device_t *rdev)
     }
     memoryFree(rdev->name);
     bufferpoolDestroy(rdev->writer_buffer_pool);
-    close(rdev->handle);
+    close(rdev->socket);
     memoryFree(rdev);
 }
