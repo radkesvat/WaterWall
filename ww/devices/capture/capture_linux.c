@@ -297,7 +297,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     ssize_t           nread;
 
     struct pollfd fds[2];
-    fds[0].fd = cdev->handle;
+    fds[0].fd = cdev->socket;
 #if defined(OS_OPENBSD)
     fds[0].events = POLLIN;
 #else
@@ -332,7 +332,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             }
             if (fds[0].revents & POLLIN)
             {
-                nread = netfilterGetPacket(cdev->handle, cdev->queue_number, buf);
+                nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
 
                 if (nread == 0)
                 {
@@ -487,7 +487,7 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                            .running             = false,
                            .up                  = false,
                            .routine_reader      = routineReadFromCapture,
-                           .handle              = socket_netfilter,
+                           .socket              = socket_netfilter,
                            .queue_number        = queue_number,
                            .read_event_callback = cb,
                            .userdata            = userdata,
@@ -505,7 +505,7 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         memoryFree(cdev->bringdown_command);
         bufferpoolDestroy(cdev->reader_buffer_pool);
         masterpoolDestroy(cdev->reader_message_pool);
-        close(cdev->handle);
+        close(cdev->socket);
         memoryFree(cdev);
         return NULL;
     }
@@ -527,6 +527,6 @@ void capturedeviceDestroy(capture_device_t *cdev)
     bufferpoolDestroy(cdev->reader_buffer_pool);
     masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
     masterpoolDestroy(cdev->reader_message_pool);
-    close(cdev->handle);
+    close(cdev->socket);
     memoryFree(cdev);
 }

@@ -15,8 +15,8 @@ typedef void (*CaptureReadEventHandle)(struct capture_device_s *cdev, void *user
 
 typedef struct capture_device_s
 {
-    char     *name;
-    int       handle;
+    char *name;
+    int   socket;
     int   linux_pipe_fds[2]; // used for signaling read thread to stop
 
     uint32_t  queue_number;
@@ -31,13 +31,13 @@ typedef struct capture_device_s
 
     CaptureReadEventHandle read_event_callback;
 
-    char           *bringup_command;
-    char           *bringdown_command;
-    int             netfilter_queue_number;
-    
-    atomic_int      packets_queued;
-    atomic_bool     running;
-    atomic_bool     up;
+    char *bringup_command;
+    char *bringdown_command;
+    int   netfilter_queue_number;
+
+    atomic_int  packets_queued;
+    atomic_bool running;
+    atomic_bool up;
 
 } capture_device_t;
 
