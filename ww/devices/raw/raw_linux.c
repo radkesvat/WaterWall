@@ -134,7 +134,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     return true;
 }
 
-raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata, RawReadEventHandle cb)
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 {
 
     int rsocket = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);
