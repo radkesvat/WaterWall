@@ -144,7 +144,7 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
     {
         if ((next->flags & kNodeFlagChainEnd) != kNodeFlagChainEnd)
         {
-            LOGF("Node Map Failure: node (\"%s\") cannot chain to node (\"%s\") because it is a chain ", node->name, node->next);
+            LOGF("Node Map Failure: node (\"%s\") cannot chain to node (\"%s\") because it is in a chain ", node->name, node->next);
             terminateProgram(1);
         }
         assert(tnext->chain->tunnels.len == 1);
