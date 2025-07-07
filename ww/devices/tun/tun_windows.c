@@ -634,7 +634,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .routine_writer        = routineWriteToTun,
                             .read_event_callback   = cb,
                             .userdata              = userdata,
-                            .writer_buffer_channel = chanOpen(sizeof(void*),kTunWriteChannelQueueMax),
+                            .writer_buffer_channel = NULL,
                             .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
                             .reader_buffer_pool    = reader_bpool,
                             .writer_buffer_pool    = writer_bpool,
@@ -703,7 +703,6 @@ void tundeviceDestroy(tun_device_t *tdev)
     bufferpoolDestroy(tdev->writer_buffer_pool);
     masterpoolMakeEmpty(tdev->reader_message_pool,NULL);
     masterpoolDestroy(tdev->reader_message_pool);
-    chanFree(tdev->writer_buffer_channel);
 
     memoryFree(tdev);
 }

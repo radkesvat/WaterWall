@@ -109,7 +109,7 @@ option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the cor
 
 option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
 
-if(LINUX AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
+if((LINUX OR WIN32) AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
    # todo (other platforms)
   option(INCLUDE_RAWSOCKET "link RawSocket staticly to the core"  TRUE)
 endif()

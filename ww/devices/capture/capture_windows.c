@@ -399,7 +399,8 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 {
     assert(! cdev->up);
 
-    cdev->handle = WinDivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
+    cdev->handle =
+        WinDivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY | WINDIVERT_FLAG_DROP);
     if (cdev->handle == INVALID_HANDLE_VALUE)
     {
         // Handle error
@@ -446,7 +447,7 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
         return false;
     }
     memoryCopy(target, &proc, sizeof(FARPROC));
-    return false;
+    return true;
 }
 capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
                                       CaptureReadEventHandle cb)
@@ -456,6 +457,8 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
     {
         rawWindowsStartup();
     }
+    if (! loadFunctionFromDLL("WinDivertOpen", &WinDivertOpen))
+        return NULL;
     if (! loadFunctionFromDLL("WinDivertRecv", &WinDivertRecv))
         return NULL;
     if (! loadFunctionFromDLL("WinDivertSend", &WinDivertSend))
@@ -464,9 +467,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         return NULL;
     if (! loadFunctionFromDLL("WinDivertClose", &WinDivertClose))
         return NULL;
-
-   
-  
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
@@ -489,10 +489,8 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                            .packets_queued      = 0,
                            .reader_buffer_pool  = reader_bpool};
 
-                           
     memorySet(cdev->filter, 0, sizeof(cdev->filter));
     stringNPrintf(cdev->filter, sizeof(cdev->filter), "ip.SrcAddr == %s", capture_ip);
-
 
     masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 
