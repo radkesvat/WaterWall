@@ -21,7 +21,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     tunnel_t *t = userdata;
 
     // rawsocket_tstate_t *state = tunnelGetState(t);
-    printIPPacketInfo("RawSocket received", sbufGetRawPtr(buf));
+    // printIPPacketInfo("RawSocket received", sbufGetRawPtr(buf));
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
 
@@ -34,7 +34,7 @@ void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     // discard t;
     rawsocket_tstate_t *state = tunnelGetState(t);
 
-    printIPPacketInfo("RawSocket sending", sbufGetRawPtr(buf));
+    // printIPPacketInfo("RawSocket sending", sbufGetRawPtr(buf));
     struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
 
     if (l->recalculate_checksum && IPH_V(ipheader) == 4)
