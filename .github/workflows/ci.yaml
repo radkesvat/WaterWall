@@ -335,6 +335,39 @@ jobs:
       - name: Show ccache statistics
         run: ccache -sv
 
+  linux-arm:
+    name: linux-arm64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.cpm-path }}
+          key: ${{ env.cpm-key }}
+          enableCrossOsArchive: true
+      - name: Install dependencies and cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ccache gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - name: Configure CMake for ARM64
+        run: >
+          cmake -B build \
+            -DCMAKE_SYSTEM_NAME=Linux \
+            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
+            -DOPENSSL_CONFIGURE_VERBOSE=ON
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Waterwall_ubuntu22_arm64
+          path: ${{ github.workspace }}/build/Waterwall
+      - name: Show ccache statistics
+        run: ccache -sv
+
   release:
       needs:
         # - android
