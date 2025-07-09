@@ -50,6 +50,7 @@ static void localThreadEventReceived(wevent_t *ev)
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
     atomicSubExplicit(&(msg->tdev->packets_queued), 1, memory_order_release);
+   
 
     msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, wid);
     masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
@@ -82,18 +83,9 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
     struct pollfd fds[2];
     fds[0].fd     = tdev->handle;
-#if defined (OS_OPENBSD)
-    fds[0].events = POLLIN;
-#else
-    fds[0].events = POLL_IN;
-#endif
     fds[1].fd     = tdev->linux_pipe_fds[0];
-#if defined (OS_OPENBSD)
+    fds[0].events = POLLIN;
     fds[1].events = POLLIN;
-#else
-    fds[1].events = POLL_IN;
-#endif
-
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
         if (atomicLoadExplicit(&(tdev->packets_queued), memory_order_acquire) > 256)
@@ -147,8 +139,15 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 }
 
                 distributePacketPayload(tdev, getNextDistributionWID(), buf);
+                continue;
             }
+            LOGW("TunDevice: read routine woke up but none of the fds had events, value is %d", ret);
         }
+        else
+        {
+            LOGW("TunDevice: read routine woke up but poll returned %d", ret);
+        }
+        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }
 
     return 0;
@@ -198,11 +197,6 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 #if ! defined(OS_BSD)
     assert(sbufGetLength(buf) > sizeof(struct iphdr));
 #endif
-    if (atomicLoadRelaxed(&(tdev->running)) == false)
-    {
-        LOGE("Write failed, device is not running");
-        return false;
-    }
 
     bool closed = false;
     if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
@@ -335,7 +329,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     if (tdev->read_event_callback != NULL)
     {
         ssize_t _unused = write(tdev->linux_pipe_fds[1], "x", 1);
-        (void)_unused;
+        (void) _unused;
 
         threadJoin(tdev->read_thread);
     }
@@ -438,7 +432,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .reader_buffer_pool  = reader_bpool,
                             .writer_buffer_pool  = writer_bpool};
 
-     if (pipe(tdev->linux_pipe_fds) != 0)
+    if (pipe(tdev->linux_pipe_fds) != 0)
     {
         LOGE("TunDevice: failed to create pipe for linux_pipe_fds");
         memoryFree(tdev->name);
@@ -463,7 +457,7 @@ void tundeviceDestroy(tun_device_t *tdev)
     memoryFree(tdev->name);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
-    masterpoolMakeEmpty(tdev->reader_message_pool,NULL);
+    masterpoolMakeEmpty(tdev->reader_message_pool, NULL);
     masterpoolDestroy(tdev->reader_message_pool);
     close(tdev->handle);
     close(tdev->linux_pipe_fds[0]);

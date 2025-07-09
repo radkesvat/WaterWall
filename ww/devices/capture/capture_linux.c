@@ -70,7 +70,7 @@ static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sb
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
-    *msg = (struct msg_event){.cdev = cdev, .buf = buf};
+    *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -297,26 +297,21 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
     ssize_t           nread;
 
     struct pollfd fds[2];
-    fds[0].fd = cdev->socket;
-#if defined(OS_OPENBSD)
+    fds[0].fd     = cdev->socket;
+    fds[1].fd     = cdev->linux_pipe_fds[0];
     fds[0].events = POLLIN;
-#else
-    fds[0].events = POLL_IN;
-#endif
-    fds[1].fd = cdev->linux_pipe_fds[0];
-#if defined(OS_OPENBSD)
     fds[1].events = POLLIN;
-#else
-    fds[1].events = POLL_IN;
-#endif
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
         if (atomicLoadExplicit(&(cdev->packets_queued), memory_order_acquire) > 256)
         {
+            LOGD("CaptureDevice: too many packets queued, waiting..., value is %d",
+                 atomicLoadExplicit(&(cdev->packets_queued), memory_order_relaxed));
             ww_msleep(1);
             continue;
         }
+
         buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
 
         buf     = sbufReserveSpace(buf, kReadPacketSize);
@@ -351,8 +346,15 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                 sbufSetLength(buf, nread);
 
                 distributePacketPayload(cdev, getNextDistributionWID(), buf);
+                continue;
             }
+            LOGW("CaptureDevice: read routine woke up but none of the fds had events, value is %d", ret);
         }
+        else
+        {
+            LOGW("CaptureDevice: read routine woke up but poll returned %d", ret);
+        }
+        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
     }
 
     return 0;
@@ -483,20 +485,20 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
     *cdev =
-        (capture_device_t){.name                = stringDuplicate(name),
-                           .running             = false,
-                           .up                  = false,
-                           .routine_reader      = routineReadFromCapture,
-                           .socket              = socket_netfilter,
-                           .queue_number        = queue_number,
-                           .read_event_callback = cb,
-                           .userdata            = userdata,
-                           .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                           .packets_queued      = 0,
-                           .netfilter_queue_number = queue_number,
-                           .bringup_command        = bringup_cmd,
-                           .bringdown_command      = bringdown_cmd,
-                           .reader_buffer_pool     = reader_bpool};
+        (capture_device_t) {.name                = stringDuplicate(name),
+                            .running             = false,
+                            .up                  = false,
+                            .routine_reader      = routineReadFromCapture,
+                            .socket              = socket_netfilter,
+                            .queue_number        = queue_number,
+                            .read_event_callback = cb,
+                            .userdata            = userdata,
+                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+                            .packets_queued      = 0,
+                            .netfilter_queue_number = queue_number,
+                            .bringup_command        = bringup_cmd,
+                            .bringdown_command      = bringdown_cmd,
+                            .reader_buffer_pool     = reader_bpool};
     if (pipe(cdev->linux_pipe_fds) != 0)
     {
         LOGE("CaptureDevice: failed to create pipe for linux_pipe_fds");
