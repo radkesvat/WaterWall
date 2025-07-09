@@ -646,7 +646,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     int wideSize = MultiByteToWideChar(CP_UTF8, 0, name, -1, NULL, 0);
 
-    tdev->name = (wchar_t *) malloc(wideSize * sizeof(wchar_t));
+    tdev->name = (wchar_t *) memoryAllocate(wideSize * sizeof(wchar_t));
     if (! tdev->name)
     {
         LOGE("TunDevice: Memory allocation failed!");
