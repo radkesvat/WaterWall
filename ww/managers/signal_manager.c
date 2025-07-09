@@ -151,15 +151,15 @@ static void multiplexedSignalHandler(int signum)
     exitHandler();
 
     // allowing normal exit
-    // if (state->raise_defaults)
-    // {
-    //     raise(signum)
+    if (state->raise_defaults)
+    {
+        raise(signum);
 
-    //     // written = write(STDOUT_FILENO,
-    //     //                 "SignalManager: The program should have been terminated before this, exiting...\n", 75);
-    //     // discard written;
-    //     // _Exit(1);
-    // }
+        // written = write(STDOUT_FILENO,
+        //                 "SignalManager: The program should have been terminated before this, exiting...\n", 75);
+        // discard written;
+        // _Exit(1);
+    }
 }
 
 void signalmanagerStart(void)
