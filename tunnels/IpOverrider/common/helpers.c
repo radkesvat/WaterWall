@@ -18,11 +18,7 @@ void ipoverriderReplacerDestModeUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *
     {
         memoryCopy(&(ipheader->dest.addr), &state->ov_4, 4);
         l->recalculate_checksum = true;
-        // IPH_CHKSUM_SET(ipheader, 0);
-
-        // u16_t new_chksum = inet_chksum(ipheader, IPH_HL_BYTES(ipheader));
-
-        // IPH_CHKSUM_SET(ipheader, new_chksum);
+  
     }
     // else if (state->support6 && IPH_V(ipheader) == 6)
     // {

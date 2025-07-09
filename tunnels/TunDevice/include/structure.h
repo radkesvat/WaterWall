@@ -60,3 +60,4 @@ void tundeviceLinestateInitialize(tundevice_lstate_t *ls);
 void tundeviceLinestateDestroy(tundevice_lstate_t *ls);
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid);
+void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);

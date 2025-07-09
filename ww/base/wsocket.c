@@ -1,5 +1,7 @@
 #include "wsocket.h"
 
+#include "shiftbuffer.h"
+
 #include "loggers/internal_logger.h"
 #include "werr.h"
 
@@ -560,4 +562,126 @@ bool verifyIPCdir(const char *ipc)
              "verifyIPCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix", ipc);
     }
     return true;
+}
+/** Sum the pseudo‑header (src, dst, proto, length) in host order */
+static uint32_t checksum_pseudo_header(const struct ip4_addr_packed *src, const struct ip4_addr_packed *dst, u8_t proto,
+                                       u16_t length)
+{
+    uint32_t sum   = 0;
+    uint32_t src_h = lwip_ntohl(src->addr);
+    uint32_t dst_h = lwip_ntohl(dst->addr);
+
+    /* high and low 16 bits of source address */
+    sum += (src_h >> 16) & 0xFFFF;
+    sum += src_h & 0xFFFF;
+    /* high and low 16 bits of destination address */
+    sum += (dst_h >> 16) & 0xFFFF;
+    sum += dst_h & 0xFFFF;
+    /* protocol (zero‑padded high byte + proto in low byte) */
+    sum += proto;
+    /* TCP/UDP length */
+    sum += length;
+
+    return sum;
+}
+
+/** Sum the payload buffer as 16‑bit big‑endian words */
+static uint32_t checksum_buffer(const uint8_t *data, size_t len)
+{
+    uint32_t sum = 0;
+    while (len > 1)
+    {
+        sum += (data[0] << 8) | data[1];
+        data += 2;
+        len -= 2;
+    }
+    if (len)
+    {
+        /* pad odd byte with zero in low‑order byte */
+        sum += data[0] << 8;
+    }
+    return sum;
+}
+
+/** Fold carries and return the one's‑complement result */
+static uint16_t finalize_checksum(uint32_t sum)
+{
+    while (sum >> 16)
+    {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    return (uint16_t) ~sum;
+}
+
+/** Compute TCP/UDP checksum including pseudo‑header */
+static uint16_t compute_tcp_udp_checksum(const struct ip4_addr_packed *src, const struct ip4_addr_packed *dst,
+                                         u8_t proto, const uint8_t *transport_hdr, u16_t transport_len)
+{
+    uint32_t sum = checksum_pseudo_header(src, dst, proto, transport_len);
+    sum += checksum_buffer(transport_hdr, transport_len);
+    return finalize_checksum(sum);
+}
+
+void recalculatePacketChecksum(uint8_t *buf)
+{
+    struct ip_hdr *ipheader = (struct ip_hdr *) buf;
+
+    if (IPH_V(ipheader) != 4)
+        return;
+
+    /* 1) Recalculate IP header checksum */
+    IPH_CHKSUM_SET(ipheader, 0);
+    IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, IPH_HL_BYTES(ipheader)));
+
+    /* 2) Get transport header & length */
+    u16_t ip_hdr_len = IPH_HL(ipheader) * 4;
+    u16_t ip_tot_len = lwip_ntohs(IPH_LEN(ipheader));
+    if (ip_tot_len < ip_hdr_len)
+        return; /* malformed */
+
+    uint8_t *transport_hdr = buf + ip_hdr_len;
+    u16_t    transport_len = ip_tot_len - ip_hdr_len;
+    u8_t     protocol      = IPH_PROTO(ipheader);
+
+    /* 3) Recalculate TCP/UDP/ICMP checksums */
+    switch (protocol)
+    {
+    case IP_PROTO_TCP: {
+        struct tcp_hdr *tcph = (struct tcp_hdr *) transport_hdr;
+        tcph->chksum         = 0;
+        tcph->chksum         = lwip_htons(
+            compute_tcp_udp_checksum(&ipheader->src, &ipheader->dest, IP_PROTO_TCP, transport_hdr, transport_len));
+        break;
+    }
+    case IP_PROTO_UDP: {
+        struct udp_hdr *udph = (struct udp_hdr *) transport_hdr;
+        udph->chksum         = 0;
+        udph->chksum         = lwip_htons(
+            compute_tcp_udp_checksum(&ipheader->src, &ipheader->dest, IP_PROTO_UDP, transport_hdr, transport_len));
+        /* RFC 768: checksum of zero is transmitted as all‑ones */
+        if (udph->chksum == 0)
+        {
+            udph->chksum = 0xFFFF;
+        }
+        break;
+    }
+    case IP_PROTO_ICMP: {
+        /* ICMP has no pseudo‑header */
+        /* sum over ICMP header + payload */
+        struct icmp_hdr {
+            uint8_t type;
+            uint8_t code;
+            uint16_t chksum;
+        };
+        struct icmp_hdr *icmph = (struct icmp_hdr *)transport_hdr;
+        icmph->chksum = 0;
+        uint32_t sum  = checksum_buffer(transport_hdr, transport_len);
+        uint16_t csum = finalize_checksum(sum);
+        icmph->chksum = lwip_htons(csum);
+        break;
+    }
+    default:
+        /* other protocols: leave as is */
+        break;
+    }
 }

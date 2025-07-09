@@ -456,9 +456,9 @@ static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_ad
         IP4_ADDR(&subnet_mask->u_addr.ip4, (subnet_mask_value >> 24) & 0xFF, (subnet_mask_value >> 16) & 0xFF,
                  (subnet_mask_value >> 8) & 0xFF, subnet_mask_value & 0xFF);
 
-        return 4; 
+        return 4;
     }
-    
+
     ip6_addr_t ip6;
     if (ip6addr_aton(ip_part, &ip6))
     {
@@ -559,5 +559,7 @@ static inline bool sockaddrToIpAddr(const sockaddr_u *src, ip_addr_t *dest)
 
 bool verifyIPPort(const char *ipc);
 bool verifyIPCdir(const char *ipc);
+
+void recalculatePacketChecksum(uint8_t *buf);
 
 #endif // WW_SOCKET_H_

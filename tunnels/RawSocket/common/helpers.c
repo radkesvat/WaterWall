@@ -10,7 +10,7 @@ static void something(void)
 void rawsocketExitHook(void *userdata, int sig)
 {
     (void) sig;
-    char* cmdbuf = userdata;
+    char *cmdbuf = userdata;
     execCmd(cmdbuf);
 }
 
@@ -20,14 +20,12 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     (void) cdev;
     tunnel_t *t = userdata;
 
-    //rawsocket_tstate_t *state = tunnelGetState(t);
-    //printIPPacketInfo("RawSocket received: ", sbufGetRawPtr(buf));
+    // rawsocket_tstate_t *state = tunnelGetState(t);
+    printIPPacketInfo("RawSocket received", sbufGetRawPtr(buf));
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
 
     tunnelPrevDownStreamPayload(t, l, buf);
-
-
 }
 
 void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -36,13 +34,12 @@ void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     // discard t;
     rawsocket_tstate_t *state = tunnelGetState(t);
 
-    // printIPPacketInfo("RawSocket sending: ", sbufGetRawPtr(buf));
+    printIPPacketInfo("RawSocket sending", sbufGetRawPtr(buf));
     struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
 
-    if (l->recalculate_checksum)
+    if (l->recalculate_checksum && IPH_V(ipheader) == 4)
     {
-        IPH_CHKSUM_SET(ipheader, 0);
-        IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, IPH_HL_BYTES(ipheader)));
+        recalculatePacketChecksum(sbufGetMutablePtr(buf));
         l->recalculate_checksum = false;
     }
 
