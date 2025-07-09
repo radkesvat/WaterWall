@@ -24,21 +24,19 @@ enum
     kReadPacketSize                       = 1500,
     kEthDataLen                           = 1500,
     kMasterMessagePoolsbufGetLeftCapacity = 64,
-    kQueueLen                             = 16384,
+    kQueueLen                             = 16384 * 32,
     kCaptureWriteChannelQueueMax          = 128
 };
 
 static const char *ip_tables_enable_queue_mi  = "iptables -I INPUT -s %s -j NFQUEUE --queue-num %d";
 static const char *ip_tables_disable_queue_mi = "iptables -D INPUT -s %s -j NFQUEUE --queue-num %d";
 
-static const char *sysctl_set_rmem_max         = "sysctl -w net.core.rmem_max=67108864";
-static const char *sysctl_set_rmem_default     = "sysctl -w net.core.rmem_default=33554432";
-static const char *sysctl_set_nfct_buckets     = "sysctl -w net.netfilter.nf_conntrack_buckets=65536";
-static const char *sysctl_set_nfct_max         = "sysctl -w net.netfilter.nf_conntrack_max=262144";
-static const char *sysctl_set_wmem_max         = "sysctl -w net.core.wmem_max=33554432";
-static const char *sysctl_set_wmem_default     = "sysctl -w net.core.wmem_default=16777216";
-
-
+static const char *sysctl_set_rmem_max     = "sysctl -w net.core.rmem_max=67108864";
+static const char *sysctl_set_rmem_default = "sysctl -w net.core.rmem_default=33554432";
+static const char *sysctl_set_nfct_buckets = "sysctl -w net.netfilter.nf_conntrack_buckets=65536";
+static const char *sysctl_set_nfct_max     = "sysctl -w net.netfilter.nf_conntrack_max=262144";
+static const char *sysctl_set_wmem_max     = "sysctl -w net.core.wmem_max=33554432";
+static const char *sysctl_set_wmem_default = "sysctl -w net.core.wmem_default=16777216";
 
 struct msg_event
 {
@@ -401,7 +399,6 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         return false;
     }
 
-
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
@@ -443,7 +440,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                                       CaptureReadEventHandle cb)
 {
 
-
     /* Fixing the most crazy socket stop reason */
     execCmd(sysctl_set_rmem_max);
     execCmd(sysctl_set_rmem_default);
@@ -451,7 +447,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
     execCmd(sysctl_set_nfct_max);
     execCmd(sysctl_set_wmem_max);
     execCmd(sysctl_set_wmem_default);
-
 
     int socket_netfilter = socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER);
     if (socket_netfilter < 0)
@@ -515,7 +510,7 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         close(socket_netfilter);
         return NULL;
     }
-    int rcvbuf_size = 1024 * 1024; // 1MB
+    int rcvbuf_size = 64 * 1024 * 1024; // 1MB
     if (setsockopt(socket_netfilter, SOL_SOCKET, SO_RCVBUF, &rcvbuf_size, sizeof(rcvbuf_size)) < 0)
     {
         LOGE("CaptureDevice: failed to set SO_RCVBUF: %s", strerror(errno));
