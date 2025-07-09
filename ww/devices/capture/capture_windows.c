@@ -400,7 +400,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     assert(! cdev->up);
 
     cdev->handle =
-        WinDivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY | WINDIVERT_FLAG_DROP);
+        WinDivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
     if (cdev->handle == INVALID_HANDLE_VALUE)
     {
         // Handle error
