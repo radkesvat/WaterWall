@@ -325,7 +325,6 @@ static void localThreadEventReceived(wevent_t *ev)
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-    atomicSubExplicit(&(msg->cdev->packets_queued), 1, memory_order_release);
 
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
@@ -334,7 +333,6 @@ static void localThreadEventReceived(wevent_t *ev)
 
 static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
 {
-    atomicAddExplicit(&(cdev->packets_queued), 1, memory_order_release);
 
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
@@ -356,11 +354,6 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        if (atomicLoadExplicit(&(cdev->packets_queued), memory_order_acquire) > 256)
-        {
-            ww_msleep(1);
-            continue;
-        }
 
         buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
 
@@ -486,7 +479,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                            .read_event_callback = cb,
                            .userdata            = userdata,
                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                           .packets_queued      = 0,
                            .reader_buffer_pool  = reader_bpool};
 
     memorySet(cdev->filter, 0, sizeof(cdev->filter));

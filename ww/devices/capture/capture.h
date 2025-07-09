@@ -39,7 +39,6 @@ typedef struct capture_device_s
 
     CaptureReadEventHandle read_event_callback;
 
-    atomic_int  packets_queued;
     atomic_bool running;
     atomic_bool up;
 

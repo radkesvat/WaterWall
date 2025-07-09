@@ -24,12 +24,21 @@ enum
     kReadPacketSize                       = 1500,
     kEthDataLen                           = 1500,
     kMasterMessagePoolsbufGetLeftCapacity = 64,
-    kQueueLen                             = 512,
+    kQueueLen                             = 16384,
     kCaptureWriteChannelQueueMax          = 128
 };
 
 static const char *ip_tables_enable_queue_mi  = "iptables -I INPUT -s %s -j NFQUEUE --queue-num %d";
 static const char *ip_tables_disable_queue_mi = "iptables -D INPUT -s %s -j NFQUEUE --queue-num %d";
+
+static const char *sysctl_set_rmem_max         = "sysctl -w net.core.rmem_max=67108864";
+static const char *sysctl_set_rmem_default     = "sysctl -w net.core.rmem_default=33554432";
+static const char *sysctl_set_nfct_buckets     = "sysctl -w net.netfilter.nf_conntrack_buckets=65536";
+static const char *sysctl_set_nfct_max         = "sysctl -w net.netfilter.nf_conntrack_max=262144";
+static const char *sysctl_set_wmem_max         = "sysctl -w net.core.wmem_max=33554432";
+static const char *sysctl_set_wmem_default     = "sysctl -w net.core.wmem_default=16777216";
+
+
 
 struct msg_event
 {
@@ -56,8 +65,6 @@ static void localThreadEventReceived(wevent_t *ev)
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-    atomicSubExplicit(&(msg->cdev->packets_queued), 1, memory_order_release);
-
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
@@ -65,7 +72,6 @@ static void localThreadEventReceived(wevent_t *ev)
 
 static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
 {
-    atomicAddExplicit(&(cdev->packets_queued), 1, memory_order_release);
 
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
@@ -304,27 +310,45 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-        if (atomicLoadExplicit(&(cdev->packets_queued), memory_order_acquire) > 256)
-        {
-            LOGD("CaptureDevice: too many packets queued, waiting..., value is %d",
-                 atomicLoadExplicit(&(cdev->packets_queued), memory_order_relaxed));
-            ww_msleep(1);
-            continue;
-        }
 
         buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
+        buf = sbufReserveSpace(buf, kReadPacketSize);
 
-        buf     = sbufReserveSpace(buf, kReadPacketSize);
         int ret = poll(fds, 2, -1);
+        if (ret < 0)
+        {
+            if (errno == EINTR)
+            {
+                bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+                continue; // Interrupted by signal, just retry
+            }
+            LOGE("CaptureDevice: Exit read routine due to poll failed with error %d (%s)", errno, strerror(errno));
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+            break;
+        }
+
         if (ret > 0)
         {
             if (fds[1].revents & POLLIN)
             {
                 bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-
-                LOGW("RawDevice: Exit read routine due to pipe event");
+                LOGW("CaptureDevice: Exit read routine due to pipe event");
                 break;
             }
+
+            // Check for socket errors
+            if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+            {
+                int       socket_error = 0;
+                socklen_t err_len      = sizeof(socket_error);
+                getsockopt(cdev->socket, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
+                LOGE("CaptureDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
+                     (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
+                     (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
+                bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+                break;
+            }
+
             if (fds[0].revents & POLLIN)
             {
                 nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
@@ -332,27 +356,33 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                 if (nread == 0)
                 {
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-                    LOGW("CaptureDevice: Exit read routine due to End Of File");
+                    LOGE("CaptureDevice: Exit read routine due to End Of File");
                     return 0;
                 }
 
                 if (nread < 0)
                 {
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-                    LOGW("CaptureDevice: failed to read a packet from netfilter socket, retrying...");
+                    LOGW("CaptureDevice: failed to read a packet from netfilter socket,errno is %d (%s), retrying...",
+                         errno, strerror(errno));
                     continue;
                 }
 
                 sbufSetLength(buf, nread);
-
                 distributePacketPayload(cdev, getNextDistributionWID(), buf);
                 continue;
             }
-            LOGW("CaptureDevice: read routine woke up but none of the fds had events, value is %d", ret);
+
+            // If we get here, poll returned > 0 but none of our expected events occurred
+            LOGE("CaptureDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, "
+                 "fd[1].revents=0x%x",
+                 fds[0].revents, fds[1].revents);
         }
         else
         {
-            LOGW("CaptureDevice: read routine woke up but poll returned %d", ret);
+            // ret == 0, which shouldn't happen with infinite timeout
+            LOGF("CaptureDevice: poll returned 0 with infinite timeout");
+            exit(1);
         }
         bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
     }
@@ -370,6 +400,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
         terminateProgram(1);
         return false;
     }
+
 
     bufferpoolUpdateAllocationPaddings(cdev->reader_buffer_pool,
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
@@ -411,6 +442,16 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
                                       CaptureReadEventHandle cb)
 {
+
+
+    /* Fixing the most crazy socket stop reason */
+    execCmd(sysctl_set_rmem_max);
+    execCmd(sysctl_set_rmem_default);
+    execCmd(sysctl_set_nfct_buckets);
+    execCmd(sysctl_set_nfct_max);
+    execCmd(sysctl_set_wmem_max);
+    execCmd(sysctl_set_wmem_default);
+
 
     int socket_netfilter = socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER);
     if (socket_netfilter < 0)
@@ -474,6 +515,13 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         close(socket_netfilter);
         return NULL;
     }
+    int rcvbuf_size = 1024 * 1024; // 1MB
+    if (setsockopt(socket_netfilter, SOL_SOCKET, SO_RCVBUF, &rcvbuf_size, sizeof(rcvbuf_size)) < 0)
+    {
+        LOGE("CaptureDevice: failed to set SO_RCVBUF: %s", strerror(errno));
+        close(socket_netfilter);
+        return NULL;
+    }
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
@@ -494,7 +542,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                             .read_event_callback = cb,
                             .userdata            = userdata,
                             .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                            .packets_queued      = 0,
                             .netfilter_queue_number = queue_number,
                             .bringup_command        = bringup_cmd,
                             .bringdown_command      = bringdown_cmd,

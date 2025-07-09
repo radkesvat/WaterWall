@@ -49,8 +49,6 @@ static void localThreadEventReceived(wevent_t *ev)
 
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
-    atomicSubExplicit(&(msg->tdev->packets_queued), 1, memory_order_release);
-   
 
     msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, wid);
     masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
@@ -59,7 +57,6 @@ static void localThreadEventReceived(wevent_t *ev)
 // Distribute packet payload to the target thread
 static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t *buf)
 {
-    atomicAddExplicit(&(tdev->packets_queued), 1, memory_order_release);
 
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
@@ -86,67 +83,91 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     fds[1].fd     = tdev->linux_pipe_fds[0];
     fds[0].events = POLLIN;
     fds[1].events = POLLIN;
+
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        if (atomicLoadExplicit(&(tdev->packets_queued), memory_order_acquire) > 256)
-        {
-            ww_msleep(1);
-            continue;
-        }
 
         buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
         assert(sbufGetRightCapacity(buf) >= kReadPacketSize);
 
         int ret = poll(fds, 2, -1);
+
+        if (ret < 0)
+        {
+            if (errno == EINTR)
+            {
+                bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+                continue; // Interrupted by signal, just retry
+            }
+            LOGE("TunDevice: Exit read routine due to poll failed with error %d (%s)", errno, strerror(errno));
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            break;
+        }
+
         if (ret > 0)
         {
             if (fds[1].revents & POLLIN)
             {
                 bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-
                 LOGW("TunDevice: Exit read routine due to pipe event");
                 break;
             }
+
+            // Check for socket errors
+            if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+            {
+                int       socket_error = 0;
+                socklen_t err_len      = sizeof(socket_error);
+                getsockopt(tdev->handle, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
+                LOGE("TunDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
+                     (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
+                     (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
+                bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+                break;
+            }
+
             if (fds[0].revents & POLLIN)
             {
-
                 nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
 
                 if (nread == 0)
                 {
                     bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-                    LOGW("TunDevice: Exit read routine due to End Of File");
+                    LOGE("TunDevice: Exit read routine due to End Of File");
                     return 0;
                 }
 
                 if (nread < 0)
                 {
                     bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-                    LOGE("TunDevice: reading a packet from TUN device failed, code: %d", nread);
-                    if (errno == EINVAL || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-                    {
-                        continue;
-                    }
-                    LOGE("TunDevice: Exit read routine due to critical error");
-                    return 0;
+                    LOGW("TunDevice: failed to read a packet from TUN device,errno is %d (%s), "
+                         "retrying...",
+                         errno, strerror(errno));
+                    continue;
                 }
-
-                sbufSetLength(buf, (uint32_t) nread);
 
                 if (TUN_LOG_EVERYTHING)
                 {
                     LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
                 }
 
+                sbufSetLength(buf, nread);
                 distributePacketPayload(tdev, getNextDistributionWID(), buf);
                 continue;
             }
-            LOGW("TunDevice: read routine woke up but none of the fds had events, value is %d", ret);
+
+            // If we get here, poll returned > 0 but none of our expected events occurred
+            LOGE("TunDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, "
+                 "fd[1].revents=0x%x",
+                 fds[0].revents, fds[1].revents);
         }
         else
         {
-            LOGW("TunDevice: read routine woke up but poll returned %d", ret);
+            // ret == 0, which shouldn't happen with infinite timeout
+            LOGF("TunDevice: poll returned 0 with infinite timeout");
+            exit(1);
         }
+
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }
 
@@ -428,7 +449,6 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .userdata              = userdata,
                             .writer_buffer_channel = NULL,
                             .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                            .packets_queued      = 0,
                             .reader_buffer_pool  = reader_bpool,
                             .writer_buffer_pool  = writer_bpool};
 
