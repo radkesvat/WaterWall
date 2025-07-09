@@ -4,7 +4,7 @@
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid)
 {
-    discard tdev;
+    discard   tdev;
     tunnel_t *t = userdata;
 
 #if LOG_PACKET_INFO
@@ -33,7 +33,7 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
         }
 #endif
     }
-#if !LOG_V6
+#if ! LOG_V6
     else if (IPH_V(iphdr) == 6)
     {
         goto afterlog;
@@ -45,7 +45,6 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
 afterlog:;
 
 #endif
-
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
     lineLock(l);
@@ -81,7 +80,13 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (l->recalculate_checksum && IPH_V(ipheader) == 4)
     {
         recalculatePacketChecksum(sbufGetMutablePtr(buf));
-        l->recalculate_checksum        = false;
+        l->recalculate_checksum = false;
+    }
+    if (UNLIKELY(state->tdev->up == false))
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+        LOGW("TunDevice: device is down, cannot write packet");
+        return;
     }
 
     if (! tundeviceWrite(tdev, buf))
