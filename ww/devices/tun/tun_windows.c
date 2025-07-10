@@ -484,11 +484,6 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     // minimum length of an IP header is 20 bytes
     assert(sbufGetLength(buf) > 20);
-    if (atomicLoadRelaxed(&(tdev->running)) == false)
-    {
-        LOGE("TunDevice: Write failed, device is not running");
-        return false;
-    }
 
     bool closed = false;
     if (! chanTrySend(tdev->writer_buffer_channel, (void *) &buf, &closed))
