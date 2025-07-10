@@ -248,7 +248,7 @@ static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
         _tcscat(tempPath, _T("\\"));
     }
 
-    // Append "mylib.sys"
+    // Append sys file name
     _tcscat(tempPath, _T("WinDivert64.sys"));
 
     // Open the temporary file for writing
@@ -278,7 +278,7 @@ static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
 }
 
 /**
- * Initializes the Windows TUN device system
+ * Initializes the Windows RawDevice system
  * Loads the WinDivert DLL and required functions
  */
 static void rawWindowsStartup(void)
@@ -289,7 +289,7 @@ static void rawWindowsStartup(void)
         return;
     }
 
-    // Write the embedded DLL to a temporary file
+    // Write the embedded driver to a temporary file
     TCHAR *tempSysPath = writeSYSToTempFile(&windivert_sys[0], windivert_sys_len);
     if (! tempSysPath)
     {
@@ -366,7 +366,6 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
             if (ERROR_NO_DATA == GetLastError())
             {
-                // No data available, continue to next iteration
                 LOGE("CaptureDevice: Handle shutdown or no data available, exiting read routine...");
                 break;
             }
