@@ -174,7 +174,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_X64_${{ matrix.cc }}
+          name: Waterwall_linux_x64_${{ matrix.cc }}
           path: ${{ github.workspace }}/build/Waterwall
       - name: Show ccache statistics
         run: ccache -sv
@@ -206,7 +206,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_X64_${{ matrix.cc }}_OLD_CPU
+          name: Waterwall_linux_X64_${{ matrix.cc }}_old_cpus
           path: ${{ github.workspace }}/build/linux-gcc-old-cpu/Release/Waterwall
       - name: Show ccache statistics
         run: ccache -sv
@@ -290,7 +290,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_MSYS2_${{ matrix.preset }}
+          name: Waterwall_windows_MSYS2_${{ matrix.preset }}
           path: ${{ github.workspace }}/build/Waterwall.exe
 
       - name: Show ccache statistics
@@ -329,7 +329,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ runner.os }}_${{ matrix.arch }}
+          name: Waterwall_windows_${{ matrix.arch }}
           path: ${{ github.workspace }}/build/Release/Waterwall.exe
 
       - name: Show ccache statistics
@@ -363,7 +363,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_ubuntu22_arm64
+          name: Waterwall_linux_arm64
           path: ${{ github.workspace }}/build/Waterwall
       - name: Show ccache statistics
         run: ccache -sv
@@ -374,6 +374,7 @@ jobs:
         # - bsd
         # - ios
         - linux
+        - linux-arm
         # - macos
         - msys2
         - windows
