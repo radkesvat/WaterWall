@@ -59,7 +59,8 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
                 continue;
             }
 
-            LOGW("RawDevice: sendto() failed permanently: %s", strerror(err));
+            LOGW("RawDevice: sendto() failed with error: %s", strerror(err));
+            LOGW("RawDevice: This command may fix this (run it yourself): sudo ip link set dev <tundevice-name> mtu 1400");
             continue; // or break, if you want to stop on hard error
         }
     }
@@ -151,13 +152,13 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
             return NULL;
         }
     }
-    // int one = 1;
-    // if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
-    // {
-    //     perror("setsockopt IP_HDRINCL");
-    //     terminateProgram(1);
-    // }
-    // fcntl(rsocket, F_SETFL, O_NONBLOCK);
+    int one = 1;
+    if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
+    {
+        perror("setsockopt IP_HDRINCL");
+        terminateProgram(1);
+    }
+    fcntl(rsocket, F_SETFL, O_NONBLOCK);
 
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
 
