@@ -160,15 +160,14 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             LOGE("TunDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, "
                  "fd[1].revents=0x%x",
                  fds[0].revents, fds[1].revents);
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            return 0;
         }
-        else
-        {
-            // ret == 0, which shouldn't happen with infinite timeout
-            LOGF("TunDevice: poll returned 0 with infinite timeout");
-            exit(1);
-        }
-
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+
+        // ret == 0, which shouldn't happen with infinite timeout
+        LOGF("TunDevice: poll returned 0 with infinite timeout");
+        exit(1);
     }
 
     return 0;

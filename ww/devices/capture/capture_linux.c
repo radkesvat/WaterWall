@@ -375,14 +375,14 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             LOGE("CaptureDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, "
                  "fd[1].revents=0x%x",
                  fds[0].revents, fds[1].revents);
-        }
-        else
-        {
-            // ret == 0, which shouldn't happen with infinite timeout
-            LOGF("CaptureDevice: poll returned 0 with infinite timeout");
-            exit(1);
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+            return 0;
         }
         bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+
+        // ret == 0, which shouldn't happen with infinite timeout
+        LOGF("CaptureDevice: poll returned 0 with infinite timeout");
+        exit(1);
     }
 
     return 0;
@@ -394,7 +394,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 
     if (execCmd(cdev->bringup_command).exit_code != 0)
     {
-        LOGE("CaptureDevicer: command failed: %s", cdev->bringup_command);
+        LOGE("CaptureDevice: command failed: %s", cdev->bringup_command);
         terminateProgram(1);
         return false;
     }
@@ -423,7 +423,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 
     if (execCmd(cdev->bringdown_command).exit_code != 0)
     {
-        LOGE("CaptureDevicer: command failed: %s", cdev->bringdown_command);
+        LOGE("CaptureDevice: command failed: %s", cdev->bringdown_command);
         terminateProgram(1);
     }
 
