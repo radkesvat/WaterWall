@@ -225,11 +225,12 @@ static TCHAR *writeSYSToTempFile(const unsigned char *sysBytes, size_t sysSize)
         _tcscat(tempPath, _T("\\"));
     }
 
+    // HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WinDivert
     // Append "mylib.sys"
     _tcscat(tempPath, _T("WinDivert64.sys"));
 
     // Open the temporary file for writing
-    HANDLE hFile = CreateFile(tempFileName, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hFile = CreateFile(tempPath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile == INVALID_HANDLE_VALUE)
     {
         // maybe already exsits
@@ -423,7 +424,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
         return NULL;
 
     LOGI("RawDevice: WinDivert loaded successfully");
-
 
     HANDLE handle = WinDivertOpen("false", WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_SEND_ONLY);
     if (handle == INVALID_HANDLE_VALUE)
