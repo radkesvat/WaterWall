@@ -16,11 +16,9 @@ To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (T
 
 Upcoming changes:
 
-Docs to build project specially for those who run in older cpu(s) and get illegal instruction error. 
+Writing docs for packettunnel
 
-Fixing multiport bug in new api
 
-Adding other abilities to IpManipulator node
 
 
 # Donation
