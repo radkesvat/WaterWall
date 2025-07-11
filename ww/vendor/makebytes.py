@@ -23,7 +23,7 @@ def generate_c_byte_array(input_file, output_file):
                 out.write("\n")
 
         out.write("\n};\n")
-        out.write(f"const unsigned int {c_array_name}_len = {len(data)};\n")
+        out.write(f"const unsigned int {c_array_name}_len = sizeof({c_array_name});\n")
 
     print(f"Generated {output_file} with array '{c_array_name}' of length {len(data)}.")
 

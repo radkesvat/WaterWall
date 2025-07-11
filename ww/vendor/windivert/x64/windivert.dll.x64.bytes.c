@@ -3972,4 +3972,4 @@ const unsigned char windivert_dll[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
 
 };
-const unsigned int windivert_dll_len = 47616;
+const unsigned int windivert_dll_len = sizeof(windivert_dll);
