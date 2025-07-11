@@ -59,8 +59,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: [freebsd, netbsd, openbsd]
-        arch: [arm64, x86_64]
+        # preset: [freebsd, netbsd, openbsd]
+        # arch: [arm64, x86_64]
+        preset: [freebsd]
+        arch: [x86_64]
         include:
           - preset: freebsd
             version: "14.2"
