@@ -219,7 +219,7 @@
     #endif
 #else
     #include <unistd.h>
-    #include <dirent.h>     // for mkdir,wwRmDir,chdir,getcwd
+    #include <dirent.h>     // for mkdir,rmdir,chdir,getcwd
 
     // socket
     #include <sys/socket.h>
@@ -230,11 +230,12 @@
     #include <netinet/udp.h>
     #include <netdb.h>  // for gethostbyname
 
-    #define wwSleep(s)     sleep(s)
+    #define wwSleep(s)      sleep(s)
     #define wwSleepMS(ms)   usleep((ms) * 1000)
     #define wwSleepUS(us)   usleep(us)
-    #define wwDelay(ms)    wwSleepMS(ms)
-    #define wwMkdir(dir)   mkdir(dir, 0777)
+    #define wwDelay(ms)     wwSleepMS(ms)
+    #define wwMkdir(dir)    mkdir(dir, 0777)
+    #define wwRmDir(dir)    rmdir(dir) 
 #endif
 
 #ifdef _MSC_VER
