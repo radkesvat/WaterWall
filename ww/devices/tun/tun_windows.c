@@ -198,9 +198,8 @@ static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_
  */
 static WTHREAD_ROUTINE(routineReadFromTun)
 {
-    tun_device_t         *tdev          = userdata;
-    WINTUN_SESSION_HANDLE Session       = tdev->session_handle;
-    HANDLE                WaitHandles[] = {WintunGetReadWaitEvent(Session), tdev->quit_event};
+    tun_device_t         *tdev    = userdata;
+    WINTUN_SESSION_HANDLE Session = tdev->session_handle;
     sbuf_t               *buf[kMaxReadQueueSize];
     uint8_t               queued_count = 0;
     ssize_t               nread;
@@ -253,8 +252,16 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                     queued_count = 0;
                     continue;
                 }
-                if (WaitForMultipleObjects(_countof(WaitHandles), WaitHandles, FALSE, INFINITE) == WAIT_OBJECT_0)
+                DWORD wait_result = WaitForSingleObject(WintunGetReadWaitEvent(Session), 500);
+                if (wait_result == WAIT_OBJECT_0)
                 {
+                    continue;
+                }
+                if (wait_result == WAIT_TIMEOUT)
+                {
+                    // when it times out we check atomic value to exit read routine if requsted
+
+                    MemoryBarrier();
                     continue;
                 }
                 return ERROR_SUCCESS;
@@ -282,7 +289,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
     while (atomicLoadRelaxed(&(tdev->running)))
     {
-        if (!chanRecv(tdev->writer_buffer_channel, (void**)&buf))
+        if (! chanRecv(tdev->writer_buffer_channel, (void **) &buf))
         {
             LOGD("TunDevice: WriteThread: Terminating due to closed channel");
             return 0;
@@ -331,7 +338,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    tdev->writer_buffer_channel = chanOpen(sizeof(void*),kTunWriteChannelQueueMax);
+    tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
     MemoryBarrier();
 
     LOGD("TunDevice: Starting WinTun session");
@@ -343,17 +350,13 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    ResetEvent(tdev->quit_event);
     tdev->up = true;
     atomicStoreRelaxed(&(tdev->running), true);
     tdev->session_handle = Session;
 
     MemoryBarrier();
 
-    if (tdev->read_event_callback != NULL)
-    {
-        tdev->read_thread = threadCreate(tdev->routine_reader, tdev);
-    }
+    tdev->read_thread  = threadCreate(tdev->routine_reader, tdev);
     tdev->write_thread = threadCreate(tdev->routine_writer, tdev);
     return true;
 }
@@ -373,27 +376,24 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     atomicStoreRelaxed(&(tdev->running), false);
     tdev->up = false;
-    SetEvent(tdev->quit_event);
     MemoryBarrier();
 
-    chanClose(tdev->writer_buffer_channel);
-    sbuf_t *buf;
+    WintunEndSession(tdev->session_handle);
 
+    chanClose(tdev->writer_buffer_channel);
+
+    threadJoin(tdev->read_thread);
+    threadJoin(tdev->write_thread);
+
+    sbuf_t *buf;
     while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
     {
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }
     tdev->writer_buffer_channel = NULL;
 
-    if (tdev->read_event_callback != NULL)
-    {
-        threadJoin(tdev->read_thread);
-    }
-    threadJoin(tdev->write_thread);
-
     assert(tdev->session_handle != NULL);
     LOGD("TunDevice: Ending WinTun session");
-    WintunEndSession(tdev->session_handle);
     tdev->session_handle = NULL;
 
     return true;
@@ -622,20 +622,21 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t) {.name                  = NULL,
-                            .running               = false,
-                            .up                    = false,
-                            .routine_reader        = routineReadFromTun,
-                            .routine_writer        = routineWriteToTun,
-                            .read_event_callback   = cb,
-                            .userdata              = userdata,
-                            .writer_buffer_channel = NULL,
-                            .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                            .reader_buffer_pool    = reader_bpool,
-                            .writer_buffer_pool    = writer_bpool,
-                            .adapter_handle        = NULL,
-                            .session_handle        = NULL,
-                            .quit_event            = CreateEventW(NULL, TRUE, FALSE, NULL)};
+    *tdev = (tun_device_t){
+        .name                  = NULL,
+        .running               = false,
+        .up                    = false,
+        .routine_reader        = routineReadFromTun,
+        .routine_writer        = routineWriteToTun,
+        .read_event_callback   = cb,
+        .userdata              = userdata,
+        .writer_buffer_channel = NULL,
+        .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+        .reader_buffer_pool    = reader_bpool,
+        .writer_buffer_pool    = writer_bpool,
+        .adapter_handle        = NULL,
+        .session_handle        = NULL,
+    };
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
@@ -692,11 +693,10 @@ void tundeviceDestroy(tun_device_t *tdev)
         tdev->adapter_handle = NULL;
     }
 
-    CloseHandle(tdev->quit_event);
     memoryFree(tdev->name);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
-    masterpoolMakeEmpty(tdev->reader_message_pool,NULL);
+    masterpoolMakeEmpty(tdev->reader_message_pool, NULL);
     masterpoolDestroy(tdev->reader_message_pool);
 
     memoryFree(tdev);

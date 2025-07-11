@@ -100,11 +100,14 @@ static void exitHandle(void *userdata, int signum)
     discard userdata;
     atomicStoreExplicit(&GSTATE.application_stopping_flag, true, memory_order_release);
 
-    for (unsigned int wid = 0; wid < WORKERS_COUNT; ++wid)
+
+    for (unsigned int wid = 1; wid < WORKERS_COUNT; ++wid)
     {
         workerExitJoin(getWorker(wid));
     }
-    mainThreadExitJoin();
+    workerFinish(getWorker(0));
+
+    finishGlobalState();
 }
 
 static void workerMessageReceived(wevent_t *ev)
@@ -196,7 +199,7 @@ void globalstateUpdateAllocationPadding(uint16_t padding)
  */
 void createGlobalState(const ww_construction_data_t init_data)
 {
-    GSTATE = (ww_global_state_t) {0};
+    GSTATE = (ww_global_state_t){0};
 
     GSTATE.flag_initialized = true;
     atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
@@ -340,7 +343,7 @@ void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1,
     assert(wid < getWorkersCount());
 
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-    *msg = (worker_msg_t) {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
+    *msg = (worker_msg_t){.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(wid);
@@ -360,18 +363,24 @@ void runMainThread(void)
     assert(GSTATE.flag_initialized);
 
     workerRun(getWorker(0));
+
+    // if we return right here the main thread exits and program finishes
+    // but the thread that requested our exit may still have work to do
+    ww_msleep(2000);
+    LOGD("MainThread Returned");
+
 }
 
 /*!
- * @brief Exits the main thread.
+ * @brief destroys global state and ends the program
  *
- * This function exits the main thread
  */
-void mainThreadExitJoin(void)
+void finishGlobalState(void)
 {
     // its not important which thread called this, at this point only 1 thread is running
     atomicThreadFence(memory_order_seq_cst);
     destroyGlobalState();
+
     exit(0);
 }
 

@@ -37,7 +37,6 @@ typedef struct tun_device_s
     wchar_t                 *name;
     HANDLE                   adapter_handle;
     HANDLE                   session_handle;
-    HANDLE                   quit_event;
     MIB_UNICASTIPADDRESS_ROW address_row;
 #else
     char *name;

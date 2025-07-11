@@ -422,7 +422,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 
     WinDivertShutdown(cdev->handle, WINDIVERT_SHUTDOWN_BOTH);
     WinDivertClose(cdev->handle);
-
+    cdev->handle = 0;
     threadJoin(cdev->read_thread);
     LOGD("CaptureDevice: device %s is now down", cdev->name);
 
@@ -499,7 +499,5 @@ void capturedeviceDestroy(capture_device_t *cdev)
     masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
     masterpoolDestroy(cdev->reader_message_pool);
 
-    WinDivertShutdown(cdev->handle, WINDIVERT_SHUTDOWN_BOTH);
-    WinDivertClose(cdev->handle);
     memoryFree(cdev);
 }

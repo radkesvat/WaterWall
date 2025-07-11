@@ -188,7 +188,7 @@ WW_EXPORT void runMainThread(void);
  *
  * This function exits the main thread
  */
-WW_EXPORT void mainThreadExitJoin(void);
+WW_EXPORT void finishGlobalState(void);
 
 /*!
  * @brief Creates the global state.

@@ -1,7 +1,19 @@
 #include "signal_manager.h"
+#include "global_state.h"
 
 static signal_manager_t *state = NULL;
 
+static WTHREAD_ROUTINE(TestThreadExit)
+{
+    discard userdata;
+    terminateProgram(0);
+    return 0;
+}
+static void testCloseProgram(wtimer_t *ev)
+{
+    discard ev;
+    threadCreate(TestThreadExit, NULL);
+}
 void registerAtExitCallBack(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
@@ -11,7 +23,7 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata)
     {
         if (state->handlers[i].handle == NULL)
         {
-            state->handlers[i] = (signal_handler_t) {.handle = handle, .userdata = userdata};
+            state->handlers[i] = (signal_handler_t){.handle = handle, .userdata = userdata};
             state->handlers_len++;
             mutexUnlock(&(state->mutex));
 
@@ -23,6 +35,7 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata)
     printError("SignalManager: Too many atexit handlers, max is %d", kMaxSigHandles);
     _Exit(1);
 }
+
 void removeAtExitCallBack(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
@@ -32,7 +45,7 @@ void removeAtExitCallBack(SignalHandler handle, void *userdata)
     {
         if (state->handlers[i].handle == handle && state->handlers[i].userdata == userdata)
         {
-            state->handlers[i] = (signal_handler_t) {.handle = NULL, .userdata = NULL};
+            state->handlers[i] = (signal_handler_t){.handle = NULL, .userdata = NULL};
             state->handlers_len--;
             mutexUnlock(&(state->mutex));
 
@@ -41,41 +54,6 @@ void removeAtExitCallBack(SignalHandler handle, void *userdata)
     }
     // not found...
     mutexUnlock(&(state->mutex));
-}
-
-signal_manager_t *signalmanagerCreate(void)
-{
-    assert(state == NULL);
-    state = memoryAllocate(sizeof(signal_manager_t));
-
-    *state = (signal_manager_t) {.handlers_len   = 0,
-                                 .started        = false,
-                                 .raise_defaults = true,
-                                 .handle_sigint  = true,
-                                 .handle_sigquit = true,
-                                 .handle_sighup  = false, // exits after ssh closed even with nohup
-                                 .handle_sigill  = true,
-                                 .handle_sigfpe  = true,
-                                 .handle_sigabrt = true,
-                                 .handle_sigsegv = true,
-                                 .handle_sigterm = true,
-                                 .handle_sigpipe = true,
-                                 .handle_sigalrm = true};
-
-    mutexInit(&(state->mutex));
-    return state;
-}
-
-signal_manager_t *signalmanagerGet(void)
-{
-    assert(state != NULL);
-    return state;
-}
-
-void signalmanagerSet(signal_manager_t *sm)
-{
-    assert(state == NULL);
-    state = sm;
 }
 
 static bool exit_handler_ran_once = false;
@@ -90,7 +68,7 @@ static void exitHandler(void)
         return;
     }
 
-    int     written = write(STDOUT_FILENO, "SignalManager: Exiting... \n", 28);
+    int     written = write(STDOUT_FILENO, "SignalManager: Exiting... \n", 27);
     discard written;
 
     exit_handler_ran_once = true;
@@ -99,6 +77,8 @@ static void exitHandler(void)
     {
         if (state->handlers[i].handle != NULL)
         {
+            // written = write(STDOUT_FILENO, ".", 1);
+            // discard written;
             state->handlers[i].handle(state->handlers[i].userdata, 0);
         }
     }
@@ -108,6 +88,7 @@ static void exitHandler(void)
 
 static BOOL WINAPI CtrlHandler(_In_ DWORD CtrlType)
 {
+    // return TRUE;
     printError("SignalManager: Received windows event %d\n", CtrlType);
 
     switch (CtrlType)
@@ -276,9 +257,44 @@ void signalmanagerStart(void)
 
 #endif
 
+    // wtimerAdd(getWorkerLoop(0), testCloseProgram, 3500, 0);
     // atexit(exitHandler);
 }
 
+signal_manager_t *signalmanagerCreate(void)
+{
+    assert(state == NULL);
+    state = memoryAllocate(sizeof(signal_manager_t));
+
+    *state = (signal_manager_t){.handlers_len   = 0,
+                                .started        = false,
+                                .raise_defaults = true,
+                                .handle_sigint  = true,
+                                .handle_sigquit = true,
+                                .handle_sighup  = false, // exits after ssh closed even with nohup
+                                .handle_sigill  = true,
+                                .handle_sigfpe  = true,
+                                .handle_sigabrt = true,
+                                .handle_sigsegv = true,
+                                .handle_sigterm = true,
+                                .handle_sigpipe = true,
+                                .handle_sigalrm = true};
+
+    mutexInit(&(state->mutex));
+    return state;
+}
+
+signal_manager_t *signalmanagerGet(void)
+{
+    assert(state != NULL);
+    return state;
+}
+
+void signalmanagerSet(signal_manager_t *sm)
+{
+    assert(state == NULL);
+    state = sm;
+}
 void signalmanagerDestroy(void)
 {
     assert(state != NULL);
@@ -299,7 +315,8 @@ _Noreturn void terminateProgram(int exit_code)
     }
     double_terminated = true;
 
-    printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n", exit_code);
+    printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
+               exit_code);
     if (state)
     {
         exitHandler();

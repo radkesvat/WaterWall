@@ -12,15 +12,7 @@
 
 thread_local wid_t tl_wid;
 
-/**
- * @brief Cleanly exits a worker.
- *
- * Signals the worker's event loop to run once, waits for the worker thread to finish,
- * and destroys allocated resource pools.
- *
- * @param worker Pointer to the worker structure.
- */
-void workerExitJoin(worker_t *worker)
+void workerFinish(worker_t *worker)
 {
     if (worker->tid == getTID())
     {
@@ -32,6 +24,11 @@ void workerExitJoin(worker_t *worker)
         genericpoolDestroy(worker->context_pool);
         genericpoolDestroy(worker->pipetunnel_msg_pool);
         bufferpoolDestroy(worker->buffer_pool);
+
+        worker->loop                = NULL;
+        worker->context_pool        = NULL;
+        worker->pipetunnel_msg_pool = NULL;
+        worker->buffer_pool         = NULL;
     }
     else
     {
@@ -39,7 +36,6 @@ void workerExitJoin(worker_t *worker)
         {
             worker->loop->flags = worker->loop->flags | WLOOP_FLAG_RUN_ONCE;
             atomicThreadFence(memory_order_release);
-            threadJoin(worker->thread);
         }
         else
         {
@@ -47,42 +43,28 @@ void workerExitJoin(worker_t *worker)
             genericpoolDestroy(worker->context_pool);
             genericpoolDestroy(worker->pipetunnel_msg_pool);
             bufferpoolDestroy(worker->buffer_pool);
+
+            worker->loop                = NULL;
+            worker->context_pool        = NULL;
+            worker->pipetunnel_msg_pool = NULL;
+            worker->buffer_pool         = NULL;
         }
     }
-    worker->loop                = NULL;
-    worker->context_pool        = NULL;
-    worker->pipetunnel_msg_pool = NULL;
-    worker->buffer_pool         = NULL;
 }
 
-// /**
-//  * @brief Signal handler for worker exit.
-//  *
-//  * Invoked when a termination signal is received and calls workerExitJoin.
-//  *
-//  * @param userdata Pointer to the worker structure.
-//  * @param signum Signal number.
-//  */
-// static void exitHandle(void *userdata, int signum)
-// {
-//     discard   signum;
-//     worker_t *worker = userdata;
-//     workerExitJoin(worker);
-// }
+void workerExitJoin(worker_t *worker)
+{
 
-/**
- * @brief Initializes a worker.
- *
- * This function initializes a worker by setting its ID, creating context and message pools,
- * and creating an event loop.
- *
- * @param worker Pointer to the worker to initialize.
- * @param wid  Worker ID.
- * @param eventloop  create eventloop for this thread
- */
+    workerFinish(worker);
+    if (worker->tid != getTID())
+    {
+        threadJoin(worker->thread);
+    }
+}
+
 void workerInit(worker_t *worker, wid_t wid, bool eventloop)
 {
-    *worker = (worker_t) {.wid = wid};
+    *worker = (worker_t){.wid = wid};
 
     worker->context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_context_pools,
                                                                             sizeof(context_t), RAM_PROFILE);
@@ -104,14 +86,6 @@ void workerInit(worker_t *worker, wid_t wid, bool eventloop)
     }
 }
 
-/**
- * @brief Runs the worker.
- *
- * This function sets the thread-local worker ID, initializes the random number generator,
- * runs the event loop, and destroys the event loop.
- *
- * @param worker Pointer to the worker to run.
- */
 void workerRun(worker_t *worker)
 {
     tl_wid    = worker->wid;
@@ -120,9 +94,18 @@ void workerRun(worker_t *worker)
 
     wloopRun(worker->loop);
 
-    genericpoolDestroy(worker->context_pool);
-    genericpoolDestroy(worker->pipetunnel_msg_pool);
-    bufferpoolDestroy(worker->buffer_pool);
+    if (worker->context_pool)
+    {
+        genericpoolDestroy(worker->context_pool);
+    }
+    if (worker->pipetunnel_msg_pool)
+    {
+        genericpoolDestroy(worker->pipetunnel_msg_pool);
+    }
+    if (worker->buffer_pool)
+    {
+        bufferpoolDestroy(worker->buffer_pool);
+    }
 
     worker->loop                = NULL;
     worker->context_pool        = NULL;

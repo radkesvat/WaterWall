@@ -56,10 +56,19 @@ static inline wid_t getWID(void)
 }
 
 /**
+ * @brief Tells a worker that it should stop immediately
+ *
+ * Signals the worker's event loop to finish , but dose not woit (join theard)
+ * if it is our own thread, it also frees resources
+ * @param worker Pointer to the worker structure.
+ */
+void workerFinish(worker_t *worker);
+
+/**
  * @brief Cleanly exits a worker.
  *
  * Signals the worker's event loop to run once, waits for the worker thread to finish,
- * and destroys allocated resource pools.
+ * and destroys allocated resource pools. (if its our own thread, otherwise other worker dose that it self)
  *
  * @param worker Pointer to the worker structure.
  */
