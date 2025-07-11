@@ -106,7 +106,7 @@ static void tunWindowsStartup(void)
         return;
     }
 
-    LOGI("TunDevice: DLL loaded successfully");
+    LOGD("TunDevice: DLL loaded successfully");
 
     GSTATE.wintun_dll_handle = hModule;
 }
@@ -596,7 +596,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     if (! loadFunctionFromDLL("WintunSendPacket", &WintunSendPacket))
         return NULL;
 
-    LOGD("TunDevice: Wintun loaded successfully");
+    LOGI("TunDevice: WinTun loaded successfully");
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,

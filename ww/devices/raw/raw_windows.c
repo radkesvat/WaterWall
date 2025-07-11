@@ -422,6 +422,9 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     if (! loadFunctionFromDLL("WinDivertClose", &WinDivertClose))
         return NULL;
 
+    LOGI("RawDevice: WinDivert loaded successfully");
+
+
     HANDLE handle = WinDivertOpen("false", WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_SEND_ONLY);
     if (handle == INVALID_HANDLE_VALUE)
     {

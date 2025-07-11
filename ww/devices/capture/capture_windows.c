@@ -459,6 +459,9 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         return NULL;
     if (! loadFunctionFromDLL("WinDivertClose", &WinDivertClose))
         return NULL;
+    
+    LOGI("CaptureDevice: WinDivert loaded successfully");
+
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
