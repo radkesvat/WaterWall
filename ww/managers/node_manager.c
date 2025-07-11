@@ -367,6 +367,7 @@ void nodemanagerDestroyNode(node_t *node)
     tunnel_t *t = node->instance;
     if (t)
     {
+        // LOGD("NodeManager: destroying tunnel %s",node->name);
         t->onDestroy(t);
         node->instance = NULL;
     }
