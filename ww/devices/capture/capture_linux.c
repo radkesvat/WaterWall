@@ -33,8 +33,6 @@ static const char *ip_tables_disable_queue_mi = "iptables -D INPUT -s %s -j NFQU
 
 static const char *sysctl_set_rmem_max     = "sysctl -w net.core.rmem_max=67108864";
 static const char *sysctl_set_rmem_default = "sysctl -w net.core.rmem_default=33554432";
-static const char *sysctl_set_nfct_buckets = "sysctl -w net.netfilter.nf_conntrack_buckets=65536";
-static const char *sysctl_set_nfct_max     = "sysctl -w net.netfilter.nf_conntrack_max=262144";
 static const char *sysctl_set_wmem_max     = "sysctl -w net.core.wmem_max=33554432";
 static const char *sysctl_set_wmem_default = "sysctl -w net.core.wmem_default=16777216";
 
@@ -443,8 +441,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
     /* Fixing the most crazy socket stop reason */
     execCmd(sysctl_set_rmem_max);
     execCmd(sysctl_set_rmem_default);
-    execCmd(sysctl_set_nfct_buckets);
-    execCmd(sysctl_set_nfct_max);
     execCmd(sysctl_set_wmem_max);
     execCmd(sysctl_set_wmem_default);
 
