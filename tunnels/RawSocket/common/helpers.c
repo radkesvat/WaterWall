@@ -20,9 +20,16 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     (void) cdev;
     tunnel_t *t = userdata;
 
-    // rawsocket_tstate_t *state = tunnelGetState(t);
     // printIPPacketInfo("RawSocket received", sbufGetRawPtr(buf));
+    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
 
+    if (IPH_V(ipheader) != 4)
+    {
+        // LOGW("RawSocket: Received packet with unsupported IP version %d", IPH_V(ipheader));
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+        return;
+    }
+    
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
 
     tunnelPrevDownStreamPayload(t, l, buf);

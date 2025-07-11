@@ -4,7 +4,6 @@
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid)
 {
-    discard   tdev;
     tunnel_t *t = userdata;
 
 #if LOG_PACKET_INFO
@@ -45,6 +44,21 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
 afterlog:;
 
 #endif
+    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
+
+    if (IPH_V(ipheader) != 4)
+    {
+        // LOGW("TunDevice: Received packet with unsupported IP version %d", IPH_V(ipheader));
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+        return;
+    }
+
+    if (UNLIKELY(tdev->up == false))
+    {
+        LOGW("TunDevice: device is down, cannot process packet");
+        bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+        return;
+    }
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
     lineLock(l);
