@@ -41,6 +41,7 @@ typedef struct line_s
     uint8_t     auth_cur;
     uint8_t     established : 1;
     uint8_t     recalculate_checksum : 1; // used for packet tunnels, ip layer checksum
+    uint8_t     do_not_recalculate_transport_checksum : 1; // used for packet tunnels, skip transport layer checksum (rare used)
 
     routing_context_t routing_context;
 
