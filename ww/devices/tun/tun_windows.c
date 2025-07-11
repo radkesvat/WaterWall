@@ -252,7 +252,9 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                     queued_count = 0;
                     continue;
                 }
-                DWORD wait_result = WaitForSingleObject(WintunGetReadWaitEvent(Session), 500);
+                HANDLE wait_handle = WintunGetReadWaitEvent(Session);
+            wait:;
+                DWORD wait_result = WaitForSingleObject(wait_handle, 500);
                 if (wait_result == WAIT_OBJECT_0)
                 {
                     continue;
@@ -262,7 +264,12 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                     // when it times out we check atomic value to exit read routine if requsted
 
                     MemoryBarrier();
-                    continue;
+                    if (atomicLoadRelaxed(&(tdev->running)) == false)
+                    {
+                        return 0;
+                    }
+
+                    goto wait;
                 }
                 return ERROR_SUCCESS;
             default:
