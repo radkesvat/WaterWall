@@ -506,7 +506,7 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         close(socket_netfilter);
         return NULL;
     }
-    int rcvbuf_size = 64 * 1024 * 1024; // 1MB
+    int rcvbuf_size = 64 * 1024 * 1024; // 64MB
     if (setsockopt(socket_netfilter, SOL_SOCKET, SO_RCVBUF, &rcvbuf_size, sizeof(rcvbuf_size)) < 0)
     {
         LOGE("CaptureDevice: failed to set SO_RCVBUF: %s", strerror(errno));
