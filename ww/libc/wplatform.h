@@ -184,17 +184,17 @@
     // #include <sys/stat.h>  // For mkdir
     // #include <unistd.h>    // For chdir, getcwd
     // #else
-    // #include <direct.h>     // for mkdir,rmdir,chdir,getcwd
+    // #include <direct.h>     // for mkdir,wwRmDir,chdir,getcwd
 
     // #endif
     #include <io.h>         // for open,close,read,write,lseek,tell
 
-    #define ww_sleep(s)     Sleep((s) * 1000)
-    #define ww_msleep(ms)   Sleep(ms)
-    #define ww_usleep(us)   Sleep((us) / 1000)
-    #define ww_delay(ms)    ww_msleep(ms)
-    #define ww_mkdir(dir)   CreateDirectoryA(dir, NULL)
-    #define rmdir(dir)      RemoveDirectoryA(dir)
+    #define wwSleep(s)      Sleep((s) * 1000)
+    #define wwSleepMS(ms)   Sleep(ms)
+    #define wwSleepUS(us)   Sleep((us) / 1000)
+    #define wwDelay(ms)     wwSleepMS(ms)
+    #define wwMkdir(dir)    CreateDirectoryA(dir, NULL)
+    #define wwRmDir(dir)    RemoveDirectoryA(dir)
     
     // access
     #ifndef F_OK
@@ -219,7 +219,7 @@
     #endif
 #else
     #include <unistd.h>
-    #include <dirent.h>     // for mkdir,rmdir,chdir,getcwd
+    #include <dirent.h>     // for mkdir,wwRmDir,chdir,getcwd
 
     // socket
     #include <sys/socket.h>
@@ -230,11 +230,11 @@
     #include <netinet/udp.h>
     #include <netdb.h>  // for gethostbyname
 
-    #define ww_sleep(s)     sleep(s)
-    #define ww_msleep(ms)   usleep((ms) * 1000)
-    #define ww_usleep(us)   usleep(us)
-    #define ww_delay(ms)    ww_msleep(ms)
-    #define ww_mkdir(dir)   mkdir(dir, 0777)
+    #define wwSleep(s)     sleep(s)
+    #define wwSleepMS(ms)   usleep((ms) * 1000)
+    #define wwSleepUS(us)   usleep(us)
+    #define wwDelay(ms)    wwSleepMS(ms)
+    #define wwMkdir(dir)   mkdir(dir, 0777)
 #endif
 
 #ifdef _MSC_VER

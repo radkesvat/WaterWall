@@ -343,12 +343,12 @@ int createDirIfNotExists(const char *dir)
         {
 #endif
             *p = '\0';
-            ww_mkdir(tmp);
+            wwMkdir(tmp);
             *p = delim;
         }
         ++p;
     }
-    if (ww_mkdir(tmp) != 0)
+    if (wwMkdir(tmp) != 0)
     {
         return EPERM;
     }
@@ -361,7 +361,7 @@ int removeDirIfExists(const char *dir)
     {
         return ENOENT;
     }
-    if (rmdir(dir) != 0)
+    if (wwRmDir(dir) != 0)
     {
         return EPERM;
     }
@@ -380,7 +380,7 @@ int removeDirIfExists(const char *dir)
         {
 #endif
             *p = '\0';
-            if (rmdir(tmp) != 0)
+            if (wwRmDir(tmp) != 0)
             {
                 return 0;
             }

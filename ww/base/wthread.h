@@ -40,7 +40,7 @@ static inline tid_t getTID(void)
 
 WTHREAD_ROUTINE(thread_demo) {
     printf("thread[%ld] start\n", getTID());
-    ww_delay(3000);
+    wwDelay(3000);
     printf("thread[%ld] end\n", getTID());
     return 0;
 }

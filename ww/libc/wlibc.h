@@ -179,7 +179,7 @@ WW_EXPORT const char *filePathBaseName(const char *filepath);
 WW_EXPORT const char *filePathSuffixName(const char *filename);
 // mkdir -p
 WW_EXPORT int createDirIfNotExists(const char *dir);
-// rmdir -p
+// wwRmDir -p
 WW_EXPORT int removeDirIfExists(const char *dir);
 // path
 WW_EXPORT bool   dirExists(const char *path);

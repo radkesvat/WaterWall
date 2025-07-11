@@ -366,7 +366,7 @@ void runMainThread(void)
 
     // if we return right here the main thread exits and program finishes
     // but the thread that requested our exit may still have work to do
-    ww_msleep(2000);
+    wwSleepMS(2000);
     LOGD("MainThread Returned");
 
 }
