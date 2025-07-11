@@ -1,3 +1,5 @@
+#pragma once
+
 #include "wlibc.h"
 #include "wsocket.h"
 #include "net/address_context.h"
