@@ -307,7 +307,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
         LOGE("TunDevice: error bringing device %s up", tdev->name);
         return false;
     }
-    LOGD("TunDevice: device %s is now up", tdev->name);
+    LOGI("TunDevice: device %s is now up", tdev->name);
 
     if (tdev->read_event_callback != NULL)
     {
@@ -344,7 +344,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
         LOGE("TunDevice: error bringing %s down", tdev->name);
         return false;
     }
-    LOGD("TunDevice: device %s is now down", tdev->name);
+    LOGI("TunDevice: device %s is now down", tdev->name);
 
     if (tdev->read_event_callback != NULL)
     {

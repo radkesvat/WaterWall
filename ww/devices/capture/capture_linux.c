@@ -404,7 +404,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
     cdev->up      = true;
     cdev->running = true;
 
-    LOGD("CaptureDevice: device %s is now up", cdev->name);
+    LOGI("CaptureDevice: device %s is now up", cdev->name);
 
     cdev->read_thread = threadCreate(cdev->routine_reader, cdev);
     return true;
@@ -429,7 +429,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
     (void) _unused;
     threadJoin(cdev->read_thread);
 
-    LOGD("CaptureDevice: device %s is now down", cdev->name);
+    LOGI("CaptureDevice: device %s is now down", cdev->name);
 
     return true;
 }

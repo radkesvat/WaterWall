@@ -361,7 +361,7 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     rdev->writer_buffer_channel = chanOpen(sizeof(void *), kRawWriteChannelQueueMax);
 
     // rdev->read_thread = threadCreate(rdev->routine_reader, rdev);
-    LOGD("RawDevice: device %s is now up", rdev->name);
+    LOGI("RawDevice: device %s is now up", rdev->name);
 
     rdev->write_thread = threadCreate(rdev->routine_writer, rdev);
     return true;
@@ -389,7 +389,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     chanFree(rdev->writer_buffer_channel);
     rdev->writer_buffer_channel = NULL;
 
-    LOGD("RawDevice: device %s is now down", rdev->name);
+    LOGI("RawDevice: device %s is now down", rdev->name);
 
     return true;
 }

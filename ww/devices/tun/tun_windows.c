@@ -341,7 +341,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
     tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
     MemoryBarrier();
 
-    LOGD("TunDevice: Starting WinTun session");
+    LOGI("TunDevice: Starting WinTun session");
     WINTUN_SESSION_HANDLE Session = WintunStartSession(tdev->adapter_handle, 0x400000);
     if (! Session)
     {
@@ -393,7 +393,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     tdev->writer_buffer_channel = NULL;
 
     assert(tdev->session_handle != NULL);
-    LOGD("TunDevice: Ending WinTun session");
+    LOGI("TunDevice: Ending WinTun session");
     tdev->session_handle = NULL;
 
     return true;
@@ -653,7 +653,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     GUID example_guid = {0xDEADC0DE, 0xFADE, 0xC01D, {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66}};
 
-    LOGD("TunDevice: Creating adapter with GUID: %08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", example_guid.Data1,
+    LOGI("TunDevice: Creating adapter with GUID: %08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", example_guid.Data1,
          example_guid.Data2, example_guid.Data3, example_guid.Data4[0], example_guid.Data4[1], example_guid.Data4[2],
          example_guid.Data4[3], example_guid.Data4[4], example_guid.Data4[5], example_guid.Data4[6],
          example_guid.Data4[7]);
