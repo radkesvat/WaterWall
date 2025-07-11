@@ -24,10 +24,14 @@ add_library(IpManipulator STATIC
                     downstream/pause.c
                     downstream/resume.c
                     downstream/est.c
+                    common/tricks/protoswap/trick.c
   
 )
 
 target_include_directories(IpManipulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+target_include_directories(IpManipulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/common/)
+
 
 target_link_libraries(IpManipulator ww)
 
