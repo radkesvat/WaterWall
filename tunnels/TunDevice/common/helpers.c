@@ -93,9 +93,19 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (l->recalculate_checksum && IPH_V(ipheader) == 4)
     {
-        recalculatePacketChecksum(sbufGetMutablePtr(buf));
-        l->recalculate_checksum = false;
+        if (UNLIKELY(l->do_not_recalculate_transport_checksum == true))
+        {
+            IPH_CHKSUM_SET(ipheader, 0);
+            IPH_CHKSUM_SET(ipheader, inet_chksum(ipheader, IPH_HL_BYTES(ipheader)));
+        }
+        else
+        {
+            recalculatePacketChecksum(sbufGetMutablePtr(buf));
+        }
+        l->recalculate_checksum                  = false;
+        l->do_not_recalculate_transport_checksum = false;
     }
+
     if (UNLIKELY(state->tdev->up == false))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);

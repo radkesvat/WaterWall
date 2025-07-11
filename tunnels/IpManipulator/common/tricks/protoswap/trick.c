@@ -2,6 +2,7 @@
 
 #include "loggers/network_logger.h"
 
+
 void protoswaptrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     ipmanipulator_tstate_t *state    = tunnelGetState(t);

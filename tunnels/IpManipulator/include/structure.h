@@ -5,9 +5,14 @@
 typedef struct ipmanipulator_tstate_s
 {
     uint64_t trick_proto_swap : 1;
+    uint64_t trick_sni_blender : 1;
 
     int trick_proto_swap_tcp_number;
     int trick_proto_swap_udp_number;
+
+    int trick_sni_blender_packets_count;
+    int trick_sni_blender_packets_delay_max;
+
 } ipmanipulator_tstate_t;
 
 typedef struct ipmanipulator_lstate_s
@@ -18,7 +23,9 @@ typedef struct ipmanipulator_lstate_s
 enum
 {
     kTunnelStateSize = sizeof(ipmanipulator_tstate_t),
-    kLineStateSize   = sizeof(ipmanipulator_lstate_t)
+    kLineStateSize   = sizeof(ipmanipulator_lstate_t),
+
+    kSniBlenderTrickMaxPacketsCount = 16
 };
 
 WW_EXPORT void         ipmanipulatorDestroy(tunnel_t *t);
