@@ -212,9 +212,9 @@ static void localThreadPtcAcceptCallBack(struct worker_s *worker, void *arg1, vo
         char src_ip[40];
         char dst_ip[40];
 
-        // Replace ipaddr_ntoa with ip4AddrNetworkToAaddress
-        stringCopyN(src_ip, ipAddrNetworkToAaddress(&newpcb->local_ip), 40);
-        stringCopyN(dst_ip, ipAddrNetworkToAaddress(&newpcb->remote_ip), 40);
+        // Replace ipaddr_ntoa with ip4AddrNetworkToAddress
+        stringCopyN(src_ip, ipAddrNetworkToAddress(&newpcb->local_ip), 40);
+        stringCopyN(dst_ip, ipAddrNetworkToAddress(&newpcb->remote_ip), 40);
 
         LOGD("PacketToConnection: new connection accepted  [%s:%d] <= [%s:%d]", src_ip, newpcb->local_port, dst_ip,
              newpcb->remote_port);
