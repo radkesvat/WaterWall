@@ -27,6 +27,9 @@ void WSADeinit(void)
         WSACleanup();
     }
 }
+#else
+#include <ifaddrs.h>
+
 #endif
 
 static inline int socketErrnoNegative(int sockfd)
@@ -753,18 +756,18 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
     for (ifa = ifaddr; ifa; ifa = ifa->ifa_next)
     {
         if (ifa->ifa_addr == NULL)
+        {
             continue;
+        }
         if ((ifa->ifa_addr->sa_family == AF_INET) && strcmp(ifa->ifa_name, if_name) == 0)
         {
             struct sockaddr_in *sa = (struct sockaddr_in *) ifa->ifa_addr;
             if (sa->sin_family == AF_INET)
             {
-                ip4AddrSetU32(ip_buffer, sa->sin_addr);
-                free(adapters);
+                ip4AddrSetU32(ip_buffer, sa->sin_addr.s_addr);
+                freeifaddrs(ifaddr);
                 return true;
             }
-            freeifaddrs(ifaddr);
-            return true;
         }
     }
 
