@@ -6,6 +6,8 @@
 #include "werr.h"
 
 #ifdef OS_WIN
+#include <iphlpapi.h>
+#include <winsock2.h>
 
 static atomic_flag s_wsa_initialized = ATOMIC_FLAG_INIT;
 void               WSAInit(void)
@@ -276,7 +278,7 @@ error:
     return socketErrnoNegative(connfd);
 }
 
-static int ListenFD(int sockfd)
+static int listenFD(int sockfd)
 {
     if (sockfd < 0)
         return sockfd;
@@ -344,7 +346,7 @@ int wwListen(int port, const char *host)
     int sockfd = Bind(port, host, SOCK_STREAM);
     if (sockfd < 0)
         return sockfd;
-    return ListenFD(sockfd);
+    return listenFD(sockfd);
 }
 
 int wwConnect(const char *host, int port, int nonblock)
@@ -389,7 +391,7 @@ int wwListenUnix(const char *path)
     int sockfd = BindUnix(path, SOCK_STREAM);
     if (sockfd < 0)
         return sockfd;
-    return ListenFD(sockfd);
+    return listenFD(sockfd);
 }
 
 int ConnectUnix(const char *path, int nonblock)
@@ -668,20 +670,105 @@ void recalculatePacketChecksum(uint8_t *buf)
     case IP_PROTO_ICMP: {
         /* ICMP has no pseudo‑header */
         /* sum over ICMP header + payload */
-        struct icmp_hdr {
-            uint8_t type;
-            uint8_t code;
+        struct icmp_hdr
+        {
+            uint8_t  type;
+            uint8_t  code;
             uint16_t chksum;
         };
-        struct icmp_hdr *icmph = (struct icmp_hdr *)transport_hdr;
-        icmph->chksum = 0;
-        uint32_t sum  = checksum_buffer(transport_hdr, transport_len);
-        uint16_t csum = finalize_checksum(sum);
-        icmph->chksum = lwip_htons(csum);
+        struct icmp_hdr *icmph = (struct icmp_hdr *) transport_hdr;
+        icmph->chksum          = 0;
+        uint32_t sum           = checksum_buffer(transport_hdr, transport_len);
+        uint16_t csum          = finalize_checksum(sum);
+        icmph->chksum          = lwip_htons(csum);
         break;
     }
     default:
         /* other protocols: leave as is */
         break;
     }
+}
+
+bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
+{
+    if (! if_name || ! ip_buffer || buflen < INET_ADDRSTRLEN)
+    {
+        return false;
+    }
+
+#ifdef OS_WIN
+    WSAInit();
+
+    ULONG                 flags    = GAA_FLAG_INCLUDE_PREFIX;
+    ULONG                 family   = AF_INET;
+    PIP_ADAPTER_ADDRESSES adapters = NULL;
+    ULONG                 size     = 0;
+
+    if (GetAdaptersAddresses(family, flags, NULL, adapters, &size) == ERROR_BUFFER_OVERFLOW)
+    {
+        adapters = (PIP_ADAPTER_ADDRESSES) malloc(size);
+        if (! adapters)
+        {
+            return false;
+        }
+    }
+
+    if (GetAdaptersAddresses(family, flags, NULL, adapters, &size) != NO_ERROR)
+    {
+        free(adapters);
+        return false;
+    }
+
+    PIP_ADAPTER_ADDRESSES adapter = adapters;
+    for (; adapter; adapter = adapter->Next)
+    {
+        if (strcmp(adapter->AdapterName, if_name) == 0 ||
+            (adapter->FriendlyName && wcscmp(adapter->FriendlyName, (const wchar_t *) if_name) == 0))
+        {
+            PIP_ADAPTER_UNICAST_ADDRESS ua = adapter->FirstUnicastAddress;
+            for (; ua; ua = ua->Next)
+            {
+                struct sockaddr_in *sa = (struct sockaddr_in *) ua->Address.lpSockaddr;
+                if (sa->sin_family == AF_INET)
+                {
+                    ip4AddrSetU32(ip_buffer, sa->sin_addr.S_un.S_addr);
+                    free(adapters);
+                    return true;
+                }
+            }
+        }
+    }
+
+    free(adapters);
+    return false;
+
+#else
+    struct ifaddrs *ifaddr, *ifa;
+
+    if (getifaddrs(&ifaddr) == -1)
+    {
+        return false;
+    }
+
+    for (ifa = ifaddr; ifa; ifa = ifa->ifa_next)
+    {
+        if (ifa->ifa_addr == NULL)
+            continue;
+        if ((ifa->ifa_addr->sa_family == AF_INET) && strcmp(ifa->ifa_name, if_name) == 0)
+        {
+            struct sockaddr_in *sa = (struct sockaddr_in *) ifa->ifa_addr;
+            if (sa->sin_family == AF_INET)
+            {
+                ip4AddrSetU32(ip_buffer, sa->sin_addr);
+                free(adapters);
+                return true;
+            }
+            freeifaddrs(ifaddr);
+            return true;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    return false;
+#endif
 }

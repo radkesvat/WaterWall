@@ -562,4 +562,7 @@ bool verifyIPCdir(const char *ipc);
 
 void recalculatePacketChecksum(uint8_t *buf);
 
+bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen);
+
+
 #endif // WW_SOCKET_H_

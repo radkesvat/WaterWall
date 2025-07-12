@@ -54,7 +54,7 @@ typedef struct
 #define ipAddrCopy              ip_addr_copy          // Copy a generic IP address
 #define ipAddrIsV4              IP_IS_V4              // Check if IP address is IPv4
 #define ipAddrIsV6              IP_IS_V6              // Check if IP address is IPv6
-#define ipAddrNetworkToAaddress ipaddr_ntoa           // Convert IP address to string
+#define ipAddrNetworkToAddress  ipaddr_ntoa           // Convert IP address to string
 
 // ------------------------------------------------------------------------
 // IPv4 Specific Function Macros
@@ -63,7 +63,9 @@ typedef struct
 #define ip4AddrGetU32            ip4_addr_get_u32
 #define ip4AddrNetcmp            ip4_addr_netcmp
 #define ip4AddrCopy              ip4_addr_copy
-#define ip4AddrNetworkToAaddress ip4addr_ntoa
+#define ip4AddrNetworkToAddress  ip4addr_ntoa
+#define ip4AddrAddressToNetwork  ip4addr_aton
+#define ip4AddrSetU32            ip4_addr_set_u32
 #define ip4AddrEqual             ip4_addr_eq
 
 // ------------------------------------------------------------------------
@@ -72,7 +74,7 @@ typedef struct
 #define ip6AddrSetAny ip6_addr_set_any
 // #define ip6AddrNetcmp            ip6_addr_netcmp // Custom function is used instead, see below
 #define ip6AddrCopyFromPacket    ip6_addr_copy_from_packed
-#define ip6AddrNetworkToAaddress ip6addr_ntoa
+#define ip6AddrNetworkToAddress  ip6addr_ntoa
 
 // ------------------------------------------------------------------------
 // TCP/IP Stack Initialization Macro

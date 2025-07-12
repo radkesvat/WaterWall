@@ -84,6 +84,9 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     socketfilteroptionInit(&filter_opt);
     filter_opt.no_delay = state->option_tcp_no_delay;
 
+
+    getStringFromJsonObject(&(filter_opt.interface), settings, "interface");
+
     getStringFromJsonObject(&(filter_opt.balance_group_name), settings, "balance-group");
     getIntFromJsonObject((int *) &(filter_opt.balance_group_interval), settings, "balance-interval");
 

@@ -1,11 +1,12 @@
 #pragma once
 
-#include "wlibc.h"
-#include "wsocket.h"
 #include "net/address_context.h"
 #include "widle_table.h"
+#include "wlibc.h"
+#include "wsocket.h"
 
-#define i_type vec_ipmask_t,ipmask_t 
+
+#define i_type vec_ipmask_t, ipmask_t
 #include "stc/vec.h"
 
 typedef enum
@@ -16,7 +17,6 @@ typedef enum
     kMultiportBackendSockets
 } multiport_backend_t;
 
-
 /*
     socket_filter_option_t provides information about which protocol (tcp? udp?)
     which ports (single? range?)
@@ -26,9 +26,10 @@ typedef enum
 */
 typedef struct socket_filter_option_s
 {
-    char                        *host;
+    char *host;
     // char                       **black_list_raddr;
     char                        *balance_group_name;
+    char                        *interface;
     enum socket_address_protocol protocol;
     multiport_backend_t          multiport_backend;
     uint16_t                     port_min;
@@ -45,6 +46,5 @@ typedef struct socket_filter_option_s
 
 } socket_filter_option_t;
 
-
-void socketfilteroptionInit(socket_filter_option_t* sfo);
-void socketfilteroptionDeInit(socket_filter_option_t* sfo);
+void socketfilteroptionInit(socket_filter_option_t *sfo);
+void socketfilteroptionDeInit(socket_filter_option_t *sfo);
