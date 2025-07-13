@@ -266,7 +266,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         option.shared_balance_table = b_table;
     }
 
-    *filter = (socket_filter_t){.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
+    *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
     mutexLock(&(state->mutex));
     filters_t_push(&(state->filters[pirority]), filter);
@@ -282,7 +282,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[wid].pool);
     mutexUnlock(&(state->tcp_pools[wid].mutex));
 
-    *result = (socket_accept_result_t){
+    *result = (socket_accept_result_t) {
         .io             = io,
         .tunnel         = filter->tunnel,
         .real_localport = local_port,
@@ -290,7 +290,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
     };
 
     wloop_t *worker_loop = getWorkerLoop(wid);
-    wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
+    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
 
     ev.userdata = result;
 
@@ -534,7 +534,11 @@ static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
                 {
                     char       host_if[60] = {0};
                     ip4_addr_t if_ip;
-                    getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface));
+                    if (! getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface)))
+                    {
+                        LOGF("SocketManager: Could not get interface \"%s\" ip", filter->option.interface);
+                        terminateProgram(1);
+                    }
                     ip4AddrAddressToNetwork(host_if, &if_ip);
                     filter->listen_io = wloopCreateTcpServer(loop, host_if, main_port, onAcceptTcpMultiPort);
                 }
@@ -585,7 +589,11 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         {
             char       host_if[60] = {0};
             ip4_addr_t if_ip;
-            getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface));
+            if (! getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface)))
+            {
+                LOGF("SocketManager: Could not get interface \"%s\" ip", filter->option.interface);
+                terminateProgram(1);
+            }
             ip4AddrAddressToNetwork(host_if, &if_ip);
             filter->listen_io = wloopCreateTcpServer(loop, host_if, p, onAcceptTcpSinglePort);
         }
@@ -620,7 +628,11 @@ static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     {
         char       host_if[60] = {0};
         ip4_addr_t if_ip;
-        getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface));
+        if (! getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface)))
+        {
+            LOGF("SocketManager: Could not get interface \"%s\" ip", filter->option.interface);
+            terminateProgram(1);
+        }
         ip4AddrAddressToNetwork(host_if, &if_ip);
         filter->listen_io = wloopCreateTcpServer(loop, host_if, port, onAcceptTcpSinglePort);
     }
@@ -704,7 +716,7 @@ static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
 
     pl->tunnel           = filter->tunnel;
     wloop_t *worker_loop = getWorkerLoop(pl->wid);
-    wevent_t ev          = (wevent_t){.loop = worker_loop, .cb = filter->cb};
+    wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
     if (pl->wid == state->wid)
@@ -813,7 +825,7 @@ static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
     uint16_t   local_port = sockaddrPort(wioGetLocaladdrU(io));
     wid_t      target_wid = (wid_t) local_port % getWorkersCount();
 
-    udp_payload_t item = (udp_payload_t){
+    udp_payload_t item = (udp_payload_t) {
         .sock = socket, .buf = buf, .wid = target_wid, .peer_addr = *wioGetPeerAddrU(io), .real_localport = local_port};
 
     distributeUdpPayload(item);
@@ -836,7 +848,7 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
         terminateProgram(1);
     }
     udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
-    *socket           = (udpsock_t){.io = filter->listen_io, .table = idleTableCreate(loop)};
+    *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
     weventSetUserData(filter->listen_io, socket);
     wioSetCallBackRead(filter->listen_io, onUdpPacketReceived);
     wioRead(filter->listen_io);
@@ -907,9 +919,9 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
 
     udp_payload_t *item = newUpdPayload(wid_from);
 
-    *item = (udp_payload_t){.sock = socket_io, .buf = buf, .wid = wid_from};
+    *item = (udp_payload_t) {.sock = socket_io, .buf = buf, .wid = wid_from};
 
-    wevent_t ev = (wevent_t){.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
+    wevent_t ev = (wevent_t) {.loop = weventGetLoop(socket_io->io), .userdata = item, .cb = writeUdpThisLoop};
 
     wloopPostEvent(weventGetLoop(socket_io->io), &ev);
 }
