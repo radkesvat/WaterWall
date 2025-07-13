@@ -20,15 +20,15 @@ enum dynamic_value_status
 
 typedef struct dynamic_value_s
 {
-    int    status; // enum dynamic_value_status
-    size_t value;
-    void  *value_ptr;
+    uint32_t status; // enum dynamic_value_status
+    uint32_t integer;
+    void    *string;
 } dynamic_value_t;
 
 static void dynamicvalueDestroy(const dynamic_value_t dy)
 {
-    if (dy.value_ptr)
+    if (dy.string)
     {
-        memoryFree(dy.value_ptr);
+        memoryFree(dy.string);
     }
 }

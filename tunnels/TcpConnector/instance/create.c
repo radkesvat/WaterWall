@@ -45,7 +45,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         TODO
         this is old code, i think the free bind part may not work if getIpVersion consider that slash
     */
-    state->constant_dest_addr.ip_address.type = getIpVersion(state->dest_addr_selected.value_ptr);
+    state->constant_dest_addr.ip_address.type = getIpVersion(state->dest_addr_selected.string);
 
     if (state->constant_dest_addr.ip_address.type == IPADDR_TYPE_ANY)
     {
@@ -60,7 +60,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     // Free bind parsings
     if (state->dest_addr_selected.status == kDvsConstant)
     {
-        char *slash = stringChr(state->dest_addr_selected.value_ptr, '/');
+        char *slash = stringChr(state->dest_addr_selected.string, '/');
         if (slash != NULL)
         {
             *slash            = '\0';
@@ -130,13 +130,13 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
         if (state->constant_dest_addr.type_ip == false)
         {
-            addresscontextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.value_ptr,
-                                            (uint8_t) stringLength(state->dest_addr_selected.value_ptr));
+            addresscontextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.string,
+                                            (uint8_t) stringLength(state->dest_addr_selected.string));
         }
         else
         {
             sockaddr_u temp;
-            sockaddrSetIp(&(temp), state->dest_addr_selected.value_ptr);
+            sockaddrSetIp(&(temp), state->dest_addr_selected.string);
             sockaddrToIpAddr(&temp,&(state->constant_dest_addr.ip_address));
         }
     }
@@ -152,7 +152,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
     if (state->dest_port_selected.status == kDvsConstant)
     {
-        addresscontextSetPort(&(state->constant_dest_addr), (uint16_t) state->dest_port_selected.value);
+        addresscontextSetPort(&(state->constant_dest_addr), (uint16_t) state->dest_port_selected.integer);
     }
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);

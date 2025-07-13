@@ -290,6 +290,7 @@ enum
 #define memorySet           memset
 #define memoryMove          memmove
 #define memoryCompare       memcmp
+#define stringCompare       strcmp
 #define stringLength        strlen
 #define stringNPrintf       snprintf        
 

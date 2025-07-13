@@ -3,7 +3,6 @@
 #include "objects/dynamic_value.h"
 #include "wlibc.h"
 
-
 static inline bool checkJsonIsObjectAndHasChild(const cJSON *json_obj)
 {
     return cJSON_IsObject(json_obj) && json_obj->child != NULL;
@@ -66,7 +65,7 @@ static inline bool getStringFromJson(char **dest, const cJSON *json_str_node)
     {
 
         *dest = memoryAllocate(strlen(json_str_node->valuestring) + 1);
-        strcpy(*dest, json_str_node->valuestring);
+        stringCopy(*dest, json_str_node->valuestring);
         return true;
     }
     return false;
@@ -81,7 +80,7 @@ static inline bool getStringFromJsonObject(char **dest, const cJSON *json_obj, c
     {
 
         *dest = memoryAllocate(strlen(jstr->valuestring) + 1);
-        strcpy(*dest, jstr->valuestring);
+        stringCopy(*dest, jstr->valuestring);
         return true;
     }
     return false;
@@ -94,7 +93,7 @@ static inline bool getStringFromJsonObjectOrDefault(char **dest, const cJSON *js
     if (! getStringFromJsonObject(dest, json_obj, key))
     {
         *dest = memoryAllocate(strlen(def) + 1);
-        strcpy(*dest, def);
+        stringCopy(*dest, def);
         return false;
     }
     return true;
@@ -121,7 +120,7 @@ static inline dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *js
         for (size_t mi = kDvsConstant + 1; mi < matchers + kDvsConstant + 1; mi++)
         {
             char *matcher = va_arg(argp, char *);
-            if (strcmp(matcher, jstr->valuestring) == 0)
+            if (stringCompare(matcher, jstr->valuestring) == 0)
             {
                 va_end(argp);
                 result.status = (int) mi;
@@ -130,9 +129,9 @@ static inline dynamic_value_t parseDynamicStrValueFromJsonObject(const cJSON *js
         }
 
         va_end(argp);
-        result.status    = kDvsConstant;
-        result.value_ptr = memoryAllocate(strlen(jstr->valuestring) + 1);
-        strcpy(result.value_ptr, jstr->valuestring);
+        result.status = kDvsConstant;
+        result.string = memoryAllocate(strlen(jstr->valuestring) + 1);
+        stringCopy(result.string, jstr->valuestring);
     }
     return result;
 }
@@ -157,7 +156,7 @@ static inline dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON
         for (size_t mi = kDvsConstant + 1; mi < matchers + kDvsConstant + 1; mi++)
         {
             char *matcher = va_arg(argp, char *);
-            if (strcmp(matcher, jstr->valuestring) == 0)
+            if (stringCompare(matcher, jstr->valuestring) == 0)
             {
                 va_end(argp);
                 result.status = (int) mi;
@@ -170,8 +169,8 @@ static inline dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON
     }
     else if (cJSON_IsNumber(jstr))
     {
-        result.status = kDvsConstant;
-        result.value  = (size_t) jstr->valueint;
+        result.status  = kDvsConstant;
+        result.integer = (size_t) jstr->valueint;
     }
     return result;
 }
