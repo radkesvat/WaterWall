@@ -2,16 +2,50 @@
 
 #include "wwapi.h"
 
+enum tcp_bit_action_dynamic_value
+{
+    kDvsNoAction = kDvsEmpty,
+    kDvsOff      = kDvsFirstOption,
+    kDvsOn,
+    kDvsSwapCwr,
+    kDvsSwapEce,
+    kDvsSwapUrg,
+    kDvsSwapAck,
+    kDvsSwapPsh,
+    kDvsSwapRst,
+    kDvsSwapSyn,
+    kDvsSwapFin
+};
+
 typedef struct ipmanipulator_tstate_s
 {
     uint64_t trick_proto_swap : 1;
     uint64_t trick_sni_blender : 1;
+    uint64_t trick_tcp_bit_changes : 1;
 
     int trick_proto_swap_tcp_number;
     int trick_proto_swap_udp_number;
 
     int trick_sni_blender_packets_count;
     int trick_sni_blender_packets_delay_max;
+
+    enum tcp_bit_action_dynamic_value up_tcp_bit_cwr_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_ece_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_urg_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_ack_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_psh_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_rst_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_syn_action;
+    enum tcp_bit_action_dynamic_value up_tcp_bit_fin_action;
+
+    enum tcp_bit_action_dynamic_value down_tcp_bit_cwr_action;
+    enum tcp_bit_action_dynamic_value down_tcp_bit_ece_action;
+    enum tcp_bit_action_dynamic_value down_tcp_bit_urg_action;
+    enum tcp_bit_action_dynamic_value down_tcp_bit_ack_action;
+    enum tcp_bit_action_dynamic_value down_tcp_bit_psh_action;
+    enum tcp_bit_action_dynamic_value down_tcp_bit_rst_action;
+    enum tcp_bit_action_dynamic_value down_tcp_bit_syn_action;
+    enum tcp_bit_action_dynamic_value down_tcp_bit_fin_action;
 
 } ipmanipulator_tstate_t;
 
