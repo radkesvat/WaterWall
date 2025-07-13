@@ -27,6 +27,9 @@ void sbufDestroy(sbuf_t *b)
  */
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
+    // Ensure pad_left is always a multiple of 16
+    pad_left = (pad_left + 15) & ~15;
+
     if (minimum_capacity != 0 && minimum_capacity % kCpuLineCacheSize != 0)
     {
         minimum_capacity =
