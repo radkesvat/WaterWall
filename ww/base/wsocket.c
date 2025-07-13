@@ -758,7 +758,7 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
         return false;
     }
 
-    stringCopy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
+    stringNCopy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
     ifr.ifr_name[IFNAMSIZ - 1] = '\0';
 
     if (ioctl(fd, SIOCGIFADDR, &ifr) == -1)
