@@ -170,7 +170,7 @@ static inline dynamic_value_t parseDynamicNumericValueFromJsonObject(const cJSON
     else if (cJSON_IsNumber(jstr))
     {
         result.status  = kDvsConstant;
-        result.integer = (size_t) jstr->valueint;
+        result.integer = jstr->valueint;
     }
     return result;
 }
