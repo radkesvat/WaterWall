@@ -28,6 +28,7 @@ void WSADeinit(void)
     }
 }
 #else
+#include <net/if.h> 
 #include <ifaddrs.h>
 
 #endif
@@ -744,6 +745,7 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
 
     free(adapters);
     return false;
+
 #elif defined(OS_ANDROID)
 
     int          fd;
@@ -767,7 +769,7 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
     }
 
     struct sockaddr_in *ipaddr = (struct sockaddr_in *) &ifr.ifr_addr;
-    ip4AddrSetU32(ip_buffer, ipaddr->sin_addr);
+    ip4AddrSetU32(ip_buffer, ipaddr->sin_addr.s_addr);
     close(fd);
 
     return true;
