@@ -741,6 +741,33 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
 
     free(adapters);
     return false;
+#elif defined(OS_ANDROID)
+
+    int          fd;
+    struct ifreq ifr;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == -1)
+    {
+        printError("socket");
+        return false;
+    }
+
+    stringCopy(ifr.ifr_name, if_name, IFNAMSIZ - 1);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+    if (ioctl(fd, SIOCGIFADDR, &ifr) == -1)
+    {
+        printError("ioctl");
+        close(fd);
+        return false;
+    }
+
+    struct sockaddr_in *ipaddr = (struct sockaddr_in *) &ifr.ifr_addr;
+    ip4AddrSetU32(ip_buffer, ipaddr->sin_addr);
+    close(fd);
+
+    return true;
 
 #else
     struct ifaddrs *ifaddr, *ifa;
