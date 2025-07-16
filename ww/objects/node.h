@@ -75,9 +75,9 @@ static inline bool nodeIsAdapter(node_t *node)
 }
 static inline bool nodeIsLastInChain(node_t *node)
 {
-    return (node->flags & kNodeFlagChainEnd) == kNodeFlagChainEnd;
+    return node->next == NULL || (node->flags & kNodeFlagChainEnd) == kNodeFlagChainEnd;
 }
 static inline bool nodeIsFirstInChain(node_t *node)
 {
-    return (node->flags & kNodeFlagChainHead) == kNodeFlagChainHead;
+    return node->next != NULL || (node->flags & kNodeFlagChainHead) == kNodeFlagChainHead;
 }
