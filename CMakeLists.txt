@@ -90,6 +90,8 @@ option(INCLUDE_TUN_DEVICE "link TunDevice staticly to the core"  TRUE)
 endif()
 
 option(INCLUDE_PACKET_TO_CONNECTION "link PacketToConnection staticly to the core"  TRUE)
+option(INCLUDE_DATA_AS_PACKET "link DataAsPacket staticly to the core"  TRUE)
+option(INCLUDE_PACKET_AS_DATA "link PacketAsData staticly to the core"  TRUE)
 
 option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
@@ -224,6 +226,21 @@ target_link_libraries(Waterwall PacketToConnection)
 endif()
 
 
+#data as packet
+if (INCLUDE_DATA_AS_PACKET)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_DATA_AS_PACKET=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/DataAsPacket)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/DataAsPacket)
+target_link_libraries(Waterwall DataAsPacket)
+endif()
+
+#packet as data
+if (INCLUDE_PACKET_AS_DATA)
+target_compile_definitions(Waterwall PUBLIC INCLUDE_PACKET_AS_DATA=1)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketAsData)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketAsData)
+target_link_libraries(Waterwall PacketAsData)
+endif()
 
 #raw socket
 if (INCLUDE_RAWSOCKET)
