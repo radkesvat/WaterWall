@@ -60,7 +60,7 @@ add_library(ww STATIC
     net/socket_filter_option.c
     lwip/ww_lwip.c
     node_builder/config_file.c
-    node_builder/node_loader.c
+    node_builder/node_library.c
     managers/signal_manager.c
     managers/socket_manager.c
     managers/node_manager.c

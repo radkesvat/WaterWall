@@ -1,8 +1,9 @@
 #include "chain.h"
 #include "global_state.h"
 #include "line.h"
+#include "objects/node.h"
+
 #include "loggers/internal_logger.h"
-#include "node_builder/node.h"
 
 void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t)
 {

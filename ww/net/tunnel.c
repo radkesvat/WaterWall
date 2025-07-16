@@ -1,7 +1,6 @@
 #include "tunnel.h"
 #include "loggers/internal_logger.h"
 #include "managers/node_manager.h"
-#include "node.h"
 
 // Binds a tunnel as the upstream of another tunnel
 void tunnelBindUp(tunnel_t *from, tunnel_t *to)

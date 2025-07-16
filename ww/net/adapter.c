@@ -2,7 +2,6 @@
 #include "line.h"
 #include "loggers/internal_logger.h"
 #include "managers/node_manager.h"
-#include "node.h"
 
 void adapterDefaultOnChainUpEnd(tunnel_t *t, tunnel_chain_t *tc)
 {

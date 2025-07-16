@@ -2,7 +2,6 @@
 #include "chain.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
-#include "node.h"
 #include "utils/json_helpers.h"
 
 enum
