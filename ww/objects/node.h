@@ -77,7 +77,7 @@ static inline bool nodeIsLastInChain(node_t *node)
 {
     return node->next == NULL;
 }
-static inline bool nodeIsFirstInChain(node_t *node)
+static inline bool nodeHasNext(node_t *node)
 {
     return node->next != NULL;
 }
