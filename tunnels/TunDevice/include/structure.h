@@ -12,6 +12,8 @@
 
 typedef struct tundevice_tstate_s
 {
+    TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
+
     // settings form json
     char *name;        // name of the device
     char *ip_subnet;   // ip/subnet

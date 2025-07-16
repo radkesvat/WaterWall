@@ -2,11 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static void something(void)
-{
-    // This function is not implemented yet
-}
-
 void rawsocketExitHook(void *userdata, int sig)
 {
     (void) sig;
@@ -32,7 +27,8 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
 
-    tunnelPrevDownStreamPayload(t, l, buf);
+    rawsocket_tstate_t *state = tunnelGetState(t);
+    state->WriteReceivedPacket(t, l, buf);
 }
 
 void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

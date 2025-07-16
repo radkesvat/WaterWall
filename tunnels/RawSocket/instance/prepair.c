@@ -7,6 +7,15 @@ void rawsocketOnPrepair(tunnel_t *t)
     (void) t;
     rawsocket_tstate_t *state = tunnelGetState(t);
 
+    if (nodeIsLastInChain(t->node))
+    {
+        state->WriteReceivedPacket = t->prev->fnPayloadD;
+    }
+    else
+    {
+        state->WriteReceivedPacket = t->next->fnPayloadU;
+    }
+
     state->capture_device =
         caputredeviceCreate(state->capture_device_name, state->capture_ip, t, rawsocketOnIPPacketReceived);
 

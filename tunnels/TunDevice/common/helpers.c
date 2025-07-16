@@ -2,9 +2,14 @@
 
 #include "loggers/network_logger.h"
 
-void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid)
+static void logPacket(struct tun_device_s *tdev, tunnel_t t, sbuf_t *buf, wid_t wid)
 {
-    tunnel_t *t = userdata;
+
+    discard tdev;
+    discard wid;
+    discard t;
+    discard buf;
+    
 
 #if LOG_PACKET_INFO
     struct ip_hdr *iphdr = (struct ip_hdr *) sbufGetRawPtr(buf);
@@ -44,6 +49,16 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
 afterlog:;
 
 #endif
+}
+
+void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid)
+{
+
+    tunnel_t *t = userdata;
+    logPacket(tdev, *t, buf, wid);
+
+    tundevice_tstate_t *state = tunnelGetState(t);
+
     struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
 
     if (IPH_V(ipheader) != 4)
@@ -55,22 +70,34 @@ afterlog:;
 
     if (UNLIKELY(tdev->up == false))
     {
+        // this may happen at start of other side creates device and gets packets on multiple workers
         LOGW("TunDevice: device is down, cannot process packet");
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
     }
 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
+#ifdef DEBUG
     lineLock(l);
+#endif
+
+
+    state->WriteReceivedPacket(t, l, buf);
+    
     tunnelNextUpStreamPayload(t, l, buf);
 
+    
+#ifdef DEBUG
     if (! lineIsAlive(l))
     {
         LOGF("TunDevice: line is not alive, rule of packet tunnels is violated");
         terminateProgram(1);
     }
+
     lineUnlock(l);
+#endif
 }
+
 
 void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {

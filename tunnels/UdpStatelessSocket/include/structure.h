@@ -4,6 +4,8 @@
 
 typedef struct udpstatelesssocket_tstate_s
 {
+    TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
+
     // These fields are read from json
     char    *listen_address; // address to listen on (ip)
     uint16_t listen_port;    // port to listen on
@@ -11,6 +13,7 @@ typedef struct udpstatelesssocket_tstate_s
 
     wio_t *io;     // socket file descriptor
     wid_t  io_wid; // the worker id that created the io
+
 } udpstatelesssocket_tstate_t;
 
 typedef struct udpstatelesssocket_lstate_s

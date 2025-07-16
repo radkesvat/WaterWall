@@ -4,7 +4,15 @@
 
 void tundeviceTunnelOnPrepair(tunnel_t *t)
 {
-    tundevice_tstate_t * state = tunnelGetState(t);
+    tundevice_tstate_t *state = tunnelGetState(t);
+    if (nodeIsLastInChain(t->node))
+    {
+        state->WriteReceivedPacket = t->prev->fnPayloadD;
+    }
+    else
+    {
+        state->WriteReceivedPacket = t->next->fnPayloadU;
+    }
 
     state->tdev = tundeviceCreate(state->name, false, t, tundeviceOnIPPacketReceived);
 
@@ -14,7 +22,7 @@ void tundeviceTunnelOnPrepair(tunnel_t *t)
         terminateProgram(1);
     }
 
-    tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int )state->subnet_mask);
+    tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int) state->subnet_mask);
 
     tundeviceBringUp(state->tdev);
 }
