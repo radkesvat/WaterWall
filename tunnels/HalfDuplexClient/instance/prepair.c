@@ -4,6 +4,6 @@
 
 void halfduplexclientTunnelOnPrepair(tunnel_t *t)
 {
-    (void)t;
+    discard t;
 }
 

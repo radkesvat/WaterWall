@@ -4,6 +4,6 @@
 
 void templateTunnelOnStart(tunnel_t *t)
 {
-    (void)t;
+    discard t;
 }
 

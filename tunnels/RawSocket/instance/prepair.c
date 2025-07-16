@@ -4,7 +4,6 @@
 
 void rawsocketOnPrepair(tunnel_t *t)
 {
-    (void) t;
     rawsocket_tstate_t *state = tunnelGetState(t);
 
     if (nodeIsLastInChain(t->node))
