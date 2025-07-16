@@ -1,6 +1,7 @@
 #include "node_manager.h"
 #include "chain.h"
 #include "global_state.h"
+#include "line.h"
 #include "loggers/internal_logger.h"
 #include "utils/json_helpers.h"
 
@@ -185,9 +186,35 @@ static void runNodes(node_manager_config_t *cfg)
         {
             assert(t_array_cpy[i] != NULL);
             tunnel_t *tunnel = t_array_cpy[i];
+            tunnelGetChain(tunnel)->started = true;
             tunnel->onStart(tunnel);
         }
     }
+    {
+        // send packt tunnels init
+        for (int i = 0; i < tunnels_count; i++)
+        {
+            assert(t_array_cpy[i] != NULL);
+            tunnel_t *tunnel = t_array_cpy[i];
+            if (tunnel->prev == NULL && tunnel->node->flags & kNodeFlagChainHead && tunnel->node->layer_group == kNodeLayer3)
+            {
+                // this is a packet tunnel, we need to send init to it ( for each worker )
+                assert(tunnelGetChain(tunnel)->packet_chain_init_sent == false);
+
+                tunnelGetChain(tunnel)->packet_chain_init_sent = true;
+                for (wid_t wi = 0; wi < getWorkersCount() - WORKER_ADDITIONS; wi++)
+                {
+                    line_t *l = tunnelchainGetPacketLine(tunnelGetChain(tunnel), wi);
+
+                    tunnelNextUpStreamInit(tunnel, l);
+                    assert(lineIsAlive(l));
+                }
+
+            }
+        }
+    }
+
+    
 }
 
 static void pathWalk(node_manager_config_t *cfg)

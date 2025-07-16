@@ -34,7 +34,9 @@ typedef struct tunnel_chain_s
     uint16_t        sum_padding_left;
     uint32_t        sum_line_state_size;
     wid_t           workers_count;
-    bool            contains_packet_node;
+    bool            contains_packet_node : 1;
+    bool            packet_chain_init_sent : 1;
+    bool            started : 1;
     line_t        **packet_lines;
     master_pool_t  *masterpool_line_pool;
     generic_pool_t *line_pools[];
