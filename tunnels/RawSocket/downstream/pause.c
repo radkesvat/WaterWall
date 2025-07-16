@@ -4,8 +4,7 @@
 
 void rawsocketDownStreamPause(tunnel_t *t, line_t *l)
 {
+    // This node dose not care about this callback
     discard t;
     discard l;
-    LOGF("This Function is not supposed to be called, used packet-tunnel interface instead  (RawSocket)");
-    terminateProgram(1);
 }

@@ -4,8 +4,7 @@
 
 void tundeviceTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
+    // This node dose not care about this callabck
     discard t;
     discard l;
-    LOGF("This Function is not supposed to be called for a down chain tunnel (TunDevice)");
-    terminateProgram(1);
 }

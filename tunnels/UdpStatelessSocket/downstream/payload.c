@@ -4,9 +4,14 @@
 
 void udpstatelesssocketTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    discard t;
-    discard l;
-    discard buf;
-    LOGF("This Function is disabled, this node is up end adapter");
-    terminateProgram(1);
+    // sharing the exact code with upstream side (bidirectional tunnel)
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    if (lineGetWID(l) != state->io_wid)
+    {
+        sendWorkerMessage(state->io_wid, UdpStatelessLocalThreadSocketUpStream, t, l, buf);
+    }
+    else
+    {
+        UdpStatelessLocalThreadSocketUpStream(NULL, t, l, buf);
+    }
 }
