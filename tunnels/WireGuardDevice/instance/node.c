@@ -19,7 +19,7 @@ node_t nodeWireGuardDeviceGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagNoChain, // TODO test
+             .flags                 = kNodeFlagNone,
              .required_padding_left = WIREGUARD_AUTHTAG_LEN,
              .layer_group           = kNodeLayer3,
              .layer_group_next_node = kNodeLayer3,

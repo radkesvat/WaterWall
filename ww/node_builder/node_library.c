@@ -1,12 +1,9 @@
-#include "node.h"
-#include "wlibc.h"
+#include "node_library.h"
 
 #include "worker.h"
 
 #include "loggers/internal_logger.h"
 
-#include <stdlib.h>
-#include <string.h>
 
 #define i_type vec_static_libs // NOLINT
 #define i_key  node_t          // NOLINT

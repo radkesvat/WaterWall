@@ -53,8 +53,7 @@ struct node_s
     enum node_flags flags;
     uint16_t        required_padding_left;
 
-    TunnelCreateHandle  createHandle;
-
+    TunnelCreateHandle createHandle;
 
     struct cJSON                 *node_json;
     struct cJSON                 *node_settings_json; // node_json -> settings
@@ -70,11 +69,15 @@ struct node_s
     tunnel_t *instance;
 };
 
-node_t nodelibraryLoadByTypeName(const char *name);
-node_t nodelibraryLoadByTypeHash(hash_t htype);
-
-void nodelibraryRegister(node_t lib);
-bool nodeHasFlagChainHead(node_t *node);
-
-void nodelibraryCleanup(void);
-
+static inline bool nodeIsAdapter(node_t *node)
+{
+    return node->is_adapter;
+}
+static inline bool nodeIsLastInChain(node_t *node)
+{
+    return (node->flags & kNodeFlagChainEnd) == kNodeFlagChainEnd;
+}
+static inline bool nodeIsFirstInChain(node_t *node)
+{
+    return (node->flags & kNodeFlagChainHead) == kNodeFlagChainHead;
+}

@@ -135,6 +135,7 @@ static void runNodes(node_manager_config_t *cfg)
             tunnel->onIndex(tunnel, &ta, &index, &mem_offset);
             tunnelGetChain(tunnel)->tunnels = ta;
 
+            // dont repeat this operation if another starter tunnel was in this chain
             for (int cti = 0; cti < ta.len; cti++)
             {
                 for (int ti = 0; ti < starter_tunnels_count; ti++)
@@ -154,6 +155,21 @@ static void runNodes(node_manager_config_t *cfg)
             if (t_array_cpy[i]->chain == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagNoChain))
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array_cpy[i]->node->name);
+                terminateProgram(1);
+            }
+
+            if (t_array_cpy[i]->next == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagChainEnd))
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but dose not have "
+                     "flagkNodeFlagChainEnd",
+                     t_array_cpy[i]->node->name);
+                terminateProgram(1);
+            }
+            if (t_array_cpy[i]->prev == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagChainHead))
+            {
+                LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but dose not have "
+                     "flagkNodeFlagChainHead",
+                     t_array_cpy[i]->node->name);
                 terminateProgram(1);
             }
         }
@@ -344,7 +360,7 @@ void nodemanagerRunConfigFile(config_file_t *config_file)
 
     node_manager_config_t *cfg = memoryAllocate(sizeof(node_manager_config_t));
 
-    *cfg = (node_manager_config_t) {
+    *cfg = (node_manager_config_t){
         .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
     vec_configs_t_push(&(state->configs), cfg);
     startInstallingConfigFile(cfg);
