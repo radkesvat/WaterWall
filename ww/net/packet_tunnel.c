@@ -5,21 +5,18 @@
 // Default upstream initialization function
 void packettunnelDefaultUpStreamInit(tunnel_t *self, line_t *line)
 {
-    assert(self->next != NULL);
     self->next->fnInitU(self->next, line);
 }
 
 // Default upstream establishment function
 void packettunnelDefaultUpStreamEst(tunnel_t *self, line_t *line)
 {
-    assert(self->next != NULL);
     self->next->fnEstU(self->next, line);
 }
 
 // Default upstream finalization function
 void packettunnelDefaultUpStreamFin(tunnel_t *self, line_t *line)
 {
-    assert(self->next != NULL);
     self->next->fnFinU(self->next, line);
 }
 
@@ -61,10 +58,10 @@ void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 {
     discard self;
     discard line;
-    if (self->prev != NULL)
-    {
-        self->prev->fnEstD(self->prev, line);
-    }
+    // if (self->prev != NULL)
+    // {
+    self->prev->fnEstD(self->prev, line);
+    // }
     // if (! line->established)
     // {
     //     self->prev->fnEstD(self->prev, line);
@@ -73,10 +70,10 @@ void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 }
 
 // Default downstream finalization function
-void packettunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line)
+void packettunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
-    LOGD("packet tunnel received Finish, forcing line to recreate");
+    // LOGD("packet tunnel received Finish, forcing line to recreate");
     // if (line->established)
     // {
     self->next->fnInitU(self->next, line);
@@ -100,25 +97,25 @@ void packettunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *
 // Default downstream pause function
 void packettunnelDefaultDownStreamPause(tunnel_t *self, line_t *line)
 {
-    if (self->prev != NULL)
-    {
-        self->next->fnPauseD(self->next, line);
-    }
+    // if (self->prev != NULL)
+    // {
+    self->next->fnPauseD(self->next, line);
+    // }
 }
 
 // Default downstream resume function
 void packettunnelDefaultDownStreamResume(tunnel_t *self, line_t *line)
 {
-    if (self->prev != NULL)
-    {
-        self->next->fnResumeD(self->next, line);
-    }
+    // if (self->prev != NULL)
+    // {
+    self->next->fnResumeD(self->next, line);
+    // }
 }
 
 tunnel_t *packettunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate_size)
 {
     assert(lstate_size == 0); // packet tunnels dont have lines
-    discard lstate_size;
+    discard   lstate_size;
     tunnel_t *t = tunnelCreate(node, tstate_size, 0);
 
     t->fnInitU    = packettunnelDefaultUpStreamInit;
@@ -130,7 +127,7 @@ tunnel_t *packettunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate
 
     t->fnInitD    = packettunnelDefaultdownStreamInit;
     t->fnEstD     = packettunnelDefaultdownStreamEst;
-    t->fnFinD     = packettunnelDefaultdownStreamFinish;
+    t->fnFinD     = packettunnelDefaultdownStreamFin;
     t->fnPayloadD = packettunnelDefaultdownStreamPayload;
     t->fnPauseD   = packettunnelDefaultDownStreamPause;
     t->fnResumeD  = packettunnelDefaultDownStreamResume;

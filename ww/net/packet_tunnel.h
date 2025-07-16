@@ -12,7 +12,7 @@ void packettunnelDefaultUpStreamResume(tunnel_t *self, line_t *line);
 
 void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line);
 void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line);
-void packettunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line);
+void packettunnelDefaultdownStreamFin(tunnel_t *self, line_t *line);
 void packettunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
 void packettunnelDefaultDownStreamPause(tunnel_t *self, line_t *line);
 void packettunnelDefaultDownStreamResume(tunnel_t *self, line_t *line);
