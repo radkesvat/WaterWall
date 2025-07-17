@@ -432,12 +432,14 @@ if(HAVE_X86INTRIN_H AND NOT DISABLE_AVX)
         MESSAGE(STATUS "Including amd64 checksum assembly code")
         target_sources(ww_lwip PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/checksum_amd64.s")
     else()
-        MESSAGE(STATUS "NOT Including amd64 checksum assembly code")
+        MESSAGE(STATUS "using C implementation of checksum")
         target_sources(ww_lwip PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/checksum_default.c")
     endif()
 
 else()
     set(WW_SUPPORTED_MEM128_OPTIMIZE 0)
+    MESSAGE(STATUS "using C implementation of checksum")
+    target_sources(ww_lwip PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/checksum_default.c")
 endif()
 
 ################################################################################
