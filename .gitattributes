@@ -2,3 +2,4 @@
 ww/lwip/** linguist-vendored
 ww/managers/mimalloc/** linguist-vendored
 *.asm linguist-ignore=true
+*.s linguist-ignore=true
