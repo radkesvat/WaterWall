@@ -83,8 +83,6 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
 
 
     state->WriteReceivedPacket(t, l, buf);
-    
-    tunnelNextUpStreamPayload(t, l, buf);
 
     
 #ifdef DEBUG
