@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: [-no-ms-compatibility, -U_MSC_VER]

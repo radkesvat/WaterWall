@@ -566,9 +566,14 @@ if(NOT MSVC)
         # -Wno-pointer-to-int-cast
     )
 
-# Suppress unused command-line argument warnings for ASM compilation on Clang
-# This prevents -D flags and -pedantic from causing errors when assembling .s files
-target_compile_options(ww PRIVATE $<$<AND:$<COMPILE_LANGUAGE:ASM>,$<C_COMPILER_ID:Clang>>:-Wno-unused-command-line-argument>)
+    # prevent defining _MSC_VER
+    if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        target_compile_options(ww PUBLIC -no-ms-compatibility)
+    endif()
+
+    # Suppress unused command-line argument warnings for ASM compilation on Clang
+    # This prevents -D flags and -pedantic from causing errors when assembling .s files
+    target_compile_options(ww PRIVATE $<$<AND:$<COMPILE_LANGUAGE:ASM>,$<C_COMPILER_ID:Clang>>:-Wno-unused-command-line-argument>)
 
 endif()
 
@@ -582,6 +587,10 @@ if(MSVC)
         /WX
     )
 endif()
+
+
+
+
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
 
