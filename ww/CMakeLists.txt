@@ -568,7 +568,7 @@ if(NOT MSVC)
 
     # prevent defining _MSC_VER
     if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
-        target_compile_options(ww PUBLIC -no-ms-compatibility)
+        target_compile_options(ww PUBLIC -fno-ms-compatibility)
     endif()
 
     # Suppress unused command-line argument warnings for ASM compilation on Clang
