@@ -114,6 +114,7 @@ else()
 endif()
 
 
+
 ################################################################################
 # Crypto Backend Source Selection
 ################################################################################
@@ -563,10 +564,17 @@ if(NOT MSVC)
         # -Wno-int-to-pointer-cast
         # -Wno-pointer-to-int-cast
     )
+    
+# Suppress unused command-line argument warnings for ASM compilation on Clang
+# This prevents -D flags and -pedantic from causing errors when assembling .s files
+target_compile_options(ww PRIVATE $<$<AND:$<COMPILE_LANGUAGE:ASM>,$<C_COMPILER_ID:Clang>>:-Wno-unused-command-line-argument>)
+
 endif()
+
 if(APPLE)
     target_compile_options(ww PRIVATE -Wno-shorten-64-to-32)
 endif()
+
 if(MSVC)
     target_compile_options(ww PUBLIC 
         /W4
