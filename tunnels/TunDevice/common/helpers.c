@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void logPacket(struct tun_device_s *tdev, tunnel_t t, sbuf_t *buf, wid_t wid)
+static void logPacket(struct tun_device_s *tdev, tunnel_t *t, sbuf_t *buf, wid_t wid)
 {
 
     discard tdev;
@@ -55,7 +55,7 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
 {
 
     tunnel_t *t = userdata;
-    logPacket(tdev, *t, buf, wid);
+    logPacket(tdev, t, buf, wid);
 
     tundevice_tstate_t *state = tunnelGetState(t);
 
