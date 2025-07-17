@@ -427,10 +427,10 @@ check_function("setproctitle" "unistd.h")
 ################################################################################
 # Checksum implementation selection
 ################################################################################
-if(HAVE_X86INTRIN_H AND NOT DISABLE_AVX)
+if(HAVE_X86INTRIN_H AND NOT DISABLE_AVX AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_compile_options(ww PUBLIC -mavx)
     set(WW_SUPPORTED_MEM128_OPTIMIZE 1)
-    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX) AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
         MESSAGE(STATUS "Including amd64 checksum assembly code")
         target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_amd64.s")
     else()
