@@ -12,7 +12,7 @@ project(Waterwall
         VERSION 1.39
         DESCRIPTION "A fast and secure VPN tunnel"
         HOMEPAGE_URL "https://github.com/radkesvat/waterwall"
-        LANGUAGES C
+        LANGUAGES C ASM
 )
 
 file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/version.txt" "${PROJECT_VERSION}\n")

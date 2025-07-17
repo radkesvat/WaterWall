@@ -127,7 +127,7 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         else
         {
-            recalculatePacketChecksum(sbufGetMutablePtr(buf));
+            calcFullPacketChecksum(sbufGetMutablePtr(buf));
         }
         l->recalculate_checksum                  = false;
         l->do_not_recalculate_transport_checksum = false;

@@ -560,8 +560,6 @@ static inline bool sockaddrToIpAddr(const sockaddr_u *src, ip_addr_t *dest)
 bool verifyIPPort(const char *ipc);
 bool verifyIPCdir(const char *ipc);
 
-void recalculatePacketChecksum(uint8_t *buf);
-
 bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen);
 
 

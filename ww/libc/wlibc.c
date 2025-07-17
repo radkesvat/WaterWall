@@ -4,9 +4,9 @@
 
 void initWLibc(void)
 {
-    frandInit();
-
     memorymanagerInit();
+    frandInit();
+    checkSumInit();
 }
 
 //--------------------string-------------------------------

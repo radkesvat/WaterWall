@@ -13,6 +13,7 @@
 #include "whash.h"
 #include "wmath.h"
 #include "wtime.h"
+#include "wchecksum.h"
 
 #include "ww_lwip.h"
 

@@ -14,6 +14,7 @@ add_library(ww STATIC
     libc/wtime.c
     libc/werr.c
     libc/wfrand.c
+    libc/wchecksum.c
     base/wchan.c
     base/widle_table.c
     base/wlog.c
@@ -76,6 +77,16 @@ add_library(ww STATIC
     loggers/internal_logger.c
 )
 
+################################################################################
+# Target Properties & Platform-specific Sources
+################################################################################
+# Enforce C11 for this specific target
+set_target_properties(ww 
+    PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
 
 ################################################################################
 # Global Options & Definitions
@@ -143,16 +154,6 @@ elseif(WCRYPTO_BACKEND_SOFTWARE)
 endif()
 
 
-################################################################################
-# Target Properties & Platform-specific Sources
-################################################################################
-# Enforce C11 for this specific target
-set_target_properties(ww 
-    PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-)
 
 # Platform-specific sources
 if(APPLE)
@@ -344,6 +345,8 @@ include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
 add_library(ww_lwip STATIC 
     ${lwipnoapps_SRCS}
 )
+
+
 target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
@@ -424,6 +427,15 @@ check_function("setproctitle" "unistd.h")
 if(HAVE_X86INTRIN_H AND NOT DISABLE_AVX)
     target_compile_options(ww PUBLIC -mavx)
     set(WW_SUPPORTED_MEM128_OPTIMIZE 1)
+
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
+        MESSAGE(STATUS "Including amd64 checksum assembly code")
+        target_sources(ww_lwip PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/checksum_amd64.s")
+    else()
+        MESSAGE(STATUS "NOT Including amd64 checksum assembly code")
+        target_sources(ww_lwip PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/checksum_default.c")
+    endif()
+
 else()
     set(WW_SUPPORTED_MEM128_OPTIMIZE 0)
 endif()
@@ -516,7 +528,7 @@ endif()
 
 
 ################################################################################
-# Sanitizer and Compiler-specific Options
+# Final Compiler-specific Options
 ################################################################################
 if(NOT MSVC)
     target_compile_options(ww PUBLIC 
