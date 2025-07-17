@@ -424,12 +424,13 @@ check_function("socketpair" "sys/socket.h")
 check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
-
+################################################################################
+# Checksum implementation selection
+################################################################################
 if(HAVE_X86INTRIN_H AND NOT DISABLE_AVX)
     target_compile_options(ww PUBLIC -mavx)
     set(WW_SUPPORTED_MEM128_OPTIMIZE 1)
-
-    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX) AND CMAKE_SIZEOF_VOID_P EQUAL 8)
         MESSAGE(STATUS "Including amd64 checksum assembly code")
         target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_amd64.s")
     else()
@@ -564,7 +565,7 @@ if(NOT MSVC)
         # -Wno-int-to-pointer-cast
         # -Wno-pointer-to-int-cast
     )
-    
+
 # Suppress unused command-line argument warnings for ASM compilation on Clang
 # This prevents -D flags and -pedantic from causing errors when assembling .s files
 target_compile_options(ww PRIVATE $<$<AND:$<COMPILE_LANGUAGE:ASM>,$<C_COMPILER_ID:Clang>>:-Wno-unused-command-line-argument>)
