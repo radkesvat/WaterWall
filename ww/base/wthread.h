@@ -110,7 +110,7 @@ static bool safeThreadJoin(wthread_t th)
     return true;
 }
 
-#define pthread_exit() ExitThread(0)
+#define terminateCurrentThread() pthread_exit()
 #endif
 
 #endif // WW_THREAD_H_
