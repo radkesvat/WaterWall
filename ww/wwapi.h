@@ -1,6 +1,7 @@
 #pragma once
 #include "wlibc.h"
 
+
 #include "adapter.h"
 #include "buffer_pool.h"
 #include "buffer_queue.h"
@@ -19,6 +20,7 @@
 #include "utils/json_helpers.h"
 #include "wcrypto.h"
 #include "worker.h"
+#include "base/widle_table.h"
 #include "wproc.h"
 #include "wsocket.h"
 #include "wsysinfo.h"

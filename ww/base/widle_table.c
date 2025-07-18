@@ -13,9 +13,11 @@
 #include "wloop.h"
 #include "wmutex.h"
 
+
 enum
 {
-    kVecCap = 32
+    kVecCap = 32,
+    kDefaultTimeout = 1000 // 1 second
 };
 
 #define i_type                    heapq_idles_t
@@ -75,7 +77,7 @@ widle_table_t *idleTableCreate(wloop_t *loop)
 
     *newtable = (widle_table_t){.memptr         = ptr,
                                 .loop           = loop,
-                                .idle_handle    = wtimerAdd(loop, idleCallBack, 1000, INFINITE),
+                                .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, 1),
                                 .hqueue         = heapq_idles_t_with_capacity(kVecCap),
                                 .hmap           = hmap_idles_t_with_capacity(kVecCap),
                                 .last_update_ms = wloopNowMS(loop)};
@@ -92,19 +94,19 @@ widle_table_t *idleTableCreate(wloop_t *loop)
  * @param key Hash key used for the item.
  * @param userdata User data pointer.
  * @param cb Callback to be invoked upon expiration.
- * @param tid Thread ID.
+ * @param wid Worker ID.
  * @param age_ms Expiration delay in milliseconds.
  * @return Pointer to the idle item; NULL if insertion fails.
  */
-widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t tid, uint64_t age_ms)
+widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid, uint64_t age_ms)
 {
     assert(self);
     widle_item_t *item = memoryAllocate(sizeof(widle_item_t));
     mutexLock(&(self->mutex));
 
-    *item = (widle_item_t){.expire_at_ms = wloopNowMS(getWorkerLoop(tid)) + age_ms,
+    *item = (widle_item_t){.expire_at_ms = wloopNowMS(getWorkerLoop(wid)) + age_ms,
                           .hash         = key,
-                          .tid          = tid,
+                          .wid          = wid,
                           .userdata     = userdata,
                           .cb           = cb,
                           .table        = self};
@@ -134,29 +136,32 @@ void idleTableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, ui
 {
     if (item->removed)
     {
+        printError("IdleTable: Attempt to keep an already removed idle item alive");
+        terminateProgram(1);
         return;
     }
     item->expire_at_ms = wloopNowMS(self->loop) + age_ms;
 
-    mutexLock(&(self->mutex));
-    heapq_idles_t_make_heap(&self->hqueue);
-    mutexUnlock(&(self->mutex));
+    // calling it before processing the heap 
+    // mutexLock(&(self->mutex));
+    // heapq_idles_t_make_heap(&self->hqueue);
+    // mutexUnlock(&(self->mutex));
 }
 
 /**
  * @brief Retrieves an idle item from the table by its hash key.
  *
- * @param tid Thread ID.
+ * @param wid Worker ID.
  * @param self Pointer to the idle table.
  * @param key Hash key of the idle item.
  * @return Pointer to the idle item if found; NULL otherwise.
  */
-widle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
+widle_item_t *idleTableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
 
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
-    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->tid != tid)
+    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->wid != wid)
     {
         mutexUnlock(&(self->mutex));
         return NULL;
@@ -170,16 +175,16 @@ widle_item_t *idleTableGetIdleItemByHash(wid_t tid, widle_table_t *self, hash_t 
  *
  * Performs a lazy deletion by marking the item as removed.
  *
- * @param tid Thread ID.
+ * @param wid Worker ID.
  * @param self Pointer to the idle table.
  * @param key Hash key of the idle item.
  * @return true if the item was found and removed; false otherwise.
  */
-bool idleTableRemoveIdleItemByHash(wid_t tid, widle_table_t *self, hash_t key)
+bool idleTableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
-    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->tid != tid)
+    if (find_result.ref == hmap_idles_t_end(&(self->hmap)).ref || find_result.ref->second->wid != wid)
     {
         mutexUnlock(&(self->mutex));
         return false;
@@ -206,7 +211,7 @@ static void beforeCloseCallBack(wevent_t *ev)
     widle_item_t *item = weventGetUserdata(ev);
     if (! item->removed)
     {
-        if (item->expire_at_ms > wloopNowMS(getWorkerLoop(item->tid)))
+        if (item->expire_at_ms > wloopNowMS(getWorkerLoop(item->wid)))
         {
             mutexLock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
@@ -221,7 +226,7 @@ static void beforeCloseCallBack(wevent_t *ev)
             item->cb(item);
         }
 
-        if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > wloopNowMS(getWorkerLoop(item->tid)))
+        if (old_expire_at_ms != item->expire_at_ms && item->expire_at_ms > wloopNowMS(getWorkerLoop(item->wid)))
         {
             mutexLock(&(item->table->mutex));
             heapq_idles_t_push(&(item->table->hqueue), item);
@@ -229,7 +234,7 @@ static void beforeCloseCallBack(wevent_t *ev)
         }
         else
         {
-            bool removal_result = idleTableRemoveIdleItemByHash(item->tid, item->table, item->hash);
+            bool removal_result = idleTableRemoveIdleItemByHash(item->wid, item->table, item->hash);
             assert(removal_result);
             discard removal_result;
             memoryFree(item);
@@ -255,6 +260,9 @@ void idleCallBack(wtimer_t *timer)
     self->last_update_ms = now;
     mutexLock(&(self->mutex));
 
+    heapq_idles_t_make_heap(&self->hqueue);
+
+
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
         widle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
@@ -273,10 +281,10 @@ void idleCallBack(wtimer_t *timer)
                 // Post event to process item on its worker thread.
                 wevent_t ev;
                 memorySet(&ev, 0, sizeof(ev));
-                ev.loop = getWorkerLoop(item->tid);
+                ev.loop = getWorkerLoop(item->wid);
                 ev.cb   = beforeCloseCallBack;
                 weventSetUserData(&ev, item);
-                wloopPostEvent(getWorkerLoop(item->tid), &ev);
+                wloopPostEvent(getWorkerLoop(item->wid), &ev);
             }
         }
         else
@@ -290,13 +298,28 @@ void idleCallBack(wtimer_t *timer)
 /**
  * @brief Destroys the idle table and releases all resources.
  *
- * Deletes the timer handle, drops internal data structures, and frees allocated memory.
+ * Deletes the timer handle, frees all idle items, drops internal data structures, and frees allocated memory.
  *
  * @param self Pointer to the idle table.
  */
 void idleTableDestroy(widle_table_t *self)
 {
     wtimerDelete(self->idle_handle);
+    
+    // Free all idle items before dropping the containers
+    mutexLock(&(self->mutex));
+    
+    // Iterate through the hash map and free each idle item
+    hmap_idles_t_iter iter = hmap_idles_t_begin(&self->hmap);
+    while (iter.ref != hmap_idles_t_end(&self->hmap).ref)
+    {
+        widle_item_t *item = iter.ref->second;
+        memoryFree(item);
+        hmap_idles_t_next(&iter);
+    }
+    
+    mutexUnlock(&(self->mutex));
+    
     heapq_idles_t_drop(&self->hqueue);
     hmap_idles_t_drop(&self->hmap);
     mutexDestroy(&self->mutex);

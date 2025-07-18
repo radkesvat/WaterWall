@@ -7,5 +7,5 @@ void tcplistenerTunnelUpStreamEst(tunnel_t *t, line_t *l)
     discard t;
     discard l;
     LOGF("TcpListener: upStreamEst disabled");
-    assert(false);
+    terminateProgram(1);
 }

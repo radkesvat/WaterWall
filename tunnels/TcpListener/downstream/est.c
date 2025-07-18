@@ -6,6 +6,6 @@ void tcplistenerTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
     tcplistener_lstate_t *lstate = lineGetState(l, t);
 
-    lineMarkEstabliched(l);
+    lineMarkEstablished(l);
     wioSetKeepaliveTimeout(lstate->io, kEstablishedKeepAliveTimeOutMs);
 }

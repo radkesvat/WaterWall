@@ -8,5 +8,5 @@ void tcplistenerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard l;
     discard buf;
     LOGF("TcpListener: upStreamPayload disabled");
-    assert(false);
+    terminateProgram(1);
 }

@@ -227,7 +227,7 @@ static inline buffer_pool_t *lineGetBufferPool(const line_t *const line)
     return getWorkerBufferPool(lineGetWID(line));
 }
 
-static inline void lineMarkEstabliched(line_t *const line)
+static inline void lineMarkEstablished(line_t *const line)
 {
     assert(! line->established);
     line->established = true;

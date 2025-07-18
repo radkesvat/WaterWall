@@ -32,10 +32,10 @@ enum connection_context_type
 
 enum socket_address_protocol
 {
-    kSocketProtocolTcp,
-    kSocketProtocolUdp,
-    kSocketProtocolIcmp,
-    kSocketProtocolPacket
+    kSocketProtocolTcp    = 3,
+    kSocketProtocolUdp    = 5,
+    kSocketProtocolIcmp   = 7,
+    kSocketProtocolPacket = 9
 };
 
 /**
@@ -53,7 +53,7 @@ typedef struct address_context_s
     // Flags for address properties
     uint8_t type_ip : 1;         // True for IP address, false for domain
     uint8_t proto_tcp : 1;       // TCP protocol enabled
-    uint8_t proto_ucp : 1;       // UDP protocol enabled
+    uint8_t proto_udp : 1;       // UDP protocol enabled
     uint8_t proto_icmp : 1;      // ICMP protocol enabled
     uint8_t proto_packet : 1;    // Raw packet protocol enabled
     uint8_t domain_constant : 1; // True if domain points to constant memory, will not free it
@@ -180,7 +180,7 @@ static inline void addresscontextAddrCopy(address_context_t *dest, const address
     dest->domain_constant = source->domain_constant;
     dest->type_ip         = source->type_ip;
     dest->proto_tcp       = source->proto_tcp;
-    dest->proto_ucp       = source->proto_ucp;
+    dest->proto_udp       = source->proto_udp;
     dest->proto_icmp      = source->proto_icmp;
     dest->proto_packet    = source->proto_packet;
     // Copy port
@@ -227,11 +227,11 @@ static inline void addresscontextDisableTcp(address_context_t *dest)
 }
 static inline void addresscontextEnableUdp(address_context_t *dest)
 {
-    dest->proto_ucp = true;
+    dest->proto_udp = true;
 }
 static inline void addresscontextDisableUdp(address_context_t *dest)
 {
-    dest->proto_ucp = false;
+    dest->proto_udp = false;
 }
 static inline void addresscontextEnableIcmp(address_context_t *dest)
 {
@@ -289,8 +289,7 @@ static void addresscontextSetIp(address_context_t *restrict scontext, const ip_a
 /**
  * @brief Set the IP address and port for an address context.
  */
-static void addresscontextSetIpPort(address_context_t *restrict scontext, const ip_addr_t *restrict ip,
-                                    uint16_t port)
+static void addresscontextSetIpPort(address_context_t *restrict scontext, const ip_addr_t *restrict ip, uint16_t port)
 {
     scontext->ip_address = *ip;
     scontext->port       = port;
