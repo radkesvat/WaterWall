@@ -93,7 +93,6 @@ option(INCLUDE_PACKET_TO_CONNECTION "link PacketToConnection staticly to the cor
 option(INCLUDE_DATA_AS_PACKET "link DataAsPacket staticly to the core"  TRUE)
 option(INCLUDE_PACKET_AS_DATA "link PacketAsData staticly to the core"  TRUE)
 
-option(INCLUDE_LAYER3_RECEIVER "link Layer3Receiver staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_SENDER "link Layer3Sender staticly to the core"  FALSE)
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE "link Layer3IpRoutingTable staticly to the core"  FALSE)
 option(INCLUDE_IP_OVERRIDER "link IpOverrider staticly to the core"  TRUE)
@@ -107,9 +106,9 @@ option(INCLUDE_LOGGER_TUNNEL "link LoggerTunnel staticly to the core"  FALSE)
 option(INCLUDE_CONNECTOR "link Connector staticly to the core"  FALSE)
 option(INCLUDE_TCPCONNECTOR "link TcpConnector staticly to the core"  TRUE)
 option(INCLUDE_UDP_CONNECTOR "link UdpConnector staticly to the core"  FALSE)
-option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the core"  TRUE)
+option(INCLUDE_UDP_STATELESS_SOCKET "link UdpStatelessSocket staticly to the core" TRUE)
 
-option(INCLUDE_BRIDGE "link Bridge staticly to the core"  FALSE)
+option(INCLUDE_BRIDGE "link Bridge staticly to the core" TRUE)
 
 if((LINUX OR WIN32) AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
    # todo (other platforms)
@@ -253,7 +252,7 @@ endif()
 
 
 
-#layer3 receiver
+#wiregurad device
 if (INCLUDE_WIREGUARD_DEVICE)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_WIREGUARD_DEVICE=1)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/WireGuardDevice)
@@ -262,21 +261,7 @@ target_link_libraries(Waterwall WireGuardDevice)
 endif()
 
 
-#layer3 receiver
-if (INCLUDE_LAYER3_RECEIVER)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_RECEIVER=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/receiver)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/receiver)
-target_link_libraries(Waterwall Layer3Receiver)
-endif()
 
-#layer3 sender
-if (INCLUDE_LAYER3_SENDER)
-target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_SENDER=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/sender)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/sender)
-target_link_libraries(Waterwall Layer3Sender)
-endif()
 
 #layer3 ip route table
 if (INCLUDE_LAYER3_IP_ROUTING_TABLE)
@@ -369,11 +354,10 @@ endif()
 #bridge
 if (INCLUDE_BRIDGE)
 target_compile_definitions(Waterwall PUBLIC INCLUDE_BRIDGE=1)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
-target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/adapters/bridge)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bridge)
+target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bridge)
 target_link_libraries(Waterwall Bridge)
 endif()
-
 
 #http2 server
 if (INCLUDE_OPENSSL_SERVER)

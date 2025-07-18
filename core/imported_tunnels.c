@@ -106,7 +106,7 @@
 #endif
 
 #ifdef INCLUDE_BRIDGE
-#include "tunnels/adapters/bridge/bridge.h"
+#include "tunnels/Bridge/include/interface.h"
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER
