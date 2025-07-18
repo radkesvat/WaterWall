@@ -62,11 +62,11 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 #endif
 
 
-#ifndef MEM128_OPTIMIZE
-#error "MEM128_OPTIMIZE must be defined to either 0 or 1"
+#ifndef ENABLE_MEMCOPY_128
+#error "ENABLE_MEMCOPY_128 must be defined to either 0 or 1"
 #endif
 
-#if MEM128_OPTIMIZ == 1
+#if ENABLE_MEMCOPY_128 == 1
 
 #include <x86intrin.h>
 static inline void memoryCopy128(void *dest, const void *src, intmax_t n)

@@ -357,49 +357,48 @@ typedef void (*procedure_t)(void* userdata);
 
 
 #if (defined(ARCH_X86) || defined(ARCH_X86_64)) && HAVE_X86INTRIN_H
-  #if defined(COMPILER_MSVC)
-    #include <intrin.h>
-    static inline bool checkcpu_sse2(void) {
-      int regs[4]; __cpuid(regs, 1);
-      return (regs[3] & (1 << 26)) != 0;
-    }
-    static inline bool checkcpu_avx(void) {
-      int regs[4]; __cpuid(regs, 1);
-      bool osx = (regs[2] & (1 << 27)) != 0;
-      bool avx = (regs[2] & (1 << 28)) != 0;
-      if (!osx || !avx) return false;
-      unsigned long long xcr = _xgetbv(0);
-      return (xcr & 0x6) == 0x6;
-    }
-    static inline bool checkcpu_avx2_bmi2(void) {
-      int regs[4]; __cpuidex(regs, 7, 0);
-      return (regs[1] & (1 << 5)) && (regs[1] & (1 << 8));
-    }
-  #else
-    #include <cpuid.h>
-    static inline bool checkcpu_sse2(void) {
-      unsigned int a,b,c,d;
-      if (!__get_cpuid(1,&a,&b,&c,&d)) return false;
-      return (d & bit_SSE2) != 0;
-    }
-    static inline bool checkcpu_avx(void) {
-      unsigned int a,b,c,d;
-      if (!__get_cpuid(1,&a,&b,&c,&d)) return false;
-      if (!(c & bit_OSXSAVE) || !(c & bit_AVX)) return false;
-      uint32_t eax,edx; __asm__ volatile("xgetbv" : "=a"(eax),"=d"(edx) : "c"(0));
-      return (eax & 0x6) == 0x6;
-    }
-    static inline bool checkcpu_avx2_bmi2(void) {
-      unsigned int a,b,c,d;
-      if (!__get_cpuid_count(7,0,&a,&b,&c,&d)) return false;
-      return (b & bit_AVX2) && (b & bit_BMI2);
-    }
-  #endif
+    #if defined(COMPILER_MSVC)
+        #include <intrin.h>
+        static inline bool checkcpu_sse3(void) {
+            int regs[4]; __cpuid(regs, 1);
+            return (regs[2] & (1 << 0)) != 0;
+        }
+        static inline bool checkcpu_avx(void) {
+            int regs[4]; __cpuid(regs, 1);
+            bool osx = (regs[2] & (1 << 27)) != 0;
+            bool avx = (regs[2] & (1 << 28)) != 0;
+            if (!osx || !avx) return false;
+            unsigned long long xcr = _xgetbv(0);
+            return (xcr & 0x6) == 0x6;
+        }
+        static inline bool checkcpu_avx2_bmi2(void) {
+            int regs[4]; __cpuidex(regs, 7, 0);
+            return (regs[1] & (1 << 5)) && (regs[1] & (1 << 8));
+        }
+    #else
+        #include <cpuid.h>
+        static inline bool checkcpu_sse3(void) {
+            unsigned int a,b,c,d;
+            if (!__get_cpuid(1,&a,&b,&c,&d)) return false;
+            return (c & bit_SSE3) != 0;
+        }
+        static inline bool checkcpu_avx(void) {
+            unsigned int a,b,c,d;
+            if (!__get_cpuid(1,&a,&b,&c,&d)) return false;
+            if (!(c & bit_OSXSAVE) || !(c & bit_AVX)) return false;
+            uint32_t eax,edx; __asm__ volatile("xgetbv" : "=a"(eax),"=d"(edx) : "c"(0));
+            return (eax & 0x6) == 0x6;
+        }
+        static inline bool checkcpu_avx2_bmi2(void) {
+            unsigned int a,b,c,d;
+            if (!__get_cpuid_count(7,0,&a,&b,&c,&d)) return false;
+            return (b & bit_AVX2) && (b & bit_BMI2);
+        }
+    #endif
 #else
-  static inline bool checkcpu_sse2(void) { return false; }
-  static inline bool checkcpu_avx(void) { return false; }
-  static inline bool checkcpu_avx2_bmi2(void) { return false; }
+    static inline bool checkcpu_sse3(void) { return false; }
+    static inline bool checkcpu_avx(void) { return false; }
+    static inline bool checkcpu_avx2_bmi2(void) { return false; }
 #endif  // ARCH_X86 || ARCH_X86_64
-
 
 #endif // WW_PLATFORM_H_

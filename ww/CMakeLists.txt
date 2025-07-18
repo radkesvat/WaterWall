@@ -14,7 +14,6 @@ add_library(ww STATIC
     libc/wtime.c
     libc/werr.c
     libc/wfrand.c
-    libc/wchecksum.c
     base/wchan.c
     base/widle_table.c
     base/wlog.c
@@ -59,6 +58,8 @@ add_library(ww STATIC
     net/chain.c
     net/context.c
     net/socket_filter_option.c
+    net/wchecksum.c
+    net/wchecksum_default.c
     lwip/ww_lwip.c
     node_builder/config_file.c
     node_builder/node_library.c
@@ -329,7 +330,6 @@ set(LWIP_INCLUDE_DIRS
     "${LWIPOPTS_DIR}"
 )
 if(NOT APPLE)
-    target_compile_definitions(ww PUBLIC )
     set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 endif()
 if(ANDROID)
@@ -424,24 +424,59 @@ check_function("socketpair" "sys/socket.h")
 check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
+
+
+
 ################################################################################
-# Checksum implementation selection
+# AVX/SSE3 Checksum and Memory Copy Configuration
 ################################################################################
-if(HAVE_X86INTRIN_H AND NOT DISABLE_AVX AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-    target_compile_options(ww PUBLIC -mavx)
-    set(WW_SUPPORTED_MEM128_OPTIMIZE 1)
-    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
-        MESSAGE(STATUS "Including amd64 checksum assembly code")
-        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_amd64.s")
+set(WW_HAVE_AVX2 0)
+set(WW_HAVE_SSE3 0)
+set(WW_SUPPORTED_MEMCOPY_128 0)
+set(WW_CHECKSUM_AVX2 0)
+set(WW_CHECKSUM_SSE3 0)
+
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" 
+    AND HAVE_X86INTRIN_H AND NOT DISABLE_AVX AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+
+    include(CheckCCompilerFlag)
+    check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX)
+    
+    if(COMPILER_SUPPORTS_AVX)
+        message(STATUS "Compiler supports AVX2")
+        target_compile_options(ww PUBLIC -mavx2)
+        set(WW_HAVE_AVX2 1)
+        set(WW_SUPPORTED_MEMCOPY_128 0) # for now...
+        set(WW_CHECKSUM_AVX2 1)
+        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
     else()
-        MESSAGE(STATUS "using C implementation of checksum")
-        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_default.c")
+        message(STATUS "AVX not supported by compiler")
     endif()
 
+    check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
+    if(COMPILER_SUPPORTS_SSE3)
+        message(STATUS "Compiler supports SSE3")
+        target_compile_options(ww PUBLIC -msse3)
+        set(WW_HAVE_SSE3 1)
+        set(WW_CHECKSUM_SSE3 1)
+        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_sse3.c")
+    else()
+        message(FATAL_ERROR "SSE3 not supported by compiler")
+    endif()
+
+
+
+    # if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
+    #     MESSAGE(STATUS "Including amd64 checksum assembly code")
+    #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=1)
+    #     target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_amd64.s")
+    # else()
+    #     MESSAGE(STATUS "using C implementation of checksum")
+    #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=0)
+    # endif()
+
 else()
-    set(WW_SUPPORTED_MEM128_OPTIMIZE 0)
-    MESSAGE(STATUS "using C implementation of checksum")
-    target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_default.c")
+    message(STATUS "AVX not supported by compiler2")
 endif()
 
 ################################################################################
@@ -473,22 +508,22 @@ target_compile_definitions(ww PUBLIC
 )
 
 if(ENABLE_UDS)
-    target_compile_definitions(ww PUBLIC -DENABLE_UDS)
+    target_compile_definitions(ww PUBLIC ENABLE_UDS)
 endif()
 if(USE_MULTIMAP)
-    target_compile_definitions(ww PUBLIC -DUSE_MULTIMAP)
+    target_compile_definitions(ww PUBLIC USE_MULTIMAP)
 endif()
 if(WW_STATICLIB)
-    target_compile_definitions(ww PUBLIC -DWW_STATICLIB)
+    target_compile_definitions(ww PUBLIC WW_STATICLIB)
 else()
-    target_compile_definitions(ww PUBLIC -DWW_DYNAMICLIB)
+    target_compile_definitions(ww PUBLIC WW_DYNAMICLIB)
 endif()
 
 if(WIN32)
-    target_compile_definitions(ww PUBLIC -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0600)
+    target_compile_definitions(ww PUBLIC -DWIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0600)
     set(LIBS ${LIBS} secur32 crypt32 winmm ntdll iphlpapi ws2_32 pdh)
     if(ENABLE_WINDUMP)
-        target_compile_definitions(ww PUBLIC -DENABLE_WINDUMP)
+        target_compile_definitions(ww PUBLIC ENABLE_WINDUMP)
         set(LIBS ${LIBS} dbghelp)
     endif()
 endif()

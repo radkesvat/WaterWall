@@ -17,6 +17,7 @@ xmmLoadMasks:
 # Requires: AVX, AVX2, BMI2
 .globl checksumAVX2
 checksumAVX2:
+    pushq   %rbx               # Save callee-saved register
     movzwl  %dx, %eax           # initial -> %ax, zero extend
     xchgb   %ah, %al            # swap bytes
     movq    %rdi, %rdx          # b -> %rdx
@@ -273,12 +274,14 @@ foldAndReturn:
     adcw        %cx, %ax
     adcw        $0x00, %ax
     xchgb       %ah, %al
+    popq        %rbx           # Restore callee-saved register
     ret
 
 # uint16_t checksumSSE2(uint8_t *b, size_t len, uint16_t initial)
 # Requires: SSE2
 .globl checksumSSE2
 checksumSSE2:
+    pushq   %rbx               # Save callee-saved register
     movzwl  %dx, %eax           # initial -> %ax, zero extend
     xchgb   %ah, %al            # swap bytes
     movq    %rdi, %rdx          # b -> %rdx
@@ -607,11 +610,14 @@ foldAndReturn_sse2:
     addw        %cx, %ax
     adcw        $0x00, %ax
     xchgb       %ah, %al
+    popq        %rbx           # Restore callee-saved register
     ret
 
 # uint16_t checksumAMD64(uint8_t *b, size_t len, uint16_t initial)
 .globl checksumAMD64
 checksumAMD64:
+    pushq   %rbx               # Save callee-saved register
+    pushq   %r12               # Save additional callee-saved register
     movzwl  %dx, %eax           # initial -> %ax, zero extend
     xchgb   %ah, %al            # swap bytes
     movq    %rdi, %rdx          # b -> %rdx
@@ -837,17 +843,17 @@ handleRemainingComplete_amd64:
     addq    %rsi, %rax
 
 foldAndReturn_amd64:
-    # add CF and fold
-    movl    %eax, %ecx
-    adcq    $0x00, %rcx
-    shrq    $0x20, %rax
+    # fold 64-bit sum to 16 bits
+    movq    %rax, %rcx
+    shrq    $32, %rcx
     addq    %rcx, %rax
-    movzwq  %ax, %rcx
-    shrq    $0x10, %rax
+    adcq    $0x00, %rax
+    movq    %rax, %rcx
+    shrq    $16, %rcx
     addq    %rcx, %rax
-    movw    %ax, %cx
-    shrq    $0x10, %rax
-    addw    %cx, %ax
-    adcw    $0x00, %ax
+    adcq    $0x00, %rax
+    andq    $0xffff, %rax
     xchgb   %ah, %al
+    popq    %r12               # Restore callee-saved registers
+    popq    %rbx
     ret

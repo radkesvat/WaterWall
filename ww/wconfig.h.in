@@ -97,11 +97,28 @@
 #define HAVE_SETPROCTITLE @HAVE_SETPROCTITLE@
 #endif
 
+#ifndef ENABLE_MEMCOPY_128
+#define ENABLE_MEMCOPY_128 @WW_SUPPORTED_MEMCOPY_128@
+#endif
 
+#ifndef HAVE_SSE3
+#define HAVE_SSE3 @WW_HAVE_SSE3@
+#endif
+
+#ifndef HAVE_AVX2
+#define HAVE_AVX2 @WW_HAVE_AVX2@
+#endif
+
+#ifndef CHECKSUM_AVX2
+#define CHECKSUM_AVX2 @WW_CHECKSUM_AVX2@
+#endif
+
+#ifndef CHECKSUM_SSE3
+#define CHECKSUM_SSE3 @WW_CHECKSUM_SSE3@
+#endif
 
 #cmakedefine ENABLE_UDS 1
 #cmakedefine USE_MULTIMAP 1
-
 #cmakedefine WITH_WEPOLL 1
 
 #define FNV_HASH  100
@@ -150,7 +167,6 @@ enum ram_profiles_e
 #define BYPASS_GENERIC_POOL 0 
 #define POOL_DEBUG          0
 
-#define MEM128_OPTIMIZE 0 && (@WW_SUPPORTED_MEM128_OPTIMIZE@ && defined(NDEBUG) &&  defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__)))
 
 
 #endif // WW_CONFIG_H_

@@ -4,10 +4,10 @@
 
 void calcFullPacketChecksum(uint8_t *buf);
 
-// The come from assembly code (typically in ww/lwip/checksum_amd64.s)
+
 extern uint16_t checksumAVX2(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumSSE2(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumAMD64(const uint8_t *data, size_t len, uint16_t initial);
+extern uint16_t checksumSSE3(const uint8_t *data, size_t len, uint16_t initial);
+// extern uint16_t checksumAMD64(const uint8_t *data, size_t len, uint16_t initial);
 extern uint16_t checksumDefault(const uint8_t *data, size_t len, uint16_t initial);
 
 typedef uint16_t (*cksum_fn)(const uint8_t *, size_t, uint16_t);
@@ -73,9 +73,14 @@ void calcFullPacketChecksum(uint8_t *buf)
         tcph->chksum         = 0;
         {
             // seed with folded pseudo-header checksum
-            uint16_t init =
-                finalizeChecksum(checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_TCP, transport_len));
-            tcph->chksum = lwip_htons(checksum(transport_hdr, transport_len, init));
+            uint16_t init = checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_TCP, transport_len);
+
+            // uint16_t d_sum = checksumDefault(transport_hdr, transport_len, 0);
+            // uint16_t a_sum = checksum(transport_hdr, transport_len, 0);
+            // assert(d_sum == a_sum);
+            // discard d_sum;
+            // discard a_sum;
+            tcph->chksum = checksum(transport_hdr, (transport_len), init);
         }
         break;
     }
@@ -85,7 +90,7 @@ void calcFullPacketChecksum(uint8_t *buf)
         {
             uint16_t init =
                 finalizeChecksum(checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_UDP, transport_len));
-            udph->chksum = lwip_htons(checksum(transport_hdr, transport_len, init));
+            udph->chksum = checksum(transport_hdr, transport_len, init);
         }
         /* RFC 768: checksum of zero is transmitted as all‑ones */
         if (udph->chksum == 0)
@@ -96,8 +101,9 @@ void calcFullPacketChecksum(uint8_t *buf)
     }
     case IP_PROTO_ICMP: {
         struct icmp_hdr *icmph = (struct icmp_hdr *) transport_hdr;
+        icmph->chksum = 0;
         // ICMP: no pseudo-header, just header+payload
-        icmph->chksum = lwip_htons(checksum(transport_hdr, transport_len, 0));
+        icmph->chksum = (checksum(transport_hdr, transport_len, 0));
         break;
     }
     default:
@@ -111,25 +117,27 @@ uint16_t calcGenericChecksum(const uint8_t *data, size_t len, uint16_t initial)
     return checksum(data, len, initial);
 }
 
-#ifdef ARCH_X86_64
 void checkSumInit(void)
 {
+#if CHECKSUM_AVX2
     if (checkcpu_avx() && checkcpu_avx2_bmi2())
     {
         checksum = checksumAVX2;
+        return;
     }
-    else if (checkcpu_sse2())
+#endif
+#if CHECKSUM_SSE3
+    if (checkcpu_sse3())
     {
-        checksum = checksumSSE2;
+        checksum = checksumSSE3;
+        return;
     }
-    else
-    {
-        checksum = checksumAMD64;
-    }
-}
-#else
-void checkSumInit(void)
-{
+#endif
+
+    // else
+    // {
+    //     checksum = checksumAMD64;
+    // }
+
     checksum = checksumDefault;
 }
-#endif
