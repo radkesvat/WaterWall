@@ -366,7 +366,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
             if (ERROR_NO_DATA == GetLastError())
             {
-                LOGE("CaptureDevice: Handle shutdown or no data available, exiting read routine...");
+                LOGW("CaptureDevice: either handle shutdown or no data available, exiting read routine...");
                 break;
             }
             continue;
