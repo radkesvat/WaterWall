@@ -58,7 +58,7 @@
 #endif
 
 #ifdef INCLUDE_UDP_LISTENER
-#include "tunnels/adapters/listener/udp/udp_listener.h"
+#include "tunnels/UdpListener/include/interface.h"
 #endif
 
 #ifdef INCLUDE_LISTENER
