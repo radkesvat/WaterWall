@@ -376,14 +376,14 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    // char cmdbuf[200];
-    // stringNPrintf(cmdbuf, sizeof(cmdbuf), "netsh interface ipv4 set subinterface %s mtu=%d", tdev->name,
-    //               GLOBAL_MTU_SIZE);
-    // if (execCmd(cmdbuf).exit_code != 0)
-    // {
-    //     LOGE("TunDevice: error setting MTU size");
-    //     return false;
-    // }
+    char cmdbuf[200];
+    stringNPrintf(cmdbuf, sizeof(cmdbuf), "netsh interface ipv4 set subinterface %s mtu=%d", tdev->name,
+                  GLOBAL_MTU_SIZE);
+    if (execCmd(cmdbuf).exit_code != 0)
+    {
+        LOGE("TunDevice: error setting MTU size");
+        return false;
+    }
 
     tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
     MemoryBarrier();
