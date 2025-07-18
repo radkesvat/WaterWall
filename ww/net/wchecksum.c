@@ -4,13 +4,12 @@
 
 void calcFullPacketChecksum(uint8_t *buf);
 
-
-extern uint16_t checksumAVX2(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumSSE3(const uint8_t *data, size_t len, uint16_t initial);
+extern uint16_t checksumAVX2(const uint8_t *data, size_t len, uint32_t initial);
+extern uint16_t checksumSSE3(const uint8_t *data, size_t len, uint32_t initial);
 // extern uint16_t checksumAMD64(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumDefault(const uint8_t *data, size_t len, uint16_t initial);
+extern uint16_t checksumDefault(const uint8_t *data, size_t len, uint32_t initial);
 
-typedef uint16_t (*cksum_fn)(const uint8_t *, size_t, uint16_t);
+typedef uint16_t (*cksum_fn)(const uint8_t *, size_t, uint32_t);
 static cksum_fn checksum = NULL;
 
 /** Sum the pseudo‑header (src, dst, proto, length) in host order */
@@ -49,7 +48,9 @@ void calcFullPacketChecksum(uint8_t *buf)
     struct ip_hdr *ipheader = (struct ip_hdr *) buf;
 
     if (IPH_V(ipheader) != 4)
+    {
         return;
+    }
 
     /* 1) Recalculate IP header checksum */
     IPH_CHKSUM_SET(ipheader, 0);
@@ -59,7 +60,9 @@ void calcFullPacketChecksum(uint8_t *buf)
     u16_t ip_hdr_len = IPH_HL(ipheader) * 4;
     u16_t ip_tot_len = lwip_ntohs(IPH_LEN(ipheader));
     if (ip_tot_len < ip_hdr_len)
+    {
         return; /* malformed */
+    }
 
     uint8_t *transport_hdr = buf + ip_hdr_len;
     u16_t    transport_len = ip_tot_len - ip_hdr_len;
@@ -101,7 +104,7 @@ void calcFullPacketChecksum(uint8_t *buf)
     }
     case IP_PROTO_ICMP: {
         struct icmp_hdr *icmph = (struct icmp_hdr *) transport_hdr;
-        icmph->chksum = 0;
+        icmph->chksum          = 0;
         // ICMP: no pseudo-header, just header+payload
         icmph->chksum = (checksum(transport_hdr, transport_len, 0));
         break;
@@ -112,7 +115,7 @@ void calcFullPacketChecksum(uint8_t *buf)
     }
 }
 
-uint16_t calcGenericChecksum(const uint8_t *data, size_t len, uint16_t initial)
+uint16_t calcGenericChecksum(const uint8_t *data, size_t len, uint32_t initial)
 {
     return checksum(data, len, initial);
 }

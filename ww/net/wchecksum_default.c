@@ -1,10 +1,7 @@
 #include "wlibc.h"
 
 
-extern uint16_t checksumAVX2(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumSSE2(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumAMD64(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumDefault(const uint8_t *data, size_t len, uint16_t initial);
+extern uint16_t checksumDefault(const uint8_t *data, size_t len, uint32_t initial);
 
 /** Sum the pseudo‑header (src, dst, proto, length) in host order */
 static inline uint32_t checksumPseudoHeader(const struct ip4_addr_packed *src, const struct ip4_addr_packed *dst,
@@ -156,7 +153,7 @@ static inline uint16_t finalizeChecksum(uint32_t sum)
 // }
 
 // returns checksum in big endian
-static uint16_t cChecksum(const uint8_t *data, size_t len, uint16_t initial)
+static uint16_t cChecksum(const uint8_t *data, size_t len, uint32_t initial)
 {
     // simple C fallback: sum data and finalize with initial seed
     uint32_t sum = initial;
@@ -165,7 +162,7 @@ static uint16_t cChecksum(const uint8_t *data, size_t len, uint16_t initial)
 }
 
 // returns checksum in big endian
-uint16_t checksumDefault(const uint8_t *data, size_t len, uint16_t initial)
+uint16_t checksumDefault(const uint8_t *data, size_t len, uint32_t initial)
 {
     return cChecksum(data, len, initial);
 }
