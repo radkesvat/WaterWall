@@ -4,12 +4,12 @@
 
 void calcFullPacketChecksum(uint8_t *buf);
 
-extern uint16_t checksumAVX2(const uint8_t *data, size_t len, uint32_t initial);
-extern uint16_t checksumSSE3(const uint8_t *data, size_t len, uint32_t initial);
+extern uint16_t checksumAVX2(const uint8_t *data, uint16_t len, uint32_t initial);
+extern uint16_t checksumSSE3(const uint8_t *data, uint16_t len, uint32_t initial);
 // extern uint16_t checksumAMD64(const uint8_t *data, size_t len, uint16_t initial);
-extern uint16_t checksumDefault(const uint8_t *data, size_t len, uint32_t initial);
+extern uint16_t checksumDefault(const uint8_t *data, uint16_t len, uint32_t initial);
 
-typedef uint16_t (*cksum_fn)(const uint8_t *, size_t, uint32_t);
+typedef uint16_t (*cksum_fn)(const uint8_t *, uint16_t, uint32_t);
 static cksum_fn checksum = NULL;
 
 /** Sum the pseudo‑header (src, dst, proto, length) in host order */
