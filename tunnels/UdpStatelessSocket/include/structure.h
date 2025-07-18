@@ -5,6 +5,7 @@
 typedef struct udpstatelesssocket_tstate_s
 {
     TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
+    tunnel_t* write_tunnel; // tunnel to write data to
 
     // These fields are read from json
     char    *listen_address; // address to listen on (ip)

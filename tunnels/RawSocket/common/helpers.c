@@ -28,7 +28,8 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     line_t *l = tunnelchainGetPacketLine(t->chain, wid);
 
     rawsocket_tstate_t *state = tunnelGetState(t);
-    state->WriteReceivedPacket(t, l, buf);
+    
+    state->WriteReceivedPacket(state->write_tunnel, l, buf);
 }
 
 void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

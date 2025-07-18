@@ -82,7 +82,7 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
 #endif
 
 
-    state->WriteReceivedPacket(t, l, buf);
+    state->WriteReceivedPacket(state->write_tunnel, l, buf);
 
     
 #ifdef DEBUG

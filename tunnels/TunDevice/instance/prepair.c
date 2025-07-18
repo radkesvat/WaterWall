@@ -8,10 +8,12 @@ void tundeviceTunnelOnPrepair(tunnel_t *t)
     if (nodeIsLastInChain(t->node))
     {
         state->WriteReceivedPacket = t->prev->fnPayloadD;
+        state->write_tunnel = t->prev;
     }
     else
     {
         state->WriteReceivedPacket = t->next->fnPayloadU;
+        state->write_tunnel = t->next;
     }
 
     state->tdev = tundeviceCreate(state->name, false, t, tundeviceOnIPPacketReceived);

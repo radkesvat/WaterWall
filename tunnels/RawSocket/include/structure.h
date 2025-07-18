@@ -21,6 +21,7 @@ enum capturedevice_filter_type_dynamic_value_status
 typedef struct rawsocket_tstate_s
 {
     TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
+    tunnel_t* write_tunnel; // tunnel to write data to
 
     capture_device_t *capture_device;
     char             *capture_ip;

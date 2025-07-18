@@ -37,7 +37,7 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
 
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
-    state->WriteReceivedPacket(t, l, buf);
+    state->WriteReceivedPacket(state->write_tunnel, l, buf);
 
 #ifdef DEBUG
     if (! lineIsAlive(l))
