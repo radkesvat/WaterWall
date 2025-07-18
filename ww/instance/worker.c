@@ -56,10 +56,7 @@ void workerExitJoin(worker_t *worker)
 {
 
     workerFinish(worker);
-    if (worker->tid != getTID())
-    {
-        threadJoin(worker->thread);
-    }
+    safeThreadJoin(worker->thread);
 }
 
 void workerInit(worker_t *worker, wid_t wid, bool eventloop)

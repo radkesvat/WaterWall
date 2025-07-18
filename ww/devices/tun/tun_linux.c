@@ -88,7 +88,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     {
 
         buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        assert(sbufGetRightCapacity(buf) >= kReadPacketSize);
+        sbufReserveSpace(buf, GLOBAL_MTU_SIZE);
 
         int ret = poll(fds, 2, -1);
 
@@ -128,7 +128,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
             if (fds[0].revents & POLLIN)
             {
-                nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
+                nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), GLOBAL_MTU_SIZE);
 
                 if (nread == 0)
                 {
@@ -351,9 +351,9 @@ bool tundeviceBringDown(tun_device_t *tdev)
         ssize_t _unused = write(tdev->linux_pipe_fds[1], "x", 1);
         (void) _unused;
 
-        threadJoin(tdev->read_thread);
+        safeThreadJoin(tdev->read_thread);
     }
-    threadJoin(tdev->write_thread);
+    safeThreadJoin(tdev->write_thread);
 
     chanFree(tdev->writer_buffer_channel);
 

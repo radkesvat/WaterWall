@@ -60,7 +60,11 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             }
 
             LOGW("RawDevice: sendto() failed with error: %s", strerror(err));
-            LOGW("RawDevice: This command may fix this (run it yourself): sudo ip link set dev <tundevice-name> mtu 1400");
+
+            if(err == EMSGSIZE)
+            {
+                LOGW("RawDevice: This command may fix this (run it yourself): sudo ip link set dev <tundevice-name> mtu 1400");
+            }
             continue; // or break, if you want to stop on hard error
         }
     }
@@ -118,7 +122,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
 
     chanClose(rdev->writer_buffer_channel);
 
-    threadJoin(rdev->write_thread);
+    safeThreadJoin(rdev->write_thread);
 
     sbuf_t *buf;
     while (chanRecv(rdev->writer_buffer_channel, (void **) &buf))

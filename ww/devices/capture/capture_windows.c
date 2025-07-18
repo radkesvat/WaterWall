@@ -424,7 +424,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
     WinDivertShutdown(cdev->handle, WINDIVERT_SHUTDOWN_BOTH);
     WinDivertClose(cdev->handle);
     cdev->handle = 0;
-    threadJoin(cdev->read_thread);
+    safeThreadJoin(cdev->read_thread);
     LOGI("CaptureDevice: device %s is now down", cdev->name);
 
     return true;

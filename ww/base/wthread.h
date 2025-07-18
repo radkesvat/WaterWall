@@ -62,12 +62,25 @@ static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
     return CreateThread(NULL, 0, fn, userdata, 0, NULL);
 }
 
-static inline int threadJoin(wthread_t th)
+static int threadJoin(wthread_t th)
 {
     WaitForSingleObject(th, INFINITE);
     CloseHandle(th);
     return 0;
 }
+
+static bool safeThreadJoin(wthread_t th)
+{
+    if (GetCurrentThreadId() == GetThreadId(th))
+    {
+        return false;
+    }
+    WaitForSingleObject(th, INFINITE);
+    CloseHandle(th);
+    return true;
+}
+
+#define terminateCurrentThread() ExitThread(0)
 
 #else
 
@@ -82,11 +95,22 @@ static inline wthread_t threadCreate(wthread_routine fn, void *userdata)
     return th;
 }
 
-static inline int threadJoin(wthread_t th)
+static int threadJoin(wthread_t th)
 {
     return pthread_join(th, NULL);
 }
 
+static bool safeThreadJoin(wthread_t th)
+{
+    if (pthread_self() == th)
+    {
+        return false;
+    }
+    pthread_join(th, NULL);
+    return true;
+}
+
+#define pthread_exit() ExitThread(0)
 #endif
 
 #endif // WW_THREAD_H_

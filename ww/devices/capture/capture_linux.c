@@ -427,7 +427,7 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 
     ssize_t _unused = write(cdev->linux_pipe_fds[1], "x", 1);
     (void) _unused;
-    threadJoin(cdev->read_thread);
+    safeThreadJoin(cdev->read_thread);
 
     LOGI("CaptureDevice: device %s is now down", cdev->name);
 

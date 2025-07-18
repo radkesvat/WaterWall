@@ -379,7 +379,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
 
     chanClose(rdev->writer_buffer_channel);
 
-    threadJoin(rdev->write_thread);
+    safeThreadJoin(rdev->write_thread);
 
     sbuf_t *buf;
     while (chanRecv(rdev->writer_buffer_channel, (void **) &buf))

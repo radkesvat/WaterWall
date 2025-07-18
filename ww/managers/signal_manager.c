@@ -3,17 +3,7 @@
 
 static signal_manager_t *state = NULL;
 
-static WTHREAD_ROUTINE(TestThreadExit)
-{
-    discard userdata;
-    terminateProgram(0);
-    return 0;
-}
-static void testCloseProgram(wtimer_t *ev)
-{
-    discard ev;
-    threadCreate(TestThreadExit, NULL);
-}
+
 void registerAtExitCallBack(SignalHandler handle, void *userdata)
 {
     assert(state != NULL);
@@ -261,6 +251,17 @@ void signalmanagerStart(void)
     // atexit(exitHandler);
 }
 
+// static WTHREAD_ROUTINE(TestThreadExit)
+// {
+//     discard userdata;
+//     exitHandler();
+//     return 0;
+// }
+// static void createCloseThread(wtimer_t *ev)
+// {
+//     discard ev;
+//     threadCreate(TestThreadExit, NULL);
+// }
 signal_manager_t *signalmanagerCreate(void)
 {
     assert(state == NULL);
@@ -302,24 +303,32 @@ void signalmanagerDestroy(void)
     memoryFree(state);
 }
 
-static bool    double_terminated = false;
 _Noreturn void terminateProgram(int exit_code)
 {
-    if (double_terminated)
-    {
-        assert(false);
-        const char msg[]   = "double terminated.\n";
-        int        written = write(STDOUT_FILENO, msg, stringLength(msg));
-        discard    written;
-        exit(exit_code);
-    }
-    double_terminated = true;
 
-    printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
-               exit_code);
     if (state)
     {
+        printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
+                   exit_code);
+
+        if (state->double_terminated)
+        {
+            assert(false);
+            const char msg[]   = "double terminated.\n";
+            int        written = write(STDOUT_FILENO, msg, stringLength(msg));
+            discard    written;
+            exit(exit_code);
+        }
+        state->double_terminated = true;
+
         exitHandler();
+        // terminateCurrentThread();
+    }
+    else
+    {
+        printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
+                   "Since signal manager is not initialized, we cannot run exit handlers, so just exiting now",
+                   exit_code);
     }
     exit(exit_code);
 }

@@ -33,6 +33,8 @@ typedef struct signal_manager_s
     uint32_t         handle_sigterm : 1;
     uint32_t         handle_sigpipe : 1;
     uint32_t         handle_sigalrm : 1;
+    uint32_t         double_terminated : 1;
+    
 
 } signal_manager_t;
 

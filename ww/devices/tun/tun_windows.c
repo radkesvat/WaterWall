@@ -207,10 +207,17 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     while (atomicLoadRelaxed(&(tdev->running)))
     {
         buf[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        assert(sbufGetRightCapacity(buf[queued_count]) >= kReadPacketSize);
+        sbufReserveSpace(buf[queued_count], GLOBAL_MTU_SIZE);
 
         DWORD packet_size;
         BYTE *packet = WintunReceivePacket(Session, &packet_size);
+        if(UNLIKELY(GLOBAL_MTU_SIZE < packet_size))
+        {
+            LOGE("TunDevice: ReadThread: Packet size %lu exceeds GLOBAL_MTU_SIZE %d", packet_size, GLOBAL_MTU_SIZE);
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf[queued_count]);
+            terminateProgram(1);
+        }
+
         if (packet)
         {
             sbufSetLength(buf[queued_count], packet_size);
@@ -389,8 +396,8 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     chanClose(tdev->writer_buffer_channel);
 
-    threadJoin(tdev->read_thread);
-    threadJoin(tdev->write_thread);
+    safeThreadJoin(tdev->read_thread);
+    safeThreadJoin(tdev->write_thread);
 
     sbuf_t *buf;
     while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
