@@ -75,8 +75,8 @@ void calcFullPacketChecksum(uint8_t *buf)
         struct tcp_hdr *tcph = (struct tcp_hdr *) transport_hdr;
         tcph->chksum         = 0;
         {
-            // seed with folded pseudo-header checksum
-            uint16_t init = checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_TCP, transport_len);
+            // seed with pseudo-header checksum (not finalized)
+            uint32_t init = checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_TCP, transport_len);
 
             // uint16_t d_sum = checksumDefault(transport_hdr, transport_len, 0);
             // uint16_t a_sum = checksum(transport_hdr, transport_len, 0);
@@ -91,8 +91,7 @@ void calcFullPacketChecksum(uint8_t *buf)
         struct udp_hdr *udph = (struct udp_hdr *) transport_hdr;
         udph->chksum         = 0;
         {
-            uint16_t init =
-                finalizeChecksum(checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_UDP, transport_len));
+            uint32_t init = checksumPseudoHeader(&ipheader->src, &ipheader->dest, IP_PROTO_UDP, transport_len);
             udph->chksum = checksum(transport_hdr, transport_len, init);
         }
         /* RFC 768: checksum of zero is transmitted as all‑ones */
