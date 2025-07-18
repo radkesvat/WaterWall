@@ -20,8 +20,6 @@ enum
     kRawWriteChannelQueueMax              = 256
 };
 
-
-
 static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 {
     raw_device_t *rdev = userdata;
@@ -35,6 +33,18 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
             LOGD("RawDevice: routine write will exit due to channel closed");
             return 0;
         }
+
+        if (UNLIKELY(GLOBAL_MTU_SIZE < sbufGetLength(buf)))
+        {
+            LOGE("RawDevice: WriteThread: Packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
+                 GLOBAL_MTU_SIZE);
+            LOGF("RawDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                 "the "
+                 "'misc' section");
+            bufferpoolReuseBuffer(rdev->writer_buffer_pool, buf);
+            terminateProgram(1);
+        }
+
 
         struct iphdr *ip_header = (struct iphdr *) sbufGetRawPtr(buf);
 
@@ -61,11 +71,14 @@ static WTHREAD_ROUTINE(routineWriteToRaw) // NOLINT
 
             LOGW("RawDevice: sendto() failed with error: %s", strerror(err));
 
-            if(err == EMSGSIZE)
+            if (err == EMSGSIZE)
             {
-                LOGW("RawDevice: This command may fix this (run it yourself): sudo ip link set dev <tundevice-name> mtu 1400");
+                LOGF("RawDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                     "the "
+                     "'misc' section");
+                terminateProgram(1);
             }
-            continue; // or break, if you want to stop on hard error
+            continue;
         }
     }
     return 0;
@@ -134,7 +147,7 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     rdev->writer_buffer_channel = NULL;
 
     LOGD("RawDevice: device %s is now down", rdev->name);
-    
+
     return true;
 }
 
@@ -165,7 +178,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
     fcntl(rsocket, F_SETFL, O_NONBLOCK);
 
     raw_device_t *rdev = memoryAllocate(sizeof(raw_device_t));
-
 
     buffer_pool_t *writer_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,

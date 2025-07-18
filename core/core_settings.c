@@ -16,6 +16,8 @@
 #define DEFAULT_DNS_ENABLE_CONSOLE      true
 #define DEFAULT_RAM_PROFILE             kRamProfileServer
 
+#define DEFAULT_MTU_PROFILE             1500
+
 enum settings_ram_profiles
 {
     kRamProfileServer        = kRamProfileL2Memory,
@@ -173,6 +175,15 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
 {
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
+        int mtu_size = DEFAULT_MTU_PROFILE;
+        getIntFromJsonObjectOrDefault(&mtu_size, misc_obj, "mtu-size", DEFAULT_MTU_PROFILE);
+        if (mtu_size <= 0)
+        {
+            printError("CoreSettings: mtu-size must be greater than 0, using default value %d\n", DEFAULT_MTU_PROFILE);
+            mtu_size = DEFAULT_MTU_PROFILE;
+        }
+        settings->mtu_size = (uint16_t) mtu_size;
+        
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
         if (! getIntFromJsonObjectOrDefault((int *) &(settings->workers_count), misc_obj, "workers", getNCPU()))
         {

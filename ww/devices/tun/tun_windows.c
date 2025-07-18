@@ -6,6 +6,10 @@
 #include "master_pool.h"
 #include "wchan.h"
 #include "wintun.h"
+#include "wplatform.h"
+#include "wproc.h"
+#include <iphlpapi.h>
+
 #include <tchar.h>
 
 #include "loggers/internal_logger.h"
@@ -207,16 +211,10 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     while (atomicLoadRelaxed(&(tdev->running)))
     {
         buf[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        sbufReserveSpace(buf[queued_count], GLOBAL_MTU_SIZE);
+        sbufReserveSpace(buf[queued_count], kReadPacketSize);
 
         DWORD packet_size;
         BYTE *packet = WintunReceivePacket(Session, &packet_size);
-        if(UNLIKELY(GLOBAL_MTU_SIZE < packet_size))
-        {
-            LOGE("TunDevice: ReadThread: Packet size %lu exceeds GLOBAL_MTU_SIZE %d", packet_size, GLOBAL_MTU_SIZE);
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf[queued_count]);
-            terminateProgram(1);
-        }
 
         if (packet)
         {
@@ -229,6 +227,21 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             {
                 LOGD("TunDevice: ReadThread: Read %zd bytes from device %s", nread, tdev->name);
                 // printPacket(Packet, PacketSize);
+            }
+
+            if (UNLIKELY(sbufGetLength(buf[queued_count]) > GLOBAL_MTU_SIZE))
+            {
+                LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
+                     sbufGetLength(buf[queued_count]), GLOBAL_MTU_SIZE);
+                LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                     "the "
+                     "'misc' section");
+
+                for (unsigned int i = 0; i < queued_count; i++)
+                {
+                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf[i]);
+                }
+                terminateProgram(1);
             }
 
             if (queued_count < kMaxReadQueueSize - 1)
@@ -309,6 +322,17 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             return 0;
         }
 
+        if (UNLIKELY(GLOBAL_MTU_SIZE < sbufGetLength(buf)))
+        {
+            LOGE("TunDevice: WriteThread: Packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
+                 GLOBAL_MTU_SIZE);
+            LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                 "the "
+                 "'misc' section");
+            bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
+            terminateProgram(1);
+        }
+
         BYTE *Packet = WintunAllocateSendPacket(Session, sbufGetLength(buf));
         if (! Packet)
         {
@@ -351,6 +375,15 @@ bool tundeviceBringUp(tun_device_t *tdev)
         LOGE("TunDevice: Device is already up");
         return false;
     }
+
+    // char cmdbuf[200];
+    // stringNPrintf(cmdbuf, sizeof(cmdbuf), "netsh interface ipv4 set subinterface %s mtu=%d", tdev->name,
+    //               GLOBAL_MTU_SIZE);
+    // if (execCmd(cmdbuf).exit_code != 0)
+    // {
+    //     LOGE("TunDevice: error setting MTU size");
+    //     return false;
+    // }
 
     tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
     MemoryBarrier();
@@ -637,7 +670,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
     *tdev = (tun_device_t){
-        .name                  = NULL,
+        .name                  = stringDuplicate(name),
         .running               = false,
         .up                    = false,
         .routine_reader        = routineReadFromTun,
@@ -654,16 +687,16 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);
 
-    int wideSize = MultiByteToWideChar(CP_UTF8, 0, name, -1, NULL, 0);
+    int wide_size = MultiByteToWideChar(CP_UTF8, 0, name, -1, NULL, 0);
 
-    tdev->name = (wchar_t *) memoryAllocate(wideSize * sizeof(wchar_t));
+    tdev->name_w = (wchar_t *) memoryAllocate(wide_size * sizeof(wchar_t));
     if (! tdev->name)
     {
         LOGE("TunDevice: Memory allocation failed!");
         return NULL;
     }
 
-    MultiByteToWideChar(CP_UTF8, 0, name, -1, (tdev->name), wideSize);
+    MultiByteToWideChar(CP_UTF8, 0, name, -1, (tdev->name_w), wide_size);
 
     GUID example_guid = {0xDEADC0DE, 0xFADE, 0xC01D, {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66}};
 
@@ -672,7 +705,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
          example_guid.Data4[3], example_guid.Data4[4], example_guid.Data4[5], example_guid.Data4[6],
          example_guid.Data4[7]);
 
-    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(tdev->name, L"Waterwall Adapter", &example_guid);
+    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(tdev->name_w, L"Waterwall Adapter", &example_guid);
     if (! adapter)
     {
         LastError = GetLastError();
@@ -708,6 +741,7 @@ void tundeviceDestroy(tun_device_t *tdev)
     }
 
     memoryFree(tdev->name);
+    memoryFree(tdev->name_w);
     bufferpoolDestroy(tdev->reader_buffer_pool);
     bufferpoolDestroy(tdev->writer_buffer_pool);
     masterpoolMakeEmpty(tdev->reader_message_pool, NULL);

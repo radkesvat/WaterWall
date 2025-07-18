@@ -268,6 +268,7 @@ void createGlobalState(const ww_construction_data_t init_data)
     // misc
     {
         GSTATE.capturedevice_queue_start_number = fastRand() % 2000;
+        GSTATE.mtu_size = init_data.mtu_size;
     }
 
     // SSL

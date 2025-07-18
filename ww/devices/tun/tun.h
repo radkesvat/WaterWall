@@ -34,7 +34,8 @@ enum
 typedef struct tun_device_s
 {
 #ifdef OS_WIN
-    wchar_t                 *name;
+    char                    *name;
+    wchar_t                 *name_w;
     HANDLE                   adapter_handle;
     HANDLE                   session_handle;
     MIB_UNICASTIPADDRESS_ROW address_row;

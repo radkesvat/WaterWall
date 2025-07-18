@@ -35,6 +35,7 @@ struct core_settings_s
     unsigned int ram_profile;
     char        *libs_path;
 
+    uint16_t mtu_size;
     vec_config_path_t config_paths;
 };
 

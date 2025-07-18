@@ -326,7 +326,6 @@ static void localThreadEventReceived(wevent_t *ev)
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-
     msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
 
     masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
@@ -382,6 +381,17 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         sbufSetLength(buf, read_packet_len);
 
+        if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
+        {
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+            LOGE("CaptureDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
+                 GLOBAL_MTU_SIZE);
+            LOGF("CaptureDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                 "'misc' section");
+            terminateProgram(1);
+            return 0;
+        }
+
         distributePacketPayload(cdev, getNextDistributionWID(), buf);
     }
 
@@ -392,8 +402,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 {
     assert(! cdev->up);
 
-    cdev->handle =
-        WinDivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
+    cdev->handle = WinDivertOpen(cdev->filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_RECV_ONLY);
     if (cdev->handle == INVALID_HANDLE_VALUE)
     {
         // Handle error
@@ -462,7 +471,6 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         return NULL;
 
     LOGI("CaptureDevice: WinDivert loaded successfully");
-
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,

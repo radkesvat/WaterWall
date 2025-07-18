@@ -56,6 +56,7 @@ typedef struct ww_global_state_s
     atomic_wid_t               distribute_wid;
     uint16_t                   buffer_allocation_padding;
     uint16_t                   capturedevice_queue_start_number;
+    uint16_t                   mtu_size;
     uint8_t                    flag_initialized : 1;
     uint8_t                    flag_buffers_calculated : 1;
     uint8_t                    flag_tundev_windows_initialized : 1;
@@ -70,6 +71,7 @@ typedef struct
 {
     unsigned int               workers_count;
     enum ram_profiles_e        ram_profile;
+    uint16_t                   mtu_size;
     logger_construction_data_t internal_logger_data;
     logger_construction_data_t core_logger_data;
     logger_construction_data_t network_logger_data;
@@ -80,6 +82,7 @@ typedef struct
 extern ww_global_state_t global_ww_state;
 
 #define GSTATE           global_ww_state
+#define GLOBAL_MTU_SIZE  global_ww_state.mtu_size
 #define RAM_PROFILE      global_ww_state.ram_profile
 #define WORKERS          global_ww_state.workers
 #define WORKERS_COUNT    global_ww_state.workers_count
