@@ -119,7 +119,7 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
         return;
     }
 
-    node_t *next = nodemanagerGetNodeInstance(node->node_manager_config, node->hash_next);
+    node_t *next = nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_next);
 
     if (next == NULL)
     {

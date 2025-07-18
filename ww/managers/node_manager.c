@@ -185,7 +185,7 @@ static void runNodes(node_manager_config_t *cfg)
         for (int i = 0; i < tunnels_count; i++)
         {
             assert(t_array_cpy[i] != NULL);
-            tunnel_t *tunnel = t_array_cpy[i];
+            tunnel_t *tunnel                = t_array_cpy[i];
             tunnelGetChain(tunnel)->started = true;
             tunnel->onStart(tunnel);
         }
@@ -196,7 +196,8 @@ static void runNodes(node_manager_config_t *cfg)
         {
             assert(t_array_cpy[i] != NULL);
             tunnel_t *tunnel = t_array_cpy[i];
-            if (tunnel->prev == NULL && tunnel->node->flags & kNodeFlagChainHead && tunnel->node->layer_group == kNodeLayer3)
+            if (tunnel->prev == NULL && tunnel->node->flags & kNodeFlagChainHead &&
+                tunnel->node->layer_group == kNodeLayer3)
             {
                 // this is a packet tunnel, we need to send init to it ( for each worker )
                 assert(tunnelGetChain(tunnel)->packet_chain_init_sent == false);
@@ -209,12 +210,9 @@ static void runNodes(node_manager_config_t *cfg)
                     tunnelNextUpStreamInit(tunnel, l);
                     assert(lineIsAlive(l));
                 }
-
             }
         }
     }
-
-    
 }
 
 static void pathWalk(node_manager_config_t *cfg)
@@ -232,7 +230,7 @@ static void pathWalk(node_manager_config_t *cfg)
                 break;
             }
             c++;
-            node_t *n2 = nodemanagerGetNodeInstance(cfg, n1->hash_next);
+            node_t *n2 = nodemanagerGetConfigNodeByHash(cfg, n1->hash_next);
             if (n2 == NULL)
             {
                 LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", cfg->config_file->file_path,
@@ -339,7 +337,7 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     map_node_t_insert(map, new_node->hash_name, new_node);
 }
 
-node_t *nodemanagerGetNodeInstance(node_manager_config_t *cfg, hash_t hash_node_name)
+node_t *nodemanagerGetConfigNodeByHash(node_manager_config_t *cfg, hash_t hash_node_name)
 {
     map_node_t_iter iter = map_node_t_find(&(cfg->node_map), hash_node_name);
     if (iter.ref == map_node_t_end(&(cfg->node_map)).ref)
@@ -347,6 +345,11 @@ node_t *nodemanagerGetNodeInstance(node_manager_config_t *cfg, hash_t hash_node_
         return NULL;
     }
     return (iter.ref->second);
+}
+
+node_t *nodemanagerGetConfigNodeByName(node_manager_config_t *cfg, const char *name)
+{
+    return nodemanagerGetConfigNodeByHash(cfg, calcHashBytes(name, stringLength(name)));
 }
 
 node_t *nodemanagerNewNode(void)
