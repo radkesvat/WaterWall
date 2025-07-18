@@ -2,8 +2,6 @@
 
 #include "wlibc.h"
 
-void calcFullPacketChecksum(uint8_t *buf);
-
 extern uint16_t checksumAVX2(const uint8_t *data, uint16_t len, uint32_t initial);
 extern uint16_t checksumSSE3(const uint8_t *data, uint16_t len, uint32_t initial);
 // extern uint16_t checksumAMD64(const uint8_t *data, size_t len, uint16_t initial);
