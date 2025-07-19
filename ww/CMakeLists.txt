@@ -446,7 +446,7 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
         message(STATUS "Compiler supports AVX2")
         target_compile_options(ww PUBLIC -mavx2)
         set(WW_HAVE_AVX2 1)
-        set(WW_SUPPORTED_MEMCOPY_128 0) # for now...
+        set(WW_SUPPORTED_MEMCOPY_128 1)
         set(WW_CHECKSUM_AVX2 1)
         target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
     else()
@@ -509,9 +509,6 @@ target_compile_definitions(ww PUBLIC
 
 if(ENABLE_UDS)
     target_compile_definitions(ww PUBLIC ENABLE_UDS)
-endif()
-if(USE_MULTIMAP)
-    target_compile_definitions(ww PUBLIC USE_MULTIMAP)
 endif()
 if(WW_STATICLIB)
     target_compile_definitions(ww PUBLIC WW_STATICLIB)

@@ -117,8 +117,7 @@
 #define CHECKSUM_SSE3 @WW_CHECKSUM_SSE3@
 #endif
 
-#cmakedefine ENABLE_UDS 1
-#cmakedefine USE_MULTIMAP 1
+#cmakedefine ENABLE_UDS 0
 #cmakedefine WITH_WEPOLL 1
 
 #define FNV_HASH  100

@@ -287,7 +287,7 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
     // eth_header->h_proto = htons(ETH_P_IP);
 
     struct iphdr *ip_header = (struct iphdr *) sbufGetMutablePtr(buff);
-    memoryMove(ip_header, nl_data, nl_data_size);
+    memoryCopyLarge(ip_header, nl_data, nl_data_size);
 
     return (int) (nl_data_size);
 }
