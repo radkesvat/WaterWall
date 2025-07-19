@@ -424,6 +424,11 @@ check_function("socketpair" "sys/socket.h")
 check_function("eventfd" "sys/eventfd.h")
 check_function("setproctitle" "unistd.h")
 
+include(CheckCCompilerFlag)
+
+check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
+check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX)
+
 
 
 
@@ -439,21 +444,7 @@ set(WW_CHECKSUM_SSE3 0)
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" 
     AND HAVE_X86INTRIN_H AND NOT DISABLE_AVX AND CMAKE_SIZEOF_VOID_P EQUAL 8)
 
-    include(CheckCCompilerFlag)
-    check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX)
     
-    if(COMPILER_SUPPORTS_AVX)
-        message(STATUS "Compiler supports AVX2")
-        target_compile_options(ww PUBLIC -mavx2)
-        set(WW_HAVE_AVX2 1)
-        set(WW_SUPPORTED_MEMCOPY_128 1)
-        set(WW_CHECKSUM_AVX2 1)
-        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
-    else()
-        message(STATUS "AVX not supported by compiler")
-    endif()
-
-    check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
     if(COMPILER_SUPPORTS_SSE3)
         message(STATUS "Compiler supports SSE3")
         target_compile_options(ww PUBLIC -msse3)
@@ -463,6 +454,19 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
     else()
         message(FATAL_ERROR "SSE3 not supported by compiler")
     endif()
+
+    if(COMPILER_SUPPORTS_AVX)
+        message(STATUS "Compiler supports AVX2")
+        target_compile_options(ww PUBLIC -mavx2)
+        set(WW_HAVE_AVX2 1)
+        set(WW_SUPPORTED_MEMCOPY_128 1)
+        set(WW_CHECKSUM_AVX2 1)
+        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
+    else()
+        message(STATUS "AVX2 not supported by compiler")
+    endif()
+
+
 
 
 
@@ -544,7 +548,7 @@ endif()
 target_link_libraries(ww PUBLIC ${LIBS})
 target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
 
-# Sanitizer options (using generator expressions for multiconfig):
+# Sanitizer options (using generator expressions for multiconfig)
 if(ENABLE_ASAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
