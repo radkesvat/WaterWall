@@ -43,5 +43,5 @@ jobs:
         # Build your program with the given configuration. 
         run: |
           cd ${{ steps.strings.outputs.build-output-dir }}
-          scan-build-19 make -j
+          scan-build-19 make -j 4
 
