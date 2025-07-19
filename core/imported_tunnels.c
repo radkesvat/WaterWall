@@ -94,7 +94,7 @@
 #endif
 
 #ifdef INCLUDE_UDP_CONNECTOR
-#include "tunnels/adapters/connector/udp/udp_connector.h"
+#include "tunnels/UdpConnector/include/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
