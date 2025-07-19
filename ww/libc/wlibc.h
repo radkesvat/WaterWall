@@ -74,7 +74,7 @@ static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
     __m256i       *d_vec = (__m256i *) (dest);
     const __m256i *s_vec = (const __m256i *) (src);
 
-    if ((uintptr_t) dest % 128 != 0 || (uintptr_t) src % 128 != 0)
+    if ((uintptr_t) dest % 32 != 0 || (uintptr_t) src % 32 != 0)
     {
 
         while (n >= 128)
