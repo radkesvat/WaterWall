@@ -55,13 +55,13 @@ const char *socketStrError(int err)
 #endif
 }
 
-bool isIPVer4(const char *host)
+bool adressIsIp4(const char *host)
 {
     struct sockaddr_in sin;
     return inet_pton(AF_INET, host, &sin) == 1;
 }
 
-bool isIPVer6(const char *host)
+bool adressIsIp6(const char *host)
 {
     struct sockaddr_in6 sin6;
     return inet_pton(AF_INET6, host, &sin6) == 1;
@@ -512,7 +512,7 @@ bool verifyIPPort(const char *ipp)
         return false;
     }
     *colon = '\0';
-    if (! isIpAddr(ipp))
+    if (! adressIsIp(ipp))
     {
         LOGE("verifyIPPort Error: \"%s\" is not a valid ip address", ipp);
         return false;
@@ -537,13 +537,13 @@ bool verifyIPCdir(const char *ipc)
         return false;
     }
     *slash = '\0';
-    if (! isIpAddr(ipc))
+    if (! adressIsIp(ipc))
     {
         LOGE("verifyIPCdir Error: \"%s\" is not a valid ip address", ipc);
         return false;
     }
 
-    bool is_v4 = isIPVer4(ipc);
+    bool is_v4 = adressIsIp4(ipc);
     *slash     = '/';
 
     char *subnet_part   = slash + 1;

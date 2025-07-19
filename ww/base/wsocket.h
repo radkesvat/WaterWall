@@ -110,11 +110,11 @@ typedef union {
 #endif
 } sockaddr_u;
 
-WW_EXPORT bool isIPVer4(const char *host);
-WW_EXPORT bool isIPVer6(const char *host);
-WW_INLINE bool isIpAddr(const char *host)
+WW_EXPORT bool adressIsIp4(const char *host);
+WW_EXPORT bool adressIsIp6(const char *host);
+WW_INLINE bool adressIsIp(const char *host)
 {
-    return isIPVer4(host) || isIPVer6(host);
+    return adressIsIp4(host) || adressIsIp6(host);
 }
 
 // @param host: domain or ip
