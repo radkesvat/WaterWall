@@ -7,6 +7,7 @@
 
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/socket.h>
 
 #include <netinet/ip.h>
 #include <poll.h>
@@ -415,11 +416,20 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         return NULL;
     }
 
-    ifr.ifr_mtu = GLOBAL_MTU_SIZE;
-    if (ioctl(fd, SIOCSIFMTU, &ifr) < 0)
+    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd >= 0)
     {
-        LOGE("TunDevice: failed to set MTU to %d for %s", GLOBAL_MTU_SIZE, ifr.ifr_name);
-        // Not fatal, continue
+        ifr.ifr_mtu = GLOBAL_MTU_SIZE;
+        if (ioctl(sock_fd, SIOCSIFMTU, &ifr) < 0)
+        {
+            LOGE("TunDevice: failed to set MTU to %d for %s", GLOBAL_MTU_SIZE, ifr.ifr_name);
+            // Not fatal, continue
+        }
+        close(sock_fd);
+    }
+    else
+    {
+        LOGE("TunDevice: failed to create socket for MTU setting");
     }
 
 #else
@@ -446,11 +456,21 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         close(fd);
         return NULL;
     }
-    ifr.ifr_mtu = GLOBAL_MTU_SIZE;
-    if (ioctl(fd, SIOCSIFMTU, &ifr) < 0)
+    
+    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd >= 0)
     {
-        LOGE("TunDevice: failed to set MTU to %d for %s", GLOBAL_MTU_SIZE, ifr.ifr_name);
-        // Not fatal, continue
+        ifr.ifr_mtu = GLOBAL_MTU_SIZE;
+        if (ioctl(sock_fd, SIOCSIFMTU, &ifr) < 0)
+        {
+            LOGE("TunDevice: failed to set MTU to %d for %s", GLOBAL_MTU_SIZE, ifr.ifr_name);
+            // Not fatal, continue
+        }
+        close(sock_fd);
+    }
+    else
+    {
+        LOGE("TunDevice: failed to create socket for MTU setting");
     }
 #endif
 
