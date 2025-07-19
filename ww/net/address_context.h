@@ -137,8 +137,7 @@ static inline void addresscontextSetPort(address_context_t *dest, uint16_t port)
 /**
  * @brief Set a domain for the address context (dynamic memory).
  */
-static inline void addresscontextDomainSet(address_context_t *restrict scontext, const char *restrict domain,
-                                           uint8_t len)
+static inline void addresscontextDomainSet(address_context_t *scontext, const char *domain, uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
@@ -155,8 +154,7 @@ static inline void addresscontextDomainSet(address_context_t *restrict scontext,
 /**
  * @brief Set a domain for the address context using constant memory.
  */
-static inline void addresscontextDomainSetConstMem(address_context_t *restrict scontext, const char *restrict domain,
-                                                   uint8_t len)
+static inline void addresscontextDomainSetConstMem(address_context_t *scontext, const char *domain, uint8_t len)
 {
     if (scontext->domain != NULL && ! scontext->domain_constant)
     {
@@ -280,7 +278,7 @@ static inline void addresscontextSetProtocol(address_context_t *dest, enum socke
 /**
  * @brief Set the IP address for an address context.
  */
-static void addresscontextSetIp(address_context_t *restrict scontext, const ip_addr_t *restrict ip)
+static void addresscontextSetIp(address_context_t *scontext, const ip_addr_t *ip)
 {
     scontext->ip_address = *ip;
     scontext->type_ip    = kCCTypeIp;
@@ -289,7 +287,7 @@ static void addresscontextSetIp(address_context_t *restrict scontext, const ip_a
 /**
  * @brief Set the IP address and port for an address context.
  */
-static void addresscontextSetIpPort(address_context_t *restrict scontext, const ip_addr_t *restrict ip, uint16_t port)
+static void addresscontextSetIpPort(address_context_t *scontext, const ip_addr_t *ip, uint16_t port)
 {
     scontext->ip_address = *ip;
     scontext->port       = port;
@@ -315,11 +313,11 @@ static inline void addresscontextClearIp(address_context_t *ctx)
  */
 static inline uint8_t getIpVersion(char *host)
 {
-    if (isIPVer4(host))
+    if (adressIsIp4(host))
     {
         return IPADDR_TYPE_V4;
     }
-    if (isIPVer6(host))
+    if (adressIsIp6(host))
     {
         return IPADDR_TYPE_V6;
     }
