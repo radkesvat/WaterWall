@@ -27,7 +27,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         break;
     default:
     case kTcpConnectorStrategyFromDest:
-        addresscontextSetProtocol(dest_ctx, kSocketProtocolTcp);
+        addresscontextSetProtocol(dest_ctx, IPPROTO_TCP);
 
         break;
     }

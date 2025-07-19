@@ -57,7 +57,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
     {
         state->support4 = true;
         sockaddr_u sa;
-        sockaddrSetIp(&(sa), ipbuf);
+        sockaddrSetIpAddress(&(sa), ipbuf);
 
         memoryCopy(&(state->ov_4), &(sa.sin.sin_addr.s_addr), sizeof(sa.sin.sin_addr.s_addr));
         memoryFree(ipbuf);
@@ -67,7 +67,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
     {
         state->support6 = true;
         sockaddr_u sa;
-        sockaddrSetIp(&(sa), ipbuf);
+        sockaddrSetIpAddress(&(sa), ipbuf);
 
         memoryCopy(&(state->ov_6), &(sa.sin6.sin6_addr.s6_addr), sizeof(sa.sin6.sin6_addr.s6_addr));
         memoryFree(ipbuf);

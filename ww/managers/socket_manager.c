@@ -382,7 +382,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
                 continue;
             }
 
-            if (option.protocol != kSocketProtocolTcp || port_min > local_port || port_max < local_port)
+            if (option.protocol != IPPROTO_TCP || port_min > local_port || port_max < local_port)
             {
                 continue;
             }
@@ -673,7 +673,7 @@ static void listenTcp(wloop_t *loop, uint8_t *ports_overlapped)
             {
                 option.multiport_backend = kMultiportBackendNone;
             }
-            if (option.protocol == kSocketProtocolTcp)
+            if (option.protocol == IPPROTO_TCP)
             {
                 if (option.multiport_backend == kMultiportBackendIptables)
                 {
@@ -761,7 +761,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
                 continue;
             }
 
-            if (option.protocol != kSocketProtocolUdp || port_min > local_port || port_max < local_port)
+            if (option.protocol != IPPROTO_UDP || port_min > local_port || port_max < local_port)
             {
                 continue;
             }
@@ -879,7 +879,7 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
             {
                 option.multiport_backend = kMultiportBackendNone;
             }
-            if (option.protocol == kSocketProtocolUdp)
+            if (option.protocol == IPPROTO_UDP)
             {
                 if (option.multiport_backend == kMultiportBackendIptables)
                 {

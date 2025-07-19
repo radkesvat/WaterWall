@@ -136,7 +136,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         else
         {
             sockaddr_u temp;
-            sockaddrSetIp(&(temp), state->dest_addr_selected.string);
+            sockaddrSetIpAddress(&(temp), state->dest_addr_selected.string);
             sockaddrToIpAddr(&temp,&(state->constant_dest_addr.ip_address));
         }
     }

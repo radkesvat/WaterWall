@@ -16,13 +16,13 @@ bool resolveContextSync(address_context_t *sctx)
     /* resolve domain */
     {
         sockaddr_u temp;
-        if (sockaddrSetIp(&temp, sctx->domain) != 0)
+        if (sockaddrSetIpAddress(&temp, sctx->domain) != 0)
         {
             LOGE("SyncDns: resolve failed  %s", sctx->domain);
-            sctx->type_ip = false;
+            sctx->domain_resolved = false;
             return false;
         }
-        sctx->type_ip = true;
+        sctx->domain_resolved = true;
         
         sockaddrToIpAddr(&temp, &(sctx->ip_address));
 

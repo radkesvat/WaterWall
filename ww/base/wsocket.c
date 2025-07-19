@@ -55,17 +55,6 @@ const char *socketStrError(int err)
 #endif
 }
 
-bool adressIsIp4(const char *host)
-{
-    struct sockaddr_in sin;
-    return inet_pton(AF_INET, host, &sin) == 1;
-}
-
-bool adressIsIp6(const char *host)
-{
-    struct sockaddr_in6 sin6;
-    return inet_pton(AF_INET6, host, &sin6) == 1;
-}
 
 int resolveAddr(const char *host, sockaddr_u *addr)
 {
@@ -131,7 +120,7 @@ uint16_t sockaddrPort(sockaddr_u *addr)
     return port;
 }
 
-int sockaddrSetIp(sockaddr_u *addr, const char *host)
+int sockaddrSetIpAddress(sockaddr_u *addr, const char *host)
 {
     if (! host || *host == '\0')
     {
@@ -154,7 +143,7 @@ void sockaddrSetPort(sockaddr_u *addr, int port)
     }
 }
 
-int sockaddrSetIpPort(sockaddr_u *addr, const char *host, int port)
+int sockaddrSetIpAddressPort(sockaddr_u *addr, const char *host, int port)
 {
 #ifdef ENABLE_UDS
     if (port < 0)
@@ -163,7 +152,7 @@ int sockaddrSetIpPort(sockaddr_u *addr, const char *host, int port)
         return 0;
     }
 #endif
-    int ret = sockaddrSetIp(addr, host);
+    int ret = sockaddrSetIpAddress(addr, host);
     if (ret != 0)
         return ret;
     sockaddrSetPort(addr, port);
@@ -337,7 +326,7 @@ int Bind(int port, const char *host, int type)
 #endif
     sockaddr_u localaddr;
     memorySet(&localaddr, 0, sizeof(localaddr));
-    int ret = sockaddrSetIpPort(&localaddr, host, port);
+    int ret = sockaddrSetIpAddressPort(&localaddr, host, port);
     if (ret != 0)
     {
         return NABS(ret);
@@ -360,7 +349,7 @@ int wwConnect(const char *host, int port, int nonblock)
 #endif
     sockaddr_u peeraddr;
     memorySet(&peeraddr, 0, sizeof(peeraddr));
-    int ret = sockaddrSetIpPort(&peeraddr, host, port);
+    int ret = sockaddrSetIpAddressPort(&peeraddr, host, port);
     if (ret != 0)
     {
         return NABS(ret);
@@ -512,7 +501,7 @@ bool verifyIPPort(const char *ipp)
         return false;
     }
     *colon = '\0';
-    if (! adressIsIp(ipp))
+    if (! addressIsIp(ipp))
     {
         LOGE("verifyIPPort Error: \"%s\" is not a valid ip address", ipp);
         return false;
@@ -537,13 +526,13 @@ bool verifyIPCdir(const char *ipc)
         return false;
     }
     *slash = '\0';
-    if (! adressIsIp(ipc))
+    if (! addressIsIp(ipc))
     {
         LOGE("verifyIPCdir Error: \"%s\" is not a valid ip address", ipc);
         return false;
     }
 
-    bool is_v4 = adressIsIp4(ipc);
+    bool is_v4 = addressIsIp4(ipc);
     *slash     = '/';
 
     char *subnet_part   = slash + 1;

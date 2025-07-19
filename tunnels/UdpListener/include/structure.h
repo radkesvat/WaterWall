@@ -21,8 +21,6 @@ typedef struct udplistener_lstate_s
     widle_item_t *idle_handle;
 
     // These fields are used internally for the queue implementation for TCP
-    buffer_queue_t pause_queue;
-    bool           write_paused : 1;
     bool           read_paused : 1;
 
 } udplistener_lstate_t;

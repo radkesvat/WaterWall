@@ -33,7 +33,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         LOGF("JSON Error: UdpStatelessSocket->settings->listen-address (string field) : The data was empty or invalid");
         return NULL;
     }
-    if (! isIpAddr(state->listen_address))
+    if (! addressIsIp(state->listen_address))
     {
         LOGF("JSON Error: UdpStatelessSocket->settings->listen-address (string field) : The data is valid ip address");
         return NULL;

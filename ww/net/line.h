@@ -245,3 +245,18 @@ static inline bool lineGetRecalculateChecksum(const line_t *const line)
 {
     return line->recalculate_checksum;
 }
+
+static inline routing_context_t *lineGetRoutingContext(line_t *const line)
+{
+    return &line->routing_context;
+}
+
+static inline address_context_t *lineGetSourceAddressContext(line_t *const line)
+{
+    return &line->routing_context.src_ctx;
+}
+
+static inline address_context_t *lineGetDestinationAddressContext(line_t *const line)
+{
+    return &line->routing_context.dest_ctx;
+}

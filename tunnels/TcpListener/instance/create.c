@@ -147,7 +147,7 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     filter_opt.host             = state->listen_address;
     filter_opt.port_min         = state->listen_port_min;
     filter_opt.port_max         = state->listen_port_max;
-    filter_opt.protocol         = kSocketProtocolTcp;
+    filter_opt.protocol         = IPPROTO_TCP;
    
     socketacceptorRegister(t, filter_opt, tcplistenerOnInboundConnected);
 

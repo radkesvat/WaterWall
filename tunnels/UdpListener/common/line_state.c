@@ -11,12 +11,7 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
     sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(uio->io), &(l->routing_context.src_ctx.ip_address));
     l->routing_context.src_ctx.port = real_localport;
 
-    *ls = (udplistener_lstate_t){.line         = l,
-                                 .uio          = uio,
-                                 .tunnel       = t,
-                                 .read_paused  = false,
-                                 .write_paused = false,
-                                 .pause_queue  = bufferqueueCreate(kPauseQueueCapacity)};
+    *ls = (udplistener_lstate_t){.line = l, .uio = uio, .tunnel = t, .read_paused = false};
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {

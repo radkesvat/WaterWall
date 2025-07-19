@@ -1,7 +1,10 @@
 #pragma once
 
 // Standard and library includes
-#include "wlibc.h"
+#include "wdef.h"
+#include "wexport.h"
+#include "wplatform.h"
+
 
 #include "lwip/autoip.h"
 #include "lwip/inet_chksum.h"
@@ -45,36 +48,36 @@ typedef struct
 // ------------------------------------------------------------------------
 // Generic IP Function Macros
 // ------------------------------------------------------------------------
-#define ipAddrSetAny            ip_addr_set_any       // Set IP address to wildcard
-#define ipAddrIsAny             ip_addr_isany         // Check if IP address is wildcard
-#define ipAddrCmp               ip_addr_cmp           // Compare two IP addresses
-#define ipAddrNetcmp            ip_addr_netcmp        // Compare two IP addresses with mask
-#define ipAddrCopyFromIp4       ip_addr_copy_from_ip4 // Copy IPv4 address to generic IP
-#define ipAddrCopyFromIp6       ip_addr_copy_from_ip6 // Copy IPv6 address to generic IP
-#define ipAddrCopy              ip_addr_copy          // Copy a generic IP address
-#define ipAddrIsV4              IP_IS_V4              // Check if IP address is IPv4
-#define ipAddrIsV6              IP_IS_V6              // Check if IP address is IPv6
-#define ipAddrNetworkToAddress  ipaddr_ntoa           // Convert IP address to string
+#define ipAddrSetAny           ip_addr_set_any       // Set IP address to wildcard
+#define ipAddrIsAny            ip_addr_isany         // Check if IP address is wildcard
+#define ipAddrCmp              ip_addr_cmp           // Compare two IP addresses
+#define ipAddrNetcmp           ip_addr_netcmp        // Compare two IP addresses with mask
+#define ipAddrCopyFromIp4      ip_addr_copy_from_ip4 // Copy IPv4 address to generic IP
+#define ipAddrCopyFromIp6      ip_addr_copy_from_ip6 // Copy IPv6 address to generic IP
+#define ipAddrCopy             ip_addr_copy          // Copy a generic IP address
+#define ipAddrIsV4             IP_IS_V4              // Check if IP address is IPv4
+#define ipAddrIsV6             IP_IS_V6              // Check if IP address is IPv6
+#define ipAddrNetworkToAddress ipaddr_ntoa           // Convert IP address to string
 
 // ------------------------------------------------------------------------
 // IPv4 Specific Function Macros
 // ------------------------------------------------------------------------
-#define ip4AddrSetAny            ip4_addr_set_any
-#define ip4AddrGetU32            ip4_addr_get_u32
-#define ip4AddrNetcmp            ip4_addr_netcmp
-#define ip4AddrCopy              ip4_addr_copy
-#define ip4AddrNetworkToAddress  ip4addr_ntoa
-#define ip4AddrAddressToNetwork  ip4addr_aton
-#define ip4AddrSetU32            ip4_addr_set_u32
-#define ip4AddrEqual             ip4_addr_eq
+#define ip4AddrSetAny           ip4_addr_set_any
+#define ip4AddrGetU32           ip4_addr_get_u32
+#define ip4AddrNetcmp           ip4_addr_netcmp
+#define ip4AddrCopy             ip4_addr_copy
+#define ip4AddrNetworkToAddress ip4addr_ntoa
+#define ip4AddrAddressToNetwork ip4addr_aton
+#define ip4AddrSetU32           ip4_addr_set_u32
+#define ip4AddrEqual            ip4_addr_eq
 
 // ------------------------------------------------------------------------
 // IPv6 Specific Function Macros
 // ------------------------------------------------------------------------
 #define ip6AddrSetAny ip6_addr_set_any
 // #define ip6AddrNetcmp            ip6_addr_netcmp // Custom function is used instead, see below
-#define ip6AddrCopyFromPacket    ip6_addr_copy_from_packed
-#define ip6AddrNetworkToAddress  ip6addr_ntoa
+#define ip6AddrCopyFromPacket   ip6_addr_copy_from_packed
+#define ip6AddrNetworkToAddress ip6addr_ntoa
 
 // ------------------------------------------------------------------------
 // TCP/IP Stack Initialization Macro
@@ -137,3 +140,51 @@ static inline int ip6AddrNetcmp(const ip6_addr_t *a, const ip6_addr_t *b, const 
  * @return the number of bytes copied, or 0 on failure
  */
 u16_t pbufLargeCopyToPtr(const struct pbuf *buf, void *dataptr);
+
+WW_INLINE bool addressIsIp4(const char *host)
+{
+    ip4_addr_t ip4;
+    return ip4addr_aton(host, &ip4) != 0;
+}
+
+WW_INLINE bool addressIsIp6(const char *host)
+{
+    ip6_addr_t ip6;
+    return ip6addr_aton(host, &ip6) != 0;
+}
+
+WW_INLINE bool addressIsIp(const char *host)
+{
+    return addressIsIp4(host) || addressIsIp6(host);
+}
+
+WW_INLINE uint8_t getIpVersion(char *host)
+{
+    if (addressIsIp4(host))
+    {
+        return IPADDR_TYPE_V4;
+    }
+    if (addressIsIp6(host))
+    {
+        return IPADDR_TYPE_V6;
+    }
+    return IPADDR_TYPE_ANY; // Not a valid IP
+}
+
+WW_INLINE int parseIpAddress(const char *ip_str, ip_addr_t *ip)
+{
+
+    if (ipaddr_aton(ip_str, ip))
+    {
+        if (IP_IS_V4(ip))
+        {
+            return IPADDR_TYPE_V4;
+        }
+        if (IP_IS_V6(ip))
+        {
+            return IPADDR_TYPE_V6;
+        }
+    }
+
+    return IPADDR_TYPE_ANY; // Not a valid IP
+}

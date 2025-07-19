@@ -110,12 +110,7 @@ typedef union {
 #endif
 } sockaddr_u;
 
-WW_EXPORT bool adressIsIp4(const char *host);
-WW_EXPORT bool adressIsIp6(const char *host);
-WW_INLINE bool adressIsIp(const char *host)
-{
-    return adressIsIp4(host) || adressIsIp6(host);
-}
+
 
 // @param host: domain or ip
 // @retval 0:succeed
@@ -123,9 +118,9 @@ WW_EXPORT int resolveAddr(const char *host, sockaddr_u *addr);
 
 WW_EXPORT const char *sockaddrIp(sockaddr_u *addr, char *ip, int len);
 WW_EXPORT uint16_t    sockaddrPort(sockaddr_u *addr);
-WW_EXPORT int         sockaddrSetIp(sockaddr_u *addr, const char *host);
+WW_EXPORT int         sockaddrSetIpAddress(sockaddr_u *addr, const char *host);
 WW_EXPORT void        sockaddrSetPort(sockaddr_u *addr, int port);
-WW_EXPORT int         sockaddrSetIpPort(sockaddr_u *addr, const char *host, int port);
+WW_EXPORT int         sockaddrSetIpAddressPort(sockaddr_u *addr, const char *host, int port);
 WW_EXPORT socklen_t   sockaddrLen(sockaddr_u *addr);
 WW_EXPORT const char *sockaddrStr(sockaddr_u *addr, char *buf, int len);
 
@@ -415,23 +410,6 @@ static inline hash_t sockaddrCalcHashWithPort(const sockaddr_u *saddr)
     return result;
 }
 
-static inline int pareIpAddress(const char *ip_str, ip_addr_t *ip)
-{
-
-    if (ipaddr_aton(ip_str, ip))
-    {
-        if (IP_IS_V4(ip))
-        {
-            return 4;
-        }
-        if (IP_IS_V6(ip))
-        {
-            return 6;
-        }
-    }
-
-    return -1;
-}
 
 static inline int parseIPWithSubnetMask(const char *ip_str, ip_addr_t *ip, ip_addr_t *subnet_mask)
 {
@@ -561,6 +539,7 @@ bool verifyIPPort(const char *ipc);
 bool verifyIPCdir(const char *ipc);
 
 bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen);
+
 
 
 #endif // WW_SOCKET_H_

@@ -1118,7 +1118,7 @@ wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e typ
 #endif
     if (port >= 0)
     {
-        ret = sockaddrSetIpPort(&addr, host, port);
+        ret = sockaddrSetIpAddressPort(&addr, host, port);
     }
     if (ret != 0)
     {
