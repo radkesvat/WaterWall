@@ -47,7 +47,7 @@ typedef struct line_s
 
     generic_pool_t *pool;
 
-    ATTR_ALIGNED_16 uintptr_t *tunnels_line_state[];
+    MSVC_ATTR_ALIGNED_16 uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_16; 
 
 } line_t;
 

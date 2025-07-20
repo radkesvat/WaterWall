@@ -20,7 +20,7 @@ struct sbuf_s
     uint32_t capacity;
     uint16_t l_pad;
     bool     is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
-    ATTR_ALIGNED_16 uint8_t buf[];
+    MSVC_ATTR_ALIGNED_16 uint8_t buf[] GNU_ATTR_ALIGNED_16;
 };
 
 typedef struct sbuf_s sbuf_t;

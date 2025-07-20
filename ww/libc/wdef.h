@@ -267,14 +267,24 @@ enum
 #define CPULINECACHESIZEMIN1 (kCpuLineCacheSize - 1)
 
 #ifdef COMPILER_MSVC
-#define ATTR_ALIGNED(size) __declspec(align(size))
-#else
-#define ATTR_ALIGNED(size) __attribute__((aligned(size)))
-#endif
 
-#define ATTR_ALIGNED_LINE_CACHE ATTR_ALIGNED(CPULINECACHESIZE)
-#define ATTR_ALIGNED_16         ATTR_ALIGNED(16)
-#define ATTR_ALIGNED_32         ATTR_ALIGNED(32)
+#define MSVC_ATTR_ALIGNED_LINE_CACHE __declspec(align(CPULINECACHESIZE))
+#define MSVC_ATTR_ALIGNED_16         __declspec(align(16))
+#define MSVC_ATTR_ALIGNED_32         __declspec(align(32))
+#define GNU_ATTR_ALIGNED_LINE_CACHE
+#define GNU_ATTR_ALIGNED_16
+#define GNU_ATTR_ALIGNED_32
+
+#else
+
+#define MSVC_ATTR_ALIGNED_LINE_CACHE
+#define MSVC_ATTR_ALIGNED_16
+#define MSVC_ATTR_ALIGNED_32
+#define GNU_ATTR_ALIGNED_LINE_CACHE  __attribute__((aligned(kCpuLineCacheSize)))
+#define GNU_ATTR_ALIGNED_16          __attribute__((aligned(16)))
+#define GNU_ATTR_ALIGNED_32          __attribute__((aligned(32)))
+
+#endif
 
 #define MUSTALIGN2(n, w)    assert(((w) & ((w) -1)) == 0); /* alignment w is not a power of two */
 
