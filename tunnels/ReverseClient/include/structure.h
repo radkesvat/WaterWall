@@ -14,7 +14,7 @@ typedef struct reverseclient_tstate_s
     widle_table_t *starved_connections;
     atomic_uint    reverse_cons;
     atomic_uint    round_index;
-    unsigned int   min_unused_cons;
+    uint32_t       min_unused_cons;
 
     GNU_ATTR_ALIGNED_16 reverseclient_thread_box_t threadlocal_pool[] MSVC_ATTR_ALIGNED_16;
 } reverseclient_tstate_t;
