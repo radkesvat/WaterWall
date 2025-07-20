@@ -92,8 +92,11 @@ static void onMsgReceivedUp(wevent_t *ev)
 
         if (msg_ev->ctx.fin)
         {
-            lineUnlock(lstate->pair_line);
-            lstate->pair_line = NULL;
+            if (lstate->pair_line != NULL)
+            {
+                lineUnlock(lstate->pair_line);
+                lstate->pair_line = NULL;
+            }
         }
         else
         {
@@ -157,8 +160,11 @@ static void onMsgReceivedDown(wevent_t *ev)
     {
         if (msg_ev->ctx.fin)
         {
-            lineUnlock(lstate->pair_line);
-            lstate->pair_line = NULL;
+            if (lstate->pair_line != NULL)
+            {
+                lineUnlock(lstate->pair_line);
+                lstate->pair_line = NULL;
+            }
         }
         if (msg_ev->ctx.est && lineIsEstablished(line_to))
         {
@@ -505,7 +511,7 @@ static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *l)
 
     if (lstate->pair_line == NULL)
     {
-        tunnelPrevDownStreamPause(t, l);
+        tunnelPrevDownStreamResume(t, l);
         return;
     }
 
@@ -565,7 +571,7 @@ static void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t 
 static void pipetunnelDefaultOnPrepair(tunnel_t *t)
 {
     tunnel_t *child = tunnelGetState(t);
-    child->onStart(child);
+    child->onPrepair(child);
 }
 
 /**
