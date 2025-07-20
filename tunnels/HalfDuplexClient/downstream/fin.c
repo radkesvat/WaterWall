@@ -4,7 +4,6 @@
 
 static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-
     discard worker;
     discard arg3;
 
@@ -27,7 +26,6 @@ void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (l == ls->download_line)
     {
-
         if (ls->upload_line)
         {
             halfduplexclient_lstate_t *ls_upload_line = lineGetState(ls->upload_line, t);
@@ -42,7 +40,7 @@ void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         if (ls->download_line)
         {
             halfduplexclient_lstate_t *ls_download_line = lineGetState(ls->download_line, t);
-            ls_download_line->download_line             = NULL;
+            ls_download_line->upload_line               = NULL;
             ls_download_line->main_line                 = NULL;
             lineLock(ls->download_line);
             sendWorkerMessageForceQueue(lineGetWID(ls->download_line), localAsyncCloseLine, t, ls->download_line, NULL);
