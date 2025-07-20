@@ -16,7 +16,7 @@ typedef struct reverseclient_tstate_s
     atomic_uint    round_index;
     uint32_t       min_unused_cons;
 
-    GNU_ATTR_ALIGNED_16 reverseclient_thread_box_t threadlocal_pool[] MSVC_ATTR_ALIGNED_16;
+    ATTR_ALIGNED_16 reverseclient_thread_box_t threadlocal_pool[];
 } reverseclient_tstate_t;
 
 typedef struct reverseclient_lstate_s
