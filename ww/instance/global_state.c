@@ -100,7 +100,6 @@ static void exitHandle(void *userdata, int signum)
     discard userdata;
     atomicStoreExplicit(&GSTATE.application_stopping_flag, true, memory_order_release);
 
-
     for (unsigned int wid = 1; wid < WORKERS_COUNT; ++wid)
     {
         workerExitJoin(getWorker(wid));
@@ -268,7 +267,7 @@ void createGlobalState(const ww_construction_data_t init_data)
     // misc
     {
         GSTATE.capturedevice_queue_start_number = fastRand() % 2000;
-        GSTATE.mtu_size = init_data.mtu_size;
+        GSTATE.mtu_size                         = init_data.mtu_size;
     }
 
     // SSL
@@ -369,7 +368,6 @@ void runMainThread(void)
     // but the thread that requested our exit may still have work to do
     wwSleepMS(2000);
     LOGD("MainThread Returned");
-
 }
 
 /*!
