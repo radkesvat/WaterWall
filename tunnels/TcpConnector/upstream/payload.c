@@ -16,7 +16,7 @@ void tcpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         int bytes  = (int) sbufGetLength(buf);
         int nwrite = wioWrite(lstate->io, buf);
 
-
+        wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs); // resets the read timeout
         if (nwrite >= 0 && nwrite < bytes)
         {
             lstate->write_paused = true;
