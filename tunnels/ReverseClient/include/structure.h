@@ -34,7 +34,7 @@ enum
     kTunnelStateSize                = sizeof(reverseclient_tstate_t),
     kLineStateSize                  = sizeof(reverseclient_lstate_t),
     kHandShakeByte                  = 0xFF,
-    kHandShakeLength                = 16,
+    kHandShakeLength                = 640,
     kPreconnectDelayShort           = 10,
     kPreconnectDelayLong            = 750,
     kConnectionStarvationTimeOutSec = 45

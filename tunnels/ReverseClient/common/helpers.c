@@ -23,9 +23,25 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     reverseclientLinestateInitialize(dls, t, dl, ul);
 
     uls->idle_handle = idleItemNew(ts->starved_connections, (hash_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
-                                  wid, kConnectionStarvationTimeOutSec);
-                                  
+                                   wid, kConnectionStarvationTimeOutSec);
+
+    lineLock(ul);
+
     tunnelNextUpStreamInit(t, ul);
+
+    if (! lineIsAlive(ul))
+    {
+        lineUnlock(ul);
+        return;
+    }
+    lineUnlock(ul);
+
+    sbuf_t* handshakebuf = bufferpoolGetLargeBuffer(lineGetBufferPool(ul));
+    sbufReserveSpace(handshakebuf, kHandShakeLength);
+    memorySet(sbufGetMutablePtr(handshakebuf), kHandShakeByte, kHandShakeLength);
+    sbufSetLength(handshakebuf, kHandShakeLength);
+
+    tunnelNextUpStreamPayload(t, ul, handshakebuf);
 }
 
 void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay)
