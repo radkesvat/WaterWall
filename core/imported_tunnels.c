@@ -138,7 +138,7 @@
 #endif
 
 #ifdef INCLUDE_REVERSE_CLIENT
-#include "tunnels/client/reverse/reverse_client.h"
+#include "tunnels/ReverseClient/include/interface.h"
 #endif
 
 #ifdef INCLUDE_HEADER_SERVER
