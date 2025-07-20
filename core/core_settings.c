@@ -176,7 +176,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))
     {
         int mtu_size = DEFAULT_MTU_PROFILE;
-        getIntFromJsonObjectOrDefault(&mtu_size, misc_obj, "mtu-size", DEFAULT_MTU_PROFILE);
+        getIntFromJsonObjectOrDefault(&mtu_size, misc_obj, "mtu", DEFAULT_MTU_PROFILE);
         if (mtu_size <= 0)
         {
             printError("CoreSettings: mtu-size must be greater than 0, using default value %d\n", DEFAULT_MTU_PROFILE);
