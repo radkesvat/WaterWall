@@ -383,13 +383,15 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
         {
-            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-            LOGE("CaptureDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
+            // we are capturing packets and this can happen, so we just log it
+            LOGW("CaptureDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
                  GLOBAL_MTU_SIZE);
-            LOGF("CaptureDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
-                 "'misc' section");
-            terminateProgram(1);
-            return 0;
+            // LOGF("CaptureDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in
+            // "
+            //      "'misc' section");
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+            // terminateProgram(1);
+            continue;
         }
 
         distributePacketPayload(cdev, getNextDistributionWID(), buf);

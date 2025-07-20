@@ -157,12 +157,12 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
                 if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
                 {
-                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
                     LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
                          GLOBAL_MTU_SIZE);
                     LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
                          "the "
                          "'misc' section");
+                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
                     terminateProgram(1);
                 }
                 
