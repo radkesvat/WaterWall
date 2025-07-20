@@ -8,7 +8,6 @@
 
 /**
  * Destroys the shift buffer and frees its memory.
- * @param b The shift buffer to destroy.
  */
 void sbufDestroy(sbuf_t *b)
 {
@@ -20,15 +19,12 @@ void sbufDestroy(sbuf_t *b)
 }
 
 /**
- * Creates a new shift buffer with specified minimum capacity and left padding.
- * @param minimum_capacity The minimum capacity of the buffer.
- * @param pad_left The left padding of the buffer.
- * @return A pointer to the created shift buffer.
+ * Creates a new shift buffer with specified capacity and left padding.
  */
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
-    // Ensure pad_left is always a multiple of 16
-    pad_left = (pad_left + 15) & ~15;
+    // Ensure pad_left is always a multiple of 32 for optimal alignment
+    pad_left = (pad_left + 31) & ~31;
 
     if (minimum_capacity != 0 && minimum_capacity % kCpuLineCacheSize != 0)
     {
@@ -39,6 +35,14 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     uint32_t real_cap = minimum_capacity + pad_left;
     sbuf_t  *b        = memoryAllocate(real_cap + sizeof(sbuf_t));
 
+    // Ensure the allocated memory is divisible by 16 for alignment
+    if ((uintptr_t)b % 16 != 0)
+    {
+        printError("sbufCreateWithPadding: Allocated memory is not aligned to 16 bytes");
+        memoryFree(b);
+        terminateProgram(1);
+    }
+    
 #ifdef DEBUG
     memorySet(b, 0x55, real_cap);
 #endif
@@ -53,9 +57,7 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 }
 
 /**
- * Creates a new shift buffer with specified minimum capacity.
- * @param minimum_capacity The minimum capacity of the buffer.
- * @return A pointer to the created shift buffer.
+ * Creates a new shift buffer with specified capacity.
  */
 sbuf_t *sbufCreate(uint32_t minimum_capacity)
 {
@@ -63,9 +65,7 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity)
 }
 
 /**
- * Duplicates the given shift buffer.
- * @param b The shift buffer to duplicate.
- * @return A pointer to the duplicated shift buffer.
+ * Duplicates the shift buffer.
  */
 sbuf_t *sbufDuplicate(sbuf_t *b)
 {
@@ -78,15 +78,12 @@ sbuf_t *sbufDuplicate(sbuf_t *b)
 
 /**
  * Concatenates two shift buffers.
- * @param root The root shift buffer.
- * @param buf The buffer to concatenate to the root.
- * @return A pointer to the concatenated shift buffer.
  */
 sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 {
     uint32_t root_length   = sbufGetLength(root);
     uint32_t append_length = sbufGetLength(buf);
-    root                   = sbufReserveSpace(root, root_length + append_length);
+    root                   = sbufReserveSpace(root, append_length);
     sbufSetLength(root, root_length + append_length);
 
     memoryCopyLarge(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
@@ -95,11 +92,7 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 }
 
 /**
- * Moves data from the source buffer to the destination buffer.
- * @param dest The destination buffer.
- * @param source The source buffer.
- * @param bytes The number of bytes to move.
- * @return A pointer to the destination buffer.
+ * Moves data from source buffer to destination buffer.
  */
 sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_t bytes)
 {
@@ -117,10 +110,7 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_
 }
 
 /**
- * Slices the given buffer by the specified number of bytes.
- * @param b The buffer to slice.
- * @param bytes The number of bytes to slice.
- * @return A pointer to the sliced buffer.
+ * Slices the buffer by specified number of bytes.
  */
 sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
 {
