@@ -22,7 +22,7 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     reverseclientLinestateInitialize(uls, t, ul, dl);
     reverseclientLinestateInitialize(dls, t, dl, ul);
 
-    uls->idle_handle = idleItemNew(ts->starved_connections, (hash_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
+    uls->idle_handle = idleItemNew(ts->starved_connections, (hash_t) (uintptr_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
                                    wid, kConnectionStarvationTimeOutSec);
 
     lineLock(ul);

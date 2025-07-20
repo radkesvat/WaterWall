@@ -36,7 +36,7 @@ void reverseclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
                  ts->threadlocal_pool[wid].unused_cons_count, atomicLoadRelaxed(&(ts->reverse_cons)));
 
             assert(uls->idle_handle != NULL);
-            idleTableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t) (uls));
+            idleTableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t)  (uintptr_t) (uls));
         }
         else
         {

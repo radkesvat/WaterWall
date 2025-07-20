@@ -22,6 +22,6 @@ void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     reverseclientInitiateConnectOnWorker(t, wid, false);
 
     uls->idle_handle =
-        idleItemNew(ts->starved_connections, (hash_t) (size_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
+        idleItemNew(ts->starved_connections, (hash_t) (uintptr_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
                     getWID(), ((uint64_t) (kConnectionStarvationTimeOutSec) *1000));
 }
