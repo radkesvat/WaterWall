@@ -100,7 +100,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     // if (p->tot_len - p->len >= 128)
     // {
-    //     memoryCopy128(sbufGetMutablePtr(buf), p->payload, p->tot_len);
+    //     memoryCopyLarge(sbufGetMutablePtr(buf), p->payload, p->tot_len);
     // }
     // else
     // {

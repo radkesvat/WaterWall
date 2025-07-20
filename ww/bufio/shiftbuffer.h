@@ -10,7 +10,7 @@
 /*
     with 16 bytes of the size of the struct and 16 bytes aligned buf inside it
 
-    it will be aligned to 32 bytes boundary which will help memoryCopy128 to use Aligned memory copy
+    it will be aligned to 32 bytes boundary which will help memoryCopyAVX2 to use Aligned memory copy
 */
 
 struct sbuf_s
@@ -206,7 +206,7 @@ static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
 static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict const from, uint32_t length)
 {
     assert(sbufGetRightCapacity(to) >= length);
-    memoryCopy128(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
+    memoryCopyLarge(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
 }
 
 /**

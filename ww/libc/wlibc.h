@@ -5,15 +5,15 @@
 #include "wdef.h"
 
 #include "watomic.h"
-#include "wmutex.h"
+#include "wchecksum.h"
 #include "wendian.h"
 #include "werr.h"
 #include "wexport.h"
 #include "wfrand.h"
 #include "whash.h"
 #include "wmath.h"
+#include "wmutex.h"
 #include "wtime.h"
-#include "wchecksum.h"
 
 #include "ww_lwip.h"
 
@@ -25,8 +25,6 @@ struct dedicated_memory_s;
 typedef struct dedicated_memory_s dedicated_memory_t;
 
 _Noreturn void terminateProgram(int exit_code); // in signal_manager.c
-
-
 
 void *memoryAllocate(size_t size);
 void *memoryAllocateZero(size_t size);
@@ -61,61 +59,165 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 
 #endif
 
-
-#ifndef ENABLE_MEMCOPY_128
-#error "ENABLE_MEMCOPY_128 must be defined to either 0 or 1"
+#ifndef ENABLE_MEMCOPY_AVX2
+#error "ENABLE_MEMCOPY_AVX2 must be defined to either 0 or 1"
 #endif
 
-#if ENABLE_MEMCOPY_128 == 1
+#if ENABLE_MEMCOPY_AVX2 == 1
 
 #include <x86intrin.h>
-static inline void memoryCopy128(void *dest, const void *src, intmax_t n)
+static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
 {
     __m256i       *d_vec = (__m256i *) (dest);
     const __m256i *s_vec = (const __m256i *) (src);
 
-    if ((uintptr_t) dest % 32 != 0 || (uintptr_t) src % 32 != 0)
-    {
+    bool aligned = ((uintptr_t) dest % 32 == 0 && (uintptr_t) src % 32 == 0);
 
-        while (n >= 128)
+    if (aligned)
+    {
+        // Copy 512 bytes at a time
+        while (n >= 512)
         {
-            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
-            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
-            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
-            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
-
-            n -= 128;
-            d_vec += 4;
-            s_vec += 4;
+            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
+            _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+            _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
+            _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
+            _mm256_store_si256(d_vec + 4, _mm256_load_si256(s_vec + 4));
+            _mm256_store_si256(d_vec + 5, _mm256_load_si256(s_vec + 5));
+            _mm256_store_si256(d_vec + 6, _mm256_load_si256(s_vec + 6));
+            _mm256_store_si256(d_vec + 7, _mm256_load_si256(s_vec + 7));
+            _mm256_store_si256(d_vec + 8, _mm256_load_si256(s_vec + 8));
+            _mm256_store_si256(d_vec + 9, _mm256_load_si256(s_vec + 9));
+            _mm256_store_si256(d_vec + 10, _mm256_load_si256(s_vec + 10));
+            _mm256_store_si256(d_vec + 11, _mm256_load_si256(s_vec + 11));
+            _mm256_store_si256(d_vec + 12, _mm256_load_si256(s_vec + 12));
+            _mm256_store_si256(d_vec + 13, _mm256_load_si256(s_vec + 13));
+            _mm256_store_si256(d_vec + 14, _mm256_load_si256(s_vec + 14));
+            _mm256_store_si256(d_vec + 15, _mm256_load_si256(s_vec + 15));
+            n -= 512;
+            d_vec += 16;
+            s_vec += 16;
         }
-    }
-    else
-    {
+
+        // Copy 128 bytes at a time
         while (n >= 128)
         {
             _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
             _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
             _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
             _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
-
             n -= 128;
             d_vec += 4;
             s_vec += 4;
         }
+
+        // Copy 64 bytes at a time
+        while (n >= 64)
+        {
+            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
+            _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+            n -= 64;
+            d_vec += 2;
+            s_vec += 2;
+        }
+
+        // Copy 32 bytes at a time
+        while (n >= 32)
+        {
+            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
+            n -= 32;
+            d_vec += 1;
+            s_vec += 1;
+        }
     }
+    else
+    {
+        // Copy 512 bytes at a time
+        while (n >= 512)
+        {
+            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
+            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
+            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
+            _mm256_storeu_si256(d_vec + 4, _mm256_loadu_si256(s_vec + 4));
+            _mm256_storeu_si256(d_vec + 5, _mm256_loadu_si256(s_vec + 5));
+            _mm256_storeu_si256(d_vec + 6, _mm256_loadu_si256(s_vec + 6));
+            _mm256_storeu_si256(d_vec + 7, _mm256_loadu_si256(s_vec + 7));
+            _mm256_storeu_si256(d_vec + 8, _mm256_loadu_si256(s_vec + 8));
+            _mm256_storeu_si256(d_vec + 9, _mm256_loadu_si256(s_vec + 9));
+            _mm256_storeu_si256(d_vec + 10, _mm256_loadu_si256(s_vec + 10));
+            _mm256_storeu_si256(d_vec + 11, _mm256_loadu_si256(s_vec + 11));
+            _mm256_storeu_si256(d_vec + 12, _mm256_loadu_si256(s_vec + 12));
+            _mm256_storeu_si256(d_vec + 13, _mm256_loadu_si256(s_vec + 13));
+            _mm256_storeu_si256(d_vec + 14, _mm256_loadu_si256(s_vec + 14));
+            _mm256_storeu_si256(d_vec + 15, _mm256_loadu_si256(s_vec + 15));
+            n -= 512;
+            d_vec += 16;
+            s_vec += 16;
+        }
+
+        // Copy 128 bytes at a time
+        while (n >= 128)
+        {
+            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
+            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
+            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
+            n -= 128;
+            d_vec += 4;
+            s_vec += 4;
+        }
+
+        // Copy 64 bytes at a time
+        while (n >= 64)
+        {
+            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
+            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+            n -= 64;
+            d_vec += 2;
+            s_vec += 2;
+        }
+
+        // Copy 32 bytes at a time
+        while (n >= 32)
+        {
+            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
+            n -= 32;
+            d_vec += 1;
+            s_vec += 1;
+        }
+    }
+
+    // Copy any remaining bytes
     if (n > 0)
     {
-        memoryCopy((uint8_t *) d_vec, (const uint8_t *) s_vec, n);
+        uint8_t       *d = (uint8_t *) d_vec;
+        const uint8_t *s = (const uint8_t *) s_vec;
+
+        if (((uintptr_t) d % 8 == 0) && ((uintptr_t) s % 8 == 0))
+        {
+            while (n >= 8)
+            {
+                *(uint64_t *) d = *(const uint64_t *) s;
+                d += 8;
+                s += 8;
+                n -= 8;
+            }
+        }
+        while (n--)
+        {
+            *d++ = *s++;
+        }
     }
 }
 
 #else
 
-#define memoryCopy128 memoryCopy
+#define memoryCopyAVX2 memoryCopy
 
 #endif
 
-#define memoryCopyLarge memoryCopy128
+#define memoryCopyLarge memoryCopyAVX2
 
 //--------------------string-------------------------------
 
@@ -241,7 +343,6 @@ static void printDebug(const char *format, ...)
     vfprintf(stdout, format, args);
     va_end(args);
     fflush(stdout);
-
 }
 
 static void printError(const char *format, ...)
