@@ -39,9 +39,9 @@ void sbufDestroy(sbuf_t *b);
  */
 static inline void sbufReset(sbuf_t *b)
 {
-    assert(!b->is_temporary);
-    b->len          = 0;
-    b->curpos       = b->l_pad;
+    assert(! b->is_temporary);
+    b->len    = 0;
+    b->curpos = b->l_pad;
 }
 
 /**
@@ -217,7 +217,7 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
     if (sbufGetRightCapacity(b) < bytes)
     {
         uint32_t needed_capacity = sbufGetLength(b) + bytes;
-        sbuf_t *bigger_buf = sbufCreateWithPadding(needed_capacity, b->l_pad);
+        sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_capacity, b->l_pad);
         sbufSetLength(bigger_buf, sbufGetLength(b));
         sbufWriteBuf(bigger_buf, b, sbufGetLength(b));
         sbufDestroy(b);
@@ -237,15 +237,23 @@ static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restri
     memoryCopy(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
 }
 
-// UnAligned
+/**
+ * Writes a  8-bit unsigned integer.
+ */
+static inline void sbufWriteUI8(sbuf_t *const b, const uint8_t data)
+{
+    *sbufGetMutablePtr(b) = data;
+}
 
 /**
- * Reads an unaligned 8-bit unsigned integer.
+ * Reads a 8-bit unsigned integer.
  */
-static inline void sbufReadUnAlignedUI8(const sbuf_t *const b, uint8_t *const dest)
+static inline void sbufReadUI8(const sbuf_t *const b, uint8_t *const dest)
 {
-    memoryCopy(dest, sbufGetRawPtr(b), sizeof(*dest));
+    *dest = *(uint8_t *) sbufGetRawPtr(b);
 }
+
+// UnAligned
 
 /**
  * Reads an unaligned 16-bit unsigned integer.
@@ -295,23 +303,7 @@ static inline void sbufWriteUnAlignedUI16(sbuf_t *const b, const uint16_t data)
     memoryCopy(sbufGetMutablePtr(b), &data, sizeof(data));
 }
 
-/**
- * Writes an unaligned 8-bit unsigned integer.
- */
-static inline void sbufWriteUnAlignedUI8(sbuf_t *const b, const uint8_t data)
-{
-    memoryCopy(sbufGetMutablePtr(b), &data, sizeof(data));
-}
-
 // Aligned
-
-/**
- * Reads an aligned 8-bit unsigned integer.
- */
-static inline void sbufReadUI8(const sbuf_t *const b, uint8_t *const dest)
-{
-    *dest = *(uint8_t *) sbufGetRawPtr(b);
-}
 
 /**
  * Reads an aligned 16-bit unsigned integer.
