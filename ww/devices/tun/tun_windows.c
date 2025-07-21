@@ -181,7 +181,14 @@ static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_
     ev.loop = getWorkerLoop(target_wid);
     ev.cb   = localThreadEventReceived;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(target_wid), &ev);
+    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
+    {
+        for (unsigned int i = 0; i < queued_count; i++)
+        {
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, msg->bufs[i]);
+        }
+        masterpoolReuseItems(tdev->reader_message_pool, (void **) &msg, 1, tdev);
+    }
 }
 // {
 //     struct msg_event *msg;
@@ -669,7 +676,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){
+    *tdev = (tun_device_t) {
         .name                  = stringDuplicate(name),
         .running               = false,
         .up                    = false,

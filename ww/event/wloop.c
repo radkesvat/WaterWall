@@ -320,11 +320,11 @@ static void wloopDestroyEventFDS(wloop_t *loop)
     loop->eventfds[0] = loop->eventfds[1] = -1;
 }
 
-void wloopPostEvent(wloop_t *loop, wevent_t *ev)
+bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
 {
     if(atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
     {
-        return;
+        return false;
     }
 
     if (ev->loop == NULL)
@@ -369,6 +369,7 @@ void wloopPostEvent(wloop_t *loop, wevent_t *ev)
     event_queue_push_back(&loop->custom_events, ev);
 unlock:
     mutexUnlock(&loop->custom_events_mutex);
+    return true;
 }
 
 static void wloopInit(wloop_t *loop)

@@ -79,7 +79,11 @@ static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sb
     ev.loop = getWorkerLoop(target_wid);
     ev.cb   = localThreadEventReceived;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(target_wid), &ev);
+    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
+    {
+        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+        masterpoolReuseItems(cdev->reader_message_pool, (void **) &msg, 1, cdev);
+    }
 }
 
 /*
@@ -369,16 +373,15 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                 if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
                 {
                     // we are capturing packets and this can happen, so we just log it
-                    LOGW("CaptureDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
-                         GLOBAL_MTU_SIZE);
-                    // LOGF("CaptureDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                    LOGW("CaptureDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
+                         sbufGetLength(buf), GLOBAL_MTU_SIZE);
+                    // LOGF("CaptureDevice: This is related to the MTU size, (core.json) please set a correct value for
+                    // 'mtu' in "
                     //      "'misc' section");
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
                     // terminateProgram(1);
                     continue;
-
                 }
-
 
                 distributePacketPayload(cdev, getNextDistributionWID(), buf);
                 continue;

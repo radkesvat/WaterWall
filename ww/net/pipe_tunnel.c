@@ -132,7 +132,15 @@ static void sendMessageUp(line_t *l_to, pipetunnel_msg_event_t *msg)
     ev.loop = getWorkerLoop(wid_to);
     ev.cb   = onMsgReceivedUp;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(wid_to), &ev);
+    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(wid_to), &ev)))
+    {
+        if (msg->ctx.payload != NULL)
+        {
+            contextReusePayload(&msg->ctx);
+        }
+        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(wid_to), msg);
+        lineUnlock(l_to);
+    }
 }
 
 /**
@@ -197,7 +205,15 @@ static void sendMessageDown(line_t *l_to, pipetunnel_msg_event_t *msg)
     ev.loop = getWorkerLoop(wid_to);
     ev.cb   = onMsgReceivedDown;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(wid_to), &ev);
+    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(wid_to), &ev)))
+    {
+        if (msg->ctx.payload != NULL)
+        {
+            contextReusePayload(&msg->ctx);
+        }
+        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(wid_to), msg);
+        lineUnlock(l_to);
+    }
 }
 
 /**
@@ -652,7 +668,7 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
         // parent_tunnel->fnFinU(parent_tunnel, l);
     }
     assert(ls->pair_line == NULL);
-    ls->pair_line = lineCreate(tunnelchainGetLinePool(tunnelGetChain(parent_tunnel), getWID()), wid_to);
+    ls->pair_line       = lineCreate(tunnelchainGetLinePool(tunnelGetChain(parent_tunnel), getWID()), wid_to);
     ls->pair_line->pool = tunnelchainGetLinePool(tunnelGetChain(parent_tunnel), wid_to);
 
     pipetunnel_line_state_t *ls_lineto = lineGetState(ls->pair_line, parent_tunnel);

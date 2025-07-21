@@ -62,14 +62,18 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event){.tdev = tdev, .buf = buf};
+    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(target_wid);
     ev.cb   = localThreadEventReceived;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(target_wid), &ev);
+    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
+    {
+        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+        masterpoolReuseItems(tdev->reader_message_pool, (void **) &msg, 1, tdev);
+    }
 }
 
 // Routine to read from TUN device
@@ -152,20 +156,20 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                     LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
                 }
 
-
                 sbufSetLength(buf, nread);
 
                 if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
                 {
                     LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
                          GLOBAL_MTU_SIZE);
-                    LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                    LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' "
+                         "in "
                          "the "
                          "'misc' section");
                     bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
                     terminateProgram(1);
                 }
-                
+
                 distributePacketPayload(tdev, getNextDistributionWID(), buf);
                 continue;
             }
@@ -221,7 +225,8 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
             if (errno == EMSGSIZE)
             {
-                LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in the "
+                LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
+                     "the "
                      "'misc' section");
                 terminateProgram(1);
             }
@@ -456,7 +461,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         close(fd);
         return NULL;
     }
-    
+
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd >= 0)
     {
@@ -490,18 +495,18 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
-                           .running               = false,
-                           .up                    = false,
-                           .routine_reader        = routineReadFromTun,
-                           .routine_writer        = routineWriteToTun,
-                           .handle                = fd,
-                           .read_event_callback   = cb,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = NULL,
-                           .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                           .reader_buffer_pool    = reader_bpool,
-                           .writer_buffer_pool    = writer_bpool};
+    *tdev = (tun_device_t) {.name                  = stringDuplicate(ifr.ifr_name),
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromTun,
+                            .routine_writer        = routineWriteToTun,
+                            .handle                = fd,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = NULL,
+                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+                            .reader_buffer_pool  = reader_bpool,
+                            .writer_buffer_pool  = writer_bpool};
 
     if (pipe(tdev->linux_pipe_fds) != 0)
     {

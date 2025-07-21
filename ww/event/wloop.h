@@ -184,7 +184,7 @@ WW_EXPORT void* wloopGetUserData(wloop_t* loop);
  * wloopPostEvent(loop, &ev);
  */
 // NOTE: wloopPostEvent is thread-safe, used to post event from other thread to loop thread.
-WW_EXPORT void wloopPostEvent(wloop_t* loop, wevent_t* ev);
+WW_EXPORT bool wloopPostEvent(wloop_t* loop, wevent_t* ev);
 
 // idle
 WW_EXPORT widle_t* widleAdd(wloop_t* loop, widle_cb cb, uint32_t repeat DEFAULT(INFINITE));
