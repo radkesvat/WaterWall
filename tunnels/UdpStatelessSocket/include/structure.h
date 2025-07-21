@@ -32,7 +32,7 @@ WW_EXPORT void         udpstatelesssocketTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *udpstatelesssocketTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpstatelesssocketTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void udpstatelesssocketTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void udpstatelesssocketTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void udpstatelesssocketTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpstatelesssocketTunnelOnPrepair(tunnel_t *t);
 void udpstatelesssocketTunnelOnStart(tunnel_t *t);

@@ -42,7 +42,7 @@ WW_EXPORT void         tcplistenerTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcplistenerTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcplistenerTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tcplistenerTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void tcplistenerTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void tcplistenerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcplistenerTunnelOnPrepair(tunnel_t *t);
 void tcplistenerTunnelOnStart(tunnel_t *t);

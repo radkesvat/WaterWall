@@ -96,7 +96,7 @@ WW_EXPORT void         ptcTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *ptcTunnelCreate(node_t *node);
 WW_EXPORT api_result_t ptcTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void ptcTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void ptcTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void ptcTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void ptcTunnelOnPrepair(tunnel_t *t);
 void ptcTunnelOnStart(tunnel_t *t);

@@ -545,22 +545,18 @@ static void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
  * @brief Handle the tunnel index.
  *
  * @param t Pointer to the tunnel.
- * @param arr Pointer to the tunnel array.
- * @param index Pointer to the index.
+ * @param index index.
  * @param mem_offset Pointer to the memory offset.
  */
-static void pipetunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
+static void pipetunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 {
-    tunnelarrayInsert(arr, t);
-    tunnel_t *child = tunnelGetState(t);
 
-    t->chain_index   = *index;
+    t->chain_index   = index;
     t->lstate_offset = *mem_offset;
 
     *mem_offset += t->lstate_size;
-    (*index)++;
 
-    child->onIndex(child, arr, index, mem_offset);
+    // child object is already in chain and will be indexed automatically
 }
 
 /**

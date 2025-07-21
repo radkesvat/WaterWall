@@ -46,14 +46,11 @@ static void runNodes(node_manager_config_t *cfg)
         kMaxTarraySize = 512
     };
 
-    tunnel_t *t_starters_array[kMaxTarraySize] = {0};
-    tunnel_t *t_array[kMaxTarraySize]          = {0};
+    tunnel_t *t_array[kMaxTarraySize] = {0};
 
-    int tunnels_count         = 0;
-    int starter_tunnels_count = 0;
+    int tunnels_count = 0;
     {
-        int index          = 0;
-        int index_starters = 0;
+        int index = 0;
         c_foreach(p1, map_node_t, cfg->node_map)
         {
             node_t *n1 = p1.ref->second;
@@ -66,18 +63,13 @@ static void runNodes(node_manager_config_t *cfg)
                 terminateProgram(1);
             }
 
-            if (nodeHasFlagChainHead(n1))
-            {
-                t_starters_array[index_starters++] = n1->instance;
-            }
             if (index == kMaxTarraySize + 1)
             {
                 LOGF("NodeManager: too many nodes in config");
                 terminateProgram(1);
             }
         }
-        tunnels_count         = index;
-        starter_tunnels_count = index_starters;
+        tunnels_count = index;
     }
 
     if (tunnels_count == 0)
@@ -86,90 +78,60 @@ static void runNodes(node_manager_config_t *cfg)
         return;
     }
 
-    tunnel_t *t_array_cpy[kMaxTarraySize];
-    memoryCopy((void *) t_array_cpy, (const void *) t_array, sizeof(t_array_cpy));
+    {
+        for (int i = 0; i < tunnels_count; i++)
+        {
+
+            tunnel_t *tunnel = t_array[i];
+            if (tunnel->chain == NULL)
+            {
+                tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount() - WORKER_ADDITIONS);
+                vec_chains_t_push(&cfg->chains, tc);
+                tunnel->onChain(tunnel, tc);
+            }
+        }
+    }
 
     {
         for (int i = 0; i < tunnels_count; i++)
         {
             tunnel_t *tunnel = t_array[i];
-
-            if (tunnel == NULL || ! nodeHasFlagChainHead(tunnelGetNode(tunnel)))
+            if (tunnelchainIsFinalized(tunnelGetChain(tunnel)) == false)
             {
-                continue;
-            }
-
-            tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount() - WORKER_ADDITIONS);
-            vec_chains_t_push(&cfg->chains, tc);
-            tunnel->onChain(tunnel, tc);
-
-            tunnelchainFinalize(tc);
-
-            for (int cti = 0; cti < tc->tunnels.len; cti++)
-            {
-                for (int ti = 0; ti < tunnels_count; ti++)
+                tunnelchainFinalize(tunnelGetChain(tunnel));
+                uint16_t index      = 0;
+                uint16_t mem_offset = 0;
+                for (int tci = 0; tci < tunnelGetChain(tunnel)->tunnels.len; tci++)
                 {
-                    if (t_array[ti] == tc->tunnels.tuns[cti])
-                    {
-                        t_array[ti] = NULL;
-                        break;
-                    }
+                    tunnel_t *tunnel_in_chain = tunnelGetChain(tunnel)->tunnels.tuns[tci];
+
+                    tunnel_in_chain->onIndex(tunnel_in_chain, index++, &mem_offset);
                 }
             }
         }
     }
 
-    {
-        for (int i = 0; i < starter_tunnels_count; i++)
-        {
-            tunnel_t *tunnel = t_starters_array[i];
-
-            if (tunnel == NULL)
-            {
-                continue;
-            }
-
-            tunnel_array_t ta         = {0};
-            uint16_t       index      = 0;
-            uint16_t       mem_offset = 0;
-            tunnel->onIndex(tunnel, &ta, &index, &mem_offset);
-            tunnelGetChain(tunnel)->tunnels = ta;
-
-            // dont repeat this operation if another starter tunnel was in this chain
-            for (int cti = 0; cti < ta.len; cti++)
-            {
-                for (int ti = 0; ti < starter_tunnels_count; ti++)
-                {
-                    if (t_starters_array[ti] == ta.tuns[cti])
-                    {
-                        t_starters_array[ti] = NULL;
-                        break;
-                    }
-                }
-            }
-        }
-    }
     {
         for (int i = 0; i < tunnels_count; i++)
         {
-            if (t_array_cpy[i]->chain == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagNoChain))
+            if (t_array[i]->chain == NULL && ! (t_array[i]->node->flags & kNodeFlagNoChain))
             {
-                LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array_cpy[i]->node->name);
+                LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array[i]->node->name);
                 terminateProgram(1);
             }
 
-            if (t_array_cpy[i]->next == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagChainEnd))
+            if (t_array[i]->next == NULL && ! (t_array[i]->node->flags & kNodeFlagChainEnd))
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but dose not have "
                      "flagkNodeFlagChainEnd",
-                     t_array_cpy[i]->node->name);
+                     t_array[i]->node->name);
                 terminateProgram(1);
             }
-            if (t_array_cpy[i]->prev == NULL && ! (t_array_cpy[i]->node->flags & kNodeFlagChainHead))
+            if (t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagChainHead))
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but dose not have "
                      "flagkNodeFlagChainHead",
-                     t_array_cpy[i]->node->name);
+                     t_array[i]->node->name);
                 terminateProgram(1);
             }
         }
@@ -177,15 +139,15 @@ static void runNodes(node_manager_config_t *cfg)
     {
         for (int i = 0; i < tunnels_count; i++)
         {
-            assert(t_array_cpy[i] != NULL);
-            t_array_cpy[i]->onPrepair(t_array_cpy[i]);
+            assert(t_array[i] != NULL);
+            t_array[i]->onPrepair(t_array[i]);
         }
     }
     {
         for (int i = 0; i < tunnels_count; i++)
         {
-            assert(t_array_cpy[i] != NULL);
-            tunnel_t *tunnel                = t_array_cpy[i];
+            assert(t_array[i] != NULL);
+            tunnel_t *tunnel                = t_array[i];
             tunnelGetChain(tunnel)->started = true;
             tunnel->onStart(tunnel);
         }
@@ -194,8 +156,8 @@ static void runNodes(node_manager_config_t *cfg)
         // send packt tunnels init
         for (int i = 0; i < tunnels_count; i++)
         {
-            assert(t_array_cpy[i] != NULL);
-            tunnel_t *tunnel = t_array_cpy[i];
+            assert(t_array[i] != NULL);
+            tunnel_t *tunnel = t_array[i];
             if (tunnel->prev == NULL && tunnel->node->flags & kNodeFlagChainHead &&
                 tunnel->node->layer_group == kNodeLayer3)
             {
@@ -389,7 +351,7 @@ void nodemanagerRunConfigFile(config_file_t *config_file)
 
     node_manager_config_t *cfg = memoryAllocate(sizeof(node_manager_config_t));
 
-    *cfg = (node_manager_config_t){
+    *cfg = (node_manager_config_t) {
         .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
     vec_configs_t_push(&(state->configs), cfg);
     startInstallingConfigFile(cfg);

@@ -5,7 +5,7 @@
 
 void adapterDefaultOnChainUpEnd(tunnel_t *t, tunnel_chain_t *tc)
 {
-    tunnelchainInsert(tc, t);
+    tunnelDefaultOnChain(t, tc);
 }
 
 void adapterDefaultOnChainDownEnd(tunnel_t *t, tunnel_chain_t *tc)
@@ -13,28 +13,19 @@ void adapterDefaultOnChainDownEnd(tunnel_t *t, tunnel_chain_t *tc)
     tunnelDefaultOnChain(t, tc);
 }
 
-void adapterDefaultOnIndexUpEnd(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
+void adapterDefaultOnIndexUpEnd(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 {
-    tunnelarrayInsert(arr, t);
-    t->chain_index   = *index;
+    t->chain_index   = index;
     t->lstate_offset = *mem_offset;
-    (*index)++;
     *mem_offset += t->lstate_size;
-    assert(t->next == NULL);
 }
 
-void adapterDefaultOnIndexDownEnd(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
+void adapterDefaultOnIndexDownEnd(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 {
-    tunnelarrayInsert(arr, t);
-    t->chain_index   = *index;
+    t->chain_index   = index;
     t->lstate_offset = *mem_offset;
-    (*index)++;
     *mem_offset += t->lstate_size;
-    if (t->next)
-    {
-
-        t->next->onIndex(t->next, arr, index, mem_offset);
-    }
+  
 }
 
 static void disabledPayloadRoutine(tunnel_t *t, line_t *line, sbuf_t *payload)

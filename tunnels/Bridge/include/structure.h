@@ -5,7 +5,7 @@
 typedef struct bridge_tstate_s
 {
     node_t   *pair_node;
-    tunnel_t *pair;
+    tunnel_t *pair_tunel;
     bool      mode_upside; // if this node is last node of upstream
 } bridge_tstate_t;
 
@@ -24,7 +24,7 @@ WW_EXPORT void         bridgeTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *bridgeTunnelCreate(node_t *node);
 WW_EXPORT api_result_t bridgeTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void bridgeTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void bridgeTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void bridgeTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void bridgeTunnelOnPrepair(tunnel_t *t);
 void bridgeTunnelOnStart(tunnel_t *t);

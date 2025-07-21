@@ -40,7 +40,7 @@ WW_EXPORT void         tundeviceTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tundeviceTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tundeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tundeviceTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void tundeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void tundeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tundeviceTunnelOnPrepair(tunnel_t *t);
 void tundeviceTunnelOnStart(tunnel_t *t);

@@ -66,7 +66,7 @@ WW_EXPORT void         ipmanipulatorDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *ipmanipulatorCreate(node_t *node);
 WW_EXPORT api_result_t ipmanipulatorApi(tunnel_t *instance, sbuf_t *message);
 
-void ipmanipulatorOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void ipmanipulatorOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void ipmanipulatorOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void ipmanipulatorOnPrepair(tunnel_t *t);
 void ipmanipulatorOnStart(tunnel_t *t);

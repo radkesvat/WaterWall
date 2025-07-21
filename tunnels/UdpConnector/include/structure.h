@@ -40,7 +40,7 @@ WW_EXPORT void         udpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *udpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void udpconnectorTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void udpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void udpconnectorTunnelOnPrepair(tunnel_t *t);
 void udpconnectorTunnelOnStart(tunnel_t *t);

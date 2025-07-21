@@ -52,7 +52,7 @@ WW_EXPORT void         rawsocketDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *rawsocketCreate(node_t *node);
 WW_EXPORT api_result_t rawsocketApi(tunnel_t *instance, sbuf_t *message);
 
-void rawsocketOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void rawsocketOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void rawsocketOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void rawsocketOnPrepair(tunnel_t *t);
 void rawsocketOnStart(tunnel_t *t);

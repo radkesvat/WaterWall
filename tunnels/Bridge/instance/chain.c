@@ -4,9 +4,19 @@
 
 void bridgeTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 {
-    // using tunnel / adapter default handle for this action
-    discard t;
-    discard chain;
-    LOGF("This Function is disabled, using the default Tunnel instead");
-    terminateProgram(1);
+
+    bridge_tstate_t *state      = tunnelGetState(t);
+    bridge_tstate_t *pair_state = tunnelGetState(state->pair_tunel);
+
+    tunnelDefaultOnChain(t, chain);
+
+    if (! state->pair_tunel)
+    {
+
+        // we are first in pair, so we need to set pair_tunel
+        state->pair_tunel      = state->pair_node->instance;
+        pair_state->pair_tunel = t;
+
+        state->pair_tunel->onChain(state->pair_tunel, chain);
+    }
 }

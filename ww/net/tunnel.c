@@ -141,14 +141,9 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 
     if (tnext->chain != NULL)
     {
-        if ((next->flags & kNodeFlagChainEnd) != kNodeFlagChainEnd)
-        {
-            LOGF("Node Map Failure: node (\"%s\") cannot chain to node (\"%s\") because it is in a chain ", node->name, node->next);
-            terminateProgram(1);
-        }
-        assert(tnext->chain->tunnels.len == 1);
-        tunnelchainDestroy(tnext->chain);
-        tnext->chain = NULL;
+        // this can happen when something like bridge node is present in the chain
+        tunnelchainCombine(tnext->chain, tc);
+        return;
     }
 
     tunnelchainInsert(tc, t);
@@ -156,17 +151,13 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 }
 
 // Default function to handle tunnel indexing
-void tunnelDefaultOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset)
+void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 {
-    tunnelarrayInsert(arr, t);
-    t->chain_index   = *index;
+    t->chain_index   = index;
     t->lstate_offset = *mem_offset;
-    (*index)++;
+
     *mem_offset += t->lstate_size;
-    if (t->next)
-    {
-        t->next->onIndex(t->next, arr, index, mem_offset);
-    }
+
 }
 
 // Default function to prepare the tunnel

@@ -35,7 +35,7 @@ WW_EXPORT void         wireguarddeviceTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *wireguarddeviceTunnelCreate(node_t *node);
 WW_EXPORT api_result_t wireguarddeviceTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void wireguarddeviceTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void wireguarddeviceTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void wireguarddeviceTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void wireguarddeviceTunnelOnPrepair(tunnel_t *t);
 void wireguarddeviceTunnelOnStart(tunnel_t *t);

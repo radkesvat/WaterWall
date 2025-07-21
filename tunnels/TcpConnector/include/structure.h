@@ -57,7 +57,7 @@ WW_EXPORT void         tcpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void tcpconnectorTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void tcpconnectorTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void tcpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void tcpconnectorTunnelOnPrepair(tunnel_t *t);
 void tcpconnectorTunnelOnStart(tunnel_t *t);

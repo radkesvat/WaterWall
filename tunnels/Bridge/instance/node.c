@@ -19,7 +19,7 @@ node_t nodeBridgeGet(void)
              .node_settings_json    = NULL,
              .node_manager_config   = NULL,
              .instance              = NULL,
-             .flags                 = kNodeFlagNone,
+             .flags                 = kNodeFlagChainHead,
              .required_padding_left = 0,
              .layer_group           = kNodeLayerAnything,
              .layer_group_next_node = kNodeLayerAnything,

@@ -59,6 +59,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
     }
 
     globalstateUpdateAllocationPadding(tc->sum_padding_left);
+    tc->finalized = true;
 }
 
 void tunnelchainDestroy(tunnel_chain_t *tc)
@@ -69,8 +70,10 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
         {
             lineDestroy(tc->packet_lines[i]);
         }
-        genericpoolDestroy(tc->line_pools[i]);
-
+        if (tc->line_pools[i])
+        {
+            genericpoolDestroy(tc->line_pools[i]);
+        }
     }
 
     masterpoolDestroy(tc->masterpool_line_pool);
@@ -81,4 +84,38 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
 generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, wid_t wid)
 {
     return tc->line_pools[wid];
+}
+
+void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
+{
+    // Check if combining would exceed maximum chain length
+    if (destination->tunnels.len + source->tunnels.len > kMaxChainLen)
+    {
+        LOGF("tunnelchainCombine: Combined chain would exceed maximum length (%d + %d > %d)", destination->tunnels.len,
+             source->tunnels.len, kMaxChainLen);
+        terminateProgram(1);
+    }
+
+    // Check if worker counts match
+    if (destination->workers_count != source->workers_count)
+    {
+        LOGF("tunnelchainCombine: Worker counts don't match (%d != %d)", destination->workers_count,
+             source->workers_count);
+        terminateProgram(1);
+    }
+
+    // Append all tunnels from source to destination using existing insert function
+    for (uint16_t i = 0; i < source->tunnels.len; i++)
+    {
+        tunnel_t *tunnel = source->tunnels.tuns[i];
+        tunnelchainInsert(destination, tunnel);
+    }
+
+    // Clear the source chain (tunnels are now owned by destination)
+    source->tunnels.len          = 0;
+    source->sum_padding_left     = 0;
+    source->sum_line_state_size  = 0;
+    source->contains_packet_node = false;
+
+    tunnelchainDestroy(source);
 }

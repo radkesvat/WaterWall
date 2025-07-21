@@ -44,7 +44,7 @@ WW_EXPORT void         reverseclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *reverseclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t reverseclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void reverseclientTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void reverseclientTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void reverseclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void reverseclientTunnelOnPrepair(tunnel_t *t);
 void reverseclientTunnelOnStart(tunnel_t *t);

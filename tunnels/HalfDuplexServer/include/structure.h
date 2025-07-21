@@ -61,7 +61,7 @@ WW_EXPORT void         halfduplexserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *halfduplexserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t halfduplexserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void halfduplexserverTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void halfduplexserverTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void halfduplexserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void halfduplexserverTunnelOnPrepair(tunnel_t *t);
 void halfduplexserverTunnelOnStart(tunnel_t *t);

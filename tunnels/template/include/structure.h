@@ -22,7 +22,7 @@ WW_EXPORT void         templateTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *templateTunnelCreate(node_t *node);
 WW_EXPORT api_result_t templateTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void templateTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void templateTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void templateTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void templateTunnelOnPrepair(tunnel_t *t);
 void templateTunnelOnStart(tunnel_t *t);

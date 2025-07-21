@@ -24,7 +24,7 @@ WW_EXPORT void         packetasdataTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *packetasdataTunnelCreate(node_t *node);
 WW_EXPORT api_result_t packetasdataTunnelApi(tunnel_t *instance, sbuf_t *message);
 
-void packetasdataTunnelOnIndex(tunnel_t *t, tunnel_array_t *arr, uint16_t *index, uint16_t *mem_offset);
+void packetasdataTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void packetasdataTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void packetasdataTunnelOnPrepair(tunnel_t *t);
 void packetasdataTunnelOnStart(tunnel_t *t);

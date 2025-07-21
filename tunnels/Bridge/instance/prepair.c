@@ -4,18 +4,10 @@
 
 void bridgeTunnelOnPrepair(tunnel_t *t)
 {
+    // using tunnel / adapter default handle for this action
+    discard t;
 
-    bridge_tstate_t *state = tunnelGetState(t);
+    LOGF("This Function is disabled, using the default Tunnel instead");
+    terminateProgram(1);
 
-    if (state->pair_node->instance)
-    {
-        state->pair                 = state->pair_node->instance;
-        bridge_tstate_t *pair_state = tunnelGetState(state->pair);
-        pair_state->pair            = t;
-    }
-    else
-    {
-        LOGF("Bridge: pair node \"%s\" is not initialized", state->pair_node->name);
-        terminateProgram(1);
-    }
 }
