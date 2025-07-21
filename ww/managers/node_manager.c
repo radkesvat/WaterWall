@@ -86,7 +86,6 @@ static void runNodes(node_manager_config_t *cfg)
             if (tunnel->chain == NULL)
             {
                 tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount() - WORKER_ADDITIONS);
-                vec_chains_t_push(&cfg->chains, tc);
                 tunnel->onChain(tunnel, tc);
             }
         }
@@ -98,7 +97,10 @@ static void runNodes(node_manager_config_t *cfg)
             tunnel_t *tunnel = t_array[i];
             if (tunnelchainIsFinalized(tunnelGetChain(tunnel)) == false)
             {
+                
                 tunnelchainFinalize(tunnelGetChain(tunnel));
+                vec_chains_t_push(&cfg->chains, tunnelGetChain(tunnel));
+
                 uint16_t index      = 0;
                 uint16_t mem_offset = 0;
                 for (int tci = 0; tci < tunnelGetChain(tunnel)->tunnels.len; tci++)

@@ -139,15 +139,17 @@ void tunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 
     tunnelBind(t, tnext);
 
+    tunnelchainInsert(tc, t);
+
     if (tnext->chain != NULL)
     {
         // this can happen when something like bridge node is present in the chain
         tunnelchainCombine(tnext->chain, tc);
-        return;
     }
-
-    tunnelchainInsert(tc, t);
-    tnext->onChain(tnext, tc);
+    else
+    {
+        tnext->onChain(tnext, tc);
+    }
 }
 
 // Default function to handle tunnel indexing
@@ -157,7 +159,6 @@ void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
     t->lstate_offset = *mem_offset;
 
     *mem_offset += t->lstate_size;
-
 }
 
 // Default function to prepare the tunnel
