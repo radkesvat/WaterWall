@@ -21,7 +21,7 @@
 enum settings_ram_profiles
 {
     kRamProfileServer        = kRamProfileL2Memory,
-    kRamProfileClientGeneric = kRamProfileS2Memory,
+    kRamProfileClientGeneric = kRamProfileM1Memory,
     kRamProfileClientLarger  = kRamProfileM2Memory,
     kRamProfileMinimal       = kRamProfileS1Memory,
 };

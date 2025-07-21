@@ -129,11 +129,11 @@ enum ram_profiles_e
 {
     kRamProfileInvalid  = 0,
     kRamProfileS1Memory = 1,
-    kRamProfileS2Memory = 8,
-    kRamProfileM1Memory = 16 * 8 * 1,
-    kRamProfileM2Memory = 16 * 8 * 2,
-    kRamProfileL1Memory = 16 * 8 * 3,
-    kRamProfileL2Memory = 16 * 8 * 4
+    kRamProfileS2Memory = 4,
+    kRamProfileM1Memory = 1  * 8,
+    kRamProfileM2Memory = 4  * 8,
+    kRamProfileL1Memory = 16 * 8,
+    kRamProfileL2Memory = 32 * 8
 };
 
 /*
