@@ -119,20 +119,20 @@ uint16_t calcGenericChecksum(const uint8_t *data, uint16_t len, uint32_t initial
 
 void checkSumInit(void)
 {
-// #if CHECKSUM_AVX2
-//     if (checkcpu_avx() && checkcpu_avx2_bmi2())
-//     {
-//         checksum = checksumAVX2;
-//         return;
-//     }
-// #endif
-// #if CHECKSUM_SSE3
-//     if (checkcpu_sse3())
-//     {
-//         checksum = checksumSSE3;
-//         return;
-//     }
-// #endif
+#if CHECKSUM_AVX2
+    if (checkcpu_avx() && checkcpu_avx2_bmi2())
+    {
+        checksum = checksumAVX2;
+        return;
+    }
+#endif
+#if CHECKSUM_SSE3
+    if (checkcpu_sse3())
+    {
+        checksum = checksumSSE3;
+        return;
+    }
+#endif
 
     // else
     // {
