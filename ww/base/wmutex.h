@@ -428,19 +428,19 @@ static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 
 // #if ! defined(TEST_HELGRIND) && ! defined(OS_WIN)
 
-// #undef wmutex_t
-// #undef mutexInit
-// #undef mutexDestroy
-// #undef mutexLock
-// #undef mutexTryLock
-// #undef mutexUnlock
+#undef wmutex_t
+#undef mutexInit
+#undef mutexDestroy
+#undef mutexLock
+#undef mutexTryLock
+#undef mutexUnlock
 
-// #define wmutex_t     whybrid_mutex_t
-// #define mutexInit    hybridmutexInit
-// #define mutexDestroy hybridmutexDestroy
-// #define mutexLock    hybridmutexLock
-// #define mutexTryLock hybridmutexTryLock
-// #define mutexUnlock  hybridmutexUnlock
+#define wmutex_t     whybrid_mutex_t
+#define mutexInit    hybridmutexInit
+#define mutexDestroy hybridmutexDestroy
+#define mutexLock    hybridmutexLock
+#define mutexTryLock hybridmutexTryLock
+#define mutexUnlock  hybridmutexUnlock
 
 // #endif // TEST_HELGRIND
 
