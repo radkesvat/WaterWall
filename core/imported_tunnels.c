@@ -29,13 +29,6 @@
 #include "tunnels/WireGuardDevice/include/interface.h"
 #endif
 
-#ifdef INCLUDE_LAYER3_RECEIVER
-#include "tunnels/layer3/receiver/receiver.h"
-#endif
-
-#ifdef INCLUDE_LAYER3_SENDER
-#include "tunnels/layer3/sender/sender.h"
-#endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
 #include "tunnels/layer3/ip/routing_table/ip_routing_table.h"
@@ -134,7 +127,7 @@
 #endif
 
 #ifdef INCLUDE_REVERSE_SERVER
-#include "tunnels/server/reverse/reverse_server.h"
+#include "tunnels/ReverseServer/include/interface.h"
 #endif
 
 #ifdef INCLUDE_REVERSE_CLIENT
@@ -220,13 +213,6 @@ void loadImportedTunnelsIntoCore(void)
     USING(WireGuardDevice);
 #endif
 
-#ifdef INCLUDE_LAYER3_RECEIVER
-    USING(Layer3Receiver);
-#endif
-
-#ifdef INCLUDE_LAYER3_SENDER
-    USING(Layer3Sender);
-#endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
     USING(Layer3IpRoutingTable);
