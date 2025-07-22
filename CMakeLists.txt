@@ -142,12 +142,15 @@ if(NOT APPLE AND NOT ANDROID)
   option(INCLUDE_TUN_DEVICE             "link TunDevice staticly to the core"            TRUE)
 endif()
 
-if(NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
+if(NOT ANDROID AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD"
+    OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
+
   if(LINUX OR (WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
   
     option(INCLUDE_RAWSOCKET              "link RawSocket staticly to the core"          TRUE)
     
   endif()
+
 endif()
 
 #--------------------------------------------------------------------------------
