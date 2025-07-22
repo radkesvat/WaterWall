@@ -95,9 +95,6 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 #--------------------------------------------------------------------------------
 option(INCLUDE_TEMPLATE                 "link Template staticly to the core"             TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"      TRUE)
-if(NOT APPLE AND NOT ANDROID)
-  option(INCLUDE_TUN_DEVICE             "link TunDevice staticly to the core"            TRUE)
-endif()
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketToConnection staticly to the core"   TRUE)
 option(INCLUDE_DATA_AS_PACKET           "link DataAsPacket staticly to the core"         TRUE)
 option(INCLUDE_PACKET_AS_DATA           "link PacketAsData staticly to the core"         TRUE)
@@ -114,10 +111,6 @@ option(INCLUDE_TCPCONNECTOR             "link TcpConnector staticly to the core"
 option(INCLUDE_UDP_CONNECTOR            "link UdpConnector staticly to the core"         TRUE)
 option(INCLUDE_UDP_STATELESS_SOCKET     "link UdpStatelessSocket staticly to the core"   TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"               TRUE)
-if((LINUX OR WIN32) AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
-  # todo (other platforms)
-  option(INCLUDE_RAWSOCKET              "link RawSocket staticly to the core"            TRUE)
-endif()
 option(INCLUDE_OPENSSL_SERVER           "link OpenSSlServer staticly to the core"        FALSE)
 option(INCLUDE_OPENSSL_CLIENT           "link OpenSSLClient staticly to the core"        FALSE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"     FALSE)
@@ -143,6 +136,19 @@ option(INCLUDE_BGP4_SERVER              "link Bgp4Server staticly to the core"  
 option(INCLUDE_BGP4_CLIENT              "link Bgp4Client staticly to the core"           FALSE)
 option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"            FALSE)
 option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"            FALSE)
+
+# tun device works on android but requires root access
+if(NOT APPLE AND NOT ANDROID)
+  option(INCLUDE_TUN_DEVICE             "link TunDevice staticly to the core"            TRUE)
+endif()
+
+if(NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD" OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
+  if(LINUX OR (WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+  
+    option(INCLUDE_RAWSOCKET              "link RawSocket staticly to the core"          TRUE)
+    
+  endif()
+endif()
 
 #--------------------------------------------------------------------------------
 # Platform-Specific Linker and Compiler Flags
