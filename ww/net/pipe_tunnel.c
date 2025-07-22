@@ -417,6 +417,8 @@ static void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
+    lineMarkEstablished(l);
+
     line_t *line_to = lstate->pair_line;
 
     pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
