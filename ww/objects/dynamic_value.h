@@ -11,11 +11,10 @@ enum dynamic_value_status
     kDvsEmpty = 0x0,
     kDvsConstant,
     kDvsFirstOption,
-    kDvsMappedOption1,
-    kDvsMappedOption2,
-    kDvsMappedOption3,
-    kDvsMappedOption4,
-    kDvsMappedOption5
+    kDvsSecondOption,
+    kDvsThirdOption,
+    kDvsFourthOption,
+    kDvsFifthOption
 };
 
 typedef struct dynamic_value_s
