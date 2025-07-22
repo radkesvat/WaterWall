@@ -193,6 +193,15 @@ static inline void sbufWrite(sbuf_t *restrict const b, const void *restrict cons
 }
 
 /**
+ * Writes data to buffer from source. but optimal for large buffers.
+ */
+static inline void sbufWriteLarge(sbuf_t *restrict const b, const void *restrict const buffer, const uint32_t len)
+{
+    memoryCopyLarge(sbufGetMutablePtr(b), buffer, len);
+}
+
+
+/**
  * Writes zeros to buffer.
  */
 static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
