@@ -92,7 +92,7 @@ set_target_properties(ww
 ################################################################################
 # Global Options & Definitions
 ################################################################################
-option(WW_STATICLIB "ON -> statil library ; OFF-> dynamic" OFF)
+option(WW_STATICLIB "ON -> static library ; OFF-> dynamic" ON)
 
 option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
 
@@ -628,7 +628,7 @@ endif()
 
 
 
-target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=0.1)
+target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=${WW_VERSION_MAJOR}.${WW_VERSION_MINOR}.${WW_VERSION_PATCH})
 
 
 
