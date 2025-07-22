@@ -34,14 +34,14 @@ void reverseclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
             ts->threadlocal_pool[wid].unused_cons_count -= 1;
             LOGD("ReverseClient: disconnected, wid: %d unused: %u active: %d", wid,
                  ts->threadlocal_pool[wid].unused_cons_count, atomicLoadRelaxed(&(ts->reverse_cons)));
-
-            assert(uls->idle_handle != NULL);
-            idleTableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t)  (uintptr_t) (uls));
         }
         else
         {
             ts->threadlocal_pool[wid].connecting_cons_count -= 1;
         }
+        assert(uls->idle_handle != NULL);
+        idleTableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t) (uintptr_t) (uls));
+        uls->idle_handle = NULL;
 
         reverseclientInitiateConnectOnWorker(t, wid, false);
 
@@ -50,6 +50,5 @@ void reverseclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
         lineDestroy(ul);
         lineDestroy(dl);
-
     }
 }

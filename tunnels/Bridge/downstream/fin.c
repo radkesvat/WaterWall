@@ -6,5 +6,5 @@ void bridgeTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
     bridge_tstate_t *state = tunnelGetState(t);
 
-    tunnelNextUpStreamFinish(state->pair_tunel, l);
+    tunnelNextUpStreamFinish(state->pair_tun, l);
 }

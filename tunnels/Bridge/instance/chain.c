@@ -5,18 +5,20 @@
 void bridgeTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 {
 
-    bridge_tstate_t *state      = tunnelGetState(t);
-    bridge_tstate_t *pair_state = tunnelGetState(state->pair_tunel);
+    bridge_tstate_t *state = tunnelGetState(t);
 
     tunnelDefaultOnChain(t, chain);
 
-    if (! state->pair_tunel)
+    if (! state->pair_tun)
     {
 
         // we are first in pair, so we need to set pair_tunel
-        state->pair_tunel      = state->pair_node->instance;
-        pair_state->pair_tunel = t;
+        state->pair_tun = state->pair_node->instance;
 
-        state->pair_tunel->onChain(state->pair_tunel, chain);
+        bridge_tstate_t *pair_state = tunnelGetState(state->pair_tun);
+
+        pair_state->pair_tun = t;
+
+        state->pair_tun->onChain(state->pair_tun, chain);
     }
 }

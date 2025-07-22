@@ -26,8 +26,10 @@ void reverseserverTunnelDownStreamFinish(tunnel_t *t, line_t *u)
         wid_t                   wid = lineGetWID(u);
 
         reverseserver_thread_box_t *this_tb = &(ts->threadlocal_pool[wid]);
-        reverseserverRemoveConnectionU(this_tb, uls);
-
-        reverseserverLinestateDestroy(uls);
+        if (uls->handshaked)
+        {
+            reverseserverRemoveConnectionU(this_tb, uls);
+        }
     }
+    reverseserverLinestateDestroy(uls);
 }

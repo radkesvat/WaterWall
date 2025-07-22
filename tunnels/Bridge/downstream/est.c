@@ -6,5 +6,5 @@ void bridgeTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
     bridge_tstate_t *state = tunnelGetState(t);
 
-    tunnelNextUpStreamEst(state->pair_tunel, l);
+    tunnelNextUpStreamEst(state->pair_tun, l);
 }

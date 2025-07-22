@@ -5,7 +5,7 @@
 typedef struct bridge_tstate_s
 {
     node_t   *pair_node;
-    tunnel_t *pair_tunel;
+    tunnel_t *pair_tun;
     bool      mode_upside; // if this node is last node of upstream
 } bridge_tstate_t;
 

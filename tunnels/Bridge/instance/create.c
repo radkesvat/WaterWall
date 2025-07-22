@@ -24,6 +24,8 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
     t->onStart   = &bridgeTunnelOnStart;
     t->onDestroy = &bridgeTunnelDestroy;
 
+    t->onChain = &bridgeTunnelOnChain;
+
     const cJSON *settings       = node->node_settings_json;
     char        *pair_node_name = NULL;
     if (! getStringFromJsonObject(&pair_node_name, settings, "pair"))
@@ -35,7 +37,7 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
 
     bridge_tstate_t *state = tunnelGetState(t);
 
-    node_t *pair_node     = nodemanagerGetConfigNodeByName(node->node_manager_config, pair_node_name);
+    node_t *pair_node = nodemanagerGetConfigNodeByName(node->node_manager_config, pair_node_name);
     if (pair_node == NULL)
     {
         LOGF("Bridge: pair node \"%s\" not found", pair_node_name);
@@ -46,7 +48,16 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
     memoryFree(pair_node_name);
 
     state->pair_node   = pair_node;
-    state->mode_upside = !nodeHasNext(node);
+    state->mode_upside = ! nodeHasNext(node);
+
+    if(state->mode_upside)
+    {
+        
+    }
+    else
+    {
+        
+    }
 
     return t;
 }

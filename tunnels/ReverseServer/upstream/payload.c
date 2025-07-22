@@ -25,7 +25,12 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
             LOGD("ReverseServer: Upstream payload is too large, dropping connection");
 
             bufferpoolReuseBuffer(lineGetBufferPool(d), buf);
+            if (dls->handshaked)
+            {
+                reverseserverRemoveConnectionD(this_tb, dls);
+            }
             reverseserverLinestateDestroy(dls);
+
             tunnelPrevDownStreamFinish(t, d);
             return;
         }
@@ -64,6 +69,8 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
 
         if (this_tb->u_count > 0)
         {
+            reverseserverRemoveConnectionD(this_tb, dls);
+
             reverseserver_lstate_t *uls = this_tb->u_root;
             line_t                 *u   = uls->u;
 
@@ -74,21 +81,18 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
             dls->paired = true;
             dls->u      = u;
 
-            if (uls->buffering != NULL)
+            assert(uls->buffering);
+            lineLock(d);
+
+            sbuf_t *ubuf   = uls->buffering;
+            uls->buffering = NULL;
+            tunnelPrevDownStreamPayload(t, d, ubuf);
+
+            if (! lineIsAlive(d))
             {
-                lineLock(d);
-
-                sbuf_t* ubuf = uls->buffering;
-                uls->buffering = NULL;
-                tunnelPrevDownStreamPayload(t, d, ubuf);
-
-                if (! lineIsAlive(d))
-                {
-                    bufferpoolReuseBuffer(lineGetBufferPool(d), buf);
-                    lineUnlock(d);
-                    return;
-                }
-                
+                bufferpoolReuseBuffer(lineGetBufferPool(d), buf);
+                lineUnlock(d);
+                return;
             }
 
             tunnelNextUpStreamPayload(t, u, buf);
@@ -99,8 +103,11 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
         {
             if (wi != lineGetWID(d) && ts->threadlocal_pool[wi].u_count > 0)
             {
+
                 if (pipeTo(t, d, wi))
                 {
+                    reverseserverRemoveConnectionD(this_tb, dls);
+
                     reverseserverLinestateDestroy(dls);
 
                     sbuf_t *handshake_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(d));

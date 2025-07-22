@@ -4,7 +4,11 @@
 
 tunnel_t *reverseserverTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(reverseserver_tstate_t), sizeof(reverseserver_lstate_t));
+
+    int wc = getWorkersCount() - WORKER_ADDITIONS;
+
+    tunnel_t *t = tunnelCreate(node, sizeof(reverseserver_tstate_t) + (wc * sizeof(reverseserver_thread_box_t)),
+                               sizeof(reverseserver_lstate_t));
 
     t->fnInitU    = &reverseserverTunnelUpStreamInit;
     t->fnEstU     = &reverseserverTunnelUpStreamEst;

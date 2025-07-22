@@ -5,5 +5,8 @@
 void reverseclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
     reverseclient_lstate_t *uls = lineGetState(l, t);
-    tunnelPrevDownStreamResume(t, uls->d);
+    if (uls->pair_connected)
+    {
+        tunnelPrevDownStreamResume(t, uls->d);
+    }
 }

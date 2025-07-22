@@ -7,7 +7,6 @@
 void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
     reverseclient_tstate_t *ts  = tunnelGetState(t);
-    reverseclient_lstate_t *uls = lineGetState(l, t);
 
     wid_t wid = lineGetWID(l);
 
@@ -21,7 +20,4 @@ void reverseclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
 
     reverseclientInitiateConnectOnWorker(t, wid, false);
 
-    uls->idle_handle =
-        idleItemNew(ts->starved_connections, (hash_t) (uintptr_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
-                    getWID(), ((uint64_t) (kConnectionStarvationTimeOutSec) *1000));
 }

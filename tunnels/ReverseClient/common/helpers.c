@@ -23,7 +23,7 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     reverseclientLinestateInitialize(dls, t, ul, dl);
 
     uls->idle_handle = idleItemNew(ts->starved_connections, (hash_t) (uintptr_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
-                                   wid, kConnectionStarvationTimeOutSec);
+                                   wid, ((uint64_t) (kConnectionStarvationTimeOutSec) * 1000));
 
     lineLock(ul);
 
@@ -88,6 +88,7 @@ void reverseclientOnStarvedConnectionExpire(widle_item_t *idle_con)
     tunnelNextUpStreamFinish(t, ul);
 
     reverseclientLinestateDestroy(ls);
+    reverseclientLinestateDestroy(lineGetState(dl, t));
 
     lineDestroy(ul);
     lineDestroy(dl);

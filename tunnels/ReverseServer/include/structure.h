@@ -15,10 +15,10 @@ typedef struct reverseserver_lstate_s
 
 typedef struct reverseserver_thread_box_s
 {
-    uint32_t                u_count;
-    uint32_t                d_count;
     reverseserver_lstate_t *u_root;
     reverseserver_lstate_t *d_root;
+    uint32_t                u_count;
+    uint32_t                d_count;
 } reverseserver_thread_box_t;
 
 typedef struct reverseserver_tstate_s

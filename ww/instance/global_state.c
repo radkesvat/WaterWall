@@ -104,9 +104,18 @@ static void exitHandle(void *userdata, int signum)
     {
         workerExitJoin(getWorker(wid));
     }
-    workerFinish(getWorker(0));
-
-    finishGlobalState();
+    
+    if (getTID() == getWorker(0)->tid)
+    {
+        // we are in the main thread, so we can finish the worker and tear down the global state
+        workerFinish(getWorker(0));
+        finishGlobalState();
+    }
+    else
+    {
+        // when main thread finishes it will tear down the global state
+        workerExitJoin(getWorker(0));
+    }
 }
 
 static void workerMessageReceived(wevent_t *ev)
@@ -198,7 +207,7 @@ void globalstateUpdateAllocationPadding(uint16_t padding)
  */
 void createGlobalState(const ww_construction_data_t init_data)
 {
-    GSTATE = (ww_global_state_t){0};
+    GSTATE = (ww_global_state_t) {0};
 
     GSTATE.flag_initialized = true;
     atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
@@ -343,13 +352,16 @@ void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1,
     assert(wid < getWorkersCount());
 
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-    *msg = (worker_msg_t){.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
+    *msg = (worker_msg_t) {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(wid);
     ev.cb   = workerMessageReceived;
     weventSetUserData(&ev, msg);
-    wloopPostEvent(getWorkerLoop(wid), &ev);
+    if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(wid), &ev)))
+    {
+        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
+    }
 }
 
 /*!
@@ -364,10 +376,12 @@ void runMainThread(void)
 
     workerRun(getWorker(0));
 
+    finishGlobalState();
+
     // if we return right here the main thread exits and program finishes
     // but the thread that requested our exit may still have work to do
-    wwSleepMS(2000);
-    LOGD("MainThread Returned");
+    // wwSleepMS(2000);
+    // LOGD("MainThread Returned");
 }
 
 /*!

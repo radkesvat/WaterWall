@@ -116,7 +116,7 @@ static void runNodes(node_manager_config_t *cfg)
     {
         for (int i = 0; i < tunnels_count; i++)
         {
-            if (t_array[i]->chain == NULL && ! (t_array[i]->node->flags & kNodeFlagNoChain))
+            if (t_array[i]->next == NULL && t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagNoChain))
             {
                 LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array[i]->node->name);
                 terminateProgram(1);

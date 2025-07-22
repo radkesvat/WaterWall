@@ -15,6 +15,7 @@ void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *u, sbuf_t *buf)
     }
     else
     {
+        reverseserver_thread_box_t *this_tb = &(ts->threadlocal_pool[wid]);
 
         if (uls->buffering != NULL)
         {
@@ -27,21 +28,29 @@ void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *u, sbuf_t *buf)
             LOGD("ReverseServer: Downstream payload is too large, dropping connection");
 
             bufferpoolReuseBuffer(lineGetBufferPool(u), buf);
+            if (uls->handshaked)
+            {
+                reverseserverRemoveConnectionU(this_tb, uls);
+            }
             reverseserverLinestateDestroy(uls);
             tunnelNextUpStreamFinish(t, u);
             return;
         }
-
-        reverseserver_thread_box_t *this_tb = &(ts->threadlocal_pool[wid]);
+        if (! uls->handshaked)
+        {
+            uls->handshaked = true;
+            reverseserverAddConnectionU(this_tb, uls);
+        }
         if (this_tb->d_count > 0)
         {
+            reverseserverRemoveConnectionU(this_tb, uls);
             reverseserver_lstate_t *dls = this_tb->d_root;
             line_t                 *d   = dls->d;
             reverseserverRemoveConnectionD(this_tb, dls);
             dls->u      = u;
             dls->paired = true;
             uls->paired = true;
-            uls->d      = dls->d;
+            uls->d      = d;
 
             lineLock(d);
 
@@ -58,13 +67,15 @@ void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *u, sbuf_t *buf)
             }
             lineUnlock(d);
 
-            tunnelNextUpStreamPayload(t, u, dbuf);
+            if (dbuf)
+            {
+                tunnelNextUpStreamPayload(t, u, dbuf);
+            }
         }
         else
         {
             LOGW("ReverseServer: no peer left, waiting tid: %d", lineGetWID(u));
 
-            reverseserverAddConnectionU(this_tb, uls);
             uls->buffering = buf;
         }
     }
