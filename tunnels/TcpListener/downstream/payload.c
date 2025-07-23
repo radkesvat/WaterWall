@@ -16,6 +16,7 @@ void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         int bytes  = (int) sbufGetLength(buf);
         int nwrite = wioWrite(lstate->io, buf);
 
+        wioSetReadTimeout(lstate->io, kEstablishedKeepAliveTimeOutMs);
 
         if (nwrite >= 0 && nwrite < bytes)
         {
