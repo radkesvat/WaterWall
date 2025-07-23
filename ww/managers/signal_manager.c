@@ -276,7 +276,7 @@ signal_manager_t *signalmanagerCreate(void)
                                 .handle_sigill  = true,
                                 .handle_sigfpe  = true,
                                 .handle_sigabrt = true,
-                                .handle_sigsegv = true,
+                                .handle_sigsegv = false,
                                 .handle_sigterm = true,
                                 .handle_sigpipe = true,
                                 .handle_sigalrm = true};
