@@ -48,7 +48,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 // pair is found
                 uint8_t wid_download_line = lineGetWID((*f_iter.ref).second->download_line);
 
-                if (wid_download_line == getWID())
+                if (wid_download_line == lineGetWID(l))
                 {
                     line_t *download_line = ((halfduplexserver_lstate_t *) ((*f_iter.ref).second))->download_line;
                     ls->download_line     = download_line;
@@ -152,7 +152,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 // pair is found
                 wid_t wid_upload_line = lineGetWID((*f_iter.ref).second->upload_line);
 
-                if (wid_upload_line == getWID())
+                if (wid_upload_line == lineGetWID(l))
                 {
                     bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
 
@@ -183,17 +183,19 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     lineLock(main_line);
                     tunnelNextUpStreamInit(t, main_line);
 
+                    
+                    assert(upload_line_ls->buffering);
+                    sbuf_t * buf_upline = upload_line_ls->buffering;
+                    upload_line_ls->buffering = NULL;
+
                     if (! lineIsAlive(main_line))
                     {
+                        bufferpoolReuseBuffer(lineGetBufferPool(l), buf_upline);
                         lineUnlock(main_line);
-
                         return;
                     }
                     lineUnlock(main_line);
 
-                    assert(upload_line_ls->buffering);
-                    sbuf_t * buf_upline = upload_line_ls->buffering;
-                    upload_line_ls->buffering = NULL;
 
                     if (sbufGetLength(buf_upline) > 0)
                     {

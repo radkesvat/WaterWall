@@ -663,6 +663,19 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     tunnel_t                *parent_tunnel = getParentTunnel(t);
     pipetunnel_line_state_t *ls            = (pipetunnel_line_state_t *) lineGetState(l, parent_tunnel);
 
+    if (wid_to == getWID())
+    {
+        LOGF("PipeTunnel: Pipe to self is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
+        terminateProgram(1);
+        return false;
+    }
+    if(l->wid != getWID())
+    {
+        LOGF("PipeTunnel: Pipe From different WID is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
+        terminateProgram(1);
+        return false;
+    }
+
     if (ls->pair_line)
     {
         return false;
