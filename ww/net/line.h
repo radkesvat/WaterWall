@@ -8,6 +8,7 @@
 #include "worker.h"
 
 typedef atomic_uint line_refc_t;
+#define LINE_REFC_MAX 0xFFFFFFFFU
 
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
@@ -134,9 +135,8 @@ static inline void lineUnRefInternal(line_t *const l)
 static inline void lineLock(line_t *const line)
 {
     assert(line->alive);
-    // basic overflow protection
-    assert(line->refc < (((0x1ULL << ((sizeof(line->refc) * 8ULL) - 1ULL)) - 1ULL) |
-                         (0xFULL << ((sizeof(line->refc) * 8ULL) - 4ULL))));
+    assert(line->refc < LINE_REFC_MAX);
+
     if (0 == atomicIncRelaxed(&line->refc))
     {
         assert(false);
