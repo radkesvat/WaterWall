@@ -9,5 +9,6 @@ void halfduplexserverLinestateInitialize(halfduplexserver_lstate_t *ls)
 
 void halfduplexserverLinestateDestroy(halfduplexserver_lstate_t *ls)
 {
+    assert(ls->buffering == NULL);
     memorySet(ls, 0, sizeof(halfduplexserver_lstate_t));
 }

@@ -129,6 +129,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 {
                     LOGW("HalfDuplexServer: duplicate upload connection closed, hash:%lu", hash);
                     bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
+                    ls->buffering = NULL;
                     halfduplexserverLinestateDestroy(ls);
 
                     tunnelPrevDownStreamFinish(t, l);
@@ -191,18 +192,18 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     lineUnlock(main_line);
 
                     assert(upload_line_ls->buffering);
+                    sbuf_t * buf_upline = upload_line_ls->buffering;
+                    upload_line_ls->buffering = NULL;
 
-                    if (sbufGetLength(upload_line_ls->buffering) > 0)
+                    if (sbufGetLength(buf_upline) > 0)
                     {
-                        sbufShiftRight(upload_line_ls->buffering, sizeof(uint64_t));
-                        tunnelNextUpStreamPayload(t, main_line, upload_line_ls->buffering);
+                        sbufShiftRight(buf_upline, sizeof(uint64_t));
+                        tunnelNextUpStreamPayload(t, main_line, buf_upline);
 
-                        upload_line_ls->buffering = NULL;
                     }
                     else
                     {
-                        bufferpoolReuseBuffer(lineGetBufferPool(l), upload_line_ls->buffering);
-                        upload_line_ls->buffering = NULL;
+                        bufferpoolReuseBuffer(lineGetBufferPool(l), buf_upline);
                     }
                 }
                 else

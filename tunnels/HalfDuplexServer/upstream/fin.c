@@ -8,8 +8,16 @@ static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *
     discard worker;
     discard arg3;
 
-    tunnel_t                  *t  = arg1;
-    line_t                    *l  = arg2;
+    tunnel_t *t = arg1;
+    line_t   *l = arg2;
+
+    // Validate line is still alive before accessing its state
+    if (! lineIsAlive(l))
+    {
+        lineUnlock(l);
+        return;
+    }
+
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
     if (! (ls->upload_line == NULL && ls->download_line == NULL))
@@ -29,13 +37,15 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     switch (ls->state)
     {
 
-    case kCsUnkown:
+    case kCsUnkown: {
         if (ls->buffering)
         {
             bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
+            ls->buffering = NULL;
         }
         halfduplexserverLinestateDestroy(ls);
-        break;
+    }
+    break;
 
     case kCsUploadInTable: {
 
@@ -54,6 +64,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         if (ls->buffering)
         {
             bufferpoolReuseBuffer(lineGetBufferPool(l), ls->buffering);
+            ls->buffering = NULL;
         }
         halfduplexserverLinestateDestroy(ls);
     }
@@ -121,7 +132,6 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         if (main_line)
         {
             halfduplexserver_lstate_t *ls_main_line = lineGetState(main_line, t);
-            ;
 
             halfduplexserverLinestateDestroy(ls_main_line);
             tunnelNextUpStreamFinish(t, main_line);

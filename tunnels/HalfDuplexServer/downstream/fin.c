@@ -10,6 +10,14 @@ static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *
 
     tunnel_t                  *t  = arg1;
     line_t                    *l  = arg2;
+    
+    // Validate line is still alive before accessing its state
+    if (!lineIsAlive(l))
+    {
+        lineUnlock(l);
+        return;
+    }
+    
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
     if (ls->upload_line != NULL)
