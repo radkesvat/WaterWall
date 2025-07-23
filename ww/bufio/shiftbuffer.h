@@ -20,6 +20,9 @@ struct sbuf_s
     uint32_t capacity;
     uint16_t l_pad;
     bool     is_temporary; // if true, this buffer will not be freed or reused in pools (like stack buffer)
+    uint8_t  _padding1;    // padding to align to 8 bytes
+    void    *original_ptr; // store original malloc pointer for proper freeing
+    uint64_t _padding2;    // padding to make struct exactly 32 bytes
     MSVC_ATTR_ALIGNED_16 uint8_t buf[] GNU_ATTR_ALIGNED_16;
 };
 
@@ -27,7 +30,7 @@ typedef struct sbuf_s sbuf_t;
 
 #define SIZEOF_STRUCT_SBUF (sizeof(struct sbuf_s))
 
-static_assert(SIZEOF_STRUCT_SBUF == 16, "sbuf_s size should be 16 bytes, buf array is flexible");
+static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, buf array is flexible");
 
 /**
  * Destroys the shift buffer and frees its memory.

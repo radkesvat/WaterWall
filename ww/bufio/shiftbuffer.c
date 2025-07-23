@@ -15,7 +15,8 @@ void sbufDestroy(sbuf_t *b)
     {
         return;
     }
-    memoryFree(b);
+    
+    memoryFree(b->original_ptr);
 }
 
 /**
@@ -33,18 +34,16 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     }
 
     uint32_t real_cap = minimum_capacity + pad_left;
-    sbuf_t  *b        = memoryAllocate(real_cap + sizeof(sbuf_t));
-
-    // Ensure the allocated memory is divisible by 16 for alignment
-    if ((uintptr_t)b % 16 != 0)
-    {
-        printError("sbufCreateWithPadding: Allocated memory is not aligned to 16 bytes");
-        memoryFree(b);
-        terminateProgram(1);
-    }
+    
+    size_t total_size = real_cap + sizeof(sbuf_t) + 31;
+    void *raw_ptr = memoryAllocate(total_size);
+    
+    sbuf_t *b = (sbuf_t *)ALIGN2(raw_ptr, 32);
+    
+    b->original_ptr = raw_ptr;
     
 #ifdef DEBUG
-    memorySet(b, 0x55, real_cap);
+    memorySet(b->buf, 0x55, real_cap);
 #endif
 
     b->is_temporary = false;
