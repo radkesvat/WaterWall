@@ -183,7 +183,7 @@
 #endif
 
 #ifdef INCLUDE_MUX_CLIENT
-#include "tunnels/client/mux/mux_client.h"
+#include "tunnels/MuxClient/include/interface.h"
 #endif
 
 void loadImportedTunnelsIntoCore(void)
@@ -363,10 +363,10 @@ void loadImportedTunnelsIntoCore(void)
 #endif
 
 #ifdef INCLUDE_MUX_SERVER
-    USING(MuxClient);
+    USING(MuxServer);
 #endif
 
 #ifdef INCLUDE_MUX_CLIENT
-    USING(MuxServer);
+    USING(MuxClient);
 #endif
 }

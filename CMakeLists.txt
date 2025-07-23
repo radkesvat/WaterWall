@@ -135,7 +135,7 @@ option(INCLUDE_HALFDUPLEX_CLIENT        "link HalfDuplexClient staticly to the c
 option(INCLUDE_BGP4_SERVER              "link Bgp4Server staticly to the core"           FALSE)
 option(INCLUDE_BGP4_CLIENT              "link Bgp4Client staticly to the core"           FALSE)
 option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"            FALSE)
-option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"            FALSE)
+option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"            TRUE)
 
 # tun device works on android but requires root access
 if(NOT APPLE AND NOT ANDROID)
@@ -574,8 +574,8 @@ endif()
 #mux client
 if(INCLUDE_MUX_CLIENT)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_MUX_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/mux)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/mux)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/MuxClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/MuxClient)
   target_link_libraries(Waterwall MuxClient)
 endif()
 
@@ -603,7 +603,7 @@ endif()
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
 
 #------------------------------------------------------------------------------------------
-# Output Path (Commented Out)
+# Output Path (No longer needed)
 #------------------------------------------------------------------------------------------
 # set output path to build/bin/
 # set_target_properties(Waterwall
