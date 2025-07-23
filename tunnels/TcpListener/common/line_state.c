@@ -16,7 +16,7 @@ void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls)
     bufferqueueDestory(&ls->pause_queue);
     if (ls->idle_handle)
     {
-        LOGF("TcpConnector: idle item still exists for FD:%x ", wioGetFD(ls->io));
+        LOGF("TcpListener: idle item still exists for FD:%x ", wioGetFD(ls->io));
         terminateProgram(1);
     }
     memorySet(ls, 0, sizeof(tcplistener_lstate_t));

@@ -23,7 +23,7 @@ typedef struct tcpconnector_tstate_s
 
 typedef struct tcpconnector_lstate_s
 {
-    tunnel_t     *tunnel;      // reference to the tunnel (TcpListener)
+    tunnel_t     *tunnel;      // reference to the tunnel (TcpConnector)
     line_t       *line;        // reference to the line
     wio_t        *io;          // IO handle for the connection (socket)
     widle_item_t *idle_handle; // reference to the idle item for this connection
