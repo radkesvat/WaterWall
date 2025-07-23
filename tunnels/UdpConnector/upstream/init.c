@@ -80,7 +80,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         }
     }
 
-    wioSetReadTimeout(ls->io, kUdpKeepExpireTime);
+    // wioSetReadTimeout(ls->io, kUdpKeepExpireTime);
     // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
    
     addr = addresscontextToSockAddr(dest_ctx);
