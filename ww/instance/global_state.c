@@ -211,6 +211,8 @@ void createGlobalState(const ww_construction_data_t init_data)
 
     GSTATE.flag_initialized = true;
     atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
+    atomicStoreRelaxed(&GSTATE.workers_run_flag, false);
+
 
     // [Section] loggers
     {
@@ -369,10 +371,13 @@ void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1,
  *
  * This function runs the event loop for the main worker thread. It asserts that the global state is initialized.
  * After the main loop finishes, it joins all other worker threads and exits.
+ * it also allows other workers begin their loops.
  */
 void runMainThread(void)
 {
     assert(GSTATE.flag_initialized);
+
+    atomicStoreExplicit(&GSTATE.workers_run_flag, true, memory_order_release);
 
     workerRun(getWorker(0));
 

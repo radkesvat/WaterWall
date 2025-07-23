@@ -89,6 +89,12 @@ void workerRun(worker_t *worker)
     wid_t wid = worker->wid;
     frandInit();
 
+    while (atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire) == false)
+    {
+        // wait for the main thread to set the flag
+        wwSleepMS(10);
+    }
+
     wloopRun(worker->loop);
 
     if (worker->context_pool)

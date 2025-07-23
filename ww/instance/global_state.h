@@ -64,6 +64,7 @@ typedef struct ww_global_state_s
     uint8_t                    flag_libsodium_initialized : 1;
     uint8_t                    flag_lwip_initialized : 1;
     atomic_bool                application_stopping_flag; // prevent threads sending messages to each other
+    atomic_bool                workers_run_flag;          // main thread sets this to true when it started its loop
 
 } ww_global_state_t;
 
