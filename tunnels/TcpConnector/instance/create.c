@@ -157,5 +157,7 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
 
+    state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
+
     return t;
 }

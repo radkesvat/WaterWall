@@ -4,26 +4,26 @@
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    tcpconnector_tstate_t *state  = tunnelGetState(t);
-    tcpconnector_lstate_t *lstate = lineGetState(l, t);
+    tcpconnector_tstate_t *ts  = tunnelGetState(t);
+    tcpconnector_lstate_t *ls = lineGetState(l, t);
 
-    tcpconnectorLinestateInitialize(lstate);
+    tcpconnectorLinestateInitialize(ls);
 
-    lstate->tunnel       = t;
-    lstate->line         = l;
-    lstate->write_paused = true;
+    ls->tunnel       = t;
+    ls->line         = l;
+    ls->write_paused = true;
 
     // findout how to deal with destination address
     address_context_t *dest_ctx = &(l->routing_context.dest_ctx);
     address_context_t *src_ctx  = &(l->routing_context.src_ctx);
 
-    switch ((tcpconnector_strategy_e) state->dest_addr_selected.status)
+    switch ((tcpconnector_strategy_e) ts->dest_addr_selected.status)
     {
     case kTcpConnectorStrategyFromSource:
         addresscontextAddrCopy(dest_ctx, src_ctx);
         break;
     case kTcpConnectorStrategyConstant:
-        addresscontextAddrCopy(dest_ctx, &(state->constant_dest_addr));
+        addresscontextAddrCopy(dest_ctx, &(ts->constant_dest_addr));
         break;
     default:
     case kTcpConnectorStrategyFromDest:
@@ -33,13 +33,13 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 
     // findout how to deal with destination port
-    switch ((tcpconnector_strategy_e) state->dest_port_selected.status)
+    switch ((tcpconnector_strategy_e) ts->dest_port_selected.status)
     {
     case kTcpConnectorStrategyFromSource:
         addresscontextCopyPort(dest_ctx, src_ctx);
         break;
     case kTcpConnectorStrategyConstant:
-        addresscontextCopyPort(dest_ctx, &(state->constant_dest_addr));
+        addresscontextCopyPort(dest_ctx, &(ts->constant_dest_addr));
         break;
     default:
     case kTcpConnectorStrategyFromDest:
@@ -63,7 +63,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 
     // apply free bind if needed
-    if (state->outbound_ip_range > 0)
+    if (ts->outbound_ip_range > 0)
     {
         if (! tcpconnectorApplyFreeBindRandomDestIp(t, dest_ctx))
         {
@@ -86,13 +86,13 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         goto fail;
     }
 
-    if (state->option_tcp_no_delay)
+    if (ts->option_tcp_no_delay)
     {
         tcpNoDelay(sockfd, 1);
     }
 
 #ifdef TCP_FASTOPEN
-    if (state->option_tcp_fast_open)
+    if (ts->option_tcp_fast_open)
     {
         const int yes = 1;
         setsockopt(sockfd, IPPROTO_TCP, TCP_FASTOPEN, (const char *) &yes, sizeof(yes));
@@ -100,9 +100,9 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 #endif
 
 #if defined(SO_MARK)
-    if (state->fwmark != kFwMarkInvalid)
+    if (ts->fwmark != kFwMarkInvalid)
     {
-        if (setsockopt(sockfd, SOL_SOCKET, SO_MARK, &state->fwmark, sizeof(state->fwmark)) < 0)
+        if (setsockopt(sockfd, SOL_SOCKET, SO_MARK, &ts->fwmark, sizeof(ts->fwmark)) < 0)
         {
             LOGE("TcpConnector: setsockopt SO_MARK error");
             goto fail;
@@ -110,23 +110,25 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 #endif
 
-    wio_t *upstream_io = wioGet(loop, sockfd);
-    assert(upstream_io != NULL);
+    wio_t *io = wioGet(loop, sockfd);
+    assert(io != NULL);
 
     sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
 
-    wioSetPeerAddr(upstream_io, (struct sockaddr *) &(addr), (int) sockaddrLen(&(addr)));
-    lstate->io = upstream_io;
-    weventSetUserData(upstream_io, lstate);
-    wioSetCallBackConnect(upstream_io, tcpconnectorOnOutBoundConnected);
-    wioSetCallBackClose(upstream_io, tcpconnectorOnClose);
-    wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs);
+    wioSetPeerAddr(io, (struct sockaddr *) &(addr), (int) sockaddrLen(&(addr)));
+    ls->io = io;
+    weventSetUserData(io, ls);
+    wioSetCallBackConnect(io, tcpconnectorOnOutBoundConnected);
+    wioSetCallBackClose(io, tcpconnectorOnClose);
+    // wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs);
+    ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire, lineGetWID(l),
+                                  kReadWriteTimeoutMs);
 
     // issue connect on the socket
-    wioConnect(upstream_io);
+    wioConnect(io);
 
     return;
 fail:
-    tcpconnectorLinestateDestroy(lstate);
+    tcpconnectorLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
 }

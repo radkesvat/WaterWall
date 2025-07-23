@@ -149,6 +149,8 @@ tunnel_t *tcplistenerTunnelCreate(node_t *node)
     filter_opt.port_max         = state->listen_port_max;
     filter_opt.protocol         = IPPROTO_TCP;
    
+    state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
+
     socketacceptorRegister(t, filter_opt, tcplistenerOnInboundConnected);
 
     return t;

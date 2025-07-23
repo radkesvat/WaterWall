@@ -10,24 +10,36 @@ static void onRecv(wio_t *io, sbuf_t *buf)
         bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
-    line_t   *l = lstate->line;
-    tunnel_t *t = lstate->tunnel;
+    line_t               *l  = lstate->line;
+    tunnel_t             *t  = lstate->tunnel;
+    tcplistener_lstate_t *ls = lineGetState(l, t);
+    tcplistener_tstate_t *ts = tunnelGetState(t);
+
+    idleTableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kEstablishedKeepAliveTimeOutMs);
 
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
 static void onClose(wio_t *io)
 {
-    tcplistener_lstate_t *lstate = (tcplistener_lstate_t *) (weventGetUserdata(io));
-    if (lstate != NULL)
+    tcplistener_lstate_t *ls = (tcplistener_lstate_t *) (weventGetUserdata(io));
+    if (ls != NULL)
     {
         LOGD("TcpListener: received close for FD:%x ", wioGetFD(io));
-        weventSetUserData(lstate->io, NULL);
+        line_t               *l  = ls->line;
+        tunnel_t             *t  = ls->tunnel;
+        tcplistener_tstate_t *ts = tunnelGetState(t);
 
-        line_t   *l = lstate->line;
-        tunnel_t *t = lstate->tunnel;
+        weventSetUserData(ls->io, NULL);
+        bool removed = idleTableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(io));
+        if (! removed)
+        {
+            LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(io));
+            terminateProgram(1);
+        }
+        ls->idle_handle = NULL; // mark as removed
 
-        tcplistenerLinestateDestroy(lstate);
+        tcplistenerLinestateDestroy(ls);
         tunnelNextUpStreamFinish(t, l);
         lineDestroy(l);
     }
@@ -44,21 +56,21 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wio_t                  *io   = data->io;
     wid_t                   wid  = data->wid;
     tunnel_t               *t    = data->tunnel;
+    tcplistener_tstate_t   *ts   = tunnelGetState(t);
 
     wioAttach(loop, io);
-    wioSetKeepaliveTimeout(io, kDefaultKeepAliveTimeOutMs);
 
-    line_t               *l      = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
-    tcplistener_lstate_t *lstate = lineGetState(l, t);
+    line_t               *l  = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
+    tcplistener_lstate_t *ls = lineGetState(l, t);
 
-    tcplistenerLinestateInitialize(lstate, io, t, l);
+    tcplistenerLinestateInitialize(ls, io, t, l);
 
     l->routing_context.src_ctx.type_ip   = true; // we have a client ip
     l->routing_context.src_ctx.proto_tcp = true; // tcp client
     sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(io), &(l->routing_context.src_ctx.ip_address));
     l->routing_context.src_ctx.port = data->real_localport;
 
-    weventSetUserData(io, lstate);
+    weventSetUserData(io, ls);
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
@@ -76,7 +88,9 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     wioSetCallBackRead(io, onRecv);
     wioSetCallBackClose(io, onClose);
-    wioSetReadTimeout(io, 1600 * 1000);
+    // wioSetReadTimeout(io, 1600 * 1000);
+    ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcplistenerOnIdleConnectionExpire, wid,
+                                  kDefaultKeepAliveTimeOutMs);
 
     // send the init packet
 
@@ -89,6 +103,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
         return;
     }
     lineUnlock(l);
+
     wioRead(io);
 }
 
@@ -134,7 +149,6 @@ void tcplistenerOnWriteComplete(wio_t *io)
         return;
     }
 
-
     if (wioCheckWriteComplete(io))
     {
         if (! resumeWriteQueue(lstate))
@@ -146,4 +160,18 @@ void tcplistenerOnWriteComplete(wio_t *io)
 
         tunnelNextUpStreamResume(lstate->tunnel, lstate->line);
     }
+}
+
+void tcplistenerOnIdleConnectionExpire(widle_item_t *idle_tcp)
+{
+    tcplistener_lstate_t *ls = idle_tcp->userdata;
+    assert(ls != NULL && ls->tunnel != NULL);
+    idle_tcp->userdata = NULL;
+
+    LOGW("TcpListener: expired 1 tcp connection on FD:%x ", wioGetFD(ls->io));
+    weventSetUserData(ls->io, NULL);
+    tcplistenerFlushWriteQueue(ls);
+    wioClose(ls->io);
+    tcplistenerLinestateDestroy(ls);
+    lineDestroy(ls->line);
 }

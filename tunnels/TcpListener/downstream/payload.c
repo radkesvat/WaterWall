@@ -4,24 +4,25 @@
 
 void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    tcplistener_lstate_t *lstate = lineGetState(l, t);
+    tcplistener_tstate_t *ts = tunnelGetState(t);
+    tcplistener_lstate_t *ls = lineGetState(l, t);
 
-    if (lstate->write_paused)
+    if (ls->write_paused)
     {
         tunnelNextUpStreamPause(t, l);
-        bufferqueuePush(&lstate->pause_queue, buf);
+        bufferqueuePush(&ls->pause_queue, buf);
     }
     else
     {
         int bytes  = (int) sbufGetLength(buf);
-        int nwrite = wioWrite(lstate->io, buf);
+        int nwrite = wioWrite(ls->io, buf);
 
-        wioSetReadTimeout(lstate->io, kEstablishedKeepAliveTimeOutMs);
+        idleTableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kEstablishedKeepAliveTimeOutMs);
 
         if (nwrite >= 0 && nwrite < bytes)
         {
-            lstate->write_paused = true;
-            wioSetCallBackWrite(lstate->io, tcplistenerOnWriteComplete);
+            ls->write_paused = true;
+            wioSetCallBackWrite(ls->io, tcplistenerOnWriteComplete);
             tunnelNextUpStreamPause(t, l);
         }
     }

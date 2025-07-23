@@ -4,6 +4,8 @@
 
 typedef struct tcpconnector_tstate_s
 {
+    widle_table_t *idle_table; // idle table for closing dead connections
+
     // These options are read form the json configuration
     dynamic_value_t dest_addr_selected;   // dynamic value for destination address
     dynamic_value_t dest_port_selected;   // dynamic value for destination port
@@ -21,9 +23,10 @@ typedef struct tcpconnector_tstate_s
 
 typedef struct tcpconnector_lstate_s
 {
-    tunnel_t *tunnel; // reference to the tunnel (TcpListener)
-    line_t   *line;   // reference to the line
-    wio_t    *io;     // IO handle for the connection (socket)
+    tunnel_t     *tunnel;      // reference to the tunnel (TcpListener)
+    line_t       *line;        // reference to the line
+    wio_t        *io;          // IO handle for the connection (socket)
+    widle_item_t *idle_handle; // reference to the idle item for this connection
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
     buffer_pool_t *buffer_pool;
@@ -36,7 +39,7 @@ enum
 {
     kTunnelStateSize    = sizeof(tcpconnector_tstate_t),
     kLineStateSize      = sizeof(tcpconnector_lstate_t),
-    kReadWriteTimeoutMs = 700 * 1000,
+    kReadWriteTimeoutMs = 300 * 1000,
     kPauseQueueCapacity = 2
 };
 
@@ -84,3 +87,4 @@ void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate);
 void tcpconnectorOnOutBoundConnected(wio_t *upstream_io);
 void tcpconnectorOnWriteComplete(wio_t *io);
 void tcpconnectorOnClose(wio_t *io);
+void tcpconnectorOnIdleConnectionExpire(widle_item_t *idle_tcp);

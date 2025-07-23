@@ -4,19 +4,27 @@
 
 void tcpconnectorOnClose(wio_t *io)
 {
-    tcpconnector_lstate_t *lstate = (tcpconnector_lstate_t *) (weventGetUserdata(io));
-    if (lstate != NULL)
+    tcpconnector_lstate_t *ls = (tcpconnector_lstate_t *) (weventGetUserdata(io));
+    if (ls != NULL)
     {
         LOGD("TcpConnector: received close for FD:%x ", wioGetFD(io));
-        weventSetUserData(lstate->io, NULL);
+        weventSetUserData(ls->io, NULL);
 
-        line_t   *l = lstate->line;
-        tunnel_t *t = lstate->tunnel;
+        line_t                *l  = ls->line;
+        tunnel_t              *t  = ls->tunnel;
+        tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-        tcpconnectorLinestateDestroy(lstate);
+        bool removed = idleTableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(io));
+        if (! removed)
+        {
+            LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));
+            terminateProgram(1);
+        }
+        ls->idle_handle = NULL; // mark as removed
+
+        tcpconnectorLinestateDestroy(ls);
 
         tunnelPrevDownStreamFinish(t, l);
-
     }
     else
     {
@@ -33,8 +41,11 @@ static void onRecv(wio_t *io, sbuf_t *buf)
         // assert(false);
         return;
     }
-    tunnel_t *t = lstate->tunnel;
-    line_t   *l = lstate->line;
+    tunnel_t              *t  = lstate->tunnel;
+    line_t                *l  = lstate->line;
+    tcpconnector_tstate_t *ts = tunnelGetState(t);
+    tcpconnector_lstate_t *ls = lineGetState(l, t);
+    idleTableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kReadWriteTimeoutMs);
 
     tunnelPrevDownStreamPayload(t, l, buf);
 }
@@ -133,7 +144,6 @@ void tcpconnectorOnWriteComplete(wio_t *io)
         return;
     }
 
-
     if (wioCheckWriteComplete(io))
     {
         if (! resumeWriteQueue(lstate))
@@ -145,4 +155,17 @@ void tcpconnectorOnWriteComplete(wio_t *io)
 
         tunnelPrevDownStreamResume(lstate->tunnel, lstate->line);
     }
+}
+
+void tcpconnectorOnIdleConnectionExpire(widle_item_t *idle_tcp)
+{
+    tcpconnector_lstate_t *ls = idle_tcp->userdata;
+    assert(ls != NULL && ls->tunnel != NULL);
+    idle_tcp->userdata = NULL;
+
+    LOGW("TcpConnector: expired 1 tcp connection on FD:%x ", wioGetFD(ls->io));
+    weventSetUserData(ls->io, NULL);
+    tcpconnectorFlushWriteQueue(ls);
+    wioClose(ls->io);
+    tcpconnectorLinestateDestroy(ls);
 }

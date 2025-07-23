@@ -4,6 +4,8 @@
 
 typedef struct tcplistener_tstate_s
 {
+    widle_table_t *idle_table; // idle table for closing dead connections
+
     // These fields are read from json
     char    *listen_address;           // address to listen on
     char   **white_list_range;         // white list of client addresses (if any)
@@ -17,9 +19,10 @@ typedef struct tcplistener_tstate_s
 
 typedef struct tcplistener_lstate_s
 {
-    tunnel_t *tunnel; // reference to the tunnel (TcpListener)
-    line_t   *line;   // reference to the line
-    wio_t    *io;     // IO handle for the connection (socket)
+    tunnel_t     *tunnel;      // reference to the tunnel (TcpListener)
+    line_t       *line;        // reference to the line
+    wio_t        *io;          // IO handle for the connection (socket)
+    widle_item_t *idle_handle; // reference to the idle item for this connection
 
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
@@ -32,9 +35,9 @@ enum
 {
     kTunnelStateSize               = sizeof(tcplistener_tstate_t),
     kLineStateSize                 = sizeof(tcplistener_lstate_t),
-    kDefaultKeepAliveTimeOutMs     = 60 * 1000,  // same as NGINX
-    kEstablishedKeepAliveTimeOutMs = 700 * 1000, // since the connection is established,
-                                                 
+    kDefaultKeepAliveTimeOutMs     = 5 * 1000,   // same as NGINX
+    kEstablishedKeepAliveTimeOutMs = 300 * 1000, // since the connection is established,
+
     kPauseQueueCapacity = 2
 };
 
@@ -67,3 +70,5 @@ void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls);
 void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);
 void tcplistenerOnInboundConnected(wevent_t *ev);
 void tcplistenerOnWriteComplete(wio_t *io);
+
+void tcplistenerOnIdleConnectionExpire(widle_item_t *idle_tcp);
