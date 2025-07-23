@@ -14,8 +14,8 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (ls->buffering)
         {
-            
-            buf = sbufAppendMerge(lineGetBufferPool(l),ls->buffering, buf);
+
+            buf = sbufAppendMerge(lineGetBufferPool(l), ls->buffering, buf);
 
             ls->buffering = NULL;
         }
@@ -51,7 +51,17 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 if (wid_download_line == lineGetWID(l))
                 {
                     line_t *download_line = ((halfduplexserver_lstate_t *) ((*f_iter.ref).second))->download_line;
-                    ls->download_line     = download_line;
+
+                    if (lineGetWID(download_line) != getWID() || lineGetWID(l) != getWID())
+                    {
+                        LOGF("HalfDuplexServer: WID mismatch detected in upload case, getWID: %d"
+                             "download_line WID: %d, upload line WID: %d",
+                             getWID(), lineGetWID(download_line), lineGetWID(l));
+                        assert(false);
+                        terminateProgram(1);
+                    }
+
+                    ls->download_line = download_line;
 
                     halfduplexserver_lstate_t *download_line_ls =
                         ((halfduplexserver_lstate_t *) ((*f_iter.ref).second));
@@ -157,6 +167,15 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
 
                     halfduplexserver_lstate_t *upload_line_ls = ((halfduplexserver_lstate_t *) ((*f_iter.ref).second));
+                    if (wid_upload_line != getWID() || lineGetWID(l) != getWID())
+                    {
+                        LOGF("HalfDuplexServer: WID mismatch detected in upload case, getWID: %d"
+                             "upload line WID: %d, download_line  WID: %d",
+                             getWID(), wid_upload_line, lineGetWID(l));
+                        assert(false);
+                        terminateProgram(1);
+                    }
+
                     hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
                     mutexUnlock(&(ts->upload_line_map_mutex));
                     ls->state       = kCsDownloadDirect;
@@ -183,9 +202,8 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     lineLock(main_line);
                     tunnelNextUpStreamInit(t, main_line);
 
-                    
                     assert(upload_line_ls->buffering);
-                    sbuf_t * buf_upline = upload_line_ls->buffering;
+                    sbuf_t *buf_upline        = upload_line_ls->buffering;
                     upload_line_ls->buffering = NULL;
 
                     if (! lineIsAlive(main_line))
@@ -196,12 +214,10 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     }
                     lineUnlock(main_line);
 
-
                     if (sbufGetLength(buf_upline) > 0)
                     {
                         sbufShiftRight(buf_upline, sizeof(uint64_t));
                         tunnelNextUpStreamPayload(t, main_line, buf_upline);
-
                     }
                     else
                     {
@@ -256,7 +272,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     case kCsUploadInTable:
         if (ls->buffering)
         {
-            ls->buffering = sbufAppendMerge(lineGetBufferPool(l),ls->buffering, buf);
+            ls->buffering = sbufAppendMerge(lineGetBufferPool(l), ls->buffering, buf);
         }
         else
         {
