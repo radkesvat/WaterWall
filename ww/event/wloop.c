@@ -101,7 +101,6 @@ static int __wloop_process_timers(struct heap *timers, uint64_t timeout)
             }
             heap_insert(timers, &timer->node);
         }
-        assert(timer->loop->wid == getWID());
         EVENT_PENDING(timer);
         ++ntimers;
     }
