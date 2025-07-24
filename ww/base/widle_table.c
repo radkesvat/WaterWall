@@ -56,6 +56,7 @@ void idleCallBack(wtimer_t *timer);
  */
 widle_table_t *idleTableCreate(wloop_t *loop)
 {
+    wloopUpdateTime(loop);
     // assert(sizeof(widle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
     size_t memsize = sizeof(widle_table_t);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
@@ -103,7 +104,7 @@ widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expir
     widle_item_t *item = memoryAllocate(sizeof(widle_item_t));
     mutexLock(&(self->mutex));
 
-    *item = (widle_item_t) {.expire_at_ms = wloopNowMS(getWorkerLoop(wid)) + age_ms,
+    *item = (widle_item_t) {.expire_at_ms = wloopNowMS(self->loop) + age_ms,
                             .hash         = key,
                             .wid          = wid,
                             .userdata     = userdata,
