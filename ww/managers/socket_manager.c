@@ -275,6 +275,7 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
 
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
 {
+    wioDetach(io);
 
     wid_t wid = getNextDistributionWID();
 
@@ -413,7 +414,6 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
                     {
                         tcpNoDelay(wioGetFD(io), 1);
                     }
-                    wioDetach(io);
                     distributeSocket(io, target_filter, local_port);
                     return;
                 }
