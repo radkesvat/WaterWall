@@ -44,7 +44,7 @@ unsigned long long getHRTimeUs(void)
     {
         LARGE_INTEGER count;
         QueryPerformanceCounter(&count);
-        return ((double) count.QuadPart / (double) s_freq * 1000000);
+        return (unsigned long long)((double) count.QuadPart / (double) s_freq * 1000000);
     }
     return 0;
 #elif defined(OS_SOLARIS)
