@@ -144,13 +144,15 @@ void tcpconnectorOnWriteComplete(wio_t *io)
         return;
     }
 
+    wioSetCallBackWrite(lstate->io, NULL);
+
     if (wioCheckWriteComplete(io))
     {
         if (! resumeWriteQueue(lstate))
         {
+            wioSetCallBackWrite(lstate->io, tcpconnectorOnWriteComplete);
             return;
         }
-        wioSetCallBackWrite(lstate->io, NULL);
         lstate->write_paused = false;
 
         tunnelPrevDownStreamResume(lstate->tunnel, lstate->line);
@@ -162,11 +164,14 @@ void tcpconnectorOnIdleConnectionExpire(widle_item_t *idle_tcp)
     tcpconnector_lstate_t *ls = idle_tcp->userdata;
     assert(ls != NULL && ls->tunnel != NULL);
     idle_tcp->userdata = NULL;
-    ls->idle_handle = NULL; // mark as removed
+    ls->idle_handle    = NULL; // mark as removed
+    tunnel_t *t = ls->tunnel;
+    line_t *l = ls->line;
 
     LOGW("TcpConnector: expired 1 tcp connection on FD:%x ", wioGetFD(ls->io));
     weventSetUserData(ls->io, NULL);
     tcpconnectorFlushWriteQueue(ls);
     wioClose(ls->io);
     tcpconnectorLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
 }
