@@ -1,15 +1,16 @@
 #include "wloop.h"
+#include "ev_memory.h"
 #include "global_state.h"
 #include "iowatcher.h"
-#include "wevent.h"
-
-#include "ev_memory.h"
 #include "loggers/internal_logger.h"
 #include "wdef.h"
+#include "wevent.h"
 #include "wmath.h"
 #include "wsocket.h"
 #include "wthread.h"
 #include "wtime.h"
+
+#include "worker.h"
 
 #if defined(OS_UNIX) && HAVE_EVENTFD
 #include "sys/eventfd.h"
@@ -100,6 +101,7 @@ static int __wloop_process_timers(struct heap *timers, uint64_t timeout)
             }
             heap_insert(timers, &timer->node);
         }
+        assert(timer->loop->wid == getWID());
         EVENT_PENDING(timer);
         ++ntimers;
     }
@@ -139,6 +141,13 @@ static int wloopProcessPendings(wloop_t *loop)
         cur = loop->pendings[i];
         while (cur)
         {
+#ifdef DEBUG
+            if (! (cur->loop->wid == loop->wid && loop->wid == getWID()))
+            {
+                printError("The multi-threading bug still present, sorry");
+                terminateProgram(1);
+            }
+#endif
             next = cur->pending_next;
             if (cur->pending)
             {
@@ -322,7 +331,7 @@ static void wloopDestroyEventFDS(wloop_t *loop)
 
 bool wloopPostEvent(wloop_t *loop, wevent_t *ev)
 {
-    if(atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
+    if (atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
     {
         return false;
     }
@@ -880,6 +889,7 @@ wio_t *wioGet(wloop_t *loop, int fd)
         io->fd            = fd;
         loop->ios.ptr[fd] = io;
     }
+    io->fd = fd;
 
     if (! io->ready)
     {
@@ -891,6 +901,10 @@ wio_t *wioGet(wloop_t *loop, int fd)
 
 void wioDetach(wio_t *io)
 {
+    assert(io->fd >= 0);
+    assert((io->events & WW_READ) != WW_READ);
+    assert((io->events & WW_WRITE) != WW_WRITE);
+
     wloop_t *loop = io->loop;
     int      fd   = io->fd;
     assert(loop != NULL && fd < (int) loop->ios.maxsize);
@@ -899,6 +913,15 @@ void wioDetach(wio_t *io)
 
 void wioAttach(wloop_t *loop, wio_t *io)
 {
+    assert((io->events & WW_READ) != WW_READ);
+    assert((io->events & WW_WRITE) != WW_WRITE);
+    if (loop->wid != getWID())
+    {
+        printError("wioAttach: loop wid %ld != current wid %ld", loop->wid, getWID());
+        assert(false);
+        terminateProgram(1);
+    }
+
     int fd = io->fd;
     // NOTE: wio was not freed for reused when closed, but attached wio can't be reused,
     // so we need to free it if fd exists to avoid memory leak.
@@ -949,6 +972,7 @@ int wioAdd(wio_t *io, wio_cb cb, int events)
 
     if (! (io->events & events))
     {
+        // printDebug("wioAdd: fd=%x on loop wid %d, real wid %d\n", io->fd, loop->wid, getWID());
         iowatcherAddEvent(loop, io->fd, events);
         io->events |= events;
     }
@@ -968,6 +992,7 @@ int wioDel(wio_t *io, int events)
 
     if (io->events & events)
     {
+        // printDebug("wioDel: fd=%x on loop wid %d, real wid %d\n", io->fd, io->loop->wid, getWID());
         iowatcherDelEvent(io->loop, io->fd, events);
         io->events &= ~events;
     }

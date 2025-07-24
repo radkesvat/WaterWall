@@ -35,6 +35,23 @@ static void __close_timeout_cb(wtimer_t *timer)
     }
 }
 
+static void __close_pending_cb(wevent_t *ev)
+{
+    int fd = (int) (uintptr_t) weventGetUserdata(ev);
+    
+    if (fd < (int) ev->loop->ios.maxsize)
+    {
+
+        if (ev->loop->ios.ptr[fd] && ev->loop->ios.ptr[fd]->pending)
+        {
+            printError("__close_pending_cb: pending io fd=%d !\n", fd);
+            terminateProgram(1);
+        }
+    }
+
+    closesocket(fd);
+}
+
 static void __accept_cb(wio_t *io)
 {
     wioAcceptCallBack(io);
@@ -203,15 +220,15 @@ static int __nio_write(wio_t *io, const void *buf, int len)
 #ifdef MSG_NOSIGNAL
         flag |= MSG_NOSIGNAL;
 #endif
-        nwrite = send(io->fd, buf, (size_t)len, flag);
+        nwrite = send(io->fd, buf, (size_t) len, flag);
     }
     break;
     case WIO_TYPE_UDP:
     case WIO_TYPE_IP:
-        nwrite = sendto(io->fd, buf, (size_t)len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
+        nwrite = sendto(io->fd, buf, (size_t) len, 0, io->peeraddr, SOCKADDR_LEN(io->peeraddr));
         break;
     default:
-        nwrite = write(io->fd, buf, (size_t)len);
+        nwrite = write(io->fd, buf, (size_t) len);
         break;
     }
     // wlogd("write retval=%d", nwrite);
@@ -292,7 +309,7 @@ static void nio_read(wio_t *io)
     // }
     // #endif
 
-    sbufSetLength(buf, min(available, (uint32_t)nread));
+    sbufSetLength(buf, min(available, (uint32_t) nread));
     __read_cb(io, buf);
     // user consumed buffer
     return;
@@ -344,8 +361,8 @@ write:
     {
         goto disconnect;
     }
-    sbufShiftRight(buf, (uint32_t)nwrite);
-    io->write_bufsize -= (uint32_t)nwrite;
+    sbufShiftRight(buf, (uint32_t) nwrite);
+    io->write_bufsize -= (uint32_t) nwrite;
     if (nwrite == len)
     {
         // NOTE: after write_cb, pbuf maybe invalid.
@@ -448,7 +465,7 @@ int wioConnect(wio_t *io)
         return 0;
     }
     int timeout                 = io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT;
-    io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t)timeout, 1);
+    io->connect_timer           = wtimerAdd(io->loop, __connect_timeout_cb, (uint32_t) timeout, 1);
     io->connect_timer->privdata = io;
     io->connect                 = 1;
     return wioAdd(io, wio_handle_events, WW_WRITE);
@@ -512,13 +529,13 @@ int wioWrite(wio_t *io, sbuf_t *buf)
 
     if (nwrite < len)
     {
-        if (io->write_bufsize + (uint32_t)len - (uint32_t)nwrite > io->max_write_bufsize)
+        if (io->write_bufsize + (uint32_t) len - (uint32_t) nwrite > io->max_write_bufsize)
         {
             wloge("write bufsize > %u, close it!", io->max_write_bufsize);
             io->error = WERR_OVER_LIMIT;
             goto write_error;
         }
-        sbufShiftRight(buf, (uint32_t)nwrite);
+        sbufShiftRight(buf, (uint32_t) nwrite);
         // #if defined(OS_LINUX) && defined(HAVE_PIPE)
         //         if(io->pfd_w != 0){
         //             remain.base = 0X0; // skips memoryFree()
@@ -595,18 +612,34 @@ int wioClose(wio_t *io)
 
         wlogd("write_queue not empty, close later.");
         int timeout_ms            = io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT;
-        io->close_timer           = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t)timeout_ms, 1);
+        io->close_timer           = wtimerAdd(io->loop, __close_timeout_cb, (uint32_t) timeout_ms, 1);
         io->close_timer->privdata = io;
         return 0;
     }
-    io->closed = 1;
+    bool has_pending = io->pending;
+
+    io->closed    = 1;
+    wloop_t *loop = io->loop;
 
     wioDone(io);
     __close_cb(io);
     // SAFE_FREE(io->hostname);
     if (io->io_type & WIO_TYPE_SOCKET)
     {
-        closesocket(io->fd);
+        if (has_pending)
+        {
+            wevent_t ev;
+            memorySet(&ev, 0, sizeof(ev));
+            ev.loop = loop;
+            ev.cb   = __close_pending_cb;
+            weventSetUserData(&ev, (uintptr_t) io->fd);
+            wloopPostEvent(loop, &ev);
+        }
+        else
+        {
+
+            closesocket(io->fd);
+        }
     }
     return 0;
 }

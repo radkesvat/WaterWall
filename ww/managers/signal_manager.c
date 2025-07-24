@@ -275,7 +275,7 @@ signal_manager_t *signalmanagerCreate(void)
                                 .handle_sighup  = false, // exits after ssh closed even with nohup
                                 .handle_sigill  = true,
                                 .handle_sigfpe  = true,
-                                .handle_sigabrt = true,
+                                .handle_sigabrt = false,
                                 .handle_sigsegv = false,
                                 .handle_sigterm = true,
                                 .handle_sigpipe = true,
