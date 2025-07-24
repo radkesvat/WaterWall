@@ -60,10 +60,9 @@ enum
 typedef struct
 {
     mux_length_t length;
-    cid_t        cid;
     uint8_t      flags;
-
-    uint8_t _pad1; // padding for alignment
+    uint8_t      _pad1; // padding for alignment
+    cid_t        cid;
 
     char data[];
 
