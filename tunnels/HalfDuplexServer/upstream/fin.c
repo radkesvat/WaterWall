@@ -19,12 +19,9 @@ static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *
 
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
-    if (! (ls->upload_line == NULL && ls->download_line == NULL))
-    {
-        halfduplexserverLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-    }
-
+    assert(ls->upload_line != NULL || ls->download_line != NULL);
+    halfduplexserverLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
     lineUnlock(l);
 }
 

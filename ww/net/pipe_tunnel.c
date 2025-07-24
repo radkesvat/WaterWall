@@ -666,12 +666,18 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     if (wid_to == getWID())
     {
         LOGF("PipeTunnel: Pipe to self is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
+        LOGF("PipeTunnel: WID: %d, line WID: %d , to WID: %d", getWID(), lineGetWID(l), wid_to);
+        assert(false);
+        memoryFree(ls);   // causes to crash and asan will print the stack trace
         terminateProgram(1);
         return false;
     }
-    if(l->wid != getWID())
+    if (l->wid != getWID())
     {
         LOGF("PipeTunnel: Pipe From different WID is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
+        LOGF("PipeTunnel: WID: %d, line WID: %d , to WID: %d", getWID(), lineGetWID(l), wid_to);
+        assert(false);
+        memoryFree(ls);   // causes to crash and asan will print the stack trace
         terminateProgram(1);
         return false;
     }
