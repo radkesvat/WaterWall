@@ -91,6 +91,11 @@ void workerRun(worker_t *worker)
 
     while (atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire) == false)
     {
+        if(atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire) == true)
+        {
+            LOGD("Worker %d exiting due to application stopping flag !", wid);
+            return;
+        }
         // wait for the main thread to set the flag
         wwSleepMS(10);
     }
