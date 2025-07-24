@@ -162,6 +162,7 @@ void tcpconnectorOnIdleConnectionExpire(widle_item_t *idle_tcp)
     tcpconnector_lstate_t *ls = idle_tcp->userdata;
     assert(ls != NULL && ls->tunnel != NULL);
     idle_tcp->userdata = NULL;
+    ls->idle_handle = NULL; // mark as removed
 
     LOGW("TcpConnector: expired 1 tcp connection on FD:%x ", wioGetFD(ls->io));
     weventSetUserData(ls->io, NULL);

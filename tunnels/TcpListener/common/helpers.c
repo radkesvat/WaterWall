@@ -167,11 +167,13 @@ void tcplistenerOnIdleConnectionExpire(widle_item_t *idle_tcp)
     tcplistener_lstate_t *ls = idle_tcp->userdata;
     assert(ls != NULL && ls->tunnel != NULL);
     idle_tcp->userdata = NULL;
+    ls->idle_handle = NULL; // mark as removed
 
+    line_t *l = ls->line;
     LOGW("TcpListener: expired 1 tcp connection on FD:%x ", wioGetFD(ls->io));
     weventSetUserData(ls->io, NULL);
     tcplistenerFlushWriteQueue(ls);
     wioClose(ls->io);
     tcplistenerLinestateDestroy(ls);
-    lineDestroy(ls->line);
+    lineDestroy(l);
 }
