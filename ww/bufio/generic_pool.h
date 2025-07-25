@@ -1,7 +1,7 @@
 #pragma once
 #include "master_pool.h"
 #include "wlibc.h"
-
+#include "wthread.h"
 
 /*
     A growable pool
@@ -16,8 +16,6 @@
 
 
 */
-
-
 
 typedef struct generic_pool_s generic_pool_t;
 
@@ -54,8 +52,34 @@ typedef void (*PoolItemDestroyHandle)(generic_pool_t *pool, pool_item_t *item);
 
 struct generic_pool_s
 {
+#ifdef DEBUG
+    tid_t tid;
+#endif
     GENERIC_POOL_FIELDS
 };
+
+/**
+ * Checks if the current thread has access to the pool.
+ * This has no effect on non-debug builds.
+ * @param pool The generic pool to check access for.
+ */
+#ifdef DEBUG
+static void debugCheckThreadAccess(generic_pool_t *pool)
+{
+    if (UNLIKELY(pool->tid == 0))
+    {
+        // This is the first access, set the thread ID
+        pool->tid = getTID();
+    }
+    if (UNLIKELY(pool->tid != getTID()))
+    {
+        printError("GenericPool: Access from wrong thread %d, expected %d", getTID(), pool->tid);
+        terminateProgram(1);
+    }
+}
+#else
+#define debugCheckThreadAccess(pool) ((void) 0)
+#endif
 
 /**
  * Recharges the pool by preallocating a number of buffers.
@@ -83,6 +107,7 @@ static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
 #if POOL_DEBUG == 1
     pool->in_use += 1;
 #endif
+    debugCheckThreadAccess(pool);
 
     if (LIKELY(pool->len > 0))
     {
@@ -110,6 +135,8 @@ static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
 #if POOL_DEBUG == 1
     pool->in_use -= 1;
 #endif
+    debugCheckThreadAccess(pool);
+
     if (pool->len > pool->free_threshold)
     {
         genericpoolShrink(pool);
@@ -181,4 +208,3 @@ generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *
  * @param pool The generic pool to destroy.
  */
 void genericpoolDestroy(generic_pool_t *pool);
-
