@@ -161,9 +161,9 @@ enum ram_profiles_e
     ((ram_prifle) >= LARGE_RAM_PROFILE_THRESHOLD ? LARGE_BUFFER_SIZE_RAM_HIGH : LARGE_BUFFER_SIZE_RAM_LOW)
 
 
-#define ALLOCATOR_BYPASS    0  
-#define BYPASS_BUFFERPOOL   0 
-#define BYPASS_GENERIC_POOL 0 
+#define ALLOCATOR_BYPASS    0
+#define BYPASS_BUFFERPOOL   0
+#define BYPASS_GENERIC_POOL 0
 #define POOL_DEBUG          0
 
 
