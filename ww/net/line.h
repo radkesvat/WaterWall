@@ -42,31 +42,34 @@ typedef struct line_s
     uint8_t     auth_cur;
     uint8_t     established : 1;
     uint8_t     recalculate_checksum : 1; // used for packet tunnels, ip layer checksum
-    uint8_t     do_not_recalculate_transport_checksum : 1; // used for packet tunnels, skip transport layer checksum (rare used)
+    uint8_t
+        do_not_recalculate_transport_checksum : 1; // used for packet tunnels, skip transport layer checksum (rare used)
 
     routing_context_t routing_context;
 
-    generic_pool_t *pool;
+    generic_pool_t **pools;
 
-    MSVC_ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_LINE_CACHE; 
+    MSVC_ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_LINE_CACHE;
 
 } line_t;
 
 /**
  * @brief Creates a new line instance.
  *
- * @param pool Pointer to the generic pool.
+ * @param pools Pointer to the array of generic pools. (per WID)
  * @return line_t* Pointer to the created line.
  */
-static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
+static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
 {
-    line_t *l = genericpoolGetItem(pool);
+    assert(wid == getWID());
+
+    line_t *l = genericpoolGetItem(pools[wid]);
 
     *l = (line_t) {.refc                 = 1,
                    .auth_cur             = 0,
                    .wid                  = wid,
                    .alive                = true,
-                   .pool                 = pool,
+                   .pools                = pools,
                    .established          = false,
                    .recalculate_checksum = false,
                    // to set a port we need to know the AF family, default v4
@@ -75,11 +78,9 @@ static inline line_t *lineCreate(generic_pool_t *pool, wid_t wid)
                                             .dest_ctx      = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .src_ctx       = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .user_name     = NULL,
-                                            .user_name_len = 0
+                                            .user_name_len = 0}};
 
-                       }};
-
-    memorySet(&l->tunnels_line_state[0], 0, genericpoolGetItemSize(l->pool) - sizeof(line_t));
+    memorySet((void *) &l->tunnels_line_state[0], 0, genericpoolGetItemSize(pools[wid]) - sizeof(line_t));
 
     return l;
 }
@@ -110,9 +111,11 @@ static inline void lineUnRefInternal(line_t *const l)
 
     assert(l->alive == false);
 
+    wid_t wid = getWID();
+
     // there should not be any conn-state alive at this point
 
-    debugAssertZeroBuf(&l->tunnels_line_state[0], genericpoolGetItemSize(l->pool) - sizeof(line_t));
+    debugAssertZeroBuf(&l->tunnels_line_state[0], genericpoolGetItemSize(l->pools[wid]) - sizeof(line_t));
 
     // assert(l->up_state == NULL);
     // assert(l->dw_state == NULL);
@@ -123,8 +126,7 @@ static inline void lineUnRefInternal(line_t *const l)
     {
         memoryFree(l->routing_context.dest_ctx.domain);
     }
-
-    genericpoolReuseItem(l->pool, l);
+    genericpoolReuseItem(l->pools[wid], l);
 }
 
 /**

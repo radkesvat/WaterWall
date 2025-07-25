@@ -76,7 +76,7 @@ void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf
         return;
     }
 
-    line_t *l = tunnelchainGetPacketLine(t->chain, wid);
+    line_t *l = tunnelchainGetWorkerPacketLine(t->chain, wid);
 #ifdef DEBUG
     lineLock(l);
 #endif

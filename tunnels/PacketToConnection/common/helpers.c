@@ -8,7 +8,7 @@ static void localThreadPacketReceived(worker_t *worker, void *arg1, void *arg2, 
     sbuf_t   *buf = (sbuf_t *) arg2;
     discard   arg3;
 
-    tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), worker->wid), buf);
+    tunnelPrevDownStreamPayload(t, tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid), buf);
 }
 
 void updateCheckSumTcp(u16_t *_hc, const void *_orig, const void *_new, int n)
@@ -68,7 +68,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     //     {
     //         goto slow_path;
     //     }
-    //     tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), wid), temp_buf);
+    //     tunnelPrevDownStreamPayload(t, tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid), temp_buf);
     // }
 // slow_path:;
 
@@ -95,7 +95,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     // pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
     // BENCH_END(ptcNetifOutput2);
 
-    tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), wid), buf);
+    tunnelPrevDownStreamPayload(t, tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid), buf);
     return ERR_OK;
 
     // if (p->tot_len - p->len >= 128)

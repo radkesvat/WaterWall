@@ -8,7 +8,7 @@ void packetasdataTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ls->line == NULL)
     {
-        line_t *nl = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), lineGetWID(l)), lineGetWID(l));
+        line_t *nl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
 
         ls->paused = false;
         ls->line = nl;

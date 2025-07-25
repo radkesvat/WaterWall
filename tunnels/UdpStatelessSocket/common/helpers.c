@@ -21,7 +21,7 @@ void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf)
         return;
     }
 
-    line_t *l = tunnelchainGetPacketLine(tunnelGetChain(t), wid);
+    line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid);
 
     char localaddrstr[SOCKADDR_STRLEN] = {0};
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};

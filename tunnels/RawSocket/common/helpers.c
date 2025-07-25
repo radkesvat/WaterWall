@@ -25,7 +25,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
         return;
     }
 
-    line_t *l = tunnelchainGetPacketLine(t->chain, wid);
+    line_t *l = tunnelchainGetWorkerPacketLine(t->chain, wid);
 
     rawsocket_tstate_t *state = tunnelGetState(t);
     

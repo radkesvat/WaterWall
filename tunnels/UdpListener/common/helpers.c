@@ -43,7 +43,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
             udppayloadDestroy(data);
             return;
         }
-        line_t *l = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), wid), wid);
+        line_t *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
 
         udplistener_lstate_t *ls = lineGetState(l, t);
 

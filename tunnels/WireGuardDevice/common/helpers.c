@@ -14,7 +14,7 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
         mutexUnlock(&ts->mutex);
     }
     tunnel_t *tunnel = ts->tunnel;
-    line_t   *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
+    line_t   *line   = tunnelchainGetWorkerPacketLine(tunnel->chain, getWID());
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), &peer->ip, peer->port);
     tunnelNextUpStreamPayload(tunnel, line, q);
     return ERR_OK;
@@ -30,7 +30,7 @@ err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_ad
         mutexUnlock(&ts->mutex);
     }
     tunnel_t *tunnel = ts->tunnel;
-    line_t   *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
+    line_t   *line   = tunnelchainGetWorkerPacketLine(tunnel->chain, getWID());
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), ipaddr, port);
     tunnelNextUpStreamPayload(tunnel, line, q);
     return ERR_OK;

@@ -20,7 +20,7 @@ typedef struct pipetunnel_msg_event_s
 
 static tunnel_t *getParentTunnel(tunnel_t *t)
 {
-    return (tunnel_t *) (((uint8_t *) t) - sizeof(tunnel_t));
+    return t->prev;
 }
 
 /**
@@ -688,8 +688,7 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
         // parent_tunnel->fnFinU(parent_tunnel, l);
     }
     assert(ls->pair_line == NULL);
-    ls->pair_line       = lineCreate(tunnelchainGetLinePool(tunnelGetChain(parent_tunnel), getWID()), wid_to);
-    ls->pair_line->pool = tunnelchainGetLinePool(tunnelGetChain(parent_tunnel), wid_to);
+    ls->pair_line       = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
 
     pipetunnel_line_state_t *ls_lineto = lineGetState(ls->pair_line, parent_tunnel);
     ls_lineto->pair_line               = l;

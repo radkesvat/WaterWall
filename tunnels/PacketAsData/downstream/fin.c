@@ -4,14 +4,14 @@
 
 void packetasdataTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    packetasdata_lstate_t *ls = lineGetState(tunnelchainGetPacketLine(tunnelGetChain(t), lineGetWID(l)), t);
+    packetasdata_lstate_t *ls = lineGetState(tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)), t);
 
     assert(ls->line);
     assert(ls->line == l);
 
     LOGD("PacketAsData: got fin, recreating line");
 
-    line_t *nl = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), lineGetWID(l)), lineGetWID(l));
+    line_t *nl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
 
     lineDestroy(ls->line);
     ls->line = NULL;

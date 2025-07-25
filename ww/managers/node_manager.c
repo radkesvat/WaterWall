@@ -170,7 +170,7 @@ static void runNodes(node_manager_config_t *cfg)
                 tunnelGetChain(tunnel)->packet_chain_init_sent = true;
                 for (wid_t wi = 0; wi < getWorkersCount() - WORKER_ADDITIONS; wi++)
                 {
-                    line_t *l = tunnelchainGetPacketLine(tunnelGetChain(tunnel), wi);
+                    line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(tunnel), wi);
 
                     tunnelNextUpStreamInit(tunnel, l);
                     assert(lineIsAlive(l));

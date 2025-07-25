@@ -78,7 +78,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     download_line_ls->upload_line = l;
 
                     line_t *main_line =
-                        lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), lineGetWID(l)), lineGetWID(l));
+                        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
                     download_line_ls->main_line = main_line;
                     ls->main_line               = main_line;
 
@@ -182,7 +182,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     upload_line_ls->download_line = l;
 
                     line_t *main_line =
-                        lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), lineGetWID(l)), lineGetWID(l));
+                        lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
 
                     upload_line_ls->main_line = main_line;
                     ls->main_line             = main_line;

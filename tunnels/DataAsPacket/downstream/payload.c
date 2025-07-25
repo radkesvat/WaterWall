@@ -24,7 +24,7 @@ void dataaspacketTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     dataaspacket_lstate_t *ls = lineGetState(l, t);
 
-    tunnelPrevDownStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), lineGetWID(l)), buf);
+    tunnelPrevDownStreamPayload(t, tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)), buf);
     if (ls->paused)
     {
         bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
@@ -39,7 +39,7 @@ void dataaspacketTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             {
                 continue;
             }
-            line_t *line = tunnelchainGetPacketLine(tunnelGetChain(t), wi);
+            line_t *line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wi);
             if (line == NULL)
             {
                 continue;

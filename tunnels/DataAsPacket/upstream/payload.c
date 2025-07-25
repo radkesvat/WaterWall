@@ -4,5 +4,5 @@
 
 void dataaspacketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    tunnelNextUpStreamPayload(t, tunnelchainGetPacketLine(tunnelGetChain(t), lineGetWID(l)), buf);
+    tunnelNextUpStreamPayload(t, tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)), buf);
 }

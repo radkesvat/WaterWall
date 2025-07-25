@@ -54,7 +54,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
 
         if (tc->contains_packet_node)
         {
-            tc->packet_lines[i] = lineCreate(tc->line_pools[i], i);
+            tc->packet_lines[i] = lineCreate(tc->line_pools, i);
         }
     }
 
@@ -88,10 +88,7 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
     memoryFree(tc);
 }
 
-generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, wid_t wid)
-{
-    return tc->line_pools[wid];
-}
+
 
 void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
 {

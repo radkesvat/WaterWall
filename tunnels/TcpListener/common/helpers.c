@@ -60,7 +60,7 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
 
     wioAttach(loop, io);
 
-    line_t               *l  = lineCreate(tunnelchainGetLinePool(t->chain, wid), wid);
+    line_t               *l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     tcplistener_lstate_t *ls = lineGetState(l, t);
 
     tcplistenerLinestateInitialize(ls, io, t, l);

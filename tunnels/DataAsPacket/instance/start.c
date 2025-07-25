@@ -9,7 +9,7 @@ void dataaspacketTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < getWorkersCount() - WORKER_ADDITIONS; wi++)
     {
-        line_t *l = tunnelchainGetPacketLine(tunnelGetChain(t), wi);
+        line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wi);
 
         tunnelNextUpStreamInit(t, l);
         assert(lineIsAlive(l));

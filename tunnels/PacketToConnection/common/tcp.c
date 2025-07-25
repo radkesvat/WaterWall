@@ -251,7 +251,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
 
     tunnel_t *t = (tunnel_t *) arg;
 
-    line_t *l = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), current_wid), target_wid);
+    line_t *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), target_wid);
 
     ptc_lstate_t *lstate = lineGetState(l, t);
 

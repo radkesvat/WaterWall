@@ -47,18 +47,29 @@ typedef struct tunnel_chain_s
 tunnel_chain_t *tunnelchainCreate(wid_t workers_count);
 void            tunnelchainFinalize(tunnel_chain_t *tc);
 void            tunnelchainDestroy(tunnel_chain_t *tc);
-generic_pool_t *tunnelchainGetLinePool(tunnel_chain_t *tc, wid_t wid);
 void            tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source);
 
 void tunnelarrayInsert(tunnel_array_t *tc, tunnel_t *t);
 void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t);
 
-static line_t *tunnelchainGetPacketLine(tunnel_chain_t *tc, wid_t wid)
+static inline generic_pool_t **tunnelchainGetLinePools(tunnel_chain_t *tc)
+{
+    return tc->line_pools;
+}
+
+static inline generic_pool_t *tunnelchainGetWorkerLinePool(tunnel_chain_t *tc, wid_t wid)
+{
+    return tc->line_pools[wid];
+}
+
+
+
+static inline line_t *tunnelchainGetWorkerPacketLine(tunnel_chain_t *tc, wid_t wid)
 {
     return tc->packet_lines[wid];
 }
 
-static bool tunnelchainIsFinalized(tunnel_chain_t *tc)
+static inline bool tunnelchainIsFinalized(tunnel_chain_t *tc)
 {
     return tc->finalized;
 }

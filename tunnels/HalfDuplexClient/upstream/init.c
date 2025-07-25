@@ -8,7 +8,7 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     halfduplexclientLinestateInitialize(ls, l);
 
-    ls->upload_line = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), lineGetWID(l)), lineGetWID(l));
+    ls->upload_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
 
     halfduplexclient_lstate_t *ls_upline = lineGetState(ls->upload_line, t);
     halfduplexclientLinestateInitialize(ls_upline, l);
@@ -22,7 +22,7 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
     lineUnlock(ls->upload_line);
 
-    ls->download_line        = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), lineGetWID(l)), lineGetWID(l));
+    ls->download_line        = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
     ls_upline->download_line = ls->download_line;
 
     halfduplexclient_lstate_t *ls_dwline = lineGetState(ls->download_line, t);

@@ -13,8 +13,8 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
 
     wid_t wid = worker->wid;
 
-    line_t *ul = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), wid), wid);
-    line_t *dl = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), wid), wid);
+    line_t *ul = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
+    line_t *dl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
 
     reverseclient_lstate_t *uls = lineGetState(ul, t);
     reverseclient_lstate_t *dls = lineGetState(dl, t);

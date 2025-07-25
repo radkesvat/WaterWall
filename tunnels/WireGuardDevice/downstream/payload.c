@@ -178,7 +178,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                                         mutexUnlock(&ts->mutex);
                                     }
                                     tunnel_t     *tunnel = ts->tunnel;
-                                    line_t       *line   = tunnelchainGetPacketLine(tunnel->chain, getWID());
+                                    line_t       *line   = tunnelchainGetWorkerPacketLine(tunnel->chain, getWID());
                                     tunnelPrevDownStreamPayload(tunnel, line, buf);
 
                                     // buf is owned by IP layer now
