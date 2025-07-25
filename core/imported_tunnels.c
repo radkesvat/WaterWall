@@ -179,7 +179,7 @@
 #endif
 
 #ifdef INCLUDE_MUX_SERVER
-#include "tunnels/server/mux/mux_server.h"
+#include "tunnels/MuxServer/include/interface.h"
 #endif
 
 #ifdef INCLUDE_MUX_CLIENT

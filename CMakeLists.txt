@@ -134,7 +134,7 @@ option(INCLUDE_HALFDUPLEX_SERVER        "link HalfDuplexServer staticly to the c
 option(INCLUDE_HALFDUPLEX_CLIENT        "link HalfDuplexClient staticly to the core"     TRUE)
 option(INCLUDE_BGP4_SERVER              "link Bgp4Server staticly to the core"           FALSE)
 option(INCLUDE_BGP4_CLIENT              "link Bgp4Client staticly to the core"           FALSE)
-option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"            FALSE)
+option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"            TRUE)
 option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"            TRUE)
 
 # tun device works on android but requires root access
@@ -566,8 +566,8 @@ endif()
 #mux server
 if(INCLUDE_MUX_SERVER)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_MUX_SERVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/mux)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/mux)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/MuxServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/MuxServer)
   target_link_libraries(Waterwall MuxServer)
 endif()
 
