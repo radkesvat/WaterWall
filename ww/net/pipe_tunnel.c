@@ -552,7 +552,7 @@ static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *l)
  */
 static void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 {
-    tunnel_t *child = tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
 
     tunnelchainInsert(tc, t);
     tunnelBind(t, child);
@@ -584,7 +584,7 @@ static void pipetunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_
  */
 static void pipetunnelDefaultOnPrepair(tunnel_t *t)
 {
-    tunnel_t *child = tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
     child->onPrepair(child);
 }
 
@@ -595,7 +595,7 @@ static void pipetunnelDefaultOnPrepair(tunnel_t *t)
  */
 static void pipetunnelDefaultOnStart(tunnel_t *t)
 {
-    tunnel_t *child = tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
     child->onStart(child);
 }
 
@@ -607,8 +607,8 @@ static void pipetunnelDefaultOnStart(tunnel_t *t)
  */
 tunnel_t *pipetunnelCreate(tunnel_t *child)
 {
-    tunnel_t *pt = tunnelCreate(tunnelGetNode(child), tunnelGetStateSize(child) + sizeof(tunnel_t),
-                                tunnelGetLineStateSize(child) + sizeof(line_t) + sizeof(pipetunnel_line_state_t));
+    tunnel_t *pt = tunnelCreate(tunnelGetNode(child), sizeof(tunnel_t *),
+                                tunnelGetLineStateSize(child) + sizeof(pipetunnel_line_state_t));
     if (pt == NULL)
     {
         // Handle memory allocation failure
@@ -634,7 +634,8 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
     pt->onStart   = &pipetunnelDefaultOnStart;
 
     pt->onDestroy = &pipetunnelDestroy;
-    tunnelSetState(pt, child);
+
+    memoryCopy(&(pt->state[0]), (void*)&child, sizeof(tunnel_t *));
 
     return pt;
 }
@@ -646,7 +647,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
  */
 void pipetunnelDestroy(tunnel_t *t)
 {
-    tunnel_t *child = tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
     child->onDestroy(child);
     tunnelDestroy(t);
 }
