@@ -19,7 +19,7 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
         {
             bufferstreamViewBytesAt(parent_ls->read_stream, 0, (uint8_t *) &frame, kMuxFrameLength);
 
-            if ((size_t)frame.length + (size_t)kMuxFrameLength > bufferstreamLen(parent_ls->read_stream))
+            if ((size_t) frame.length + (size_t) kMuxFrameLength > bufferstreamLen(parent_ls->read_stream))
             {
                 // not enough data for a full frame
                 break;
@@ -31,8 +31,8 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
             break; // not enough data for a full frame
         }
 
-        assert(parent_ls->children_count > 0);
 
+        // Start from the first child in the doubly linked list
         muxclient_lstate_t *child_ls = parent_ls->child_next;
         while (child_ls)
         {
@@ -42,8 +42,7 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
                 break;
             }
             muxclient_lstate_t *temp = child_ls->child_next;
-            tunnelPrevDownStreamResume(t, child_ls->l);
-            child_ls = temp;
+            child_ls                 = temp;
         }
 
         if (! child_ls)
@@ -52,6 +51,30 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
             LOGD("MuxClient: DownStreamPayload: No child line state found for cid: %u", frame.cid);
             bufferpoolReuseBuffer(lineGetBufferPool(parent_l), frame_buffer);
             continue;
+        }
+
+        // Move-to-front optimization: if the found child is not already the first child,
+        // move it to the front of the list for faster future access
+        if (child_ls != parent_ls->child_next)
+        {
+            // Remove child_ls from its current position
+            if (child_ls->child_prev)
+            {
+                child_ls->child_prev->child_next = child_ls->child_next;
+            }
+            if (child_ls->child_next)
+            {
+                child_ls->child_next->child_prev = child_ls->child_prev;
+            }
+
+            // Insert child_ls at the front of the list
+            child_ls->child_prev = NULL;
+            child_ls->child_next = parent_ls->child_next;
+            if (parent_ls->child_next)
+            {
+                parent_ls->child_next->child_prev = child_ls;
+            }
+            parent_ls->child_next = child_ls;
         }
 
         lineLock(parent_l);
