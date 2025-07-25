@@ -11,7 +11,7 @@ void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
     if (ts->unsatisfied_lines[wid] == NULL ||
         muxclientCheckConnectionIsExhausted(ts, lineGetState(ts->unsatisfied_lines[wid], t)))
     {
-        line_t             *parent_l  = lineCreate(tunnelchainGetLinePool(tunnelGetChain(t), wid), wid);
+        line_t             *parent_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
         muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
         muxclientLinestateInitialize(parent_ls, parent_l, false);
