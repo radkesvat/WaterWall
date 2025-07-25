@@ -73,6 +73,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 
     memoryCopy(pool_ptr, &pool, sizeof(master_pool_t));
     mutexInit(&(pool_ptr->mutex));
+    atomicStoreExplicit(&(pool_ptr->len), 0, memory_order_relaxed);
 
     return pool_ptr;
 }
@@ -100,11 +101,12 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
 void masterpoolMakeEmpty(master_pool_t *pool, void *userdata)
 {
     mutexLock(&(pool->mutex));
-    for (uint32_t i = 0; i < pool->len; i++)
+    const uint32_t current_len = (uint32_t) atomicLoadExplicit(&(pool->len), memory_order_relaxed);
+    for (uint32_t i = 0; i < current_len; i++)
     {
         pool->destroy_item_handle(pool, pool->available[i], userdata);
     }
-    pool->len = 0;
+    atomicStoreExplicit(&(pool->len), 0, memory_order_relaxed);
     mutexUnlock(&(pool->mutex));
 }
 

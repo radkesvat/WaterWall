@@ -109,6 +109,7 @@ static void runNodes(node_manager_config_t *cfg)
 
                     tunnel_in_chain->onIndex(tunnel_in_chain, index++, &mem_offset);
                 }
+                assert(mem_offset ==  tunnelGetChain(tunnel)->sum_line_state_size);
             }
         }
     }
