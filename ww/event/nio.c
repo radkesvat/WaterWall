@@ -38,7 +38,7 @@ static void __close_timeout_cb(wtimer_t *timer)
 static void __close_pending_cb(wevent_t *ev)
 {
     int fd = (int) (uintptr_t) weventGetUserdata(ev);
-    
+
     if (fd < (int) ev->loop->ios.maxsize)
     {
 
@@ -633,11 +633,13 @@ int wioClose(wio_t *io)
             ev.loop = loop;
             ev.cb   = __close_pending_cb;
             weventSetUserData(&ev, (uintptr_t) io->fd);
-            wloopPostEvent(loop, &ev);
+            if (false == wloopPostEvent(loop, &ev))
+            {
+                closesocket(io->fd);
+            }
         }
         else
         {
-
             closesocket(io->fd);
         }
     }
