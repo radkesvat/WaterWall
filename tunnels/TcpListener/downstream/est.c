@@ -4,9 +4,7 @@
 
 void tcplistenerTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
-    tcplistener_lstate_t *ls = lineGetState(l, t);
-    tcplistener_tstate_t *ts     = tunnelGetState(t);
-
+    discard t;
+    discard l;
     lineMarkEstablished(l);
-    idleTableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kEstablishedKeepAliveTimeOutMs);
 }
