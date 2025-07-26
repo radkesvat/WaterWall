@@ -278,7 +278,7 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     }
     else
     {
-        LOGD("%-18s: library \"%s\" loaded successfully", node_name, node_type);
+        // LOGD("%-18s: library \"%s\" loaded successfully", node_name, node_type);
     }
     new_node->name      = node_name;
     new_node->type      = node_type;
