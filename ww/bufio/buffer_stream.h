@@ -100,6 +100,7 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
  */
 static inline size_t bufferstreamLen(buffer_stream_t *self)
 {
+    assert(self != NULL);
     return self->size;
 }
 
@@ -110,5 +111,17 @@ static inline size_t bufferstreamLen(buffer_stream_t *self)
  */
 static inline sbuf_t *bufferstreamFullRead(buffer_stream_t *self)
 {
+    assert(self != NULL);
     return bufferstreamReadExact(self, bufferstreamLen(self));
+}
+
+/**
+ * Checks if the buffer stream is empty.
+ * @param self The buffer stream.
+ * @return true if empty, false otherwise.
+ */
+static inline bool bufferstreamIsEmpty(buffer_stream_t *self)
+{
+    assert(self != NULL);
+    return self->size == 0;
 }

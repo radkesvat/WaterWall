@@ -32,6 +32,8 @@ buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool)
  */
 void bufferstreamEmpty(buffer_stream_t *self)
 {
+    assert(self != NULL);
+
     c_foreach(i, bs_doublequeue_t, self->q)
     {
         bufferpoolReuseBuffer(self->pool, *i.ref);
@@ -46,6 +48,8 @@ void bufferstreamEmpty(buffer_stream_t *self)
  */
 void bufferstreamDestroy(buffer_stream_t *self)
 {
+    assert(self != NULL);
+
     c_foreach(i, bs_doublequeue_t, self->q)
     {
         bufferpoolReuseBuffer(self->pool, *i.ref);
@@ -75,14 +79,17 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
             // Check for potential overflow
             assert(self->size <= SIZE_MAX - write_size);
 
-            self->size += write_size;
             sbufWriteLarge(last, buf, write_size);
-            if (sbufGetLength(buf) == write_size)
+            sbufSetLength(last, sbufGetLength(last) + write_size);
+            self->size += write_size;
+
+            sbufShiftRight(buf, write_size);
+
+            if (sbufGetLength(buf) == 0)
             {
                 sbufDestroy(buf);
                 return;
             }
-            sbufShiftRight(buf, write_size);
         }
     }
 
@@ -103,6 +110,8 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
 {
     assert(self && self->size >= bytes && bytes > 0);
+    assert(bs_doublequeue_t_size(&self->q) > 0); // Ensure queue is not empty
+
     self->size -= bytes;
 
     sbuf_t *container = bs_doublequeue_t_pull_front(&self->q);
@@ -121,6 +130,10 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
         {
             return container;
         }
+
+        // Assert queue is not empty - this should never happen if size accounting is correct
+        assert(bs_doublequeue_t_size(&self->q) > 0 && "Buffer stream size inconsistency detected");
+
         container = sbufAppendMerge(self->pool, container, bs_doublequeue_t_pull_front(&self->q));
     }
 }
@@ -134,6 +147,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
 sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
 {
     assert(self && self->size >= bytes && bytes > 0);
+    assert(bs_doublequeue_t_size(&self->q) > 0); // Ensure queue is not empty
 
     sbuf_t *container = bs_doublequeue_t_pull_front(&self->q);
     size_t  consumed  = sbufGetLength(container);
@@ -146,6 +160,10 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
             self->size -= consumed;
             return container;
         }
+
+        // Assert queue is not empty - this should never happen if size accounting is correct
+        assert(bs_doublequeue_t_size(&self->q) > 0 && "Buffer stream size inconsistency detected");
+
         sbuf_t *next = bs_doublequeue_t_pull_front(&self->q);
         consumed += sbufGetLength(next);
         container = sbufAppendMerge(self->pool, container, next);
@@ -160,6 +178,8 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
 sbuf_t *bufferstreamIdealRead(buffer_stream_t *self)
 {
     assert(self && self->size > 0);
+    assert(bs_doublequeue_t_size(&self->q) > 0); // Ensure queue is not empty
+
     sbuf_t *container = bs_doublequeue_t_pull_front(&self->q);
     self->size -= sbufGetLength(container);
     return container;
