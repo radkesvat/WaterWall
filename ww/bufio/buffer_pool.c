@@ -20,6 +20,10 @@ struct buffer_pool_s
     atomic_size_t in_use;
 #endif
 
+#ifdef DEBUG
+    tid_t tid;
+#endif
+
     master_pool_t *large_buffers_mp;
     sbuf_t       **large_buffers;
     master_pool_t *small_buffers_mp;
@@ -27,10 +31,28 @@ struct buffer_pool_s
 };
 
 /**
- * Gets the size of large buffers in the buffer pool.
- * @param pool The buffer pool.
- * @return The size of large buffers.
+ * Checks if the current thread has access to the pool.
+ * This has no effect on non-debug builds.
+ * @param pool The generic pool to check access for.
  */
+#ifdef DEBUG
+static inline void bufferpoolDebugCheckThreadAccess(buffer_pool_t *pool)
+{
+    if (UNLIKELY(pool->tid == 0))
+    {
+        // This is the first access, set the thread ID
+        pool->tid = getTID();
+    }
+    if (UNLIKELY(pool->tid != getTID()))
+    {
+        printError("BufferPool: Access from wrong thread %d, expected %d", getTID(), pool->tid);
+        terminateProgram(1);
+    }
+}
+#else
+#define bufferpoolDebugCheckThreadAccess(pool) ((void) 0)
+#endif
+
 uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
 {
     return pool->large_buffers_size;
@@ -41,11 +63,6 @@ uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool)
     return pool->large_buffer_left_padding;
 }
 
-/**
- * Gets the size of small buffers in the buffer pool.
- * @param pool The buffer pool.
- * @return The size of small buffers.
- */
 uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool)
 {
     return pool->small_buffers_size;
@@ -197,19 +214,17 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
 #endif
 }
 
-/**
- * Retrieves a large buffer from the buffer pool.
- * @param pool The buffer pool.
- * @return A pointer to the retrieved large buffer.
- */
 sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 {
 #if BYPASS_BUFFERPOOL == 1
     return sbufCreateWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding);
 #endif
+
 #if BUFFER_POOL_DEBUG == 1
     pool->in_use += 1;
 #endif
+
+    bufferpoolDebugCheckThreadAccess(pool);
 
     if (LIKELY(pool->large_buffers_container_len > 0))
     {
@@ -222,19 +237,17 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
     return pool->large_buffers[pool->large_buffers_container_len];
 }
 
-/**
- * Retrieves a small buffer from the buffer pool.
- * @param pool The buffer pool.
- * @return A pointer to the retrieved small buffer.
- */
 sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 {
 #if BYPASS_BUFFERPOOL == 1
     return sbufCreateWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding);
 #endif
+
 #if BUFFER_POOL_DEBUG == 1
     pool->in_use += 1;
 #endif
+
+    bufferpoolDebugCheckThreadAccess(pool);
 
     if (LIKELY(pool->small_buffers_container_len > 0))
     {
@@ -270,7 +283,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 #endif
     sbufReset(b);
 
-    if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size)
+    if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size && sbufGetLeftPadding(b) == pool->large_buffer_left_padding)
     {
         if (UNLIKELY(pool->large_buffers_container_len > pool->free_threshold))
         {
@@ -278,7 +291,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
         }
         pool->large_buffers[(pool->large_buffers_container_len)++] = b;
     }
-    else if (sbufGetTotalCapacityNoPadding(b) == pool->small_buffers_size)
+    else if (sbufGetTotalCapacityNoPadding(b) == pool->small_buffers_size && sbufGetLeftPadding(b) == pool->small_buffer_left_padding)
     {
         if (UNLIKELY(pool->small_buffers_container_len > pool->free_threshold))
         {
@@ -292,13 +305,6 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     }
 }
 
-/**
- * Appends and merges two buffers.
- * @param pool The buffer pool.
- * @param b1 The first buffer.
- * @param b2 The second buffer.
- * @return A pointer to the merged buffer.
- */
 sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2)
 {
     b1 = sbufConcat(b1, b2);
@@ -306,12 +312,6 @@ sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restri
     return b1;
 }
 
-/**
- * Duplicates a buffer using the buffer pool.
- * @param pool The buffer pool.
- * @param b The buffer to duplicate.
- * @return A pointer to the duplicated buffer.
- */
 sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 {
     sbuf_t *bnew;
@@ -332,30 +332,24 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
     return bnew;
 }
 
-/**
- * Updates the allocation paddings for the buffer pool.
- * @param pool The buffer pool.
- * @param large_buffer_left_padding The left padding for large buffers.
- * @param small_buffer_left_padding The left padding for small buffers.
- */
 void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buffer_left_padding,
                                         uint16_t small_buffer_left_padding)
 {
+
+    uint16_t l_new_max = max(pool->large_buffer_left_padding, large_buffer_left_padding);
+    uint16_t s_new_max = max(pool->small_buffer_left_padding, small_buffer_left_padding);
+
+    if(l_new_max == pool->large_buffer_left_padding &&
+        s_new_max == pool->small_buffer_left_padding)
+    {
+        return; // no change
+    }
     assert(pool->small_buffers_container_len == 0 && pool->large_buffers_container_len == 0);
 
-    pool->large_buffer_left_padding = max(pool->large_buffer_left_padding, large_buffer_left_padding);
-    pool->small_buffer_left_padding = max(pool->small_buffer_left_padding, small_buffer_left_padding);
+    pool->large_buffer_left_padding = l_new_max;
+    pool->small_buffer_left_padding = s_new_max;
 }
 
-/**
- * Creates a buffer pool with specified parameters.
- * @param mp_large The master pool for large buffers.
- * @param mp_small The master pool for small buffers.
- * @param bufcount The number of buffers to preallocate.
- * @param large_buffer_size The size of each large buffer.
- * @param small_buffer_size The size of each small buffer.
- * @return A pointer to the created buffer pool.
- */
 buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small, uint32_t bufcount,
                                 uint32_t large_buffer_size, uint32_t small_buffer_size)
 {
@@ -378,6 +372,9 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
         .in_use = 0,
 #endif
 
+#ifdef DEBUG
+        .tid = 0,
+#endif
         .large_buffers_mp = mp_large,
         .large_buffers    = (sbuf_t **) memoryAllocate(container_len),
         .small_buffers_mp = mp_small,
@@ -408,7 +405,7 @@ void bufferpoolDestroy(buffer_pool_t *pool)
     }
     masterpoolMakeEmpty(pool->large_buffers_mp, pool);
     masterpoolMakeEmpty(pool->small_buffers_mp, pool);
-    memoryFree(pool->large_buffers);
-    memoryFree(pool->small_buffers);
+    memoryFree((void *) pool->large_buffers);
+    memoryFree((void *) pool->small_buffers);
     memoryFree(pool);
 }

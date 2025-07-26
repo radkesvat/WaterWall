@@ -23,6 +23,7 @@ struct buffer_stream_s
     buffer_pool_t   *pool;
     bs_doublequeue_t q;
     size_t           size;
+    uint16_t         use_left_padding; // Whether to use left padding for buffers
 };
 
 typedef struct buffer_stream_s buffer_stream_t;
@@ -30,9 +31,10 @@ typedef struct buffer_stream_s buffer_stream_t;
 /**
  * Creates a new buffer stream.
  * @param pool The buffer pool.
+ * @param use_left_padding Whether to use left padding for buffers.
  * @return A pointer to the created buffer stream.
  */
-buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool);
+buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding);
 
 /**
  * Empties the buffer stream, returning all buffers to the pool.

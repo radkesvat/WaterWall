@@ -118,6 +118,14 @@ static inline uint32_t sbufGetRightCapacity(const sbuf_t *const b)
 }
 
 /**
+ * Gets left padding of the buffer.
+ */
+static inline uint16_t sbufGetLeftPadding(const sbuf_t *const b)
+{
+    return b->l_pad;
+}
+
+/**
  * Shifts the buffer left by specified bytes.
  */
 static inline void sbufShiftLeft(sbuf_t *const b, const uint32_t bytes)
@@ -132,7 +140,7 @@ static inline void sbufShiftLeft(sbuf_t *const b, const uint32_t bytes)
  */
 static inline void sbufShiftRight(sbuf_t *const b, const uint32_t bytes)
 {
-    assert(sbufGetRightCapacity(b) >= bytes);
+    assert(b->len >= bytes);
     b->curpos += bytes;
     b->len -= bytes;
 }

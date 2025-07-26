@@ -64,7 +64,7 @@ struct generic_pool_s
  * @param pool The generic pool to check access for.
  */
 #ifdef DEBUG
-static void debugCheckThreadAccess(generic_pool_t *pool)
+static inline void genericpoolDebugCheckThreadAccess(generic_pool_t *pool)
 {
     if (UNLIKELY(pool->tid == 0))
     {
@@ -78,7 +78,7 @@ static void debugCheckThreadAccess(generic_pool_t *pool)
     }
 }
 #else
-#define debugCheckThreadAccess(pool) ((void) 0)
+#define genericpoolDebugCheckThreadAccess(pool) ((void) 0)
 #endif
 
 /**
@@ -107,7 +107,7 @@ static inline pool_item_t *genericpoolGetItem(generic_pool_t *pool)
 #if POOL_DEBUG == 1
     pool->in_use += 1;
 #endif
-    debugCheckThreadAccess(pool);
+    genericpoolDebugCheckThreadAccess(pool);
 
     if (LIKELY(pool->len > 0))
     {
@@ -135,7 +135,7 @@ static inline void genericpoolReuseItem(generic_pool_t *pool, pool_item_t *b)
 #if POOL_DEBUG == 1
     pool->in_use -= 1;
 #endif
-    debugCheckThreadAccess(pool);
+    genericpoolDebugCheckThreadAccess(pool);
 
     if (pool->len > pool->free_threshold)
     {

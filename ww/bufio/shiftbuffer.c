@@ -96,12 +96,14 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_t bytes)
 {
     assert(bytes <= sbufGetLength(source));
-    assert(sbufGetLength(dest) == 0);
+    assert(bytes <= sbufGetRightCapacity(dest));
 
-    dest = sbufReserveSpace(dest, bytes);
-    sbufSetLength(dest, bytes);
+
+    // dest = sbufReserveSpace(dest, bytes);
+
 
     sbufWriteBuf(dest, source, bytes);
+    sbufSetLength(dest, sbufGetLength(dest) + bytes);
 
     sbufShiftRight(source, bytes);
 
