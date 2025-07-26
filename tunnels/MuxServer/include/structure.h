@@ -24,7 +24,6 @@ typedef struct muxserver_lstate_s
     struct muxserver_lstate_s *child_prev;     // previous child in the parent connection
     struct muxserver_lstate_s *child_next;     // next child in the parent connection
     buffer_stream_t           *read_stream;    // stream for reading data from the parent connection
-    uint64_t                   creation_epoch; // epoch of the connection creation, used for concurrency mode timer
     cid_t                      connection_id;  // unique connection id, used for multiplexing
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
     bool     is_child : 1;   // if this connection is muxed into a parent connection
@@ -36,7 +35,8 @@ enum
     kTunnelStateSize        = sizeof(muxserver_tstate_t),
     kLineStateSize          = sizeof(muxserver_lstate_t),
     kConcurrencyModeTimer   = kDvsFirstOption,
-    kConcurrencyModeCounter = kDvsSecondOption
+    kConcurrencyModeCounter = kDvsSecondOption,
+    kMaxMainChannelBufferSize = 1024 * 1024, // 1MB
 };
 
 /*
@@ -102,7 +102,7 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void muxserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child);
+void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child, cid_t connection_id);
 void muxserverLinestateDestroy(muxserver_lstate_t *ls);
 
 bool muxserverCheckConnectionIsExhausted(muxserver_tstate_t *ts, muxserver_lstate_t *ls);

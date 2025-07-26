@@ -41,9 +41,9 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     if (ts->concurrency_mode == kConcurrencyModeTimer)
     {
         int duration = 0;
-        if (! getIntFromJsonObject(&duration, settings, "duration"))
+        if (! getIntFromJsonObject(&duration, settings, "connection-duration"))
         {
-            LOGF("MuxClient: duration is not specified", duration);
+            LOGF("MuxClient: connection-duration is not specified", duration);
             tunnelDestroy(t);
             return NULL;
         }
@@ -53,10 +53,18 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
             tunnelDestroy(t);
             return NULL;
         }
+        if (duration <= 60)
+        {
+            LOGF("MuxClient: This value is in Milliseconds: you are probably wrong with value lower than 60 , value is"
+                 " %d",
+                 duration);
+            tunnelDestroy(t);
+            return NULL;
+        }
 
         ts->concurrency_duration = duration;
     }
-    
+
     if (ts->concurrency_mode == kConcurrencyModeCounter)
     {
         int counter = 0;

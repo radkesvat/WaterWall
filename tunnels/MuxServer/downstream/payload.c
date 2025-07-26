@@ -13,5 +13,5 @@ void muxserverTunnelDownStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 
     line_t *parent_line = child_ls->parent->l;
 
-    tunnelNextUpStreamPayload(t, parent_line, buf);
+    tunnelPrevDownStreamPayload(t, parent_line, buf);
 }

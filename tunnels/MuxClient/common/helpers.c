@@ -4,8 +4,7 @@
 
 void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child)
 {
-
-    assert(child && parent && ! child->is_child && parent->is_child == false);
+    assert(child != NULL && parent != NULL && child->is_child && (parent->is_child == false));
     child->parent   = parent;
     child->is_child = true;
 
@@ -20,9 +19,6 @@ void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *chi
     parent->child_next = child;
 
     parent->children_count++;
-
-    assert(parent->connection_id < CID_MAX);
-    child->connection_id = ++parent->connection_id;
 }
 
 void muxclientLeaveConnection(muxclient_lstate_t *child)
@@ -58,9 +54,15 @@ bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstat
 {
     assert(ls->is_child == false);
 
+    if (ls->children_count == CID_MAX)
+    {
+        LOGE("MuxClient: Connection exhausted, children count reached maximum value: %u", CID_MAX);
+        return true; // Connection is exhausted
+    }
+
     if (ts->concurrency_mode == kConcurrencyModeTimer)
     {
-        if (wloopNowMS(getWorkerLoop(lineGetWID(ls->l))) - ls->creation_epoch < ts->concurrency_duration)
+        if (wloopNowMS(getWorkerLoop(lineGetWID(ls->l))) < ts->concurrency_duration + ls->creation_epoch)
         {
             return false; // Connection is not exhausted yet
         }
@@ -87,11 +89,11 @@ void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag)
         LOGF("MuxClient: Buffer length exceeds maximum allowed size for MUX frame: %zu", sbufGetLength(buf));
         terminateProgram(1);
     }
-    sbufShiftLeft(buf, kMuxFrameLength);
 
-    mux_frame_t frame = {.length = sbufGetLength(buf) - kMuxFrameLength,
+    mux_frame_t frame = {.length = sbufGetLength(buf),
                          .cid    = cid, // will be set later
                          .flags  = flag,
                          ._pad1  = 0};
+    sbufShiftLeft(buf, kMuxFrameLength);
     sbufWrite(buf, &frame, kMuxFrameLength);
 }

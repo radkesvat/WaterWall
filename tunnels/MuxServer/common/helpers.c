@@ -4,8 +4,7 @@
 
 void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *child)
 {
-
-    assert(child && parent && ! child->is_child && parent->is_child == false);
+    assert(child != NULL && parent != NULL && child->is_child && (parent->is_child == false));
     child->parent   = parent;
     child->is_child = true;
 
@@ -20,9 +19,6 @@ void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *chi
     parent->child_next = child;
 
     parent->children_count++;
-
-    assert(parent->connection_id < CID_MAX);
-    child->connection_id = ++parent->connection_id;
 }
 
 void muxserverLeaveConnection(muxserver_lstate_t *child)
@@ -62,11 +58,11 @@ void muxserverMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag)
         LOGF("MuxServer: Buffer length exceeds maximum allowed size for MUX frame: %zu", sbufGetLength(buf));
         terminateProgram(1);
     }
-    sbufShiftLeft(buf, kMuxFrameLength);
 
-    mux_frame_t frame = {.length = sbufGetLength(buf) - kMuxFrameLength,
+    mux_frame_t frame = {.length = sbufGetLength(buf),
                          .cid    = cid, // will be set later
                          .flags  = flag,
                          ._pad1  = 0};
+    sbufShiftLeft(buf, kMuxFrameLength);
     sbufWrite(buf, &frame, kMuxFrameLength);
 }

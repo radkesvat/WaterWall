@@ -2,16 +2,15 @@
 
 #include "loggers/network_logger.h"
 
-void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child)
+void muxserverLinestateInitialize(muxserver_lstate_t *ls, line_t *l, bool is_child, cid_t connection_id)
 {
     wid_t wid = lineGetWID(l);
     *ls       = (muxserver_lstate_t) {.l              = l,
                                       .parent         = NULL,
                                       .child_prev     = NULL,
                                       .child_next     = NULL,
-                                      .read_stream    = bufferstreamCreate(getWorkerBufferPool(wid)),
-                                      .creation_epoch = wloopNowMS(getWorkerLoop(wid)),
-                                      .connection_id  = 0, // will be set later
+                                      .read_stream    = bufferstreamCreate(getWorkerBufferPool(wid),kMuxFrameLength),
+                                      .connection_id  = connection_id,
                                       .children_count = 0,
                                       .is_child       = is_child,
                                       .paused         = false};

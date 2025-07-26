@@ -40,7 +40,8 @@ enum
     kTunnelStateSize        = sizeof(muxclient_tstate_t),
     kLineStateSize          = sizeof(muxclient_lstate_t),
     kConcurrencyModeTimer   = kDvsFirstOption,
-    kConcurrencyModeCounter = kDvsSecondOption
+    kConcurrencyModeCounter = kDvsSecondOption,
+    kMaxMainChannelBufferSize = 1024 * 1024, // 1MB
 };
 
 /*
@@ -106,7 +107,7 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void muxclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void muxclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child);
+void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_child,cid_t connection_id);
 void muxclientLinestateDestroy(muxclient_lstate_t *ls);
 
 bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);

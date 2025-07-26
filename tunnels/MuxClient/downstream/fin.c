@@ -10,9 +10,10 @@ void muxclientTunnelDownStreamFinish(tunnel_t *t, line_t *parent_l)
     while (child_ls)
     {
         muxclient_lstate_t *temp = child_ls->child_next;
+        line_t *child_l = child_ls->l;
         muxclientLeaveConnection(child_ls);
         muxclientLinestateDestroy(child_ls);
-        tunnelPrevDownStreamFinish(t, child_ls->l);
+        tunnelPrevDownStreamFinish(t, child_l);
         child_ls = temp;
     }
 

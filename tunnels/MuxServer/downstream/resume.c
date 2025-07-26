@@ -12,7 +12,7 @@ void muxserverTunnelDownStreamResume(tunnel_t *t, line_t *child_l)
     muxserverMakeMuxFrame(resumepacket_buf, child_ls->connection_id, kMuxFlagFlowResume);
 
     line_t             *parent_line = child_ls->parent->l;
-    muxserver_lstate_t *parent_ls   = lineGetState(parent_line, t);
+    // muxserver_lstate_t *parent_ls   = lineGetState(parent_line, t);
 
     lineLock(parent_line);
     tunnelPrevDownStreamPayload(t, parent_line, resumepacket_buf);
@@ -24,7 +24,7 @@ void muxserverTunnelDownStreamResume(tunnel_t *t, line_t *child_l)
     }
     lineUnlock(parent_line);
 
-    parent_ls->paused = false;
-    tunnelPrevDownStreamResume(t, parent_line);
+    // parent_ls->paused = false;
+    // tunnelPrevDownStreamResume(t, parent_line);
 }
 
