@@ -383,6 +383,13 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
+    bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+
+    bufferpoolUpdateAllocationPaddings(writer_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
+
+                                       
     char cmdbuf[200];
     stringNPrintf(cmdbuf, sizeof(cmdbuf), "netsh interface ipv4 set subinterface %s mtu=%d", tdev->name,
                   GLOBAL_MTU_SIZE);
@@ -668,11 +675,6 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
         );
 
-    bufferpoolUpdateAllocationPaddings(reader_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
-
-    bufferpoolUpdateAllocationPaddings(writer_bpool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
-                                       bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
