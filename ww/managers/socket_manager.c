@@ -993,6 +993,12 @@ socket_manager_state_t *socketmanagerCreate(void)
         state->tcp_pools[i].pool = genericpoolCreateWithCapacity(
             state->mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
         mutexInit(&(state->tcp_pools[i].mutex));
+
+#ifdef DEBUG
+        // we already protect these pools with mutex
+        state->udp_pools[i].pool->no_thread_check = true;
+        state->tcp_pools[i].pool->no_thread_check = true;
+#endif
     }
 
 #ifdef OS_UNIX

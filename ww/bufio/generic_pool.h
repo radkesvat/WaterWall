@@ -53,6 +53,7 @@ typedef void (*PoolItemDestroyHandle)(generic_pool_t *pool, pool_item_t *item);
 struct generic_pool_s
 {
 #ifdef DEBUG
+    bool no_thread_check; // if true, we don't check the thread ID
     tid_t tid;
 #endif
     GENERIC_POOL_FIELDS
@@ -66,6 +67,12 @@ struct generic_pool_s
 #ifdef DEBUG
 static inline void genericpoolDebugCheckThreadAccess(generic_pool_t *pool)
 {
+    if (pool->no_thread_check)
+    {
+        // If no thread check is enabled, skip the thread ID check
+        return;
+    }
+
     if (UNLIKELY(pool->tid == 0))
     {
         // This is the first access, set the thread ID
