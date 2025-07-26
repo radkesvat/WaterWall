@@ -114,7 +114,7 @@ static inline uint32_t sbufGetLeftCapacityNoPadding(const sbuf_t *const b)
  */
 static inline uint32_t sbufGetRightCapacity(const sbuf_t *const b)
 {
-    return (b->capacity - b->curpos);
+    return (b->capacity - b->curpos - b->len);
 }
 
 /**
