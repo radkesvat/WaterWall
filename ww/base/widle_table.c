@@ -13,6 +13,8 @@
 #include "wloop.h"
 #include "wmutex.h"
 
+#include "loggers/internal_logger.h"
+
 enum
 {
     kVecCap         = 32,
@@ -111,6 +113,7 @@ widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expir
                             .cb           = cb,
                             .table        = self};
 
+    // LOGD("add to expire on idle table, wid: %ld, hash: %lx, expire_at_ms: %lu", wid, key, item->expire_at_ms);
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
     {
         // hash is already in the table !
@@ -219,6 +222,9 @@ static void beforeCloseCallBack(wevent_t *ev)
             return;
         }
 
+        // LOGD("item expired, wid: %ld, hash: %lx, expire_at_ms: %lu, now: %lu", item->wid, item->hash,
+        //      item->expire_at_ms, wloopNowMS(getWorkerLoop(item->wid)));
+
         uint64_t old_expire_at_ms = item->expire_at_ms;
 
         if (item->cb)
@@ -255,10 +261,12 @@ static void beforeCloseCallBack(wevent_t *ev)
  */
 void idleCallBack(wtimer_t *timer)
 {
+
     widle_table_t *self  = weventGetUserdata(timer);
     const uint64_t now   = wloopNowMS(self->loop);
     self->last_update_ms = now;
     mutexLock(&(self->mutex));
+    // LOGD("idleCallBack called, wid: %ld , loop current ms: %lu", getWID(), wloopNowMS(self->loop));
 
     heapq_idles_t_make_heap(&self->hqueue);
 
