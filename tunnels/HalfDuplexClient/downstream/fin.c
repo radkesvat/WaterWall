@@ -7,8 +7,15 @@ static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *
     discard worker;
     discard arg3;
 
-    tunnel_t                  *t  = arg1;
-    line_t                    *l  = arg2;
+    tunnel_t *t = arg1;
+    line_t   *l = arg2;
+
+    if (! lineIsAlive(l))
+    {
+        // The line is already closed, no need to do anything
+        lineUnlock(l);
+        return;
+    }
     halfduplexclient_lstate_t *ls = lineGetState(l, t);
 
     if (! (ls->upload_line == NULL && ls->download_line == NULL))
