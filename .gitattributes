@@ -1,5 +1,6 @@
 *.h linguist-language=C
 ww/lwip/** linguist-vendored
+ww/vendor/** linguist-vendored
 ww/managers/mimalloc/** linguist-vendored
 *.asm linguist-vendored
 *.s linguist-vendored
