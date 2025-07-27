@@ -272,7 +272,7 @@ void idleCallBack(wtimer_t *timer)
 
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
-        widle_item_t *item = *heapq_idles_t_(&(self->hqueue));
+        widle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
 
         if (item->expire_at_ms <= now)
         {
