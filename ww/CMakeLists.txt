@@ -427,7 +427,7 @@ check_function("setproctitle" "unistd.h")
 include(CheckCCompilerFlag)
 
 check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
-check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX)
+check_c_compiler_flag("-mavx2" WW_SUPPORTED_MEMCOPY_AVX22)
 
 
 
@@ -437,7 +437,7 @@ check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX)
 ################################################################################
 set(WW_HAVE_AVX2 0)
 set(WW_HAVE_SSE3 0)
-set(WW_SUPPORTED_MEMCOPY_128 0)
+set(WW_SUPPORTED_MEMCOPY_AVX2 0)
 set(WW_CHECKSUM_AVX2 0)
 set(WW_CHECKSUM_SSE3 0)
 
@@ -455,11 +455,11 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
         message(FATAL_ERROR "SSE3 not supported by compiler")
     endif()
 
-    if(COMPILER_SUPPORTS_AVX)
+    if(WW_SUPPORTED_MEMCOPY_AVX2)
         message(STATUS "Compiler supports AVX2")
         target_compile_options(ww PUBLIC -mavx2)
         set(WW_HAVE_AVX2 1)
-        set(WW_SUPPORTED_MEMCOPY_128 1)
+        set(WW_SUPPORTED_MEMCOPY_AVX2 1)
         set(WW_CHECKSUM_AVX2 1)
         target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
     else()
@@ -480,7 +480,7 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
     # endif()
 
 else()
-    message(STATUS "AVX not supported by compiler2")
+    message(STATUS "AVX not supported by compiler")
 endif()
 
 ################################################################################
