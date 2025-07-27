@@ -24,7 +24,7 @@ enum
 #define i_type                    heapq_idles_t
 #define i_key                     widle_item_t *
 #define i_cmp                     -c_default_cmp                                // NOLINT
-#define idletable_less_func(x, y) ((*(x))->expire_at_ms < (*(y))->expire_at_ms) // NOLINT
+#define idletable_less_func(x, y) ((*(x))->expire_at_ms > (*(y))->expire_at_ms) // NOLINT
 #define i_less                    idletable_less_func                           // NOLINT
 #include "stc/pqueue.h"
 
@@ -272,7 +272,7 @@ void idleCallBack(wtimer_t *timer)
 
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
-        widle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
+        widle_item_t *item = *heapq_idles_t_(&(self->hqueue));
 
         if (item->expire_at_ms <= now)
         {
