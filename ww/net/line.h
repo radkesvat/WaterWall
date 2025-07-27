@@ -53,15 +53,9 @@ typedef struct line_s
 
 } line_t;
 
-/**
- * @brief Creates a new line instance.
- *
- * @param pools Pointer to the array of generic pools. (per WID)
- * @return line_t* Pointer to the created line.
- */
-static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
+
+static inline line_t *lineCreateForWorker(generic_pool_t **pools, wid_t wid)
 {
-    assert(wid == getWID());
 
     line_t *l = genericpoolGetItem(pools[wid]);
 
@@ -83,6 +77,20 @@ static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
     memorySet((void *) &l->tunnels_line_state[0], 0, genericpoolGetItemSize(pools[wid]) - sizeof(line_t));
 
     return l;
+}
+
+/**
+ * @brief Creates a new line instance.
+ *
+ * @param pools Pointer to the array of generic pools. (per WID)
+ * @return line_t* Pointer to the created line.
+ */
+static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
+{
+    assert(wid == getWID());
+  
+
+    return lineCreateForWorker(pools, wid);
 }
 
 /**

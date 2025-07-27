@@ -552,7 +552,7 @@ static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *l)
  */
 static void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
 {
-    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
 
     tunnelchainInsert(tc, t);
     tunnelBind(t, child);
@@ -584,7 +584,7 @@ static void pipetunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_
  */
 static void pipetunnelDefaultOnPrepair(tunnel_t *t)
 {
-    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
     child->onPrepair(child);
 }
 
@@ -595,7 +595,7 @@ static void pipetunnelDefaultOnPrepair(tunnel_t *t)
  */
 static void pipetunnelDefaultOnStart(tunnel_t *t)
 {
-    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
     child->onStart(child);
 }
 
@@ -635,7 +635,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
 
     pt->onDestroy = &pipetunnelDestroy;
 
-    memoryCopy(&(pt->state[0]), (void*)&child, sizeof(tunnel_t *));
+    memoryCopy(&(pt->state[0]), (void *) &child, sizeof(tunnel_t *));
 
     return pt;
 }
@@ -647,7 +647,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
  */
 void pipetunnelDestroy(tunnel_t *t)
 {
-    tunnel_t *child = *(tunnel_t**)tunnelGetState(t);
+    tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
     child->onDestroy(child);
     tunnelDestroy(t);
 }
@@ -688,9 +688,7 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
         // parent_tunnel->fnFinU(parent_tunnel, l);
     }
     assert(ls->pair_line == NULL);
-    ls->pair_line       = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(l));
-    ls->pair_line->wid = wid_to;
-
+    ls->pair_line      = lineCreateForWorker(tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
 
     pipetunnel_line_state_t *ls_lineto = lineGetState(ls->pair_line, parent_tunnel);
     ls_lineto->pair_line               = l;

@@ -54,7 +54,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
 
         if (tc->contains_packet_node)
         {
-            tc->packet_lines[i] = lineCreate(tc->line_pools, i);
+            tc->packet_lines[i] = lineCreateForWorker(tc->line_pools, i);
         }
     }
 
@@ -70,6 +70,11 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
         {
             lineDestroy(tc->packet_lines[i]);
         }
+    }
+    // since we destroyed all lines on main thread, we need to free line pools later, not there after each line
+    // because on dsetruction of each line it needs pool[getWID()] to be valid
+    for (uint32_t i = 0; i < tc->workers_count; i++)
+    {
         if (tc->line_pools[i])
         {
             genericpoolDestroy(tc->line_pools[i]);
@@ -87,8 +92,6 @@ void tunnelchainDestroy(tunnel_chain_t *tc)
     }
     memoryFree(tc);
 }
-
-
 
 void tunnelchainCombine(tunnel_chain_t *destination, tunnel_chain_t *source)
 {
