@@ -64,7 +64,7 @@ WW_INLINE unsigned long long getTimeOfDayMS(void)
 {
     struct timeval tv;
     getTimeOfDay(&tv, NULL);
-    return (unsigned long long)(tv.tv_sec *  (1000 + tv.tv_usec / 1000));
+    return (unsigned long long)((tv.tv_sec * 1000) + (tv.tv_usec / 1000));
 }
 WW_INLINE unsigned long long getTimeOfDayUS(void)
 {
