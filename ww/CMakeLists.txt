@@ -427,10 +427,7 @@ check_function("setproctitle" "unistd.h")
 include(CheckCCompilerFlag)
 
 check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
-check_c_compiler_flag("-mavx2" WW_SUPPORTED_MEMCOPY_AVX22)
-
-
-
+check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
 
 ################################################################################
 # AVX/SSE3 Checksum and Memory Copy Configuration
@@ -455,7 +452,7 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
         message(FATAL_ERROR "SSE3 not supported by compiler")
     endif()
 
-    if(WW_SUPPORTED_MEMCOPY_AVX2)
+    if(COMPILER_SUPPORTS_AVX2)
         message(STATUS "Compiler supports AVX2")
         target_compile_options(ww PUBLIC -mavx2)
         set(WW_HAVE_AVX2 1)
