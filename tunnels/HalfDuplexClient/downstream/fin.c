@@ -24,7 +24,7 @@ static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *
         tunnelNextUpStreamFinish(t, l);
     }
 
-    lineUnlock(l);
+    lineDestroy(l);
 }
 
 void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)

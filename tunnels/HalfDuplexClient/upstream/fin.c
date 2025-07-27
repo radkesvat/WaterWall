@@ -8,16 +8,18 @@ void halfduplexclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->upload_line)
     {
-        tunnelNextUpStreamFinish(t, ls->upload_line);
-        halfduplexclientLinestateDestroy(lineGetState(ls->upload_line, t));
-        lineDestroy(ls->upload_line);
+        line_t *upload_line = ls->upload_line;
+        tunnelNextUpStreamFinish(t, upload_line);
+        halfduplexclientLinestateDestroy(lineGetState(upload_line, t));
+        lineDestroy(upload_line);
     }
 
     if (ls->download_line)
     {
-        tunnelNextUpStreamFinish(t, ls->download_line);
-        halfduplexclientLinestateDestroy(lineGetState(ls->download_line, t));
-        lineDestroy(ls->download_line);
+        line_t *download_line = ls->download_line;
+        tunnelNextUpStreamFinish(t, download_line);
+        halfduplexclientLinestateDestroy(lineGetState(download_line, t));
+        lineDestroy(download_line);
     }
 
     halfduplexclientLinestateDestroy(ls);
