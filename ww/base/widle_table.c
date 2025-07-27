@@ -76,7 +76,7 @@ widle_table_t *idleTableCreate(wloop_t *loop)
 
     *newtable = (widle_table_t) {.memptr         = ptr,
                                  .loop           = loop,
-                                 .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, 1),
+                                 .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, INFINITE),
                                  .hqueue         = heapq_idles_t_with_capacity(kVecCap),
                                  .hmap           = hmap_idles_t_with_capacity(kVecCap),
                                  .last_update_ms = wloopNowMS(loop)};
