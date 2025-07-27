@@ -62,8 +62,8 @@
 #include "tunnels/server/openssl/openssl_server.h"
 #endif
 
-#ifdef INCLUDE_OPENSSL_CLIENT
-#include "tunnels/client/openssl/openssl_client.h"
+#ifdef INCLUDE_TLS_CLIENT
+#include "tunnels/TlsClient/include/interface.h"
 #endif
 
 #ifdef INCLUDE_LOGGER_TUNNEL
@@ -246,8 +246,8 @@ void loadImportedTunnelsIntoCore(void)
     USING(OpenSSLServer);
 #endif
 
-#ifdef INCLUDE_OPENSSL_CLIENT
-    USING(OpenSSLClient);
+#ifdef INCLUDE_TLS_CLIENT
+    USING(TlsClient);
 #endif
 
 #ifdef INCLUDE_LOGGER_TUNNEL
