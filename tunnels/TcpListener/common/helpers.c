@@ -89,8 +89,16 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wioSetCallBackRead(io, onRecv);
     wioSetCallBackClose(io, onClose);
     // wioSetReadTimeout(io, 1600 * 1000);
-    ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcplistenerOnIdleConnectionExpire, wid,
-                                  kDefaultKeepAliveTimeOutMs);
+
+    ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcplistenerOnIdleConnectionExpire,
+                                      wid, kDefaultKeepAliveTimeOutMs);
+    while (ls->idle_handle == NULL)
+    {
+        // a very rare case where the socket FD from another thread is still present in the idle table
+        cycleDelay(100);
+        ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcplistenerOnIdleConnectionExpire,
+                                      wid, kDefaultKeepAliveTimeOutMs);
+    }
 
     // send the init packet
 
@@ -171,7 +179,7 @@ void tcplistenerOnIdleConnectionExpire(widle_item_t *idle_tcp)
     ls->idle_handle    = NULL; // mark as removed
 
     tunnel_t *t = ls->tunnel;
-    line_t *l = ls->line;
+    line_t   *l = ls->line;
 
     LOGW("TcpListener: expired 1 tcp connection on FD:%x ", wioGetFD(ls->io));
     weventSetUserData(ls->io, NULL);

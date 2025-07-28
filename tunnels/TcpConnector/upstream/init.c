@@ -4,7 +4,7 @@
 
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    tcpconnector_tstate_t *ts  = tunnelGetState(t);
+    tcpconnector_tstate_t *ts = tunnelGetState(t);
     tcpconnector_lstate_t *ls = lineGetState(l, t);
 
     tcpconnectorLinestateInitialize(ls);
@@ -118,11 +118,21 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     wioSetPeerAddr(io, (struct sockaddr *) &(addr), (int) sockaddrLen(&(addr)));
     ls->io = io;
     weventSetUserData(io, ls);
+
+    ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
+                                  lineGetWID(l), kReadWriteTimeoutMs);
+
+    while (ls->idle_handle == NULL)
+    {
+        // a very rare case where the socket FD from another thread is still present in the idle table
+        cycleDelay(100);
+        ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
+                                      lineGetWID(l), kReadWriteTimeoutMs);
+    }
+
     wioSetCallBackConnect(io, tcpconnectorOnOutBoundConnected);
     wioSetCallBackClose(io, tcpconnectorOnClose);
     // wioSetReadTimeout(lstate->io, kReadWriteTimeoutMs);
-    ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire, lineGetWID(l),
-                                  kReadWriteTimeoutMs);
 
     // issue connect on the socket
     wioConnect(io);
