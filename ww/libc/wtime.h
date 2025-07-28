@@ -207,10 +207,19 @@ clock_gettime(CLOCK_MONOTONIC, &name##_end); \
     printDebug("%s took %ld nanoseconds\n", #name, name##_time);
 
 
+#ifdef COMPILER_MSVC
+    #include <intrin.h>
+    #pragma intrinsic(_mm_pause)
+    #define CPU_RELAX() _mm_pause()
+#else
+    #define CPU_RELAX() __asm__ __volatile__ ("" ::: "memory")
+#endif
+
 static inline void cycleDelay(unsigned int cycles) {
     volatile uint32_t i;
     for (i = 0; i < cycles; ++i) {
-        __asm__ __volatile__ ("" ::: "memory");
+        CPU_RELAX();
     }
 }
+
 #endif // WW_TIME_H_
