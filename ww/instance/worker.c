@@ -120,7 +120,7 @@ void workerRun(worker_t *worker)
     worker->pipetunnel_msg_pool = NULL;
     worker->buffer_pool         = NULL;
 
-    LOGD("Worker %d cleanly exited !", wid);
+    LOGD("Worker %d exited", wid);
 }
 
 /**
