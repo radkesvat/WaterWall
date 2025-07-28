@@ -32,9 +32,9 @@ typedef struct buffer_stream_s buffer_stream_t;
  * Creates a new buffer stream.
  * @param pool The buffer pool.
  * @param use_left_padding Whether to use left padding for buffers.
- * @return A pointer to the created buffer stream.
+ * @return A new buffer stream instance.
  */
-buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding);
+buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding);
 
 /**
  * Empties the buffer stream, returning all buffers to the pool.

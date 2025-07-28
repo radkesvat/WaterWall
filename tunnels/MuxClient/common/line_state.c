@@ -50,6 +50,6 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
         }
     }
 
-    bufferstreamDestroy(ls->read_stream);
+    bufferstreamDestroy(&(ls->read_stream));
     memorySet(ls, 0, sizeof(muxclient_lstate_t));
 }

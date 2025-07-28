@@ -4,20 +4,20 @@
 
 static sbuf_t *tryReadCompleteFrame(muxserver_lstate_t *parent_ls, mux_frame_t *frame)
 {
-    if (bufferstreamLen(parent_ls->read_stream) < kMuxFrameLength)
+    if (bufferstreamLen(parent_&(ls->read_stream)) < kMuxFrameLength)
     {
         return NULL;
     }
 
-    bufferstreamViewBytesAt(parent_ls->read_stream, 0, (uint8_t *) frame, kMuxFrameLength);
+    bufferstreamViewBytesAt(parent_&(ls->read_stream), 0, (uint8_t *) frame, kMuxFrameLength);
 
     size_t total_frame_size = (size_t) frame->length + (size_t) kMuxFrameLength;
-    if (total_frame_size > bufferstreamLen(parent_ls->read_stream))
+    if (total_frame_size > bufferstreamLen(parent_&(ls->read_stream)))
     {
         return NULL;
     }
 
-    return bufferstreamReadExact(parent_ls->read_stream, total_frame_size);
+    return bufferstreamReadExact(parent_&(ls->read_stream), total_frame_size);
 }
 
 static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_frame_t *frame,
@@ -159,9 +159,9 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
 
-    bufferstreamPush(parent_ls->read_stream, buf);
+    bufferstreamPush(parent_&(ls->read_stream), buf);
 
-    if (! isOverFlow(parent_ls->read_stream))
+    if (! isOverFlow(parent_&(ls->read_stream)))
     {
         handleOverFlow(t, parent_l);
         return;

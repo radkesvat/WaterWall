@@ -23,7 +23,7 @@ typedef struct muxserver_lstate_s
     struct muxserver_lstate_s *parent;         // the parent  f is_child is true
     struct muxserver_lstate_s *child_prev;     // previous child in the parent connection
     struct muxserver_lstate_s *child_next;     // next child in the parent connection
-    buffer_stream_t           *read_stream;    // stream for reading data from the parent connection
+    buffer_stream_t            read_stream;    // stream for reading data from the parent connection
     cid_t                      connection_id;  // unique connection id, used for multiplexing
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter
     bool     is_child : 1;   // if this connection is muxed into a parent connection

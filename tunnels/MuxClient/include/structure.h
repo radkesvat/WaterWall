@@ -27,7 +27,7 @@ typedef struct muxclient_lstate_s
     struct muxclient_lstate_s *parent;         // the parent  f is_child is true
     struct muxclient_lstate_s *child_prev;     // previous child in the parent connection
     struct muxclient_lstate_s *child_next;     // next child in the parent connection
-    buffer_stream_t           *read_stream;    // stream for reading data from the parent connection
+    buffer_stream_t            read_stream;    // stream for reading data from the parent connection
     uint64_t                   creation_epoch; // epoch of the connection creation, used for concurrency mode timer
     cid_t                      connection_id;  // unique connection id, used for multiplexing
     uint32_t children_count; // number of children in the parent connection, used for concurrency mode counter

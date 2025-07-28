@@ -50,7 +50,7 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
     }
     
-    bufferqueueDestory(&ls->pause_queue);
+    bufferqueueDestroy(&ls->pause_queue);
 
     c_foreach(i, sbuf_ack_queue_t, ls->ack_queue)
     {

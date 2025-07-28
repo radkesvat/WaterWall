@@ -49,7 +49,7 @@ buffer_queue_t bufferqueueCreate(int init_capacity);
  * 
  * @param self A pointer to the buffer queue to be destroyed.
  */
-void bufferqueueDestory(buffer_queue_t *self);
+void bufferqueueDestroy(buffer_queue_t *self);
 
 /**
  * @brief Pushes an sbuf_t pointer onto the back of the queue.

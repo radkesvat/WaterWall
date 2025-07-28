@@ -38,7 +38,7 @@ buffer_queue_t bufferqueueCreate(int init_capacity)
  *
  * @param self A pointer to the buffer queue to be destroyed.
  */
-void bufferqueueDestory(buffer_queue_t *self)
+void bufferqueueDestroy(buffer_queue_t *self)
 {
     wid_t wid = getWID();
     c_foreach(i, ww_sbuffer_queue_t, self->q)

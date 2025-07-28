@@ -13,7 +13,7 @@ void tcplistenerLinestateInitialize(tcplistener_lstate_t *ls, wio_t *io, tunnel_
 
 void tcplistenerLinestateDestroy(tcplistener_lstate_t *ls)
 {
-    bufferqueueDestory(&ls->pause_queue);
+    bufferqueueDestroy(&ls->pause_queue);
     if (ls->idle_handle)
     {
         LOGF("TcpListener: idle item still exists for FD:%x ", wioGetFD(ls->io));

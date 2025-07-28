@@ -9,16 +9,20 @@ enum
     kConcatMaxThreshould = 4096
 };
 
-buffer_stream_t *bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding)
+buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding)
 {
     assert(pool != NULL);
 
-    buffer_stream_t *bs = memoryAllocate(sizeof(buffer_stream_t));
+    buffer_stream_t bs = {
+        .use_left_padding = use_left_padding,
+        .q = bs_doublequeue_t_with_capacity(kQCap),
+        .pool = pool,
+        .size = 0
+    };
 
-    *bs = (buffer_stream_t) {
-        .use_left_padding = use_left_padding, .q = bs_doublequeue_t_with_capacity(kQCap), .pool = pool, .size = 0};
     return bs;
 }
+
 
 void bufferstreamEmpty(buffer_stream_t *self)
 {
@@ -41,7 +45,6 @@ void bufferstreamDestroy(buffer_stream_t *self)
         bufferpoolReuseBuffer(self->pool, *i.ref);
     }
     bs_doublequeue_t_drop(&self->q);
-    memoryFree(self);
 }
 
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
