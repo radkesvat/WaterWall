@@ -3,7 +3,6 @@
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
-#include "signal_manager.h"
 #include "stc/common.h"
 #include "tunnel.h"
 #include "widle_table.h"
@@ -82,6 +81,9 @@ typedef struct socket_manager_s
 
 static socket_manager_state_t *state = NULL;
 
+static void distributeTcpSocket(wio_t *io, uint16_t local_port);
+static void distributeUdpPayload(udp_payload_t pl);
+
 static pool_item_t *allocTcpResultObjectPoolHandle(generic_pool_t *pool)
 {
     discard pool;
@@ -132,61 +134,61 @@ void udppayloadDestroy(udp_payload_t *upl)
     mutexUnlock(&(state->udp_pools[wid].mutex));
 }
 
-static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
+static bool executeIptablesRule(const char *protocol, unsigned int port_min, unsigned int port_max, unsigned int to_port)
 {
-    char b[256];
+    char command[256];
     bool result = true;
-    sprintf(b, "iptables -t nat -A PREROUTING -p TCP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    result = result && execCmd(b).exit_code == 0;
+    
+    if (port_min == port_max)
+    {
+        sprintf(command, "iptables -t nat -A PREROUTING -p %s --dport %u -j REDIRECT --to-port %u", 
+                protocol, port_min, to_port);
+    }
+    else
+    {
+        sprintf(command, "iptables -t nat -A PREROUTING -p %s --dport %u:%u -j REDIRECT --to-port %u", 
+                protocol, port_min, port_max, to_port);
+    }
+    result = execCmd(command).exit_code == 0;
+
 #if SUPPORT_V6
-    sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    result = result && execCmd(b).exit_code == 0;
+    if (port_min == port_max)
+    {
+        sprintf(command, "ip6tables -t nat -A PREROUTING -p %s --dport %u -j REDIRECT --to-port %u", 
+                protocol, port_min, to_port);
+    }
+    else
+    {
+        sprintf(command, "ip6tables -t nat -A PREROUTING -p %s --dport %u:%u -j REDIRECT --to-port %u", 
+                protocol, port_min, port_max, to_port);
+    }
+    result = result && execCmd(command).exit_code == 0;
 #endif
     return result;
+}
+
+static bool redirectPortRangeTcp(unsigned int pmin, unsigned int pmax, unsigned int to)
+{
+    return executeIptablesRule("TCP", pmin, pmax, to);
 }
 
 static bool redirectPortRangeUdp(unsigned int pmin, unsigned int pmax, unsigned int to)
 {
-    char b[256];
-    bool result = true;
-    sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    result = result && execCmd(b).exit_code == 0;
-#if SUPPORT_V6
-    sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u:%u -j REDIRECT --to-port %u", pmin, pmax, to);
-    result = result && execCmd(b).exit_code == 0;
-#endif
-    return result;
+    return executeIptablesRule("UDP", pmin, pmax, to);
 }
 
 static bool redirectPortTcp(unsigned int port, unsigned int to)
 {
-    char b[256];
-    bool result = true;
-    sprintf(b, "iptables -t nat -A PREROUTING -p TCP --dport %u -j REDIRECT --to-port %u", port, to);
-    result = result && execCmd(b).exit_code == 0;
-#if SUPPORT_V6
-    sprintf(b, "ip6tables -t nat -A PREROUTING -p TCP --dport %u -j REDIRECT --to-port %u", port, to);
-    result = result && execCmd(b).exit_code == 0;
-#endif
-    return result;
+    return executeIptablesRule("TCP", port, port, to);
 }
 
 static bool redirectPortUdp(unsigned int port, unsigned int to)
 {
-    char b[256];
-    bool result = true;
-    sprintf(b, "iptables -t nat -A PREROUTING -p UDP --dport %u -j REDIRECT --to-port %u", port, to);
-    result = result && execCmd(b).exit_code == 0;
-#if SUPPORT_V6
-    sprintf(b, "ip6tables -t nat -A PREROUTING -p UDP --dport %u -j REDIRECT --to-port %u", port, to);
-    result = result && execCmd(b).exit_code == 0;
-#endif
-    return result;
+    return executeIptablesRule("UDP", port, port, to);
 }
 
 static bool resetIptables(bool safe_mode)
 {
-
     if (safe_mode)
     {
         char    msg[] = "SocketManager: clearing iptables nat rules\n";
@@ -198,10 +200,8 @@ static bool resetIptables(bool safe_mode)
         char msg[] = "SocketManager: clearing iptables nat rules";
         LOGD(msg);
     }
+    
     bool result = true;
-
-    // todo (async unsafe) this works but should be replaced with a asyncsafe execcmd function
-    // probably do it with fork?
     result = result && execCmd("iptables -t nat -F").exit_code == 0;
     result = result && execCmd("iptables -t nat -X").exit_code == 0;
 #if SUPPORT_V6
@@ -220,6 +220,50 @@ static inline bool needsV4SocketStrategy(const ip6_addr_t addr)
             segments[5] == 0xFFFF);
 }
 
+static unsigned int calculateFilterPriority(const socket_filter_option_t option)
+{
+    unsigned int priority = 0;
+    
+    if (option.multiport_backend == kMultiportBackendNone)
+    {
+        priority++;
+    }
+    if (vec_ipmask_t_size(&option.white_list) > 0)
+    {
+        priority++;
+    }
+    if (vec_ipmask_t_size(&option.black_list))
+    {
+        priority++;
+    }
+    
+    return priority;
+}
+
+static widle_table_t *getOrCreateBalanceTable(const char *balance_group_name)
+{
+    hash_t         name_hash = calcHashBytes(balance_group_name, stringLength(balance_group_name));
+    widle_table_t *b_table   = NULL;
+    
+    mutexLock(&(state->mutex));
+
+    balancegroup_registry_t_iter find_result = balancegroup_registry_t_find(&(state->balance_groups), name_hash);
+
+    if (find_result.ref == balancegroup_registry_t_end(&(state->balance_groups)).ref)
+    {
+        b_table = idleTableCreate(state->worker->loop);
+        balancegroup_registry_t_insert(&(state->balance_groups), name_hash, b_table);
+    }
+    else
+    {
+        b_table = (find_result.ref->second);
+    }
+
+    mutexUnlock(&(state->mutex));
+    
+    return b_table;
+}
+
 void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
     if (state->started)
@@ -227,49 +271,19 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
         LOGF("SocketManager: cannot register after accept thread starts");
         terminateProgram(1);
     }
-    socket_filter_t *filter   = memoryAllocate(sizeof(socket_filter_t));
-    unsigned int     pirority = 0;
-    if (option.multiport_backend == kMultiportBackendNone)
-    {
-        pirority++;
-    }
-    if (vec_ipmask_t_size(&option.white_list) > 0)
-    {
-        pirority++;
-    }
-
-    if (vec_ipmask_t_size(&option.black_list))
-    {
-        pirority++;
-    }
+    
+    socket_filter_t *filter = memoryAllocate(sizeof(socket_filter_t));
+    unsigned int priority = calculateFilterPriority(option);
 
     if (option.balance_group_name)
     {
-        hash_t         name_hash = calcHashBytes(option.balance_group_name, stringLength(option.balance_group_name));
-        widle_table_t *b_table   = NULL;
-        mutexLock(&(state->mutex));
-
-        balancegroup_registry_t_iter find_result = balancegroup_registry_t_find(&(state->balance_groups), name_hash);
-
-        if (find_result.ref == balancegroup_registry_t_end(&(state->balance_groups)).ref)
-        {
-            b_table = idleTableCreate(state->worker->loop);
-            balancegroup_registry_t_insert(&(state->balance_groups), name_hash, b_table);
-        }
-        else
-        {
-            b_table = (find_result.ref->second);
-        }
-
-        mutexUnlock(&(state->mutex));
-
-        option.shared_balance_table = b_table;
+        option.shared_balance_table = getOrCreateBalanceTable(option.balance_group_name);
     }
 
     *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
     mutexLock(&(state->mutex));
-    filters_t_push(&(state->filters[pirority]), filter);
+    filters_t_push(&(state->filters[priority]), filter);
     mutexUnlock(&(state->mutex));
 }
 
@@ -315,6 +329,32 @@ static void noTcpSocketConsumerFound(wio_t *io)
     wioClose(io);
 }
 
+static bool checkIpv4WhiteList(const ip4_addr_t ipv4_addr, const socket_filter_option_t option)
+{
+    for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
+    {
+        if (checkIPRange4(ipv4_addr, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip4,
+                          vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip4))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool checkIpv6WhiteList(const ip6_addr_t ipv6_addr, const socket_filter_option_t option)
+{
+    for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
+    {
+        if (checkIPRange6(ipv6_addr, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip6,
+                          vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip6))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_t option)
 {
     const bool is_v4 = addr.type == IPADDR_TYPE_V4;
@@ -323,126 +363,70 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
     if (is_v4)
     {
         ip4_addr_copy(ipv4_addr, addr.u_addr.ip4);
-    v4checks:
-        for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
-        {
-
-            if (checkIPRange4(ipv4_addr, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip4,
-                              vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip4))
-            {
-                return true;
-            }
-        }
+        return checkIpv4WhiteList(ipv4_addr, option);
     }
-    else
+    
+    if (needsV4SocketStrategy(addr.u_addr.ip6))
     {
-        if (needsV4SocketStrategy(addr.u_addr.ip6))
-        {
-            memoryCopy(&ipv4_addr, &(addr.u_addr.ip6.addr[3]), sizeof(ipv4_addr.addr));
-            goto v4checks;
-        }
+        memoryCopy(&ipv4_addr, &(addr.u_addr.ip6.addr[3]), sizeof(ipv4_addr.addr));
+        return checkIpv4WhiteList(ipv4_addr, option);
+    }
+    return checkIpv6WhiteList(addr.u_addr.ip6, option);
+}
 
-        for (int i = 0; i < vec_ipmask_t_size(&option.white_list); i++)
-        {
-
-            if (checkIPRange6(addr.u_addr.ip6, vec_ipmask_t_at(&option.white_list, i)->ip.u_addr.ip6,
-                              vec_ipmask_t_at(&option.white_list, i)->mask.u_addr.ip6))
-            {
-                return true;
-            }
-        }
+static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_option_t option, 
+                                 wio_t *io, uint16_t local_port, hash_t *src_hash, bool *src_hashed,
+                                 socket_filter_t **balance_selection_filters, 
+                                 uint8_t *balance_selection_filters_length,
+                                 widle_table_t **selected_balance_table)
+{
+    if (*selected_balance_table != NULL && option.shared_balance_table != *selected_balance_table)
+    {
+        return false;
     }
 
+    if (!*src_hashed)
+    {
+        ip_addr_t paddr;
+        sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
+        *src_hash = ipaddrCalcHashNoPort(paddr);
+        *src_hashed = true;
+    }
+    
+    widle_item_t *idle_item = idleTableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+
+    if (idle_item)
+    {
+        socket_filter_t *target_filter = idle_item->userdata;
+        idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
+                                        option.balance_group_interval == 0 ? kDefaultBalanceInterval
+                                                                           : option.balance_group_interval);
+        if (option.no_delay)
+        {
+            tcpNoDelay(wioGetFD(io), 1);
+        }
+        distributeSocket(io, target_filter, local_port);
+        return true;
+    }
+
+    if (UNLIKELY(*balance_selection_filters_length >= kMaxBalanceSelections))
+    {
+        LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
+        return false;
+    }
+    balance_selection_filters[(*balance_selection_filters_length)++] = filter;
+    *selected_balance_table = option.shared_balance_table;
     return false;
 }
 
-static void distributeTcpSocket(wio_t *io, uint16_t local_port)
+static void finalizeTcpDistribution(socket_filter_t **balance_selection_filters, 
+                                   uint8_t balance_selection_filters_length,
+                                   wio_t *io, uint16_t local_port, hash_t src_hash)
 {
-    ip_addr_t paddr;
-
-    sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
-
-    static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
-    uint8_t                 balance_selection_filters_length = 0;
-    widle_table_t          *selected_balance_table           = NULL;
-    hash_t                  src_hash                         = 0x0;
-    bool                    src_hashed                       = false;
-    const uint8_t           this_wid                         = state->wid;
-
-    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
-    {
-        c_foreach(k, filters_t, state->filters[ri])
-        {
-            socket_filter_t       *filter   = *(k.ref);
-            socket_filter_option_t option   = filter->option;
-            uint16_t               port_min = option.port_min;
-            uint16_t               port_max = option.port_max;
-
-            if (selected_balance_table != NULL && option.shared_balance_table != selected_balance_table)
-            {
-                continue;
-            }
-
-            if (option.protocol != IPPROTO_TCP || port_min > local_port || port_max < local_port)
-            {
-                continue;
-            }
-
-            if (vec_ipmask_t_size(&option.white_list) > 0)
-            {
-                if (! checkIpIsWhiteList(paddr, option))
-                {
-                    continue;
-                }
-            }
-
-            if (option.shared_balance_table)
-            {
-                if (! src_hashed)
-                {
-                    src_hash = ipaddrCalcHashNoPort(paddr);
-                }
-                widle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
-
-                if (idle_item)
-                {
-                    socket_filter_t *target_filter = idle_item->userdata;
-                    idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
-                                                    option.balance_group_interval == 0 ? kDefaultBalanceInterval
-                                                                                       : option.balance_group_interval);
-                    if (option.no_delay)
-                    {
-                        tcpNoDelay(wioGetFD(io), 1);
-                    }
-                    distributeSocket(io, target_filter, local_port);
-                    return;
-                }
-
-                if (UNLIKELY(balance_selection_filters_length >= kMaxBalanceSelections))
-                {
-                    // probably never but the limit can be simply increased
-                    LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
-                    continue;
-                }
-                balance_selection_filters[balance_selection_filters_length++] = filter;
-                selected_balance_table                                        = option.shared_balance_table;
-                continue;
-            }
-
-            if (option.no_delay)
-            {
-                tcpNoDelay(wioGetFD(io), 1);
-            }
-            wioDetach(io);
-            distributeSocket(io, filter, local_port);
-            return;
-        }
-    }
-
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_wid,
+        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
                     filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                : filter->option.balance_group_interval);
         if (filter->option.no_delay)
@@ -455,6 +439,70 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
     {
         noTcpSocketConsumerFound(io);
     }
+}
+
+static bool processFilterMatch(const socket_filter_option_t option, uint16_t local_port, const ip_addr_t paddr)
+{
+    if (option.protocol != IPPROTO_TCP || option.port_min > local_port || option.port_max < local_port)
+    {
+        return false;
+    }
+
+    if (vec_ipmask_t_size(&option.white_list) > 0)
+    {
+        if (!checkIpIsWhiteList(paddr, option))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void distributeTcpSocket(wio_t *io, uint16_t local_port)
+{
+    ip_addr_t paddr;
+    sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr);
+
+    static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
+    uint8_t                 balance_selection_filters_length = 0;
+    widle_table_t          *selected_balance_table           = NULL;
+    hash_t                  src_hash                         = 0x0;
+    bool                    src_hashed                       = false;
+
+    for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
+    {
+        c_foreach(k, filters_t, state->filters[ri])
+        {
+            socket_filter_t       *filter = *(k.ref);
+            socket_filter_option_t option = filter->option;
+
+            if (!processFilterMatch(option, local_port, paddr))
+            {
+                continue;
+            }
+
+            if (option.shared_balance_table)
+            {
+                if (handleBalancedFilter(filter, option, io, local_port, &src_hash, &src_hashed,
+                                       balance_selection_filters, &balance_selection_filters_length,
+                                       &selected_balance_table))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                if (option.no_delay)
+                {
+                    tcpNoDelay(wioGetFD(io), 1);
+                }
+                distributeSocket(io, filter, local_port);
+                return;
+            }
+        }
+    }
+
+    finalizeTcpDistribution(balance_selection_filters, balance_selection_filters_length, io, local_port, src_hash);
 }
 
 static void onAcceptTcpSinglePort(wio_t *io)
@@ -504,66 +552,88 @@ static multiport_backend_t getDefaultMultiPortBackend(void)
     return kMultiportBackendSockets;
 }
 
-static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
-                                       uint8_t *ports_overlapped, uint16_t port_max)
+static bool getInterfaceHostString(const char *interface, char *host_if)
 {
-    if (! state->iptables_installed)
+    ip4_addr_t if_ip;
+    if (!getInterfaceIp(interface, &if_ip, stringLength(interface)))
+    {
+        LOGF("SocketManager: Could not get interface \"%s\" ip", interface);
+        terminateProgram(1);
+        return false;
+    }
+    ip4AddrAddressToNetwork(host_if, &if_ip);
+    return true;
+}
+
+static wio_t *createTcpServerWithInterface(wloop_t *loop, socket_filter_t *filter, char *host, 
+                                          uint16_t port, void (*callback)(wio_t *))
+{
+    if (filter->option.interface != NULL)
+    {
+        char host_if[60] = {0};
+        getInterfaceHostString(filter->option.interface, host_if);
+        return wloopCreateTcpServer(loop, host_if, port, callback);
+    }
+    return wloopCreateTcpServer(loop, host, port, callback);
+}
+
+static uint16_t selectMainPortForIptables(socket_filter_t *filter, wloop_t *loop, char *host, 
+                                         uint16_t port_min, uint16_t port_max, uint8_t *ports_overlapped)
+{
+    uint16_t main_port = port_max;
+    
+    do
+    {
+        if (ports_overlapped[main_port] != 1)
+        {
+            filter->listen_io = createTcpServerWithInterface(loop, filter, host, main_port, onAcceptTcpMultiPort);
+            ports_overlapped[main_port] = 1;
+            
+            if (filter->listen_io != NULL)
+            {
+                filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
+                break;
+            }
+            main_port--;
+        }
+    } while (main_port >= port_min);
+
+    if (filter->listen_io == NULL)
+    {
+        LOGF("SocketManager: stopping due to null socket handle");
+        terminateProgram(1);
+    }
+    
+    return main_port;
+}
+
+static void initializeIptablesIfNeeded(void)
+{
+    if (!state->iptables_installed)
     {
         LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
         terminateProgram(1);
     }
+    
     state->iptables_used = true;
-    if (! state->iptable_cleaned)
+    if (!state->iptable_cleaned)
     {
-        if (! resetIptables(false))
+        if (!resetIptables(false))
         {
             LOGF("SocketManager: could not clear iptables rules");
             terminateProgram(1);
         }
         state->iptable_cleaned = true;
     }
-    uint16_t main_port = port_max;
-    // select main port
-    {
-        do
-        {
-            if (ports_overlapped[main_port] != 1)
-            {
+}
 
-                if (filter->option.interface != NULL)
-                {
-                    char       host_if[60] = {0};
-                    ip4_addr_t if_ip;
-                    if (! getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface)))
-                    {
-                        LOGF("SocketManager: Could not get interface \"%s\" ip", filter->option.interface);
-                        terminateProgram(1);
-                    }
-                    ip4AddrAddressToNetwork(host_if, &if_ip);
-                    filter->listen_io = wloopCreateTcpServer(loop, host_if, main_port, onAcceptTcpMultiPort);
-                }
-                else
-                {
-                    filter->listen_io = wloopCreateTcpServer(loop, host, main_port, onAcceptTcpMultiPort);
-                }
-
-                ports_overlapped[main_port] = 1;
-                if (filter->listen_io != NULL)
-                {
-                    filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
-                    break;
-                }
-
-                main_port--;
-            }
-        } while (main_port >= port_min);
-
-        if (filter->listen_io == NULL)
-        {
-            LOGF("SocketManager: stopping due to null socket handle");
-            terminateProgram(1);
-        }
-    }
+static void listenTcpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
+                                       uint8_t *ports_overlapped, uint16_t port_max)
+{
+    initializeIptablesIfNeeded();
+    
+    uint16_t main_port = selectMainPortForIptables(filter, loop, host, port_min, port_max, ports_overlapped);
+    
     redirectPortRangeTcp(port_min, port_max, main_port);
     LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", host, port_min, port_max, main_port, "TCP");
 }
@@ -580,31 +650,16 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
     {
         if (ports_overlapped[p] == 1)
         {
-            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p, "TCP");
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
             continue;
         }
         ports_overlapped[p] = 1;
 
-        if (filter->option.interface != NULL)
-        {
-            char       host_if[60] = {0};
-            ip4_addr_t if_ip;
-            if (! getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface)))
-            {
-                LOGF("SocketManager: Could not get interface \"%s\" ip", filter->option.interface);
-                terminateProgram(1);
-            }
-            ip4AddrAddressToNetwork(host_if, &if_ip);
-            filter->listen_io = wloopCreateTcpServer(loop, host_if, p, onAcceptTcpSinglePort);
-        }
-        else
-        {
-            filter->listen_io = wloopCreateTcpServer(loop, host, p, onAcceptTcpSinglePort);
-        };
+        filter->listen_io = createTcpServerWithInterface(loop, filter, host, p, onAcceptTcpSinglePort);
 
         if (filter->listen_ios[i] == NULL)
         {
-            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p, "TCP");
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
             continue;
         }
         filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
@@ -624,22 +679,7 @@ static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     ports_overlapped[port] = 1;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
 
-    if (filter->option.interface != NULL)
-    {
-        char       host_if[60] = {0};
-        ip4_addr_t if_ip;
-        if (! getInterfaceIp(filter->option.interface, &if_ip, stringLength(filter->option.interface)))
-        {
-            LOGF("SocketManager: Could not get interface \"%s\" ip", filter->option.interface);
-            terminateProgram(1);
-        }
-        ip4AddrAddressToNetwork(host_if, &if_ip);
-        filter->listen_io = wloopCreateTcpServer(loop, host_if, port, onAcceptTcpSinglePort);
-    }
-    else
-    {
-        filter->listen_io = wloopCreateTcpServer(loop, host, port, onAcceptTcpSinglePort);
-    }
+    filter->listen_io = createTcpServerWithInterface(loop, filter, host, port, onAcceptTcpSinglePort);
 
     if (filter->listen_io == NULL)
     {
@@ -701,14 +741,8 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
          SOCKADDR_STR(wioGetPeerAddrU(upl.sock->io), peeraddrstr));
 }
 
-/*
- * @brief Post udp payload to the worker loop
- * @param post_pl: udp payload to post
- * @param filter: socket filter to use
- */
 static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
 {
-
     mutexLock(&(state->udp_pools[post_pl.wid].mutex));
     udp_payload_t *pl = genericpoolGetItem(state->udp_pools[post_pl.wid].pool);
     mutexUnlock(&(state->udp_pools[post_pl.wid].mutex));
@@ -727,13 +761,84 @@ static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
     wloopPostEvent(worker_loop, &ev);
 }
 
-/**
- * @brief Distribute udp payload to the appropriate socket filter
- * @param pl: udp payload to distribute
- */
+static bool processUdpFilterMatch(const socket_filter_option_t option, uint16_t local_port, const ip_addr_t paddr)
+{
+    if (option.protocol != IPPROTO_UDP || option.port_min > local_port || option.port_max < local_port)
+    {
+        return false;
+    }
+
+    if (vec_ipmask_t_size(&option.white_list) > 0)
+    {
+        if (!checkIpIsWhiteList(paddr, option))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter_option_t option,
+                                   const udp_payload_t pl, hash_t *src_hash, bool *src_hashed,
+                                   socket_filter_t **balance_selection_filters,
+                                   uint8_t *balance_selection_filters_length,
+                                   widle_table_t **selected_balance_table)
+{
+    if (*selected_balance_table != NULL && option.shared_balance_table != *selected_balance_table)
+    {
+        return false;
+    }
+
+    if (!*src_hashed)
+    {
+        ip_addr_t paddr;
+        sockaddrToIpAddr(wioGetPeerAddrU(pl.sock->io), &paddr);
+        *src_hash = ipaddrCalcHashNoPort(paddr);
+        *src_hashed = true;
+    }
+
+    widle_item_t *idle_item = idleTableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+
+    if (idle_item)
+    {
+        socket_filter_t *target_filter = idle_item->userdata;
+        idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
+                                        option.balance_group_interval == 0 ? kDefaultBalanceInterval
+                                                                           : option.balance_group_interval);
+        postUdpPayload(pl, target_filter);
+        return true;
+    }
+
+    if (UNLIKELY(*balance_selection_filters_length >= kMaxBalanceSelections))
+    {
+        LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
+        return false;
+    }
+    balance_selection_filters[(*balance_selection_filters_length)++] = filter;
+    *selected_balance_table = option.shared_balance_table;
+    return false;
+}
+
+static void finalizeUdpDistribution(socket_filter_t **balance_selection_filters,
+                                   uint8_t balance_selection_filters_length,
+                                   const udp_payload_t pl, hash_t src_hash)
+{
+    if (balance_selection_filters_length > 0)
+    {
+        socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
+        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
+                    filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
+                                                               : filter->option.balance_group_interval);
+        postUdpPayload(pl, filter);
+    }
+    else
+    {
+        noUdpSocketConsumerFound(pl);
+    }
+}
+
 static void distributeUdpPayload(const udp_payload_t pl)
 {
-
     ip_addr_t paddr;
     sockaddrToIpAddr(wioGetPeerAddrU(pl.sock->io), &paddr);
 
@@ -744,79 +849,37 @@ static void distributeUdpPayload(const udp_payload_t pl)
     widle_table_t          *selected_balance_table           = NULL;
     hash_t                  src_hash                         = 0x0;
     bool                    src_hashed                       = false;
-    const uint8_t           this_wid                         = state->wid;
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
         c_foreach(k, filters_t, state->filters[ri])
         {
+            socket_filter_t       *filter = *(k.ref);
+            socket_filter_option_t option = filter->option;
 
-            socket_filter_t       *filter   = *(k.ref);
-            socket_filter_option_t option   = filter->option;
-            uint16_t               port_min = option.port_min;
-            uint16_t               port_max = option.port_max;
-
-            if (selected_balance_table != NULL && option.shared_balance_table != selected_balance_table)
+            if (!processUdpFilterMatch(option, local_port, paddr))
             {
                 continue;
             }
 
-            if (option.protocol != IPPROTO_UDP || port_min > local_port || port_max < local_port)
-            {
-                continue;
-            }
-            if (vec_ipmask_t_size(&option.white_list) > 0)
-            {
-                if (! checkIpIsWhiteList(paddr, option))
-                {
-                    continue;
-                }
-            }
             if (option.shared_balance_table)
             {
-                if (! src_hashed)
+                if (handleUdpBalancedFilter(filter, option, pl, &src_hash, &src_hashed,
+                                          balance_selection_filters, &balance_selection_filters_length,
+                                          &selected_balance_table))
                 {
-                    src_hash = ipaddrCalcHashNoPort(paddr);
-                }
-                widle_item_t *idle_item = idleTableGetIdleItemByHash(this_wid, option.shared_balance_table, src_hash);
-
-                if (idle_item)
-                {
-                    socket_filter_t *target_filter = idle_item->userdata;
-                    idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
-                                                    option.balance_group_interval == 0 ? kDefaultBalanceInterval
-                                                                                       : option.balance_group_interval);
-                    postUdpPayload(pl, target_filter);
                     return;
                 }
-
-                if (UNLIKELY(balance_selection_filters_length >= kMaxBalanceSelections))
-                {
-                    // probably never but the limit can be simply increased
-                    LOGW("SocketManager: balance between more than %d tunnels is not supported", kMaxBalanceSelections);
-                    continue;
-                }
-                balance_selection_filters[balance_selection_filters_length++] = filter;
-                selected_balance_table                                        = option.shared_balance_table;
-                continue;
             }
-
-            postUdpPayload(pl, filter);
-            return;
+            else
+            {
+                postUdpPayload(pl, filter);
+                return;
+            }
         }
     }
-    if (balance_selection_filters_length > 0)
-    {
-        socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, this_wid,
-                    filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
-                                                               : filter->option.balance_group_interval);
-        postUdpPayload(pl, filter);
-    }
-    else
-    {
-        noUdpSocketConsumerFound(pl);
-    }
+
+    finalizeUdpDistribution(balance_selection_filters, balance_selection_filters_length, pl, src_hash);
 }
 
 static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
@@ -854,7 +917,6 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     wioRead(filter->listen_io);
 }
 
-// todo (udp manager)
 static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
@@ -957,6 +1019,45 @@ void socketmanagerStart(void)
     mutexUnlock(&(state->mutex));
 }
 
+static void initializeSocketManagerPools(void)
+{
+    state->udp_pools = memoryAllocate(sizeof(*state->udp_pools) * getWorkersCount());
+    memorySet(state->udp_pools, 0, sizeof(*state->udp_pools) * getWorkersCount());
+
+    state->tcp_pools = memoryAllocate(sizeof(*state->tcp_pools) * getWorkersCount());
+    memorySet(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
+
+    state->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    state->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+
+    for (unsigned int i = 0; i < getWorkersCount(); ++i)
+    {
+        state->udp_pools[i].pool = genericpoolCreateWithCapacity(
+            state->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
+        mutexInit(&(state->udp_pools[i].mutex));
+
+        state->tcp_pools[i].pool = genericpoolCreateWithCapacity(
+            state->mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
+        mutexInit(&(state->tcp_pools[i].mutex));
+
+#ifdef DEBUG
+        state->udp_pools[i].pool->no_thread_check = true;
+        state->tcp_pools[i].pool->no_thread_check = true;
+#endif
+    }
+}
+
+static void detectSystemCapabilities(void)
+{
+#ifdef OS_UNIX
+    state->iptables_installed = checkCommandAvailable("iptables");
+    state->lsof_installed     = checkCommandAvailable("lsof");
+#if SUPPORT_V6
+    state->ip6tables_installed = checkCommandAvailable("ip6tables");
+#endif
+#endif
+}
+
 socket_manager_state_t *socketmanagerCreate(void)
 {
     assert(state == NULL);
@@ -973,55 +1074,14 @@ socket_manager_state_t *socketmanagerCreate(void)
     }
 
     mutexInit(&state->mutex);
-
-    state->udp_pools = memoryAllocate(sizeof(*state->udp_pools) * getWorkersCount());
-    memorySet(state->udp_pools, 0, sizeof(*state->udp_pools) * getWorkersCount());
-
-    state->tcp_pools = memoryAllocate(sizeof(*state->tcp_pools) * getWorkersCount());
-    memorySet(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
-
-    state->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
-    state->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
-
-    for (unsigned int i = 0; i < getWorkersCount(); ++i)
-    {
-
-        state->udp_pools[i].pool = genericpoolCreateWithCapacity(
-            state->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
-        mutexInit(&(state->udp_pools[i].mutex));
-
-        state->tcp_pools[i].pool = genericpoolCreateWithCapacity(
-            state->mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
-        mutexInit(&(state->tcp_pools[i].mutex));
-
-#ifdef DEBUG
-        // we already protect these pools with mutex
-        state->udp_pools[i].pool->no_thread_check = true;
-        state->tcp_pools[i].pool->no_thread_check = true;
-#endif
-    }
-
-#ifdef OS_UNIX
-
-    state->iptables_installed = checkCommandAvailable("iptables");
-    state->lsof_installed     = checkCommandAvailable("lsof");
-#if SUPPORT_V6
-    state->ip6tables_installed = checkCommandAvailable("ip6tables");
-#endif
-
-#endif
+    initializeSocketManagerPools();
+    detectSystemCapabilities();
 
     return state;
 }
 
-void socketmanagerDestroy(void)
+static void cleanupFilters(void)
 {
-    assert(state != NULL);
-
-    if (state->iptables_used)
-    {
-        resetIptables(true);
-    }
     for (size_t i = 0; i < kFilterLevels; i++)
     {
         c_foreach(filter, filters_t, state->filters[i])
@@ -1029,10 +1089,12 @@ void socketmanagerDestroy(void)
             socketfilteroptionDeInit(&((*filter.ref)->option));
             memoryFree(*filter.ref);
         }
-
         filters_t_drop(&(state->filters[i]));
     }
+}
 
+static void destroyPools(void)
+{
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
         mutexDestroy(&(state->udp_pools[i].mutex));
@@ -1045,7 +1107,19 @@ void socketmanagerDestroy(void)
     memoryFree(state->tcp_pools);
     masterpoolDestroy(state->mp_tcp);
     masterpoolDestroy(state->mp_udp);
-    memoryFree(state);
+}
 
+void socketmanagerDestroy(void)
+{
+    assert(state != NULL);
+
+    if (state->iptables_used)
+    {
+        resetIptables(true);
+    }
+    
+    cleanupFilters();
+    destroyPools();
+    memoryFree(state);
     state = NULL;
 }
