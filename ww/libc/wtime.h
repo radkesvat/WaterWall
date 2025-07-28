@@ -207,4 +207,10 @@ clock_gettime(CLOCK_MONOTONIC, &name##_end); \
     printDebug("%s took %ld nanoseconds\n", #name, name##_time);
 
 
+static inline void cycleDelay(unsigned int cycles) {
+    volatile uint32_t i;
+    for (i = 0; i < cycles; ++i) {
+        __asm__ __volatile__ ("" ::: "memory");
+    }
+}
 #endif // WW_TIME_H_
