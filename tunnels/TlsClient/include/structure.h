@@ -2,9 +2,20 @@
 
 #include "wwapi.h"
 
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
+
 typedef struct tlsclient_tstate_s
 {
-    int unused;
+    // settings
+    char *alpn;
+    char *sni;
+    bool  verify;
+
+    // state
+    SSL_CTX **threadlocal_ssl_contexts;
 } tlsclient_tstate_t;
 
 typedef struct tlsclient_lstate_s

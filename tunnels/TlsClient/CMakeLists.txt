@@ -29,7 +29,13 @@ add_library(TlsClient STATIC
 
 target_include_directories(TlsClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_link_libraries(TlsClient ww)
+
+target_link_libraries(TlsClient PRIVATE ww)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
 CPMAddPackage(
     NAME BoringSSL
@@ -39,4 +45,19 @@ CPMAddPackage(
     "BUILD_SHARED_LIBS OFF"
 )
 
-target_link_libraries(TlsClient crypto ssl)
+target_include_directories(TlsClient PRIVATE
+    ${boringssl_SOURCE_DIR}/include
+)
+
+enable_language(CXX)
+
+# Static link standard libraries for C++ code in BoringSSL
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    if(APPLE)
+        target_link_libraries(TlsClient PRIVATE c++)
+    else()
+        target_link_libraries(TlsClient PRIVATE stdc++)
+    endif()
+endif()
+
+target_link_libraries(TlsClient PRIVATE crypto ssl)
