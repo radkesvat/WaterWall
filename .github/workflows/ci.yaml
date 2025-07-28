@@ -37,7 +37,7 @@ jobs:
           sudo apt-get install -y ninja-build ccache
       - name: Configure CMake
         run: >
-          cmake -B build
+          cmake -B build -G Ninja
           -DANDROID_ABI=${{ matrix.arch }}
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
@@ -91,7 +91,7 @@ jobs:
           version: ${{ matrix.version }}
           run: |
             ${{ matrix.install }}
-            cmake -B build                           \
+            cmake -B build -G Ninja                \
               -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
               -DOPENSSL_CONFIGURE_VERBOSE=ON
 
@@ -167,7 +167,7 @@ jobs:
           sudo apt-get install -y ninja-build ccache
       - name: Configure CMake
         run: >
-          cmake -B build
+          cmake -B build -G Ninja
           -DCMAKE_C_COMPILER=${{ matrix.cc }}
           -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
           -DOPENSSL_CONFIGURE_VERBOSE=ON
@@ -354,7 +354,7 @@ jobs:
           sudo apt-get install -y ninja-build ccache gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
       - name: Configure CMake for ARM64
         run: >
-          cmake -B build \
+          cmake -B build -G Ninja \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
             -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
@@ -387,7 +387,7 @@ jobs:
           sudo apt-get install -y ninja-build ccache gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
       - name: Configure CMake for ARM64
         run: >
-          cmake -B build \
+          cmake -B build -G Ninja \
             -DCMAKE_SYSTEM_NAME=Linux \
             -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
             -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
