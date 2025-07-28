@@ -208,9 +208,14 @@ clock_gettime(CLOCK_MONOTONIC, &name##_end); \
 
 
 #ifdef COMPILER_MSVC
-    #include <intrin.h>
-    #pragma intrinsic(_mm_pause)
-    #define CPU_RELAX() _mm_pause()
+    #if defined(_M_ARM) || defined(_M_ARM64)
+        #include <windows.h>
+        #define CPU_RELAX() __yield()
+    #else
+        #include <intrin.h>
+        #pragma intrinsic(_mm_pause)
+        #define CPU_RELAX() _mm_pause()
+    #endif
 #else
     #define CPU_RELAX() __asm__ __volatile__ ("" ::: "memory")
 #endif
