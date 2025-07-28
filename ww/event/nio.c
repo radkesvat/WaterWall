@@ -616,33 +616,32 @@ int wioClose(wio_t *io)
         io->close_timer->privdata = io;
         return 0;
     }
-    bool has_pending = io->pending;
+    // bool has_pending = io->pending;
 
-    io->closed    = 1;
-    wloop_t *loop = io->loop;
+    io->closed = 1;
+    // wloop_t *loop = io->loop;
 
     wioDone(io);
     __close_cb(io);
     // SAFE_FREE(io->hostname);
-    if (io->io_type & WIO_TYPE_SOCKET)
-    {
-        if (has_pending)
-        {
-            wevent_t ev;
-            memorySet(&ev, 0, sizeof(ev));
-            ev.loop = loop;
-            ev.cb   = __close_pending_cb;
-            weventSetUserData(&ev, (uintptr_t) io->fd);
-            if (false == wloopPostEvent(loop, &ev))
-            {
-                closesocket(io->fd);
-            }
-        }
-        else
-        {
-            closesocket(io->fd);
-        }
-    }
+    //     if (has_pending)
+    //     {
+    //         wevent_t ev;
+    //         memorySet(&ev, 0, sizeof(ev));
+    //         ev.loop = loop;
+    //         ev.cb   = __close_pending_cb;
+    //         weventSetUserData(&ev, (uintptr_t) io->fd);
+    //         if (false == wloopPostEvent(loop, &ev))
+    //         {
+    //             closesocket(io->fd);
+    //         }
+    //     }
+    //     else
+    //     {
+    //         closesocket(io->fd);
+    //     }
+    closesocket(io->fd);
+
     return 0;
 }
 #endif

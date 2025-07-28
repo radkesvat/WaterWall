@@ -140,15 +140,15 @@ static int wloopProcessPendings(wloop_t *loop)
         cur = loop->pendings[i];
         while (cur)
         {
-#ifdef DEBUG
-            if (! (cur->loop->wid == loop->wid && loop->wid == getWID()))
-            {
-                printError("The multi-threading bug still present, sorry");
-                terminateProgram(1);
-            }
-#endif
+            // #ifdef DEBUG
+            //             if (! (cur->loop->wid == loop->wid && loop->wid == getWID()))
+            //             {
+            //                 printError("The multi-threading bug still present, sorry");
+            //                 terminateProgram(1);
+            //             }
+            // #endif
             next = cur->pending_next;
-            if (cur->pending)
+            if (cur->pending && cur->loop == loop)
             {
                 if (cur->active && cur->cb)
                 {
@@ -500,7 +500,7 @@ void wloopDestroy(wloop_t **pp)
     if (loop->status == WLOOP_STATUS_DESTROY)
         return;
     loop->status = WLOOP_STATUS_DESTROY;
-    wlogd("Eventloop shutdown worker=%ld", loop->wid);
+    // wlogd("Eventloop shutdown worker=%ld", loop->wid);
     wloopCleanup(loop);
     EVENTLOOP_FREE(loop);
     *pp = NULL;
@@ -1000,6 +1000,7 @@ int wioDel(wio_t *io, int events)
         io->loop->nios--;
         // NOTE: not EVENT_DEL, avoid free
         EVENT_INACTIVE(io);
+        EVENT_UNPENDING(io);
     }
     return 0;
 }

@@ -259,4 +259,12 @@ void wioDelHeartBeatTimer(wio_t* io);
         ev->pending = 0;\
     } while(0)
 
+#define EVENT_UNPENDING(ev) \
+    do {\
+        if (ev->pending) {\
+            ev->pending = 0;\
+            ev->loop->npendings--;\
+        }\
+    } while(0)
+
 #endif // WW_EVENT_H_
