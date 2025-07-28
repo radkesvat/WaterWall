@@ -57,7 +57,7 @@ void bufferqueueDestory(buffer_queue_t *self);
  * @param self A pointer to the buffer queue.
  * @param b A pointer to the sbuf_t to be added to the queue.
  */
-void bufferqueuePush(buffer_queue_t *self, sbuf_t *b);
+void bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b);
 
 /**
  * @brief Pops an sbuf_t pointer from the front of the queue.

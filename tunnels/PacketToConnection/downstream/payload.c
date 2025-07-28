@@ -75,7 +75,7 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (lstate->write_paused)
         {
             tunnelNextUpStreamPause(t, l);
-            bufferqueuePush(&lstate->pause_queue, buf);
+            bufferqueuePushBack(&lstate->pause_queue, buf);
             goto return_unlockifneeded;
         }
         int diff = tcp_sndbuf(tpcb) - sbufGetLength(buf);
@@ -101,7 +101,7 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         pause:
             lstate->write_paused = true;
             tunnelNextUpStreamPause(t, l);
-            bufferqueuePush(&lstate->pause_queue, buf);
+            bufferqueuePushBack(&lstate->pause_queue, buf);
             // assert(lstate->timer == NULL);
             // lstate->timer = wtimerAdd(getWorkerLoop(wid), retryTcpWriteTimerCb, kTcpWriteRetryTime, 0);
             // weventSetUserData(lstate->timer, lstate);

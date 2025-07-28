@@ -26,7 +26,7 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts
 static void handlePausedWrite(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, tcplistener_lstate_t *ls, sbuf_t *buf)
 {
     tunnelNextUpStreamPause(t, l);
-    bufferqueuePush(&ls->pause_queue, buf);
+    bufferqueuePushBack(&ls->pause_queue, buf);
 
     if (bufferqueueLen(&ls->pause_queue) > kMaxPauseQueueSize)
     {
