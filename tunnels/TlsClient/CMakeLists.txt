@@ -37,17 +37,23 @@ set(CMAKE_C_VISIBILITY_PRESET hidden)
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
-set(BUILD_TESTING OFF)
-set(INSTALL_ENABLED OFF)
 
-# Configure BoringSSL options based on target architecture
+# Force INSTALL_ENABLED to be OFF and unchangeable
+set(INSTALL_ENABLED OFF CACHE BOOL "Disable BoringSSL installation" FORCE)
+
 set(BORINGSSL_OPTIONS "BUILD_SHARED_LIBS OFF")
+list(APPEND BORINGSSL_OPTIONS "INSTALL_ENABLED OFF")
+list(APPEND BORINGSSL_OPTIONS "BUILD_TOOL OFF")
+list(APPEND BORINGSSL_OPTIONS "BUILD_TESTING OFF")
+
 
 # For Windows ARM64 builds, disable assembly to avoid x86/x64 assembly conflicts
 if(WIN32 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64"))
     message(STATUS "Configuring BoringSSL for Windows ARM64 - disabling assembly to avoid x86/x64 conflicts")
     list(APPEND BORINGSSL_OPTIONS "OPENSSL_NO_ASM ON")
 endif()
+
+
 
 CPMAddPackage(
     NAME BoringSSL
