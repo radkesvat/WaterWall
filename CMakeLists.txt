@@ -14,7 +14,7 @@ project(Waterwall
   VERSION 1.39
   DESCRIPTION "A fast and secure VPN tunnel"
   HOMEPAGE_URL "https://github.com/radkesvat/waterwall"
-  LANGUAGES C
+  LANGUAGES C CXX
 )
 
 file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/version.txt" "${PROJECT_VERSION}\n")
@@ -572,6 +572,9 @@ endif()
 #--------------------------------------------------------------------------------
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Use C++ linker for proper C++ runtime handling
+set_target_properties(Waterwall PROPERTIES LINKER_LANGUAGE CXX)
+
 # Platform-specific flags
 if(MINGW OR MSYS)
   # On Windows (MinGW), statically link libgcc, libstdc++, and libwinpthread
@@ -580,9 +583,8 @@ if(MINGW OR MSYS)
 else()
   # Ensure static linking of C++ standard library for BoringSSL (but not glibc)
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_link_libraries(Waterwall PRIVATE -static-libstdc++ -static-libgcc)
+    target_link_libraries(Waterwall -static-libstdc++ -static-libgcc)
   endif()
-
 endif()
 
 
@@ -595,13 +597,6 @@ if(BUILD_OPENSSL_GLOBALS)
 endif()
 
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
-
-# For Clang, add the -flto compile option only in Release:
-if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  target_compile_options(Waterwall PRIVATE
-    $<$<CONFIG:Release>:-flto>
-  )
-endif()
 
 if(OPENSSL_VERSION)
   message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")

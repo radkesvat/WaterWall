@@ -40,14 +40,21 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 set(BUILD_TESTING OFF)
 set(INSTALL_ENABLED OFF)
 
+# Configure BoringSSL options based on target architecture
+set(BORINGSSL_OPTIONS "BUILD_SHARED_LIBS OFF")
 
+# For Windows ARM64 builds, disable assembly to avoid x86/x64 assembly conflicts
+if(WIN32 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64"))
+    message(STATUS "Configuring BoringSSL for Windows ARM64 - disabling assembly to avoid x86/x64 conflicts")
+    list(APPEND BORINGSSL_OPTIONS "OPENSSL_NO_ASM ON")
+endif()
 
 CPMAddPackage(
     NAME BoringSSL
     GIT_REPOSITORY https://boringssl.googlesource.com/boringssl
     GIT_TAG main
     OPTIONS
-    "BUILD_SHARED_LIBS OFF"
+    ${BORINGSSL_OPTIONS}
 )
 
 target_include_directories(TlsClient PRIVATE
