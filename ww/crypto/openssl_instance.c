@@ -192,15 +192,6 @@ void printSSLError(void)
 
 _Noreturn void printSSLErrorAndAbort(void)
 {
-    // ERR_print_errors_fp(stderr);
-    BIO *bio = BIO_new(BIO_s_mem());
-    ERR_print_errors(bio);
-    char  *buf = NULL;
-    size_t len = BIO_get_mem_data(bio, &buf);
-    if (len > 0)
-    {
-        LOGF("%.*s", len, buf);
-    }
+    printSSLError();
     abort();
-    BIO_free(bio);
 }
