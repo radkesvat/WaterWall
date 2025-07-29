@@ -58,7 +58,7 @@ endif()
 CPMAddPackage(
     NAME BoringSSL
     GIT_REPOSITORY https://boringssl.googlesource.com/boringssl
-    GIT_TAG main
+    GIT_TAG 0.20250701.0
     OPTIONS
     ${BORINGSSL_OPTIONS}
 )
