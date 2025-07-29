@@ -382,7 +382,7 @@ set(LIBS ${LIBS} mimalloc-static)
 # Platform-specific options and settings
 message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
 message(STATUS "CMAKE_CURRENT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}")
-if(IOS)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(BUILD_SHARED OFF)
     set(BUILD_EXAMPLES OFF)
 endif()

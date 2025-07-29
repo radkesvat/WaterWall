@@ -38,29 +38,27 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
 
 
-# Force INSTALL_ENABLED to be OFF and unchangeable
+# Configure BoringSSL options
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build BoringSSL as static library" FORCE)
 set(INSTALL_ENABLED OFF CACHE BOOL "Disable BoringSSL installation" FORCE)
+set(BUILD_TOOL OFF CACHE BOOL "Disable BoringSSL tools" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "Disable BoringSSL tests" FORCE)
 
-set(BORINGSSL_OPTIONS "BUILD_SHARED_LIBS OFF")
-list(APPEND BORINGSSL_OPTIONS "INSTALL_ENABLED OFF")
-list(APPEND BORINGSSL_OPTIONS "BUILD_TOOL OFF")
-list(APPEND BORINGSSL_OPTIONS "BUILD_TESTING OFF")
-
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+    set(CMAKE_OSX_SYSROOT "iphoneos")
+endif()
 
 # For Windows ARM64 builds, disable assembly to avoid x86/x64 assembly conflicts
 if(WIN32 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64"))
     message(STATUS "Configuring BoringSSL for Windows ARM64 - disabling assembly to avoid x86/x64 conflicts")
-    list(APPEND BORINGSSL_OPTIONS "OPENSSL_NO_ASM ON")
+    set(OPENSSL_NO_ASM ON CACHE BOOL "Disable BoringSSL assembly for Windows ARM64" FORCE)
 endif()
-
-
 
 CPMAddPackage(
     NAME BoringSSL
     GIT_REPOSITORY https://boringssl.googlesource.com/boringssl
     GIT_TAG 0.20250701.0
-    OPTIONS
-    ${BORINGSSL_OPTIONS}
 )
 
 target_include_directories(TlsClient PRIVATE
