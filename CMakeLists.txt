@@ -112,7 +112,7 @@ option(INCLUDE_UDP_CONNECTOR            "link UdpConnector staticly to the core"
 option(INCLUDE_UDP_STATELESS_SOCKET     "link UdpStatelessSocket staticly to the core"   TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"               TRUE)
 option(INCLUDE_OPENSSL_SERVER           "link OpenSSlServer staticly to the core"        FALSE)
-option(INCLUDE_OPENSSL_CLIENT           "link OpenSSLClient staticly to the core"        FALSE)
+option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"            TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"     FALSE)
 option(INCLUDE_TROJAN_SOCKS_SERVER      "link TrojanSocksServer staticly to the core"    FALSE)
 option(INCLUDE_WOLFSSL_SERVER           "link WolfSSLServer staticly to the core"        OFF)  # this downloads 750 mb of data!
@@ -153,20 +153,7 @@ if(NOT ANDROID AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD"
 
 endif()
 
-#--------------------------------------------------------------------------------
-# Platform-Specific Linker and Compiler Flags
-#--------------------------------------------------------------------------------
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-# Platform-specific flags
-if(MINGW OR MSYS)
-  # On Windows (MinGW), statically link libgcc, libstdc++, and libwinpthread
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
-  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
-elseif(UNIX AND NOT APPLE)
-  # On Linux, statically link libstdc++ and libgcc
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
-endif()
 
 #--------------------------------------------------------------------------------
 # Main Executable and Sources
@@ -395,12 +382,12 @@ if(INCLUDE_OPENSSL_SERVER)
   target_link_libraries(Waterwall OpenSSLServer)
 endif()
 
-#openssl client
-if(INCLUDE_OPENSSL_CLIENT)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_OPENSSL_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/openssl)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/openssl)
-  target_link_libraries(Waterwall OpenSSLClient)
+#tls client
+if(INCLUDE_TLS_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_TLS_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TlsClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TlsClient)
+  target_link_libraries(Waterwall TlsClient)
 endif()
 
 #trojan auth server
@@ -579,6 +566,26 @@ if(INCLUDE_MUX_CLIENT)
   target_link_libraries(Waterwall MuxClient)
 endif()
 
+
+#--------------------------------------------------------------------------------
+# Platform-Specific Linker and Compiler Flags
+#--------------------------------------------------------------------------------
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+# Platform-specific flags
+if(MINGW OR MSYS)
+  # On Windows (MinGW), statically link libgcc, libstdc++, and libwinpthread
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+else()
+  # Ensure static linking of C++ standard library for BoringSSL (but not glibc)
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    target_link_libraries(Waterwall PRIVATE -static-libstdc++ -static-libgcc)
+  endif()
+
+endif()
+
+
 #------------------------------------------------------------------------------------------
 # Final Configuration
 #------------------------------------------------------------------------------------------
@@ -601,15 +608,3 @@ if(OPENSSL_VERSION)
 endif()
 
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
-
-#------------------------------------------------------------------------------------------
-# Output Path (No longer needed)
-#------------------------------------------------------------------------------------------
-# set output path to build/bin/
-# set_target_properties(Waterwall
-#   PROPERTIES
-#   OUTPUT_NAME ${FINAL_EXECUTABLE_NAME}
-#   ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-#   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-#   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-# )
