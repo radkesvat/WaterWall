@@ -14,10 +14,10 @@
             ]
         },
         {
-            "name": "android-arm",
+            "name": "android-arm32",
             "inherits": [
                 "host-not-windows",
-                "target-android-arm",
+                "target-android-arm32",
                 "ninja",
                 "default"
             ]
@@ -41,10 +41,10 @@
             ]
         },
         {
-            "name": "android-x86_64",
+            "name": "android-x86-64",
             "inherits": [
                 "host-not-windows",
-                "target-android-x86_64",
+                "target-android-x86-64",
                 "ninja",
                 "default"
             ]
@@ -59,8 +59,8 @@
             ]
         },
         {
-            "name": "android-arm",
-            "configurePreset": "android-arm",
+            "name": "android-arm32",
+            "configurePreset": "android-arm32",
             "inherits": [
                 "host-not-windows"
             ]
@@ -80,8 +80,8 @@
             ]
         },
         {
-            "name": "android-x86_64",
-            "configurePreset": "android-x86_64",
+            "name": "android-x86-64",
+            "configurePreset": "android-x86-64",
             "inherits": [
                 "host-not-windows"
             ]

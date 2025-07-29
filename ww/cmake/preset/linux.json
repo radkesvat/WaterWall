@@ -14,7 +14,7 @@
             ]
         },
         {
-            "name": "linux-clang",
+            "name": "linux-clang-x64",
             "inherits": [
                 "host-linux",
                 "target-linux",
@@ -24,7 +24,7 @@
             ]
         },
         {
-            "name": "linux-gcc",
+            "name": "linux-gcc-x64",
             "inherits": [
                 "host-linux",
                 "target-linux",
@@ -34,18 +34,34 @@
             ]
         },
         {
-            "name": "linux-gcc-old-cpu",
-            "cacheVariables": {
-                "DISABLE_AVX": "ON",
-                "CMAKE_C_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx",
-                "CMAKE_CXX_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx"
-            },
-            
+            "name": "linux-gcc-x64-old-cpu",
             "inherits": [
                 "host-linux",
                 "target-linux",
                 "ninja",
                 "gcc",
+                "old-cpu",
+                "default"
+            ]
+        },
+        {
+            "name": "linux-gcc-arm64",
+            "inherits": [
+                "host-linux",
+                "target-linux-arm64",
+                "ninja",
+                "gcc-cross-arm64",
+                "default"
+            ]
+        },
+        {
+            "name": "linux-gcc-arm64-old-cpu",
+            "inherits": [
+                "host-linux",
+                "target-linux-arm64",
+                "ninja",
+                "gcc-cross-arm64",
+                "old-cpu",
                 "default"
             ]
         }
@@ -59,22 +75,22 @@
             ]
         },
         {
-            "name": "linux-clang",
-            "configurePreset": "linux-clang",
+            "name": "linux-clang-x64",
+            "configurePreset": "linux-clang-x64",
             "inherits": [
                 "host-linux"
             ]
         },
         {
-            "name": "linux-gcc",
-            "configurePreset": "linux-gcc",
+            "name": "linux-gcc-x64",
+            "configurePreset": "linux-gcc-x64",
             "inherits": [
                 "host-linux"
             ]
         },
         {
             "name": "linux-gcc-debug",
-            "configurePreset": "linux-gcc",
+            "configurePreset": "linux-gcc-x64",
             "configuration": "Debug",
             "inherits": [
                 "host-linux"
@@ -82,15 +98,29 @@
         },
         {
             "name": "linux-gcc-rwd",
-            "configurePreset": "linux-gcc",
+            "configurePreset": "linux-gcc-x64",
             "configuration": "RelWithDebInfo",
             "inherits": [
                 "host-linux"
             ]
         },
         {
-            "name": "linux-gcc-old-cpu",
-            "configurePreset": "linux-gcc-old-cpu",
+            "name": "linux-gcc-x64-old-cpu",
+            "configurePreset": "linux-gcc-x64-old-cpu",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-gcc-arm64",
+            "configurePreset": "linux-gcc-arm64",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-gcc-arm64-old-cpu",
+            "configurePreset": "linux-gcc-arm64-old-cpu",
             "inherits": [
                 "host-linux"
             ]
@@ -107,7 +137,7 @@
         },
         {
             "name": "linux-clang",
-            "configurePreset": "linux-clang",
+            "configurePreset": "linux-clang-x64",
             "inherits": [
                 "host-linux",
                 "options"
@@ -115,7 +145,7 @@
         },
         {
             "name": "linux-gcc",
-            "configurePreset": "linux-gcc",
+            "configurePreset": "linux-gcc-x64",
             "inherits": [
                 "host-linux",
                 "options"

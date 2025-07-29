@@ -20,7 +20,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [armeabi-v7a, arm64-v8a, x86, x86_64]
+        include:
+          - preset: android-arm32
+            arch: armeabi-v7a
+            
+          - preset: android-arm64
+            arch: arm64-v8a
+            
+          - preset: android-x86
+            arch: x86
+            
+          - preset: android-x86_64
+            arch: x86_64
+            
     name: android-${{ matrix.arch }}
     runs-on: ubuntu-latest
     steps:
@@ -29,28 +41,27 @@ jobs:
         with:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
+          enableCrossOsArchive: false
       - name: Install dependencies on Linux
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache
+
+
       - name: Configure CMake
         run: >
-          cmake -B build -G Ninja
-          -DANDROID_ABI=${{ matrix.arch }}
-          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          cmake --preset ${{ matrix.preset }}
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_android_${{ matrix.arch }}
-          path: ${{ github.workspace }}/build/Waterwall
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -82,7 +93,7 @@ jobs:
         with:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
+          enableCrossOsArchive: false
          
       - uses: cross-platform-actions/action@master
         with:
@@ -112,8 +123,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ios, ios_sim]
-    name: ${{ matrix.target }}
+        include:
+          - preset: ios
+          - preset: ios_sim
+    name: ${{ matrix.preset }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,28 +134,25 @@ jobs:
         with:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
+          enableCrossOsArchive: false
       - name: Install dependencies on macOS
-        if: runner.os == 'macOS'
         run: |
           brew update
           brew install ccache
 
       - name: Configure CMake
         run: >
-          cmake -B build -G Xcode
-          -DCMAKE_TOOLCHAIN_FILE=ww/cmake/toolchain/${{ matrix.target }}.cmake
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          cmake --preset ${{ matrix.preset }}
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_${{ matrix.target }}
-          path: ${{ matrix.target == 'ios_sim' && format('{0}/build/Debug-iphonesimulator/Waterwall.app/', github.workspace) || format('{0}/build/Debug-iphoneos/Waterwall.app/', github.workspace) }}
+          name: Waterwall_${{ matrix.preset }}
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
       - name: Show ccache statistics
         run: ccache -sv
 
@@ -150,8 +160,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cc: [clang, gcc]
-    name: linux-${{ matrix.cc }}
+        include:
+          - preset: linux-gcc-x64
+          - preset: linux-clang-x64
+          - preset: linux-gcc-x64-old-cpu
+          - preset: linux-gcc-arm64
+          - preset: linux-gcc-arm64-old-cpu
+
+          
+    name: ${{ matrix.preset }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -159,60 +176,32 @@ jobs:
         with:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
+          enableCrossOsArchive: false
       - name: Install dependencies on Linux
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache
+
+      - name: Install cross-compiler
+        if: matrix.preset == 'linux-gcc-arm64' || matrix.preset == 'linux-gcc-arm64-old-cpu'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
       - name: Configure CMake
         run: >
-          cmake -B build -G Ninja
-          -DCMAKE_C_COMPILER=${{ matrix.cc }}
-          -DCMAKE_CXX_COMPILER=${{ matrix.cc }}++
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          cmake --preset ${{ matrix.preset }}
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build --preset ${{ matrix.preset }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_linux_x64_${{ matrix.cc }}
-          path: ${{ github.workspace }}/build/Waterwall
+          name: Waterwall-${{ matrix.preset }}
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
       - name: Show ccache statistics
         run: ccache -sv
 
-  linux-old-cpu:
-    strategy:
-      fail-fast: false
-      matrix:
-        cc: [gcc]
-    name: linux-old-cpu-${{ matrix.cc }}
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ env.cpm-path }}
-          key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
-      - name: Install dependencies on Linux
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache
-      - name: Configure CMake
-        run: >
-          cmake --preset linux-gcc-old-cpu
-      - name: Build
-        run: cmake --build build --preset linux-gcc-old-cpu
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Waterwall_linux_X64_${{ matrix.cc }}_old_cpus
-          path: ${{ github.workspace }}/build/linux-gcc-old-cpu/Release/Waterwall
-      - name: Show ccache statistics
-        run: ccache -sv
   
   macos:
     runs-on: macos-latest
@@ -222,7 +211,7 @@ jobs:
         with:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
+          enableCrossOsArchive: false
       - name: Install dependencies on macOS
         if: runner.os == 'macOS'
         run: |
@@ -230,18 +219,17 @@ jobs:
           brew install ccache
       - name: Configure CMake
         run: >
-          cmake -B build
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          cmake --preset macos
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
 
       - name: Build
-        run: cmake --build  build
+        run: cmake --build --preset macos
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Waterwall_${{ runner.os }}
-          path: ${{ github.workspace }}/build/Waterwall
+          path: ${{ github.workspace }}/build/macos/Release/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -250,8 +238,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        preset: [CLANG64, MINGW32, MINGW64, UCRT64]
-    name: msys2-${{ matrix.preset }}
+        include:
+          - preset: windows-clang-x64
+            msys: CLANG64
+          - preset: windows-mingw-x32
+            msys: MINGW32
+          - preset: windows-mingw-x64
+            msys: MINGW64
+          - preset: windows-ucrt-x64
+            msys: UCRT64
+    name: ${{ matrix.preset }}
     runs-on: windows-latest
     defaults:
       run:
@@ -262,7 +258,7 @@ jobs:
         with:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
+          enableCrossOsArchive: false
       - name: Install dependencies on Windows
         if: runner.os == 'Windows'
         shell: bash
@@ -272,7 +268,7 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: ${{ matrix.preset }}
+          msystem: ${{ matrix.msys }}
           update: true
           pacboy: >-
             ccache:p
@@ -284,18 +280,17 @@ jobs:
       - name: Configure CMake
         shell: msys2 {0}
         run: >
-          cmake -B build -G Ninja
-          -DCPM_SOURCE_CACHE=${{ env.cpm-path }}
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
+          cmake --preset ${{ matrix.preset }}
+          -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
 
       - name: Build
-        run: cmake --build  build --config Release
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_windows_MSYS2_${{ matrix.preset }}
-          path: ${{ github.workspace }}/build/Waterwall.exe
+          name: Waterwall-${{ matrix.preset }}
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
 
       - name: Show ccache statistics
         run: ccache -sv
@@ -304,8 +299,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [ARM64, Win32, x64]
-    name: windows-${{ matrix.arch }}
+        include:
+          - preset: windows-arm32
+          - preset: windows-arm64
+          - preset: windows-x86
+          - preset: windows-x86-64
+    name: ${{ matrix.preset }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -313,7 +312,7 @@ jobs:
         with:
           path: ${{ env.cpm-path }}
           key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
+          enableCrossOsArchive: false
       - name: Install dependencies on Windows
         if: runner.os == 'Windows'
         run: |
@@ -322,90 +321,23 @@ jobs:
 
       - name: Configure CMake
         run: >
-          cmake -B build -A ${{ matrix.arch }}
+          cmake --preset ${{ matrix.preset }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
-          -DOPENSSL_CONFIGURE_OPTIONS=no-asm
-          -DOPENSSL_CONFIGURE_VERBOSE=ON
-
+        # -DOPENSSL_CONFIGURE_OPTIONS=no-asm
+        
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build --preset ${{ matrix.preset }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_windows_${{ matrix.arch }}
-          path: ${{ github.workspace }}/build/Release/Waterwall.exe
+          name: Waterwall-${{ matrix.preset }}
+          path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
 
       - name: Show ccache statistics
         run: ccache -sv
 
-  linux-arm:
-    name: linux-arm64
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ env.cpm-path }}
-          key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
-      - name: Install dependencies and cross-compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-      - name: Configure CMake for ARM64
-        run: >
-          cmake -B build -G Ninja \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-            -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
-            -DOPENSSL_CONFIGURE_VERBOSE=ON
-      - name: Build
-        run: cmake --build build --config Release
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Waterwall_linux_arm64
-          path: ${{ github.workspace }}/build/Waterwall
-      - name: Show ccache statistics
-        run: ccache -sv
 
-  linux-arm-old-cpu:
-    name: linux-arm64-old-cpu
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ env.cpm-path }}
-          key: ${{ env.cpm-key }}
-          enableCrossOsArchive: true
-      - name: Install dependencies and cross-compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build ccache gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-      - name: Configure CMake for ARM64
-        run: >
-          cmake -B build -G Ninja \
-            -DCMAKE_SYSTEM_NAME=Linux \
-            -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
-            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-            -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
-            -DCPM_SOURCE_CACHE=${{ env.cpm-path }} \
-            -DOPENSSL_CONFIGURE_VERBOSE=ON \
-            -DDISABLE_AVX=1 
-
-      - name: Build
-        run: cmake --build build --config Release
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Waterwall_linux_arm64_old_cpu
-          path: ${{ github.workspace }}/build/Waterwall
-      - name: Show ccache statistics
-        run: ccache -sv
 
   release:
       needs:
@@ -413,12 +345,9 @@ jobs:
         # - bsd
         # - ios
         - linux
-        - linux-arm
-        - linux-arm-old-cpu
         # - macos
         - msys2
         - windows
-        - linux-old-cpu
 
       runs-on: ubuntu-latest
       steps:
