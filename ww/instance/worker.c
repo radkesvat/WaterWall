@@ -93,7 +93,7 @@ void workerRun(worker_t *worker)
     {
         if(atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire) == true)
         {
-            LOGD("Worker %d exiting due to application stopping flag !", wid);
+            LOGD("Worker %d exited", wid);
             return;
         }
         // wait for the main thread to set the flag
