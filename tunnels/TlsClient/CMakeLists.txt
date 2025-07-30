@@ -33,9 +33,7 @@ target_include_directories(TlsClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
 target_link_libraries(TlsClient PRIVATE ww)
 
 # set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(CMAKE_C_VISIBILITY_PRESET hidden)
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN 1)
+
 
 
 # Configure BoringSSL options

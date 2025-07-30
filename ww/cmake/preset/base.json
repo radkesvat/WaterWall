@@ -8,7 +8,11 @@
             "installDir": "${sourceDir}/install/${presetName}",
             "cmakeExecutable": "cmake",
             "cacheVariables": {
-                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache"
+                "CPM_SOURCE_CACHE": "${sourceDir}/build/.cache",
+                "CMAKE_C_VISIBILITY_PRESET": "hidden",
+                "CMAKE_CXX_VISIBILITY_PRESET": "hidden",
+                "CMAKE_VISIBILITY_INLINES_HIDDEN": "1"
+
             }
         },
         {
