@@ -52,8 +52,19 @@ set(BUILD_TESTING OFF CACHE BOOL "Disable BoringSSL tests" FORCE)
 # if i change anything inside it, the notes will be here:
 # currently only removed git folder to be able to push it
 # line 44 of bssl cmake: set INSTALL_ENABLED to zero
+# at around line 720 of bssl cmake:  add_executable(bssl ${BSSL_SOURCES}) is excluded if APPLE
 # Add BoringSSL as a subdirectory
+
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/boringssl boringssl)
+
+
+
+
+# Include BoringSSL headers
+target_include_directories(TlsClient PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
+)
 
 if(APPLE)
     target_compile_options(ssl PRIVATE -Wno-shorten-64-to-32)
@@ -70,12 +81,6 @@ endif()
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_compile_options(bssl PRIVATE -Wno-format)
 endif()
-
-# Include BoringSSL headers
-target_include_directories(TlsClient PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
-)
-
 
 
 target_link_libraries(TlsClient PRIVATE crypto ssl)
