@@ -28,6 +28,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE} (ignored on multi-config generators)")
 
+# Set static runtime library for MSVC - this is the modern CMake way (dont move this line)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 #--------------------------------------------------------------------------------
 # Executable and C/CXX Standards
 #--------------------------------------------------------------------------------
@@ -570,7 +573,7 @@ endif()
 #--------------------------------------------------------------------------------
 # Platform-Specific Linker and Compiler Flags
 #--------------------------------------------------------------------------------
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 
 # Use C++ linker for proper C++ runtime handling (especially for BoringSSL)
 set_target_properties(Waterwall PROPERTIES LINKER_LANGUAGE CXX)
