@@ -134,6 +134,11 @@
             "inherits": "target-windows",
             "architecture": {
                 "value": "ARM"
+            },
+            "cacheVariables": {
+                "CMAKE_SYSTEM_NAME": "Windows",
+                "CMAKE_SYSTEM_PROCESSOR": "arm32",
+                "OPENSSL_NO_ASM": "1"
             }
         },
         {
@@ -142,6 +147,11 @@
             "inherits": "target-windows",
             "architecture": {
                 "value": "ARM64"
+            },
+            "cacheVariables": {
+                "CMAKE_SYSTEM_NAME": "Windows",
+                "CMAKE_SYSTEM_PROCESSOR": "arm64",
+                "OPENSSL_NO_ASM": "1"
             }
         },
         {
