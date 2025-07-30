@@ -15,8 +15,8 @@ void tlsclientLinestateDestroy(tlsclient_lstate_t *ls)
 {
 
     SSL_free(ls->ssl); /* free the SSL object and its BIO's */
-    BIO_free(ls->rbio);
-    BIO_free(ls->wbio);
+    // BIO_free(ls->rbio);
+    // BIO_free(ls->wbio);
     bufferqueueDestroy(&(ls->bq));
     memorySet(ls, 0, sizeof(tlsclient_lstate_t));
 }
