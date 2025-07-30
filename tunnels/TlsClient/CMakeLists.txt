@@ -52,6 +52,10 @@ if(WIN32 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR 
     set(OPENSSL_NO_ASM ON CACHE BOOL "Disable BoringSSL assembly for Windows ARM64" FORCE)
 endif()
 
+if(APPLE)
+    cmake_policy(SET CMP0006 NEW)
+endif()
+
 CPMAddPackage(
     NAME BoringSSL
     GIT_REPOSITORY https://boringssl.googlesource.com/boringssl
