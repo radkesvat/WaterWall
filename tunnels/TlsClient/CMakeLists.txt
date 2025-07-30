@@ -69,13 +69,14 @@ target_include_directories(TlsClient PRIVATE
 if(APPLE)
     target_compile_options(ssl PRIVATE -Wno-shorten-64-to-32)
     target_compile_options(crypto PRIVATE -Wno-shorten-64-to-32)
+    target_compile_options(pki PRIVATE -Wno-shorten-64-to-32)
 endif()
 
 
 # Fix for Windows Clang x64 assembly issues
-if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-    set(OPENSSL_NO_ASM ON CACHE BOOL "Disable assembly optimizations on Windows Clang" FORCE)
-endif()
+# if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang")
+#     set(OPENSSL_NO_ASM ON CACHE BOOL "Disable assembly optimizations on Windows Clang" FORCE)
+# endif()
 
 # Fix for MinGW64 format string warnings
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
