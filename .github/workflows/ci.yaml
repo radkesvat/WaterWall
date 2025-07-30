@@ -293,7 +293,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - preset: windows-arm32
           - preset: windows-arm64
           - preset: windows-x86
           - preset: windows-x86-64
