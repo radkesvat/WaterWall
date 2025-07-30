@@ -1,6 +1,0 @@
-[workspace]
-members = [
-  "bssl-crypto",
-  "bssl-sys",
-]
-resolver = "3"
