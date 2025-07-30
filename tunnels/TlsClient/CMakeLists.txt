@@ -71,6 +71,8 @@ if(APPLE)
     target_compile_options(crypto PRIVATE -Wno-shorten-64-to-32)
     target_compile_options(pki PRIVATE -Wno-shorten-64-to-32)
     target_compile_options(fipsmodule PRIVATE -Wno-shorten-64-to-32)
+    target_compile_options(decrepit PRIVATE -Wno-shorten-64-to-32)
+    
 endif()
 
 
