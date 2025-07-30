@@ -53,7 +53,7 @@ if(WIN32 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR 
 endif()
 
 if(APPLE)
-    cmake_policy(SET CMP0006 NEW)
+    cmake_policy(SET CMP0006 OLD)
 endif()
 
 CPMAddPackage(
