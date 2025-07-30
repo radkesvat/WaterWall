@@ -312,6 +312,11 @@ jobs:
           choco install -y jom nasm ccache
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
 
+      - name: Set Windows SDK version
+        if: matrix.preset == 'windows-arm32' || matrix.preset == 'windows-arm64'
+        run: |
+          run: echo "CMAKE_SYSTEM_VERSION=10.0.19041.0" >> $GITHUB_ENV
+
       - name: Configure CMake
         run: >
           cmake --preset ${{ matrix.preset }}
