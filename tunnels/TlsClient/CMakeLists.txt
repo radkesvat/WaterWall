@@ -49,11 +49,15 @@ set(BUILD_TESTING OFF CACHE BOOL "Disable BoringSSL tests" FORCE)
 ########## NOTES
 # The Downnloaded BoringSSL source code was the HEAD of the repository at the time of writing this.
 # the commit hash is 4b3285002397da82681bebaacea9b4f231c9dbfc
-# if i change anything inside it, the notes will be here:
 # currently only removed git folder to be able to push it
+
+# i saved original cmake file as CMakeLists.txt.original
+# and the diff of changes that i made to CMakeLists.tx is ./CMakeLists.txt.patch
+# it was result of command 'diff -u CMakeLists.txt.original CMakeLists.txt > ../CMakeLists.txt.patch'
+
+# a note of changes i made to boringssl CMakeLists.txt:
 # line 44 of bssl cmake: set INSTALL_ENABLED to zero
 # at around line 720 of bssl cmake:  add_executable(bssl ${BSSL_SOURCES}) is excluded if APPLE
-# Add BoringSSL as a subdirectory
 
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/boringssl boringssl)

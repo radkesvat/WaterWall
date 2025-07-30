@@ -1,0 +1,31 @@
+--- CMakeLists.txt.original	2025-07-30 16:17:55.632176477 +0000
++++ CMakeLists.txt	2025-07-30 14:54:41.872040573 +0000
+@@ -41,7 +41,7 @@
+ include(CTest)
+ include(GNUInstallDirs)
+ 
+-set(INSTALL_ENABLED 1)
++set(INSTALL_ENABLED 0)
+ 
+ if(CMAKE_VERSION VERSION_LESS 3.21 AND
+    CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+@@ -133,7 +133,7 @@
+   else()
+     if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+       # emscripten's emcc/clang does not accept the "-ggdb" flag.
+-      set(C_CXX_FLAGS "${C_CXX_FLAGS} -g")
++      set(C_CXX_FLAGS "${C_CXX_FLAGS}- -g")
+     else()
+       set(C_CXX_FLAGS "${C_CXX_FLAGS} -ggdb")
+     endif()
+@@ -720,8 +720,10 @@
+   target_link_libraries(modulewrapper crypto)
+ endif()
+ 
++if(NOT APPLE)
+ add_executable(bssl ${BSSL_SOURCES})
+ target_link_libraries(bssl ssl crypto)
++endif()
+ 
+ if(FUZZ)
+   if(LIBFUZZER_FROM_DEPS)
