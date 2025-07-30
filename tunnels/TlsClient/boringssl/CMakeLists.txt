@@ -720,8 +720,10 @@ if(FIPS)
   target_link_libraries(modulewrapper crypto)
 endif()
 
+if(NOT APPLE)
 add_executable(bssl ${BSSL_SOURCES})
 target_link_libraries(bssl ssl crypto)
+endif()
 
 if(FUZZ)
   if(LIBFUZZER_FROM_DEPS)
