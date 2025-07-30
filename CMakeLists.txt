@@ -572,21 +572,17 @@ endif()
 #--------------------------------------------------------------------------------
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-# Use C++ linker for proper C++ runtime handling
+# Use C++ linker for proper C++ runtime handling (especially for BoringSSL)
 set_target_properties(Waterwall PROPERTIES LINKER_LANGUAGE CXX)
 
 # Platform-specific flags
 if(MINGW OR MSYS)
   # On Windows (MinGW), statically link libgcc, libstdc++, and libwinpthread
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
-  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
-else()
+  target_link_options(Waterwall PRIVATE -static -static-libgcc -static-libstdc++)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   # Ensure static linking of C++ standard library for BoringSSL (but not glibc)
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    target_link_libraries(Waterwall -static-libstdc++ -static-libgcc)
-  endif()
+  target_link_options(Waterwall PRIVATE -static-libstdc++ -static-libgcc)
 endif()
-
 
 #------------------------------------------------------------------------------------------
 # Final Configuration

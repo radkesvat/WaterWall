@@ -22,9 +22,13 @@ jobs:
       matrix:
         include:
           - preset: android-arm32
+            arch: armeabi-v7a
           - preset: android-arm64
+            arch: arm64-v8a
           - preset: android-x86
+            arch: x86
           - preset: android-x86-64
+            arch: x86-64
             
     name: ${{ matrix.preset }}
     runs-on: ubuntu-latest
@@ -65,6 +69,7 @@ jobs:
       matrix:
         # preset: [freebsd, netbsd, openbsd]
         # arch: [arm64, x86_64]
+        names: [freebsd-x86-64]
         preset: [freebsd]
         arch: [x86_64]
         include:
@@ -78,7 +83,7 @@ jobs:
           #   version: "7.6"
           #   install: sudo pkg_add cmake git ninja
             
-    name: ${{ matrix.preset }}-${{ matrix.arch }}
+    name: ${{ matrix.names }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -109,7 +114,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_BSD_${{ matrix.preset }}_${{ matrix.arch }}
+          name: Waterwall-${{ matrix.names }}
           path: ${{ github.workspace }}/build/Waterwall
 
   ios:

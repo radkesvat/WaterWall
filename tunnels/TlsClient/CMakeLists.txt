@@ -44,37 +44,20 @@ set(INSTALL_ENABLED OFF CACHE BOOL "Disable BoringSSL installation" FORCE)
 set(BUILD_TOOL OFF CACHE BOOL "Disable BoringSSL tools" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "Disable BoringSSL tests" FORCE)
 
+########## NOTES
+# The Downnloaded BoringSSL source code is for tag chromium-5414
+# if i change anything inside it, the notes will be here:
+# currently only removed git folder to be able to push it
 
 
-# For Windows ARM64 builds, disable assembly to avoid x86/x64 assembly conflicts
-if(WIN32 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64"))
-    message(STATUS "Configuring BoringSSL for Windows ARM64 - disabling assembly to avoid x86/x64 conflicts")
-    set(OPENSSL_NO_ASM ON CACHE BOOL "Disable BoringSSL assembly for Windows ARM64" FORCE)
-endif()
+# Add BoringSSL as a subdirectory
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/boringssl boringssl)
 
-if(APPLE)
-    cmake_policy(SET CMP0006 OLD)
-endif()
-
-CPMAddPackage(
-    NAME BoringSSL
-    GIT_REPOSITORY https://boringssl.googlesource.com/boringssl
-    GIT_TAG 0.20250701.0
-)
-
+# Include BoringSSL headers
 target_include_directories(TlsClient PRIVATE
-    ${boringssl_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
 )
 
-enable_language(CXX)
 
-# Static link standard libraries for C++ code in BoringSSL
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-    if(APPLE)
-        target_link_libraries(TlsClient PRIVATE c++)
-    else()
-        target_link_libraries(TlsClient PRIVATE stdc++)
-    endif()
-endif()
 
 target_link_libraries(TlsClient PRIVATE crypto ssl)
