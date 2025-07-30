@@ -59,37 +59,19 @@
             ]
         },
         {
-            "name": "windows-clang-x64",
+            "name": "windows-msys-clang",
             "inherits": [
                 "host-windows",
                 "target-windows",
                 "ninja",
                 "clang",
+                "no-openssl-assembly",
                 "default"
             ]
         },
+
         {
-            "name": "windows-mingw-x32",
-            "inherits": [
-                "host-windows",
-                "target-windows",
-                "ninja",
-                "gcc",
-                "default"
-            ]
-        },
-        {
-            "name": "windows-mingw-x64",
-            "inherits": [
-                "host-windows",
-                "target-windows",
-                "ninja",
-                "gcc",
-                "default"
-            ]
-        },
-        {
-            "name": "windows-ucrt-x64",
+            "name": "windows-mingw",
             "inherits": [
                 "host-windows",
                 "target-windows",
@@ -98,6 +80,7 @@
                 "default"
             ]
         }
+       
     ],
     "buildPresets": [
         {
@@ -167,33 +150,20 @@
             ]
         },
         {
-            "name": "windows-clang-x64",
-            "configurePreset": "windows-clang-x64",
+            "name": "windows-msys-clang",
+            "configurePreset": "windows-msys-clang",
             "inherits": [
                 "host-windows"
             ]
         },
         {
-            "name": "windows-mingw-x32",
-            "configurePreset": "windows-mingw-x32",
-            "inherits": [
-                "host-windows"
-            ]
-        },
-        {
-            "name": "windows-mingw-x64",
-            "configurePreset": "windows-mingw-x64",
-            "inherits": [
-                "host-windows"
-            ]
-        },
-        {
-            "name": "windows-ucrt-x64",
-            "configurePreset": "windows-ucrt-x64",
+            "name": "windows-mingw",
+            "configurePreset": "windows-mingw",
             "inherits": [
                 "host-windows"
             ]
         }
+        
     ],
     "testPresets": [
         {

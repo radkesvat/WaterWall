@@ -256,7 +256,15 @@
             "cacheVariables": {
                 "DISABLE_AVX": "ON"
             }
+        },
+        {
+            "name": "no-openssl-assembly",
+            "hidden": true,
+            "cacheVariables": {
+                "OPENSSL_NO_ASM": "ON"
+            }
         }
+       
     ],
     "buildPresets": [
         {

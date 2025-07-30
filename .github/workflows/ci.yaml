@@ -237,15 +237,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - preset: windows-clang-x64
+          - name: windows-clang-x64
+            preset: windows-msys-clang
             msys: CLANG64
-          - preset: windows-mingw-x32
+          - name: windows-mingw-x32
+            preset: windows-mingw
             msys: MINGW32
-          - preset: windows-mingw-x64
+          - name: windows-mingw-x64
+            preset: windows-mingw
             msys: MINGW64
-          - preset: windows-ucrt-x64
+          - name: windows-mingw-ucrt-x64
+            preset: windows-mingw
             msys: UCRT64
-    name: ${{ matrix.preset }}
+    name: ${{ matrix.name }}
     runs-on: windows-latest
     defaults:
       run:
@@ -287,7 +291,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall-${{ matrix.preset }}
+          name: Waterwall-${{ matrix.name }}
           path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
 
       - name: Show ccache statistics
