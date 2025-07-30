@@ -315,7 +315,7 @@ jobs:
       - name: Set Windows SDK version
         if: matrix.preset == 'windows-arm32' || matrix.preset == 'windows-arm64'
         run: |
-          run: echo "CMAKE_SYSTEM_VERSION=10.0.19041.0" >> $GITHUB_ENV
+          echo "CMAKE_SYSTEM_VERSION=10.0.19041.0" >> $GITHUB_ENV
 
       - name: Configure CMake
         run: >
