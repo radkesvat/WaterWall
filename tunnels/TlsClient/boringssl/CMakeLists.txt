@@ -41,7 +41,7 @@ enable_language(CXX)
 include(CTest)
 include(GNUInstallDirs)
 
-set(INSTALL_ENABLED 1)
+set(INSTALL_ENABLED 0)
 
 if(CMAKE_VERSION VERSION_LESS 3.21 AND
    CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
@@ -133,7 +133,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CLANG)
   else()
     if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
       # emscripten's emcc/clang does not accept the "-ggdb" flag.
-      set(C_CXX_FLAGS "${C_CXX_FLAGS} -g")
+      set(C_CXX_FLAGS "${C_CXX_FLAGS}- -g")
     else()
       set(C_CXX_FLAGS "${C_CXX_FLAGS} -ggdb")
     endif()
