@@ -22,18 +22,11 @@ jobs:
       matrix:
         include:
           - preset: android-arm32
-            arch: armeabi-v7a
-            
           - preset: android-arm64
-            arch: arm64-v8a
-            
           - preset: android-x86
-            arch: x86
+          - preset: android-x86-64
             
-          - preset: android-x86_64
-            arch: x86_64
-            
-    name: android-${{ matrix.arch }}
+    name: ${{ matrix.preset }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +53,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Waterwall_android_${{ matrix.arch }}
+          name: Waterwall-${{ matrix.preset }}
           path: ${{ github.workspace }}/build/${{ matrix.preset }}/Release/
 
       - name: Show ccache statistics
@@ -324,7 +317,7 @@ jobs:
           cmake --preset ${{ matrix.preset }}
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
         # -DOPENSSL_CONFIGURE_OPTIONS=no-asm
-        
+
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 

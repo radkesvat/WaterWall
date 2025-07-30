@@ -101,7 +101,11 @@
         {
             "name": "target-ios",
             "hidden": true,
-            "toolchainFile": "${sourceDir}/ww/cmake/toolchain/ios.cmake"
+            "toolchainFile": "${sourceDir}/ww/cmake/toolchain/ios.cmake",
+            "cacheVariables": {
+                "CMAKE_OSX_SYSROOT": "iphoneos",
+                "DCMAKE_OSX_ARCHITECTURES": "x64"
+            }
         },
         {
             "name": "target-ios_sim",
@@ -222,12 +226,19 @@
             }
         },
         {
-            "name": "old-cpu",
+            "name": "old-cpu-x64",
             "hidden": true,
             "cacheVariables": {
                 "DISABLE_AVX": "ON",
                 "CMAKE_C_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx",
                 "CMAKE_CXX_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx"
+            }
+        },
+        {
+            "name": "old-cpu-arm",
+            "hidden": true,
+            "cacheVariables": {
+                "DISABLE_AVX": "ON"
             }
         }
     ],

@@ -40,7 +40,7 @@
                 "target-linux",
                 "ninja",
                 "gcc",
-                "old-cpu",
+                "old-cpu-x64",
                 "default"
             ]
         },
@@ -61,7 +61,7 @@
                 "target-linux-arm64",
                 "ninja",
                 "gcc-cross-arm64",
-                "old-cpu",
+                "old-cpu-arm",
                 "default"
             ]
         }
