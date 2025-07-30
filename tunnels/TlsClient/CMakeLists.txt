@@ -50,10 +50,7 @@ if(APPLE)
     set(CMAKE_SKIP_INSTALL_RULES ON CACHE BOOL "Skip install rules" FORCE)
 endif()
 
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(CMAKE_OSX_ARCHITECTURES "arm64")
-    set(CMAKE_OSX_SYSROOT "iphoneos")
-endif()
+
 
 # For Windows ARM64 builds, disable assembly to avoid x86/x64 assembly conflicts
 if(WIN32 AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64"))

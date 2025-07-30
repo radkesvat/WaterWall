@@ -104,13 +104,21 @@
             "toolchainFile": "${sourceDir}/ww/cmake/toolchain/ios.cmake",
             "cacheVariables": {
                 "CMAKE_OSX_SYSROOT": "iphoneos",
-                "DCMAKE_OSX_ARCHITECTURES": "x64"
+                "CMAKE_OSX_ARCHITECTURES": "x64",
+                "CMAKE_INSTALL_BINDIR":"bin",
+                "CMAKE_INSTALL_BUNDLEDIR":"."
             }
         },
         {
             "name": "target-ios_sim",
             "hidden": true,
-            "toolchainFile": "${sourceDir}/ww/cmake/toolchain/ios_sim.cmake"
+            "toolchainFile": "${sourceDir}/ww/cmake/toolchain/ios_sim.cmake",
+               "cacheVariables": {
+                "CMAKE_OSX_SYSROOT": "iphoneos",
+                "CMAKE_OSX_ARCHITECTURES": "x64",
+                "CMAKE_INSTALL_BINDIR":"bin",
+                "CMAKE_INSTALL_BUNDLEDIR":"."
+            }
         },
         {
             "name": "target-linux",
@@ -136,6 +144,7 @@
                 "value": "ARM"
             },
             "cacheVariables": {
+                "CMAKE_SYSTEM_VERSION":"10.0.19041.0",
                 "CMAKE_SYSTEM_NAME": "Windows",
                 "CMAKE_SYSTEM_PROCESSOR": "ARM",
                 "OPENSSL_NO_ASM": "1"
