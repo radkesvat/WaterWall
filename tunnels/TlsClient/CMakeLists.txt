@@ -44,6 +44,10 @@ set(INSTALL_ENABLED OFF CACHE BOOL "Disable BoringSSL installation" FORCE)
 set(BUILD_TOOL OFF CACHE BOOL "Disable BoringSSL tools" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "Disable BoringSSL tests" FORCE)
 
+if(APPLE)
+    set(CMAKE_MACOSX_BUNDLE OFF CACHE BOOL "Disable macOS bundle creation for BoringSSL" FORCE)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     set(CMAKE_OSX_ARCHITECTURES "arm64")
     set(CMAKE_OSX_SYSROOT "iphoneos")

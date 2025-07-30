@@ -372,6 +372,10 @@ set(LIBS ${LIBS} ww_lwip)
 # if(ANDROID OR (WIN32 AND MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4))
     # set(MI_OPT_ARCH OFF)
 # endif()
+
+set(MI_USE_CXX ON)
+
+
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
 
 if(NOT MSVC)        
@@ -380,12 +384,9 @@ endif()
 
 set(LIBS ${LIBS} mimalloc-static)
 # Platform-specific options and settings
-message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
-message(STATUS "CMAKE_CURRENT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}")
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(BUILD_SHARED OFF)
-    set(BUILD_EXAMPLES OFF)
-endif()
+# message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+# message(STATUS "CMAKE_CURRENT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}")
+
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
 include(utils)
 include(vars)
@@ -495,7 +496,6 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
         set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
     else()
         target_link_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
-        set(LIBS ${LIBS} mimalloc-static)
     endif()
 endif()
 
