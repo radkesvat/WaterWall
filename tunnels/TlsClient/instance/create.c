@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "utils/cacert.h" // from ww/utils/cacert.h
+
 #include "loggers/network_logger.h"
 
 tunnel_t *tlsclientTunnelCreate(node_t *node)
@@ -82,6 +84,25 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
         SSL_CTX_set_verify(ts->threadlocal_ssl_contexts[i], SSL_VERIFY_PEER, NULL);
         SSL_CTX_set_alpn_protos(ts->threadlocal_ssl_contexts[i], (const unsigned char *) alpn_opensslformat->alpn_data,
                                 1 + alpn_len);
+
+        BIO *bio = BIO_new(BIO_s_mem());
+        int  n   = BIO_write(bio, cacert_bytes, (int) cacert_len);
+        assert(n == (int) cacert_len);
+        discard n;
+        X509   *x = NULL;
+        while (true)
+        {
+            x = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL);
+            if (x == NULL)
+            {
+                break;
+            }
+            X509_STORE_add_cert(SSL_CTX_get_cert_store(ts->threadlocal_ssl_contexts[i]), x);
+            X509_free(x);
+            x = NULL;
+        }
+
+        BIO_free(bio);
     }
 
     memoryFree(alpn_opensslformat);
