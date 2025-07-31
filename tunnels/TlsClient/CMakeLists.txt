@@ -35,12 +35,11 @@ target_link_libraries(TlsClient PRIVATE ww)
 # set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 
-
 # Configure BoringSSL options
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build BoringSSL as static library" FORCE)
-set(INSTALL_ENABLED OFF CACHE BOOL "Disable BoringSSL installation" FORCE)
-set(BUILD_TOOL OFF CACHE BOOL "Disable BoringSSL tools" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "Disable BoringSSL tests" FORCE)
+set(BUILD_SHARED_LIBS OFF)
+set(INSTALL_ENABLED OFF)
+set(BUILD_TOOL OFF)
+set(BUILD_TESTING OFF)
 
 
 
@@ -49,17 +48,26 @@ set(BUILD_TESTING OFF CACHE BOOL "Disable BoringSSL tests" FORCE)
 # the commit hash is 4b3285002397da82681bebaacea9b4f231c9dbfc
 # currently only removed git folder to be able to push it
 
-# i saved original cmake file as CMakeLists.txt.original
-# and the diff of changes that i made to CMakeLists.tx is ./CMakeLists.txt.patch
-# it was result of command 'diff -u CMakeLists.txt.original CMakeLists.txt > ../CMakeLists.txt.patch'
+# All my patches are saveid in RadkesvatPatches folder
 
-# a note of changes i made to boringssl CMakeLists.txt:
-# line 44 of bssl cmake: set INSTALL_ENABLED to zero
-# at around line 720 of bssl cmake:  add_executable(bssl ${BSSL_SOURCES}) is excluded if APPLE
+# i saved original cmake file as CMakeLists.txt.original
+# and the diff of changes that i made to CMakeLists.tx is CMakeLists.txt.patch
+   
+# description:
+    # line 44 of bssl cmake: set INSTALL_ENABLED to zero
+    # at around line 720 of bssl cmake:  add_executable(bssl ${BSSL_SOURCES}) is excluded if APPLE
+
+# i saved the original p256_64.h file as p256_64.h.original
+# and the diff of changes that i made to p256_64.h is p256_64.h.patch
+
+# description:
+    # There was a problem on windows with assembly optimizations in BoringSSL, so we disable them
+    # by defining WW_BSSL_WIN_FIAT_NO_ASM, which is used in p256_64.h to conditionally switch to c code.
+    # This is done to avoid issues with assembly code that is not added to NASM build list by boringssl CMakeLists.txt
+    # The assembly code is only compiled on Linux, so we can safely disable it on Windows.
 
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/boringssl boringssl)
-
 
 
 
@@ -68,25 +76,33 @@ target_include_directories(TlsClient PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/boringssl/include
 )
 
+
 if(APPLE)
     target_compile_options(ssl PRIVATE -Wno-shorten-64-to-32)
     target_compile_options(crypto PRIVATE -Wno-shorten-64-to-32)
     target_compile_options(pki PRIVATE -Wno-shorten-64-to-32)
     target_compile_options(fipsmodule PRIVATE -Wno-shorten-64-to-32)
     target_compile_options(decrepit PRIVATE -Wno-shorten-64-to-32)
-    
 endif()
 
 
-# Fix for Windows Clang x64 assembly issues
-# if(WIN32 AND CMAKE_C_COMPILER_ID MATCHES "Clang")
-#     set(OPENSSL_NO_ASM ON CACHE BOOL "Disable assembly optimizations on Windows Clang" FORCE)
-# endif()
 
 # Fix for MinGW64 format string warnings
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
     target_compile_options(bssl PRIVATE -Wno-format)
 endif()
 
+
+if(WIN32)
+    # boring ssl on windows points to some functions in assembly that their assembly files are only compiled on linux
+    # adding this to switch to c version on windows
+    # more notes are above
+    target_compile_definitions(bssl       PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
+    target_compile_definitions(ssl        PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
+    target_compile_definitions(crypto     PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
+    target_compile_definitions(pki        PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
+    target_compile_definitions(fipsmodule PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
+    target_compile_definitions(decrepit   PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
+endif()
 
 target_link_libraries(TlsClient PRIVATE crypto ssl)
