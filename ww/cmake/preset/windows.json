@@ -65,7 +65,6 @@
                 "target-windows",
                 "ninja",
                 "clang",
-                "no-openssl-assembly",
                 "default"
             ]
         },

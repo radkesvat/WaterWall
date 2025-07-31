@@ -185,8 +185,7 @@
             "hidden": true,
             "generator": "Ninja Multi-Config",
             "cacheVariables": {
-                "CMAKE_COLOR_DIAGNOSTICS": true,
-                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+                "CMAKE_COLOR_DIAGNOSTICS": true
             }
         },
         {
@@ -260,14 +259,8 @@
             "cacheVariables": {
                 "DISABLE_AVX": "ON"
             }
-        },
-        {
-            "name": "no-openssl-assembly",
-            "hidden": true,
-            "cacheVariables": {
-                "OPENSSL_NO_ASM": "ON"
-            }
         }
+
        
     ],
     "buildPresets": [
