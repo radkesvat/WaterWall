@@ -21,7 +21,6 @@ add_library(ww STATIC
     base/wsocket.c
     base/wsysinfo.c
     base/wproc.c
-    base/wthread.c
     bufio/buffer_pool.c
     bufio/buffer_stream.c
     bufio/context_queue.c
@@ -49,7 +48,6 @@ add_library(ww STATIC
     instance/worker.c
     instance/wversion.c
     net/http_def.c
-    net/line.c
     net/packet_tunnel.c
     net/pipe_tunnel.c
     net/sync_dns.c
@@ -627,12 +625,7 @@ if(MSVC)
 endif()
 
 
-
-
+target_precompile_headers(ww PUBLIC "wwapi.h")
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=${WW_VERSION_MAJOR}.${WW_VERSION_MINOR}.${WW_VERSION_PATCH})
-
-
-
-
 
