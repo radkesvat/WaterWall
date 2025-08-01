@@ -14,6 +14,12 @@ concurrency:
 env:
   cpm-path: .cpm
   cpm-key: waterwall-1.1.0-cpm
+  CCACHE_COMPILERCHECK: content
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_NOHASHDIR: 1
+  CCACHE_SLOPPINESS: time_macros,file_macro
+  CCACHE_COMPRESS: 1
+  CCACHE_MAXSIZE: 20G
 
 jobs:
   android:
@@ -45,6 +51,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build ccache
 
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
 
       - name: Configure CMake
         run: >
@@ -138,6 +146,9 @@ jobs:
           brew update
           brew install ccache
 
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
+
       - name: Configure CMake
         run: >
           cmake --preset ${{ matrix.preset }}
@@ -186,6 +197,9 @@ jobs:
         run: |
           sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
+
       - name: Configure CMake
         run: >
           cmake --preset ${{ matrix.preset }}
@@ -215,6 +229,10 @@ jobs:
         run: |
           brew update
           brew install ccache
+
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
+
       - name: Configure CMake
         run: >
           cmake --preset macos
@@ -279,6 +297,9 @@ jobs:
             make:p
             ninja:p
       
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
+
       - name: Configure CMake
         shell: msys2 {0}
         run: >
@@ -320,7 +341,9 @@ jobs:
           choco install -y jom nasm ccache
           echo "PATH=$ENV:PATH;C:\Program Files\NASM" >> $ENV:GITHUB_ENV
 
-   
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
+
       - name: Configure CMake
         run: >
           cmake --preset ${{ matrix.preset }}
