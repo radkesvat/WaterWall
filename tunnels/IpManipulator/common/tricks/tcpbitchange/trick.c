@@ -92,10 +92,37 @@ void tcpbitchangetrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (IPH_V(ipheader) == 4 && IPH_PROTO(ipheader) == IPPROTO_TCP)
     {
-        uint16_t        iphdr_len = IPH_HL(ipheader) * 4;
-        struct tcp_hdr *tcp_header =
-            (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + (uintptr_t) (IPH_HL(ipheader) * 4));
-        uint16_t tcphdr_len = TCPH_HDRLEN(tcp_header) * 4;
+        // Validate IP header length field first
+        uint8_t ip_hdr_len_words = IPH_HL(ipheader);
+        if (ip_hdr_len_words < 5 || ip_hdr_len_words > 15)
+        {
+            LOGE("tcpbitchangetrick: invalid IP header length: %d", ip_hdr_len_words);
+            tunnelNextUpStreamPayload(t, l, buf);
+            return;
+        }
+        
+        uint16_t iphdr_len = ip_hdr_len_words * 4;
+        
+        // Check if buffer has enough space for IP header
+        if (sbufGetLength(buf) < iphdr_len + sizeof(struct tcp_hdr))
+        {
+            LOGE("tcpbitchangetrick: buffer too small for IP + minimum TCP header");
+            tunnelNextUpStreamPayload(t, l, buf);
+            return;
+        }
+        
+        struct tcp_hdr *tcp_header = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
+        uint8_t tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
+        
+        // Validate TCP header length
+        if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
+        {
+            LOGE("tcpbitchangetrick: invalid TCP header length: %d", tcp_hdr_len_words);
+            tunnelNextUpStreamPayload(t, l, buf);
+            return;
+        }
+        
+        uint16_t tcphdr_len = tcp_hdr_len_words * 4;
 
         if (sbufGetLength(buf) < iphdr_len + tcphdr_len)
         {
@@ -125,10 +152,37 @@ void tcpbitchangetrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (IPH_V(ipheader) == 4 && IPH_PROTO(ipheader) == IPPROTO_TCP)
     {
-        uint16_t        iphdr_len = IPH_HL(ipheader) * 4;
-        struct tcp_hdr *tcp_header =
-            (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + (uintptr_t) (IPH_HL(ipheader) * 4));
-        uint16_t tcphdr_len = TCPH_HDRLEN(tcp_header) * 4;
+        // Validate IP header length field first
+        uint8_t ip_hdr_len_words = IPH_HL(ipheader);
+        if (ip_hdr_len_words < 5 || ip_hdr_len_words > 15)
+        {
+            LOGE("tcpbitchangetrick: invalid IP header length: %d", ip_hdr_len_words);
+            tunnelPrevDownStreamPayload(t, l, buf);
+            return;
+        }
+        
+        uint16_t iphdr_len = ip_hdr_len_words * 4;
+        
+        // Check if buffer has enough space for IP header
+        if (sbufGetLength(buf) < iphdr_len + sizeof(struct tcp_hdr))
+        {
+            LOGE("tcpbitchangetrick: buffer too small for IP + minimum TCP header");
+            tunnelPrevDownStreamPayload(t, l, buf);
+            return;
+        }
+        
+        struct tcp_hdr *tcp_header = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
+        uint8_t tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
+        
+        // Validate TCP header length
+        if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
+        {
+            LOGE("tcpbitchangetrick: invalid TCP header length: %d", tcp_hdr_len_words);
+            tunnelPrevDownStreamPayload(t, l, buf);
+            return;
+        }
+        
+        uint16_t tcphdr_len = tcp_hdr_len_words * 4;
 
         if (sbufGetLength(buf) < iphdr_len + tcphdr_len)
         {
