@@ -342,3 +342,134 @@ also enabled these in SSL_CTX creation:
         return NULL;
     }
 
+---------------------------------------------------------
+
+
+
+
+ok , here is a packet that tls client made, and as we can see we got same ja4 
+Frame 42272: 665 bytes on wire (5320 bits), 665 bytes captured (5320 bits) on interface \Device\NPF_{03432FFB-4389-408C-9CD5-B01120B44721}, id 0
+Ethernet II, Src: Intel_69:82:91 (f8:94:c2:69:82:91), Dst: HuaweiTechno_ad:3b:28 (fc:ab:90:ad:3b:28)
+Internet Protocol Version 4, Src: 192.168.1.100, Dst: 185.15.59.226
+Transmission Control Protocol, Src Port: 37699, Dst Port: 443, Seq: 1, Ack: 1, Len: 611
+Transport Layer Security
+    TLSv1.3 Record Layer: Handshake Protocol: Client Hello
+        Content Type: Handshake (22)
+        Version: TLS 1.0 (0x0301)
+        Length: 606
+        Handshake Protocol: Client Hello
+            Handshake Type: Client Hello (1)
+            Length: 602
+            Version: TLS 1.2 (0x0303)
+            Random: e1c7d0640cc567269edfb4d5d45916d22089a7c257037bacb1b5eb83c4712c95
+            Session ID Length: 32
+            Session ID: d251ee3eb52ca5318f7d6ae4130d38eae18700c90ee352c214040061fc44abd5
+            Cipher Suites Length: 32
+            Cipher Suites (16 suites)
+            Compression Methods Length: 1
+            Compression Methods (1 method)
+            Extensions Length: 497
+            Extension: Reserved (GREASE) (len=0)
+                Type: Reserved (GREASE) (2570)
+                Length: 0
+                Data: <MISSING>
+            Extension: extended_master_secret (len=0)
+                Type: extended_master_secret (23)
+                Length: 0
+            Extension: compress_certificate (len=3)
+                Type: compress_certificate (27)
+                Length: 3
+                Algorithms Length: 2
+                Algorithm: brotli (2)
+            Extension: session_ticket (len=0)
+                Type: session_ticket (35)
+                Length: 0
+                Session Ticket: <MISSING>
+            Extension: ec_point_formats (len=2)
+                Type: ec_point_formats (11)
+                Length: 2
+                EC point formats Length: 1
+                Elliptic curves point formats (1)
+            Extension: signature_algorithms (len=18)
+                Type: signature_algorithms (13)
+                Length: 18
+                Signature Hash Algorithms Length: 16
+                Signature Hash Algorithms (8 algorithms)
+            Extension: supported_groups (len=12)
+                Type: supported_groups (10)
+                Length: 12
+                Supported Groups List Length: 10
+                Supported Groups (5 groups)
+            Extension: application_layer_protocol_negotiation (len=14)
+                Type: application_layer_protocol_negotiation (16)
+                Length: 14
+                ALPN Extension Length: 12
+                ALPN Protocol
+                    ALPN string length: 2
+                    ALPN Next Protocol: h2
+                    ALPN string length: 8
+                    ALPN Next Protocol: http/1.1
+            Extension: supported_versions (len=7) TLS 1.3, TLS 1.2
+                Type: supported_versions (43)
+                Length: 7
+                Supported Versions length: 6
+                Supported Version: Reserved (GREASE) (0x1a1a)
+                Supported Version: TLS 1.3 (0x0304)
+                Supported Version: TLS 1.2 (0x0303)
+            Extension: psk_key_exchange_modes (len=2)
+                Type: psk_key_exchange_modes (45)
+                Length: 2
+                PSK Key Exchange Modes Length: 1
+                PSK Key Exchange Mode: PSK with (EC)DHE key establishment (psk_dhe_ke) (1)
+            Extension: status_request (len=5)
+                Type: status_request (5)
+                Length: 5
+                Certificate Status Type: OCSP (1)
+                Responder ID list Length: 0
+                Request Extensions Length: 0
+            Extension: renegotiation_info (len=1)
+                Type: renegotiation_info (65281)
+                Length: 1
+                Renegotiation Info extension
+            Extension: server_name (len=21) name=en.wikipedia.com
+                Type: server_name (0)
+                Length: 21
+                Server Name Indication extension
+            Extension: Unknown type 17613 (len=14)
+                Type: Unknown (17613)
+                Length: 14
+                Data: 000c02683208687474702f312e31
+            Extension: key_share (len=43) x25519
+                Type: key_share (51)
+                Length: 43
+                Key Share extension
+            Extension: encrypted_client_hello (len=282)
+                Type: encrypted_client_hello (65037)
+                Length: 282
+                Client Hello type: Outer Client Hello (0)
+                Cipher Suite: HKDF-SHA256/AES-128-GCM
+                Config Id: 27
+                Enc length: 32
+                Enc: c049f7059d7c0130b69a850abab9b01790a7c9c7c4547cb602d4a4ea315efe60
+                Payload length: 240
+                Payload […]: c327b2a714ca34982913bee0c448a75eb13cc6e4a8f88b7e04080625f7bee76ea1c488fdd6660efc3fa7812e108207e35fb4cfd987fe05cb2c40c80d955f3034087be5a1685c5ede8a2a2f8f50f504a79bb18c00afe03f55cadd309bc129781e8617a93b9c0ab733291580453e8d83d3
+            Extension: signed_certificate_timestamp (len=0)
+                Type: signed_certificate_timestamp (18)
+                Length: 0
+            Extension: Reserved (GREASE) (len=1)
+                Type: Reserved (GREASE) (39578)
+                Length: 1
+                Data: 00
+            [JA4: t13d1516h2_8daaf6152771_d8a2da3f94cd]
+            [JA4_r: t13d1516h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,fe0d,ff01_0403,0804,0401,0503,0805,0501,0806,0601]
+            [JA3 Fullstring: 771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,23-27-35-11-13-10-16-43-45-5-65281-0-17613-51-65037-18,29-23-24-25,0]
+            [JA3: a9fea9014897e0a991a2eb16a296f5db]
+
+but ja3 didnt match and its correct, the reason is (copied from internet):
+
+JA3 is a TLS fingerprinting method that generates a hash based on specific fields in the ClientHello message of a TLS handshake. These fields include the TLS version, cipher suites, extensions, elliptic curves, and elliptic curve point formats. Importantly, JA3 takes into account the order of these extensions, meaning that if the order changes, the JA3 fingerprint changes too.
+JA4 is a newer, more robust fingerprinting method designed to handle modern TLS implementations, like TLS 1.3 and QUIC. Unlike JA3, JA4 is built to be resistant to changes in extension order and focuses on consistent characteristics of the client, such as the protocol, version, Server Name Indication (SNI), cipher suites, extensions, and Application-Layer Protocol Negotiation (ALPN).
+
+Your goal is to mimic Google Chrome’s handshake signature, likely to avoid detection or ensure compatibility by making your client look like a standard Chrome browser. Here’s my take:Matching JA4: This is good. It shows that your program accurately reflects Chrome’s TLS implementation in the ways that matter most for modern fingerprinting. JA4 is the more reliable and future-proof method, especially as TLS evolves with features like TLS 1.3 and QUIC.
+Not Matching JA3: This is not bad—it’s correct and expected. Since Chrome randomizes extension order, its JA3 fingerprint varies with each connection. Your program doing the same means it behaves like Chrome, producing a different JA3 each time rather than a fixed one that could be tracked or flagged. Not matching the specific JA3 from your Wireshark capture just confirms that your randomization is working as intended.
+
