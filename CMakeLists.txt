@@ -36,8 +36,9 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 #--------------------------------------------------------------------------------
 set(FINAL_EXECUTABLE_NAME "Waterwall" CACHE STRING "Final executable name" FORCE)
 
+# since Waterwall 1.40, we use C++17 as the minimum standard which is necessary for BoringSSL
 set(CMAKE_C_STANDARD 11 CACHE INTERNAL "C standard version" FORCE)
-set(CMAKE_CXX_STANDARD 11 CACHE INTERNAL "CXX standard version" FORCE)
+set(CMAKE_CXX_STANDARD 17 CACHE INTERNAL "CXX standard version" FORCE)
 set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 
