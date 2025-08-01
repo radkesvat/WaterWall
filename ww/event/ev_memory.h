@@ -17,7 +17,7 @@ WW_EXPORT void  eventloopFree(void* ptr);
 #define EVENTLOOP_ALLOC(ptr, size)\
     do {\
         *(void**)&(ptr) = eventloopZalloc(size);\
-        printd("alloc(%p, size=%llu)\tat [%s:%d:%s]\n", ptr, (unsigned long long)size, __FILE__, __LINE__, __FUNCTION__);\
+        /* printd("alloc(%p, size=%llu)\tat [%s:%d:%s]\n", ptr, (unsigned long long)size, __FILE__, __LINE__, __FUNCTION__);*/\
     } while(0)
 
 #define EVENTLOOP_ALLOC_SIZEOF(ptr)  EVENTLOOP_ALLOC(ptr, sizeof(*(ptr)))
@@ -26,7 +26,7 @@ WW_EXPORT void  eventloopFree(void* ptr);
     do {\
         if (ptr) {\
             eventloopFree(ptr);\
-            printd("memoryFree( %p )\tat [%s:%d:%s]\n", ptr, __FILE__, __LINE__, __FUNCTION__);\
+            /*printd("memoryFree( %p )\tat [%s:%d:%s]\n", ptr, __FILE__, __LINE__, __FUNCTION__);*/\
             ptr = NULL;\
         }\
     } while(0)
