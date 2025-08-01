@@ -8,10 +8,12 @@ void dataaspacketTunnelUpStreamInit(tunnel_t *t, line_t *l)
     
     if(ls->line != NULL)
     {
-        LOGD("DataAsPacket: Upstream init called on a line that already has a state, the received packets will be sent to older line");
+        // this can happen and is ok, it means that the line already has a state
+        // LOGD("DataAsPacket: Upstream init called on a line that already has a state, the received packets will be sent to older line");
         return;
     }
     ls->paused = false;
-    ls->line = l; 
+    ls->line = l;
+    ls->read_stream = bufferstreamCreate(lineGetBufferPool(l), 0);
 
 }
