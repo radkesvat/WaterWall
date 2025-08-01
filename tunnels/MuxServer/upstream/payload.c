@@ -129,15 +129,15 @@ static bool isOverFlow(buffer_stream_t *read_stream)
     {
         LOGW("MuxServer: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamLen(read_stream),
              kMaxMainChannelBufferSize);
-        return false;
+        return true;
     }
-    return true;
+    return false;
 }
 
 static void handleOverFlow(tunnel_t *t, line_t *parent_l)
 {
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
-    muxserver_lstate_t *child_ls = parent_ls->child_next;
+    muxserver_lstate_t *child_ls  = parent_ls->child_next;
 
     while (child_ls)
     {
@@ -161,7 +161,7 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 
     bufferstreamPush(&(parent_ls->read_stream), buf);
 
-    if (! isOverFlow(&(parent_ls->read_stream)))
+    if (isOverFlow(&(parent_ls->read_stream)))
     {
         handleOverFlow(t, parent_l);
         return;
