@@ -39,7 +39,7 @@ static bool validateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings, tu
     return true;
 }
 
-static bool validateAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
+static bool getandvalidateAlpnSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
 {
     getStringFromJsonObjectOrDefault(&(ts->alpn), settings, "alpn", "http/1.1");
 
@@ -132,6 +132,9 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
     // session tickets are by default enabled, this code disables it (WE DONT WANT TO DISABLE IT)
     // SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
 
+    SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
+    SSL_CTX_set_timeout(ssl_ctx, 7200); // 2 hours, typical for browsers
+    
     // Set supported groups to match Chrome (including post-quantum)
     // Chrome now supports X25519MLKEM768 (post-quantum) + traditional curves
     if (! SSL_CTX_set1_groups_list(ssl_ctx, "X25519MLKEM768:X25519:P-256:P-384:P-521"))
@@ -209,13 +212,12 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     const cJSON        *settings     = node->node_settings_json;
 
-    // We want to build up exact chrome handshake, so we dont ask for sni and alpn settings
-    discard settings;
 
-    // if (!validateSniSetting(ts, settings, t))
-    // {
-    //     return NULL;
-    // }
+    if (!getandvalidateAlpnSetting(ts, settings, t))
+    {
+        return NULL;
+    }
+    // We want to build up exact chrome handshake, so we dont ask for alpn settings
 
     // getBoolFromJsonObjectOrDefault(&(ts->verify), settings, "verify", true);
 
