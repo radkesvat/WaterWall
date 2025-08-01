@@ -28,7 +28,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &tlsclientTunnelDestroy;
 }
 
-static bool validateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
+static bool getandvalidateSniSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
 {
     if (! getStringFromJsonObject(&(ts->sni), settings, "sni") || stringLength(ts->sni) == 0)
     {
@@ -103,14 +103,6 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
 
     SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
 
-    SSL_CTX_set_alpn_protos(ssl_ctx,
-                            (const unsigned char *) ((struct {
-                                uint8_t len;
-                                char    alpn_data[];
-                            } *) alpn_format)
-                                ->alpn_data,
-                            1 + alpn_len);
-
     if (! SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_2_VERSION))
     {
         LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set min proto version for SSL_CTX");
@@ -134,8 +126,8 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
 
     SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
     SSL_CTX_set_timeout(ssl_ctx, 7200); // 2 hours, typical for browsers
-    
-    // Set supported groups to match Chrome (including post-quantum)
+
+    // Set supported groups to match Chrome
     // Chrome now supports X25519MLKEM768 (post-quantum) + traditional curves
     if (! SSL_CTX_set1_groups_list(ssl_ctx, "X25519MLKEM768:X25519:P-256:P-384:P-521"))
     {
@@ -154,28 +146,33 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
 
     // Configure signature algorithms to match Chrome
     // Chrome uses these signature algorithms in this order
-    if (! SSL_CTX_set1_sigalgs_list(ssl_ctx, 
-        "ecdsa_secp256r1_sha256:"
-        "rsa_pss_rsae_sha256:"
-        "rsa_pkcs1_sha256:"
-        "ecdsa_secp384r1_sha384:"
-        "rsa_pss_rsae_sha384:"
-        "rsa_pkcs1_sha384:"
-        "rsa_pss_rsae_sha512:"
-        "rsa_pkcs1_sha512"))
+    if (! SSL_CTX_set1_sigalgs_list(ssl_ctx, "ecdsa_secp256r1_sha256:"
+                                             "rsa_pss_rsae_sha256:"
+                                             "rsa_pkcs1_sha256:"
+                                             "ecdsa_secp384r1_sha384:"
+                                             "rsa_pss_rsae_sha384:"
+                                             "rsa_pkcs1_sha384:"
+                                             "rsa_pss_rsae_sha512:"
+                                             "rsa_pkcs1_sha512"))
     {
         LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set signature algorithms for SSL_CTX");
         SSL_CTX_free(ssl_ctx);
         return NULL;
     }
 
-   
     if (! loadCaCertificates(ssl_ctx))
     {
         SSL_CTX_free(ssl_ctx);
         return NULL;
     }
 
+    // boringssl: Note this function's return value is backwards.
+    if (SSL_CTX_set_alpn_protos(ssl_ctx, (const unsigned char *)alpn_format, alpn_len))
+    {
+        LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set ALPN for SSL_CTX (len=%zu)", alpn_len);
+        SSL_CTX_free(ssl_ctx);
+        return NULL;
+    }
     return ssl_ctx;
 }
 
@@ -212,8 +209,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     const cJSON        *settings     = node->node_settings_json;
 
-
-    if (!getandvalidateAlpnSetting(ts, settings, t))
+    if (! getandvalidateSniSetting(ts, settings, t))
     {
         return NULL;
     }
@@ -232,7 +228,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     const uint8_t chrome_alpn[] = {2, 'h', '2', // HTTP/2
                                    8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
 
-    if (! createSslContexts(ts, (void *) chrome_alpn, sizeof(chrome_alpn), worker_count, t))
+    if (! createSslContexts(ts, (void *) &chrome_alpn[0], sizeof(chrome_alpn), worker_count, t))
     {
         return NULL;
     }
