@@ -615,6 +615,8 @@ endif()
 
 if(APPLE)
     target_compile_options(ww PRIVATE -Wno-shorten-64-to-32 -Wno-unused-command-line-argument)
+    # Disable precompiled headers on Apple platforms due to clang issues with C/C++ mixed compilation
+    set_target_properties(ww PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 endif()
 
 if(MSVC)
@@ -626,7 +628,9 @@ if(MSVC)
 endif()
 
 
-target_precompile_headers(ww PUBLIC "wwapi.h")
+if(NOT APPLE)
+    target_precompile_headers(ww PUBLIC "wwapi.h")
+endif()
 
 target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=${WW_VERSION_MAJOR}.${WW_VERSION_MINOR}.${WW_VERSION_PATCH})
 
