@@ -119,14 +119,14 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->io = io;
     weventSetUserData(io, ls);
 
-    ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
+    ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
                                   lineGetWID(l), kReadWriteTimeoutMs);
 
     while (ls->idle_handle == NULL)
     {
         // a very rare case where the socket FD from another thread is still present in the idle table
         cycleDelay(100);
-        ls->idle_handle = idleItemNew(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
+        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
                                       lineGetWID(l), kReadWriteTimeoutMs);
     }
 

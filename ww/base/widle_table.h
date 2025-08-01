@@ -60,7 +60,7 @@ widle_table_t *idleTableCreate(wloop_t *loop);
  *
  * @param self Pointer to the idle table.
  */
-void idleTableDestroy(widle_table_t *self);
+void idletableDestroy(widle_table_t *self);
 
 /**
  * @brief Create a new idle item.
@@ -75,8 +75,8 @@ void idleTableDestroy(widle_table_t *self);
  * @param age_ms Expiration age (in milliseconds).
  * @return Pointer to the new idle item; NULL if key already exists.
  */
-widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
-                          uint64_t age_ms);
+widle_item_t *idletableCreateItem(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
+                                  uint64_t age_ms);
 
 /**
  * @brief Retrieve an idle item by hash.
@@ -86,7 +86,7 @@ widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expir
  * @param key Hash key of the item.
  * @return Pointer to the idle item if found; otherwise, NULL.
  */
-widle_item_t *idleTableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key);
+widle_item_t *idletableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key);
 
 /**
  * @brief Update the expiration of an idle item.
@@ -97,7 +97,7 @@ widle_item_t *idleTableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t 
  * @param item The idle item to update.
  * @param age_ms Minimum age to keep the item.
  */
-void idleTableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms);
+void idletableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms);
 
 /**
  * @brief Remove an idle item by hash.
@@ -109,4 +109,4 @@ void idleTableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, ui
  * @param key Hash key of the item.
  * @return true if the item was removed; false otherwise.
  */
-bool idleTableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key);
+bool idletableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key);

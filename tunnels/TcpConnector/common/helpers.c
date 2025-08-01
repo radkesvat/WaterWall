@@ -14,7 +14,7 @@ void tcpconnectorOnClose(wio_t *io)
         tunnel_t              *t  = ls->tunnel;
         tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-        bool removed = idleTableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(io));
+        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(io));
         if (! removed)
         {
             LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));
@@ -45,7 +45,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     line_t                *l  = lstate->line;
     tcpconnector_tstate_t *ts = tunnelGetState(t);
     tcpconnector_lstate_t *ls = lineGetState(l, t);
-    idleTableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kReadWriteTimeoutMs);
+    idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kReadWriteTimeoutMs);
 
     tunnelPrevDownStreamPayload(t, l, buf);
 }

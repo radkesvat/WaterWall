@@ -30,12 +30,12 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
 
     hash_t peeraddr_hash = sockaddrCalcHashWithPort((sockaddr_u *) wioGetPeerAddr(sock->io));
 
-    widle_item_t *idle = idleTableGetIdleItemByHash(wid, table, peeraddr_hash);
+    widle_item_t *idle = idletableGetIdleItemByHash(wid, table, peeraddr_hash);
     // if idle is NULL, it means this is the first packet from this peer, so we need to create a new connection
     // and add it to the idle table
     if (idle == NULL)
     {
-        idle = idleItemNew(table, peeraddr_hash, NULL, onUdpConnectonExpire, wid, (uint64_t) kUdpInitExpireTime);
+        idle = idletableCreateItem(table, peeraddr_hash, NULL, onUdpConnectonExpire, wid, (uint64_t) kUdpInitExpireTime);
         // if idle is NULL, it means we failed to create a new idle item (duplicate hash, etc)
         if (! idle)
         {
@@ -55,7 +55,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
             if (! lineIsAlive(l))
             {
                 LOGW("UdpListener: socket just got closed by upstream before anything happend");
-                bool removed = idleTableRemoveIdleItemByHash(wid, table, peeraddr_hash);
+                bool removed = idletableRemoveIdleItemByHash(wid, table, peeraddr_hash);
                 if (! removed)
                 {
                     LOGF("UdpListener: failed to remove idle item for hash %x, how?", peeraddr_hash);
@@ -75,7 +75,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     }
     else
     {
-        idleTableKeepIdleItemForAtleast(table, idle, (uint64_t) kUdpKeepExpireTime);
+        idletableKeepIdleItemForAtleast(table, idle, (uint64_t) kUdpKeepExpireTime);
     }
 
     udplistener_lstate_t *ls = idle->userdata;

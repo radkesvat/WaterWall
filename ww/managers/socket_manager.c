@@ -393,12 +393,12 @@ static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_op
         *src_hashed = true;
     }
     
-    widle_item_t *idle_item = idleTableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+    widle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
 
     if (idle_item)
     {
         socket_filter_t *target_filter = idle_item->userdata;
-        idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
+        idletableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
                                         option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                            : option.balance_group_interval);
         if (option.no_delay)
@@ -426,7 +426,7 @@ static void finalizeTcpDistribution(socket_filter_t **balance_selection_filters,
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
+        idletableCreateItem(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
                     filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                : filter->option.balance_group_interval);
         if (filter->option.no_delay)
@@ -797,12 +797,12 @@ static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter
         *src_hashed = true;
     }
 
-    widle_item_t *idle_item = idleTableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+    widle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
 
     if (idle_item)
     {
         socket_filter_t *target_filter = idle_item->userdata;
-        idleTableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
+        idletableKeepIdleItemForAtleast(option.shared_balance_table, idle_item,
                                         option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                            : option.balance_group_interval);
         postUdpPayload(pl, target_filter);
@@ -826,7 +826,7 @@ static void finalizeUdpDistribution(socket_filter_t **balance_selection_filters,
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idleItemNew(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
+        idletableCreateItem(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
                     filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                : filter->option.balance_group_interval);
         postUdpPayload(pl, filter);

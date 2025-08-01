@@ -6,7 +6,7 @@ void tcplistenerTunnelDestroy(tunnel_t *t)
 {
     tcplistener_tstate_t *tstate = tunnelGetState(t);
 
-    idleTableDestroy(tstate->idle_table);
+    idletableDestroy(tstate->idle_table);
 
     if (tstate->listen_address)
     {

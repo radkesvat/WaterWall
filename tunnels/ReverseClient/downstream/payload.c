@@ -22,7 +22,7 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         assert(uls->idle_handle);
         uls->idle_handle = NULL;
-        idleTableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t) (uintptr_t) (uls));
+        idletableRemoveIdleItemByHash(uls->u->wid, ts->starved_connections, (hash_t) (uintptr_t) (uls));
 
         uls->pair_connected = true;
 

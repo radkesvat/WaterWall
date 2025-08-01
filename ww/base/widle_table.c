@@ -99,7 +99,7 @@ widle_table_t *idleTableCreate(wloop_t *loop)
  * @param age_ms Expiration delay in milliseconds.
  * @return Pointer to the idle item; NULL if insertion fails.
  */
-widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
+widle_item_t *idletableCreateItem(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
                           uint64_t age_ms)
 {
     assert(self);
@@ -135,7 +135,7 @@ widle_item_t *idleItemNew(widle_table_t *self, hash_t key, void *userdata, Expir
  * @param item Idle item to update.
  * @param age_ms Time in milliseconds to extend the item.
  */
-void idleTableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms)
+void idletableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms)
 {
     if (item->removed)
     {
@@ -159,7 +159,7 @@ void idleTableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, ui
  * @param key Hash key of the idle item.
  * @return Pointer to the idle item if found; NULL otherwise.
  */
-widle_item_t *idleTableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
+widle_item_t *idletableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
 
@@ -183,7 +183,7 @@ widle_item_t *idleTableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t 
  * @param key Hash key of the idle item.
  * @return true if the item was found and removed; false otherwise.
  */
-bool idleTableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
+bool idletableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
@@ -240,7 +240,7 @@ static void beforeCloseCallBack(wevent_t *ev)
         }
         else
         {
-            bool removal_result = idleTableRemoveIdleItemByHash(item->wid, item->table, item->hash);
+            bool removal_result = idletableRemoveIdleItemByHash(item->wid, item->table, item->hash);
             assert(removal_result);
             discard removal_result;
             memoryFree(item);
@@ -309,7 +309,7 @@ void idleCallBack(wtimer_t *timer)
  *
  * @param self Pointer to the idle table.
  */
-void idleTableDestroy(widle_table_t *self)
+void idletableDestroy(widle_table_t *self)
 {
     // if our loop is destroyed then the loop it self has freed the timer handle
     if (! atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
