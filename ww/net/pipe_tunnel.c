@@ -664,6 +664,10 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
     tunnel_t                *parent_tunnel = getParentTunnel(t);
     pipetunnel_line_state_t *ls            = (pipetunnel_line_state_t *) lineGetState(l, parent_tunnel);
 
+    wid_t wid = lineGetWID(l);
+
+    // we no longer need these checks, thank god all related bugs are fixed
+#ifdef DEBUG
     if (wid_to == getWID())
     {
         LOGF("PipeTunnel: Pipe to self is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
@@ -672,7 +676,7 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
         terminateProgram(1);
         return false;
     }
-    if (l->wid != getWID())
+    if (wid != getWID())
     {
         LOGF("PipeTunnel: Pipe From different WID is not allowed, line: %p, tunnel: %p", l, parent_tunnel);
         LOGF("PipeTunnel: WID: %d, line WID: %d , to WID: %d", getWID(), lineGetWID(l), wid_to);
@@ -680,6 +684,7 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
         terminateProgram(1);
         return false;
     }
+#endif
 
     if (ls->pair_line)
     {
@@ -688,7 +693,7 @@ bool pipeTo(tunnel_t *t, line_t *l, wid_t wid_to)
         // parent_tunnel->fnFinU(parent_tunnel, l);
     }
     assert(ls->pair_line == NULL);
-    ls->pair_line      = lineCreateForWorker(tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
+    ls->pair_line = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
 
     pipetunnel_line_state_t *ls_lineto = lineGetState(ls->pair_line, parent_tunnel);
     ls_lineto->pair_line               = l;

@@ -53,11 +53,10 @@ typedef struct line_s
 
 } line_t;
 
-
-static inline line_t *lineCreateForWorker(generic_pool_t **pools, wid_t wid)
+static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools, wid_t wid)
 {
 
-    line_t *l = genericpoolGetItem(pools[wid]);
+    line_t *l = genericpoolGetItem(pools[current]);
 
     *l = (line_t) {.refc                 = 1,
                    .auth_cur             = 0,
@@ -74,7 +73,7 @@ static inline line_t *lineCreateForWorker(generic_pool_t **pools, wid_t wid)
                                             .user_name     = NULL,
                                             .user_name_len = 0}};
 
-    memorySet((void *) &l->tunnels_line_state[0], 0, genericpoolGetItemSize(pools[wid]) - sizeof(line_t));
+    memorySet((void *) &l->tunnels_line_state[0], 0, genericpoolGetItemSize(pools[current]) - sizeof(line_t));
 
     return l;
 }
@@ -88,9 +87,8 @@ static inline line_t *lineCreateForWorker(generic_pool_t **pools, wid_t wid)
 static inline line_t *lineCreate(generic_pool_t **pools, wid_t wid)
 {
     assert(wid == getWID());
-  
 
-    return lineCreateForWorker(pools, wid);
+    return lineCreateForWorker(wid, pools, wid);
 }
 
 /**

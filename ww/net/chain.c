@@ -54,7 +54,7 @@ void tunnelchainFinalize(tunnel_chain_t *tc)
 
         if (tc->contains_packet_node)
         {
-            tc->packet_lines[i] = lineCreateForWorker(tc->line_pools, i);
+            tc->packet_lines[i] = lineCreateForWorker(i,tc->line_pools, i);
         }
     }
 
