@@ -621,6 +621,7 @@ if(MSVC)
     target_compile_options(ww PUBLIC 
         /W4
         /WX
+        /wd4505 # unreferenced local function has been removed (unused function warning)
     )
 endif()
 
