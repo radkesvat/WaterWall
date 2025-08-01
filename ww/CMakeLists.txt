@@ -614,7 +614,7 @@ if(NOT MSVC)
 endif()
 
 if(APPLE)
-    target_compile_options(ww PRIVATE -Wno-shorten-64-to-32)
+    target_compile_options(ww PRIVATE -Wno-shorten-64-to-32 -Wno-unused-command-line-argument)
 endif()
 
 if(MSVC)
