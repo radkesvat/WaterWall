@@ -45,19 +45,19 @@ void reverseserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void reverseserverTunnelOnPrepair(tunnel_t *t);
 void reverseserverTunnelOnStart(tunnel_t *t);
 
-void reverseserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
-void reverseserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
-void reverseserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
-void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void reverseserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
-void reverseserverTunnelUpStreamResume(tunnel_t *t, line_t *l);
+void reverseserverTunnelUpStreamInit(tunnel_t *t, line_t *d);
+void reverseserverTunnelUpStreamEst(tunnel_t *t, line_t *d);
+void reverseserverTunnelUpStreamFinish(tunnel_t *t, line_t *d);
+void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf);
+void reverseserverTunnelUpStreamPause(tunnel_t *t, line_t *d);
+void reverseserverTunnelUpStreamResume(tunnel_t *t, line_t *d);
 
-void reverseserverTunnelDownStreamInit(tunnel_t *t, line_t *l);
-void reverseserverTunnelDownStreamEst(tunnel_t *t, line_t *l);
-void reverseserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
-void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
-void reverseserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
-void reverseserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
+void reverseserverTunnelDownStreamInit(tunnel_t *t, line_t *u);
+void reverseserverTunnelDownStreamEst(tunnel_t *t, line_t *u);
+void reverseserverTunnelDownStreamFinish(tunnel_t *t, line_t *u);
+void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *u, sbuf_t *buf);
+void reverseserverTunnelDownStreamPause(tunnel_t *t, line_t *u);
+void reverseserverTunnelDownStreamResume(tunnel_t *t, line_t *u);
 
 void reverseserverLinestateInitialize(reverseserver_lstate_t *ls, line_t *u, line_t *d);
 void reverseserverLinestateDestroy(reverseserver_lstate_t *ls);
