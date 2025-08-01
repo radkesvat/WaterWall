@@ -4,6 +4,9 @@
 
 #include "loggers/network_logger.h"
 
+extern int tlsclientDecompressBrotliCert(SSL *ssl, CRYPTO_BUFFER **out, size_t uncompressed_len, const uint8_t *in,
+                                         size_t in_len);
+
 static void configureTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &tlsclientTunnelUpStreamInit;
@@ -126,13 +129,44 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
 
     SSL_CTX_set_permute_extensions(ssl_ctx, true);
 
-    if (! SSL_CTX_set1_groups_list(ssl_ctx, "X25519:P-256:P-384"))
+    // session tickets are by default enabled, this code disables it (WE DONT WANT TO DISABLE IT)
+    // SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET);
+
+    // Set supported groups to match Chrome (including post-quantum)
+    // Chrome now supports X25519MLKEM768 (post-quantum) + traditional curves
+    if (! SSL_CTX_set1_groups_list(ssl_ctx, "X25519MLKEM768:X25519:P-256:P-384:P-521"))
     {
         LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set groups list for SSL_CTX");
         SSL_CTX_free(ssl_ctx);
         return NULL;
     }
 
+    // Enable certificate compression with brotli (Chrome supports this)
+    SSL_CTX_add_cert_compression_alg(ssl_ctx, TLSEXT_cert_compression_brotli,
+                                     NULL /* compression not supported (same as chrome)*/,
+                                     tlsclientDecompressBrotliCert);
+
+    // Enable SCT (Signed Certificate Timestamp) extension at context level
+    SSL_CTX_enable_signed_cert_timestamps(ssl_ctx);
+
+    // Configure signature algorithms to match Chrome
+    // Chrome uses these signature algorithms in this order
+    if (! SSL_CTX_set1_sigalgs_list(ssl_ctx, 
+        "ecdsa_secp256r1_sha256:"
+        "rsa_pss_rsae_sha256:"
+        "rsa_pkcs1_sha256:"
+        "ecdsa_secp384r1_sha384:"
+        "rsa_pss_rsae_sha384:"
+        "rsa_pkcs1_sha384:"
+        "rsa_pss_rsae_sha512:"
+        "rsa_pkcs1_sha512"))
+    {
+        LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set signature algorithms for SSL_CTX");
+        SSL_CTX_free(ssl_ctx);
+        return NULL;
+    }
+
+   
     if (! loadCaCertificates(ssl_ctx))
     {
         SSL_CTX_free(ssl_ctx);
