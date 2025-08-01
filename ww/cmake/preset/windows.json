@@ -10,6 +10,7 @@
                 "host-windows",
                 "target-windows",
                 "mingw",
+                "ccache",
                 "default"
             ]
         },
@@ -19,6 +20,7 @@
                 "host-windows",
                 "target-windows",
                 "vs2022",
+                "ccache",
                 "default"
             ]
         },
@@ -28,6 +30,7 @@
                 "host-windows",
                 "target-windows-arm32",
                 "vs2022",
+                "ccache",
                 "default"
             ]
         },
@@ -37,6 +40,7 @@
                 "host-windows",
                 "target-windows-arm64",
                 "vs2022",
+                "ccache",
                 "default"
             ]
         },
@@ -46,6 +50,7 @@
                 "host-windows",
                 "target-windows-x86",
                 "vs2022",
+                "ccache",
                 "default"
             ]
         },
@@ -55,6 +60,7 @@
                 "host-windows",
                 "target-windows-x86-64",
                 "vs2022",
+                "ccache",
                 "default"
             ]
         },
@@ -65,6 +71,7 @@
                 "target-windows",
                 "ninja",
                 "clang",
+                "ccache",
                 "default"
             ]
         },
@@ -76,6 +83,7 @@
                 "target-windows",
                 "ninja",
                 "gcc",
+                "ccache",
                 "default"
             ]
         }

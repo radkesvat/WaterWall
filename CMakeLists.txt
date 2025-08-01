@@ -45,8 +45,7 @@ set(CMAKE_C_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE CACHE BOOL "request not to use lower versions" FORCE)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_C_COMPILER_LAUNCHER ccache)
-set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
+
 
 #--------------------------------------------------------------------------------
 # Deprecated CPM Library Warning Suppression

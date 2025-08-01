@@ -10,6 +10,7 @@
                 "host-not-windows",
                 "target-android",
                 "ninja",
+                "ccache",
                 "default"
             ]
         },
@@ -19,6 +20,7 @@
                 "host-not-windows",
                 "target-android-arm32",
                 "ninja",
+                "ccache",
                 "default"
             ]
         },
@@ -28,6 +30,7 @@
                 "host-not-windows",
                 "target-android-arm64",
                 "ninja",
+                "ccache",
                 "default"
             ]
         },
@@ -37,6 +40,7 @@
                 "host-not-windows",
                 "target-android-x86",
                 "ninja",
+                "ccache",
                 "default"
             ]
         },
@@ -46,6 +50,7 @@
                 "host-not-windows",
                 "target-android-x86-64",
                 "ninja",
+                "ccache",
                 "default"
             ]
         }

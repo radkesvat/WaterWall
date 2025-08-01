@@ -10,6 +10,7 @@
                 "host-linux",
                 "target-linux",
                 "ninja",
+                "ccache",
                 "default"
             ]
         },
@@ -20,6 +21,7 @@
                 "target-linux",
                 "ninja",
                 "clang",
+                "ccache",
                 "default"
             ]
         },
@@ -30,6 +32,7 @@
                 "target-linux",
                 "ninja",
                 "gcc",
+                "ccache",
                 "default"
             ]
         },
@@ -41,6 +44,7 @@
                 "ninja",
                 "gcc",
                 "old-cpu-x64",
+                "ccache",
                 "default"
             ]
         },
@@ -51,6 +55,7 @@
                 "target-linux-arm64",
                 "ninja",
                 "gcc-cross-arm64",
+                "ccache",
                 "default"
             ]
         },
@@ -62,6 +67,7 @@
                 "ninja",
                 "gcc-cross-arm64",
                 "old-cpu-arm",
+                "ccache",
                 "default"
             ]
         }
