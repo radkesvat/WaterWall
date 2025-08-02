@@ -23,7 +23,7 @@ struct sbuf_s
     uint8_t  _padding1;    // padding to align to 8 bytes
     void    *original_ptr; // store original malloc pointer for proper freeing
     uint64_t _padding2;    // padding to make struct exactly 32 bytes
-    MSVC_ATTR_ALIGNED_16 uint8_t buf[] GNU_ATTR_ALIGNED_16;
+    MSVC_ATTR_ALIGNED_32 uint8_t buf[] GNU_ATTR_ALIGNED_32;
 };
 
 typedef struct sbuf_s sbuf_t;
@@ -210,7 +210,6 @@ static inline void sbufWriteLarge(sbuf_t *restrict const b, const void *restrict
 {
     memoryCopyLarge(sbufGetMutablePtr(b), buffer, len);
 }
-
 
 /**
  * Writes zeros to buffer.
