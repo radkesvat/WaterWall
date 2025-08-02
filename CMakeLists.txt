@@ -108,7 +108,6 @@ option(INCLUDE_PACKET_AS_DATA           "link PacketAsData staticly to the core"
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE  "link Layer3IpRoutingTable staticly to the core" FALSE)
 option(INCLUDE_IP_OVERRIDER             "link IpOverrider staticly to the core"          TRUE)
 option(INCLUDE_IP_MANIPULATOR           "link IPManipulator staticly to the core"        TRUE)
-option(INCLUDE_LAYER3_TCP_MANIPULATOR   "link Layer3TcpManipulator staticly to the core" FALSE)
 option(INCLUDE_TCP_LISTENER             "link TcpListener staticly to the core"          TRUE)
 option(INCLUDE_UDP_LISTENER             "link UdpListener staticly to the core"          TRUE)
 option(INCLUDE_LISTENER                 "link Listener staticly to the core"             FALSE)
@@ -117,6 +116,7 @@ option(INCLUDE_CONNECTOR                "link Connector staticly to the core"   
 option(INCLUDE_TCPCONNECTOR             "link TcpConnector staticly to the core"         TRUE)
 option(INCLUDE_UDP_CONNECTOR            "link UdpConnector staticly to the core"         TRUE)
 option(INCLUDE_UDP_STATELESS_SOCKET     "link UdpStatelessSocket staticly to the core"   TRUE)
+option(INCLUDE_UDP_OVER_TCP_CLIENT      "link UdpOverTcpClient staticly to the core"     TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"               TRUE)
 option(INCLUDE_OPENSSL_SERVER           "link OpenSSlServer staticly to the core"        FALSE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"            TRUE)
@@ -293,13 +293,6 @@ if(INCLUDE_IP_MANIPULATOR)
   target_link_libraries(Waterwall IpManipulator)
 endif()
 
-#layer3 tcp manipulator
-if(INCLUDE_LAYER3_TCP_MANIPULATOR)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_LAYER3_TCP_MANIPULATOR=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/tcp/manipulator)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/layer3/tcp/manipulator)
-  target_link_libraries(Waterwall Layer3TcpManipulator)
-endif()
 
 #tcp listener
 if(INCLUDE_TCP_LISTENER)
@@ -355,6 +348,14 @@ if(INCLUDE_UDP_STATELESS_SOCKET)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpStatelessSocket)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpStatelessSocket)
   target_link_libraries(Waterwall UdpStatelessSocket)
+endif()
+
+#udp over tcp client
+if(INCLUDE_UDP_OVER_TCP_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_UDP_OVER_TCP_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpOverTcpClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpOverTcpClient)
+  target_link_libraries(Waterwall UdpOverTcpClient)
 endif()
 
 #bridge

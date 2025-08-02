@@ -4,7 +4,6 @@
 
 #define USING(x) nodelibraryRegister(node##x##Get());
 
-
 #ifdef INCLUDE_TEMPLATE
 #include "tunnels/template/include/interface.h"
 #endif
@@ -28,7 +27,6 @@
 #ifdef INCLUDE_WIREGUARD_DEVICE
 #include "tunnels/WireGuardDevice/include/interface.h"
 #endif
-
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
 #include "tunnels/layer3/ip/routing_table/ip_routing_table.h"
@@ -88,6 +86,10 @@
 
 #ifdef INCLUDE_UDP_CONNECTOR
 #include "tunnels/UdpConnector/include/interface.h"
+#endif
+
+#ifdef INCLUDE_UDP_OVER_TCP_CLIENT
+#include "tunnels/UdpOverTcpClient/include/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
@@ -213,7 +215,6 @@ void loadImportedTunnelsIntoCore(void)
     USING(WireGuardDevice);
 #endif
 
-
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
     USING(Layer3IpRoutingTable);
 #endif
@@ -272,6 +273,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_UDP_CONNECTOR
     USING(UdpConnector);
+#endif
+
+#ifdef INCLUDE_UDP_OVER_TCP_CLIENT
+    USING(UdpOverTcpClient);
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
