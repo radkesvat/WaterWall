@@ -4,13 +4,13 @@
 
 static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
 {
-    if (bufferstreamLen(stream) < kLeftPaddingSize + 1)
+    if (bufferstreamLen(stream) < kHeaderSize + 1)
     {
         return NULL;
     }
 
-    uint8_t packet_first_bytes[kLeftPaddingSize];
-    bufferstreamViewBytesAt(stream, 0, packet_first_bytes, kLeftPaddingSize);
+    uint8_t packet_first_bytes[kHeaderSize];
+    bufferstreamViewBytesAt(stream, 0, packet_first_bytes, kHeaderSize);
 
     uint16_t total_packet_size = ntohs(*(uint16_t *) packet_first_bytes);
 
@@ -21,7 +21,10 @@ static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
     }
 
     // Read the complete packet (header + payload)
-    return bufferstreamReadExact(stream, total_packet_size);
+    sbuf_t *packet_buffer = bufferstreamReadExact(stream, kHeaderSize + total_packet_size);
+    sbufShiftRight(packet_buffer, kHeaderSize);
+
+    return packet_buffer;
 }
 
 static bool isOverFlow(buffer_stream_t *read_stream)

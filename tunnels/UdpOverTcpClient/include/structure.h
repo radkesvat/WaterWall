@@ -14,10 +14,10 @@ typedef struct udpovertcpclient_lstate_s
 
 enum
 {
-    kTunnelStateSize = sizeof(udpovertcpclient_tstate_t),
-    kLineStateSize   = sizeof(udpovertcpclient_lstate_t),
-    kLeftPaddingSize = 2, // 2 bytes for the length of the packet
-    kMaxAllowedPacketLength = 65535 - 20 - 8, // Maximum UDP packet size (shared with udp_over_tcp_server)
+    kTunnelStateSize        = sizeof(udpovertcpclient_tstate_t),
+    kLineStateSize          = sizeof(udpovertcpclient_lstate_t),
+    kHeaderSize             = 2,                            // 2 bytes for the length of the packet
+    kMaxAllowedPacketLength = 65535 - 20 - 8 - kHeaderSize, // Maximum UDP packet size (shared with udp_over_tcp_server)
 };
 
 WW_EXPORT void         udpovertcpclientTunnelDestroy(tunnel_t *t);
@@ -43,5 +43,5 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 void udpovertcpclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void udpovertcpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void udpovertcpclientLinestateInitialize(udpovertcpclient_lstate_t *ls,buffer_pool_t *pool);
+void udpovertcpclientLinestateInitialize(udpovertcpclient_lstate_t *ls, buffer_pool_t *pool);
 void udpovertcpclientLinestateDestroy(udpovertcpclient_lstate_t *ls);

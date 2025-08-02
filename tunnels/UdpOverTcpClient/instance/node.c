@@ -20,7 +20,7 @@ node_t nodeUdpOverTcpClientGet(void)
              .node_manager_config   = NULL,
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
-             .required_padding_left = 2, // to append the length of the payload (should not be changed) (must same kLeftPaddingSize)
+             .required_padding_left = 2, // to append the length of the payload (should not be changed) (must same kHeaderSize)
              .layer_group           = kNodeLayerAnything,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,
