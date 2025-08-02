@@ -376,13 +376,15 @@ set(LIBS ${LIBS} ww_lwip)
     # set(MI_OPT_ARCH OFF)
 # endif()
 
-set(MI_USE_CXX ON)
-
+set(MI_USE_CXX ON) # since we enabled c++ for waterwall
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
 
 if(NOT MSVC)        
     target_compile_options(mimalloc-static PRIVATE -Wno-attributes -Wno-array-bounds)
+    if(MI_USE_CXX)
+        target_compile_options(mimalloc-static PRIVATE -Wno-missing-field-initializers)
+    endif()
 endif()
 
 set(LIBS ${LIBS} mimalloc-static)
