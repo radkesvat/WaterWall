@@ -14,7 +14,6 @@ static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
 
     uint16_t total_packet_size = ntohs(*(uint16_t *) packet_first_bytes);
 
-    // Validate packet size (minimum IP header size, maximum reasonable size)
     if (total_packet_size < 1 || total_packet_size > bufferstreamLen(stream))
     {
         return NULL;
@@ -31,7 +30,7 @@ static bool isOverFlow(buffer_stream_t *read_stream)
 {
     if (bufferstreamLen(read_stream) > (uint32_t) (kMaxAllowedPacketLength * 2))
     {
-        LOGW("UdpOverTcpClient: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamLen(read_stream),
+        LOGW("UdpOverTcpClient: DownStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamLen(read_stream),
              (uint32_t) (kMaxAllowedPacketLength * 2));
         return true; // Return true when overflow IS detected
     }
