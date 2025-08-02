@@ -182,7 +182,7 @@ static inline void wlogf(const char *fmt, ...)
 }
 #else
 
-static inline void wlogd(const char *fmt, ...)
+static void wlogd(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
@@ -190,7 +190,7 @@ static inline void wlogd(const char *fmt, ...)
     va_end(myargs);
 }
 
-static inline void wlogi(const char *fmt, ...)
+static void wlogi(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
@@ -198,7 +198,7 @@ static inline void wlogi(const char *fmt, ...)
     va_end(myargs);
 }
 
-static inline void wlogw(const char *fmt, ...)
+static void wlogw(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
@@ -206,14 +206,14 @@ static inline void wlogw(const char *fmt, ...)
     va_end(myargs);
 }
 
-static inline void wloge(const char *fmt, ...)
+static void wloge(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
     loggerPrintVA(wlog, LOG_LEVEL_ERROR, fmt, myargs);
     va_end(myargs);
 }
-static inline void wlogf(const char *fmt, ...)
+static void wlogf(const char *fmt, ...)
 {
     va_list myargs;
     va_start(myargs, fmt);
