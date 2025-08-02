@@ -2,14 +2,8 @@
 
 #include "loggers/network_logger.h"
 
-void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
+static int createAndBindSocket(void)
 {
-    udpconnector_tstate_t *ts = tunnelGetState(t);
-
-    udpconnector_lstate_t *ls = lineGetState(l, t);
-
-
-    wloop_t   *loop      = getWorkerLoop(getWID());
     sockaddr_u host_addr = {0};
     sockaddrSetIpAddressPort(&host_addr, "0.0.0.0", 0);
 
@@ -17,33 +11,24 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (sockfd < 0)
     {
         LOGE("UdpConnector: socket fd < 0");
-        tunnelPrevDownStreamFinish(t, l);
-        return;
+        return -1;
     }
 
 #ifdef OS_UNIX
     socketOptionReuseAddr(sockfd, 1);
 #endif
-    sockaddr_u addr;
 
-
-    if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0)
+    if (bind(sockfd, &host_addr.sa, sockaddrLen(&host_addr)) < 0)
     {
         LOGE("UdpConnector: UDP bind failed;");
-        tunnelPrevDownStreamFinish(t, l);
-        return;
+        return -1;
     }
 
-    wio_t *io = wioGet(loop, sockfd);
+    return sockfd;
+}
 
-    udpconnectorLinestateInitialize(ls, t, l, io);
-
-    wioSetCallBackRead(io, udpconnectorOnRecvFrom);
-    wioRead(io);
-
-    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
-    address_context_t *src_ctx  = lineGetSourceAddressContext(l);
-
+static void setupDestinationAddress(udpconnector_tstate_t *ts, address_context_t *dest_ctx, address_context_t *src_ctx)
+{
     switch (ts->dest_addr_selected.status)
     {
     case kDvsFromSource:
@@ -54,9 +39,12 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         break;
     default:
     case kDvsFromDest:
-        
         break;
     }
+}
+
+static void setupDestinationPort(udpconnector_tstate_t *ts, address_context_t *dest_ctx, address_context_t *src_ctx)
+{
     switch (ts->dest_port_selected.status)
     {
     case kDvsFromSource:
@@ -65,26 +53,58 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     case kDvsConstant:
         addresscontextCopyPort(dest_ctx, &(ts->constant_dest_addr));
         break;
+    case kDvsRandom:
+        addresscontextSetPort(dest_ctx, (fastRand() % (ts->random_dest_port_y - ts->random_dest_port_x + 1)) +
+                                            ts->random_dest_port_x);
+        break;
     default:
     case kDvsFromDest:
         break;
     }
-
-    if(addresscontextIsDomain(dest_ctx) && ! addresscontextIsDomainResolved(dest_ctx))
-    {
-        if (! resolveContextSync(dest_ctx))
-        {
-            udpconnectorLinestateDestroy(ls);
-            tunnelPrevDownStreamFinish(t, l);
-            return;
-        }
-    }
-
-    // wioSetReadTimeout(ls->io, kUdpKeepExpireTime);
-    // sockaddr_set_ipport(&(dest->addr),"www.gstatic.com",80);
-   
-    addr = addresscontextToSockAddr(dest_ctx);
-    wioSetPeerAddr(ls->io, &addr.sa, sockaddrLen(&addr));
-
 }
 
+static bool resolveDomainIfNeeded(address_context_t *dest_ctx)
+{
+    if (addresscontextIsDomain(dest_ctx) && ! addresscontextIsDomainResolved(dest_ctx))
+    {
+        return resolveContextSync(dest_ctx);
+    }
+    return true;
+}
+
+void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
+{
+    udpconnector_tstate_t *ts = tunnelGetState(t);
+    udpconnector_lstate_t *ls = lineGetState(l, t);
+
+    int sockfd = createAndBindSocket();
+    if (sockfd < 0)
+    {
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
+    wloop_t *loop = getWorkerLoop(getWID());
+    wio_t *io = wioGet(loop, sockfd);
+
+    udpconnectorLinestateInitialize(ls, t, l, io);
+
+    wioSetCallBackRead(io, udpconnectorOnRecvFrom);
+    wioRead(io);
+
+    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
+    address_context_t *src_ctx  = lineGetSourceAddressContext(l);
+
+    setupDestinationAddress(ts, dest_ctx, src_ctx);
+    setupDestinationPort(ts, dest_ctx, src_ctx);
+
+    if (!resolveDomainIfNeeded(dest_ctx))
+    {
+        udpconnectorLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
+    sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
+    wioSetPeerAddr(ls->io, &addr.sa, sockaddrLen(&addr));
+}

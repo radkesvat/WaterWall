@@ -7,6 +7,7 @@ enum udp_connector_dynamic_value_status
 
     kDvsFromSource = kDvsFirstOption,
     kDvsFromDest,
+    kDvsRandom // currently only meaningful for port selection
 };
 
 typedef struct udpconnector_tstate_s
@@ -16,6 +17,9 @@ typedef struct udpconnector_tstate_s
     dynamic_value_t   dest_addr_selected; // selected destination address
     dynamic_value_t   dest_port_selected; // selected destination port
     address_context_t constant_dest_addr; // constant destination address for the connection
+
+    uint16_t random_dest_port_x; // lower bound of random port range (used when dest_port_selected.status == kDvsRandom)
+    uint16_t random_dest_port_y; // upper bound of random port range (used when dest_port_selected.status == kDvsRandom)
 } udpconnector_tstate_t;
 
 typedef struct udpconnector_lstate_s
