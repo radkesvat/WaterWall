@@ -92,6 +92,10 @@
 #include "tunnels/UdpOverTcpClient/include/interface.h"
 #endif
 
+#ifdef INCLUDE_UDP_OVER_TCP_SERVER
+#include "tunnels/UdpOverTcpServer/include/interface.h"
+#endif
+
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
 #include "tunnels/UdpStatelessSocket/include/interface.h"
 #endif
@@ -277,6 +281,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_UDP_OVER_TCP_CLIENT
     USING(UdpOverTcpClient);
+#endif
+
+#ifdef INCLUDE_UDP_OVER_TCP_SERVER
+    USING(UdpOverTcpServer);
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET

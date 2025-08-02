@@ -117,6 +117,7 @@ option(INCLUDE_TCPCONNECTOR             "link TcpConnector staticly to the core"
 option(INCLUDE_UDP_CONNECTOR            "link UdpConnector staticly to the core"         TRUE)
 option(INCLUDE_UDP_STATELESS_SOCKET     "link UdpStatelessSocket staticly to the core"   TRUE)
 option(INCLUDE_UDP_OVER_TCP_CLIENT      "link UdpOverTcpClient staticly to the core"     TRUE)
+option(INCLUDE_UDP_OVER_TCP_SERVER      "link UdpOverTcpServer staticly to the core"     TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"               TRUE)
 option(INCLUDE_OPENSSL_SERVER           "link OpenSSlServer staticly to the core"        FALSE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"            TRUE)
@@ -356,6 +357,14 @@ if(INCLUDE_UDP_OVER_TCP_CLIENT)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpOverTcpClient)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpOverTcpClient)
   target_link_libraries(Waterwall UdpOverTcpClient)
+endif()
+
+#udp over tcp server
+if(INCLUDE_UDP_OVER_TCP_SERVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_UDP_OVER_TCP_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpOverTcpServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/UdpOverTcpServer)
+  target_link_libraries(Waterwall UdpOverTcpServer)
 endif()
 
 #bridge
