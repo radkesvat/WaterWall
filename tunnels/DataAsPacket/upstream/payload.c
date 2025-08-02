@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "lwip/prot/ip4.h"
 
 static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
 {
@@ -64,6 +63,7 @@ void dataaspacketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    lineLock(l);
     while (true)
     {
         sbuf_t *packet_buffer = tryReadCompletePacket(&(ls->read_stream));
@@ -74,5 +74,10 @@ void dataaspacketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         tunnelNextUpStreamPayload(t, tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)), packet_buffer);
+        if (! lineIsAlive(l))
+        {
+            break; // Exit if the line is no longer alive
+        }
     }
+    lineUnlock(l);
 }

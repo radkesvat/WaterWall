@@ -19,7 +19,7 @@ enum
 {
     kTunnelStateSize = sizeof(dataaspacket_tstate_t),
     kLineStateSize   = sizeof(dataaspacket_lstate_t),
-    kMaxBufferSize   = 65536 // Maximum buffer size (64 KB)
+    kMaxBufferSize   = 65536 * 2 // Maximum buffer size for reading data packets
 };
 
 WW_EXPORT void         dataaspacketTunnelDestroy(tunnel_t *t);
