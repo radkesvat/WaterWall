@@ -50,7 +50,7 @@ int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     assert(lineIsAlive(l));
 
-    if (ls->write_paused)
+    if (ls->write_paused && ikcp_waitsnd(ls->k_handle) < KCP_SEND_WINDOW_LIMIT)
     {
         lineLock(l);
         ls->write_paused = false;
