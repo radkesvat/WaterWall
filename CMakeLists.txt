@@ -119,7 +119,7 @@ option(INCLUDE_UDP_STATELESS_SOCKET     "link UdpStatelessSocket staticly to the
 option(INCLUDE_UDP_OVER_TCP_CLIENT      "link UdpOverTcpClient staticly to the core"     TRUE)
 option(INCLUDE_UDP_OVER_TCP_SERVER      "link UdpOverTcpServer staticly to the core"     TRUE)
 option(INCLUDE_TCP_OVER_UDP_CLIENT      "link TcpOverUdpClient staticly to the core"     TRUE)
-option(INCLUDE_TCP_OVER_UDP_SERVER      "link TcpOverUdpServer staticly to the core"     FALSE)
+option(INCLUDE_TCP_OVER_UDP_SERVER      "link TcpOverUdpServer staticly to the core"     TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"               TRUE)
 option(INCLUDE_OPENSSL_SERVER           "link OpenSSlServer staticly to the core"        FALSE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"            TRUE)
