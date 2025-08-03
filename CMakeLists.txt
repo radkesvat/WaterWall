@@ -118,13 +118,13 @@ option(INCLUDE_UDP_CONNECTOR            "link UdpConnector staticly to the core"
 option(INCLUDE_UDP_STATELESS_SOCKET     "link UdpStatelessSocket staticly to the core"   TRUE)
 option(INCLUDE_UDP_OVER_TCP_CLIENT      "link UdpOverTcpClient staticly to the core"     TRUE)
 option(INCLUDE_UDP_OVER_TCP_SERVER      "link UdpOverTcpServer staticly to the core"     TRUE)
+option(INCLUDE_TCP_OVER_UDP_CLIENT      "link TcpOverUdpClient staticly to the core"     TRUE)
+option(INCLUDE_TCP_OVER_UDP_SERVER      "link TcpOverUdpServer staticly to the core"     FALSE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"               TRUE)
 option(INCLUDE_OPENSSL_SERVER           "link OpenSSlServer staticly to the core"        FALSE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"            TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"     FALSE)
 option(INCLUDE_TROJAN_SOCKS_SERVER      "link TrojanSocksServer staticly to the core"    FALSE)
-option(INCLUDE_WOLFSSL_SERVER           "link WolfSSLServer staticly to the core"        OFF)  # this downloads 750 mb of data!
-option(INCLUDE_WOLFSSL_CLIENT           "link WolfSSLClient staticly to the core"        OFF)  # this downloads 750 mb of data!
 option(INCLUDE_HTTP2_SERVER             "link Http2Server staticly to the core"          FALSE)
 option(INCLUDE_HTTP2_CLIENT             "link Http2Client staticly to the core"          FALSE)
 option(INCLUDE_PROTOBUF_SERVER          "link ProtoBufServer staticly to the core"       FALSE)
@@ -213,6 +213,12 @@ target_link_libraries(Waterwall ww)
 #--------------------------------------------------------------------------------
 # Tunnel Libraries
 #--------------------------------------------------------------------------------
+
+#first setting these variables to false, so we can use them in the tunnels CMakeLists.txt files
+
+set(TUNNELS_KCP_INCLUDE_SET FALSE CACHE INTERNAL "") #if any tunnel has kcp, it will set this to true
+
+  
 
 #template
 if(INCLUDE_TEMPLATE)
@@ -367,6 +373,22 @@ if(INCLUDE_UDP_OVER_TCP_SERVER)
   target_link_libraries(Waterwall UdpOverTcpServer)
 endif()
 
+#tcp over udp client
+if(INCLUDE_TCP_OVER_UDP_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_TCP_OVER_UDP_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpClient)
+  target_link_libraries(Waterwall TcpOverUdpClient)
+endif()
+
+#tcp over udp server
+if(INCLUDE_TCP_OVER_UDP_SERVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_TCP_OVER_UDP_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpServer)
+  target_link_libraries(Waterwall TcpOverUdpServer)
+endif()
+
 #bridge
 if(INCLUDE_BRIDGE)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_BRIDGE=1)
@@ -423,21 +445,6 @@ if(INCLUDE_TROJAN_SOCKS_SERVER)
   target_link_libraries(Waterwall TrojanSocksServer)
 endif()
 
-#wolf ssl server
-if(INCLUDE_WOLFSSL_SERVER)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_WOLFSSL_SERVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/wolfssl)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/wolfssl)
-  target_link_libraries(Waterwall WolfSSLServer)
-endif()
-
-#wolf ssl client
-if(INCLUDE_WOLFSSL_CLIENT)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_WOLFSSL_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/wolfssl)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/wolfssl)
-  target_link_libraries(Waterwall WolfSSLClient)
-endif()
 
 #logger tunnel
 if(INCLUDE_LOGGER_TUNNEL)
