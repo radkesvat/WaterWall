@@ -40,6 +40,7 @@ enum
 {
     kTunnelStateSize   = sizeof(udpconnector_tstate_t),
     kLineStateSize     = sizeof(udpconnector_lstate_t),
+    kUdpInitExpireTime  = 30 * 1000,
     kUdpKeepExpireTime = 300 * 1000
 };
 

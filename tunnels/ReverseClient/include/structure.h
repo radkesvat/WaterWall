@@ -37,7 +37,7 @@ enum
     kHandShakeLength                = 640,  // shared with ReverseServer
     kPreconnectDelayShort           = 10,
     kPreconnectDelayLong            = 750,
-    kConnectionStarvationTimeOutSec = 45
+    kConnectionStarvationTimeOutSec = 600
 };
 
 WW_EXPORT void         reverseclientTunnelDestroy(tunnel_t *t);
