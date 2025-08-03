@@ -28,7 +28,7 @@ enum
 enum tcpoverudpserver_kcpsettings_e
 {
     kTcpOverUdpServerKcpNodelay  = 1,  // enable nodelay
-    kTcpOverUdpServerKcpInterval = 10, // interval for sending data
+    kTcpOverUdpServerKcpInterval = 10, // interval for processing kcp stack (ms)
     kTcpOverUdpServerKcpResend   = 2,  // resend count
     kTcpOverUdpServerKcpStream   = 0,  // stream mode
 };
