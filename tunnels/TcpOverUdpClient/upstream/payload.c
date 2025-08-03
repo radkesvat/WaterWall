@@ -29,5 +29,19 @@ void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         sendWorkerMessageForceQueue(lineGetWID(l), pauseDownSide, t, l, NULL);
     }
 
-    ikcp_send(ls->k_handle, (void *) sbufGetMutablePtr(buf), (int) sbufGetLength(buf));
+    // Break buffer into chunks of less than 4096 bytes and send in order
+
+    lineLock(l);
+    while (sbufGetLength(buf) > 0)
+    {
+        int write_size = min(4096, sbufGetLength(buf));
+        ikcp_send(ls->k_handle, (void *) sbufGetMutablePtr(buf), write_size);
+        sbufShiftRight(buf, write_size);
+        if (! lineIsAlive(l))
+        {
+            break;
+        }
+    }
+    lineUnlock(l);
+    bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
 }
