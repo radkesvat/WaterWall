@@ -198,6 +198,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     {
         return NULL;
     }
+    state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
 
     return t;
 }

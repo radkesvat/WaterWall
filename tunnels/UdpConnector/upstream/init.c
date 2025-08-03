@@ -89,6 +89,17 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     udpconnectorLinestateInitialize(ls, t, l, io);
 
+     ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, udpconnectorOnIdleConnectionExpire,
+                                  lineGetWID(l), kUdpKeepExpireTime);
+
+    while (ls->idle_handle == NULL)
+    {
+        // a very rare case where the socket FD from another thread is still present in the idle table
+        cycleDelay(100);
+        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, udpconnectorOnIdleConnectionExpire,
+                                      lineGetWID(l), kUdpKeepExpireTime);
+    }
+    
     wioSetCallBackRead(io, udpconnectorOnRecvFrom);
     wioRead(io);
 

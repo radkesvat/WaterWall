@@ -4,6 +4,7 @@
 
 void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    udpconnector_tstate_t *ts = tunnelGetState(t);
     udpconnector_lstate_t *ls = lineGetState(l, t);
 
     wio_t *io = ls->io;
@@ -16,6 +17,8 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         assert(false);
         terminateProgram(1);
     }
+
+    idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kUdpKeepExpireTime);
 
     wioWrite(io, buf);
 }
