@@ -964,6 +964,7 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
 static void writeUdpThisLoop(wevent_t *ev)
 {
     udp_payload_t *upl    = weventGetUserdata(ev);
+    wioSetPeerAddr(upl->sock->io,&wioGetPeerAddrU(upl->sock->io)->sa, sizeof(sockaddr_u));
     int            nwrite = wioWrite(upl->sock->io, upl->buf);
     discard        nwrite;
     udppayloadDestroy(upl);
@@ -973,9 +974,9 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf)
 {
     if (wid_from == state->wid)
     {
+        wioSetPeerAddr(socket_io->io,&wioGetPeerAddrU(socket_io->io)->sa, sizeof(sockaddr_u));
         int     nwrite = wioWrite(socket_io->io, buf);
         discard nwrite;
-
         return;
     }
 
