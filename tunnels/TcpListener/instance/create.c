@@ -90,11 +90,11 @@ static void configureMultiportBackend(socket_filter_option_t *filter_opt, tcplis
     {
         filter_opt->multiport_backend = kMultiportBackendDefault;
         dynamic_value_t dy_mb = parseDynamicStrValueFromJsonObject(settings, "multiport-backend", 2, "iptables", "socket");
-        if (dy_mb.status == 2)
+        if (dy_mb.status == kDvsFirstOption)
         {
             filter_opt->multiport_backend = kMultiportBackendIptables;
         }
-        if (dy_mb.status == 3)
+        if (dy_mb.status == kDvsSecondOption)
         {
             filter_opt->multiport_backend = kMultiportBackendSockets;
         }
