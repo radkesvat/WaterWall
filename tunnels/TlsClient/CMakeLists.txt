@@ -157,6 +157,11 @@ if(WIN32)
     target_compile_definitions(decrepit   PRIVATE WW_BSSL_WIN_FIAT_NO_ASM=1)
 endif()
 
+if(NOT MSVC)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wno-free-nonheap-object" CACHE STRING "Linker flags" FORCE)
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wno-free-nonheap-object" CACHE STRING "Linker flags" FORCE)
+endif()
+
 #==============================================================================
 # Final Library Linkage
 #==============================================================================
