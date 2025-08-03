@@ -118,4 +118,15 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
     wioSetPeerAddr(ls->io, &addr.sa, sockaddrLen(&addr));
+
+    if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    {
+        char localaddrstr[SOCKADDR_STRLEN] = {0};
+        char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+
+        LOGD("UdpConnector: Communication begin FD:%x [%s] => [%s]", wioGetFD(io),
+             SOCKADDR_STR(wioGetLocaladdr(io), localaddrstr),
+             SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
+    }
+
 }
