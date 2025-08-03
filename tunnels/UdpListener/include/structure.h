@@ -30,8 +30,8 @@ enum
     kTunnelStateSize    = sizeof(udplistener_tstate_t),
     kLineStateSize      = sizeof(udplistener_lstate_t),
     kPauseQueueCapacity = 2,
-    kUdpInitExpireTime  = 5 * 1000,
-    kUdpKeepExpireTime  = 60 * 1000
+    kUdpInitExpireTime  = 30 * 1000,
+    kUdpKeepExpireTime  = 180 * 1000
 };
 
 WW_EXPORT void         udplistenerTunnelDestroy(tunnel_t *t);
