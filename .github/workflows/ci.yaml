@@ -196,6 +196,7 @@ jobs:
           - preset: linux-gcc-x64-old-cpu
           - preset: linux-gcc-arm64
           - preset: linux-gcc-arm64-old-cpu
+          - preset: linux-clang-avx512f-x64
 
           
     name: ${{ matrix.preset }}

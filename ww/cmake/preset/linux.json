@@ -26,6 +26,18 @@
             ]
         },
         {
+            "name": "linux-clang-avx512f-x64",
+            "inherits": [
+                "host-linux",
+                "target-linux",
+                "ninja",
+                "clang",
+                "avx512f",
+                "ccache",
+                "default"
+            ]
+        },
+        {
             "name": "linux-gcc-x64",
             "inherits": [
                 "host-linux",
@@ -83,6 +95,13 @@
         {
             "name": "linux-clang-x64",
             "configurePreset": "linux-clang-x64",
+            "inherits": [
+                "host-linux"
+            ]
+        },
+        {
+            "name": "linux-clang-avx512f-x64",
+            "configurePreset": "linux-clang-avx512f-x64",
             "inherits": [
                 "host-linux"
             ]

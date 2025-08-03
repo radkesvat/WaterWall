@@ -434,6 +434,7 @@ include(CheckCCompilerFlag)
 
 check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
 check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+check_c_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
 
 ################################################################################
 # AVX/SSE3 Checksum and Memory Copy Configuration
@@ -469,7 +470,23 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
         message(STATUS "AVX2 not supported by compiler")
     endif()
 
-
+    
+    if(COMPILER_SUPPORTS_AVX512F)
+        message(STATUS "Compiler supports AVX512F")
+        if(WW_ENABLE_AVX_512)
+            message(STATUS "Using AVX512F code...")
+            target_compile_options(ww PUBLIC -mavx512f)
+            set(WW_HAVE_AVX512F 1)
+            set(WW_SUPPORTED_MEMCOPY_AVX512F 1)
+        else()
+            set(WW_SUPPORTED_MEMCOPY_AVX512F 0)
+            message(STATUS "AVX512F is power consuming and is disabled by default")
+            message(STATUS "We are currently not using AVX512F code until the user enables it")
+        endif()
+        
+    else()
+        message(STATUS "AVX512F not supported by compiler")
+    endif()
 
 
 

@@ -265,6 +265,13 @@
                 "CMAKE_C_COMPILER_LAUNCHER": "ccache",
                 "CMAKE_CXX_COMPILER_LAUNCHER": "ccache"
             }
+        },
+        {
+            "name": "avx512f",
+            "hidden": true,
+            "cacheVariables": {
+                "WW_ENABLE_AVX_512": true
+            }
         }
     ],
     "buildPresets": [

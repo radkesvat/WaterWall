@@ -63,7 +63,157 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 #error "ENABLE_MEMCOPY_AVX2 must be defined to either 0 or 1"
 #endif
 
-#if ENABLE_MEMCOPY_AVX2 == 1
+#if ENABLE_MEMCOPY_AVX512 == 1
+
+#include <x86intrin.h>
+static inline void memoryCopyAVX512(void *dest, const void *src, intmax_t n)
+{
+    __m512i       *d_vec = (__m512i *) (dest);
+    const __m512i *s_vec = (const __m512i *) (src);
+
+    bool aligned = ((uintptr_t) dest % 64 == 0 && (uintptr_t) src % 64 == 0);
+
+    if (aligned)
+    {
+        // Copy 1024 bytes at a time (16 * 64 bytes)
+        while (n >= 1024)
+        {
+            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
+            _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
+            _mm512_store_si512(d_vec + 2, _mm512_load_si512(s_vec + 2));
+            _mm512_store_si512(d_vec + 3, _mm512_load_si512(s_vec + 3));
+            _mm512_store_si512(d_vec + 4, _mm512_load_si512(s_vec + 4));
+            _mm512_store_si512(d_vec + 5, _mm512_load_si512(s_vec + 5));
+            _mm512_store_si512(d_vec + 6, _mm512_load_si512(s_vec + 6));
+            _mm512_store_si512(d_vec + 7, _mm512_load_si512(s_vec + 7));
+            _mm512_store_si512(d_vec + 8, _mm512_load_si512(s_vec + 8));
+            _mm512_store_si512(d_vec + 9, _mm512_load_si512(s_vec + 9));
+            _mm512_store_si512(d_vec + 10, _mm512_load_si512(s_vec + 10));
+            _mm512_store_si512(d_vec + 11, _mm512_load_si512(s_vec + 11));
+            _mm512_store_si512(d_vec + 12, _mm512_load_si512(s_vec + 12));
+            _mm512_store_si512(d_vec + 13, _mm512_load_si512(s_vec + 13));
+            _mm512_store_si512(d_vec + 14, _mm512_load_si512(s_vec + 14));
+            _mm512_store_si512(d_vec + 15, _mm512_load_si512(s_vec + 15));
+            n -= 1024;
+            d_vec += 16;
+            s_vec += 16;
+        }
+
+        // Copy 256 bytes at a time (4 * 64 bytes)
+        while (n >= 256)
+        {
+            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
+            _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
+            _mm512_store_si512(d_vec + 2, _mm512_load_si512(s_vec + 2));
+            _mm512_store_si512(d_vec + 3, _mm512_load_si512(s_vec + 3));
+            n -= 256;
+            d_vec += 4;
+            s_vec += 4;
+        }
+
+        // Copy 128 bytes at a time (2 * 64 bytes)
+        while (n >= 128)
+        {
+            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
+            _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
+            n -= 128;
+            d_vec += 2;
+            s_vec += 2;
+        }
+
+        // Copy 64 bytes at a time
+        while (n >= 64)
+        {
+            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
+            n -= 64;
+            d_vec += 1;
+            s_vec += 1;
+        }
+    }
+    else
+    {
+        // Copy 1024 bytes at a time (16 * 64 bytes)
+        while (n >= 1024)
+        {
+            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
+            _mm512_storeu_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
+            _mm512_storeu_si512(d_vec + 2, _mm512_loadu_si512(s_vec + 2));
+            _mm512_storeu_si512(d_vec + 3, _mm512_loadu_si512(s_vec + 3));
+            _mm512_storeu_si512(d_vec + 4, _mm512_loadu_si512(s_vec + 4));
+            _mm512_storeu_si512(d_vec + 5, _mm512_loadu_si512(s_vec + 5));
+            _mm512_storeu_si512(d_vec + 6, _mm512_loadu_si512(s_vec + 6));
+            _mm512_storeu_si512(d_vec + 7, _mm512_loadu_si512(s_vec + 7));
+            _mm512_storeu_si512(d_vec + 8, _mm512_loadu_si512(s_vec + 8));
+            _mm512_storeu_si512(d_vec + 9, _mm512_loadu_si512(s_vec + 9));
+            _mm512_storeu_si512(d_vec + 10, _mm512_loadu_si512(s_vec + 10));
+            _mm512_storeu_si512(d_vec + 11, _mm512_loadu_si512(s_vec + 11));
+            _mm512_storeu_si512(d_vec + 12, _mm512_loadu_si512(s_vec + 12));
+            _mm512_storeu_si512(d_vec + 13, _mm512_loadu_si512(s_vec + 13));
+            _mm512_storeu_si512(d_vec + 14, _mm512_loadu_si512(s_vec + 14));
+            _mm512_storeu_si512(d_vec + 15, _mm512_loadu_si512(s_vec + 15));
+            n -= 1024;
+            d_vec += 16;
+            s_vec += 16;
+        }
+
+        // Copy 256 bytes at a time (4 * 64 bytes)
+        while (n >= 256)
+        {
+            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
+            _mm512_storeu_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
+            _mm512_storeu_si512(d_vec + 2, _mm512_loadu_si512(s_vec + 2));
+            _mm512_storeu_si512(d_vec + 3, _mm512_loadu_si512(s_vec + 3));
+            n -= 256;
+            d_vec += 4;
+            s_vec += 4;
+        }
+
+        // Copy 128 bytes at a time (2 * 64 bytes)
+        while (n >= 128)
+        {
+            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
+            _mm512_storeu_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
+            n -= 128;
+            d_vec += 2;
+            s_vec += 2;
+        }
+
+        // Copy 64 bytes at a time
+        while (n >= 64)
+        {
+            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
+            n -= 64;
+            d_vec += 1;
+            s_vec += 1;
+        }
+    }
+
+    // Copy any remaining bytes
+    if (n > 0)
+    {
+        uint8_t       *d = (uint8_t *) d_vec;
+        const uint8_t *s = (const uint8_t *) s_vec;
+
+        if (((uintptr_t) d % 8 == 0) && ((uintptr_t) s % 8 == 0))
+        {
+            while (n >= 8)
+            {
+                *(uint64_t *) d = *(const uint64_t *) s;
+                d += 8;
+                s += 8;
+                n -= 8;
+            }
+        }
+        while (n--)
+        {
+            *d++ = *s++;
+        }
+    }
+}
+
+#define memoryCopyLarge memoryCopyAVX512
+
+#elif ENABLE_MEMCOPY_AVX2 == 1
 
 #include <x86intrin.h>
 static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
@@ -211,13 +361,14 @@ static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
     }
 }
 
+#define memoryCopyLarge memoryCopyAVX2
+
 #else
 
-#define memoryCopyAVX2 memoryCopy
+#define memoryCopyLarge memoryCopy
 
 #endif
 
-#define memoryCopyLarge memoryCopyAVX2
 
 //--------------------string-------------------------------
 
