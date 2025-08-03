@@ -599,6 +599,18 @@ endif()
 # Use C++ linker for proper C++ runtime handling (especially for BoringSSL)
 set_target_properties(Waterwall PROPERTIES LINKER_LANGUAGE CXX)
 
+# Disable import library generation for the executable
+set_target_properties(Waterwall PROPERTIES ENABLE_EXPORTS FALSE)
+
+# Ensure no import library is generated
+if(WIN32 AND (MINGW OR MSYS))
+  set_target_properties(Waterwall PROPERTIES 
+    ARCHIVE_OUTPUT_NAME ""
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/symbols_archive"
+    WINDOWS_EXPORT_ALL_SYMBOLS FALSE
+  )
+endif()
+
 # Platform-specific flags
 if(MINGW OR MSYS)
   # On Windows (MinGW), statically link libgcc, libstdc++, and libwinpthread
