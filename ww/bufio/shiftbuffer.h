@@ -267,9 +267,9 @@ static inline void sbufWriteUI8(sbuf_t *const b, const uint8_t data)
 /**
  * Reads a 8-bit unsigned integer.
  */
-static inline void sbufReadUI8(const sbuf_t *const b, uint8_t *const dest)
+static inline uint8_t sbufReadUI8(const sbuf_t *const b)
 {
-    *dest = *(uint8_t *) sbufGetRawPtr(b);
+    return *(uint8_t *) sbufGetRawPtr(b);
 }
 
 // UnAligned
