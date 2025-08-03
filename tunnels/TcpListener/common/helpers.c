@@ -90,14 +90,14 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wioSetCallBackClose(io, onClose);
     // wioSetReadTimeout(io, 1600 * 1000);
 
-    ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcplistenerOnIdleConnectionExpire,
-                                      wid, kDefaultKeepAliveTimeOutMs);
+    ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
+                                          tcplistenerOnIdleConnectionExpire, wid, kDefaultKeepAliveTimeOutMs);
     while (ls->idle_handle == NULL)
     {
         // a very rare case where the socket FD from another thread is still present in the idle table
         cycleDelay(100);
-        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcplistenerOnIdleConnectionExpire,
-                                      wid, kDefaultKeepAliveTimeOutMs);
+        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
+                                              tcplistenerOnIdleConnectionExpire, wid, kDefaultKeepAliveTimeOutMs);
     }
 
     // send the init packet
@@ -174,7 +174,9 @@ void tcplistenerOnWriteComplete(wio_t *io)
 void tcplistenerOnIdleConnectionExpire(widle_item_t *idle_tcp)
 {
     tcplistener_lstate_t *ls = idle_tcp->userdata;
+
     assert(ls != NULL && ls->tunnel != NULL);
+
     idle_tcp->userdata = NULL;
     ls->idle_handle    = NULL; // mark as removed
 
