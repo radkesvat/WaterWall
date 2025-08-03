@@ -60,6 +60,11 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     state->subnet_mask = atoi(subnet_part);
 
+
+    int dev_mtu = 0;
+    getIntFromJsonObjectOrDefault(&dev_mtu, settings, "device-mtu", GLOBAL_MTU_SIZE);
+
+    state->mtu = dev_mtu;
     // tun creation must be done in prepair or start padding, in create method paddings are not calculated yout
 
     // on windows we need admin to load win tun driver

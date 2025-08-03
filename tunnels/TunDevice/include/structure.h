@@ -4,7 +4,6 @@
 
 #include "devices/tun/tun.h"
 
-
 #define LOG_PACKET_INFO 0
 #define LOG_SSDP        0
 #define LOG_MDNS        0
@@ -13,13 +12,14 @@
 typedef struct tundevice_tstate_s
 {
     TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
-    tunnel_t* write_tunnel; // tunnel to write data to
-    
+    tunnel_t                *write_tunnel;        // tunnel to write data to
+
     // settings form json
-    char *name;        // name of the device
-    char *ip_subnet;   // ip/subnet
-    char *ip_present;  //  only ip
-    int   subnet_mask; // only subnet mask
+    char    *name;        // name of the device
+    char    *ip_subnet;   // ip/subnet
+    char    *ip_present;  //  only ip
+    int      subnet_mask; // only subnet mask
+    uint16_t mtu;         // device mtu, default is GLOBAL_MTU_SIZE
 
     tun_device_t *tdev;
 

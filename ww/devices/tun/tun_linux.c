@@ -387,8 +387,8 @@ bool tundeviceBringDown(tun_device_t *tdev)
     return true;
 }
 
-// Create TUN device
-tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb)
+
+tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
     discard offload; // todo (send/receive offloading)
 
@@ -506,7 +506,9 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
                             .writer_buffer_channel = NULL,
                             .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
                             .reader_buffer_pool  = reader_bpool,
-                            .writer_buffer_pool  = writer_bpool};
+                            .writer_buffer_pool  = writer_bpool,
+                            .mtu                   = mtu,
+                            .packets_queued        = 0};
 
     if (pipe(tdev->linux_pipe_fds) != 0)
     {

@@ -59,6 +59,7 @@ typedef struct tun_device_s
     TunReadEventHandle read_event_callback;
 
     struct wchan_s *writer_buffer_channel;
+    uint16_t        mtu;
     atomic_int      packets_queued;
 
     atomic_bool running;
@@ -67,7 +68,7 @@ typedef struct tun_device_s
 } tun_device_t;
 
 // Function prototypes
-tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb);
+tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb);
 void          tundeviceDestroy(tun_device_t *tdev);
 bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);

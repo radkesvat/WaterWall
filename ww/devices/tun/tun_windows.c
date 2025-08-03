@@ -370,11 +370,6 @@ static WTHREAD_ROUTINE(routineWriteToTun)
     return 0;
 }
 
-/**
- * Brings the TUN device up and starts the read/write threads
- * @param tdev TUN device handle
- * @return true if successful, false otherwise
- */
 bool tundeviceBringUp(tun_device_t *tdev)
 {
     if (tdev->up)
@@ -383,13 +378,14 @@ bool tundeviceBringUp(tun_device_t *tdev)
         return false;
     }
 
-    bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+    bufferpoolUpdateAllocationPaddings(tdev->reader_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool, bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
+    bufferpoolUpdateAllocationPaddings(tdev->writer_buffer_pool,
+                                       bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-                                       
     char cmdbuf[200];
     stringNPrintf(cmdbuf, sizeof(cmdbuf), "netsh interface ipv4 set subinterface %s mtu=%d", tdev->name,
                   GLOBAL_MTU_SIZE);
@@ -422,11 +418,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
     return true;
 }
 
-/**
- * Brings the TUN device down and stops the read/write threads
- * @param tdev TUN device handle
- * @return true if successful, false otherwise
- */
+
 bool tundeviceBringDown(tun_device_t *tdev)
 {
     if (! tdev->up)
@@ -460,13 +452,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     return true;
 }
 
-/**
- * Assigns an IP address to the TUN device
- * @param tdev TUN device handle
- * @param ip_presentation IP address in string format
- * @param subnet Subnet mask length
- * @return true if successful, false otherwise
- */
 bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
     ULONG ip_binary;
@@ -503,13 +488,7 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     return true;
 }
 
-/**
- * Unassigns an IP address from the TUN device
- * @param tdev TUN device handle
- * @param ip_presentation IP address in string format
- * @param subnet Subnet mask length
- * @return true if successful, false otherwise
- */
+
 bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
     discard subnet;
@@ -535,12 +514,7 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
     return true;
 }
 
-/**
- * Writes a buffer to the TUN device
- * @param tdev TUN device handle
- * @param buf Buffer containing packet data
- * @return true if successful, false otherwise
- */
+
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
     // minimum length of an IP header is 20 bytes
@@ -602,15 +576,8 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
     return true;
 }
 
-/**
- * Creates a new TUN device
- * @param name Name of the TUN device
- * @param offload Offload flag
- * @param userdata User data
- * @param cb Read event callback function
- * @return Pointer to the created TUN device or NULL on failure
- */
-tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, TunReadEventHandle cb)
+
+tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
     discard offload;
     DWORD   LastError;
@@ -675,10 +642,9 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
 
         );
 
-
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t) {
+    *tdev = (tun_device_t){
         .name                  = stringDuplicate(name),
         .running               = false,
         .up                    = false,
@@ -692,6 +658,8 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, void *userdata, Tu
         .writer_buffer_pool    = writer_bpool,
         .adapter_handle        = NULL,
         .session_handle        = NULL,
+        .mtu                   = mtu,
+        .packets_queued        = 0,
     };
 
     masterpoolInstallCallBacks(tdev->reader_message_pool, allocTunMsgPoolHandle, destroyTunMsgPoolHandle);

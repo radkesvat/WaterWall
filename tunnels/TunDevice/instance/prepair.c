@@ -16,7 +16,7 @@ void tundeviceTunnelOnPrepair(tunnel_t *t)
         state->write_tunnel = t->next;
     }
 
-    state->tdev = tundeviceCreate(state->name, false, t, tundeviceOnIPPacketReceived);
+    state->tdev = tundeviceCreate(state->name, false,state->mtu, t, tundeviceOnIPPacketReceived);
 
     if (state->tdev == NULL)
     {
