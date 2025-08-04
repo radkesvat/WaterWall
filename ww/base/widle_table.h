@@ -6,8 +6,7 @@
  * When the timeout expires, the idle item is removed and its callback is invoked.
  * Items are thread-local, and operations must be performed on the same thread that created them.
  *
- * The adding or modifying of idle items will not cause heap reordering,
- * this table checks every 1 second for expired items. (this makes it performant but not good for accuracy)
+ * The adding or modifying of idle items will not cause heap reordering and therefore is performant.
  *
  *
  * Note: The underlying timer uses a heap-based mechanism.

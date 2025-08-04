@@ -100,7 +100,7 @@ widle_table_t *idleTableCreate(wloop_t *loop)
  * @return Pointer to the idle item; NULL if insertion fails.
  */
 widle_item_t *idletableCreateItem(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
-                          uint64_t age_ms)
+                                  uint64_t age_ms)
 {
     assert(self);
     widle_item_t *item = memoryAllocate(sizeof(widle_item_t));
@@ -261,6 +261,7 @@ static void beforeCloseCallBack(wevent_t *ev)
  */
 void idleCallBack(wtimer_t *timer)
 {
+    uint64_t next_timeout = kDefaultTimeout;
 
     widle_table_t *self  = weventGetUserdata(timer);
     const uint64_t now   = wloopNowMS(self->loop);
@@ -296,10 +297,13 @@ void idleCallBack(wtimer_t *timer)
         }
         else
         {
+            next_timeout = min(next_timeout, item->expire_at_ms - now);
             break;
         }
     }
     mutexUnlock(&(self->mutex));
+
+    wtimerReset(timer, (uint32_t) (next_timeout));
 }
 
 /**
