@@ -10,6 +10,7 @@
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
 
+
 #if defined(WCRYPTO_BACKEND_OPENSSL)
 
 #include "crypto/openssl_instance.h"
@@ -413,13 +414,15 @@ void initTcpIpStack(void)
     tcpipInit(tcpipInitDone, NULL);
 }
 
+extern void call_freeres(void);
+
 WW_EXPORT void destroyGlobalState(void)
 {
 
     memoryFree((void *) GSTATE.shortcut_loops);
 
-    nodemanagerDestroy();
     socketmanagerDestroy();
+    nodemanagerDestroy();
     signalmanagerDestroy();
 
     coreloggerDestroy();
@@ -441,4 +444,9 @@ WW_EXPORT void destroyGlobalState(void)
     WORKERS = NULL;
 
     nodelibraryCleanup();
+
+#ifdef WW_CALL_GNU_FREES
+    call_freeres();
+#endif
+
 }

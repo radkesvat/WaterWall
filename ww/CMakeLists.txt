@@ -522,8 +522,6 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
 endif()
 
 
-
-
 target_compile_definitions(ww PUBLIC 
     $<$<CONFIG:Debug>:DEBUG=1>
     $<$<CONFIG:RelWithDebInfo>:NDEBUG=1;RELEASEWITHDEBUGINFO=1>
@@ -564,8 +562,18 @@ if(APPLE)
     set(LIBS ${LIBS} "-framework CoreFoundation" "-framework Security")
 endif()
 
+if(NOT MSVC)
+    add_library(FREERS_EH OBJECT 
+        utils/freeres_wrap.cc
+    )
+    target_compile_definitions(ww PRIVATE WW_CALL_GNU_FREES)
+    set(LIBS ${LIBS} "FREERS_EH")
+endif()
+
 target_link_libraries(ww PUBLIC ${LIBS})
 target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
+
+
 
 # Sanitizer options (using generator expressions for multiconfig)
 if(ENABLE_ASAN)
@@ -586,10 +594,14 @@ if(ENABLE_USAN)
 endif()
 
 
+
+
 ################################################################################
 # Final Compiler-specific Options
 ################################################################################
 if(NOT MSVC)
+
+
     target_compile_options(ww PUBLIC 
         -Wall 
         -Wextra 
