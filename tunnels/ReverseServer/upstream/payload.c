@@ -75,7 +75,7 @@ static bool processHandshake(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls
         {
             dls->buffering = buf;
         }
-        // LOGD("ReverseServer: Handshake successful, connection established");
+        // LOGD("ReverseServer: Handshake successful");
         return true;
     }
 
