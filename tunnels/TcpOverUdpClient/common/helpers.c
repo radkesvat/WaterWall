@@ -13,29 +13,28 @@ bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
     bool ret = true;
 
     lineLock(l);
-    ikcp_update(ls->k_handle, (IUINT32) current_time);
+
     if (flush)
     {
         ikcp_flush(ls->k_handle);
     }
+    ikcp_update(ls->k_handle, (IUINT32) current_time);
 
-    while (contextqueueLen(&ls->cq_u) > 0 && lineIsAlive(l))
+    while (lineIsAlive(l) && contextqueueLen(&ls->cq_u) > 0)
     {
         context_t *c = contextqueuePop(&ls->cq_u);
         contextApplyOnNextTunnelU(c, t);
+        contextDestroy(c);
     }
 
-    while (contextqueueLen(&ls->cq_d) > 0 && lineIsAlive(l))
+    while (lineIsAlive(l) && contextqueueLen(&ls->cq_d) > 0)
     {
         context_t *c = contextqueuePop(&ls->cq_d);
         if (ls->can_downstream)
         {
             contextApplyOnPrevTunnelD(c, t);
         }
-        else
-        {
-            contextDestroy(c);
-        }
+        contextDestroy(c);
     }
     ret = lineIsAlive(l);
 
@@ -53,7 +52,11 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
         return;
     }
 
-    tcpoverudpclientUpdateKcp(ls, false);
+    if(tcpoverudpclientUpdateKcp(ls, false)){
+        uint64    current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
+        uint64_t next_update_time = ikcp_check(ls->k_handle, current_time);
+        wtimerReset(timer, (uint32_t)(next_update_time - current_time));
+    }
 }
 
 int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *user)
@@ -70,9 +73,8 @@ int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     if (ls->write_paused && ikcp_waitsnd(ls->k_handle) < KCP_SEND_WINDOW_LIMIT)
     {
-        lineLock(l);
         ls->write_paused = false;
-        context_t *ctx    = contextCreateResume(l);
+        context_t *ctx   = contextCreateResume(l);
         contextqueuePush(&ls->cq_d, ctx);
     }
 

@@ -34,15 +34,18 @@ enum
 
 enum tcpoverudpclient_kcpsettings_e
 {
-    kTcpOverUdpClientKcpNodelay  = 1,  // enable nodelay
-    kTcpOverUdpClientKcpInterval = 10, // interval for processing kcp stack (ms)
-    kTcpOverUdpClientKcpResend   = 2,  // resend count
-    kTcpOverUdpClientKcpStream   = 0,  // stream mode
+    kTcpOverUdpClientKcpNodelay    = 1,  // enable nodelay
+    kTcpOverUdpClientKcpInterval   = 10, // interval for processing kcp stack (ms)
+    kTcpOverUdpClientKcpResend     = 1,  // resend count
+    kTcpOverUdpClientKcpStream     = 0,  // stream mode
+    kTcpOverUdpClientKcpSendWindow = 2048,
+    kTcpOverUdpClientKcpRecvWindow = 2048,
 };
 
 // 1400 - 20 (IP) - 8 (UDP) - ~24 (KCP) ≈ 1348 bytes
-#define KCP_MTU               (GLOBAL_MTU_SIZE - 20 - 8 - 24)
-#define KCP_SEND_WINDOW_LIMIT 512
+#define KCP_MTU               (GLOBAL_MTU_SIZE)
+#define KCP_MTU_WRITE         (GLOBAL_MTU_SIZE - 20 - 8 - 24 - kFrameHeaderLength)
+#define KCP_SEND_WINDOW_LIMIT 2048
 
 WW_EXPORT void         tcpoverudpclientTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpoverudpclientTunnelCreate(node_t *node);

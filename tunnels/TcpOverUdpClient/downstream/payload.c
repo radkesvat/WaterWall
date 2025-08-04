@@ -26,6 +26,7 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
         if (read <= 0)
         {
+            bufferpoolReuseBuffer(lineGetBufferPool(l), large_buf);
             break; // No more data available
         }
 

@@ -11,11 +11,16 @@
 //=====================================================================
 #include "ikcp.h"
 
+
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
+
+void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n);
+// #define wwMemoryCopyLarge memcpy
 
 #define IKCP_FASTACK_CONSERVE
 
@@ -387,7 +392,7 @@ int ikcp_recv(ikcpcb *kcp, char *buffer, int len)
 		p = p->next;
 
 		if (buffer) {
-			memcpy(buffer, seg->data, seg->len);
+			wwMemoryCopyLarge(buffer, seg->data, seg->len);
 			buffer += seg->len;
 		}
 
@@ -488,9 +493,9 @@ int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
 					return -2;
 				}
 				iqueue_add_tail(&seg->node, &kcp->snd_queue);
-				memcpy(seg->data, old->data, old->len);
+				wwMemoryCopyLarge(seg->data, old->data, old->len);
 				if (buffer) {
-					memcpy(seg->data + old->len, buffer, extend);
+					wwMemoryCopyLarge(seg->data + old->len, buffer, extend);
 					buffer += extend;
 				}
 				seg->len = old->len + extend;
@@ -526,7 +531,7 @@ int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
 			return -2;
 		}
 		if (buffer && len > 0) {
-			memcpy(seg->data, buffer, size);
+			wwMemoryCopyLarge(seg->data, buffer, size);
 		}
 		seg->len = size;
 		seg->frg = (kcp->stream == 0)? (count - i - 1) : 0;
@@ -845,7 +850,7 @@ int ikcp_input(ikcpcb *kcp, const char *data, long size)
 					seg->len = len;
 
 					if (len > 0) {
-						memcpy(seg->data, data, len);
+						wwMemoryCopyLarge(seg->data, data, len);
 					}
 
 					ikcp_parse_data(kcp, seg);
@@ -1104,7 +1109,7 @@ void ikcp_flush(ikcpcb *kcp)
 			ptr = ikcp_encode_seg(ptr, segment);
 
 			if (segment->len > 0) {
-				memcpy(ptr, segment->data, segment->len);
+				wwMemoryCopyLarge(ptr, segment->data, segment->len);
 				ptr += segment->len;
 			}
 

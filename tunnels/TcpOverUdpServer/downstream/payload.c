@@ -34,7 +34,7 @@ void tcpoverudpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     while (sbufGetLength(buf) > 0)
     {
-        int write_size = min(4095, sbufGetLength(buf));
+        int write_size = min(KCP_MTU_WRITE, sbufGetLength(buf));
 
         sbufShiftLeft(buf, kFrameHeaderLength);
         sbufWriteUI8(buf, kFrameFlagData);

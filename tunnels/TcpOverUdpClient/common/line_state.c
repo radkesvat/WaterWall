@@ -24,7 +24,11 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
     ikcp_nodelay(k_handle, kTcpOverUdpClientKcpNodelay, kTcpOverUdpClientKcpInterval, kTcpOverUdpClientKcpResend,
                  kTcpOverUdpClientKcpStream);
 
+    ikcp_wndsize(k_handle, kTcpOverUdpClientKcpSendWindow, kTcpOverUdpClientKcpRecvWindow);
+
     ikcp_setmtu(k_handle, KCP_MTU);
+
+    k_handle->cwnd = kTcpOverUdpClientKcpSendWindow / 4;
 
     k_handle->writelog = kcpPrintLog;
     // k_handle->logmask = 0x0FFFFFFF; // Enable all logs
@@ -36,8 +40,14 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
 
     weventSetUserData(k_timer, ls);
 
-    *ls = (tcpoverudpclient_lstate_t){
-        .k_handle = k_handle, .k_timer = k_timer, .tunnel = t, .line = l, .write_paused = false, .can_downstream = true};
+    *ls = (tcpoverudpclient_lstate_t) {.k_handle       = k_handle,
+                                       .k_timer        = k_timer,
+                                       .tunnel         = t,
+                                       .line           = l,
+                                       .cq_d           = contextqueueCreate(),
+                                       .cq_u           = contextqueueCreate(),
+                                       .write_paused   = false,
+                                       .can_downstream = true};
 
     // ikcp_update(k_handle, wloopNowMS(getWorkerLoop(lineGetWID(l))));
 }
@@ -46,7 +56,8 @@ void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)
 {
     weventSetUserData(ls->k_timer, NULL);
     wtimerDelete(ls->k_timer);
-
+    contextqueueDestroy(&ls->cq_u);
+    contextqueueDestroy(&ls->cq_d);
     ikcp_release(ls->k_handle);
     memorySet(ls, 0, sizeof(tcpoverudpclient_lstate_t));
 }

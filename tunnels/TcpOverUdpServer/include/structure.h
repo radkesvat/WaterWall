@@ -34,15 +34,18 @@ enum
 
 enum tcpoverudpserver_kcpsettings_e
 {
-    kTcpOverUdpServerKcpNodelay  = 1,  // enable nodelay
-    kTcpOverUdpServerKcpInterval = 10, // interval for processing kcp stack (ms)
-    kTcpOverUdpServerKcpResend   = 2,  // resend count
-    kTcpOverUdpServerKcpStream   = 0,  // stream mode
+    kTcpOverUdpServerKcpNodelay    = 1,  // enable nodelay
+    kTcpOverUdpServerKcpInterval   = 10, // interval for processing kcp stack (ms)
+    kTcpOverUdpServerKcpResend     = 1,  // resend count
+    kTcpOverUdpServerKcpStream     = 0,  // stream mode
+    kTcpOverUdpServerKcpSendWindow = 2048,
+    kTcpOverUdpServerKcpRecvWindow = 2048,
 };
 
 // 1400 - 20 (IP) - 8 (UDP) - ~24 (KCP) ≈ 1348 bytes
-#define KCP_MTU               (GLOBAL_MTU_SIZE - 20 - 8 - 24)
-#define KCP_SEND_WINDOW_LIMIT 512
+#define KCP_MTU               (GLOBAL_MTU_SIZE)
+#define KCP_MTU_WRITE         (GLOBAL_MTU_SIZE - 20 - 8 - 24 - kFrameHeaderLength)
+#define KCP_SEND_WINDOW_LIMIT 2048
 
 WW_EXPORT void         tcpoverudpserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpoverudpserverTunnelCreate(node_t *node);
@@ -73,4 +76,4 @@ void tcpoverudpserverLinestateDestroy(tcpoverudpserver_lstate_t *ls);
 int tcpoverudpserverKUdpOutput(const char *data, int len, ikcpcb *kcp, void *user);
 
 void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer);
-bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls,bool flush);
+bool tcpoverudpserverUpdateKcp(tcpoverudpserver_lstate_t *ls, bool flush);
