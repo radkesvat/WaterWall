@@ -19,9 +19,9 @@ typedef struct udplistener_lstate_s
     line_t       *line;   // reference to the line
     udpsock_t    *uio;    // IO handle for the connection (socket)
     widle_item_t *idle_handle;
-
+    sockaddr_u    peer_addr; // peer address of the connection
     // These fields are used internally for the queue implementation for TCP
-    bool           read_paused : 1;
+    bool read_paused : 1;
 
 } udplistener_lstate_t;
 
@@ -62,4 +62,3 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
 void udplistenerLinestateDestroy(udplistener_lstate_t *ls);
 
 void onUdpListenerFilteredPayloadReceived(wevent_t *ev);
-

@@ -8,7 +8,7 @@ void udplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     idletableKeepIdleItemForAtleast(ls->uio->table, ls->idle_handle, (uint64_t) kUdpKeepExpireTime);
 
-    // LOGD(" writing %d bytes ", sbufGetLength(buf));
+    // LOGD(" writing %d bytes", sbufGetLength(buf));
 
-    postUdpWrite(ls->uio, lineGetWID(l), buf);
+    postUdpWrite(ls->uio, lineGetWID(l), buf, ls->peer_addr);
 }

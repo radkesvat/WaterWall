@@ -6,12 +6,15 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
                                     uint16_t real_localport)
 {
 
+    addresscontextFromSockAddr(&(l->routing_context.src_ctx), (sockaddr_u *) wioGetPeerAddr(uio->io));
     l->routing_context.src_ctx.type_ip   = true; // we have a client ip
     l->routing_context.src_ctx.proto_udp = true; // udp
-    sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(uio->io), &(l->routing_context.src_ctx.ip_address));
-    l->routing_context.src_ctx.port = real_localport;
 
-    *ls = (udplistener_lstate_t){.line = l, .uio = uio, .tunnel = t, .read_paused = false};
+    // sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(uio->io), &(l->routing_context.src_ctx.ip_address));
+    // addresscontextSetPort(&(l->routing_context.src_ctx), real_localport);
+
+    *ls = (udplistener_lstate_t) {
+        .line = l, .uio = uio, .tunnel = t, .read_paused = false, .peer_addr = *(sockaddr_u *) wioGetPeerAddr(uio->io)};
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {

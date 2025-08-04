@@ -87,7 +87,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     }
     else
     {
-        // LOGD("reading %d bytes ", sbufGetLength(buf));
+        // LOGD("reading %d bytes", sbufGetLength(buf));
 
         tunnelNextUpStreamPayload(t, ls->line, buf);
     }
