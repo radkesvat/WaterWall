@@ -22,8 +22,9 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     reverseclientLinestateInitialize(uls, t, ul, dl);
     reverseclientLinestateInitialize(dls, t, ul, dl);
 
-    uls->idle_handle = idletableCreateItem(ts->starved_connections, (hash_t) (uintptr_t) (uls), uls, reverseclientOnStarvedConnectionExpire,
-                                   wid, ((uint64_t) (kConnectionStarvationTimeOutSec) * 1000));
+    uls->idle_handle = idletableCreateItem(ts->starved_connections, (hash_t) (uintptr_t) (uls), uls,
+                                           reverseclientOnStarvedConnectionExpire, wid,
+                                           ((uint64_t) (kConnectionStarvationTimeOutSec) *1000));
 
     lineLock(ul);
 
@@ -36,7 +37,7 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     }
     lineUnlock(ul);
 
-    sbuf_t* handshakebuf = bufferpoolGetLargeBuffer(lineGetBufferPool(ul));
+    sbuf_t *handshakebuf = bufferpoolGetLargeBuffer(lineGetBufferPool(ul));
     sbufReserveSpace(handshakebuf, kHandShakeLength);
     memorySet(sbufGetMutablePtr(handshakebuf), kHandShakeByte, kHandShakeLength);
     sbufSetLength(handshakebuf, kHandShakeLength);
@@ -80,7 +81,14 @@ void reverseclientOnStarvedConnectionExpire(widle_item_t *idle_con)
     line_t *ul = ls->u;
     line_t *dl = ls->d;
 
-    ts->threadlocal_pool[lineGetWID(ul)].unused_cons_count -= 1;
+    if (lineIsEstablished(ul))
+    {
+        ts->threadlocal_pool[lineGetWID(ul)].unused_cons_count -= 1;
+    }
+    else
+    {
+        ts->threadlocal_pool[lineGetWID(ul)].connecting_cons_count -= 1;
+    }
     LOGW("ReverseClient: a idle connection detected and closed");
 
     reverseclientInitiateConnectOnWorker(t, lineGetWID(ul), false);

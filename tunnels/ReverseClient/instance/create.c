@@ -33,7 +33,7 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     getIntFromJsonObject((int *) &(ts->min_unused_cons), settings, "minimum-unused");
 
     ts->min_unused_cons = (uint32_t) min(max((getWorkersCount() * (ssize_t) 2), ts->min_unused_cons), 128);
-
+    ts->min_unused_cons =1;
     ts->starved_connections = idleTableCreate(getWorkerLoop(getWID()));
     return t;
 }
