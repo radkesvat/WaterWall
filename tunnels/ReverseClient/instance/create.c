@@ -30,9 +30,11 @@ tunnel_t *reverseclientTunnelCreate(node_t *node)
     const cJSON            *settings = node->node_settings_json;
     reverseclient_tstate_t *ts       = tunnelGetState(t);
 
-    getIntFromJsonObject((int *) &(ts->min_unused_cons), settings, "minimum-unused");
+    if (! getIntFromJsonObject((int *) &(ts->min_unused_cons), settings, "minimum-unused"))
+    {
+        ts->min_unused_cons = (uint32_t) getWorkersCount() * (ssize_t) 4;
+    }
 
-    ts->min_unused_cons     = (uint32_t) min(max((getWorkersCount() * (ssize_t) 2), ts->min_unused_cons), 128);
     // ts->min_unused_cons     = 1;
     ts->starved_connections = idleTableCreate(getWorkerLoop(getWID()));
     return t;

@@ -32,6 +32,7 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
 
     if (! lineIsAlive(ul))
     {
+        ts->threadlocal_pool[wid].connecting_cons_count -= 1;
         lineUnlock(ul);
         return;
     }
