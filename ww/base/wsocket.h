@@ -259,7 +259,7 @@ WW_INLINE int socketOptionRecvTime(int sockfd, int timeout)
 }
 
 // send buffer size
-WW_INLINE int socketOptionSNDBUF(int sockfd, int len)
+WW_INLINE int socketOptionSendBuf(int sockfd, int len)
 {
     return setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, (const char *) &len, sizeof(int));
 }
