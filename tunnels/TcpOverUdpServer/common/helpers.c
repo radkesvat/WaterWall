@@ -72,8 +72,8 @@ int tcpoverudpserverKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
     {
         lineLock(l);
         ls->write_paused = false;
-        context_t ctx    = {.line = l, .resume = true};
-        contextqueuePush(&ls->cq_u, &ctx);
+        context_t *ctx    = contextCreateResume(l);
+        contextqueuePush(&ls->cq_u, ctx);
     }
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
@@ -89,11 +89,8 @@ int tcpoverudpserverKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     sbufSetLength(buf, (uint32_t) len);
     sbufWriteLarge(buf, data, len);
-    context_t ctx = {
-        .line    = l,
-        .payload = buf,
-    };
-    contextqueuePush(&ls->cq_d, &ctx);
+    context_t *ctx = contextCreatePayload(l, buf);
+    contextqueuePush(&ls->cq_d, ctx);
 
     return 0;
 }
