@@ -11,6 +11,7 @@ void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
         bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
+    // LOGD("reading %d bytes ", sbufGetLength(buf));
 
     tunnel_t *t       = ls->tunnel;
     line_t   *l       = ls->line;
@@ -79,7 +80,7 @@ void udpconnectorOnIdleConnectionExpire(widle_item_t *idle_udp)
     tunnel_t *t = ls->tunnel;
     line_t   *l = ls->line;
 
-    LOGW("UdpConnector: expired 1 udp connection on FD:%x ", wioGetFD(ls->io));
+    LOGW("UdpConnector: expired 1 udp connection FD:%x ", wioGetFD(ls->io));
     weventSetUserData(ls->io, NULL);
     wioClose(ls->io);
     udpconnectorLinestateDestroy(ls);

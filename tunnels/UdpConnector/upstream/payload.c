@@ -17,8 +17,15 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         assert(false);
         terminateProgram(1);
     }
+    // LOGD("writing %d bytes ", sbufGetLength(buf));
 
+
+    // this code is not required, cuz we dont change the destination address of the UDP socket
+    // address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
+    // sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
+    // wioSetPeerAddr(ls->io, &addr.sa, sockaddrLen(&addr));
+   
     idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kUdpKeepExpireTime);
-
+    
     wioWrite(io, buf);
 }

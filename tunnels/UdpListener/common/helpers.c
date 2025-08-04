@@ -8,7 +8,7 @@ static void onUdpConnectonExpire(widle_item_t *idle_udp)
     assert(ls != NULL && ls->tunnel != NULL);
     idle_udp->userdata = NULL;
 
-    LOGD("UdpListener: expired 1 udp connection on FD:%x ", wioGetFD(ls->uio->io));
+    LOGD("UdpListener: expired 1 udp connection FD:%x ", wioGetFD(ls->uio->io));
     tunnel_t *self = ls->tunnel;
     line_t   *line = ls->line;
     udplistenerLinestateDestroy(ls);
@@ -87,6 +87,8 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     }
     else
     {
+        // LOGD("reading %d bytes ", sbufGetLength(buf));
+
         tunnelNextUpStreamPayload(t, ls->line, buf);
     }
     udppayloadDestroy(data);
