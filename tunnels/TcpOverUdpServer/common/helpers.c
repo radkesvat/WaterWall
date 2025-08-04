@@ -55,8 +55,8 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
     if (tcpoverudpserverUpdateKcp(ls, false))
     {
         uint64   current_time     = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
-        uint64_t next_update_time = ikcp_check(ls->k_handle, current_time);
-        wtimerReset(timer, (uint32_t)(next_update_time - current_time));
+        uint64_t next_update_time = (uint64_t) ikcp_check(ls->k_handle, current_time);
+        wtimerReset(timer, (uint32_t) (next_update_time - current_time));
     }
 }
 
