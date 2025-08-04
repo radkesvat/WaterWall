@@ -369,6 +369,9 @@ static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
 
 #endif
 
+// same as memoryCopyLarge, but defines the symbol for the linker, used for extranl libraries that dont want to include
+// this file, use the 'memoryCopyLarge' above for your use
+void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n);
 
 //--------------------string-------------------------------
 

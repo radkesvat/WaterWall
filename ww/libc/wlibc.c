@@ -9,6 +9,11 @@ void initWLibc(void)
     checkSumInit();
 }
 
+void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n)
+{
+    memoryCopyLarge(dest, src, n);
+}
+
 //--------------------string-------------------------------
 
 char *stringUpperCase(char *str)
