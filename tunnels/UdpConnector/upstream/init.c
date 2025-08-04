@@ -13,6 +13,21 @@ static int createAndBindSocket(void)
         LOGE("UdpConnector: socket fd < 0");
         return -1;
     }
+    int size   = 4 * 1024 * 1024; // 4MB
+    int so_ret = socketOptionSendBuf(sockfd, size);
+    if (so_ret != 0)
+    {
+        LOGE("UdpConnector: set socket send buffer failed, call: setsockopt , value: %d\n", so_ret);
+        closesocket(sockfd);
+        return -1;
+    }
+    so_ret = socketOptionRecvBuf(sockfd, size);
+    if (so_ret != 0)
+    {
+        LOGE("UdpConnector: set socket recv buffer failed, call: setsockopt , value: %d\n", so_ret);
+        closesocket(sockfd);
+        return -1;
+    }
 
 #ifdef OS_UNIX
     socketOptionReuseAddr(sockfd, 1);
@@ -85,21 +100,21 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 
     wloop_t *loop = getWorkerLoop(getWID());
-    wio_t *io = wioGet(loop, sockfd);
+    wio_t   *io   = wioGet(loop, sockfd);
 
     udpconnectorLinestateInitialize(ls, t, l, io);
 
-     ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, udpconnectorOnIdleConnectionExpire,
-                                  lineGetWID(l), kUdpInitExpireTime);
+    ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
+                                          udpconnectorOnIdleConnectionExpire, lineGetWID(l), kUdpInitExpireTime);
 
     while (ls->idle_handle == NULL)
     {
         // a very rare case where the socket FD from another thread is still present in the idle table
         cycleDelay(100);
-        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, udpconnectorOnIdleConnectionExpire,
-                                      lineGetWID(l), kUdpInitExpireTime);
+        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
+                                              udpconnectorOnIdleConnectionExpire, lineGetWID(l), kUdpInitExpireTime);
     }
-    
+
     wioSetCallBackRead(io, udpconnectorOnRecvFrom);
     wioRead(io);
 
@@ -109,7 +124,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     setupDestinationAddress(ts, dest_ctx, src_ctx);
     setupDestinationPort(ts, dest_ctx, src_ctx);
 
-    if (!resolveDomainIfNeeded(dest_ctx))
+    if (! resolveDomainIfNeeded(dest_ctx))
     {
         udpconnectorLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
@@ -125,8 +140,6 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
         LOGD("UdpConnector: Communication begin FD:%x [%s] => [%s]", wioGetFD(io),
-             SOCKADDR_STR(wioGetLocaladdr(io), localaddrstr),
-             SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
+             SOCKADDR_STR(wioGetLocaladdr(io), localaddrstr), SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
     }
-
 }

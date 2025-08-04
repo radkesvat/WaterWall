@@ -17,7 +17,7 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         assert(false);
         terminateProgram(1);
     }
-    // LOGD("writing %d bytes ", sbufGetLength(buf));
+    // LOGD("writing %d bytes", sbufGetLength(buf));
 
 
     // this code is not required, cuz we dont change the destination address of the UDP socket

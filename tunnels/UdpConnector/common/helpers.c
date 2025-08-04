@@ -11,7 +11,7 @@ void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
         bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
-    // LOGD("reading %d bytes ", sbufGetLength(buf));
+    // LOGD("reading %d bytes", sbufGetLength(buf));
 
     tunnel_t *t       = ls->tunnel;
     line_t   *l       = ls->line;
