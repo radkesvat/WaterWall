@@ -562,21 +562,41 @@ if(APPLE)
     set(LIBS ${LIBS} "-framework CoreFoundation" "-framework Security")
 endif()
 
-# this code will make valgrind output clean, it frees c++ exception handler allocated memory
+# this code will make valgrind output a bit cleaner, there is 1 unfreed resource because of c++ lineker
+# this code can free c++ exception handler allocated memory
 # only useful for development and debugging
 if(NOT MSVC)
-    # Try to compile freeres_wrap.cc to check if it's supported on this platform
-    # We use CMAKE_TRY_COMPILE_TARGET_TYPE to compile as STATIC_LIBRARY instead of executable
-    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+    # Create a test file with main (main is required) function to properly test linking
+    set(FREERES_TEST_FILE "${CMAKE_CURRENT_BINARY_DIR}/test_freeres_wrap.cc")
+    file(WRITE ${FREERES_TEST_FILE} "
+#define WW_FREERES_TEST_MODE 1
+
+extern \"C\" void call_freeres(); 
+
+namespace __gnu_cxx {
+  // match the real signature exactly:
+  void __freeres() noexcept;
+}
+
+extern \"C\" void call_freeres() {
+    __gnu_cxx::__freeres();   
+}
+
+#ifdef WW_FREERES_TEST_MODE
+int main() {
+    call_freeres();
+    return 0;
+}
+#endif
+")
+    # Try to compile and link as executable to ensure __gnu_cxx::__freeres is available
     try_compile(FREERES_WRAP_COMPILES
         ${CMAKE_CURRENT_BINARY_DIR}/test_freeres_wrap
-        ${CMAKE_CURRENT_SOURCE_DIR}/utils/freeres_wrap.cc
+        ${FREERES_TEST_FILE}
         CXX_STANDARD 17
         CXX_STANDARD_REQUIRED ON
         OUTPUT_VARIABLE FREERES_WRAP_OUTPUT
     )
-    # Reset to default behavior for other try_compile calls
-    unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
     
     if(FREERES_WRAP_COMPILES)
         message(STATUS "freeres_wrap.cc compilation test passed - including FREERS_EH library")
@@ -586,15 +606,8 @@ if(NOT MSVC)
         target_compile_definitions(ww PRIVATE WW_CALL_GNU_FREES)
         set(LIBS ${LIBS} "FREERS_EH")
     else()
-        # message(STATUS "freeres_wrap.cc compilation test failed - skipping FREERS_EH")
+        message(STATUS "freeres_wrap.cc linking test failed - __gnu_cxx::__freeres not available - skipping FREERS_EH")
         # message(STATUS "Compilation output: ${FREERES_WRAP_OUTPUT}")
-        # Also check the detailed log file
-        # if(EXISTS "${CMAKE_BINARY_DIR}/CMakeFiles/CMakeOutput.log")
-        #     message(STATUS "Check CMakeFiles/CMakeOutput.log for detailed try_compile logs")
-        # endif()
-        # if(EXISTS "${CMAKE_BINARY_DIR}/CMakeFiles/CMakeError.log")
-        #     message(STATUS "Check CMakeFiles/CMakeError.log for detailed error logs")
-        # endif()
     endif()
 endif()
 
