@@ -1152,11 +1152,32 @@ wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e typ
         return NULL;
     }
     int sockfd = (int) socket(addr.sa.sa_family, sock_type, 0);
+
     if (sockfd < 0)
     {
         printError("syscall return error, call: socket , value: %d\n", sockfd);
         return NULL;
     }
+
+    if (type == WIO_TYPE_UDP)
+    {
+        int size = 4 * 1024 * 1024; // 4MB
+        int so_ret = socketOptionSendBuf(sockfd, size);
+        if(so_ret != 0)
+        {
+            printError("set socket send buffer failed, call: setsockopt , value: %d\n", so_ret);
+            closesocket(sockfd);
+            return NULL;
+        }
+        so_ret = socketOptionRecvBuf(sockfd, size);
+        if(so_ret != 0)
+        {
+            printError("set socket recv buffer failed, call: setsockopt , value: %d\n", so_ret);
+            closesocket(sockfd);
+            return NULL;
+        }
+    }
+
     wio_t *io = NULL;
     if (side == WIO_SERVER_SIDE)
     {
