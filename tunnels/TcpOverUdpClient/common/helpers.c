@@ -2,19 +2,45 @@
 
 #include "loggers/network_logger.h"
 
-static void resumeDownSide(worker_t *worker, void *arg1, void *arg2, void *arg3)
+bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
 {
-    discard worker;
-    discard arg3;
+    assert(ls != NULL && ls->line != NULL && lineIsAlive(ls->line));
 
-    tunnel_t *t = (tunnel_t *) arg1;
-    line_t   *l = (line_t *) arg2;
+    line_t   *l            = ls->line;
+    tunnel_t *t            = ls->tunnel;
+    uint64    current_time = wloopNowMS(getWorkerLoop(lineGetWID(l)));
 
-    if (lineIsAlive(l))
+    bool ret = true;
+
+    lineLock(l);
+    ikcp_update(ls->k_handle, (IUINT32) current_time);
+    if (flush)
     {
-        tunnelPrevDownStreamResume(t, l);
+        ikcp_flush(ls->k_handle);
     }
+
+    while (contextqueueLen(&ls->cq_u) > 0 && lineIsAlive(l))
+    {
+        context_t *c = contextqueuePop(&ls->cq_u);
+        contextApplyOnNextTunnelU(c, t);
+    }
+
+    while (contextqueueLen(&ls->cq_d) > 0 && lineIsAlive(l))
+    {
+        context_t *c = contextqueuePop(&ls->cq_d);
+        if (ls->can_downstream)
+        {
+            contextApplyOnPrevTunnelD(c, t);
+        }
+        else
+        {
+            contextDestroy(c);
+        }
+    }
+    ret = lineIsAlive(l);
+
     lineUnlock(l);
+    return ret;
 }
 
 void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
@@ -22,17 +48,12 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
 
     tcpoverudpclient_lstate_t *ls = weventGetUserdata(timer);
 
-    if (ls == NULL || ls->k_handle == NULL)
+    if (ls == NULL || ls->line == NULL || ! lineIsAlive(ls->line))
     {
         return;
     }
 
-    // line is always alive here, otherwise we would not be here
-
-    assert(lineIsAlive(ls->line));
-    uint64 current_time = wloopNowMS(weventGetLoop(timer));
-
-    ikcp_update(ls->k_handle, (IUINT32) current_time);
+    tcpoverudpclientUpdateKcp(ls, false);
 }
 
 int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *user)
@@ -41,20 +62,18 @@ int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     tcpoverudpclient_lstate_t *ls = (tcpoverudpclient_lstate_t *) user;
 
-    if (ls == NULL || ls->line == NULL)
+    if (ls == NULL || ls->line == NULL || ! lineIsAlive(ls->line))
     {
         return -1;
     }
-    line_t *l   = ls->line;
-    tunnel_t *t = ls->tunnel;
-
-    assert(lineIsAlive(l));
+    line_t *l = ls->line;
 
     if (ls->write_paused && ikcp_waitsnd(ls->k_handle) < KCP_SEND_WINDOW_LIMIT)
     {
         lineLock(l);
         ls->write_paused = false;
-        sendWorkerMessageForceQueue(lineGetWID(l), resumeDownSide, t, l, NULL);
+        context_t ctx    = {.line = l, .resume = true};
+        contextqueuePush(&ls->cq_d, &ctx);
     }
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
@@ -70,7 +89,11 @@ int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
 
     sbufSetLength(buf, (uint32_t) len);
     sbufWriteLarge(buf, data, len);
-    tunnelNextUpStreamPayload(ls->tunnel, ls->line, buf);
+    context_t ctx = {
+        .line    = l,
+        .payload = buf,
+    };
+    contextqueuePush(&ls->cq_u, &ctx);
 
     return 0;
 }

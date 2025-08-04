@@ -12,17 +12,24 @@ typedef struct tcpoverudpclient_tstate_s
 
 typedef struct tcpoverudpclient_lstate_s
 {
-    tunnel_t *tunnel;       // our tunnel
-    line_t   *line;         // our line
-    ikcpcb   *k_handle;     // kcp handle
-    wtimer_t *k_timer;      // kcp processing loop timer
-    bool      write_paused; // write pause state
+    tunnel_t       *tunnel;             // our tunnel
+    line_t         *line;               // our line
+    ikcpcb         *k_handle;           // kcp handle
+    wtimer_t       *k_timer;            // kcp processing loop timer
+    context_queue_t cq_u;               // context queue upstream
+    context_queue_t cq_d;               // context queue downstream
+    bool            write_paused : 1;   // write pause state
+    bool            can_downstream : 1; // can downstream data
+
 } tcpoverudpclient_lstate_t;
 
 enum
 {
-    kTunnelStateSize = sizeof(tcpoverudpclient_tstate_t),
-    kLineStateSize   = sizeof(tcpoverudpclient_lstate_t)
+    kTunnelStateSize   = sizeof(tcpoverudpclient_tstate_t),
+    kLineStateSize     = sizeof(tcpoverudpclient_lstate_t),
+    kFrameHeaderLength = 1,
+    kFrameFlagData     = 0x00,
+    kFrameFlagClose    = 0xFF,
 };
 
 enum tcpoverudpclient_kcpsettings_e
@@ -66,3 +73,4 @@ void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls);
 int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *user);
 
 void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer);
+bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush);

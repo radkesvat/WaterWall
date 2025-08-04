@@ -20,7 +20,7 @@ node_t nodeTcpOverUdpServerGet(void)
              .node_manager_config   = NULL,
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
-             .required_padding_left = 0,
+             .required_padding_left = 1, // kFrameHeaderLength in structure.h
              .layer_group           = kNodeLayerAnything,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,
