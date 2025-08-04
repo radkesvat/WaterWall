@@ -53,4 +53,4 @@ void                     socketmanagerDestroy(void);
 void                     socketmanagerSet(struct socket_manager_s *state);
 void                     socketmanagerStart(void);
 void                     socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb);
-void                     postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf);
+void                     postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf,sockaddr_u peer_addr);
