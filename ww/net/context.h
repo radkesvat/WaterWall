@@ -74,6 +74,27 @@ static inline context_t *contextCreateInit(line_t *const line)
     return c;
 }
 
+static inline context_t *contextCreatePayload(line_t *const line,
+                                              sbuf_t *const payload)
+{
+    context_t *c = contextCreate(line);
+    c->payload   = payload;
+    return c;
+}
+static inline context_t *contextCreatePause(line_t *const line)
+{
+    context_t *c = contextCreate(line);
+    c->pause     = true;
+    return c;
+}
+
+static inline context_t *contextCreateResume(line_t *const line)
+{
+    context_t *c = contextCreate(line);
+    c->resume    = true;
+    return c;
+}
+
 static inline context_t *contextSwitchLine(context_t *const c, line_t *const line)
 {
     lineLock(line);
