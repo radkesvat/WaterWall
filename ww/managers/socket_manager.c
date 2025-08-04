@@ -880,9 +880,10 @@ static void distributeUdpPayload(const udp_payload_t pl)
 
 static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
 {
-    udpsock_t *socket     = weventGetUserdata(io);
-    uint16_t   local_port = sockaddrPort(wioGetLocaladdrU(io));
-    wid_t      target_wid = (wid_t) local_port % getWorkersCount();
+    udpsock_t *socket      = weventGetUserdata(io);
+    uint16_t   local_port  = sockaddrPort(wioGetLocaladdrU(io));
+    uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
+    wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount() - WORKER_ADDITIONS);
 
     if (GSTATE.application_stopping_flag)
     {
@@ -906,7 +907,6 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     ports_overlapped[port] = 1;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
     filter->listen_io = wloopCreateUdpServer(loop, host, port);
-
 
     if (filter->listen_io == NULL)
     {
