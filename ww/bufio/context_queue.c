@@ -18,7 +18,7 @@ context_queue_t contextqueueCreate(void)
     return cq;
 }
 
-void contextqueueDestory(context_queue_t *self)
+void contextqueueDestroy(context_queue_t *self)
 {
     c_foreach(i, ww_context_queue_t, self->q)
     {

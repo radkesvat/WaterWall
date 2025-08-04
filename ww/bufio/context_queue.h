@@ -32,7 +32,7 @@ context_queue_t contextqueueCreate(void);
     Destroys a context queue, freeing all its resources.
     @param self A pointer to the context queue to destroy.
 */
-void contextqueueDestory(context_queue_t *self);
+void contextqueueDestroy(context_queue_t *self);
 
 /*
     Pushes a context onto the back of the queue.
