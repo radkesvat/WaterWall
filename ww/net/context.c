@@ -5,6 +5,7 @@ void contextApplyOnTunnelU(context_t *c, tunnel_t *t)
     if (c->payload)
     {
         t->fnPayloadU(t, c->line, c->payload);
+        c->payload = NULL; // Clear payload after applying
         return;
     }
     if (c->init)
@@ -44,6 +45,7 @@ void contextApplyOnTunnelD(context_t *c, tunnel_t *t)
     if (c->payload)
     {
         t->fnPayloadD(t, c->line, c->payload);
+        c->payload = NULL; // Clear payload after applying
         return;
     }
     if (c->init)
