@@ -25,16 +25,9 @@ typedef struct context_s
     uint8_t resume : 1;
 } context_t;
 
-static inline line_t* contextGetLine(const context_t *const c)
+static inline line_t *contextGetLine(const context_t *const c)
 {
     return c->line;
-}
-
-static inline void contextDestroy(context_t *c)
-{
-    assert(c->payload == NULL);
-    lineUnlock(c->line);
-    genericpoolReuseItem(getWorkerContextPool(lineGetWID(contextGetLine(c))), c);
 }
 
 static inline context_t *contextCreate(line_t *const line)
@@ -44,8 +37,6 @@ static inline context_t *contextCreate(line_t *const line)
     lineLock(line);
     return new_ctx;
 }
-
-
 
 static inline context_t *contextCreateFrom(const context_t *const source)
 {
@@ -99,7 +90,7 @@ static inline context_t *contextSwitchLine(context_t *const c, line_t *const lin
 static inline void contextDropPayload(context_t *const c)
 {
 #if defined(NDEBUG)
-    discard (c);
+    discard(c);
 #else
     assert(c->payload != NULL);
     c->payload = NULL;
@@ -120,5 +111,25 @@ static inline void bufferStreamPushContextPayload(buffer_stream_t *self, context
     contextDropPayload(c);
 }
 
+static inline void contextDestroy(context_t *c)
+{
+    if (c->payload)
+    {
+        contextReusePayload(c);
+    }
+    lineUnlock(c->line);
+    genericpoolReuseItem(getWorkerContextPool(lineGetWID(contextGetLine(c))), c);
+}
+
 void contextApplyOnTunnelU(context_t *c, tunnel_t *t);
 void contextApplyOnTunnelD(context_t *c, tunnel_t *t);
+
+static inline void contextApplyOnNextTunnelU(context_t *c, tunnel_t *t)
+{
+    contextApplyOnTunnelU(c, t->next);
+}
+
+static inline void contextApplyOnPrevTunnelD(context_t *c, tunnel_t *t)
+{
+    contextApplyOnTunnelD(c, t->prev);
+}
