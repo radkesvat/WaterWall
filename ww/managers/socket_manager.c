@@ -654,14 +654,14 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         }
         ports_overlapped[p] = 1;
 
-        filter->listen_io = createTcpServerWithInterface(loop, filter, host, p, onAcceptTcpSinglePort);
+        filter->listen_ios[i] = createTcpServerWithInterface(loop, filter, host, p, onAcceptTcpSinglePort);
 
         if (filter->listen_ios[i] == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
             continue;
         }
-        filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
+        filter->v6_dualstack = wioGetLocaladdr(filter->listen_ios[i])->sa_family == AF_INET6;
 
         i++;
         LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "TCP");
@@ -698,6 +698,8 @@ static void listenTcp(wloop_t *loop, uint8_t *ports_overlapped)
             if (filter->option.multiport_backend == kMultiportBackendDefault)
             {
                 filter->option.multiport_backend = getDefaultMultiPortBackend();
+                // iptable backend dose not work with udp sockets
+                filter->option.multiport_backend = kMultiportBackendSockets;
             }
 
             socket_filter_option_t option   = filter->option;
@@ -897,6 +899,54 @@ static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
     distributeUdpPayload(item);
 }
 
+// sad: this dose not work (getsockopt fails)
+static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
+{
+
+#ifdef OS_UNIX
+    udpsock_t *socket      = weventGetUserdata(io);
+    uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
+    wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount() - WORKER_ADDITIONS);
+    uint16_t   real_local_port = sockaddrPort(wioGetLocaladdrU(io)); // default fallback
+
+    if (GSTATE.application_stopping_flag)
+    {
+        sbufDestroy(buf);
+        return;
+    }
+
+    // Get the original destination port using SO_ORIGINAL_DST
+    ip_addr_t paddr;
+    if (sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr))
+    {
+        bool          use_v4_strategy = paddr.type == IPADDR_TYPE_V6 ? needsV4SocketStrategy(paddr.u_addr.ip6) : true;
+        unsigned char pbuf[28]        = {0};
+        socklen_t     size            = use_v4_strategy ? 16 : 24;
+
+        int level = use_v4_strategy ? IPPROTO_IP : IPPROTO_IPV6;
+        if (getsockopt(wioGetFD(io), level, kSoOriginalDest, &(pbuf[0]), &size) >= 0)
+        {
+            real_local_port = (uint16_t) ((pbuf[2] << 8) | pbuf[3]);
+        }
+        else
+        {
+            char localaddrstr[SOCKADDR_STRLEN] = {0};
+            char peeraddrstr[SOCKADDR_STRLEN]  = {0};
+            LOGW("SocketManager: UDP multiport failure getting origin port FD:%x [%s] <= [%s], using fallback port", 
+                 wioGetFD(io), SOCKADDR_STR(wioGetLocaladdrU(io), localaddrstr), 
+                 SOCKADDR_STR(wioGetPeerAddrU(io), peeraddrstr));
+        }
+    }
+
+    udp_payload_t item = (udp_payload_t) {
+        .sock = socket, .buf = buf, .wid = target_wid, .peer_addr = *wioGetPeerAddrU(io), .real_localport = real_local_port};
+
+    distributeUdpPayload(item);
+#else
+    onUdpPacketReceived(io, buf);
+#endif
+}
+
 static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
                                 uint8_t *ports_overlapped)
 {
@@ -918,6 +968,92 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     weventSetUserData(filter->listen_io, socket);
     wioSetCallBackRead(filter->listen_io, onUdpPacketReceived);
     wioRead(filter->listen_io);
+}
+
+static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
+                                       uint8_t *ports_overlapped, uint16_t port_max)
+{
+    initializeIptablesIfNeeded();
+
+    // Find an available port for the main UDP socket
+    uint16_t main_port = port_max;
+    
+    do
+    {
+        if (ports_overlapped[main_port] != 1)
+        {
+            filter->listen_io = wloopCreateUdpServer(loop, host, main_port);
+            ports_overlapped[main_port] = 1;
+
+            if (filter->listen_io != NULL)
+            {
+                break;
+            }
+            main_port--;
+        }
+        else
+        {
+            main_port--;
+        }
+    } while (main_port >= port_min);
+
+    if (filter->listen_io == NULL)
+    {
+        LOGF("SocketManager: stopping due to null UDP socket handle");
+        terminateProgram(1);
+    }
+
+    filter->v6_dualstack = wioGetLocaladdr(filter->listen_io)->sa_family == AF_INET6;
+
+    // Set up the UDP socket with multiport packet handler
+    udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
+    *socket           = (udpsock_t) {.io = filter->listen_io, .table = idleTableCreate(loop)};
+    weventSetUserData(filter->listen_io, socket);
+    wioSetCallBackRead(filter->listen_io, onUdpPacketReceivedMultiPort);
+    wioRead(filter->listen_io);
+
+    // Set up iptables redirection for the port range
+    redirectPortRangeUdp(port_min, port_max, main_port);
+    LOGI("SocketManager: listening on %s:[%u - %u] >> %d (%s)", host, port_min, port_max, main_port, "UDP");
+}
+
+static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port_min,
+                                      uint8_t *ports_overlapped, uint16_t port_max)
+{
+    const int length           = (port_max - port_min);
+    filter->listen_ios         = (wio_t **) memoryAllocate(sizeof(wio_t *) * ((size_t) length + 1));
+    filter->listen_ios[length] = 0x0;
+    int i                      = 0;
+
+    for (uint16_t p = port_min; p < port_max; p++)
+    {
+        if (ports_overlapped[p] == 1)
+        {
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            continue;
+        }
+        ports_overlapped[p] = 1;
+
+        wio_t *udp_io = wloopCreateUdpServer(loop, host, p);
+        if (udp_io == NULL)
+        {
+            LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);
+            continue;
+        }
+
+        filter->listen_ios[i] = udp_io;
+        filter->v6_dualstack = wioGetLocaladdr(udp_io)->sa_family == AF_INET6;
+
+        // Set up the UDP socket
+        udpsock_t *socket = memoryAllocate(sizeof(udpsock_t));
+        *socket           = (udpsock_t) {.io = udp_io, .table = idleTableCreate(loop)};
+        weventSetUserData(udp_io, socket);
+        wioSetCallBackRead(udp_io, onUdpPacketReceived);
+        wioRead(udp_io);
+
+        i++;
+        LOGI("SocketManager: listening on %s:[%u] (%s)", host, p, "UDP");
+    }
 }
 
 static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
@@ -948,12 +1084,11 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
             {
                 if (option.multiport_backend == kMultiportBackendIptables)
                 {
-                    ;
-                    // listenUdpMultiPortIptables(loop, filter, option.host, port_min, ports_overlapped, port_max);
+                    listenUdpMultiPortIptables(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }
                 else if (option.multiport_backend == kMultiportBackendSockets)
                 {
-                    // listenUdpMultiPortSockets(loop, filter, option.host, port_min, ports_overlapped, port_max);
+                    listenUdpMultiPortSockets(loop, filter, option.host, port_min, ports_overlapped, port_max);
                 }
                 else
                 {
