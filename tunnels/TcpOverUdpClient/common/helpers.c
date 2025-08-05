@@ -52,9 +52,32 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
         return;
     }
 
+    uint64 current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
+
+    if ((current_time - ls->last_recv) > kTcpOverUdpClientPingintervalMs)
+    {
+        if (! ls->ping_sent)
+        {
+            // LOGD("TcpOverUdpClient -> KCP[%d]: sending ping", ls->k_handle->conv);
+
+            ls->ping_sent                        = true;
+            uint8_t ping_buf[kFrameHeaderLength] = {kFrameFlagPing};
+            ikcp_send(ls->k_handle, (const char *) ping_buf, (int) sizeof(ping_buf));
+        }
+        else if ((current_time - ls->last_recv) > kTcpOverUdpClientNoRecvTimeOut)
+        {
+            LOGW("TcpOverUdpClient -> KCP[%d]: no data received for too long, closing connection", ls->k_handle->conv);
+
+            tunnel_t *t = ls->tunnel;
+            line_t   *l = ls->line;
+            tunnelUpStreamFin(t, l);
+            tunnelPrevDownStreamFinish(t, l);
+            return;
+        }
+    }
+
     if (tcpoverudpclientUpdateKcp(ls, false))
     {
-        uint64   current_time     = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
         uint64_t next_update_time = ikcp_check(ls->k_handle, (IUINT32) current_time);
         wtimerReset(timer, (uint32_t) (next_update_time - current_time));
     }

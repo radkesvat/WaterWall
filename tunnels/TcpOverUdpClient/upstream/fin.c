@@ -15,13 +15,8 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     ls->can_downstream = false;
 
-    sbuf_t *fin_buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
-
-    sbufSetLength(fin_buf, kFrameHeaderLength);
-    sbufWriteUI8(fin_buf, kFrameFlagClose);
-    ikcp_send(ls->k_handle, (void *) sbufGetMutablePtr(fin_buf), (int) sbufGetLength(fin_buf));
-
-    bufferpoolReuseBuffer(lineGetBufferPool(l), fin_buf);
+    uint8_t close_buf[kFrameHeaderLength] = {kFrameFlagClose};
+    ikcp_send(ls->k_handle, (const char *) close_buf, (int) sizeof(close_buf));
 
     if (tcpoverudpclientUpdateKcp(ls, true))
     {

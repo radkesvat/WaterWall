@@ -24,13 +24,11 @@ tunnel_t *tcpoverudpserverTunnelCreate(node_t *node)
     t->onStart   = &tcpoverudpserverTunnelOnStart;
     t->onDestroy = &tcpoverudpserverTunnelDestroy;
 
-    
     tcpoverudpserver_tstate_t *ts = tunnelGetState(t);
 
-    *ts = (tcpoverudpserver_tstate_t){.session_identifier = 0};
+    *ts = (tcpoverudpserver_tstate_t) {0};
 
-    ikcp_allocator(&memoryAllocate,
-                   &memoryFree);
+    ikcp_allocator(&memoryAllocate, &memoryFree);
 
     return t;
 }

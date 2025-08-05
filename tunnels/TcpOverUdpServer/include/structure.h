@@ -6,20 +6,22 @@
 
 typedef struct tcpoverudpserver_tstate_s
 {
-    atomic_uint session_identifier;
+    int unused;
 
 } tcpoverudpserver_tstate_t;
 
 typedef struct tcpoverudpserver_lstate_s
 {
-    tunnel_t       *tunnel;           // our tunnel
-    line_t         *line;             // our line
-    ikcpcb         *k_handle;         // kcp handle
-    wtimer_t       *k_timer;          // kcp processing loop timer
-    context_queue_t cq_u;             // context queue upstream
-    context_queue_t cq_d;             // context queue downstream
-    bool            write_paused : 1; // write pause state
-    bool            can_upstream : 1; // can upstream data
+    tunnel_t       *tunnel;       // our tunnel
+    line_t         *line;         // our line
+    ikcpcb         *k_handle;     // kcp handle
+    wtimer_t       *k_timer;      // kcp processing loop timer
+    uint64_t        last_recv;    // last received timestamp
+    context_queue_t cq_u;         // context queue upstream
+    context_queue_t cq_d;         // context queue downstream
+    bool            write_paused; // write pause state
+    bool            can_upstream; // can upstream data
+    bool            ping_sent;    // ping sent state
 
 } tcpoverudpserver_lstate_t;
 
@@ -29,23 +31,26 @@ enum
     kLineStateSize     = sizeof(tcpoverudpserver_lstate_t),
     kFrameHeaderLength = 1,
     kFrameFlagData     = 0x00,
+    kFrameFlagPing     = 0xF0,
     kFrameFlagClose    = 0xFF,
 };
 
 enum tcpoverudpserver_kcpsettings_e
 {
-    kTcpOverUdpServerKcpNodelay    = 1,  // enable nodelay
-    kTcpOverUdpServerKcpInterval   = 10, // interval for processing kcp stack (ms)
-    kTcpOverUdpServerKcpResend     = 1,  // resend count
-    kTcpOverUdpServerKcpStream     = 0,  // stream mode
-    kTcpOverUdpServerKcpSendWindow = 2048,
-    kTcpOverUdpServerKcpRecvWindow = 2048,
+    kTcpOverUdpServerKcpNodelay     = 1,  // enable nodelay
+    kTcpOverUdpServerKcpInterval    = 10, // interval for processing kcp stack (ms)
+    kTcpOverUdpServerKcpResend      = 2,  // resend count
+    kTcpOverUdpServerKcpFlowCtl     = 0,  // stream mode
+    kTcpOverUdpServerKcpSendWindow  = 2048,
+    kTcpOverUdpServerKcpRecvWindow  = 2048,
+    kTcpOverUdpServerPingintervalMs = 3000,
+    kTcpOverUdpServerNoRecvTimeOut  = 6000,
 };
 
 // 1400 - 20 (IP) - 8 (UDP) - ~24 (KCP) ≈ 1348 bytes
 #define KCP_MTU               (GLOBAL_MTU_SIZE)
 #define KCP_MTU_WRITE         (GLOBAL_MTU_SIZE - 20 - 8 - 24 - kFrameHeaderLength)
-#define KCP_SEND_WINDOW_LIMIT 2048
+#define KCP_SEND_WINDOW_LIMIT (int) (ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10)
 
 WW_EXPORT void         tcpoverudpserverTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcpoverudpserverTunnelCreate(node_t *node);

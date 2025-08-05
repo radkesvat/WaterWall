@@ -27,7 +27,7 @@ tunnel_t *tcpoverudpclientTunnelCreate(node_t *node)
     
     tcpoverudpclient_tstate_t *ts = tunnelGetState(t);
 
-    *ts = (tcpoverudpclient_tstate_t){.session_identifier = 0};
+    *ts = (tcpoverudpclient_tstate_t){0};
 
     ikcp_allocator(&memoryAllocate,
                    &memoryFree);

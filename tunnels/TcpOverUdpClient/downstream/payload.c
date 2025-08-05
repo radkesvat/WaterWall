@@ -6,6 +6,10 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 {
     tcpoverudpclient_lstate_t *ls = lineGetState(l, t);
 
+    // any recv indicates that connection is still alive
+    ls->last_recv = wloopNowMS(getWorkerLoop(lineGetWID(l)));
+    ls->ping_sent = false;
+
     ikcp_input(ls->k_handle, (void *) sbufGetMutablePtr(buf), (int) sbufGetLength(buf));
     bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
 
@@ -52,6 +56,11 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
             tunnelNextUpStreamFinish(t, l);
             tunnelPrevDownStreamFinish(t, l);
             break;
+        }
+        else if (frame_flag == kFrameFlagPing)
+        {
+            // kcp it self will send ack
+            bufferpoolReuseBuffer(lineGetBufferPool(l), large_buf);
         }
         else
         {
