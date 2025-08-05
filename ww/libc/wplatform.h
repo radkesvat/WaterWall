@@ -357,7 +357,7 @@ typedef void (*procedure_t)(void* userdata);
 
 #if WW_HAVE_ADVANCED_CPU_INSTRUCTIONS
 
-    #if COMPILER_MSVC
+    #if defined(COMPILER_MSVC)
         #include <intrin.h>
         #include <immintrin.h>
         
