@@ -133,6 +133,8 @@ option(INCLUDE_REVERSE_SERVER           "link ReverseServer staticly to the core
 option(INCLUDE_REVERSE_CLIENT           "link ReverseClient staticly to the core"        TRUE)
 option(INCLUDE_HEADER_SERVER            "link HeaderServer staticly to the core"         FALSE)
 option(INCLUDE_HEADER_CLIENT            "link HeaderClient staticly to the core"         FALSE)
+option(INCLUDE_OBFUSCATOR_CLIENT        "link ObfuscatorClient staticly to the core"     TRUE)
+option(INCLUDE_OBFUSCATOR_SERVER        "link ObfuscatorServer staticly to the core"     TRUE)
 option(INCLUDE_PRECONNECT_SERVER        "link PreConnectServer staticly to the core"     FALSE)
 option(INCLUDE_PRECONNECT_CLIENT        "link PreConnectClient staticly to the core"     FALSE)
 option(INCLUDE_SOCKS_5_SERVER           "link Socks5Server staticly to the core"         FALSE)
@@ -500,6 +502,22 @@ if(INCLUDE_HEADER_CLIENT)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
   target_link_libraries(Waterwall HeaderClient)
+endif()
+
+#obfuscator client
+if(INCLUDE_OBFUSCATOR_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_OBFUSCATOR_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ObfuscatorClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ObfuscatorClient)
+  target_link_libraries(Waterwall ObfuscatorClient)
+endif()
+
+#obfuscator server
+if(INCLUDE_OBFUSCATOR_SERVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_OBFUSCATOR_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ObfuscatorServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ObfuscatorServer)
+  target_link_libraries(Waterwall ObfuscatorServer)
 endif()
 
 #preconnect server
