@@ -6,6 +6,13 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
     tcpoverudpclient_lstate_t *ls = lineGetState(l, t);
 
+    if (UNLIKELY(GSTATE.application_stopping_flag))
+    {
+        tcpoverudpclientLinestateDestroy(ls);
+        tunnelNextUpStreamFinish(t, l);
+        return;
+    }
+
     ls->can_downstream = false;
 
     sbuf_t *fin_buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));

@@ -6,6 +6,14 @@ void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
     tcpoverudpserver_lstate_t *ls = lineGetState(l, t);
 
+    
+    if (UNLIKELY(GSTATE.application_stopping_flag))
+    {
+        tcpoverudpserverLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+    
     ls->can_upstream = false;
 
     sbuf_t *fin_buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
