@@ -1,13 +1,5 @@
 #include "wlibc.h"
 
-#ifdef _MSC_VER
-#include <intrin.h>
-#else
-#if defined(__i386__) || defined(__x86_64__)
-#include <x86intrin.h>
-#endif
-#endif
-
 uint16_t checksumAVX2(const void *, uint16_t, uint32_t);
 
 // Note: This function works internally in big endian

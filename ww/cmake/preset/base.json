@@ -246,7 +246,7 @@
             "name": "old-cpu-x64",
             "hidden": true,
             "cacheVariables": {
-                "DISABLE_AVX": "ON",
+                "WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS": "ON",
                 "CMAKE_C_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx",
                 "CMAKE_CXX_FLAGS": "-march=x86-64 -mtune=generic  -mno-avx"
             }
@@ -255,7 +255,7 @@
             "name": "old-cpu-arm",
             "hidden": true,
             "cacheVariables": {
-                "DISABLE_AVX": "ON"
+                "WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS": "ON"
             }
         },
         {

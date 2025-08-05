@@ -355,10 +355,20 @@ typedef void (*procedure_t)(void* userdata);
 #include <pthread.h>
 #endif
 
+#if WW_HAVE_ADVANCED_CPU_INSTRUCTIONS
 
-#if (defined(ARCH_X86) || defined(ARCH_X86_64)) && HAVE_X86INTRIN_H
-    #if defined(COMPILER_MSVC)
+    #if COMPILER_MSVC
         #include <intrin.h>
+        #include <immintrin.h>
+        
+    #elif defined(__GNUC__) || defined(__clang__)
+        #include <x86intrin.h>
+    #else
+        #error "Unsupported compiler for advanced CPU instructions"
+    #endif
+
+
+    #if defined(COMPILER_MSVC)
         static inline bool checkcpu_sse3(void) {
             int regs[4]; __cpuid(regs, 1);
             return (regs[2] & (1 << 0)) != 0;
@@ -395,10 +405,14 @@ typedef void (*procedure_t)(void* userdata);
             return (b & bit_AVX2) && (b & bit_BMI2);
         }
     #endif
+
+
 #else
     static inline bool checkcpu_sse3(void) { return false; }
     static inline bool checkcpu_avx(void) { return false; }
     static inline bool checkcpu_avx2_bmi2(void) { return false; }
-#endif  // ARCH_X86 || ARCH_X86_64
+#endif
+
+
 
 #endif // WW_PLATFORM_H_

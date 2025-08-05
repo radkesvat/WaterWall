@@ -412,6 +412,7 @@ check_header("pthread.h")
 check_header("endian.h")
 check_header("sys/endian.h")
 check_header("x86intrin.h")
+check_header("immintrin.h")
 
 # Function checks
 if(NOT MSVC)
@@ -432,13 +433,11 @@ check_function("setproctitle" "unistd.h")
 
 include(CheckCCompilerFlag)
 
-check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
-check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
-check_c_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
 
 ################################################################################
 # AVX/SSE3 Checksum and Memory Copy Configuration
 ################################################################################
+set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0)
 set(WW_HAVE_AVX2 0)
 set(WW_HAVE_SSE3 0)
 set(WW_SUPPORTED_MEMCOPY_AVX2 0)
@@ -446,8 +445,15 @@ set(WW_SUPPORTED_MEMCOPY_AVX512F 0)
 set(WW_CHECKSUM_AVX2 0)
 set(WW_CHECKSUM_SSE3 0)
 
-if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" 
-    AND HAVE_X86INTRIN_H AND NOT DISABLE_AVX AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS
+    AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+
+    message(STATUS "using advanced CPU instructions")
+    set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 1)
+    
+    check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
+    check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+    check_c_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
 
     
     if(COMPILER_SUPPORTS_SSE3)
@@ -471,7 +477,7 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
         message(STATUS "AVX2 not supported by compiler")
     endif()
 
-    
+        
     if(COMPILER_SUPPORTS_AVX512F)
         message(STATUS "Compiler supports AVX512F")
         if(WW_ENABLE_AVX_512)
@@ -490,18 +496,20 @@ if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x
 
 
 
-    # if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
-    #     MESSAGE(STATUS "Including amd64 checksum assembly code")
-    #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=1)
-    #     target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_amd64.s")
-    # else()
-    #     MESSAGE(STATUS "using C implementation of checksum")
-    #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=0)
-    # endif()
+        # if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
+        #     MESSAGE(STATUS "Including amd64 checksum assembly code")
+        #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=1)
+        #     target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_amd64.s")
+        # else()
+        #     MESSAGE(STATUS "using C implementation of checksum")
+        #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=0)
+        # endif()
 
 else()
-    message(STATUS "AVX not supported by compiler")
+    message(STATUS "advanced CPU instructions will not be used")
 endif()
+
+
 
 ################################################################################
 # Configuration and Linking
@@ -521,6 +529,15 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     endif()
 endif()
 
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=1)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_32BIT=0)
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=0)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_32BIT=1)
+else()
+    message(FATAL_ERROR "Unknown pointer size")
+endif()
 
 target_compile_definitions(ww PUBLIC 
     $<$<CONFIG:Debug>:DEBUG=1>
@@ -616,7 +633,9 @@ target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
 
 
 
+
 # Sanitizer options (using generator expressions for multiconfig)
+
 if(ENABLE_ASAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)

@@ -65,7 +65,6 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 
 #if ENABLE_MEMCOPY_AVX512 == 1
 
-#include <x86intrin.h>
 static inline void memoryCopyAVX512(void *dest, const void *src, intmax_t n)
 {
     __m512i       *d_vec = (__m512i *) (dest);
@@ -215,7 +214,6 @@ static inline void memoryCopyAVX512(void *dest, const void *src, intmax_t n)
 
 #elif ENABLE_MEMCOPY_AVX2 == 1
 
-#include <x86intrin.h>
 static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
 {
     __m256i       *d_vec = (__m256i *) (dest);

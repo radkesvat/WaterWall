@@ -1,12 +1,5 @@
 #include "wlibc.h"
 
-#ifdef _MSC_VER
-#include <intrin.h>
-#else
-#if defined(__i386__) || defined(__x86_64__)
-#include <x86intrin.h>
-#endif
-#endif
 
 uint16_t checksumSSE3(const void *addr, uint16_t len, uint32_t csum);
 

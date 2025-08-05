@@ -45,6 +45,15 @@
 #define HAVE_X86INTRIN_H @HAVE_X86INTRIN_H@
 #endif
 
+#ifndef HAVE_IMMINTRIN_H
+#define HAVE_IMMINTRIN_H @HAVE_IMMINTRIN_H@
+#endif
+
+// means that the CPU supports advanced instructions like AVX2, SSE3, etc. and header is included
+#ifndef WW_HAVE_ADVANCED_CPU_INSTRUCTIONS
+#define WW_HAVE_ADVANCED_CPU_INSTRUCTIONS @WW_HAVE_ADVANCED_CPU_INSTRUCTIONS@
+#endif
+
 #ifndef HAVE_SYS_ENDIAN_H
 #define HAVE_SYS_ENDIAN_H @HAVE_SYS_ENDIAN_H@
 #endif
