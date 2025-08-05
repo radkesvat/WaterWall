@@ -10,6 +10,34 @@ A simple core for tunneling and even direct user-server connections. based on hi
 
 To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (The documents are currently only in Persian language.)
 
+# News
+
+A number of new nodes have been added and they seem to be functioning well without any issues.
+
+🔒 TlsClient
+Performs SSL handshakes using the exact latest Google Chrome JA4 TLS fingerprint.
+
+🔀 MuxClient / MuxServer
+Standalone multiplexing implementation.
+
+Supports both time-based and count-based muxing strategies.
+
+🔁 HalfDuplexClient / HalfDuplexServer
+Completely rewritten from the previous version.
+
+
+🔄 TcpOverUdpClient / TcpOverUdpServer
+Enables tunneling of TCP traffic over UDP (or raw Wire in general).
+
+🔁 UdpOverTcpClient / UdpOverTcpServer
+Enables tunneling of UDP-based protocols (like WireGuard or L2TP) over TCP.
+
+🛠️ Additional Features
+Support for port range listening. (Tcp and Udp)
+
+Support for random UDP port connections.
+
+I still need to test them more, and if i dont find any bugs they will be released soon!
 
 
 # Donation
