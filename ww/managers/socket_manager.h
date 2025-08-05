@@ -28,7 +28,7 @@ typedef void (*onAccept)(wevent_t *ev);
 typedef struct udpsock_s
 {
     wio_t         *io;
-    widle_table_t *table;
+    idle_table_t *table;
 
 } udpsock_t;
 

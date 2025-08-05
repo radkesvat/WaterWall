@@ -22,7 +22,7 @@ enum
 };
 
 #define i_type                    heapq_idles_t
-#define i_key                     widle_item_t *
+#define i_key                     idle_item_t *
 #define i_cmp                     -c_default_cmp                                // NOLINT
 #define idletable_less_func(x, y) ((*(x))->expire_at_ms > (*(y))->expire_at_ms) // NOLINT
 #define i_less                    idletable_less_func                           // NOLINT
@@ -30,10 +30,10 @@ enum
 
 #define i_type hmap_idles_t
 #define i_key  uint64_t
-#define i_val  widle_item_t *
+#define i_val  idle_item_t *
 #include "stc/hmap.h"
 
-typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct widle_table_s
+typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
 {
     wloop_t      *loop;
     wtimer_t     *idle_handle;
@@ -43,7 +43,7 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct widle_table_s
     uint64_t      last_update_ms;
     uintptr_t     memptr;
 
-} GNU_ATTR_ALIGNED_LINE_CACHE widle_table_t;
+} GNU_ATTR_ALIGNED_LINE_CACHE idle_table_t;
 
 void idleCallBack(wtimer_t *timer);
 
@@ -56,27 +56,27 @@ void idleCallBack(wtimer_t *timer);
  * @param loop Pointer to the event loop.
  * @return Pointer to the newly created idle table.
  */
-widle_table_t *idleTableCreate(wloop_t *loop)
+idle_table_t *idleTableCreate(wloop_t *loop)
 {
     wloopUpdateTime(loop);
-    // assert(sizeof(widle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
-    size_t memsize = sizeof(widle_table_t);
+    // assert(sizeof(idle_table_t) <= kCpuLineCacheSize); promotion to 128 bytes
+    size_t memsize = sizeof(idle_table_t);
     // ensure we have enough space to offset the allocation by line cache (for alignment)
     memsize = ALIGN2(memsize + ((kCpuLineCacheSize + 1) / 2), kCpuLineCacheSize);
 
     // check for overflow
-    if (memsize < sizeof(widle_table_t))
+    if (memsize < sizeof(idle_table_t))
     {
         printError("buffer size out of range");
         terminateProgram(1);
     }
 
-    // allocate memory, placing widle_table_t at a line cache address boundary
+    // allocate memory, placing idle_table_t at a line cache address boundary
     uintptr_t ptr = (uintptr_t) memoryAllocate(memsize);
 
-    widle_table_t *newtable = (widle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
+    idle_table_t *newtable = (idle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    *newtable = (widle_table_t) {.memptr         = ptr,
+    *newtable = (idle_table_t) {.memptr         = ptr,
                                  .loop           = loop,
                                  .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, INFINITE),
                                  .hqueue         = heapq_idles_t_with_capacity(kVecCap),
@@ -99,14 +99,14 @@ widle_table_t *idleTableCreate(wloop_t *loop)
  * @param age_ms Expiration delay in milliseconds.
  * @return Pointer to the idle item; NULL if insertion fails.
  */
-widle_item_t *idletableCreateItem(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
+idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
                                   uint64_t age_ms)
 {
     assert(self);
-    widle_item_t *item = memoryAllocate(sizeof(widle_item_t));
+    idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
     mutexLock(&(self->mutex));
 
-    *item = (widle_item_t) {.expire_at_ms = wloopNowMS(self->loop) + age_ms,
+    *item = (idle_item_t) {.expire_at_ms = wloopNowMS(self->loop) + age_ms,
                             .hash         = key,
                             .wid          = wid,
                             .userdata     = userdata,
@@ -135,7 +135,7 @@ widle_item_t *idletableCreateItem(widle_table_t *self, hash_t key, void *userdat
  * @param item Idle item to update.
  * @param age_ms Time in milliseconds to extend the item.
  */
-void idletableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms)
+void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
     if (item->removed)
     {
@@ -159,7 +159,7 @@ void idletableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, ui
  * @param key Hash key of the idle item.
  * @return Pointer to the idle item if found; NULL otherwise.
  */
-widle_item_t *idletableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
+idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
 
@@ -183,7 +183,7 @@ widle_item_t *idletableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t 
  * @param key Hash key of the idle item.
  * @return true if the item was found and removed; false otherwise.
  */
-bool idletableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
+bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
     hmap_idles_t_iter find_result = hmap_idles_t_find(&(self->hmap), key);
@@ -192,7 +192,7 @@ bool idletableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
         mutexUnlock(&(self->mutex));
         return false;
     }
-    widle_item_t *item = (find_result.ref->second);
+    idle_item_t *item = (find_result.ref->second);
     hmap_idles_t_erase_at(&(self->hmap), find_result);
     item->removed = true; // Note: The item remains in the heap (lazy deletion)
     // heapq_idles_t_make_heap(&self->hqueue);
@@ -211,7 +211,7 @@ bool idletableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key)
  */
 static void beforeCloseCallBack(wevent_t *ev)
 {
-    widle_item_t *item = weventGetUserdata(ev);
+    idle_item_t *item = weventGetUserdata(ev);
     if (! item->removed)
     {
         if (item->expire_at_ms > wloopNowMS(getWorkerLoop(item->wid)))
@@ -263,7 +263,7 @@ void idleCallBack(wtimer_t *timer)
 {
     uint64_t next_timeout = kDefaultTimeout;
 
-    widle_table_t *self  = weventGetUserdata(timer);
+    idle_table_t *self  = weventGetUserdata(timer);
     const uint64_t now   = wloopNowMS(self->loop);
     self->last_update_ms = now;
     mutexLock(&(self->mutex));
@@ -273,7 +273,7 @@ void idleCallBack(wtimer_t *timer)
 
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
-        widle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
+        idle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
 
         if (item->expire_at_ms <= now)
         {
@@ -313,7 +313,7 @@ void idleCallBack(wtimer_t *timer)
  *
  * @param self Pointer to the idle table.
  */
-void idletableDestroy(widle_table_t *self)
+void idletableDestroy(idle_table_t *self)
 {
     // if our loop is destroyed then the loop it self has freed the timer handle
     if (! atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire))
@@ -327,7 +327,7 @@ void idletableDestroy(widle_table_t *self)
     // Iterate through the hash map and free each idle item
     while (heapq_idles_t_size(&(self->hqueue)) > 0)
     {
-        widle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
+        idle_item_t *item = *heapq_idles_t_top(&(self->hqueue));
         heapq_idles_t_pop(&(self->hqueue));
         memoryFree(item);
     }

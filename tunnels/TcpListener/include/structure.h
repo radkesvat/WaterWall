@@ -4,7 +4,7 @@
 
 typedef struct tcplistener_tstate_s
 {
-    widle_table_t *idle_table; // idle table for closing dead connections
+    idle_table_t *idle_table; // idle table for closing dead connections
 
     // These fields are read from json
     char    *listen_address;           // address to listen on
@@ -22,7 +22,7 @@ typedef struct tcplistener_lstate_s
     tunnel_t     *tunnel;      // reference to the tunnel (TcpListener)
     line_t       *line;        // reference to the line
     wio_t        *io;          // IO handle for the connection (socket)
-    widle_item_t *idle_handle; // reference to the idle item for this connection
+    idle_item_t *idle_handle; // reference to the idle item for this connection
 
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
@@ -72,4 +72,4 @@ void tcplistenerFlushWriteQueue(tcplistener_lstate_t *lstate);
 void tcplistenerOnInboundConnected(wevent_t *ev);
 void tcplistenerOnWriteComplete(wio_t *io);
 
-void tcplistenerOnIdleConnectionExpire(widle_item_t *idle_tcp);
+void tcplistenerOnIdleConnectionExpire(idle_item_t *idle_tcp);

@@ -2,7 +2,7 @@
  * @file widle_table.h
  * @brief Thread-safe idle table implementation.
  *
- * The idle table stores widle_item_t objects that each have an expiration timeout.
+ * The idle table stores idle_item_t objects that each have an expiration timeout.
  * When the timeout expires, the idle item is removed and its callback is invoked.
  * Items are thread-local, and operations must be performed on the same thread that created them.
  *
@@ -18,31 +18,31 @@
 #include "wloop.h"
 #include "worker.h"
 
-typedef struct widle_item_s widle_item_t;
+typedef struct idle_item_s idle_item_t;
 
 /**
  * @brief Callback type to be invoked on item expiration.
  *
- * @param item Pointer to the expired widle_item_t object.
+ * @param item Pointer to the expired idle_item_t object.
  */
-typedef void (*ExpireCallBack)(widle_item_t *);
+typedef void (*ExpireCallBack)(idle_item_t *);
 
 /**
  * @brief Idle item structure (thread-local).
  *
  * This structure represents an item in the idle table.
  */
-struct widle_item_s
+struct idle_item_s
 {
-    void                 *userdata;     ///< User data associated with the item.
-    struct widle_table_s *table;        ///< Pointer to the parent idle table.
-    hash_t                hash;         ///< Hash used for item lookup.
-    ExpireCallBack        cb;           ///< Expiration callback.
-    uint64_t              expire_at_ms; ///< Expiration time in milliseconds.
-    wid_t                 wid;          ///< Worker ID that owns this item.
-    bool                  removed;      ///< Flag indicating if the item is removed.
+    void                *userdata;     ///< User data associated with the item.
+    struct idle_table_s *table;        ///< Pointer to the parent idle table.
+    uint64_t             expire_at_ms; ///< Expiration time in milliseconds.
+    ExpireCallBack       cb;           ///< Expiration callback.
+    hash_t               hash;         ///< Hash used for item lookup.
+    wid_t                wid;          ///< Worker ID that owns this item.
+    bool                 removed;      ///< Flag indicating if the item is removed.
 };
-typedef struct widle_table_s widle_table_t;
+typedef struct idle_table_s idle_table_t;
 
 /**
  * @brief Create an idle table.
@@ -50,7 +50,7 @@ typedef struct widle_table_s widle_table_t;
  * @param loop Pointer to the event loop.
  * @return Pointer to a new idle table instance.
  */
-widle_table_t *idleTableCreate(wloop_t *loop);
+idle_table_t *idleTableCreate(wloop_t *loop);
 
 /**
  * @brief Destroy an idle table.
@@ -59,7 +59,7 @@ widle_table_t *idleTableCreate(wloop_t *loop);
  *
  * @param self Pointer to the idle table.
  */
-void idletableDestroy(widle_table_t *self);
+void idletableDestroy(idle_table_t *self);
 
 /**
  * @brief Create a new idle item.
@@ -74,8 +74,8 @@ void idletableDestroy(widle_table_t *self);
  * @param age_ms Expiration age (in milliseconds).
  * @return Pointer to the new idle item; NULL if key already exists.
  */
-widle_item_t *idletableCreateItem(widle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
-                                  uint64_t age_ms);
+idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
+                                 uint64_t age_ms);
 
 /**
  * @brief Retrieve an idle item by hash.
@@ -85,7 +85,7 @@ widle_item_t *idletableCreateItem(widle_table_t *self, hash_t key, void *userdat
  * @param key Hash key of the item.
  * @return Pointer to the idle item if found; otherwise, NULL.
  */
-widle_item_t *idletableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key);
+idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key);
 
 /**
  * @brief Update the expiration of an idle item.
@@ -96,7 +96,7 @@ widle_item_t *idletableGetIdleItemByHash(wid_t wid, widle_table_t *self, hash_t 
  * @param item The idle item to update.
  * @param age_ms Minimum age to keep the item.
  */
-void idletableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, uint64_t age_ms);
+void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms);
 
 /**
  * @brief Remove an idle item by hash.
@@ -108,4 +108,4 @@ void idletableKeepIdleItemForAtleast(widle_table_t *self, widle_item_t *item, ui
  * @param key Hash key of the item.
  * @return true if the item was removed; false otherwise.
  */
-bool idletableRemoveIdleItemByHash(wid_t wid, widle_table_t *self, hash_t key);
+bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key);

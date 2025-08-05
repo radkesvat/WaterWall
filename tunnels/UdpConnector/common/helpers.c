@@ -68,7 +68,7 @@ void udpconnectorOnClose(wio_t *io)
     }
 }
 
-void udpconnectorOnIdleConnectionExpire(widle_item_t *idle_udp)
+void udpconnectorOnIdleConnectionExpire(idle_item_t *idle_udp)
 {
     udpconnector_lstate_t *ls = (udpconnector_lstate_t *) (idle_udp->userdata);
 

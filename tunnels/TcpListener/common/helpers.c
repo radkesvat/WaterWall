@@ -171,7 +171,7 @@ void tcplistenerOnWriteComplete(wio_t *io)
     }
 }
 
-void tcplistenerOnIdleConnectionExpire(widle_item_t *idle_tcp)
+void tcplistenerOnIdleConnectionExpire(idle_item_t *idle_tcp)
 {
     tcplistener_lstate_t *ls = idle_tcp->userdata;
 

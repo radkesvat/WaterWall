@@ -11,7 +11,7 @@ typedef struct reverseclient_thread_box_s
 
 typedef struct reverseclient_tstate_s
 {
-    widle_table_t *starved_connections;
+    idle_table_t *starved_connections;
     atomic_uint    reverse_cons;
     atomic_uint    round_index;
     uint32_t       min_unused_cons;
@@ -22,7 +22,7 @@ typedef struct reverseclient_tstate_s
 typedef struct reverseclient_lstate_s
 {
 
-    widle_item_t *idle_handle;
+    idle_item_t *idle_handle;
     tunnel_t     *t;
     line_t       *u;
     line_t       *d;
@@ -67,4 +67,4 @@ void reverseclientLinestateInitialize(reverseclient_lstate_t *ls, tunnel_t *t, l
 void reverseclientLinestateDestroy(reverseclient_lstate_t *ls);
 
 void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay);
-void reverseclientOnStarvedConnectionExpire(widle_item_t *idle_con);
+void reverseclientOnStarvedConnectionExpire(idle_item_t *idle_con);

@@ -12,7 +12,7 @@
 
 #define i_type balancegroup_registry_t // NOLINT
 #define i_key  hash_t                  // NOLINT
-#define i_val  widle_table_t *         // NOLINT
+#define i_val  idle_table_t *         // NOLINT
 
 #include "stc/hmap.h"
 
@@ -240,10 +240,10 @@ static unsigned int calculateFilterPriority(const socket_filter_option_t option)
     return priority;
 }
 
-static widle_table_t *getOrCreateBalanceTable(const char *balance_group_name)
+static idle_table_t *getOrCreateBalanceTable(const char *balance_group_name)
 {
     hash_t         name_hash = calcHashBytes(balance_group_name, stringLength(balance_group_name));
-    widle_table_t *b_table   = NULL;
+    idle_table_t *b_table   = NULL;
 
     mutexLock(&(state->mutex));
 
@@ -377,7 +377,7 @@ static bool checkIpIsWhiteList(const ip_addr_t addr, const socket_filter_option_
 static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_option_t option, wio_t *io,
                                  uint16_t local_port, hash_t *src_hash, bool *src_hashed,
                                  socket_filter_t **balance_selection_filters, uint8_t *balance_selection_filters_length,
-                                 widle_table_t **selected_balance_table)
+                                 idle_table_t **selected_balance_table)
 {
     if (*selected_balance_table != NULL && option.shared_balance_table != *selected_balance_table)
     {
@@ -392,7 +392,7 @@ static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_op
         *src_hashed = true;
     }
 
-    widle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+    idle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
 
     if (idle_item)
     {
@@ -464,7 +464,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
-    widle_table_t          *selected_balance_table           = NULL;
+    idle_table_t          *selected_balance_table           = NULL;
     hash_t                  src_hash                         = 0x0;
     bool                    src_hashed                       = false;
 
@@ -782,7 +782,7 @@ static bool processUdpFilterMatch(const socket_filter_option_t option, uint16_t 
 static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter_option_t option,
                                     const udp_payload_t pl, hash_t *src_hash, bool *src_hashed,
                                     socket_filter_t **balance_selection_filters,
-                                    uint8_t *balance_selection_filters_length, widle_table_t **selected_balance_table)
+                                    uint8_t *balance_selection_filters_length, idle_table_t **selected_balance_table)
 {
     if (*selected_balance_table != NULL && option.shared_balance_table != *selected_balance_table)
     {
@@ -797,7 +797,7 @@ static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter
         *src_hashed = true;
     }
 
-    widle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+    idle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
 
     if (idle_item)
     {
@@ -845,7 +845,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
 
     static socket_filter_t *balance_selection_filters[kMaxBalanceSelections];
     uint8_t                 balance_selection_filters_length = 0;
-    widle_table_t          *selected_balance_table           = NULL;
+    idle_table_t          *selected_balance_table           = NULL;
     hash_t                  src_hash                         = 0x0;
     bool                    src_hashed                       = false;
 

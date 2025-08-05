@@ -41,7 +41,7 @@ typedef struct socket_filter_option_s
     vec_ipmask_t black_list;
     // Internal use
 
-    widle_table_t *shared_balance_table;
+    idle_table_t *shared_balance_table;
 
 } socket_filter_option_t;
 

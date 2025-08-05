@@ -62,7 +62,7 @@ void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay)
     sendWorkerMessageForceQueue(wid, reverseclientBeginConnectMessageReceived, t, NULL, NULL);
 }
 
-void reverseclientOnStarvedConnectionExpire(widle_item_t *idle_con)
+void reverseclientOnStarvedConnectionExpire(idle_item_t *idle_con)
 {
     reverseclient_lstate_t *ls = idle_con->userdata;
 

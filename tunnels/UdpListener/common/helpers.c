@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void onUdpConnectonExpire(widle_item_t *idle_udp)
+static void onUdpConnectonExpire(idle_item_t *idle_udp)
 {
     udplistener_lstate_t *ls = idle_udp->userdata;
     assert(ls != NULL && ls->tunnel != NULL);
@@ -21,7 +21,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
 {
     udp_payload_t *data = (udp_payload_t *) weventGetUserdata(ev);
 
-    widle_table_t *table          = data->sock->table;
+    idle_table_t *table          = data->sock->table;
     udpsock_t     *sock           = data->sock;
     tunnel_t      *t              = data->tunnel;
     wid_t          wid            = data->wid;
@@ -30,7 +30,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
 
     hash_t peeraddr_hash = sockaddrCalcHashWithPort((sockaddr_u *) wioGetPeerAddr(sock->io));
 
-    widle_item_t *idle = idletableGetIdleItemByHash(wid, table, peeraddr_hash);
+    idle_item_t *idle = idletableGetIdleItemByHash(wid, table, peeraddr_hash);
     // if idle is NULL, it means this is the first packet from this peer, so we need to create a new connection
     // and add it to the idle table
     if (idle == NULL)

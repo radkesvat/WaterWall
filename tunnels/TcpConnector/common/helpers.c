@@ -159,7 +159,7 @@ void tcpconnectorOnWriteComplete(wio_t *io)
     }
 }
 
-void tcpconnectorOnIdleConnectionExpire(widle_item_t *idle_tcp)
+void tcpconnectorOnIdleConnectionExpire(idle_item_t *idle_tcp)
 {
     tcpconnector_lstate_t *ls = idle_tcp->userdata;
 
