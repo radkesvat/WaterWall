@@ -92,7 +92,7 @@ char *stringDuplicate(const char *src)
     return dup;
 }
 // n = sizeof(dest_buf)
-#if ! HAVE_STRLCPY
+// #if ! HAVE_STRLCPY
 char *stringCopyN(char *dest, const char *src, size_t n)
 {
     assert(dest != NULL && src != NULL);
@@ -105,7 +105,7 @@ char *stringCopyN(char *dest, const char *src, size_t n)
     *dest = '\0';
     return ret;
 }
-#endif
+// #endif
 
 #if ! HAVE_STRLCAT
 
