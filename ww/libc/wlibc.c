@@ -97,9 +97,10 @@ char *stringCopyN(char *dest, const char *src, size_t n)
 {
     assert(dest != NULL && src != NULL);
     char *ret = dest;
-    while (*src != '\0' && --n > 0)
+    while (*src != '\0' && n > 0)
     {
         *dest++ = *src++;
+        n--;
     }
     *dest = '\0';
     return ret;

@@ -393,17 +393,17 @@ WW_EXPORT bool stringWildCardMatch(const char *str, const char *pattern);
 
 WW_EXPORT char *stringNewWithoutSpace(const char *str);
 
-#if HAVE_STRLCPY
+// #if HAVE_STRLCPY
 
-#define stringCopyN strlcpy
+// #define stringCopyN strlcpy
 
-#else
+// #else
 
 // strncpy n = sizeof(dest_buf)-1
 // stringCopyN n = sizeof(dest_buf)
 WW_EXPORT char *stringCopyN(char *dest, const char *src, size_t n);
 
-#endif
+// #endif
 
 #if HAVE_STRLCAT
 
