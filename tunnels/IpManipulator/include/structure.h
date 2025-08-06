@@ -7,14 +7,14 @@ enum tcp_bit_action_dynamic_value
     kDvsNoAction = kDvsEmpty,
     kDvsOff      = kDvsFirstOption,
     kDvsOn,
-    kDvsSwapCwr,
-    kDvsSwapEce,
-    kDvsSwapUrg,
-    kDvsSwapAck,
-    kDvsSwapPsh,
-    kDvsSwapRst,
-    kDvsSwapSyn,
-    kDvsSwapFin
+    kDvsPacketCwr,
+    kDvsPacketEce,
+    kDvsPacketUrg,
+    kDvsPacketAck,
+    kDvsPacketPsh,
+    kDvsPacketRst,
+    kDvsPacketSyn,
+    kDvsPacketFin
 };
 
 typedef struct ipmanipulator_tstate_s

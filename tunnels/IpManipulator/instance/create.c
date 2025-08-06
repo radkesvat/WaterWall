@@ -73,73 +73,73 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     }
 
     state->up_tcp_bit_cwr_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-cwr", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-cwr", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
 
     state->up_tcp_bit_ece_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-ece", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-ece", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
 
     state->up_tcp_bit_urg_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-urg", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-urg", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->up_tcp_bit_ack_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-ack", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-ack", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->up_tcp_bit_psh_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-psh", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-psh", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->up_tcp_bit_rst_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-rst", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-rst", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->up_tcp_bit_syn_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-syn", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-syn", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->up_tcp_bit_fin_action =
-        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-fin", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "up-tcp-bit-fin", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
 
     state->down_tcp_bit_cwr_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-cwr", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-cwr", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
 
     state->down_tcp_bit_ece_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-ece", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-ece", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
 
     state->down_tcp_bit_urg_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-urg", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-urg", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->down_tcp_bit_ack_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-ack", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-ack", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->down_tcp_bit_psh_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-psh", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-psh", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->down_tcp_bit_rst_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-rst", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-rst", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->down_tcp_bit_syn_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-syn", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-syn", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
     state->down_tcp_bit_fin_action =
-        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-fin", 10, "off", "on", "swap-cwr", "swap-ece",
-                                           "swap-urg", "swap-ack", "swap-psh", "swap-rst", "swap-syn", "swap-fin")
+        parseDynamicStrValueFromJsonObject(settings, "dw-tcp-bit-fin", 10, "off", "on", "packet->cwr", "packet->ece",
+                                           "packet->urg", "packet->ack", "packet->psh", "packet->rst", "packet->syn", "packet->fin")
             .status;
 
     if (state->down_tcp_bit_cwr_action != kDvsNoAction || state->down_tcp_bit_ece_action != kDvsNoAction ||

@@ -11,22 +11,22 @@ static uint8_t processTcpBitAction(enum tcp_bit_action_dynamic_value action, uin
         return 0;
     case kDvsOn:
         return 1;
-    case kDvsSwapCwr:
-        return (all_flags & 0x80) ? 1 : 0; // Swap with CWR bit
-    case kDvsSwapEce:
-        return (all_flags & 0x40) ? 1 : 0; // Swap with ECE bit
-    case kDvsSwapUrg:
-        return (all_flags & 0x20) ? 1 : 0; // Swap with URG bit
-    case kDvsSwapAck:
-        return (all_flags & 0x10) ? 1 : 0; // Swap with ACK bit
-    case kDvsSwapPsh:
-        return (all_flags & 0x08) ? 1 : 0; // Swap with PSH bit
-    case kDvsSwapRst:
-        return (all_flags & 0x04) ? 1 : 0; // Swap with RST bit
-    case kDvsSwapSyn:
-        return (all_flags & 0x02) ? 1 : 0; // Swap with SYN bit
-    case kDvsSwapFin:
-        return (all_flags & 0x01) ? 1 : 0; // Swap with FIN bit
+    case kDvsPacketCwr:
+        return (all_flags & 0x80) ? 1 : 0; // packet CWR bit
+    case kDvsPacketEce:
+        return (all_flags & 0x40) ? 1 : 0; // packet ECE bit
+    case kDvsPacketUrg:
+        return (all_flags & 0x20) ? 1 : 0; // packet URG bit
+    case kDvsPacketAck:
+        return (all_flags & 0x10) ? 1 : 0; // packet ACK bit
+    case kDvsPacketPsh:
+        return (all_flags & 0x08) ? 1 : 0; // packet PSH bit
+    case kDvsPacketRst:
+        return (all_flags & 0x04) ? 1 : 0; // packet RST bit
+    case kDvsPacketSyn:
+        return (all_flags & 0x02) ? 1 : 0; // packet SYN bit
+    case kDvsPacketFin:
+        return (all_flags & 0x01) ? 1 : 0; // packet FIN bit
     case kDvsNoAction:
     default:
         return current_bit; // Not changed, will not change the bit
