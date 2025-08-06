@@ -33,10 +33,22 @@ if(NOT TUNNELS_KCP_INCLUDE_SET)
         kcp/ikcp.c
     )
     target_include_directories(kcp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/kcp)
+
+    add_library(fec OBJECT
+        fec/fec.cc
+        fec/reedsolomon.cc
+        fec/sess.cc
+        fec/matrix.cc
+        fec/galois.cc
+        fec/galois_noasm.cc
+        fec/inversion_tree.cc
+    )
+    target_include_directories(fec PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/kcp)
+    target_include_directories(fec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/fec)
+
 endif()
-
-
 
 target_include_directories(TcpOverUdpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# target_link_libraries(TcpOverUdpClient fec)
 target_link_libraries(TcpOverUdpClient ww kcp)
