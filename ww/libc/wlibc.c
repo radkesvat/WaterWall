@@ -21,22 +21,30 @@ void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n)
  * They are defined here to avoid linking against OpenSSL's own memory management.
  * also used by boringssl
  */
-void *OPENSSL_memory_alloc(size_t size) {
+void  *OPENSSL_memory_alloc(size_t size);
+void   OPENSSL_memory_free(void *ptr);
+size_t OPENSSL_memory_get_size(void *ptr);
+
+void *OPENSSL_memory_alloc(size_t size)
+{
     size_t *p = memoryAllocate(size + sizeof(size_t));
-    if (!p) return NULL;
+    if (! p)
+        return NULL;
     *p = size;
-    return (void *)(p + 1);
+    return (void *) (p + 1);
 }
 
-void OPENSSL_memory_free(void *ptr) {
+void OPENSSL_memory_free(void *ptr)
+{
     // if (!ptr) return; (docs say this will never be NULL)
-    size_t *p = ((size_t *)ptr) - 1;
+    size_t *p = ((size_t *) ptr) - 1;
     memoryFree(p);
 }
 
-size_t OPENSSL_memory_get_size(void *ptr) {
+size_t OPENSSL_memory_get_size(void *ptr)
+{
     // if (!ptr) return 0; (docs say this will never be NULL)
-    size_t *p = ((size_t *)ptr) - 1;
+    size_t *p = ((size_t *) ptr) - 1;
     return *p;
 }
 //--------------------string-------------------------------
