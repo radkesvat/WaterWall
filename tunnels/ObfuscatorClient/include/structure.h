@@ -4,7 +4,7 @@
 
 enum obfuscator_methods_e
 {
-    kObfuscatorMethodXor  = kDvsFifthOption,
+    kObfuscatorMethodXor  = kDvsFirstOption,
 
 };
 
