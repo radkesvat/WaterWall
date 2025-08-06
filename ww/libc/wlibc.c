@@ -14,6 +14,31 @@ void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n)
     memoryCopyLarge(dest, src, n);
 }
 
+//--------------------memory-------------------------------
+/*
+ * OpenSSL memory allocation functions
+ * These functions are used by OpenSSL to allocate and free memory.
+ * They are defined here to avoid linking against OpenSSL's own memory management.
+ * also used by boringssl
+ */
+void *OPENSSL_memory_alloc(size_t size) {
+    size_t *p = memoryAllocate(size + sizeof(size_t));
+    if (!p) return NULL;
+    *p = size;
+    return (void *)(p + 1);
+}
+
+void OPENSSL_memory_free(void *ptr) {
+    // if (!ptr) return; (docs say this will never be NULL)
+    size_t *p = ((size_t *)ptr) - 1;
+    memoryFree(p);
+}
+
+size_t OPENSSL_memory_get_size(void *ptr) {
+    // if (!ptr) return 0; (docs say this will never be NULL)
+    size_t *p = ((size_t *)ptr) - 1;
+    return *p;
+}
 //--------------------string-------------------------------
 
 char *stringUpperCase(char *str)
@@ -448,7 +473,7 @@ int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
 char *getExecuteablePath(char *buf, int size)
 {
 #ifdef OS_WIN
-    GetModuleFileName(NULL, buf, (DWORD)size);
+    GetModuleFileName(NULL, buf, (DWORD) size);
 #elif defined(OS_DARWIN)
     _NSGetExecutablePath(buf, (uint32_t *) &size);
 #elif defined(OS_UNIX)
