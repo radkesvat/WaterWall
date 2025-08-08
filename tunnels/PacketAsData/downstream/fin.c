@@ -18,6 +18,7 @@ void packetasdataTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     ls->paused = false;
     ls->line   = nl;
+    bufferstreamEmpty(&ls->read_stream);
 
     tunnelNextUpStreamInit(t, nl);
 }

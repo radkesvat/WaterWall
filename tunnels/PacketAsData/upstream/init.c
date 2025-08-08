@@ -12,6 +12,7 @@ void packetasdataTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
         ls->paused = false;
         ls->line = nl;
+        ls->read_stream = bufferstreamCreate(lineGetBufferPool(l), 0);
 
         tunnelNextUpStreamInit(t, nl);
     }

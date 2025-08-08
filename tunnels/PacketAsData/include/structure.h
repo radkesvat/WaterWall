@@ -9,15 +9,17 @@ typedef struct packetasdata_tstate_s
 
 typedef struct packetasdata_lstate_s
 {
-    line_t *line; // Pointer to the line associated with this state
-    bool paused; // Indicates if the line is paused, dropping packets
+    line_t         *line;        // Pointer to the line associated with this state
+    buffer_stream_t read_stream; // Stream for reading data packets
+    bool            paused;      // Indicates if the line is paused, dropping packets
 
 } packetasdata_lstate_t;
 
 enum
 {
     kTunnelStateSize = sizeof(packetasdata_tstate_t),
-    kLineStateSize   = sizeof(packetasdata_lstate_t)
+    kLineStateSize   = sizeof(packetasdata_lstate_t),
+    kMaxBufferSize   = 65536 * 2 // Maximum buffer size for reading data packets
 };
 
 WW_EXPORT void         packetasdataTunnelDestroy(tunnel_t *t);
