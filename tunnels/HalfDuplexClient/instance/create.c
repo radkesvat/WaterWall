@@ -25,6 +25,6 @@ tunnel_t *halfduplexclientTunnelCreate(node_t *node)
     t->onDestroy = &halfduplexclientTunnelDestroy;
 
     halfduplexclient_tstate_t* state = tunnelGetState(t);
-    state->identifier = 0;
+    state->identifier = fastRand64() % 10000000;
     return t;
 }
