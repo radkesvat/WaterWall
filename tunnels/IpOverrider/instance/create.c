@@ -18,14 +18,14 @@ tunnel_t *ipoverriderCreate(node_t *node)
 
     if (! (cJSON_IsObject(settings) && settings->child != NULL))
     {
-        LOGF("JSON Error: Layer3IpOverrider->settings (object field) : The object was empty or invalid");
+        LOGF("JSON Error: IpOverrider->settings (object field) : The object was empty or invalid");
         return NULL;
     }
 
     dynamic_value_t directon_dv = parseDynamicNumericValueFromJsonObject(settings, "direction", 2, "up", "down");
     if (directon_dv.status != kDvsUp && directon_dv.status != kDvsDown)
     {
-        LOGF("Layer3IpOverrider: Layer3IpOverrider->settings->direction (string field)  must be either up or down ");
+        LOGF("IpOverrider: IpOverrider->settings->direction (string field)  must be either up or down ");
         terminateProgram(1);
     }
 
@@ -33,7 +33,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
 
     if (mode_dv.status != kDvsDestMode && mode_dv.status != kDvsSourceMode)
     {
-        LOGF("Layer3IpOverrider: Layer3IpOverrider->settings->mode (string field)  mode is not set or invalid, do you "
+        LOGF("IpOverrider: IpOverrider->settings->mode (string field)  mode is not set or invalid, do you "
              "want to override source ip or dest ip?");
         terminateProgram(1);
     }
