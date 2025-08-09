@@ -116,9 +116,9 @@ void ptcFlushWriteQueue(ptc_lstate_t *lstate)
 {
 
     struct tcp_pcb *tpcb = lstate->tcp_pcb;
-    while (bufferqueueLen(&lstate->pause_queue) > 0)
+    while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
     {
-        sbuf_t *buf = bufferqueueFront(&lstate->pause_queue);
+        sbuf_t *buf = bufferqueuePopFront(&lstate->pause_queue);
 
         // assert(sbufGetLength(buf) <= TCP_SND_BUF);
         int diff = tcp_sndbuf(tpcb) - sbufGetLength(buf);
@@ -139,6 +139,7 @@ void ptcFlushWriteQueue(ptc_lstate_t *lstate)
             }
             lstate->write_paused = true;
             tcp_output(tpcb);
+            bufferqueuePushFront(&lstate->pause_queue, buf);
             return;
         }
 
@@ -151,10 +152,10 @@ void ptcFlushWriteQueue(ptc_lstate_t *lstate)
         {
             lstate->write_paused = true;
             tcp_output(tpcb);
+            bufferqueuePushFront(&lstate->pause_queue, buf);
             return;
         }
 
-        bufferqueuePopFront(&lstate->pause_queue); // pop to remove from queue
     }
     /*
       lwip says:

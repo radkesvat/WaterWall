@@ -5,7 +5,7 @@
 static inline bool flushWriteQueue(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
     lineLock(l);
-    while (bufferqueueLen(&(ls->bq)) > 0)
+    while (bufferqueueGetBufCount(&(ls->bq)) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&(ls->bq));
         tunnelUpStreamPayload(t, l, buf);

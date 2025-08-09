@@ -40,7 +40,16 @@ void bufferqueueDestroy(buffer_queue_t *self)
 
 void bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b)
 {
+    BUFFER_WONT_BE_REUSED(b);
     ww_sbuffer_queue_t_push_back(&self->q, b);
+    self->total_len += sbufGetLength(b);
+}
+
+void bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b)
+{
+    BUFFER_WONT_BE_REUSED(b);
+
+    ww_sbuffer_queue_t_push_front(&self->q, b);
     self->total_len += sbufGetLength(b);
 }
 

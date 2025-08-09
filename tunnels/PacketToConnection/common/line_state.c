@@ -35,7 +35,7 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
         wtimerDelete(ls->timer);
     }
 
-    while (bufferqueueLen(&ls->pause_queue) > 0)
+    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
 

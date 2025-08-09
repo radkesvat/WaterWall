@@ -100,7 +100,7 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
  * @param self The buffer stream.
  * @return The length of the buffer stream.
  */
-static inline size_t bufferstreamLen(buffer_stream_t *self)
+static inline size_t bufferstreamGetBufLen(buffer_stream_t *self)
 {
     assert(self != NULL);
     return self->size;
@@ -114,7 +114,7 @@ static inline size_t bufferstreamLen(buffer_stream_t *self)
 static inline sbuf_t *bufferstreamFullRead(buffer_stream_t *self)
 {
     assert(self != NULL);
-    return bufferstreamReadExact(self, bufferstreamLen(self));
+    return bufferstreamReadExact(self, bufferstreamGetBufLen(self));
 }
 
 /**

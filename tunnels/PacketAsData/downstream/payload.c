@@ -5,7 +5,7 @@
 
 static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
 {
-    if (bufferstreamLen(stream) < IP_HLEN)
+    if (bufferstreamGetBufLen(stream) < IP_HLEN)
     {
         return NULL;
     }
@@ -32,7 +32,7 @@ static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
     size_t total_packet_size = lwip_ntohs(IPH_LEN(ip_header));
 
     // Validate packet size (minimum IP header size, maximum reasonable size)
-    if (total_packet_size < IP_HLEN || total_packet_size > 65535 || total_packet_size > bufferstreamLen(stream))
+    if (total_packet_size < IP_HLEN || total_packet_size > 65535 || total_packet_size > bufferstreamGetBufLen(stream))
     {
         return NULL;
     }
@@ -43,9 +43,9 @@ static sbuf_t *tryReadCompletePacket(buffer_stream_t *stream)
 
 static bool isOverFlow(buffer_stream_t *read_stream)
 {
-    if (bufferstreamLen(read_stream) > kMaxBufferSize)
+    if (bufferstreamGetBufLen(read_stream) > kMaxBufferSize)
     {
-        LOGW("PacketAsData: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamLen(read_stream),
+        LOGW("PacketAsData: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamGetBufLen(read_stream),
              kMaxBufferSize);
         return true; // Return true when overflow IS detected
     }

@@ -5,7 +5,7 @@
 static void handleQueueOverflow(tunnel_t *t, line_t *l, tcpconnector_tstate_t *ts, tcpconnector_lstate_t *ls)
 {
     LOGE("TcpConnector: Upstream write queue overflow, size: %d , limit: %d", 
-         bufferqueueLen(&ls->pause_queue), kMaxPauseQueueSize);
+         bufferqueueGetBufLen(&ls->pause_queue), kMaxPauseQueueSize);
 
     bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(ls->io));
     if (!removed)
@@ -26,7 +26,7 @@ static void handlePausedWrite(tunnel_t *t, line_t *l, tcpconnector_tstate_t *ts,
     tunnelPrevDownStreamPause(t, l);
     bufferqueuePushBack(&ls->pause_queue, buf);
 
-    if (bufferqueueLen(&ls->pause_queue) > kMaxPauseQueueSize)
+    if (bufferqueueGetBufLen(&ls->pause_queue) > kMaxPauseQueueSize)
     {
         handleQueueOverflow(t, l, ts, ls);
     }

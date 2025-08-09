@@ -4,7 +4,7 @@
 
 static sbuf_t *tryReadCompleteFrame(muxserver_lstate_t *parent_ls, mux_frame_t *frame)
 {
-    if (bufferstreamLen(&(parent_ls->read_stream)) < kMuxFrameLength)
+    if (bufferstreamGetBufLen(&(parent_ls->read_stream)) < kMuxFrameLength)
     {
         return NULL;
     }
@@ -12,7 +12,7 @@ static sbuf_t *tryReadCompleteFrame(muxserver_lstate_t *parent_ls, mux_frame_t *
     bufferstreamViewBytesAt(&(parent_ls->read_stream), 0, (uint8_t *) frame, kMuxFrameLength);
 
     size_t total_frame_size = (size_t) frame->length + (size_t) kMuxFrameLength;
-    if (total_frame_size > bufferstreamLen(&(parent_ls->read_stream)))
+    if (total_frame_size > bufferstreamGetBufLen(&(parent_ls->read_stream)))
     {
         return NULL;
     }
@@ -125,9 +125,9 @@ static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
 
 static bool isOverFlow(buffer_stream_t *read_stream)
 {
-    if (bufferstreamLen(read_stream) > kMaxMainChannelBufferSize)
+    if (bufferstreamGetBufLen(read_stream) > kMaxMainChannelBufferSize)
     {
-        LOGW("MuxServer: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamLen(read_stream),
+        LOGW("MuxServer: UpStreamPayload: Read stream overflow, size: %zu, limit: %zu", bufferstreamGetBufLen(read_stream),
              kMaxMainChannelBufferSize);
         return true;
     }
