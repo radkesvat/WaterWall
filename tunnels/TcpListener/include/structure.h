@@ -19,9 +19,9 @@ typedef struct tcplistener_tstate_s
 
 typedef struct tcplistener_lstate_s
 {
-    tunnel_t     *tunnel;      // reference to the tunnel (TcpListener)
-    line_t       *line;        // reference to the line
-    wio_t        *io;          // IO handle for the connection (socket)
+    tunnel_t    *tunnel;      // reference to the tunnel (TcpListener)
+    line_t      *line;        // reference to the line
+    wio_t       *io;          // IO handle for the connection (socket)
     idle_item_t *idle_handle; // reference to the idle item for this connection
 
     // These fields are used internally for the queue implementation for TCP
@@ -35,9 +35,9 @@ enum
 {
     kTunnelStateSize               = sizeof(tcplistener_tstate_t),
     kLineStateSize                 = sizeof(tcplistener_lstate_t),
-    kMaxPauseQueueSize             = 1024 * 1024, // 1MB
-    kDefaultKeepAliveTimeOutMs     = 5 * 1000,    // same as NGINX
-    kEstablishedKeepAliveTimeOutMs = 300 * 1000,  // since the connection is established,
+    kMaxPauseQueueSize             = (1U << 23), // 8MB
+    kDefaultKeepAliveTimeOutMs     = 5 * 1000,   // same as NGINX
+    kEstablishedKeepAliveTimeOutMs = 300 * 1000, // since the connection is established,
 
     kPauseQueueCapacity = 2
 };
