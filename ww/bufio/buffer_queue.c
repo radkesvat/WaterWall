@@ -14,12 +14,7 @@ enum
 };
 
 
-/**
- * @brief Creates a new buffer queue.
- *
- * @param init_capacity The initial capacity for the queue.
- * @return A newly created buffer queue.
- */
+
 buffer_queue_t bufferqueueCreate(int init_capacity)
 {
     if (init_capacity < 1)
@@ -27,17 +22,11 @@ buffer_queue_t bufferqueueCreate(int init_capacity)
         init_capacity = kQCapDefault;
     }
 
-    buffer_queue_t bq = {.q = ww_sbuffer_queue_t_with_capacity(init_capacity)};
+    buffer_queue_t bq = {.q = ww_sbuffer_queue_t_with_capacity(init_capacity),.total_len = 0};
     return bq;
 }
 
-/**
- * @brief Destroys a buffer queue and releases its resources.
- * 
- * This function reuses all buffers in the queue before freeing the queue itself.
- *
- * @param self A pointer to the buffer queue to be destroyed.
- */
+
 void bufferqueueDestroy(buffer_queue_t *self)
 {
     wid_t wid = getWID();
@@ -49,47 +38,33 @@ void bufferqueueDestroy(buffer_queue_t *self)
     ww_sbuffer_queue_t_drop(&self->q);
 }
 
-/**
- * @brief Pushes an sbuf_t pointer onto the back of the queue.
- *
- * @param self A pointer to the buffer queue.
- * @param b A pointer to the sbuf_t to be added to the queue.
- */
 void bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b)
 {
     ww_sbuffer_queue_t_push_back(&self->q, b);
+    self->total_len += sbufGetLength(b);
 }
 
-/**
- * @brief Pops an sbuf_t pointer from the front of the queue.
- *
- * @param self A pointer to the buffer queue.
- * @return A pointer to the sbuf_t at the front of the queue, or NULL if the queue is empty.
- */
+
 sbuf_t *bufferqueuePopFront(buffer_queue_t *self)
 {
     sbuf_t *b = ww_sbuffer_queue_t_pull_front(&self->q);
+    self->total_len -= sbufGetLength(b);
     return b;
 }
 
-/**
- * @brief Gets the sbuf_t pointer at the front of the queue without removing it.
- *
- * @param self A pointer to the buffer queue.
- * @return A pointer to the sbuf_t at the front of the queue, or NULL if the queue is empty.
- */
-sbuf_t *bufferqueueFront(buffer_queue_t *self)
+const sbuf_t *bufferqueueFront(buffer_queue_t *self)
 {
     return *ww_sbuffer_queue_t_front(&self->q);
 }
 
-/**
- * @brief Gets the number of elements in the queue.
- *
- * @param self A pointer to the buffer queue.
- * @return The number of sbuf_t pointers currently in the queue.
- */
-size_t bufferqueueLen(buffer_queue_t *self)
+
+size_t bufferqueueGetBufCount(buffer_queue_t *self)
 {
     return (size_t)(ww_sbuffer_queue_t_size(&self->q));
+}
+
+
+size_t bufferqueueGetBufLen(buffer_queue_t *self)
+{
+    return self->total_len;
 }

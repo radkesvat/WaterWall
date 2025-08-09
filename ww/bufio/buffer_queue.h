@@ -30,6 +30,7 @@ typedef struct buffer_queue_s buffer_queue_t;
 struct buffer_queue_s
 {
     ww_sbuffer_queue_t q; // The internal queue data structure (internal)
+    size_t total_len; // Total length of all buffers in the queue (optional, can be used for optimization)
 };
 
 
@@ -73,7 +74,7 @@ sbuf_t *bufferqueuePopFront(buffer_queue_t *self);
  * @param self A pointer to the buffer queue.
  * @return A pointer to the sbuf_t at the front of the queue, or NULL if the queue is empty.
  */
-sbuf_t* bufferqueueFront(buffer_queue_t *self);
+const sbuf_t *bufferqueueFront(buffer_queue_t *self)
 
 /**
  * @brief Gets the number of elements in the queue.
@@ -81,4 +82,12 @@ sbuf_t* bufferqueueFront(buffer_queue_t *self);
  * @param self A pointer to the buffer queue.
  * @return The number of sbuf_t pointers currently in the queue.
  */
-size_t bufferqueueLen(buffer_queue_t *self);
+size_t bufferqueueGetBufCount(buffer_queue_t *self);
+
+/**
+ * @brief Gets the total length of the sbuf_t pointers in the queue.
+ *
+ * @param self A pointer to the buffer queue.
+ * @return The total length of the sbuf_t pointers currently in the queue.
+ */
+size_t bufferqueueGetBufLen(buffer_queue_t *self);
