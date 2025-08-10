@@ -13,7 +13,7 @@ void muxserverTunnelDownStreamPause(tunnel_t *t, line_t *child_l)
     muxserverMakeMuxFrame(pausepacket_buf, child_ls->connection_id, kMuxFlagFlowPause);
 
     line_t             *parent_line = child_ls->parent->l;
-    // muxserver_lstate_t *parent_ls   = lineGetState(parent_line, t);
+    muxserver_lstate_t *parent_ls   = lineGetState(parent_line, t);
 
     lineLock(parent_line);
     tunnelPrevDownStreamPayload(t, parent_line, pausepacket_buf);
@@ -25,6 +25,6 @@ void muxserverTunnelDownStreamPause(tunnel_t *t, line_t *child_l)
     }
     lineUnlock(parent_line);
 
-    // parent_ls->paused = true;
-    // tunnelPrevDownStreamPause(t, parent_line);
+    parent_ls->paused = true;
+    tunnelPrevDownStreamPause(t, parent_line);
 }
