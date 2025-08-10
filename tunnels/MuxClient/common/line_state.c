@@ -6,6 +6,7 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
 {
     wid_t wid = lineGetWID(l);
     *ls       = (muxclient_lstate_t) {.l              = l,
+                                      .last_writer    = NULL,
                                       .parent         = NULL,
                                       .child_prev     = NULL,
                                       .child_next     = NULL,
