@@ -15,7 +15,7 @@ void sbufDestroy(sbuf_t *b)
     {
         return;
     }
-    
+
     memoryFree(b->original_ptr);
 }
 
@@ -34,14 +34,14 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     }
 
     uint32_t real_cap = minimum_capacity + pad_left;
-    
+
     size_t total_size = real_cap + sizeof(sbuf_t) + 31;
-    void *raw_ptr = memoryAllocate(total_size);
-    
-    sbuf_t *b = (sbuf_t *)ALIGN2(raw_ptr, 32);
-    
+    void  *raw_ptr    = memoryAllocate(total_size);
+
+    sbuf_t *b = (sbuf_t *) ALIGN2(raw_ptr, 32);
+
     b->original_ptr = raw_ptr;
-    
+
 #ifdef DEBUG
     memorySet(b->buf, 0x55, real_cap);
 #endif
@@ -69,6 +69,9 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity)
 sbuf_t *sbufDuplicate(sbuf_t *b)
 {
     sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
+    
+    newbuf->curpos = b->curpos;
+
     sbufSetLength(newbuf, sbufGetLength(b));
     memoryCopyLarge(sbufGetMutablePtr(newbuf), sbufGetRawPtr(b), sbufGetLength(b));
 
@@ -98,9 +101,7 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_
     assert(bytes <= sbufGetLength(source));
     assert(bytes <= sbufGetRightCapacity(dest));
 
-
     // dest = sbufReserveSpace(dest, bytes);
-
 
     sbufWriteBuf(dest, source, bytes);
     sbufSetLength(dest, sbufGetLength(dest) + bytes);
