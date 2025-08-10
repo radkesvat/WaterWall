@@ -35,7 +35,7 @@ enum
 {
     kTunnelStateSize               = sizeof(tcplistener_tstate_t),
     kLineStateSize                 = sizeof(tcplistener_lstate_t),
-    kMaxPauseQueueSize             = (1U << 23), // 8MB
+    kMaxPauseQueueSize             = (1U << 24), // 16MB
     kDefaultKeepAliveTimeOutMs     = 5 * 1000,   // same as NGINX
     kEstablishedKeepAliveTimeOutMs = 300 * 1000, // since the connection is established,
 

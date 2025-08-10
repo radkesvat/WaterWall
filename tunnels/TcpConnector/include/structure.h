@@ -39,7 +39,7 @@ enum
 {
     kTunnelStateSize    = sizeof(tcpconnector_tstate_t),
     kLineStateSize      = sizeof(tcpconnector_lstate_t),
-    kMaxPauseQueueSize  = (1U << 23),  // 8MB
+    kMaxPauseQueueSize  = (1U << 24),  // 16MB
     kReadWriteTimeoutMs = 300 * 1000,
     kPauseQueueCapacity = 2
 };
