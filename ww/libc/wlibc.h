@@ -67,145 +67,201 @@ static inline void debugAssertZeroBuf(void *buf, size_t size)
 
 static inline void memoryCopyAVX512(void *dest, const void *src, intmax_t n)
 {
-    __m512i       *d_vec = (__m512i *) (dest);
-    const __m512i *s_vec = (const __m512i *) (src);
-
-    bool aligned = ((uintptr_t) dest % 64 == 0 && (uintptr_t) src % 64 == 0);
-
-    if (aligned)
+    if (n <= 0)
     {
-        // Copy 1024 bytes at a time (16 * 64 bytes)
-        while (n >= 1024)
-        {
-            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
-            _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
-            _mm512_store_si512(d_vec + 2, _mm512_load_si512(s_vec + 2));
-            _mm512_store_si512(d_vec + 3, _mm512_load_si512(s_vec + 3));
-            _mm512_store_si512(d_vec + 4, _mm512_load_si512(s_vec + 4));
-            _mm512_store_si512(d_vec + 5, _mm512_load_si512(s_vec + 5));
-            _mm512_store_si512(d_vec + 6, _mm512_load_si512(s_vec + 6));
-            _mm512_store_si512(d_vec + 7, _mm512_load_si512(s_vec + 7));
-            _mm512_store_si512(d_vec + 8, _mm512_load_si512(s_vec + 8));
-            _mm512_store_si512(d_vec + 9, _mm512_load_si512(s_vec + 9));
-            _mm512_store_si512(d_vec + 10, _mm512_load_si512(s_vec + 10));
-            _mm512_store_si512(d_vec + 11, _mm512_load_si512(s_vec + 11));
-            _mm512_store_si512(d_vec + 12, _mm512_load_si512(s_vec + 12));
-            _mm512_store_si512(d_vec + 13, _mm512_load_si512(s_vec + 13));
-            _mm512_store_si512(d_vec + 14, _mm512_load_si512(s_vec + 14));
-            _mm512_store_si512(d_vec + 15, _mm512_load_si512(s_vec + 15));
-            n -= 1024;
-            d_vec += 16;
-            s_vec += 16;
-        }
+        return;
+    }
 
-        // Copy 256 bytes at a time (4 * 64 bytes)
-        while (n >= 256)
-        {
-            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
-            _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
-            _mm512_store_si512(d_vec + 2, _mm512_load_si512(s_vec + 2));
-            _mm512_store_si512(d_vec + 3, _mm512_load_si512(s_vec + 3));
-            n -= 256;
-            d_vec += 4;
-            s_vec += 4;
-        }
+    uint8_t       *d8 = (uint8_t *) dest;
+    const uint8_t *s8 = (const uint8_t *) src;
 
-        // Copy 128 bytes at a time (2 * 64 bytes)
-        while (n >= 128)
-        {
-            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
-            _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
-            n -= 128;
-            d_vec += 2;
-            s_vec += 2;
-        }
+    uintptr_t dptr = (uintptr_t) d8;
+    uintptr_t sptr = (uintptr_t) s8;
 
-        // Copy 64 bytes at a time
-        while (n >= 64)
-        {
-            _mm512_store_si512(d_vec, _mm512_load_si512(s_vec));
-            n -= 64;
-            d_vec += 1;
-            s_vec += 1;
-        }
+    size_t head = 0;
+    if (((dptr ^ sptr) & 63) == 0)
+    {
+        size_t off = dptr & 63;
+        head       = (64 - off) & 63;
     }
     else
     {
-        // Copy 1024 bytes at a time (16 * 64 bytes)
-        while (n >= 1024)
-        {
-            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
-            _mm512_storeu_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
-            _mm512_storeu_si512(d_vec + 2, _mm512_loadu_si512(s_vec + 2));
-            _mm512_storeu_si512(d_vec + 3, _mm512_loadu_si512(s_vec + 3));
-            _mm512_storeu_si512(d_vec + 4, _mm512_loadu_si512(s_vec + 4));
-            _mm512_storeu_si512(d_vec + 5, _mm512_loadu_si512(s_vec + 5));
-            _mm512_storeu_si512(d_vec + 6, _mm512_loadu_si512(s_vec + 6));
-            _mm512_storeu_si512(d_vec + 7, _mm512_loadu_si512(s_vec + 7));
-            _mm512_storeu_si512(d_vec + 8, _mm512_loadu_si512(s_vec + 8));
-            _mm512_storeu_si512(d_vec + 9, _mm512_loadu_si512(s_vec + 9));
-            _mm512_storeu_si512(d_vec + 10, _mm512_loadu_si512(s_vec + 10));
-            _mm512_storeu_si512(d_vec + 11, _mm512_loadu_si512(s_vec + 11));
-            _mm512_storeu_si512(d_vec + 12, _mm512_loadu_si512(s_vec + 12));
-            _mm512_storeu_si512(d_vec + 13, _mm512_loadu_si512(s_vec + 13));
-            _mm512_storeu_si512(d_vec + 14, _mm512_loadu_si512(s_vec + 14));
-            _mm512_storeu_si512(d_vec + 15, _mm512_loadu_si512(s_vec + 15));
-            n -= 1024;
-            d_vec += 16;
-            s_vec += 16;
-        }
+        size_t off = dptr & 63;
+        head       = (64 - off) & 63;
+    }
+    if ((intmax_t) head > n)
+    {
+        head = (size_t) n;
+    }
 
-        // Copy 256 bytes at a time (4 * 64 bytes)
-        while (n >= 256)
-        {
-            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
-            _mm512_storeu_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
-            _mm512_storeu_si512(d_vec + 2, _mm512_loadu_si512(s_vec + 2));
-            _mm512_storeu_si512(d_vec + 3, _mm512_loadu_si512(s_vec + 3));
-            n -= 256;
-            d_vec += 4;
-            s_vec += 4;
-        }
+    // small head copy (8/4/2/1)
+    size_t t = head;
+    while (t >= 8)
+    {
+        *(uint64_t *) d8 = *(const uint64_t *) s8;
+        d8 += 8;
+        s8 += 8;
+        t -= 8;
+    }
+    if (t >= 4)
+    {
+        *(uint32_t *) d8 = *(const uint32_t *) s8;
+        d8 += 4;
+        s8 += 4;
+        t -= 4;
+    }
+    if (t >= 2)
+    {
+        *(uint16_t *) d8 = *(const uint16_t *) s8;
+        d8 += 2;
+        s8 += 2;
+        t -= 2;
+    }
+    if (t)
+    {
+        *d8++ = *s8++;
+    }
 
-        // Copy 128 bytes at a time (2 * 64 bytes)
-        while (n >= 128)
-        {
-            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
-            _mm512_storeu_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
-            n -= 128;
-            d_vec += 2;
-            s_vec += 2;
-        }
+    n -= (intmax_t) head;
 
-        // Copy 64 bytes at a time
-        while (n >= 64)
+    __m512i       *d_vec       = (__m512i *) d8; // dest is aligned now
+    const __m512i *s_vec       = (const __m512i *) s8;
+    bool           loadsAligned = (((uintptr_t) s8 & 63) == 0);
+
+    if (n >= 64)
+    {
+        if (loadsAligned)
         {
-            _mm512_storeu_si512(d_vec, _mm512_loadu_si512(s_vec));
-            n -= 64;
-            d_vec += 1;
-            s_vec += 1;
+            // 1024 bytes at a time (16 * 64 bytes)
+            while (n >= 1024)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_load_si512(s_vec + 0));
+                _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
+                _mm512_store_si512(d_vec + 2, _mm512_load_si512(s_vec + 2));
+                _mm512_store_si512(d_vec + 3, _mm512_load_si512(s_vec + 3));
+                _mm512_store_si512(d_vec + 4, _mm512_load_si512(s_vec + 4));
+                _mm512_store_si512(d_vec + 5, _mm512_load_si512(s_vec + 5));
+                _mm512_store_si512(d_vec + 6, _mm512_load_si512(s_vec + 6));
+                _mm512_store_si512(d_vec + 7, _mm512_load_si512(s_vec + 7));
+                _mm512_store_si512(d_vec + 8, _mm512_load_si512(s_vec + 8));
+                _mm512_store_si512(d_vec + 9, _mm512_load_si512(s_vec + 9));
+                _mm512_store_si512(d_vec + 10, _mm512_load_si512(s_vec + 10));
+                _mm512_store_si512(d_vec + 11, _mm512_load_si512(s_vec + 11));
+                _mm512_store_si512(d_vec + 12, _mm512_load_si512(s_vec + 12));
+                _mm512_store_si512(d_vec + 13, _mm512_load_si512(s_vec + 13));
+                _mm512_store_si512(d_vec + 14, _mm512_load_si512(s_vec + 14));
+                _mm512_store_si512(d_vec + 15, _mm512_load_si512(s_vec + 15));
+                d_vec += 16;
+                s_vec += 16;
+                n -= 1024;
+            }
+
+            // 256 bytes at a time (4 * 64 bytes)
+            while (n >= 256)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_load_si512(s_vec + 0));
+                _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
+                _mm512_store_si512(d_vec + 2, _mm512_load_si512(s_vec + 2));
+                _mm512_store_si512(d_vec + 3, _mm512_load_si512(s_vec + 3));
+                d_vec += 4;
+                s_vec += 4;
+                n -= 256;
+            }
+
+            // 128 bytes at a time (2 * 64 bytes)
+            while (n >= 128)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_load_si512(s_vec + 0));
+                _mm512_store_si512(d_vec + 1, _mm512_load_si512(s_vec + 1));
+                d_vec += 2;
+                s_vec += 2;
+                n -= 128;
+            }
+
+            // 64 bytes at a time
+            while (n >= 64)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_load_si512(s_vec + 0));
+                d_vec += 1;
+                s_vec += 1;
+                n -= 64;
+            }
+        }
+        else
+        {
+            // Unaligned loads, aligned stores
+            while (n >= 1024)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_loadu_si512(s_vec + 0));
+                _mm512_store_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
+                _mm512_store_si512(d_vec + 2, _mm512_loadu_si512(s_vec + 2));
+                _mm512_store_si512(d_vec + 3, _mm512_loadu_si512(s_vec + 3));
+                _mm512_store_si512(d_vec + 4, _mm512_loadu_si512(s_vec + 4));
+                _mm512_store_si512(d_vec + 5, _mm512_loadu_si512(s_vec + 5));
+                _mm512_store_si512(d_vec + 6, _mm512_loadu_si512(s_vec + 6));
+                _mm512_store_si512(d_vec + 7, _mm512_loadu_si512(s_vec + 7));
+                _mm512_store_si512(d_vec + 8, _mm512_loadu_si512(s_vec + 8));
+                _mm512_store_si512(d_vec + 9, _mm512_loadu_si512(s_vec + 9));
+                _mm512_store_si512(d_vec + 10, _mm512_loadu_si512(s_vec + 10));
+                _mm512_store_si512(d_vec + 11, _mm512_loadu_si512(s_vec + 11));
+                _mm512_store_si512(d_vec + 12, _mm512_loadu_si512(s_vec + 12));
+                _mm512_store_si512(d_vec + 13, _mm512_loadu_si512(s_vec + 13));
+                _mm512_store_si512(d_vec + 14, _mm512_loadu_si512(s_vec + 14));
+                _mm512_store_si512(d_vec + 15, _mm512_loadu_si512(s_vec + 15));
+                d_vec += 16;
+                s_vec += 16;
+                n -= 1024;
+            }
+
+            while (n >= 256)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_loadu_si512(s_vec + 0));
+                _mm512_store_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
+                _mm512_store_si512(d_vec + 2, _mm512_loadu_si512(s_vec + 2));
+                _mm512_store_si512(d_vec + 3, _mm512_loadu_si512(s_vec + 3));
+                d_vec += 4;
+                s_vec += 4;
+                n -= 256;
+            }
+
+            while (n >= 128)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_loadu_si512(s_vec + 0));
+                _mm512_store_si512(d_vec + 1, _mm512_loadu_si512(s_vec + 1));
+                d_vec += 2;
+                s_vec += 2;
+                n -= 128;
+            }
+
+            while (n >= 64)
+            {
+                _mm512_store_si512(d_vec + 0, _mm512_loadu_si512(s_vec + 0));
+                d_vec += 1;
+                s_vec += 1;
+                n -= 64;
+            }
         }
     }
 
-    // Copy any remaining bytes
+    // Tail
     if (n > 0)
     {
-        uint8_t       *d = (uint8_t *) d_vec;
-        const uint8_t *s = (const uint8_t *) s_vec;
+        d8 = (uint8_t *) d_vec;
+        s8 = (const uint8_t *) s_vec;
 
-        if (((uintptr_t) d % 8 == 0) && ((uintptr_t) s % 8 == 0))
+        if ((((uintptr_t) d8 | (uintptr_t) s8) & 7) == 0)
         {
             while (n >= 8)
             {
-                *(uint64_t *) d = *(const uint64_t *) s;
-                d += 8;
-                s += 8;
+                *(uint64_t *) d8 = *(const uint64_t *) s8;
+                d8 += 8;
+                s8 += 8;
                 n -= 8;
             }
         }
         while (n--)
         {
-            *d++ = *s++;
+            *d8++ = *s8++;
         }
     }
 }
@@ -216,145 +272,197 @@ static inline void memoryCopyAVX512(void *dest, const void *src, intmax_t n)
 
 static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
 {
-    __m256i       *d_vec = (__m256i *) (dest);
-    const __m256i *s_vec = (const __m256i *) (src);
 
-    bool aligned = ((uintptr_t) dest % 32 == 0 && (uintptr_t) src % 32 == 0);
-
-    if (aligned)
+    if (n <= 0)
     {
-        // Copy 512 bytes at a time
-        while (n >= 512)
-        {
-            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
-            _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
-            _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
-            _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
-            _mm256_store_si256(d_vec + 4, _mm256_load_si256(s_vec + 4));
-            _mm256_store_si256(d_vec + 5, _mm256_load_si256(s_vec + 5));
-            _mm256_store_si256(d_vec + 6, _mm256_load_si256(s_vec + 6));
-            _mm256_store_si256(d_vec + 7, _mm256_load_si256(s_vec + 7));
-            _mm256_store_si256(d_vec + 8, _mm256_load_si256(s_vec + 8));
-            _mm256_store_si256(d_vec + 9, _mm256_load_si256(s_vec + 9));
-            _mm256_store_si256(d_vec + 10, _mm256_load_si256(s_vec + 10));
-            _mm256_store_si256(d_vec + 11, _mm256_load_si256(s_vec + 11));
-            _mm256_store_si256(d_vec + 12, _mm256_load_si256(s_vec + 12));
-            _mm256_store_si256(d_vec + 13, _mm256_load_si256(s_vec + 13));
-            _mm256_store_si256(d_vec + 14, _mm256_load_si256(s_vec + 14));
-            _mm256_store_si256(d_vec + 15, _mm256_load_si256(s_vec + 15));
-            n -= 512;
-            d_vec += 16;
-            s_vec += 16;
-        }
+        return;
+    }
 
-        // Copy 128 bytes at a time
-        while (n >= 128)
-        {
-            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
-            _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
-            _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
-            _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
-            n -= 128;
-            d_vec += 4;
-            s_vec += 4;
-        }
+    uint8_t       *d8 = (uint8_t *) dest;
+    const uint8_t *s8 = (const uint8_t *) src;
 
-        // Copy 64 bytes at a time
-        while (n >= 64)
-        {
-            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
-            _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
-            n -= 64;
-            d_vec += 2;
-            s_vec += 2;
-        }
+    uintptr_t dptr = (uintptr_t) d8;
+    uintptr_t sptr = (uintptr_t) s8;
 
-        // Copy 32 bytes at a time
-        while (n >= 32)
-        {
-            _mm256_store_si256(d_vec, _mm256_load_si256(s_vec));
-            n -= 32;
-            d_vec += 1;
-            s_vec += 1;
-        }
+    // align both if possible, else align dest only
+    size_t head = 0;
+    if (((dptr ^ sptr) & 31) == 0)
+    {
+        size_t off = dptr & 31;
+        head       = (32 - off) & 31;
     }
     else
     {
-        // Copy 512 bytes at a time
-        while (n >= 512)
-        {
-            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
-            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
-            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
-            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
-            _mm256_storeu_si256(d_vec + 4, _mm256_loadu_si256(s_vec + 4));
-            _mm256_storeu_si256(d_vec + 5, _mm256_loadu_si256(s_vec + 5));
-            _mm256_storeu_si256(d_vec + 6, _mm256_loadu_si256(s_vec + 6));
-            _mm256_storeu_si256(d_vec + 7, _mm256_loadu_si256(s_vec + 7));
-            _mm256_storeu_si256(d_vec + 8, _mm256_loadu_si256(s_vec + 8));
-            _mm256_storeu_si256(d_vec + 9, _mm256_loadu_si256(s_vec + 9));
-            _mm256_storeu_si256(d_vec + 10, _mm256_loadu_si256(s_vec + 10));
-            _mm256_storeu_si256(d_vec + 11, _mm256_loadu_si256(s_vec + 11));
-            _mm256_storeu_si256(d_vec + 12, _mm256_loadu_si256(s_vec + 12));
-            _mm256_storeu_si256(d_vec + 13, _mm256_loadu_si256(s_vec + 13));
-            _mm256_storeu_si256(d_vec + 14, _mm256_loadu_si256(s_vec + 14));
-            _mm256_storeu_si256(d_vec + 15, _mm256_loadu_si256(s_vec + 15));
-            n -= 512;
-            d_vec += 16;
-            s_vec += 16;
-        }
+        size_t off = dptr & 31;
+        head       = (32 - off) & 31;
+    }
+    if ((intmax_t) head > n)
+    {
+        head = (size_t) n;
+    }
 
-        // Copy 128 bytes at a time
-        while (n >= 128)
-        {
-            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
-            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
-            _mm256_storeu_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
-            _mm256_storeu_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
-            n -= 128;
-            d_vec += 4;
-            s_vec += 4;
-        }
+    // small head copy (8/4/2/1)
+    size_t t = head;
+    while (t >= 8)
+    {
+        *(uint64_t *) d8 = *(const uint64_t *) s8;
+        d8 += 8;
+        s8 += 8;
+        t -= 8;
+    }
+    if (t >= 4)
+    {
+        *(uint32_t *) d8 = *(const uint32_t *) s8;
+        d8 += 4;
+        s8 += 4;
+        t -= 4;
+    }
+    if (t >= 2)
+    {
+        *(uint16_t *) d8 = *(const uint16_t *) s8;
+        d8 += 2;
+        s8 += 2;
+        t -= 2;
+    }
+    if (t)
+    {
+        *d8++ = *s8++;
+    }
 
-        // Copy 64 bytes at a time
-        while (n >= 64)
-        {
-            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
-            _mm256_storeu_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
-            n -= 64;
-            d_vec += 2;
-            s_vec += 2;
-        }
+    n -= (intmax_t) head;
 
-        // Copy 32 bytes at a time
-        while (n >= 32)
+    __m256i       *d_vec      = (__m256i *) d8; // dest is aligned now
+    const __m256i *s_vec      = (const __m256i *) s8;
+    bool           is_aligned = (((uintptr_t) s8 & 31) == 0);
+
+    if (n >= 32)
+    {
+        if (is_aligned)
         {
-            _mm256_storeu_si256(d_vec, _mm256_loadu_si256(s_vec));
-            n -= 32;
-            d_vec += 1;
-            s_vec += 1;
+            // 512B blocks (16x32B)
+            while (n >= 512)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_load_si256(s_vec + 0));
+                _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+                _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
+                _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
+                _mm256_store_si256(d_vec + 4, _mm256_load_si256(s_vec + 4));
+                _mm256_store_si256(d_vec + 5, _mm256_load_si256(s_vec + 5));
+                _mm256_store_si256(d_vec + 6, _mm256_load_si256(s_vec + 6));
+                _mm256_store_si256(d_vec + 7, _mm256_load_si256(s_vec + 7));
+                _mm256_store_si256(d_vec + 8, _mm256_load_si256(s_vec + 8));
+                _mm256_store_si256(d_vec + 9, _mm256_load_si256(s_vec + 9));
+                _mm256_store_si256(d_vec + 10, _mm256_load_si256(s_vec + 10));
+                _mm256_store_si256(d_vec + 11, _mm256_load_si256(s_vec + 11));
+                _mm256_store_si256(d_vec + 12, _mm256_load_si256(s_vec + 12));
+                _mm256_store_si256(d_vec + 13, _mm256_load_si256(s_vec + 13));
+                _mm256_store_si256(d_vec + 14, _mm256_load_si256(s_vec + 14));
+                _mm256_store_si256(d_vec + 15, _mm256_load_si256(s_vec + 15));
+                d_vec += 16;
+                s_vec += 16;
+                n -= 512;
+            }
+            // 128B blocks (4x32B)
+            while (n >= 128)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_load_si256(s_vec + 0));
+                _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+                _mm256_store_si256(d_vec + 2, _mm256_load_si256(s_vec + 2));
+                _mm256_store_si256(d_vec + 3, _mm256_load_si256(s_vec + 3));
+                d_vec += 4;
+                s_vec += 4;
+                n -= 128;
+            }
+            // 64B blocks (2x32B)
+            while (n >= 64)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_load_si256(s_vec + 0));
+                _mm256_store_si256(d_vec + 1, _mm256_load_si256(s_vec + 1));
+                d_vec += 2;
+                s_vec += 2;
+                n -= 64;
+            }
+            // 32B
+            while (n >= 32)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_load_si256(s_vec + 0));
+                d_vec += 1;
+                s_vec += 1;
+                n -= 32;
+            }
+        }
+        else
+        {
+            // Unaligned loads, aligned stores
+            while (n >= 512)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_loadu_si256(s_vec + 0));
+                _mm256_store_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+                _mm256_store_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
+                _mm256_store_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
+                _mm256_store_si256(d_vec + 4, _mm256_loadu_si256(s_vec + 4));
+                _mm256_store_si256(d_vec + 5, _mm256_loadu_si256(s_vec + 5));
+                _mm256_store_si256(d_vec + 6, _mm256_loadu_si256(s_vec + 6));
+                _mm256_store_si256(d_vec + 7, _mm256_loadu_si256(s_vec + 7));
+                _mm256_store_si256(d_vec + 8, _mm256_loadu_si256(s_vec + 8));
+                _mm256_store_si256(d_vec + 9, _mm256_loadu_si256(s_vec + 9));
+                _mm256_store_si256(d_vec + 10, _mm256_loadu_si256(s_vec + 10));
+                _mm256_store_si256(d_vec + 11, _mm256_loadu_si256(s_vec + 11));
+                _mm256_store_si256(d_vec + 12, _mm256_loadu_si256(s_vec + 12));
+                _mm256_store_si256(d_vec + 13, _mm256_loadu_si256(s_vec + 13));
+                _mm256_store_si256(d_vec + 14, _mm256_loadu_si256(s_vec + 14));
+                _mm256_store_si256(d_vec + 15, _mm256_loadu_si256(s_vec + 15));
+                d_vec += 16;
+                s_vec += 16;
+                n -= 512;
+            }
+            while (n >= 128)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_loadu_si256(s_vec + 0));
+                _mm256_store_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+                _mm256_store_si256(d_vec + 2, _mm256_loadu_si256(s_vec + 2));
+                _mm256_store_si256(d_vec + 3, _mm256_loadu_si256(s_vec + 3));
+                d_vec += 4;
+                s_vec += 4;
+                n -= 128;
+            }
+            while (n >= 64)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_loadu_si256(s_vec + 0));
+                _mm256_store_si256(d_vec + 1, _mm256_loadu_si256(s_vec + 1));
+                d_vec += 2;
+                s_vec += 2;
+                n -= 64;
+            }
+            while (n >= 32)
+            {
+                _mm256_store_si256(d_vec + 0, _mm256_loadu_si256(s_vec + 0));
+                d_vec += 1;
+                s_vec += 1;
+                n -= 32;
+            }
         }
     }
 
-    // Copy any remaining bytes
+    // Tail
     if (n > 0)
     {
-        uint8_t       *d = (uint8_t *) d_vec;
-        const uint8_t *s = (const uint8_t *) s_vec;
+        d8 = (uint8_t *) d_vec;
+        s8 = (const uint8_t *) s_vec;
 
-        if (((uintptr_t) d % 8 == 0) && ((uintptr_t) s % 8 == 0))
+        if ((((uintptr_t) d8 | (uintptr_t) s8) & 7) == 0)
         {
             while (n >= 8)
             {
-                *(uint64_t *) d = *(const uint64_t *) s;
-                d += 8;
-                s += 8;
+                *(uint64_t *) d8 = *(const uint64_t *) s8;
+                d8 += 8;
+                s8 += 8;
                 n -= 8;
             }
         }
         while (n--)
         {
-            *d++ = *s++;
+            *d8++ = *s8++;
         }
     }
 }
