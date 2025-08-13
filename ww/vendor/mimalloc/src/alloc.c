@@ -483,7 +483,7 @@ static bool mi_try_new_handler(bool nothrow) {
 #else
 typedef void (*std_new_handler_t)(void);
 
-#if (defined(__GNUC__) || (defined(__clang__) && !defined(_MSC_VER)))  // exclude clang-cl, see issue #631
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(_WIN32)  // exclude all Windows targets (mingw/clang-cl), see issue #631 and Windows COFF duplicate symbol behavior
 std_new_handler_t __attribute__((weak)) _ZSt15get_new_handlerv(void) {
   return NULL;
 }
@@ -492,7 +492,7 @@ static std_new_handler_t mi_get_new_handler(void) {
 }
 #else
 // note: on windows we could dynamically link to `?get_new_handler@std@@YAP6AXXZXZ`.
-static std_new_handler_t mi_get_new_handler() {
+static std_new_handler_t mi_get_new_handler(void) {
   return NULL;
 }
 #endif

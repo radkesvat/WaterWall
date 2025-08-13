@@ -510,6 +510,11 @@ if(NOT MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
     set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-stringop-overread -Wno-stringop-overflow)
 endif()
 
+# Windows-specific LWIP compiler flags for non-MSVC compilers
+if(WIN32 AND NOT MSVC)
+    set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-pragma-pack)
+endif()
+
 target_compile_options(ww_lwip PRIVATE ${LWIP_COMPILER_FLAGS})
 set(LIBS ${LIBS} ww_lwip)
 
