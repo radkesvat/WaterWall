@@ -22,6 +22,8 @@
 #include <net/if_tun.h>
 #endif
 
+enum { kTunPollDrainBatch = 128 };
+
 struct msg_event
 {
     tun_device_t *tdev;
@@ -76,12 +78,73 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t
     }
 }
 
+// helper to drain multiple packets from TUN after POLLIN
+// returns 1 to continue, 0 on EOF (caller should exit), -1 on other errors (caller may continue)
+static int tunDrainPackets(tun_device_t *tdev)
+{
+    for (int i = 0; i < kTunPollDrainBatch; ++i)
+    {
+        sbuf_t *buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
+        sbufReserveSpace(buf, kReadPacketSize);
+
+        int nread;
+        for (;;)
+        {
+            nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
+            if (nread < 0 && errno == EINTR)
+            {
+                continue;
+            }
+            break;
+        }
+
+        if (nread == 0)
+        {
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            return 0;
+        }
+
+        if (nread < 0)
+        {
+            int saved_errno = errno;
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
+            {
+                // No more packets now; end this drain cycle
+                return 1;
+            }
+            LOGW("TunDevice: failed to read a packet from TUN device, errno is %d (%s), retrying...", saved_errno,
+                 strerror(saved_errno));
+            return -1;
+        }
+
+        if (TUN_LOG_EVERYTHING)
+        {
+            LOGD("TunDevice: read %d bytes from device %s", nread, tdev->name);
+        }
+
+        sbufSetLength(buf, nread);
+
+        if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
+        {
+            LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
+                 GLOBAL_MTU_SIZE);
+            LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in the '"
+                 "misc' section");
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            terminateProgram(1);
+        }
+
+        distributePacketPayload(tdev, getNextDistributionWID(), buf);
+    }
+
+    return 1;
+}
+
 // Routine to read from TUN device
 static WTHREAD_ROUTINE(routineReadFromTun)
 {
     tun_device_t *tdev = userdata;
-    sbuf_t       *buf;
-    int           nread;
 
     struct pollfd fds[2];
     fds[0].fd     = tdev->handle;
@@ -91,101 +154,58 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-
-        buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        sbufReserveSpace(buf, kReadPacketSize);
-
         int ret = poll(fds, 2, -1);
 
         if (ret < 0)
         {
             if (errno == EINTR)
             {
-                bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
                 continue; // Interrupted by signal, just retry
             }
             LOGE("TunDevice: Exit read routine due to poll failed with error %d (%s)", errno, strerror(errno));
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
             break;
         }
 
-        if (ret > 0)
+        if (ret == 0)
         {
-            if (fds[1].revents & POLLIN)
-            {
-                bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-                LOGW("TunDevice: Exit read routine due to pipe event");
-                break;
-            }
-
-            // Check for socket errors
-            if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
-            {
-                int       socket_error = 0;
-                socklen_t err_len      = sizeof(socket_error);
-                getsockopt(tdev->handle, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
-                LOGE("TunDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
-                     (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
-                     (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
-                bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-                break;
-            }
-
-            if (fds[0].revents & POLLIN)
-            {
-                nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
-
-                if (nread == 0)
-                {
-                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-                    LOGE("TunDevice: Exit read routine due to End Of File");
-                    return 0;
-                }
-
-                if (nread < 0)
-                {
-                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-                    LOGW("TunDevice: failed to read a packet from TUN device,errno is %d (%s), "
-                         "retrying...",
-                         errno, strerror(errno));
-                    continue;
-                }
-
-                if (TUN_LOG_EVERYTHING)
-                {
-                    LOGD("TunDevice: read %zd bytes from device %s", nread, tdev->name);
-                }
-
-                sbufSetLength(buf, nread);
-
-                if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
-                {
-                    LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
-                         GLOBAL_MTU_SIZE);
-                    LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' "
-                         "in "
-                         "the "
-                         "'misc' section");
-                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-                    terminateProgram(1);
-                }
-
-                distributePacketPayload(tdev, getNextDistributionWID(), buf);
-                continue;
-            }
-
-            // If we get here, poll returned > 0 but none of our expected events occurred
-            LOGE("TunDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, "
-                 "fd[1].revents=0x%x",
-                 fds[0].revents, fds[1].revents);
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
-            return 0;
+            // ret == 0, which shouldn't happen with infinite timeout
+            LOGF("TunDevice: poll returned 0 with infinite timeout");
+            exit(1);
         }
-        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
 
-        // ret == 0, which shouldn't happen with infinite timeout
-        LOGF("TunDevice: poll returned 0 with infinite timeout");
-        exit(1);
+        if (fds[1].revents & POLLIN)
+        {
+            LOGW("TunDevice: Exit read routine due to pipe event");
+            break;
+        }
+
+        // Check for socket errors
+        if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+        {
+            int       socket_error = 0;
+            socklen_t err_len      = sizeof(socket_error);
+            getsockopt(tdev->handle, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
+            LOGE("TunDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
+                 (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
+                 (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
+            break;
+        }
+
+        if (fds[0].revents & POLLIN)
+        {
+            int drain_res = tunDrainPackets(tdev);
+            if (drain_res == 0)
+            {
+                LOGE("TunDevice: Exit read routine due to End Of File");
+                return 0;
+            }
+            continue;
+        }
+
+        // If we get here, poll returned > 0 but none of our expected events occurred
+        LOGE("TunDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
+             fds[0].revents, fds[1].revents);
+        return 0;
     }
 
     return 0;
@@ -200,7 +220,7 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
     while (atomicLoadExplicit(&(tdev->running), memory_order_relaxed))
     {
-        if (! chanRecv(tdev->writer_buffer_channel, (void **) &buf))
+        if (! chanRecv(tdev->writer_buffer_channel, (void *) &buf))
         {
             LOGD("TunDevice: routine write will exit due to channel closed");
             return 0;
@@ -357,7 +377,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
     chanClose(tdev->writer_buffer_channel);
     sbuf_t *buf;
 
-    while (chanRecv(tdev->writer_buffer_channel, (void **) &buf))
+    while (chanRecv(tdev->writer_buffer_channel, (void *) &buf))
     {
         bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
     }
@@ -373,8 +393,8 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     if (tdev->read_event_callback != NULL)
     {
-        ssize_t _unused = write(tdev->linux_pipe_fds[1], "x", 1);
-        (void) _unused;
+        ssize_t write_res = write(tdev->linux_pipe_fds[1], "x", 1);
+        discard write_res;
 
         safeThreadJoin(tdev->read_thread);
     }
@@ -437,6 +457,22 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         LOGE("TunDevice: failed to create socket for MTU setting");
     }
 
+    // Set TUN fd non-blocking (BSD)
+    {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags >= 0)
+        {
+            if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+            {
+                LOGW("TunDevice: failed to set O_NONBLOCK: %s", strerror(errno));
+            }
+        }
+        else
+        {
+            LOGW("TunDevice: failed to get fd flags for O_NONBLOCK: %s", strerror(errno));
+        }
+    }
+
 #else
 
     int fd = open("/dev/net/tun", O_RDWR);
@@ -476,6 +512,22 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     else
     {
         LOGE("TunDevice: failed to create socket for MTU setting");
+    }
+
+    // Set TUN fd non-blocking (Linux)
+    {
+        int flags = fcntl(fd, F_GETFL, 0);
+        if (flags >= 0)
+        {
+            if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+            {
+                LOGW("TunDevice: failed to set O_NONBLOCK: %s", strerror(errno));
+            }
+        }
+        else
+        {
+            LOGW("TunDevice: failed to get fd flags for O_NONBLOCK: %s", strerror(errno));
+        }
     }
 #endif
 

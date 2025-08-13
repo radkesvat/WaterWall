@@ -25,6 +25,8 @@ enum
     kEthDataLen                           = 1500,
     kMasterMessagePoolsbufGetLeftCapacity = 64,
     kQueueLen                             = 16384 * 32,
+    // Drain up to this many packets after poll() signals readability
+    kPollDrainBatch                       = 128,
     kCaptureWriteChannelQueueMax          = 128
 };
 
@@ -191,12 +193,18 @@ static bool netfilterSetQueueLength(int netfilter_socket, uint16_t qnumber, uint
  */
 static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *buff)
 {
-    // Read a message from netlink
+    // Read a message from netlink (non-blocking)
     char               nl_buff[512 + kEthDataLen + sizeof(struct ethhdr) + sizeof(struct nfqnl_msg_packet_hdr)];
     struct sockaddr_nl nl_addr;
     socklen_t          nl_addr_len = sizeof(nl_addr);
     ssize_t            result =
-        recvfrom(netfilter_socket, nl_buff, sizeof(nl_buff), 0, (struct sockaddr *) &nl_addr, &nl_addr_len);
+        recvfrom(netfilter_socket, nl_buff, sizeof(nl_buff), MSG_DONTWAIT, (struct sockaddr *) &nl_addr, &nl_addr_len);
+
+    if (result < 0)
+    {
+        // Preserve errno for caller (e.g., EAGAIN)
+        return -1;
+    }
 
     if (result <= (int) sizeof(struct nlmsghdr))
     {
@@ -206,7 +214,7 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
     if (nl_addr_len != sizeof(nl_addr) || nl_addr.nl_pid != 0)
     {
         errno = EINVAL;
-        return false;
+        return -1;
     }
 
     struct nlmsghdr *nl_hdr = (struct nlmsghdr *) nl_buff;
@@ -263,6 +271,9 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
             found_pkt_hdr = true;
             nl_pkt_hdr    = (struct nfqnl_msg_packet_hdr *) NFA_DATA(nl_attr);
             break;
+        default:
+            // Ignore other attributes
+            break;
         }
         nl_attr = NFA_NEXT(nl_attr, nl_attr_size);
     }
@@ -284,14 +295,15 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
 
     // Copy the packet's contents to the output buffer.
     // Also add a phony ethernet header.
-    sbufSetLength(buff, nl_data_size);
     // struct ethhdr *eth_header = (struct ethhdr *) buff;
     // memorySet(&eth_header->h_dest, 0x0, ETH_ALEN);
     // memorySet(&eth_header->h_source, 0x0, ETH_ALEN);
     // eth_header->h_proto = htons(ETH_P_IP);
 
+    sbufSetLength(buff, nl_data_size);
+
     struct iphdr *ip_header = (struct iphdr *) sbufGetMutablePtr(buff);
-    memoryCopyLarge(ip_header, nl_data, nl_data_size);
+    memoryCopyLarge(ip_header, nl_data, (intmax_t) nl_data_size);
 
     return (int) (nl_data_size);
 }
@@ -299,7 +311,6 @@ static int netfilterGetPacket(int netfilter_socket, uint16_t qnumber, sbuf_t *bu
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
     capture_device_t *cdev = userdata;
-    sbuf_t           *buf;
     ssize_t           nread;
 
     struct pollfd fds[2];
@@ -310,47 +321,50 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
     while (atomicLoadExplicit(&(cdev->running), memory_order_relaxed))
     {
-
-        buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
-        buf = sbufReserveSpace(buf, kReadPacketSize);
-
         int ret = poll(fds, 2, -1);
         if (ret < 0)
         {
             if (errno == EINTR)
             {
-                bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
                 continue; // Interrupted by signal, just retry
             }
             LOGE("CaptureDevice: Exit read routine due to poll failed with error %d (%s)", errno, strerror(errno));
-            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
             break;
         }
 
-        if (ret > 0)
+        if (ret == 0)
         {
-            if (fds[1].revents & POLLIN)
-            {
-                bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-                LOGW("CaptureDevice: Exit read routine due to pipe event");
-                break;
-            }
+            // ret == 0, which shouldn't happen with infinite timeout
+            LOGF("CaptureDevice: poll returned 0 with infinite timeout");
+            exit(1);
+        }
 
-            // Check for socket errors
-            if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
-            {
-                int       socket_error = 0;
-                socklen_t err_len      = sizeof(socket_error);
-                getsockopt(cdev->socket, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
-                LOGE("CaptureDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
-                     (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
-                     (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
-                bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-                break;
-            }
+        if (fds[1].revents & POLLIN)
+        {
+            LOGW("CaptureDevice: Exit read routine due to pipe event");
+            break;
+        }
 
-            if (fds[0].revents & POLLIN)
+        // Check for socket errors
+        if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+        {
+            int       socket_error = 0;
+            socklen_t err_len      = sizeof(socket_error);
+            getsockopt(cdev->socket, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
+            LOGE("CaptureDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
+                 (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
+                 (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
+            break;
+        }
+
+        if (fds[0].revents & POLLIN)
+        {
+            // Drain multiple packets while the socket remains readable
+            for (int i = 0; i < kPollDrainBatch; ++i)
             {
+                sbuf_t *buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
+                buf         = sbufReserveSpace(buf, kReadPacketSize);
+
                 nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
 
                 if (nread == 0)
@@ -362,43 +376,38 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
                 if (nread < 0)
                 {
+                    int saved_errno = errno;
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-                    LOGW("CaptureDevice: failed to read a packet from netfilter socket,errno is %d (%s), retrying...",
-                         errno, strerror(errno));
-                    continue;
+                    if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
+                    {
+                        // No more packets right now; go back to poll
+                        break;
+                    }
+                    LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
+                         saved_errno, strerror(saved_errno));
+                    // On other errors, also go back to poll to avoid a tight loop
+                    break;
                 }
 
-                sbufSetLength(buf, nread);
-
+                // Length was set in netfilterGetPacket via sbufSetLength
                 if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
                 {
                     // we are capturing packets and this can happen, so we just log it
                     LOGW("CaptureDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
                          sbufGetLength(buf), GLOBAL_MTU_SIZE);
-                    // LOGF("CaptureDevice: This is related to the MTU size, (core.json) please set a correct value for
-                    // 'mtu' in "
-                    //      "'misc' section");
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-                    // terminateProgram(1);
                     continue;
                 }
 
                 distributePacketPayload(cdev, getNextDistributionWID(), buf);
-                continue;
             }
-
-            // If we get here, poll returned > 0 but none of our expected events occurred
-            LOGE("CaptureDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, "
-                 "fd[1].revents=0x%x",
-                 fds[0].revents, fds[1].revents);
-            bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-            return 0;
+            continue;
         }
-        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
 
-        // ret == 0, which shouldn't happen with infinite timeout
-        LOGF("CaptureDevice: poll returned 0 with infinite timeout");
-        exit(1);
+        // If we get here, poll returned > 0 but none of our expected events occurred
+        LOGE("CaptureDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
+             fds[0].revents, fds[1].revents);
+        return 0;
     }
 
     return 0;
@@ -443,8 +452,8 @@ bool caputredeviceBringDown(capture_device_t *cdev)
         terminateProgram(1);
     }
 
-    ssize_t _unused = write(cdev->linux_pipe_fds[1], "x", 1);
-    (void) _unused;
+    ssize_t write_res = write(cdev->linux_pipe_fds[1], "x", 1);
+    discard write_res;
     safeThreadJoin(cdev->read_thread);
 
     LOGI("CaptureDevice: device %s is now down", cdev->name);
@@ -479,6 +488,27 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         LOGE("CaptureDevice: unable to bind netfilter socket to current process");
         close(socket_netfilter);
         return NULL;
+    }
+
+    // Best-effort: avoid ENOBUFS notifications waking us up and set non-blocking
+    {
+        int one = 1;
+        if (setsockopt(socket_netfilter, SOL_NETLINK, NETLINK_NO_ENOBUFS, &one, sizeof(one)) < 0)
+        {
+            LOGW("CaptureDevice: failed to set NETLINK_NO_ENOBUFS: %s", strerror(errno));
+        }
+        int flags = fcntl(socket_netfilter, F_GETFL, 0);
+        if (flags >= 0)
+        {
+            if (fcntl(socket_netfilter, F_SETFL, flags | O_NONBLOCK) < 0)
+            {
+                LOGW("CaptureDevice: failed to set O_NONBLOCK: %s", strerror(errno));
+            }
+        }
+        else
+        {
+            LOGW("CaptureDevice: failed to get socket flags for O_NONBLOCK: %s", strerror(errno));
+        }
     }
 
     if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_PF_UNBIND, 0, PF_INET))

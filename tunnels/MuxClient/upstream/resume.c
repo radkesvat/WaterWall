@@ -15,6 +15,8 @@ void muxclientTunnelUpStreamResume(tunnel_t *t, line_t *child_l)
     muxclient_lstate_t *parent_ls   = lineGetState(parent_line, t);
 
     lineLock(parent_line);
+    parent_ls->last_writer = child_l; // update the last writer to the current child
+
     tunnelNextUpStreamPayload(t, parent_line, resumepacket_buf);
 
     if (! lineIsAlive(parent_line))
@@ -22,8 +24,10 @@ void muxclientTunnelUpStreamResume(tunnel_t *t, line_t *child_l)
         lineUnlock(parent_line);
         return;
     }
+
+    parent_ls->last_writer = NULL; // reset the last writer after sending the payload
+    // parent_ls->paused      = false;
     lineUnlock(parent_line);
 
-    parent_ls->paused = false;
-    tunnelNextUpStreamResume(t, parent_line);
+    // tunnelNextUpStreamResume(t, parent_line);
 }

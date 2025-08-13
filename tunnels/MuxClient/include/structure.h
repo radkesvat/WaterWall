@@ -23,6 +23,7 @@ typedef struct muxclient_tstate_s
 typedef struct muxclient_lstate_s
 {
     line_t *l; // the line this state is associated with
+    line_t *last_writer; // used when parent, to track the last writer line
 
     struct muxclient_lstate_s *parent;         // the parent  f is_child is true
     struct muxclient_lstate_s *child_prev;     // previous child in the parent connection
