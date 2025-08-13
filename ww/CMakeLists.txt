@@ -415,6 +415,7 @@ CPMAddPackage(
     DOWNLOAD_ONLY True
 )
 if(stc_ADDED)
+    target_compile_definitions(ww PUBLIC STC_STATIC=1 STC_ALLOCATOR=c)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         target_compile_options(ww PUBLIC /wd4310)
@@ -738,6 +739,5 @@ endif()
 
 # Final definitions
 target_compile_definitions(ww PUBLIC 
-    STC_STATIC=1 
     WW_VERSION=${WW_VERSION_MAJOR}.${WW_VERSION_MINOR}.${WW_VERSION_PATCH}
 )
