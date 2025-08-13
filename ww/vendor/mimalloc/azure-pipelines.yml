@@ -6,10 +6,8 @@
 trigger:
   branches:
     include:
-    - master
-    - dev
-    - dev2
-    - dev3
+    - main
+    - dev*
   tags:
     include:
     - v*
@@ -30,9 +28,29 @@ jobs:
         BuildType: release
         cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release
         MSBuildConfiguration: Release
+      Release SIMD:
+        BuildType: release-simd
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release -DMI_OPT_ARCH=ON -DMI_OPT_SIMD=ON -DMI_WIN_USE_FIXED_TLS=ON
+        MSBuildConfiguration: Release
       Secure:
         BuildType: secure
         cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release -DMI_SECURE=ON
+        MSBuildConfiguration: Release
+      Debug x86:
+        BuildType: debug
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON -A Win32
+        MSBuildConfiguration: Debug
+      Release x86:
+        BuildType: release
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release -A Win32
+        MSBuildConfiguration: Release
+      Debug Fixed TLS:
+        BuildType: debug
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON -DMI_WIN_USE_FIXED_TLS=ON
+        MSBuildConfiguration: Debug
+      Release Fixed TLS:
+        BuildType: release
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release -DMI_WIN_USE_FIXED_TLS=ON
         MSBuildConfiguration: Release
   steps:
   - task: CMake@1
@@ -89,6 +107,11 @@ jobs:
         CXX: clang++
         BuildType: release-clang
         cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release
+      Release SIMD Clang:
+        CC: clang
+        CXX: clang++
+        BuildType: release-simd-clang
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release -DMI_OPT_ARCH=ON -DMI_OPT_SIMD=ON
       Secure Clang:
         CC: clang
         CXX: clang++
@@ -148,6 +171,9 @@ jobs:
       Release:
         BuildType: release
         cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release
+      Release SIMD:
+        BuildType: release-simd
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release -DMI_OPT_ARCH=ON -DMI_OPT_SIMD=ON
       Secure:
         BuildType: secure
         cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release -DMI_SECURE=ON
@@ -169,82 +195,10 @@ jobs:
 # ----------------------------------------------------------
 
 - job:
-  displayName: Windows 2019
-  pool:
-    vmImage:
-      windows-2019
-  strategy:
-    matrix:
-      Debug:
-        BuildType: debug
-        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON
-        MSBuildConfiguration: Debug
-      Release:
-        BuildType: release
-        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release
-        MSBuildConfiguration: Release
-  steps:
-  - task: CMake@1
-    inputs:
-      workingDirectory: $(BuildType)
-      cmakeArgs: .. $(cmakeExtraArgs)
-  - task: MSBuild@1
-    inputs:
-      solution: $(BuildType)/libmimalloc.sln
-      configuration: '$(MSBuildConfiguration)'
-      msbuildArguments: -m
-  - script: ctest --verbose --timeout 240 -C $(MSBuildConfiguration)
-    workingDirectory: $(BuildType)
-    displayName: CTest
-
-- job:
   displayName: Ubuntu 24.04
   pool:
     vmImage:
       ubuntu-24.04
-  strategy:
-    matrix:
-      Debug:
-        CC: gcc
-        CXX: g++
-        BuildType: debug
-        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON
-      Debug++:
-        CC: gcc
-        CXX: g++
-        BuildType: debug-cxx
-        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON -DMI_USE_CXX=ON
-      Debug Clang:
-        CC: clang
-        CXX: clang++
-        BuildType: debug-clang
-        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON
-      Debug++ Clang:
-        CC: clang
-        CXX: clang++
-        BuildType: debug-clang-cxx
-        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON -DMI_USE_CXX=ON
-      Release Clang:
-        CC: clang
-        CXX: clang++
-        BuildType: release-clang
-        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release
-  steps:
-  - task: CMake@1
-    inputs:
-      workingDirectory: $(BuildType)
-      cmakeArgs: .. $(cmakeExtraArgs)
-  - script: make -j$(nproc) -C $(BuildType)
-    displayName: Make
-  - script: ctest --verbose --timeout 240
-    workingDirectory: $(BuildType)
-    displayName: CTest
-
-- job:
-  displayName: Ubuntu 20.04
-  pool:
-    vmImage:
-      ubuntu-20.04
   strategy:
     matrix:
       Debug:
@@ -306,3 +260,28 @@ jobs:
   - script: ctest --verbose --timeout 240
     workingDirectory: $(BuildType)
     displayName: CTest
+
+- job:
+  displayName: macOS 13 (Ventura)
+  pool:
+    vmImage:
+      macOS-13
+  strategy:
+    matrix:
+      Debug:
+        BuildType: debug
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Debug -DMI_DEBUG_FULL=ON
+      Release:
+        BuildType: release
+        cmakeExtraArgs: -DCMAKE_BUILD_TYPE=Release
+  steps:
+  - task: CMake@1
+    inputs:
+      workingDirectory: $(BuildType)
+      cmakeArgs: .. $(cmakeExtraArgs)
+  - script: make -j$(sysctl -n hw.ncpu) -C $(BuildType)
+    displayName: Make
+  - script: ctest --verbose --timeout 180
+    workingDirectory: $(BuildType)
+    displayName: CTest
+

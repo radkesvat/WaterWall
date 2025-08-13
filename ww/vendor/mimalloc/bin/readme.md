@@ -1,15 +1,14 @@
 # Windows Override
 
-<span id="override_on_windows">Dynamically overriding on mimalloc on Windows</span> 
-is robust and has the particular advantage to be able to redirect all malloc/free calls 
-that go through the (dynamic) C runtime allocator, including those from other DLL's or 
-libraries. As it intercepts all allocation calls on a low level, it can be used reliably 
-on large programs that include other 3rd party components.
+<span id="override_on_windows">We use a separate redirection DLL to override mimalloc on Windows</span> 
+such that we redirect all malloc/free calls that go through the (dynamic) C runtime allocator, 
+including those from other DLL's or libraries. As it intercepts all allocation calls on a low level, 
+it can be used on large programs that include other 3rd party components.
 There are four requirements to make the overriding work well:
 
 1. Use the C-runtime library as a DLL (using the `/MD` or `/MDd` switch).
 
-2. Link your program explicitly with the `mimalloc.lib` export library for
+2. Link your program explicitly with the `mimalloc.dll.lib` export library for
    the `mimalloc.dll` -- which contains all mimalloc functionality.
    To ensure the `mimalloc.dll` is actually loaded at run-time it is easiest 
    to insert some call to the mimalloc API in the `main` function, like `mi_version()`
@@ -25,6 +24,23 @@ There are four requirements to make the overriding work well:
 4. Ensure the `mimalloc.dll` comes as early as possible in the import
    list of the final executable (so it can intercept all potential allocations).
    You can use `minject -l <exe>` to check this if needed.
+
+```csharp
+┌──────────────┐                                                    
+│ Your Program │                                                    
+└────┬─────────┘                                                    
+     │                                                              
+     │ mi_version()  ┌───────────────┐     ┌───────────────────────┐
+     ├──────────────►│ mimalloc.dll  ├────►│ mimalloc-redirect.dll │
+     │               └──────┬────────┘     └───────────────────────┘
+     │                      ▼                                       
+     │ malloc() etc. ┌──────────────┐                               
+     ├──────────────►│ ucrtbase.dll │                               
+     │               └──────────────┘                               
+     │                                                              
+     │                                                              
+     └──────────────► ...                                           
+```
 
 For best performance on Windows with C++, it
 is also recommended to also override the `new`/`delete` operations (by including
@@ -47,7 +63,7 @@ need a specific redirection DLL:
   mode on Windows arm64. Unfortunately we cannot run x64 code emulated on Windows arm64 with
   the x64 mimalloc override directly (since the C runtime always uses `arm64ec`). Instead:
   1. Build the program as normal for x64 and link as normal with the x64 
-     `mimalloc.lib` export library.
+     `mimalloc.dll.lib` export library.
   2. Now separately build `mimalloc.dll` in `arm64ec` mode and _overwrite_ your
      previous (x64) `mimalloc.dll` -- the loader can handle the mix of arm64ec
      and x64 code. Now use `mimalloc-redirect-arm64ec.dll` to match your new

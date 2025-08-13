@@ -1,19 +1,47 @@
 ################################################################################
+# WaterWall Runtime Library CMake Configuration
+################################################################################
+
+################################################################################
 # Version Settings
 ################################################################################
 set(WW_VERSION_MAJOR 1)
 set(WW_VERSION_MINOR 1)
 set(WW_VERSION_PATCH 0)
 
+################################################################################
+# Global Options & Build Configuration
+################################################################################
+option(WW_STATICLIB "Build as static library" ON)
+option(ASMLIB_OVERRIDE "Try to link against asm lib and override standard functions" OFF)
+
+# Crypto backend options (only one can be enabled)
+option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
+option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
+option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
+
+# Windows-specific options
+if(WIN32)
+    option(WITH_WEPOLL "Use wepoll (IOCP wrapper)" ON)
+    option(ENABLE_WINDUMP "Enable Windows MiniDumpWriteDump" OFF)
+endif()
+
+# Validate required variables
+if(NOT DEFINED FINAL_EXECUTABLE_NAME OR FINAL_EXECUTABLE_NAME STREQUAL "")
+    message(FATAL_ERROR "FINAL_EXECUTABLE_NAME is not set! Please define it before configuring.")
+endif()
 
 ################################################################################
 # Library Build Configuration
 ################################################################################
 add_library(ww STATIC
+    # Core libraries
     libc/wlibc.c
     libc/wtime.c
     libc/werr.c
     libc/wfrand.c
+    
+    # Base functionality
     base/wchan.c
     base/widle_table.c
     base/wlog.c
@@ -21,6 +49,8 @@ add_library(ww STATIC
     base/wsocket.c
     base/wsysinfo.c
     base/wproc.c
+    
+    # Buffer I/O
     bufio/buffer_pool.c
     bufio/buffer_stream.c
     bufio/context_queue.c
@@ -28,10 +58,14 @@ add_library(ww STATIC
     bufio/generic_pool.c
     bufio/master_pool.c
     bufio/shiftbuffer.c
+    
+    # Utilities
     utils/base64.c
     utils/cacert.c
     utils/md5.c
     utils/sha1.c
+    
+    # Event handling
     event/wevent.c
     event/wloop.c
     event/nio.c
@@ -44,9 +78,13 @@ add_library(ww STATIC
     event/overlapio.c
     event/poll.c
     event/select.c
+    
+    # Instance management
     instance/global_state.c
     instance/worker.c
     instance/wversion.c
+    
+    # Networking
     net/http_def.c
     net/packet_tunnel.c
     net/pipe_tunnel.c
@@ -58,18 +96,28 @@ add_library(ww STATIC
     net/socket_filter_option.c
     net/wchecksum.c
     net/wchecksum_default.c
+    
+    # LWIP integration
     lwip/ww_lwip.c
+    
+    # Node builder
     node_builder/config_file.c
     node_builder/node_library.c
+    
+    # Managers
     managers/signal_manager.c
     managers/socket_manager.c
     managers/node_manager.c
     managers/memory_manager.c
+
+    # Data of SocketManager
     managers/data/iprange_mci.c
     managers/data/iprange_irancell.c
     managers/data/iprange_mokhaberat.c
     managers/data/iprange_rightel.c
     managers/data/iprange_iran.c
+    
+    # Loggers
     loggers/core_logger.c
     loggers/network_logger.c
     loggers/dns_logger.c
@@ -77,9 +125,8 @@ add_library(ww STATIC
 )
 
 ################################################################################
-# Target Properties & Platform-specific Sources
+# Target Properties
 ################################################################################
-# Enforce C11 for this specific target
 set_target_properties(ww 
     PROPERTIES
     C_STANDARD 11
@@ -87,122 +134,255 @@ set_target_properties(ww
     C_EXTENSIONS OFF
 )
 
+################################################################################
+# Include Directories
+################################################################################
+target_include_directories(ww PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/base
+    ${CMAKE_CURRENT_SOURCE_DIR}/node_builder
+    ${CMAKE_CURRENT_SOURCE_DIR}/bufio
+    ${CMAKE_CURRENT_SOURCE_DIR}/event
+    ${CMAKE_CURRENT_SOURCE_DIR}/net
+    ${CMAKE_CURRENT_SOURCE_DIR}/instance
+    ${CMAKE_CURRENT_SOURCE_DIR}/libc
+    ${CMAKE_CURRENT_SOURCE_DIR}/crypto
+    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib
+)
 
+target_include_directories(ww PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/base/internal_types
+)
 
 ################################################################################
-# Global Options & Definitions
+# Platform-specific Configuration
 ################################################################################
-option(WW_STATICLIB "ON -> static library ; OFF-> dynamic" ON)
-
-option(ASMLIB_OVERRIDE "try to link against asm lib and override standard functions" OFF)
-
-
-# Crypto backend options
-option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
-option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
-option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
-
-if(NOT DEFINED FINAL_EXECUTABLE_NAME OR MY_VARIABLE STREQUAL "")
-    message(FATAL_ERROR "Error: FINAL_EXECUTABLE_NAME is not set! Please define FINAL_EXECUTABLE_NAME before configuring.")
-endif()
-
 if(WIN32)
-    option(WITH_WEPOLL "compile event/wepoll -> use iocp" ON)
-    option(ENABLE_WINDUMP "Windows MiniDumpWriteDump" OFF)
-    target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}.exe")
+    target_compile_definitions(ww PUBLIC 
+        FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}.exe"
+        WIN32_LEAN_AND_MEAN
+        _CRT_SECURE_NO_WARNINGS 
+        _WIN32_WINNT=0x0600
+    )
 else()
     target_compile_definitions(ww PUBLIC FINAL_EXECUTABLE_NAME="${FINAL_EXECUTABLE_NAME}")
 endif()
 
+################################################################################
+# CMake Module Setup
+################################################################################
+set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
+include(utils)
+include(vars)
+include(CheckCCompilerFlag)
 
+################################################################################
+# Header and Function Checks
+################################################################################
+check_header("stdbool.h")
+check_header("stdint.h")
+check_header("stdatomic.h")
+check_header("sys/types.h")
+check_header("sys/stat.h")
+check_header("sys/time.h")
+check_header("fcntl.h")
+check_header("pthread.h")
+check_header("endian.h")
+check_header("sys/endian.h")
+check_header("x86intrin.h")
+check_header("immintrin.h")
+
+if(NOT MSVC)
+    set(CMAKE_REQUIRED_LIBRARIES "-pthread")
+endif()
+
+check_function("gettid" "unistd.h")
+check_function("strlcpy" "string.h")
+check_function("strlcat" "string.h")
+check_function("clock_gettime" "time.h")
+check_function("gettimeofday" "sys/time.h")
+check_function("pthread_spin_lock" "pthread.h")
+check_function("pthread_mutex_timedlock" "pthread.h")
+check_function("sem_timedwait" "semaphore.h")
+check_function("pipe" "unistd.h")
+check_function("socketpair" "sys/socket.h")
+check_function("eventfd" "sys/eventfd.h")
+check_function("setproctitle" "unistd.h")
+
+################################################################################
+# Advanced CPU Instructions Configuration
+################################################################################
+set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0)
+set(WW_HAVE_AVX2 0)
+set(WW_HAVE_SSE3 0)
+set(WW_SUPPORTED_MEMCOPY_AVX2 0)
+set(WW_SUPPORTED_MEMCOPY_AVX512F 0)
+set(WW_CHECKSUM_AVX2 0)
+set(WW_CHECKSUM_SSE3 0)
+
+if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS
+    AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+
+    message(STATUS "Using advanced CPU instructions")
+    set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 1)
+    
+    # Check compiler support for instruction sets
+    if(MSVC)
+        check_c_compiler_flag("/arch:SSE2" COMPILER_SUPPORTS_SSE3) # SSE3 is included in SSE2 support on MSVC
+        check_c_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2)
+        check_c_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512F)
+    else()
+        check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
+        check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+        check_c_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
+    endif()
+
+    # SSE3 Configuration
+    if(COMPILER_SUPPORTS_SSE3)
+        message(STATUS "Compiler supports SSE3")
+        if(MSVC)
+            target_compile_options(ww PUBLIC /arch:SSE2)   # SSE3 is included in SSE2 support on MSVC
+        else()
+            target_compile_options(ww PUBLIC -msse3)
+        endif()
+        set(WW_HAVE_SSE3 1)
+        set(WW_CHECKSUM_SSE3 1)
+        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_sse3.c")
+    else()
+        message(FATAL_ERROR "SSE3 not supported by compiler")
+    endif()
+
+    # AVX2 Configuration
+    if(COMPILER_SUPPORTS_AVX2)
+        message(STATUS "Compiler supports AVX2")
+        if(MSVC)
+            target_compile_options(ww PUBLIC /arch:AVX2)
+        else()
+            target_compile_options(ww PUBLIC -mavx2)
+        endif()
+        set(WW_HAVE_AVX2 1)
+        set(WW_SUPPORTED_MEMCOPY_AVX2 1)
+        set(WW_CHECKSUM_AVX2 1)
+        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
+    else()
+        message(STATUS "AVX2 not supported by compiler")
+    endif()
+
+    # AVX512F Configuration
+    if(COMPILER_SUPPORTS_AVX512F)
+        message(STATUS "Compiler supports AVX512F")
+        if(WW_ENABLE_AVX_512)
+            message(STATUS "Using AVX512F code...")
+            if(MSVC)
+                target_compile_options(ww PUBLIC /arch:AVX512)
+            else()
+                target_compile_options(ww PUBLIC -mavx512f)
+            endif()
+            set(WW_HAVE_AVX512F 1)
+            set(WW_SUPPORTED_MEMCOPY_AVX512F 1)
+        else()
+            message(STATUS "AVX512F is power consuming and disabled by default")
+        endif()
+    else()
+        message(STATUS "AVX512F not supported by compiler")
+    endif()
+
+else()
+    message(STATUS "Advanced CPU instructions will not be used")
+endif()
 
 ################################################################################
 # Crypto Backend Source Selection
 ################################################################################
-# Ensure only one backend is selected
 if(WCRYPTO_BACKEND_SODIUM)
     set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
     set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
     
-    target_sources(ww PRIVATE crypto/sodium_instance.c)
-    target_sources(ww PRIVATE crypto/impl_sodium/chacha20poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_sodium/xchacha20poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_sodium/x25519.c)
-    target_sources(ww PRIVATE crypto/impl_software/blake2s.c)
-    
+    target_sources(ww PRIVATE 
+        crypto/sodium_instance.c
+        crypto/impl_sodium/chacha20poly1305.c
+        crypto/impl_sodium/xchacha20poly1305.c
+        crypto/impl_sodium/x25519.c
+        crypto/impl_software/blake2s.c
+    )
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
+    
 elseif(WCRYPTO_BACKEND_OPENSSL)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
     set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
     
-    target_sources(ww PRIVATE crypto/openssl_instance.c)
-    target_sources(ww PRIVATE crypto/impl_openssl/blake2s.c)
-    target_sources(ww PRIVATE crypto/impl_openssl/chacha20poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_openssl/x25519.c)
-    
+    target_sources(ww PRIVATE 
+        crypto/openssl_instance.c
+        crypto/impl_openssl/blake2s.c
+        crypto/impl_openssl/chacha20poly1305.c
+        crypto/impl_openssl/x25519.c
+    )
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_OPENSSL=1)
+    
 elseif(WCRYPTO_BACKEND_SOFTWARE)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
     set(WCRYPTO_BACKEND_OPENSSL OFF CACHE BOOL "Enable OpenSSL backend" FORCE)
     
-    target_sources(ww PRIVATE crypto/impl_software/blake2s.c)
-    target_sources(ww PRIVATE crypto/impl_software/chacha20.c)
-    target_sources(ww PRIVATE crypto/impl_software/chacha20poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_software/poly1305.c)
-    target_sources(ww PRIVATE crypto/impl_software/poly1305-donna.c)
-    target_sources(ww PRIVATE crypto/impl_software/x25519.c)
-    
+    target_sources(ww PRIVATE 
+        crypto/impl_software/blake2s.c
+        crypto/impl_software/chacha20.c
+        crypto/impl_software/chacha20poly1305.c
+        crypto/impl_software/poly1305.c
+        crypto/impl_software/poly1305-donna.c
+        crypto/impl_software/x25519.c
+    )
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SOFTWARE=1)
 endif()
 
-
-
-# Platform-specific sources
+################################################################################
+# Platform-specific Device Sources
+################################################################################
 if(APPLE)
-    message(STATUS "No Tun device for This os yet")
+    message(STATUS "No Tun device support for macOS yet")
+    
 elseif(UNIX AND NOT ANDROID)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
     if(LINUX)
-        target_sources(ww PRIVATE devices/capture/capture_linux.c)
-        target_sources(ww PRIVATE devices/raw/raw_linux.c)
+        target_sources(ww PRIVATE 
+            devices/capture/capture_linux.c
+            devices/raw/raw_linux.c
+        )
     endif()
+    
 elseif(WIN32)
-
+    # WinDivert for x64 systems
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-        message(STATUS "Including WinDivert Target architecture: amd64")
-        target_sources(ww PRIVATE vendor/windivert/x64/windivert.dll.x64.bytes.c)
-        target_sources(ww PRIVATE vendor/windivert/x64/windivert.sys.x64.bytes.c)
-
-        target_sources(ww PRIVATE devices/raw/raw_windows.c)
-        target_sources(ww PRIVATE devices/capture/capture_windows.c)
-
+        message(STATUS "Including WinDivert for amd64")
+        target_sources(ww PRIVATE 
+            vendor/windivert/x64/windivert.dll.x64.bytes.c
+            vendor/windivert/x64/windivert.sys.x64.bytes.c
+            devices/raw/raw_windows.c
+            devices/capture/capture_windows.c
+        )
     endif()
 
-
+    # WinTun configuration
     target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/wintun/)
-
+    
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-        message(STATUS "Including WinTun Target architecture: amd64")
+        message(STATUS "Including WinTun for amd64")
         target_sources(ww PRIVATE vendor/wintun/amd64/wintun_bytes.c)
     elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "i386")
-        message(STATUS "Including WinTun Target architecture: x86")
+        message(STATUS "Including WinTun for x86")
         target_sources(ww PRIVATE vendor/wintun/x86/wintun_bytes.c)
     elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM")
-        message(STATUS "Including WinTun Target architecture: arm")
+        message(STATUS "Including WinTun for ARM")
         target_sources(ww PRIVATE vendor/wintun/arm/wintun_bytes.c)
     elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
-        message(STATUS "Including WinTun Target architecture: arm64")
+        message(STATUS "Including WinTun for ARM64")
         target_sources(ww PRIVATE vendor/wintun/arm64/wintun_bytes.c)
     else()
-        message(FATAL_ERROR "Cannot Bind WinTun -> Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+        message(FATAL_ERROR "Cannot bind WinTun - Unknown architecture: ${CMAKE_SYSTEM_PROCESSOR}")
     endif()
     
     target_sources(ww PRIVATE devices/tun/tun_windows.c)
 
-
-endif()
-
-if(WIN32)
+    # WEPoll configuration
     set(WITH_WEPOLL 1)
     if(WITH_WEPOLL)
         target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)
@@ -210,32 +390,13 @@ if(WIN32)
     endif()
 endif()
 
-
-################################################################################
-# Include Directories
-################################################################################
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/base)
-target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/base/internal_types)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/node_builder)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/bufio)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/event)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/net)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/instance)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/libc)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
-
-
 ################################################################################
 # External Dependencies
 ################################################################################
-# include(cmake/GetCPM.cmake)
 include(cmake/CPM.cmake)
-
 set(BUILD_SHARED_LIBS OFF)
 
-# Add komihash library
+# KomiHash library
 CPMAddPackage(
     NAME komihash
     GIT_REPOSITORY https://github.com/avaneev/komihash.git
@@ -246,7 +407,7 @@ if(komihash_ADDED)
     target_include_directories(ww PUBLIC ${komihash_SOURCE_DIR})
 endif()
 
-# Add STC library
+# STC library
 CPMAddPackage(
     NAME stc
     GIT_REPOSITORY https://github.com/radkesvat/STC
@@ -256,11 +417,11 @@ CPMAddPackage(
 if(stc_ADDED)
     target_include_directories(ww PUBLIC ${stc_SOURCE_DIR}/include)
     if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-        target_compile_options(ww PUBLIC /wd4310) # stc bug, hash -> cast truncates constant value
+        target_compile_options(ww PUBLIC /wd4310)
     endif()
 endif()
 
-# Add cJSON library
+# cJSON library
 CPMAddPackage(
     NAME cjson
     VERSION 1.7.17
@@ -271,24 +432,9 @@ if(cjson_ADDED)
     target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
-target_compile_definitions(ww PRIVATE ENABLE_TARGET_EXPORT=OFF) # Disable export of cJSON symbols
+target_compile_definitions(ww PRIVATE ENABLE_TARGET_EXPORT=OFF)
 
-
-# add openssl (default version is latest)
-# CPMAddPackage(
-#     NAME openssl-cmake
-#     URL https://github.com/radkesvat/openssl-cmake/archive/main.tar.gz
-#     OPTIONS
-#     "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
-#     "BUILD_SHARED_LIBS OFF"
-#     "OPENSSL_CONFIGURE_VERBOSE OFF"
-#     "OPENSSL_BUILD_VERBOSE TRUE"
-# )
-# set(LIBS ${LIBS} OpenSSL::SSL)
-# set(LIBS ${LIBS} OpenSSL::Crypto)
-# set(LIBS ${LIBS} OpenSSL::applink)
-
-# Add libsodium as a static library
+# LibSodium library
 CPMAddPackage(
     NAME libsodium
     GITHUB_REPOSITORY robinlinden/libsodium-cmake
@@ -309,9 +455,8 @@ endif()
 
 set(LIBS ${LIBS} sodium)
 
-
 ################################################################################
-# LWIP Library Settings
+# LWIP Library Configuration
 ################################################################################
 CPMAddPackage(
     NAME lwip
@@ -320,10 +465,10 @@ CPMAddPackage(
     DOWNLOAD_ONLY True
 )
 if(NOT lwip_ADDED)
-    message(FATAL_ERROR "Error: LWIP library could not be downloaded")
+    message(FATAL_ERROR "LWIP library could not be downloaded")
 endif()
-set(LWIP_DIR ${lwip_SOURCE_DIR})
 
+set(LWIP_DIR ${lwip_SOURCE_DIR})
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 set(LWIP_CONTRIB_DIR ${LWIPOPTS_DIR}/contrib)
@@ -332,6 +477,7 @@ set(LWIP_INCLUDE_DIRS
     "${LWIP_DIR}/contrib"
     "${LWIPOPTS_DIR}"
 )
+
 if(NOT APPLE)
     set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
 endif()
@@ -344,16 +490,16 @@ if(WIN32)
 else()
     set(LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/unix/port/include")
 endif()
+
 include(${LWIP_DIR}/src/Filelists.cmake)
 include(${LWIP_CONTRIB_DIR}/Filelists.cmake)
-add_library(ww_lwip STATIC 
-    ${lwipnoapps_SRCS}
-)
 
+add_library(ww_lwip STATIC ${lwipnoapps_SRCS})
 
 target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
+
 if(UNIX)
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
 else()
@@ -367,16 +513,22 @@ endif()
 target_compile_options(ww_lwip PRIVATE ${LWIP_COMPILER_FLAGS})
 set(LIBS ${LIBS} ww_lwip)
 
-
 ################################################################################
-# Mimalloc & Platform-specific Options
+# Mimalloc Configuration
 ################################################################################
-# Add mimalloc library
-# if(ANDROID OR (WIN32 AND MINGW AND CMAKE_SIZEOF_VOID_P EQUAL 4))
-    # set(MI_OPT_ARCH OFF)
-# endif()
+set(MI_USE_CXX OFF) 
+set(MI_NO_USE_CXX ON)
+set(MI_OVERRIDE OFF)
+set(MI_XMALLOC ON)
+set(MI_OPT_ARCH ${WW_HAVE_ADVANCED_CPU_INSTRUCTIONS})
+set(MI_OPT_SIMD ${WW_HAVE_ADVANCED_CPU_INSTRUCTIONS})
+set(MI_BUILD_SHARED OFF)
+set(MI_BUILD_OBJECT OFF)
+set(MI_BUILD_TESTS OFF)
+set(MI_SKIP_COLLECT_ON_EXIT ON)
+set(MI_DEBUG OFF)
+set(MI_SECURE OFF)
 
-set(MI_USE_CXX ON) # since we enabled c++ for waterwall
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/mimalloc)
 
@@ -388,158 +540,17 @@ if(NOT MSVC)
 endif()
 
 set(LIBS ${LIBS} mimalloc-static)
-# Platform-specific options and settings
-# message(STATUS "CMAKE_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
-# message(STATUS "CMAKE_CURRENT_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}")
-
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
-include(utils)
-include(vars)
-
 
 ################################################################################
-# Header and Function Checks
+# Final Configuration and Linking
 ################################################################################
-# Header checks
-check_header("stdbool.h")
-check_header("stdint.h")
-check_header("stdatomic.h")
-check_header("sys/types.h")
-check_header("sys/stat.h")
-check_header("sys/time.h")
-check_header("fcntl.h")
-check_header("pthread.h")
-check_header("endian.h")
-check_header("sys/endian.h")
-check_header("x86intrin.h")
-check_header("immintrin.h")
-
-# Function checks
-if(NOT MSVC)
-    set(CMAKE_REQUIRED_LIBRARIES "-pthread")
-endif()
-check_function("gettid" "unistd.h")
-check_function("strlcpy" "string.h")
-check_function("strlcat" "string.h")
-check_function("clock_gettime" "time.h")
-check_function("gettimeofday" "sys/time.h")
-check_function("pthread_spin_lock" "pthread.h")
-check_function("pthread_mutex_timedlock" "pthread.h")
-check_function("sem_timedwait" "semaphore.h")
-check_function("pipe" "unistd.h")
-check_function("socketpair" "sys/socket.h")
-check_function("eventfd" "sys/eventfd.h")
-check_function("setproctitle" "unistd.h")
-
-include(CheckCCompilerFlag)
-
-
-################################################################################
-# AVX/SSE3 Checksum and Memory Copy Configuration
-################################################################################
-set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0)
-set(WW_HAVE_AVX2 0)
-set(WW_HAVE_SSE3 0)
-set(WW_SUPPORTED_MEMCOPY_AVX2 0)
-set(WW_SUPPORTED_MEMCOPY_AVX512F 0)
-set(WW_CHECKSUM_AVX2 0)
-set(WW_CHECKSUM_SSE3 0)
-
-if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS
-    AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-
-    message(STATUS "using advanced CPU instructions")
-    set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 1)
-    
-    if(MSVC)
-        check_c_compiler_flag("/arch:SSE2" COMPILER_SUPPORTS_SSE3)  # SSE3 is included in SSE2 support on MSVC
-        check_c_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2)
-        check_c_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512F)
-    else()
-        check_c_compiler_flag("-msse3" COMPILER_SUPPORTS_SSE3)
-        check_c_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
-        check_c_compiler_flag("-mavx512f" COMPILER_SUPPORTS_AVX512F)
-    endif()
-
-    
-    if(COMPILER_SUPPORTS_SSE3)
-        message(STATUS "Compiler supports SSE3")
-        if(MSVC)
-            target_compile_options(ww PUBLIC /arch:SSE2)  # SSE3 is included in SSE2 support on MSVC
-        else()
-            target_compile_options(ww PUBLIC -msse3)
-        endif()
-        set(WW_HAVE_SSE3 1)
-        set(WW_CHECKSUM_SSE3 1)
-        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_sse3.c")
-    else()
-        message(FATAL_ERROR "SSE3 not supported by compiler")
-    endif()
-
-    if(COMPILER_SUPPORTS_AVX2)
-        message(STATUS "Compiler supports AVX2")
-        if(MSVC)
-            target_compile_options(ww PUBLIC /arch:AVX2)
-        else()
-            target_compile_options(ww PUBLIC -mavx2)
-        endif()
-        set(WW_HAVE_AVX2 1)
-        set(WW_SUPPORTED_MEMCOPY_AVX2 1)
-        set(WW_CHECKSUM_AVX2 1)
-        target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/net/wchecksum_avx2.c")
-    else()
-        message(STATUS "AVX2 not supported by compiler")
-    endif()
-
-        
-    if(COMPILER_SUPPORTS_AVX512F)
-        message(STATUS "Compiler supports AVX512F")
-        if(WW_ENABLE_AVX_512)
-            message(STATUS "Using AVX512F code...")
-            if(MSVC)
-                target_compile_options(ww PUBLIC /arch:AVX512)
-            else()
-                target_compile_options(ww PUBLIC -mavx512f)
-            endif()
-            set(WW_HAVE_AVX512F 1)
-            set(WW_SUPPORTED_MEMCOPY_AVX512F 1)
-        else()
-            message(STATUS "AVX512F is power consuming and is disabled by default")
-            message(STATUS "We are currently not using AVX512F code until the user enables it")
-        endif()
-        
-    else()
-        message(STATUS "AVX512F not supported by compiler")
-    endif()
-
-
-
-        # if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" AND (WIN32 OR LINUX))
-        #     MESSAGE(STATUS "Including amd64 checksum assembly code")
-        #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=1)
-        #     target_sources(ww PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/libc/checksum_amd64.s")
-        # else()
-        #     MESSAGE(STATUS "using C implementation of checksum")
-        #     target_compile_definitions(ww PUBLIC WW_COMPILE_CHECKSUM_ASSEMBLY=0)
-        # endif()
-
-else()
-    message(STATUS "advanced CPU instructions will not be used")
-endif()
-
-
-
-################################################################################
-# Configuration and Linking
-################################################################################
-# Configure file
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
 message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
+# ASM library configuration for Linux x86_64
 if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     target_include_directories(ww PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib)
     if(CMAKE_BUILD_TYPE STREQUAL "Release" AND ASMLIB_OVERRIDE)
-        # Disable built-in inline functions for optimal performance
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-builtin-function")  
         set(CMAKE_EXE_LINKER_FLAGS "-L${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib -laelf64o" CACHE INTERNAL "calculated linker flags, the order is important")
     else()
@@ -547,41 +558,41 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     endif()
 endif()
 
+# Architecture definitions
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=1)
-    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_32BIT=0)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=1 WW_COMPILE_FOR_32BIT=0)
 elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
-    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=0)
-    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_32BIT=1)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=0 WW_COMPILE_FOR_32BIT=1)
 else()
     message(FATAL_ERROR "Unknown pointer size")
 endif()
 
+# Build type definitions
 target_compile_definitions(ww PUBLIC 
     $<$<CONFIG:Debug>:DEBUG=1>
     $<$<CONFIG:RelWithDebInfo>:NDEBUG=1;RELEASEWITHDEBUGINFO=1>
     $<$<CONFIG:Release>:NDEBUG=1;RELEASE=1>
 )
 
+# Optional features
 if(ENABLE_UDS)
     target_compile_definitions(ww PUBLIC ENABLE_UDS)
 endif()
+
 if(WW_STATICLIB)
     target_compile_definitions(ww PUBLIC WW_STATICLIB)
 else()
     target_compile_definitions(ww PUBLIC WW_DYNAMICLIB)
 endif()
 
+# Platform-specific libraries
 if(WIN32)
-    target_compile_definitions(ww PUBLIC -DWIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0600)
     set(LIBS ${LIBS} secur32 crypt32 winmm ntdll iphlpapi ws2_32 pdh)
     if(ENABLE_WINDUMP)
         target_compile_definitions(ww PUBLIC ENABLE_WINDUMP)
         set(LIBS ${LIBS} dbghelp)
     endif()
-endif()
-
-if(ANDROID)
+elseif(ANDROID)
     set(LIBS ${LIBS} log)
 elseif(UNIX)
     set(LIBS ${LIBS} pthread m)
@@ -597,11 +608,8 @@ if(APPLE)
     set(LIBS ${LIBS} "-framework CoreFoundation" "-framework Security")
 endif()
 
-# this code will make valgrind output a bit cleaner, there is 1 unfreed resource because of c++ lineker
-# this code can free c++ exception handler allocated memory
-# only useful for development and debugging
+# GNU C++ exception handler cleanup (development/debugging)
 if(NOT MSVC)
-    # Create a test file with main (main is required) function to properly test linking
     set(FREERES_TEST_FILE "${CMAKE_CURRENT_BINARY_DIR}/test_freeres_wrap.cc")
     file(WRITE ${FREERES_TEST_FILE} "
 #define WW_FREERES_TEST_MODE 1
@@ -609,7 +617,6 @@ if(NOT MSVC)
 extern \"C\" void call_freeres(); 
 
 namespace __gnu_cxx {
-  // match the real signature exactly:
   void __freeres() noexcept;
 }
 
@@ -624,7 +631,7 @@ int main() {
 }
 #endif
 ")
-    # Try to compile and link as executable to ensure __gnu_cxx::__freeres is available
+    
     try_compile(FREERES_WRAP_COMPILES
         ${CMAKE_CURRENT_BINARY_DIR}/test_freeres_wrap
         ${FREERES_TEST_FILE}
@@ -634,26 +641,21 @@ int main() {
     )
     
     if(FREERES_WRAP_COMPILES)
-        message(STATUS "freeres_wrap.cc compilation test passed - including FREERS_EH library")
-        add_library(FREERS_EH OBJECT 
-            utils/freeres_wrap.cc
-        )
+        message(STATUS "Including FREERS_EH library for cleaner valgrind output")
+        add_library(FREERS_EH OBJECT utils/freeres_wrap.cc)
         target_compile_definitions(ww PRIVATE WW_CALL_GNU_FREES)
         set(LIBS ${LIBS} "FREERS_EH")
     else()
-        message(STATUS "freeres_wrap.cc linking test failed - __gnu_cxx::__freeres not available - skipping FREERS_EH")
-        # message(STATUS "Compilation output: ${FREERES_WRAP_OUTPUT}")
+        message(STATUS "__gnu_cxx::__freeres not available - skipping FREERS_EH")
     endif()
 endif()
 
 target_link_libraries(ww PUBLIC ${LIBS})
 target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
 
-
-
-
-# Sanitizer options (using generator expressions for multiconfig)
-
+################################################################################
+# Sanitizer Options (Debug builds only)
+################################################################################
 if(ENABLE_ASAN)
     target_compile_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=address>)
@@ -671,15 +673,10 @@ if(ENABLE_USAN)
     target_link_options(ww PUBLIC $<$<CONFIG:Debug>:-fsanitize=undefined>)
 endif()
 
-
-
-
 ################################################################################
-# Final Compiler-specific Options
+# Compiler-specific Options
 ################################################################################
 if(NOT MSVC)
-
-
     target_compile_options(ww PUBLIC 
         -Wall 
         -Wextra 
@@ -697,29 +694,24 @@ if(NOT MSVC)
         -Wwrite-strings
         -Wunused-parameter
         -Wstrict-prototypes
-
         # disable warnings for unused functions and unkown pragmas
         -Wno-unused-function
         -Wno-unknown-pragmas 
         -Wno-error=pragmas
         -Wno-unknown-warning-option
         -Wno-pragmas
-
-
         # disable warnings for int to pointer conversion
         # -Wno-int-to-pointer-cast
         # -Wno-pointer-to-int-cast
     )
 
-    # prevent defining _MSC_VER
     if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        # Suppress unused command-line argument warnings for ASM compilation on Clang
+        # This prevents -D flags and -pedantic from causing errors when assembling .s files
+        target_compile_options(ww PRIVATE $<$<AND:$<COMPILE_LANGUAGE:ASM>,$<C_COMPILER_ID:Clang>>:-Wno-unused-command-line-argument>)
+        # prevent defining _MSC_VER
         target_compile_options(ww PUBLIC -fno-ms-compatibility)
     endif()
-
-    # Suppress unused command-line argument warnings for ASM compilation on Clang
-    # This prevents -D flags and -pedantic from causing errors when assembling .s files
-    target_compile_options(ww PRIVATE $<$<AND:$<COMPILE_LANGUAGE:ASM>,$<C_COMPILER_ID:Clang>>:-Wno-unused-command-line-argument>)
-
 endif()
 
 if(APPLE)
@@ -729,17 +721,18 @@ if(APPLE)
 endif()
 
 if(MSVC)
-    target_compile_options(ww PUBLIC 
-        /W4
-        /WX
-        /wd4505 # unreferenced local function has been removed (unused function warning)
+    target_compile_options(ww PUBLIC /W4 /WX 
+    /wd4505 # unreferenced local function has been removed (unused function warning)
     )
 endif()
 
-
+# Precompiled headers (except on Apple)
 if(NOT APPLE)
     target_precompile_headers(ww PUBLIC "wwapi.h")
 endif()
 
-target_compile_definitions(ww PUBLIC STC_STATIC=1 WW_VERSION=${WW_VERSION_MAJOR}.${WW_VERSION_MINOR}.${WW_VERSION_PATCH})
-
+# Final definitions
+target_compile_definitions(ww PUBLIC 
+    STC_STATIC=1 
+    WW_VERSION=${WW_VERSION_MAJOR}.${WW_VERSION_MINOR}.${WW_VERSION_PATCH}
+)

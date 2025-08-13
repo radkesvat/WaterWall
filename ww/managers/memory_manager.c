@@ -8,14 +8,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+
+#if !ALLOCATOR_BYPASS
+
 void memorymanagerInit(void)
 {
     // assert(state == NULL);
     // state = memorymanagerCreateDedicatedMemory();
     // return state;
-}
 
-#if !ALLOCATOR_BYPASS
+    mi_option_enable(mi_option_allow_large_os_pages);
+    mi_option_enable(mi_option_eager_commit);
+    mi_option_enable(mi_option_large_os_pages);
+    // mi_option_set(mi_option_reserve_huge_os_pages, 1); 
+}
 
 struct dedicated_memory_s
 {
@@ -113,6 +120,13 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 }
 
 #else
+
+
+void memorymanagerInit(void)
+{
+
+}
+
 
 void *memoryAllocate(size_t size)
 {
