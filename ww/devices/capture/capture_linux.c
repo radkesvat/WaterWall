@@ -395,6 +395,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                     if (queued_count > 0)
                     {
                         distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                        queued_count = 0;
                     }
                     LOGE("CaptureDevice: Exit read routine due to End Of File");
                     return 0;
@@ -408,6 +409,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                     if (queued_count > 0)
                     {
                         distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                        queued_count = 0;
                     }
 
                     if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
