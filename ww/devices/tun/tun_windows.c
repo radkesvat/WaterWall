@@ -258,7 +258,6 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             else
             {
                 distributePacketPayloads(tdev, getNextDistributionWID(), &bufs[0], queued_count);
-
                 queued_count = 0;
             }
         }
@@ -275,7 +274,6 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 if (queued_count > 0)
                 {
                     distributePacketPayloads(tdev, getNextDistributionWID(), &bufs[0], queued_count);
-
                     queued_count = 0;
                     continue;
                 }
