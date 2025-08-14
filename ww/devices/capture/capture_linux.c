@@ -404,13 +404,14 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                 {
                     int saved_errno = errno;
                     bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
+                    // No more packets right now; distribute any packets we've accumulated and go back to poll
+                    if (queued_count > 0)
+                    {
+                        distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                    }
+
                     if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
                     {
-                        // No more packets right now; distribute any packets we've accumulated and go back to poll
-                        if (queued_count > 0)
-                        {
-                            distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
-                        }
                         break;
                     }
                     LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)", saved_errno,

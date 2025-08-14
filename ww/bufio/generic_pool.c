@@ -93,10 +93,12 @@ static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size
         .mp                  = mp,
         .create_item_handle  = create_h,
         .destroy_item_handle = destroy_h,
-#ifdef DEBUG
+
+#if POOL_THREAD_CHECK
         .tid = 0,
         .no_thread_check = false,
 #endif
+
 #if POOL_DEBUG == 1
         .in_use = 0,
 #endif

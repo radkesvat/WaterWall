@@ -20,7 +20,7 @@ struct buffer_pool_s
     atomic_size_t in_use;
 #endif
 
-#ifdef DEBUG
+#if POOL_THREAD_CHECK
     tid_t tid;
 #endif
 
@@ -35,7 +35,7 @@ struct buffer_pool_s
  * This has no effect on non-debug builds.
  * @param pool The generic pool to check access for.
  */
-#ifdef DEBUG
+#if POOL_THREAD_CHECK
 static inline void bufferpoolDebugCheckThreadAccess(buffer_pool_t *pool)
 {
     if (UNLIKELY(pool->tid == 0))
@@ -372,7 +372,7 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_small
         .in_use = 0,
 #endif
 
-#ifdef DEBUG
+#if POOL_THREAD_CHECK
         .tid = 0,
 #endif
         .large_buffers_mp = mp_large,

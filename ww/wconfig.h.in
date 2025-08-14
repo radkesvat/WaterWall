@@ -169,8 +169,8 @@ enum ram_profiles_e
 #define LARGE_BUFFER_SIZE_RAM_HIGH  32768
 #define LARGE_RAM_PROFILE_THRESHOLD kRamProfileM1Memory
 
-#define PROPER_LARGE_BUFFER_SIZE(ram_prifle)                                                                           \
-    ((ram_prifle) >= LARGE_RAM_PROFILE_THRESHOLD ? LARGE_BUFFER_SIZE_RAM_HIGH : LARGE_BUFFER_SIZE_RAM_LOW)
+#define PROPER_LARGE_BUFFER_SIZE(ram_profile)                                                                           \
+    ((ram_profile) >= LARGE_RAM_PROFILE_THRESHOLD ? LARGE_BUFFER_SIZE_RAM_HIGH : LARGE_BUFFER_SIZE_RAM_LOW)
 
 
 #define ALLOCATOR_BYPASS    0
@@ -178,6 +178,12 @@ enum ram_profiles_e
 #define BYPASS_GENERIC_POOL 0
 #define POOL_DEBUG          0
 
+// #define POOL_THREAD_CHECK (!(defined(RELEASE))) causes warning !
+#ifndef RELEASE
+#define POOL_THREAD_CHECK 1
+#else
+#define POOL_THREAD_CHECK 0
+#endif
 
 
 #endif // WW_CONFIG_H_
