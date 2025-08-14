@@ -12,8 +12,11 @@ To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (T
 
 # News
 
-I'm currently focused on writing the project's documentation. The code won't be changed unless a bug is reported or the docs are finished.
+In order to bring back `Reality` support, a `TLS server` needs to be implemented. Unfortunately, this requires both HTTP client and server nodes.
 
+Because OCSP (Online Certificate Status Protocol) support is required to Match Nginx Tls fingerprinting.
+
+This will extend the development timeline for the new version.
 
 
 # Donation
