@@ -18,14 +18,6 @@ extern unsigned int  windivert_dll_len;
 extern unsigned char windivert_sys[];
 extern unsigned int  windivert_sys_len;
 
-enum
-{
-    kReadPacketSize                       = 1500,
-    kEthDataLen                           = 1500,
-    kMasterMessagePoolsbufGetLeftCapacity = 64,
-    kQueueLen                             = 512,
-    kCaptureWriteChannelQueueMax          = 128
-};
 
 struct msg_event
 {
@@ -337,7 +329,7 @@ static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sb
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
-    *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
+    *msg = (struct msg_event){.cdev = cdev, .buf = buf};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -488,16 +480,15 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
-    *cdev =
-        (capture_device_t) {.name                = stringDuplicate(name),
-                            .running             = false,
-                            .up                  = false,
-                            .routine_reader      = routineReadFromCapture,
-                            .handle              = NULL,
-                            .read_event_callback = cb,
-                            .userdata            = userdata,
-                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                            .reader_buffer_pool  = reader_bpool};
+    *cdev = (capture_device_t){.name                = stringDuplicate(name),
+                               .running             = false,
+                               .up                  = false,
+                               .routine_reader      = routineReadFromCapture,
+                               .handle              = NULL,
+                               .read_event_callback = cb,
+                               .userdata            = userdata,
+                               .reader_message_pool = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+                               .reader_buffer_pool  = reader_bpool};
 
     memorySet(cdev->filter, 0, sizeof(cdev->filter));
     stringNPrintf(cdev->filter, sizeof(cdev->filter), "ip.SrcAddr == %s", capture_ip);

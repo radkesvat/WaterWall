@@ -121,7 +121,7 @@ static void tunWindowsStartup(void)
 struct msg_event
 {
     tun_device_t *tdev;
-    sbuf_t       *bufs[kMaxReadQueueSize];
+    sbuf_t       *bufs[kMaxReadDistributeQueueSize];
     uint8_t       count;
 };
 
@@ -211,22 +211,22 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 {
     tun_device_t         *tdev    = userdata;
     WINTUN_SESSION_HANDLE Session = tdev->session_handle;
-    sbuf_t               *buf[kMaxReadQueueSize];
+    sbuf_t               *bufs[kMaxReadDistributeQueueSize];
     uint8_t               queued_count = 0;
     ssize_t               nread;
 
     while (atomicLoadRelaxed(&(tdev->running)))
     {
-        buf[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        sbufReserveSpace(buf[queued_count], kReadPacketSize);
+        bufs[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
+        sbufReserveSpace(bufs[queued_count], kReadPacketSize);
 
         DWORD packet_size;
         BYTE *packet = WintunReceivePacket(Session, &packet_size);
 
         if (packet)
         {
-            sbufSetLength(buf[queued_count], packet_size);
-            memoryCopyLarge(sbufGetMutablePtr(buf[queued_count]), packet, packet_size);
+            sbufSetLength(bufs[queued_count], packet_size);
+            memoryCopyLarge(sbufGetMutablePtr(bufs[queued_count]), packet, packet_size);
 
             WintunReleaseReceivePacket(Session, packet);
 
@@ -236,28 +236,28 @@ static WTHREAD_ROUTINE(routineReadFromTun)
                 // printPacket(Packet, PacketSize);
             }
 
-            if (UNLIKELY(sbufGetLength(buf[queued_count]) > GLOBAL_MTU_SIZE))
+            if (UNLIKELY(sbufGetLength(bufs[queued_count]) > GLOBAL_MTU_SIZE))
             {
                 LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
-                     sbufGetLength(buf[queued_count]), GLOBAL_MTU_SIZE);
+                     sbufGetLength(bufs[queued_count]), GLOBAL_MTU_SIZE);
                 LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
                      "the "
                      "'misc' section");
 
                 for (unsigned int i = 0; i < queued_count; i++)
                 {
-                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf[i]);
+                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
                 }
                 terminateProgram(1);
             }
 
-            if (queued_count < kMaxReadQueueSize - 1)
+            if (queued_count < kMaxReadDistributeQueueSize - 1)
             {
                 queued_count++;
             }
             else
             {
-                distributePacketPayloads(tdev, getNextDistributionWID(), &buf[0], queued_count);
+                distributePacketPayloads(tdev, getNextDistributionWID(), &bufs[0], queued_count);
 
                 queued_count = 0;
             }
@@ -265,7 +265,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
         else
         {
 
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf[queued_count]);
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
 
             DWORD last_error = GetLastError();
             switch (last_error)
@@ -274,7 +274,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             case ERROR_NO_MORE_ITEMS:
                 if (queued_count > 0)
                 {
-                    distributePacketPayloads(tdev, getNextDistributionWID(), &buf[0], queued_count);
+                    distributePacketPayloads(tdev, getNextDistributionWID(), &bufs[0], queued_count);
 
                     queued_count = 0;
                     continue;
@@ -418,7 +418,6 @@ bool tundeviceBringUp(tun_device_t *tdev)
     return true;
 }
 
-
 bool tundeviceBringDown(tun_device_t *tdev)
 {
     if (! tdev->up)
@@ -488,7 +487,6 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     return true;
 }
 
-
 bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
     discard subnet;
@@ -513,7 +511,6 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
     }
     return true;
 }
-
 
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 {
@@ -575,7 +572,6 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
     memoryCopy(target, &proc, sizeof(FARPROC));
     return true;
 }
-
 
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
@@ -653,7 +649,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         .read_event_callback   = cb,
         .userdata              = userdata,
         .writer_buffer_channel = NULL,
-        .reader_message_pool   = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
+        .reader_message_pool   = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
         .reader_buffer_pool    = reader_bpool,
         .writer_buffer_pool    = writer_bpool,
         .adapter_handle        = NULL,

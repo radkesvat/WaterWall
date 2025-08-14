@@ -21,13 +21,8 @@
 
 enum
 {
-    kReadPacketSize                       = 1500,
-    kEthDataLen                           = 1500,
-    kMasterMessagePoolsbufGetLeftCapacity = 64,
-    kQueueLen                             = 16384 * 32,
-    // Drain up to this many packets after poll() signals readability
-    kPollDrainBatch                       = 128,
-    kCaptureWriteChannelQueueMax          = 128
+    kEthDataLen        = 1500,
+    kNetfilterQueueLen = 16384 * 32
 };
 
 static const char *ip_tables_enable_queue_mi  = "iptables -I INPUT -s %s -j NFQUEUE --queue-num %d";
@@ -38,12 +33,15 @@ static const char *sysctl_set_rmem_default = "sysctl -w net.core.rmem_default=33
 static const char *sysctl_set_wmem_max     = "sysctl -w net.core.wmem_max=33554432";
 static const char *sysctl_set_wmem_default = "sysctl -w net.core.wmem_default=16777216";
 
+/**
+ * Event message structure for TUN device communication
+ */
 struct msg_event
 {
     capture_device_t *cdev;
-    sbuf_t           *buf;
+    sbuf_t           *bufs[kMaxReadDistributeQueueSize];
+    uint8_t           count;
 };
-
 static pool_item_t *allocCaptureMsgPoolHandle(master_pool_t *pool, void *userdata)
 {
     discard userdata;
@@ -58,23 +56,40 @@ static void destroyCaptureMsgPoolHandle(master_pool_t *pool, master_pool_item_t 
     memoryFree(item);
 }
 
+/**
+ * Handles events received on the local thread
+ * @param ev Event containing message data
+ */
 static void localThreadEventReceived(wevent_t *ev)
 {
     struct msg_event *msg = weventGetUserdata(ev);
-    wid_t             tid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
+    wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-    msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->buf, tid);
+    for (uint8_t i = 0; i < msg->count; i++)
+    {
+        msg->cdev->read_event_callback(msg->cdev, msg->cdev->userdata, msg->bufs[i], wid);
+    }
 
     masterpoolReuseItems(msg->cdev->reader_message_pool, (void **) &msg, 1, msg->cdev);
 }
 
-static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sbuf_t *buf)
+/**
+ * Distributes a packet payload to the target worker thread
+ * @param cdev Capture device handle
+ * @param target_wid Target thread ID
+ * @param buf Buffer containing packet data
+ */
+static void distributePacketPayloads(capture_device_t *cdev, wid_t target_wid, sbuf_t **buf, uint8_t queued_count)
 {
-
     struct msg_event *msg;
     masterpoolGetItems(cdev->reader_message_pool, (const void **) &(msg), 1, cdev);
 
-    *msg = (struct msg_event) {.cdev = cdev, .buf = buf};
+    msg->cdev  = cdev;
+    msg->count = queued_count;
+    for (uint8_t i = 0; i < queued_count; i++)
+    {
+        msg->bufs[i] = buf[i];
+    }
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -83,7 +98,10 @@ static void distributePacketPayload(capture_device_t *cdev, wid_t target_wid, sb
     weventSetUserData(&ev, msg);
     if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
     {
-        bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+        for (uint8_t i = 0; i < queued_count; i++)
+        {
+            bufferpoolReuseBuffer(cdev->reader_buffer_pool, msg->bufs[i]);
+        }
         masterpoolReuseItems(cdev->reader_message_pool, (void **) &msg, 1, cdev);
     }
 }
@@ -359,17 +377,25 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 
         if (fds[0].revents & POLLIN)
         {
-            // Drain multiple packets while the socket remains readable
-            for (int i = 0; i < kPollDrainBatch; ++i)
-            {
-                sbuf_t *buf = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
-                buf         = sbufReserveSpace(buf, kReadPacketSize);
+            uint8_t queued_count = 0;
+            sbuf_t *bufs[kMaxReadDistributeQueueSize];
 
-                nread = netfilterGetPacket(cdev->socket, cdev->queue_number, buf);
+            // Drain multiple packets while the socket remains readable
+            for (int i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
+            {
+                bufs[queued_count] = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
+                sbufReserveSpace(bufs[queued_count], kReadPacketSize);
+
+                nread = netfilterGetPacket(cdev->socket, cdev->queue_number, bufs[queued_count]);
 
                 if (nread == 0)
                 {
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
+                    // Distribute any packets we've accumulated before returning
+                    if (queued_count > 0)
+                    {
+                        distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                    }
                     LOGE("CaptureDevice: Exit read routine due to End Of File");
                     return 0;
                 }
@@ -377,29 +403,39 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
                 if (nread < 0)
                 {
                     int saved_errno = errno;
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
                     {
-                        // No more packets right now; go back to poll
+                        // No more packets right now; distribute any packets we've accumulated and go back to poll
+                        if (queued_count > 0)
+                        {
+                            distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
+                        }
                         break;
                     }
-                    LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)",
-                         saved_errno, strerror(saved_errno));
+                    LOGW("CaptureDevice: failed to read a packet from netfilter socket, errno is %d (%s)", saved_errno,
+                         strerror(saved_errno));
                     // On other errors, also go back to poll to avoid a tight loop
                     break;
                 }
 
                 // Length was set in netfilterGetPacket via sbufSetLength
-                if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
+                if (UNLIKELY(sbufGetLength(bufs[queued_count]) > GLOBAL_MTU_SIZE))
                 {
                     // we are capturing packets and this can happen, so we just log it
                     LOGW("CaptureDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
-                         sbufGetLength(buf), GLOBAL_MTU_SIZE);
-                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
+                         sbufGetLength(bufs[queued_count]), GLOBAL_MTU_SIZE);
+                    bufferpoolReuseBuffer(cdev->reader_buffer_pool, bufs[queued_count]);
                     continue;
                 }
 
-                distributePacketPayload(cdev, getNextDistributionWID(), buf);
+                queued_count++;
+            }
+
+            // Distribute all accumulated packets in one batch
+            if (queued_count > 0)
+            {
+                distributePacketPayloads(cdev, getNextDistributionWID(), bufs, queued_count);
             }
             continue;
         }
@@ -547,9 +583,9 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
         close(socket_netfilter);
         return NULL;
     }
-    if (! netfilterSetQueueLength(socket_netfilter, queue_number, kQueueLen))
+    if (! netfilterSetQueueLength(socket_netfilter, queue_number, kNetfilterQueueLen))
     {
-        LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kQueueLen);
+        LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kNetfilterQueueLen);
 
         close(socket_netfilter);
         return NULL;
@@ -571,20 +607,19 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
 
     capture_device_t *cdev = memoryAllocate(sizeof(capture_device_t));
 
-    *cdev =
-        (capture_device_t) {.name                = stringDuplicate(name),
-                            .running             = false,
-                            .up                  = false,
-                            .routine_reader      = routineReadFromCapture,
-                            .socket              = socket_netfilter,
-                            .queue_number        = queue_number,
-                            .read_event_callback = cb,
-                            .userdata            = userdata,
-                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                            .netfilter_queue_number = queue_number,
-                            .bringup_command        = bringup_cmd,
-                            .bringdown_command      = bringdown_cmd,
-                            .reader_buffer_pool     = reader_bpool};
+    *cdev = (capture_device_t){.name                   = stringDuplicate(name),
+                               .running                = false,
+                               .up                     = false,
+                               .routine_reader         = routineReadFromCapture,
+                               .socket                 = socket_netfilter,
+                               .queue_number           = queue_number,
+                               .read_event_callback    = cb,
+                               .userdata               = userdata,
+                               .reader_message_pool    = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+                               .netfilter_queue_number = queue_number,
+                               .bringup_command        = bringup_cmd,
+                               .bringdown_command      = bringdown_cmd,
+                               .reader_buffer_pool     = reader_bpool};
     if (pipe(cdev->linux_pipe_fds) != 0)
     {
         LOGE("CaptureDevice: failed to create pipe for linux_pipe_fds");

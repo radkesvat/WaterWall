@@ -8,8 +8,6 @@
 */
 
 /*
-    with 16 bytes of the size of the struct and 16 bytes aligned buf inside it
-
     it will be aligned to 32 bytes boundary which will help memoryCopyAVX2 to use Aligned memory copy
 */
 
@@ -78,7 +76,7 @@ sbuf_t *sbufSlice(sbuf_t *b, uint32_t bytes);
 sbuf_t *sbufDuplicate(sbuf_t *b);
 
 /**
- * Gets total capacity of the buffer.
+ * Gets total capacity of the buffer. (Total capacity is a constant value that will not change)
  */
 static inline uint32_t sbufGetTotalCapacity(sbuf_t *const b)
 {
@@ -94,7 +92,7 @@ static inline uint32_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
 }
 
 /**
- * Gets left capacity of the buffer.
+ * Gets left capacity of the buffer. (This means how much space is left, it gets reduced if you shift left)
  */
 static inline uint32_t sbufGetLeftCapacity(const sbuf_t *const b)
 {
@@ -110,7 +108,7 @@ static inline uint32_t sbufGetLeftCapacityNoPadding(const sbuf_t *const b)
 }
 
 /**
- * Gets right capacity of the buffer.
+ * Gets right capacity of the buffer. (This means how much space is left, it gets reduced if you shift right)
  */
 static inline uint32_t sbufGetRightCapacity(const sbuf_t *const b)
 {
@@ -257,7 +255,7 @@ static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restri
 }
 
 /**
- * Writes a  8-bit unsigned integer.
+ * Writes a 8-bit unsigned integer.
  */
 static inline void sbufWriteUI8(sbuf_t *const b, const uint8_t data)
 {

@@ -17,17 +17,21 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <linux/ipv6.h>
-#else // bsd
+#elif defined(OS_BSD)
 #include <net/if.h>
 #include <net/if_tun.h>
+#else
+#error "Unsupported OS"
 #endif
 
-enum { kTunPollDrainBatch = 128 };
-
+/**
+ * Event message structure for TUN device communication
+ */
 struct msg_event
 {
     tun_device_t *tdev;
-    sbuf_t       *buf;
+    sbuf_t       *bufs[kMaxReadDistributeQueueSize];
+    uint8_t       count;
 };
 
 // Allocate memory for message pool handle
@@ -46,25 +50,40 @@ static void destroyTunMsgPoolHandle(master_pool_t *pool, master_pool_item_t *ite
     memoryFree(item);
 }
 
-// Handle local thread event
+/**
+ * Handles events received on the local thread
+ * @param ev Event containing message data
+ */
 static void localThreadEventReceived(wevent_t *ev)
 {
-
     struct msg_event *msg = weventGetUserdata(ev);
     wid_t             wid = (wid_t) (wloopGetWid(weventGetLoop(ev)));
 
-    msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->buf, wid);
+    for (unsigned int i = 0; i < msg->count; i++)
+    {
+        msg->tdev->read_event_callback(msg->tdev, msg->tdev->userdata, msg->bufs[i], wid);
+    }
+
     masterpoolReuseItems(msg->tdev->reader_message_pool, (void **) &msg, 1, msg->tdev);
 }
 
-// Distribute packet payload to the target thread
-static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t *buf)
+/**
+ * Distributes a packet payload to the target worker thread
+ * @param tdev TUN device handle
+ * @param target_wid Target thread ID
+ * @param buf Buffer containing packet data
+ */
+static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_t **buf, unsigned int queued_count)
 {
-
     struct msg_event *msg;
     masterpoolGetItems(tdev->reader_message_pool, (const void **) &(msg), 1, tdev);
 
-    *msg = (struct msg_event) {.tdev = tdev, .buf = buf};
+    msg->tdev  = tdev;
+    msg->count = queued_count;
+    for (unsigned int i = 0; i < queued_count; i++)
+    {
+        msg->bufs[i] = buf[i];
+    }
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
@@ -73,7 +92,10 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t
     weventSetUserData(&ev, msg);
     if (UNLIKELY(false == wloopPostEvent(getWorkerLoop(target_wid), &ev)))
     {
-        bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+        for (unsigned int i = 0; i < queued_count; i++)
+        {
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, msg->bufs[i]);
+        }
         masterpoolReuseItems(tdev->reader_message_pool, (void **) &msg, 1, tdev);
     }
 }
@@ -82,15 +104,18 @@ static void distributePacketPayload(tun_device_t *tdev, wid_t target_wid, sbuf_t
 // returns 1 to continue, 0 on EOF (caller should exit), -1 on other errors (caller may continue)
 static int tunDrainPackets(tun_device_t *tdev)
 {
-    for (int i = 0; i < kTunPollDrainBatch; ++i)
+    uint8_t queued_count = 0;
+    sbuf_t *bufs[kMaxReadDistributeQueueSize];
+
+    for (int i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
     {
-        sbuf_t *buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        sbufReserveSpace(buf, kReadPacketSize);
+        bufs[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
+        sbufReserveSpace(bufs[queued_count], kReadPacketSize);
 
         int nread;
         for (;;)
         {
-            nread = (int) read(tdev->handle, sbufGetMutablePtr(buf), kReadPacketSize);
+            nread = (int) read(tdev->handle, sbufGetMutablePtr(bufs[queued_count]), kReadPacketSize);
             if (nread < 0 && errno == EINTR)
             {
                 continue;
@@ -100,17 +125,28 @@ static int tunDrainPackets(tun_device_t *tdev)
 
         if (nread == 0)
         {
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
+            // Distribute any packets we've accumulated before returning
+            if (queued_count > 0)
+            {
+                distributePacketPayloads(tdev, getNextDistributionWID(), bufs, queued_count);
+            }
             return 0;
         }
 
         if (nread < 0)
         {
             int saved_errno = errno;
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
+
+            // No more packets now; distribute any packets we've accumulated and end this drain cycle
+            if (queued_count > 0)
+            {
+                distributePacketPayloads(tdev, getNextDistributionWID(), bufs, queued_count);
+            }
+
             if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK)
             {
-                // No more packets now; end this drain cycle
                 return 1;
             }
             LOGW("TunDevice: failed to read a packet from TUN device, errno is %d (%s), retrying...", saved_errno,
@@ -123,19 +159,25 @@ static int tunDrainPackets(tun_device_t *tdev)
             LOGD("TunDevice: read %d bytes from device %s", nread, tdev->name);
         }
 
-        sbufSetLength(buf, nread);
+        sbufSetLength(bufs[queued_count], nread);
 
-        if (UNLIKELY(sbufGetLength(buf) > GLOBAL_MTU_SIZE))
+        if (UNLIKELY(sbufGetLength(bufs[queued_count]) > GLOBAL_MTU_SIZE))
         {
-            LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
-                 GLOBAL_MTU_SIZE);
+            LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
+                 sbufGetLength(bufs[queued_count]), GLOBAL_MTU_SIZE);
             LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in the '"
                  "misc' section");
-            bufferpoolReuseBuffer(tdev->reader_buffer_pool, buf);
+            bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             terminateProgram(1);
         }
 
-        distributePacketPayload(tdev, getNextDistributionWID(), buf);
+        queued_count++;
+    }
+
+    // Distribute all accumulated packets in one batch
+    if (queued_count > 0)
+    {
+        distributePacketPayloads(tdev, getNextDistributionWID(), bufs, queued_count);
     }
 
     return 1;
@@ -407,7 +449,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
     return true;
 }
 
-
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
     discard offload; // todo (send/receive offloading)
@@ -547,20 +588,20 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t) {.name                  = stringDuplicate(ifr.ifr_name),
-                            .running               = false,
-                            .up                    = false,
-                            .routine_reader        = routineReadFromTun,
-                            .routine_writer        = routineWriteToTun,
-                            .handle                = fd,
-                            .read_event_callback   = cb,
-                            .userdata              = userdata,
-                            .writer_buffer_channel = NULL,
-                            .reader_message_pool = masterpoolCreateWithCapacity(kMasterMessagePoolsbufGetLeftCapacity),
-                            .reader_buffer_pool  = reader_bpool,
-                            .writer_buffer_pool  = writer_bpool,
-                            .mtu                   = mtu,
-                            .packets_queued        = 0};
+    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
+                           .running               = false,
+                           .up                    = false,
+                           .routine_reader        = routineReadFromTun,
+                           .routine_writer        = routineWriteToTun,
+                           .handle                = fd,
+                           .read_event_callback   = cb,
+                           .userdata              = userdata,
+                           .writer_buffer_channel = NULL,
+                           .reader_message_pool   = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+                           .reader_buffer_pool    = reader_bpool,
+                           .writer_buffer_pool    = writer_bpool,
+                           .mtu                   = mtu,
+                           .packets_queued        = 0};
 
     if (pipe(tdev->linux_pipe_fds) != 0)
     {
