@@ -222,7 +222,7 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
                 settings->ram_profile = kRamProfileL2Memory;
                 break;
             default:
-                printError("CoreSettings: ram-profile must be in range [1 - 5]\n");
+                printError("CoreSettings: ram-profile must be in range [1 - 6]\n");
                 terminateProgram(1);
                 break;
             }
