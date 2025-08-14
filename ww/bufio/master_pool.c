@@ -29,11 +29,7 @@ static void defaultDestroyHandle(master_pool_t *pool, master_pool_item_t *item, 
     terminateProgram(1);
 }
 
-/**
- * Creates a master pool with a specified capacity.
- * @param pool_width The width of the pool.
- * @return A pointer to the created master pool.
- */
+
 master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
 {
 
@@ -78,12 +74,7 @@ master_pool_t *masterpoolCreateWithCapacity(uint32_t pool_width)
     return pool_ptr;
 }
 
-/**
- * Installs create and destroy callbacks for the master pool.
- * @param pool The master pool.
- * @param create_h The handler to create pool items.
- * @param destroy_h The handler to destroy pool items.
- */
+
 void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle create_h,
                                 MasterPoolItemDestroyHandle destroy_h)
 {
@@ -93,11 +84,7 @@ void masterpoolInstallCallBacks(master_pool_t *pool, MasterPoolItemCreateHandle 
     mutexUnlock(&(pool->mutex));
 }
 
-/**
- * Makes the master pool empty without destroying it.
- * @param pool The master pool to make empty.
- * @param userdata User data passed to the destroy handler.
- */
+
 void masterpoolMakeEmpty(master_pool_t *pool, void *userdata)
 {
     mutexLock(&(pool->mutex));
@@ -110,10 +97,7 @@ void masterpoolMakeEmpty(master_pool_t *pool, void *userdata)
     mutexUnlock(&(pool->mutex));
 }
 
-/**
- * Destroys the master pool and frees its resources.
- * @param pool The master pool to destroy.
- */
+
 void masterpoolDestroy(master_pool_t *pool)
 {
     mutexLock(&(pool->mutex));

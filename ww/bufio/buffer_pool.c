@@ -260,11 +260,7 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
     return pool->small_buffers[pool->small_buffers_container_len];
 }
 
-/**
- * Reuses a buffer by returning it to the buffer pool.
- * @param pool The buffer pool.
- * @param b The buffer to reuse.
- */
+
 void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
 {
 

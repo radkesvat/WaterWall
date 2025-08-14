@@ -46,10 +46,7 @@ void genericpoolReCharge(generic_pool_t *pool)
 #endif
 }
 
-/**
- * Shrinks the pool by releasing a number of buffers.
- * @param pool The generic pool to shrink.
- */
+
 void genericpoolShrink(generic_pool_t *pool)
 {
     const uint32_t decrease = (pool->len < (pool->cap / 2) ? pool->len : (pool->cap / 2));

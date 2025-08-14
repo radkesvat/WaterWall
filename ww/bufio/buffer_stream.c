@@ -124,12 +124,6 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
     }
 }
 
-/**
- * Reads at least a specified number of bytes from the buffer stream.
- * @param self The buffer stream.
- * @param bytes The minimum number of bytes to read.
- * @return A pointer to the buffer containing the read data.
- */
 sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
 {
     assert(self && self->size >= bytes && bytes > 0);

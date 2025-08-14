@@ -6,9 +6,6 @@
 
 // #define TOTALPADDING ((uint32_t) (sizeof(sbuf_t) + (LEFTPADDING + RIGHTPADDING)))
 
-/**
- * Destroys the shift buffer and frees its memory.
- */
 void sbufDestroy(sbuf_t *b)
 {
     if (UNLIKELY(b->is_temporary))
@@ -19,9 +16,7 @@ void sbufDestroy(sbuf_t *b)
     memoryFree(b->original_ptr);
 }
 
-/**
- * Creates a new shift buffer with specified capacity and left padding.
- */
+
 sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
 {
     // Ensure pad_left is always a multiple of 32 for optimal alignment
@@ -55,17 +50,13 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     return b;
 }
 
-/**
- * Creates a new shift buffer with specified capacity.
- */
+
 sbuf_t *sbufCreate(uint32_t minimum_capacity)
 {
     return sbufCreateWithPadding(minimum_capacity, 0);
 }
 
-/**
- * Duplicates the shift buffer.
- */
+
 sbuf_t *sbufDuplicate(sbuf_t *b)
 {
     sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
@@ -78,9 +69,7 @@ sbuf_t *sbufDuplicate(sbuf_t *b)
     return newbuf;
 }
 
-/**
- * Concatenates two shift buffers.
- */
+
 sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 {
     uint32_t root_length   = sbufGetLength(root);
@@ -93,9 +82,7 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
     return root;
 }
 
-/**
- * Moves data from source buffer to destination buffer.
- */
+
 sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_t bytes)
 {
     assert(bytes <= sbufGetLength(source));
@@ -111,9 +98,7 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_
     return dest;
 }
 
-/**
- * Slices the buffer by specified number of bytes.
- */
+
 sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
 {
     sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
