@@ -381,7 +381,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             sbuf_t *bufs[kMaxReadDistributeQueueSize];
 
             // Drain multiple packets while the socket remains readable
-            for (int i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
+            for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
             {
                 bufs[queued_count] = bufferpoolGetSmallBuffer(cdev->reader_buffer_pool);
                 sbufReserveSpace(bufs[queued_count], kReadPacketSize);

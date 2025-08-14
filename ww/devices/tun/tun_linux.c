@@ -107,7 +107,7 @@ static int tunDrainPackets(tun_device_t *tdev)
     uint8_t queued_count = 0;
     sbuf_t *bufs[kMaxReadDistributeQueueSize];
 
-    for (int i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
+    for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
     {
         bufs[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
         sbufReserveSpace(bufs[queued_count], kReadPacketSize);
