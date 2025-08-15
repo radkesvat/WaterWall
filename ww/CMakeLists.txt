@@ -510,6 +510,12 @@ target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
 
+# Ensure GNU extensions are enabled for lwIP unix port in Unity builds
+# This exposes pthread_setname_np prototype on glibc-based systems.
+if(UNIX)
+    target_compile_definitions(ww_lwip PRIVATE _GNU_SOURCE)
+endif()
+
 if(UNIX)
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
 else()
