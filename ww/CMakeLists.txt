@@ -201,10 +201,6 @@ check_header("sys/endian.h")
 check_header("x86intrin.h")
 check_header("immintrin.h")
 
-if(NOT MSVC)
-    set(CMAKE_REQUIRED_LIBRARIES "-pthread")
-endif()
-
 check_function("gettid" "unistd.h")
 check_function("strlcpy" "string.h")
 check_function("strlcat" "string.h")
@@ -532,6 +528,7 @@ if(WIN32)
 
     if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
         set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -fno-ms-compatibility)
+        target_compile_definitions(ww_lwip PUBLIC LWIP_ERRNO_STDINCLUDE=1)
     endif()
 endif()
 
