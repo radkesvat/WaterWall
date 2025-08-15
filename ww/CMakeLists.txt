@@ -514,6 +514,11 @@ target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
 # This exposes pthread_setname_np prototype on glibc-based systems.
 if(UNIX)
     target_compile_definitions(ww_lwip PRIVATE _GNU_SOURCE)
+    set_source_files_properties(
+    lwip/contrib/ports/unix/port/sys_arch.c
+    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+    )
+
 endif()
 
 if(UNIX)
