@@ -528,7 +528,7 @@ if(WIN32)
 
     if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
         set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -fno-ms-compatibility)
-        target_compile_definitions(ww_lwip PUBLIC LWIP_ERRNO_STDINCLUDE=1)
+        set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
     endif()
 endif()
 
