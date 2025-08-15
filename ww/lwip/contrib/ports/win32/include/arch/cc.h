@@ -55,7 +55,7 @@
 /*
   Radkesvat CHANGES BEGIN
 */
-#ifdef WW_LWIP_HAVE_ERRNO_H
+#if WW_LWIP_HAVE_ERRNO_H
 #include <errno.h>
 #else 
 #define LWIP_PROVIDE_ERRNO
