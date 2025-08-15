@@ -162,14 +162,15 @@ if(NOT MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wno-free-nonheap-object" CACHE STRING "Linker flags" FORCE)
 endif()
 
-
 set_target_properties(crypto PROPERTIES UNITY_BUILD OFF)
-set_target_properties(bssl PROPERTIES UNITY_BUILD OFF)
 set_target_properties(ssl PROPERTIES UNITY_BUILD OFF)
 set_target_properties(pki PROPERTIES UNITY_BUILD OFF)
 set_target_properties(fipsmodule PROPERTIES UNITY_BUILD OFF)
 set_target_properties(decrepit PROPERTIES UNITY_BUILD OFF)
 
+if(NOT APPLE)
+    set_target_properties(bssl PROPERTIES UNITY_BUILD OFF)
+endif()
 
 
 #==============================================================================

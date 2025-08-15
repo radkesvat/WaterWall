@@ -501,6 +501,10 @@ endif()
 if(WIN32)
     set(LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/win32/include")
     target_compile_definitions(ww PUBLIC LWIP_NO_UNISTD_H=1)
+    # Fix for Clang on Windows: Prevent lwip from defining errno constants that conflict with pthread_compat.h
+    if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} LWIP_PROVIDE_ERRNO=0)
+    endif()
 else()
     set(LWIP_INCLUDE_DIRS ${LWIP_INCLUDE_DIRS} "${LWIP_CONTRIB_DIR}/ports/unix/port/include")
 endif()
@@ -526,8 +530,15 @@ endif()
 
 # Windows-specific LWIP compiler flags for non-MSVC compilers
 if(WIN32 AND NOT MSVC)
-    set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-pragma-pack)
+    if(NOT MSVC)
+        set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-pragma-pack)
+    endif()
+
+    if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -fno-ms-compatibility)
+    endif()
 endif()
+
 
 target_compile_options(ww_lwip PRIVATE ${LWIP_COMPILER_FLAGS})
 set(LIBS ${LIBS} ww_lwip)
