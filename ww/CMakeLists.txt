@@ -197,6 +197,7 @@ check_header("sys/time.h")
 check_header("fcntl.h")
 check_header("pthread.h")
 check_header("endian.h")
+check_header("errno.h")
 check_header("sys/endian.h")
 check_header("x86intrin.h")
 check_header("immintrin.h")
@@ -487,6 +488,7 @@ set(LWIP_INCLUDE_DIRS
     "${LWIP_DIR}/contrib"
     "${LWIPOPTS_DIR}"
 )
+set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} WW_LWIP_HAVE_ERRNO_H=$<IF:${HAVE_ERRNO_H},1,0>)
 
 if(NOT APPLE)
     set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
@@ -530,15 +532,12 @@ if(NOT MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" AND NOT CMAKE_C_COMPILE
     set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-stringop-overread -Wno-stringop-overflow)
 endif()
 
-# Windows-specific LWIP compiler flags for non-MSVC compilers
+# Windows-specific LWIP compiler flags for Clang
 if(WIN32)
-    if(NOT MSVC)
-        set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-pragma-pack)
-    endif()
-
     if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+        set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-pragma-pack)
         set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -fno-ms-compatibility)
-        set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
+        # set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
     endif()
 endif()
 

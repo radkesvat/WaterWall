@@ -40,15 +40,30 @@
 #pragma warning (disable: 4711) /* The compiler performed inlining on the given function, although it was not marked for inlining */
 #endif
 
-#ifdef _MSC_VER
-#if _MSC_VER >= 1910
-#include <errno.h> /* use MSVC errno for >= 2017 */
-#else
-#define LWIP_PROVIDE_ERRNO /* provide errno for MSVC pre-2017 */
-#endif
-#else /* _MSC_VER */
-#define LWIP_PROVIDE_ERRNO /* provide errno for non-MSVC */
-#endif /* _MSC_VER */
+
+//Radkesvat : commenting this and using the new condition
+// #ifdef _MSC_VER
+// #if _MSC_VER >= 1910
+// #include <errno.h> /* use MSVC errno for >= 2017 */
+// #else
+// #define LWIP_PROVIDE_ERRNO /* provide errno for MSVC pre-2017 */
+// #endif
+// #else /* _MSC_VER */
+// #define LWIP_PROVIDE_ERRNO /* provide errno for non-MSVC */
+// #endif /* _MSC_VER */
+
+/*
+  Radkesvat CHANGES BEGIN
+*/
+#ifdef WW_LWIP_HAVE_ERRNO_H
+#include <errno.h>
+#else 
+#define LWIP_PROVIDE_ERRNO
+#endif 
+/*
+  Radkesvat CHANGES END
+*/
+
 
 #ifdef __GNUC__
 #define LWIP_TIMEVAL_PRIVATE 0

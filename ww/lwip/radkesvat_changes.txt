@@ -14,3 +14,32 @@ UDP_STATS -> LWIP_UDP_STATS
 
 IP6_STATS -> IP6_STATS
 
+i modified
+
+ww\lwip\contrib\ports\win32\include\arch\cc.h
+
+added this part: line 40
+
+//Radkesvat : commenting this and using the new condition
+// #ifdef _MSC_VER
+// #if _MSC_VER >= 1910
+// #include <errno.h> /* use MSVC errno for >= 2017 */
+// #else
+// #define LWIP_PROVIDE_ERRNO /* provide errno for MSVC pre-2017 */
+// #endif
+// #else /* _MSC_VER */
+// #define LWIP_PROVIDE_ERRNO /* provide errno for non-MSVC */
+// #endif /* _MSC_VER */
+
+/*
+  Radkesvat CHANGES BEGIN
+*/
+#ifdef WW_LWIP_HAVE_ERRNO_H
+#include <errno.h>
+#else 
+#define LWIP_PROVIDE_ERRNO
+#endif 
+/*
+  Radkesvat CHANGES END
+*/
+
