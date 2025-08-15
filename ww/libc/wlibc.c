@@ -1,5 +1,6 @@
 #include "wlibc.h"
 
+#include "wchecksum.h"
 #include "managers/memory_manager.h"
 
 void initWLibc(void)

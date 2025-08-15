@@ -4,15 +4,14 @@
 
 #include "wdef.h"
 
+#include "wexport.h"
+
 #include "watomic.h"
-#include "wchecksum.h"
 #include "wendian.h"
 #include "werr.h"
-#include "wexport.h"
 #include "wfrand.h"
 #include "whash.h"
 #include "wmath.h"
-#include "wmutex.h"
 #include "wtime.h"
 
 #include "ww_lwip.h"
