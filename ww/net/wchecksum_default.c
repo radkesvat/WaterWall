@@ -3,27 +3,6 @@
 
 extern uint16_t checksumDefault(const uint8_t *data, uint16_t len, uint32_t initial);
 
-/** Sum the pseudo‑header (src, dst, proto, length) in host order */
-static inline uint32_t checksumPseudoHeader(const struct ip4_addr_packed *src, const struct ip4_addr_packed *dst,
-                                              u8_t proto, u16_t length)
-{
-    uint32_t sum   = 0;
-    uint32_t src_h = lwip_ntohl(src->addr);
-    uint32_t dst_h = lwip_ntohl(dst->addr);
-
-    /* high and low 16 bits of source address */
-    sum += (src_h >> 16) & 0xFFFF;
-    sum += src_h & 0xFFFF;
-    /* high and low 16 bits of destination address */
-    sum += (dst_h >> 16) & 0xFFFF;
-    sum += dst_h & 0xFFFF;
-    /* protocol (zero‑padded high byte + proto in low byte) */
-    sum += proto;
-    /* TCP/UDP length */
-    sum += length;
-
-    return sum;
-}
 
 /** Helper function to read 64-bit big-endian value from buffer */
 static inline uint64_t readBigEndian64(const uint8_t *data)

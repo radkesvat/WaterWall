@@ -2,15 +2,15 @@
 
 struct logger_s;
 
-static logger_t *logger = NULL;
+static logger_t *network_logger = NULL;
 
 void networkloggerDestroy(void)
 {
-    if (logger)
+    if (network_logger)
     {
-        loggerSyncFile(logger);
-        loggerDestroy(logger);
-        logger = NULL;
+        loggerSyncFile(network_logger);
+        loggerDestroy(network_logger);
+        network_logger = NULL;
     }
 }
 
@@ -32,51 +32,51 @@ static void networkLoggerHandleOnlyStdStream(int loglevel, const char *buf, int 
 static void networkLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     networkLoggerHandleOnlyStdStream(loglevel, buf, len);
-    loggerWrite(logger, buf, len);
+    loggerWrite(network_logger, buf, len);
 }
 
 
 static void networkLoggerHandle(int loglevel, const char *buf, int len)
 {
     discard loglevel;
-    loggerWrite(logger, buf, len);
+    loggerWrite(network_logger, buf, len);
 }
 
 logger_t *getNetworkLogger(void)
 {
-    return logger;
+    return network_logger;
 }
 void setNetworkLogger(logger_t *newlogger)
 {
-    assert(logger == NULL);
-    logger = newlogger;
+    assert(network_logger == NULL);
+    network_logger = newlogger;
 }
 
 logger_t *createNetworkLogger(const char *log_file, bool console)
 {
-    assert(logger == NULL);
-    logger = loggerCreate();
-    bool path_accepted = loggerSetFile(logger, log_file);
+    assert(network_logger == NULL);
+    network_logger = loggerCreate();
+    bool path_accepted = loggerSetFile(network_logger, log_file);
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(logger, networkLoggerHandleWithStdStream);
+            loggerSetHandler(network_logger, networkLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(logger, networkLoggerHandleOnlyStdStream);
+            loggerSetHandler(network_logger, networkLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(logger, networkLoggerHandle);
+        loggerSetHandler(network_logger, networkLoggerHandle);
     }
-    return logger;
+    return network_logger;
 }
 
 logger_handler getNetworkLoggerHandle(void)
 {
-    return loggerGetHandle(logger);
+    return loggerGetHandle(network_logger);
 }

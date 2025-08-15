@@ -292,7 +292,7 @@ void wwSHA1(unsigned char* input, uint32_t inputlen, unsigned char digest[20]) {
     wwSHA1Final(digest, &ctx);
 }
 
-static inline char i2hex(unsigned char i) {
+static inline char wwsha1_i2hex(unsigned char i) {
     if(i<10){
         return (char) i +'0';
     }else{
@@ -306,8 +306,8 @@ void wwSHA1Hex(unsigned char* input, uint32_t inputlen, char* output, uint32_t o
     if (outputlen < 40) return;
     wwSHA1(input, inputlen, digest);
     for (i = 0; i < 20; ++i) {
-        *output++ = i2hex(digest[i] >> 4);
-        *output++ = i2hex(digest[i] & 0x0F);
+        *output++ = wwsha1_i2hex(digest[i] >> 4);
+        *output++ = wwsha1_i2hex(digest[i] & 0x0F);
     }
     if (outputlen > 40) *output = '\0';
 }

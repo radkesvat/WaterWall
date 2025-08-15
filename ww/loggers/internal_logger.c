@@ -1,15 +1,15 @@
 #include "internal_logger.h"
 
 struct logger_s;
-static logger_t *logger = NULL;
+static logger_t *internal_logger = NULL;
 
 void internaloggerDestroy(void)
 {
-    if (logger)
+    if (internal_logger)
     {
-        loggerSyncFile(logger);
-        loggerDestroy(logger);
-        logger = NULL;
+        loggerSyncFile(internal_logger);
+        loggerDestroy(internal_logger);
+        internal_logger = NULL;
     }
 }
 
@@ -31,72 +31,72 @@ static void internalLoggerHandleOnlyStdStream(int loglevel, const char *buf, int
 static void internalLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     internalLoggerHandleOnlyStdStream(loglevel, buf, len);
-    loggerWrite(logger, buf, len);
+    loggerWrite(internal_logger, buf, len);
 }
 
 static void internalLoggerHandle(int loglevel, const char *buf, int len)
 {
     discard loglevel;
-    loggerWrite(logger, buf, len);
+    loggerWrite(internal_logger, buf, len);
 }
 
 logger_t *getInternalLogger(void)
 {
-    return logger;
+    return internal_logger;
 }
 
 void setInternalLogger(logger_t *newlogger)
 {
-    assert(logger == NULL);
-    logger = newlogger;
+    assert(internal_logger == NULL);
+    internal_logger = newlogger;
 }
 
 logger_t *createInternalLogger(const char *log_file, bool console)
 {
-    assert(logger == NULL);
-    logger             = loggerCreate();
-    bool path_accepted = loggerSetFile(logger, log_file);
+    assert(internal_logger == NULL);
+    internal_logger             = loggerCreate();
+    bool path_accepted = loggerSetFile(internal_logger, log_file);
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(logger, internalLoggerHandleWithStdStream);
+            loggerSetHandler(internal_logger, internalLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(logger, internalLoggerHandleOnlyStdStream);
+            loggerSetHandler(internal_logger, internalLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(logger, internalLoggerHandle);
+        loggerSetHandler(internal_logger, internalLoggerHandle);
     }
 
-    return logger;
+    return internal_logger;
 }
 
 logger_handler getInternalLoggerHandle(void)
 {
-    return loggerGetHandle(logger);
+    return loggerGetHandle(internal_logger);
 }
 
 logger_t *loggerGetDefaultLogger(void)
 {
-    if (logger == NULL)
+    if (internal_logger == NULL)
     {
-        logger = loggerCreate();
-        loggerSetHandler(logger, internalLoggerHandleOnlyStdStream);
+        internal_logger = loggerCreate();
+        loggerSetHandler(internal_logger, internalLoggerHandleOnlyStdStream);
     }
-    return logger;
+    return internal_logger;
 }
 
 void loggerDestroyDefaultLogger(void)
 {
-    if (logger)
+    if (internal_logger)
     {
-        loggerSyncFile(logger);
-        loggerDestroy(logger);
-        logger = NULL;
+        loggerSyncFile(internal_logger);
+        loggerDestroy(internal_logger);
+        internal_logger = NULL;
     }
 }

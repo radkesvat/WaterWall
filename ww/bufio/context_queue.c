@@ -14,7 +14,7 @@ context_queue_t contextqueueCreate(void)
 {
 
     context_queue_t cq;
-    cq.q = ww_context_queue_t_with_capacity(kQCap);
+    cq.q = ww_context_queue_t_with_capacity(kBufferStreamQCap);
     return cq;
 }
 

@@ -197,7 +197,7 @@ void wwMD5(unsigned char* input, unsigned int inputlen, unsigned char digest[16]
     wwMD5Final(&ctx, digest);
 }
 
-static inline char i2hex(unsigned char i) {
+static inline char wwmd5_i2hex(unsigned char i) {
     if(i<10){
         return (char) i+'0';
     }else{
@@ -211,8 +211,8 @@ void wwMD5Hex(unsigned char* input, unsigned int inputlen, char* output, unsigne
     if (outputlen < 32) return;
     wwMD5(input, inputlen, digest);
     for (i = 0; i < 16; ++i) {
-        *output++ = i2hex(digest[i] >> 4);
-        *output++ = i2hex(digest[i] & 0x0F);
+        *output++ = wwmd5_i2hex(digest[i] >> 4);
+        *output++ = wwmd5_i2hex(digest[i] & 0x0F);
     }
     if (outputlen > 32) *output = '\0';
 }

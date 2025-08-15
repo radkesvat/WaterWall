@@ -5,7 +5,7 @@
 
 enum
 {
-    kQCap                = 16,
+    kBufferStreamQCap    = 16,
     kConcatMaxThreshould = 4096
 };
 
@@ -13,16 +13,13 @@ buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_paddin
 {
     assert(pool != NULL);
 
-    buffer_stream_t bs = {
-        .use_left_padding = use_left_padding,
-        .q = bs_doublequeue_t_with_capacity(kQCap),
-        .pool = pool,
-        .size = 0
-    };
+    buffer_stream_t bs = {.use_left_padding = use_left_padding,
+                          .q                = bs_doublequeue_t_with_capacity(kBufferStreamQCap),
+                          .pool             = pool,
+                          .size             = 0};
 
     return bs;
 }
-
 
 void bufferstreamEmpty(buffer_stream_t *self)
 {

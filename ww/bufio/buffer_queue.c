@@ -10,7 +10,7 @@
 
 enum
 {
-    kQCapDefault = 8 // Initial capacity of the queue
+    kBufferQueueQCap = 8 // Initial capacity of the queue
 };
 
 
@@ -19,7 +19,7 @@ buffer_queue_t bufferqueueCreate(int init_capacity)
 {
     if (init_capacity < 1)
     {
-        init_capacity = kQCapDefault;
+        init_capacity = kBufferQueueQCap;
     }
 
     buffer_queue_t bq = {.q = ww_sbuffer_queue_t_with_capacity(init_capacity),.total_len = 0};

@@ -2,15 +2,15 @@
 
 
 struct logger_s;
-static logger_t *logger = NULL;
+static logger_t *dns_logger = NULL;
 
 void dnsloggerDestroy(void)
 {
-    if (logger)
+    if (dns_logger)
     {
-        loggerSyncFile(logger);
-        loggerDestroy(logger);
-        logger = NULL;
+        loggerSyncFile(dns_logger);
+        loggerDestroy(dns_logger);
+        dns_logger = NULL;
     }
 }
 
@@ -32,51 +32,51 @@ static void dnsLoggerHandleOnlyStdStream(int loglevel, const char *buf, int len)
 static void dnsLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     dnsLoggerHandleOnlyStdStream(loglevel, buf, len);
-    loggerWrite(logger, buf, len);
+    loggerWrite(dns_logger, buf, len);
 }
 
 
 static void dnsLoggerHandle(int loglevel, const char *buf, int len)
 {
     discard loglevel;
-    loggerWrite(logger, buf, len);
+    loggerWrite(dns_logger, buf, len);
 }
 
 logger_t *getDnsLogger(void)
 {
-    return logger;
+    return dns_logger;
 }
 void setDnsLogger(logger_t *newlogger)
 {
-    assert(logger == NULL);
-    logger = newlogger;
+    assert(dns_logger == NULL);
+    dns_logger = newlogger;
 }
 
 logger_t *createDnsLogger(const char *log_file, bool console)
 {
-    assert(logger == NULL);
-    logger = loggerCreate();
-    bool path_accepted = loggerSetFile(logger, log_file);
+    assert(dns_logger == NULL);
+    dns_logger = loggerCreate();
+    bool path_accepted = loggerSetFile(dns_logger, log_file);
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(logger, dnsLoggerHandleWithStdStream);
+            loggerSetHandler(dns_logger, dnsLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(logger, dnsLoggerHandleOnlyStdStream);
+            loggerSetHandler(dns_logger, dnsLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(logger, dnsLoggerHandle);
+        loggerSetHandler(dns_logger, dnsLoggerHandle);
     }
-    return logger;
+    return dns_logger;
 }
 
 logger_handler getDnsLoggerHandle(void)
 {
-    return loggerGetHandle(logger);
+    return loggerGetHandle(dns_logger);
 }

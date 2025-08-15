@@ -10,7 +10,7 @@ if(POLICY CMP0169)
   set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
 endif()
 
-
+set(CMAKE_UNITY_BUILD ON)
 
 project(Waterwall
   VERSION 1.40
@@ -613,6 +613,8 @@ endif()
 # Platform-Specific Linker and Compiler Flags
 #--------------------------------------------------------------------------------
 
+# Enable Unity Build (already enabled globally)
+# set_target_properties(Waterwall PROPERTIES UNITY_BUILD ON)
 
 # Use C++ linker for proper C++ runtime handling (especially for BoringSSL)
 set_target_properties(Waterwall PROPERTIES LINKER_LANGUAGE CXX)

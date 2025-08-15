@@ -124,6 +124,18 @@ add_library(ww STATIC
     loggers/internal_logger.c
 )
 
+set_source_files_properties(
+    managers/signal_manager.c
+    managers/socket_manager.c
+    managers/node_manager.c
+    managers/memory_manager.c
+    devices/capture/capture_linux.c
+    devices/raw/raw_linux.c
+    devices/raw/raw_windows.c
+    devices/capture/capture_windows.c
+    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+)
+
 ################################################################################
 # Target Properties
 ################################################################################
@@ -148,9 +160,6 @@ target_include_directories(ww PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/libc
     ${CMAKE_CURRENT_SOURCE_DIR}/crypto
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/asmlib
-)
-
-target_include_directories(ww PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/base/internal_types
 )
 
@@ -387,6 +396,10 @@ elseif(WIN32)
     if(WITH_WEPOLL)
         target_include_directories(ww PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/event/wepoll)
         target_sources(ww PRIVATE event/wepoll/wepoll.c)
+        set_source_files_properties(
+            event/wepoll/wepoll.c
+            PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+        )
     endif()
 endif()
 
@@ -658,6 +671,12 @@ endif()
 
 target_link_libraries(ww PUBLIC ${LIBS})
 target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
+
+# Disable Unity Build for targets that cannot use it
+set_target_properties(sodium PROPERTIES UNITY_BUILD OFF)
+# set_target_properties(ww PROPERTIES UNITY_BUILD OFF)
+
+
 
 ################################################################################
 # Sanitizer Options (Debug builds only)

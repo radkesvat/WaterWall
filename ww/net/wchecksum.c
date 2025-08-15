@@ -31,15 +31,7 @@ static inline uint32_t checksumPseudoHeader(const struct ip4_addr_packed *src, c
 
     return sum;
 }
-/** Fold carries and return the one's‑complement result */
-static inline uint16_t finalizeChecksum(uint32_t sum)
-{
-    while (sum >> 16)
-    {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-    return (uint16_t) ~sum;
-}
+
 
 void calcFullPacketChecksum(uint8_t *buf)
 {

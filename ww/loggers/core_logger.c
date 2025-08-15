@@ -2,15 +2,15 @@
 
 
 struct logger_s;
-static logger_t *logger = NULL;
+static logger_t *core_logger = NULL;
 
 void coreloggerDestroy(void)
 {
-    if (logger)
+    if (core_logger)
     {
-        loggerSyncFile(logger);
-        loggerDestroy(logger);
-        logger = NULL;
+        loggerSyncFile(core_logger);
+        loggerDestroy(core_logger);
+        core_logger = NULL;
     }
 }
 
@@ -32,51 +32,51 @@ static void coreLoggerHandleOnlyStdStream(int loglevel, const char *buf, int len
 static void coreLoggerHandleWithStdStream(int loglevel, const char *buf, int len)
 {
     coreLoggerHandleOnlyStdStream(loglevel, buf, len);
-    loggerWrite(logger, buf, len);
+    loggerWrite(core_logger, buf, len);
 }
 
 static void coreLoggerHandle(int loglevel, const char *buf, int len)
 {
     discard loglevel;
-    loggerWrite(logger, buf, len);
+    loggerWrite(core_logger, buf, len);
 }
 
 logger_t *getCoreLogger(void)
 {
-    return logger;
+    return core_logger;
 }
 void setCoreLogger(logger_t *newlogger)
 {
-    assert(logger == NULL);
-    logger = newlogger;
+    assert(core_logger == NULL);
+    core_logger = newlogger;
 }
 
 logger_t *createCoreLogger(const char *log_file, bool console)
 {   
-    assert(logger == NULL);
-    logger = loggerCreate();
-    bool path_accepted = loggerSetFile(logger, log_file);
+    assert(core_logger == NULL);
+    core_logger = loggerCreate();
+    bool path_accepted = loggerSetFile(core_logger, log_file);
     if (console)
     {
         if (path_accepted)
         {
-            loggerSetHandler(logger, coreLoggerHandleWithStdStream);
+            loggerSetHandler(core_logger, coreLoggerHandleWithStdStream);
         }
         else
         {
 
-            loggerSetHandler(logger, coreLoggerHandleOnlyStdStream);
+            loggerSetHandler(core_logger, coreLoggerHandleOnlyStdStream);
         }
     }
     else if (path_accepted)
     {
-        loggerSetHandler(logger, coreLoggerHandle);
+        loggerSetHandler(core_logger, coreLoggerHandle);
     }
 
-    return logger;
+    return core_logger;
 }
 
 logger_handler getCoreLoggerHandle(void)
 {
-    return loggerGetHandle(logger);
+    return loggerGetHandle(core_logger);
 }
