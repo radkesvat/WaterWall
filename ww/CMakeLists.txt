@@ -529,7 +529,7 @@ if(NOT MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" AND NOT CMAKE_C_COMPILE
 endif()
 
 # Windows-specific LWIP compiler flags for non-MSVC compilers
-if(WIN32 AND NOT MSVC)
+if(WIN32)
     if(NOT MSVC)
         set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-pragma-pack)
     endif()
