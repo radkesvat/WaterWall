@@ -520,7 +520,7 @@ else()
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c)
 endif()
 
-if(NOT MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+if(NOT MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" AND NOT CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
     set(LWIP_COMPILER_FLAGS ${LWIP_COMPILER_FLAGS} -Wno-stringop-overread -Wno-stringop-overflow)
 endif()
 

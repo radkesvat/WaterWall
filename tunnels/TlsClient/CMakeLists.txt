@@ -170,6 +170,12 @@ set_target_properties(ssl PROPERTIES UNITY_BUILD OFF)
 # set_target_properties(fipsmodule PROPERTIES UNITY_BUILD OFF)
 # set_target_properties(decrepit PROPERTIES UNITY_BUILD OFF)
 
+set_source_files_properties(
+    boringssl/decrepit/dsa/dsa_decrepit.cc
+    boringssl/decrepit/dsa/dh_decrepit.cc
+    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+)
+
 #==============================================================================
 # Final Library Linkage
 #==============================================================================
