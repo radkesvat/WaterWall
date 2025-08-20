@@ -10,23 +10,6 @@ A simple core for tunneling and even direct user-server connections. based on hi
 
 To start please read the [docs](https://radkesvat.github.io/WaterWall-Docs/). (The documents are currently only in Persian language.)
 
-# News
-
-In order to bring back `Reality` support, a `TLS server` needs to be implemented. Unfortunately, this requires both HTTP client and server nodes.
-
-Because OCSP (Online Certificate Status Protocol) support is required to Match Nginx Tls fingerprinting.
-
-This will extend the development timeline for the new version.
-
-
-# Donation
-
-Those who are willing to support the continuation of the project can send donations to this TRX wallet.
-
-
-```
-TJpNiqtg3ddkrToUxm6tGhEaoaU9i1UK5c
-```
 
 <!-- # Plan
 
@@ -44,3 +27,4 @@ TJpNiqtg3ddkrToUxm6tGhEaoaU9i1UK5c
 
 
 Thanks for the support! ❤ -->
+
