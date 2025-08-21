@@ -1,10 +1,10 @@
 #include "wlibc.h"
 
 
-uint16_t checksumSSE3(const void *addr, uint16_t len, uint32_t csum);
+uint16_t checksumSSE3(const uint8_t *addr, uint16_t len, uint32_t csum);
 
 // Note: This function works internally in big endian
-uint16_t checksumSSE3(const void *addr, uint16_t len, uint32_t csum)
+uint16_t checksumSSE3(const uint8_t *addr, uint16_t len, uint32_t csum)
 {
     csum = lwip_htons(csum);
     uint_fast64_t  acc       = csum; /* fixed size for asm */

@@ -1,9 +1,9 @@
 #include "wlibc.h"
 
-uint16_t checksumAVX2(const void *, uint16_t, uint32_t);
+uint16_t checksumAVX2(const uint8_t *, uint16_t, uint32_t);
 
 // Note: This function works internally in big endian
-uint16_t checksumAVX2(const void *addr, uint16_t len, uint32_t csum)
+uint16_t checksumAVX2(const uint8_t *addr, uint16_t len, uint32_t csum)
 {
     csum = lwip_htons(csum);
     uint_fast64_t  acc       = csum; /* fixed size for asm */

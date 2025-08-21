@@ -150,7 +150,7 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, tcplistener_t
     socketfilteroptionInit(filter_opt);
     filter_opt->no_delay = state->option_tcp_no_delay;
 
-    getStringFromJsonObject(&(filter_opt->interface), settings, "interface");
+    getStringFromJsonObject(&(filter_opt->interface_name), settings, "interface");
     getStringFromJsonObject(&(filter_opt->balance_group_name), settings, "balance-group");
     getIntFromJsonObject((int *) &(filter_opt->balance_group_interval), settings, "balance-interval");
 

@@ -2,18 +2,18 @@
 
 #include "loggers/network_logger.h"
 
-static err_t interfaceInit(struct netif *netif)
-{
-    // IP4_ADDR(&netif->ip_addr.u_addr.ip4, 192, 168, 2, 10);  // Set IP address
-    // IP4_ADDR(&netif->gw.u_addr.ip4, 192, 168, 2, 1);        // Set gateway
-    // IP4_ADDR(&netif->netmask.u_addr.ip4, 255, 255, 255, 0); // Set subnet mask
+// static err_t interfaceInit(struct netif *netif)
+// {
+//     // IP4_ADDR(&netif->ip_addr.u_addr.ip4, 192, 168, 2, 10);  // Set IP address
+//     // IP4_ADDR(&netif->gw.u_addr.ip4, 192, 168, 2, 1);        // Set gateway
+//     // IP4_ADDR(&netif->netmask.u_addr.ip4, 255, 255, 255, 0); // Set subnet mask
 
-    netif->output = ptcNetifOutput;
-    /* later our lwip ip hooks identify this netif form this flag */
-    netif->flags |= NETIF_FLAG_L3TO4;
+//     netif->output = ptcNetifOutput;
+//     /* later our lwip ip hooks identify this netif form this flag */
+//     netif->flags |= NETIF_FLAG_L3TO4;
 
-    return ERR_OK;
-}
+//     return ERR_OK;
+// }
 
 tunnel_t *ptcTunnelCreate(node_t *node)
 {

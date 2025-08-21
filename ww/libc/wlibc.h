@@ -466,6 +466,7 @@ static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
     }
 }
 
+
 #define memoryCopyLarge memoryCopyAVX2
 
 #else
@@ -474,9 +475,50 @@ static inline void memoryCopyAVX2(void *dest, const void *src, intmax_t n)
 
 #endif
 
+#if ENABLE_MEMCOPY_AVX2 == 1 || ENABLE_MEMCOPY_AVX512 == 1
+
+static inline void memoryZeroAligned32(void *ptr, size_t n)
+{
+    __m256i *vec = (__m256i *) ptr;
+    size_t i;
+
+    // n is always a multiple of 32 bytes, so no tail handling needed
+    for (i = 0; i < n / 32; i++)
+    {
+        _mm256_store_si256(&vec[i], _mm256_setzero_si256());
+    }
+}
+
+#else
+
+static inline void memoryZeroAligned32(void *ptr, size_t n)
+{
+    uintmax_t *maxptr = (uintmax_t *) ptr;
+    size_t maxsize = sizeof(uintmax_t);
+    size_t i;
+    
+    for (i = 0; i < n / maxsize; i++)
+    {
+        maxptr[i] = 0;
+    }
+    
+    // Handle remaining bytes (should be 0 since n is multiple of 32, but just in case)
+    uint8_t *byteptr = (uint8_t *) ptr;
+    for (i = (n / maxsize) * maxsize; i < n; i++)
+    {
+        byteptr[i] = 0;
+    }
+}
+
+#endif
+
+
 // same as memoryCopyLarge, but defines the symbol for the linker, used for extranl libraries that dont want to include
 // this file, use the 'memoryCopyLarge' above for your use
 void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n);
+
+
+
 
 //--------------------string-------------------------------
 

@@ -133,6 +133,7 @@ set_source_files_properties(
     devices/raw/raw_linux.c
     devices/raw/raw_windows.c
     devices/capture/capture_windows.c
+    base/wlsem.c
     PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
 )
 
@@ -231,6 +232,14 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
 
     message(STATUS "Using advanced CPU instructions")
     set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 1)
+
+    if (MSVC)
+        # MSVC: enable Haswell's AVX2
+        # target_compile_options(ww PUBLIC /arch:AVX2)
+    else()
+        # GCC/Clang: target Haswell microarchitecture
+        target_compile_options(ww PUBLIC -march=haswell)
+    endif()
     
     # Check compiler support for instruction sets
     if(MSVC)
@@ -245,7 +254,7 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
 
     # SSE3 Configuration
     if(COMPILER_SUPPORTS_SSE3)
-        message(STATUS "Compiler supports SSE3")
+        message(STATUS "Using SSE3")
         if(MSVC)
             target_compile_options(ww PUBLIC /arch:SSE2)   # SSE3 is included in SSE2 support on MSVC
         else()
@@ -260,7 +269,7 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
 
     # AVX2 Configuration
     if(COMPILER_SUPPORTS_AVX2)
-        message(STATUS "Compiler supports AVX2")
+        message(STATUS "Using AVX2")
         if(MSVC)
             target_compile_options(ww PUBLIC /arch:AVX2)
         else()
@@ -278,7 +287,7 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
     if(COMPILER_SUPPORTS_AVX512F)
         message(STATUS "Compiler supports AVX512F")
         if(WW_ENABLE_AVX_512)
-            message(STATUS "Using AVX512F code...")
+            message(STATUS "Using AVX512F")
             if(MSVC)
                 target_compile_options(ww PUBLIC /arch:AVX512)
             else()
@@ -464,6 +473,7 @@ if(NOT MSVC)
     target_compile_options(sodium PRIVATE -Wno-attributes)
 endif()
 
+
 set(LIBS ${LIBS} sodium)
 
 ################################################################################
@@ -512,15 +522,33 @@ target_compile_definitions(ww_lwip PUBLIC $<$<CONFIG:Debug>:LWIP_DEBUG=1>)
 target_include_directories(ww_lwip PUBLIC ${LWIP_INCLUDE_DIRS})
 target_compile_definitions(ww_lwip PUBLIC ${LWIP_DEFINITIONS})
 
-# Ensure GNU extensions are enabled for lwIP unix port in Unity builds
-# This exposes pthread_setname_np prototype on glibc-based systems.
+# Set the platform-specific sys_arch.c property explicitly.
 if(UNIX)
     set_source_files_properties(
-    lwip/contrib/ports/unix/port/sys_arch.c
-    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+        ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
     )
-
+elseif(WIN32)
+    set_source_files_properties(
+        ${LWIP_CONTRIB_DIR}/ports/win32/sys_arch.c
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+    )
 endif()
+
+set_source_files_properties(
+    ${LWIP_DIR}/src/core/tcp.c
+    ${LWIP_DIR}/src/core/altcp_tcp.c
+    ${LWIP_DIR}/src/core/altcp.c
+    ${LWIP_DIR}/src/core/tcp_in.c
+    ${LWIP_DIR}/src/core/ipv4/ip4_frag.c
+    ${LWIP_DIR}/src/core/ipv6/ip6_frag.c
+    ${LWIP_DIR}/src/core/udp.c
+    ${LWIP_DIR}/src/core/memp.c
+    ${LWIP_DIR}/src/netif/ppp/ppp.c
+    ${LWIP_DIR}/src/api/netdb.c
+    ${LWIP_DIR}/src/api/sockets.c
+    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+)
 
 if(UNIX)
     target_sources(ww_lwip PRIVATE ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
@@ -687,7 +715,8 @@ target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
 
 # Disable Unity Build for targets that cannot use it
 set_target_properties(sodium PROPERTIES UNITY_BUILD OFF)
-# set_target_properties(ww PROPERTIES UNITY_BUILD OFF)
+# set_target_properties(ww_lwip PROPERTIES UNITY_BUILD_BATCH_SIZE 16)
+set_target_properties(ww PROPERTIES UNITY_BUILD_BATCH_SIZE 500)
 
 
 

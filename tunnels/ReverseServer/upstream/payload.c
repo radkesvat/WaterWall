@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void handleBufferMerging(line_t *d, reverseserver_lstate_t *dls, sbuf_t **buf)
+static void reverseclienthandleBufferMerging(line_t *d, reverseserver_lstate_t *dls, sbuf_t **buf)
 {
     if (dls->buffering != NULL)
     {
@@ -12,7 +12,7 @@ static void handleBufferMerging(line_t *d, reverseserver_lstate_t *dls, sbuf_t *
     }
 }
 
-static bool checkBufferSizeLimit(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
+static bool checkBufferSizeLimitD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls,
                                  reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
     if (sbufGetLength(buf) > kMaxBuffering)
@@ -43,7 +43,7 @@ static bool validateHandshake(sbuf_t *buf)
     return true;
 }
 
-static bool processHandshake(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_thread_box_t *this_tb,
+static bool processHandshakeD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_thread_box_t *this_tb,
                              sbuf_t *buf)
 {
     if (dls->handshaked)
@@ -186,17 +186,17 @@ static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
     return false;
 }
 
-static void handleUnpairedConnection(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_tstate_t *ts,
+static void handleUnpairedConnectionD(tunnel_t *t, line_t *d, reverseserver_lstate_t *dls, reverseserver_tstate_t *ts,
                                      reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    handleBufferMerging(d, dls, &buf);
+    reverseclienthandleBufferMerging(d, dls, &buf);
 
-    if (! checkBufferSizeLimit(t, d, dls, this_tb, buf))
+    if (! checkBufferSizeLimitD(t, d, dls, this_tb, buf))
     {
         return;
     }
 
-    if (! processHandshake(t, d, dls, this_tb, buf))
+    if (! processHandshakeD(t, d, dls, this_tb, buf))
     {
         return;
     }
@@ -224,6 +224,6 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
     }
     else
     {
-        handleUnpairedConnection(t, d, dls, ts, this_tb, buf);
+        handleUnpairedConnectionD(t, d, dls, ts, this_tb, buf);
     }
 }

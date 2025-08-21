@@ -567,10 +567,10 @@ static bool getInterfaceHostString(const char *interface, char *host_if)
 static wio_t *createTcpServerWithInterface(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
                                            void (*callback)(wio_t *))
 {
-    if (filter->option.interface != NULL)
+    if (filter->option.interface_name != NULL)
     {
         char host_if[60] = {0};
-        getInterfaceHostString(filter->option.interface, host_if);
+        getInterfaceHostString(filter->option.interface_name, host_if);
         return wloopCreateTcpServer(loop, host_if, port, callback);
     }
     return wloopCreateTcpServer(loop, host, port, callback);

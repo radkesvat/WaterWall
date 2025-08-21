@@ -11,6 +11,7 @@ if(POLICY CMP0169)
 endif()
 
 set(CMAKE_UNITY_BUILD ON)
+set(CMAKE_UNITY_BUILD_BATCH_SIZE 500)
 
 project(Waterwall
   VERSION 1.40

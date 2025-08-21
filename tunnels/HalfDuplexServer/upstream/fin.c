@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static void localAsyncCloseLineUpStream(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
 
     discard worker;
@@ -111,7 +111,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_upload_line->download_line             = NULL;
 
             lineLock(upload_line);
-            sendWorkerMessageForceQueue(lineGetWID(upload_line), localAsyncCloseLine, t, upload_line, NULL);
+            sendWorkerMessageForceQueue(lineGetWID(upload_line), localAsyncCloseLineUpStream, t, upload_line, NULL);
         }
 
         halfduplexserverLinestateDestroy(ls_download_line);
@@ -144,7 +144,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             ls_download_line->upload_line               = NULL;
 
             lineLock(download_line);
-            sendWorkerMessageForceQueue(lineGetWID(download_line), localAsyncCloseLine, t, download_line, NULL);
+            sendWorkerMessageForceQueue(lineGetWID(download_line), localAsyncCloseLineUpStream, t, download_line, NULL);
         }
 
         halfduplexserverLinestateDestroy(ls_upload_line);

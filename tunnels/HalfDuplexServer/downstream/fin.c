@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void localAsyncCloseLine(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static void localAsyncCloseLineDownStream(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
 
     discard worker;
@@ -53,6 +53,6 @@ void halfduplexserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     halfduplexserverLinestateDestroy(ls_main_line);
 
     lineLock(upload_line);
-    sendWorkerMessageForceQueue(lineGetWID(l), localAsyncCloseLine, t, upload_line, NULL);
+    sendWorkerMessageForceQueue(lineGetWID(l), localAsyncCloseLineDownStream, t, upload_line, NULL);
     lineDestroy(l);
 }

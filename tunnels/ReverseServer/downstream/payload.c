@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-static void handleBufferMerging(line_t *u, reverseserver_lstate_t *uls, sbuf_t **buf)
+static void reverseServerHandleBufferMerging(line_t *u, reverseserver_lstate_t *uls, sbuf_t **buf)
 {
     if (uls->buffering != NULL)
     {
@@ -12,7 +12,7 @@ static void handleBufferMerging(line_t *u, reverseserver_lstate_t *uls, sbuf_t *
     }
 }
 
-static bool checkBufferSizeLimit(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
+static bool checkBufferSizeLimitU(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
                                  reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
     if (sbufGetLength(buf) > kMaxBuffering)
@@ -31,7 +31,7 @@ static bool checkBufferSizeLimit(tunnel_t *t, line_t *u, reverseserver_lstate_t 
     return true;
 }
 
-static void processHandshake(reverseserver_lstate_t *uls, reverseserver_thread_box_t *this_tb)
+static void processHandshakeU(reverseserver_lstate_t *uls, reverseserver_thread_box_t *this_tb)
 {
     if (! uls->handshaked)
     {
@@ -82,17 +82,17 @@ static bool pairWithLocalDownstreamConnection(tunnel_t *t, line_t *u, reverseser
     return true;
 }
 
-static void handleUnpairedConnection(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
+static void handleUnpairedConnectionU(tunnel_t *t, line_t *u, reverseserver_lstate_t *uls,
                                      reverseserver_thread_box_t *this_tb, sbuf_t *buf)
 {
-    handleBufferMerging(u, uls, &buf);
+    reverseServerHandleBufferMerging(u, uls, &buf);
 
-    if (! checkBufferSizeLimit(t, u, uls, this_tb, buf))
+    if (! checkBufferSizeLimitU(t, u, uls, this_tb, buf))
     {
         return;
     }
 
-    processHandshake(uls, this_tb);
+    processHandshakeU(uls, this_tb);
 
     if (pairWithLocalDownstreamConnection(t, u, uls, this_tb, buf))
     {
@@ -116,6 +116,6 @@ void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *u, sbuf_t *buf)
     }
     else
     {
-        handleUnpairedConnection(t, u, uls, this_tb, buf);
+        handleUnpairedConnectionU(t, u, uls, this_tb, buf);
     }
 }

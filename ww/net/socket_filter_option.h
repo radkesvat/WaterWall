@@ -1,9 +1,8 @@
 #pragma once
 
-#include "net/address_context.h"
-#include "widle_table.h"
 #include "wlibc.h"
-#include "wsocket.h"
+#include "widle_table.h"
+
 
 #define i_type vec_ipmask_t, ipmask_t
 #include "stc/vec.h"
@@ -28,7 +27,7 @@ typedef struct socket_filter_option_s
     char *host;
     // char                       **black_list_raddr;
     char               *balance_group_name;
-    char               *interface;
+    char               *interface_name;
     uint8_t             protocol;
     multiport_backend_t multiport_backend;
     uint16_t            port_min;

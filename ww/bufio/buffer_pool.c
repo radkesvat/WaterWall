@@ -1,7 +1,7 @@
 #include "buffer_pool.h"
 #include "loggers/internal_logger.h"
 #include "shiftbuffer.h"
-#include "wplatform.h"
+#include "wmath.h"
 
 struct buffer_pool_s
 {
