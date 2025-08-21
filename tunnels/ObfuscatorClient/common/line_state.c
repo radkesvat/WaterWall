@@ -9,5 +9,5 @@ void obfuscatorclientLinestateInitialize(obfuscatorclient_lstate_t *ls)
 
 void obfuscatorclientLinestateDestroy(obfuscatorclient_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(obfuscatorclient_lstate_t));
+    memoryZeroAligned32(ls, sizeof(obfuscatorclient_lstate_t));
 }

@@ -32,5 +32,5 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
 
 void udplistenerLinestateDestroy(udplistener_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(udplistener_lstate_t));
+    memoryZeroAligned32(ls, sizeof(udplistener_lstate_t));
 }

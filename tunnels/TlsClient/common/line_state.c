@@ -67,5 +67,5 @@ void tlsclientLinestateDestroy(tlsclient_lstate_t *ls)
     // BIO_free(ls->rbio);
     // BIO_free(ls->wbio);
     bufferqueueDestroy(&(ls->bq));
-    memorySet(ls, 0, sizeof(tlsclient_lstate_t));
+    memoryZeroAligned32(ls, sizeof(tlsclient_lstate_t));
 }

@@ -23,5 +23,5 @@ void reverseclientLinestateDestroy(reverseclient_lstate_t *ls)
     }
 
 
-    memorySet(ls, 0, sizeof(reverseclient_lstate_t));
+    memoryZeroAligned32(ls, sizeof(reverseclient_lstate_t));
 }

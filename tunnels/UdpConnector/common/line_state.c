@@ -19,5 +19,5 @@ void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
 
 void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(udpconnector_lstate_t));
+    memoryZeroAligned32(ls, sizeof(udpconnector_lstate_t));
 }

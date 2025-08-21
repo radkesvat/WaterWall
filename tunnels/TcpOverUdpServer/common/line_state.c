@@ -64,5 +64,5 @@ void tcpoverudpserverLinestateDestroy(tcpoverudpserver_lstate_t *ls)
     contextqueueDestroy(&ls->cq_d);
 
     ikcp_release(ls->k_handle);
-    memorySet(ls, 0, sizeof(tcpoverudpserver_lstate_t));
+    memoryZeroAligned32(ls, sizeof(tcpoverudpserver_lstate_t));
 }

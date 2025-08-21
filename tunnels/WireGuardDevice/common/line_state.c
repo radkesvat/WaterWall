@@ -9,5 +9,5 @@ void wireguarddeviceLinestateInitialize(wgd_lstate_t *ls)
 
 void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(wgd_lstate_t));
+    memoryZeroAligned32(ls, sizeof(wgd_lstate_t));
 }

@@ -9,5 +9,5 @@ void tundeviceLinestateInitialize(tundevice_lstate_t *ls)
 
 void tundeviceLinestateDestroy(tundevice_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(tundevice_lstate_t));
+    memoryZeroAligned32(ls, sizeof(tundevice_lstate_t));
 }

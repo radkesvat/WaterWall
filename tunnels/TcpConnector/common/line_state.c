@@ -16,5 +16,5 @@ void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls)
         LOGF("TcpConnector: idle item still exists for FD:%x ", wioGetFD(ls->io));
         terminateProgram(1);
     }
-    memorySet(ls, 0, sizeof(tcpconnector_lstate_t));
+    memoryZeroAligned32(ls, sizeof(tcpconnector_lstate_t));
 }

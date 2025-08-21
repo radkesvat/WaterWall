@@ -70,6 +70,6 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
 #endif
 
     line_t *l = ls->line;
-    memorySet(ls, 0, sizeof(ptc_lstate_t));
+    memoryZeroAligned32(ls, sizeof(ptc_lstate_t));
     lineUnlock(l);
 }

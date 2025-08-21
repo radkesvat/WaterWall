@@ -9,5 +9,5 @@ void udpstatelesssocketLinestateInitialize(udpstatelesssocket_lstate_t *ls)
 
 void udpstatelesssocketLinestateDestroy(udpstatelesssocket_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(udpstatelesssocket_lstate_t));
+    memoryZeroAligned32(ls, sizeof(udpstatelesssocket_lstate_t));
 }

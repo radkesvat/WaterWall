@@ -9,5 +9,5 @@ void rawsocketLinestateInitialize(rawsocket_lstate_t *ls)
 
 void rawsocketLinestateDestroy(rawsocket_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(rawsocket_lstate_t));
+    memoryZeroAligned32(ls, sizeof(rawsocket_lstate_t));
 }

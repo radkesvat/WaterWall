@@ -9,5 +9,5 @@ void halfduplexclientLinestateInitialize(halfduplexclient_lstate_t *ls, line_t *
 
 void halfduplexclientLinestateDestroy(halfduplexclient_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(halfduplexclient_lstate_t));
+    memoryZeroAligned32(ls, sizeof(halfduplexclient_lstate_t));
 }

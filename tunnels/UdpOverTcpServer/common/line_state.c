@@ -10,5 +10,5 @@ void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls,buffer_po
 void udpovertcpserverLinestateDestroy(udpovertcpserver_lstate_t *ls)
 {
     bufferstreamDestroy(&ls->read_stream);
-    memorySet(ls, 0, sizeof(udpovertcpserver_lstate_t));
+    memoryZeroAligned32(ls, sizeof(udpovertcpserver_lstate_t));
 }

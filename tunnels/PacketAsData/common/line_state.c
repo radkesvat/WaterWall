@@ -9,5 +9,5 @@ void packetasdataLinestateInitialize(packetasdata_lstate_t *ls)
 
 void packetasdataLinestateDestroy(packetasdata_lstate_t *ls)
 {
-    memorySet(ls, 0, sizeof(packetasdata_lstate_t));
+    memoryZeroAligned32(ls, sizeof(packetasdata_lstate_t));
 }
