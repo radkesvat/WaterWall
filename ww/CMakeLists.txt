@@ -211,13 +211,13 @@ check_function("setproctitle" "unistd.h")
 ################################################################################
 # Advanced CPU Instructions Configuration
 ################################################################################
-set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0)
-set(WW_HAVE_AVX2 0)
-set(WW_HAVE_SSE3 0)
-set(WW_SUPPORTED_MEMCOPY_AVX2 0)
-set(WW_SUPPORTED_MEMCOPY_AVX512F 0)
-set(WW_CHECKSUM_AVX2 0)
-set(WW_CHECKSUM_SSE3 0)
+set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS 0 CACHE INTERNAL "Using advanced CPU instructions" FORCE)
+set(WW_HAVE_AVX2 0 CACHE INTERNAL "AVX2 available" FORCE)
+set(WW_HAVE_SSE3 0 CACHE INTERNAL "SSE3 available" FORCE)
+set(WW_SUPPORTED_MEMCOPY_AVX2 0 CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX2" FORCE)
+set(WW_SUPPORTED_MEMCOPY_AVX512F 0 CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX512F" FORCE)
+set(WW_CHECKSUM_AVX2 0 CACHE INTERNAL "Enable Checksum() to use AVX2" FORCE)
+set(WW_CHECKSUM_SSE3 0 CACHE INTERNAL "Enable Checksum() to use SSE3" FORCE)
 
 if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT WW_DISABLE_ADVANCED_CPU_INSTRUCTIONS
     AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
@@ -298,6 +298,16 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
 else()
     message(STATUS "Advanced CPU instructions will not be used")
 endif()
+
+# Update cache variables
+set(WW_HAVE_ADVANCED_CPU_INSTRUCTIONS ${WW_HAVE_ADVANCED_CPU_INSTRUCTIONS} CACHE INTERNAL "Using advanced CPU instructions" FORCE)
+set(WW_HAVE_AVX2 ${WW_HAVE_AVX2} CACHE INTERNAL "AVX2 available" FORCE)
+set(WW_HAVE_SSE3 ${WW_HAVE_SSE3} CACHE INTERNAL "SSE3 available" FORCE)
+set(WW_SUPPORTED_MEMCOPY_AVX2 ${WW_SUPPORTED_MEMCOPY_AVX2} CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX2" FORCE)
+set(WW_SUPPORTED_MEMCOPY_AVX512F ${WW_SUPPORTED_MEMCOPY_AVX512F} CACHE INTERNAL "Enable MemoryCopyLarge() to use AVX512F" FORCE)
+set(WW_CHECKSUM_AVX2 ${WW_CHECKSUM_AVX2} CACHE INTERNAL "Enable Checksum() to use AVX2" FORCE)
+set(WW_CHECKSUM_SSE3 ${WW_CHECKSUM_SSE3} CACHE INTERNAL "Enable Checksum() to use SSE3" FORCE)
+
 
 ################################################################################
 # Crypto Backend Source Selection
@@ -454,13 +464,13 @@ CPMAddPackage(
     GITHUB_REPOSITORY robinlinden/libsodium-cmake
     GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
     OPTIONS
-        "SODIUM_MINIMAL=ON"
-        "SODIUM_DISABLE_TESTS=ON"
-        "BUILD_SHARED_LIBS=OFF"
-        "SODIUM_BUILD_TESTS=OFF"
-        "SODIUM_BUILD_EXAMPLES=OFF"
-        "SODIUM_BUILD_SHARED=OFF"
-        "SODIUM_STATIC=ON"
+        "SODIUM_MINIMAL ON"
+        "SODIUM_DISABLE_TESTS ON"
+        "BUILD_SHARED_LIBS OFF"
+        "SODIUM_BUILD_TESTS OFF"
+        "SODIUM_BUILD_EXAMPLES OFF"
+        "SODIUM_BUILD_SHARED OFF"
+        "SODIUM_STATIC ON"
 )
 
 if(NOT MSVC)        
