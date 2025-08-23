@@ -797,10 +797,7 @@ if(MSVC)
     )
 endif()
 
-# Precompiled headers (except on Apple)
-if(NOT APPLE)
-    target_precompile_headers(ww PUBLIC "wwapi.h")
-endif()
+target_precompile_headers(ww PUBLIC "wwapi.h")
 
 # Final definitions
 target_compile_definitions(ww PUBLIC 
