@@ -881,7 +881,8 @@ wio_t *wioGet(wloop_t *loop, int fd)
     wio_t *io = __wio_get(loop, fd);
     if (io == NULL)
     {
-        EVENTLOOP_ALLOC_SIZEOF(io);
+        io = genericpoolGetItem(getWorkerWiosPool(loop->wid));
+        memoryZero(io, sizeof(wio_t));
         wioInit(io);
         io->event_type    = WEVENT_TYPE_IO;
         io->loop          = loop;

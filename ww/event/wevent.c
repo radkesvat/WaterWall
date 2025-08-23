@@ -206,7 +206,7 @@ void wioFree(wio_t *io)
     wioClose(io);
     EVENTLOOP_FREE(io->localaddr);
     EVENTLOOP_FREE(io->peeraddr);
-    EVENTLOOP_FREE(io);
+    genericpoolReuseItem(getWorkerWiosPool(io->loop->wid), io);
 }
 
 bool wioIsOpened(wio_t *io)

@@ -30,10 +30,12 @@ typedef struct ww_global_state_s
 {
     wloop_t                  **shortcut_loops;
     buffer_pool_t            **shortcut_buffer_pools;
+    generic_pool_t           **shortcut_wios_pools;
     generic_pool_t           **shortcut_context_pools;
     generic_pool_t           **shortcut_pipetunnel_msg_pools;
     master_pool_t             *masterpool_buffer_pools_large;
     master_pool_t             *masterpool_buffer_pools_small;
+    master_pool_t             *masterpool_wios;
     master_pool_t             *masterpool_context_pools;
     master_pool_t             *masterpool_pipetunnel_msg_pools;
     master_pool_t             *masterpool_messages;
@@ -120,6 +122,19 @@ static inline buffer_pool_t *getWorkerBufferPool(wid_t wid)
 {
     return GSTATE.shortcut_buffer_pools[wid];
 }
+
+
+/*!
+ * @brief Get the Wios pool for a worker.
+ *
+ * @param wid The worker ID.
+ * @return A pointer to the Wios pool.
+ */
+static inline generic_pool_t *getWorkerWiosPool(wid_t wid)
+{
+    return GSTATE.shortcut_wios_pools[wid];
+}
+
 
 /*!
  * @brief Get the context pool for a worker.

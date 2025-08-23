@@ -21,11 +21,13 @@ void workerFinish(worker_t *worker)
             wloopDestroy(&worker->loop);
         }
 
+        genericpoolDestroy(worker->wios_pool);
         genericpoolDestroy(worker->context_pool);
         genericpoolDestroy(worker->pipetunnel_msg_pool);
         bufferpoolDestroy(worker->buffer_pool);
 
         worker->loop                = NULL;
+        worker->wios_pool           = NULL;
         worker->context_pool        = NULL;
         worker->pipetunnel_msg_pool = NULL;
         worker->buffer_pool         = NULL;
@@ -40,11 +42,13 @@ void workerFinish(worker_t *worker)
         else
         {
             // lwip thread
+            genericpoolDestroy(worker->wios_pool);
             genericpoolDestroy(worker->context_pool);
             genericpoolDestroy(worker->pipetunnel_msg_pool);
             bufferpoolDestroy(worker->buffer_pool);
 
             worker->loop                = NULL;
+            worker->wios_pool           = NULL;
             worker->context_pool        = NULL;
             worker->pipetunnel_msg_pool = NULL;
             worker->buffer_pool         = NULL;
@@ -62,6 +66,9 @@ void workerExitJoin(worker_t *worker)
 void workerInit(worker_t *worker, wid_t wid, bool eventloop)
 {
     *worker = (worker_t){.wid = wid};
+
+    worker->wios_pool =
+        genericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_wios, sizeof(wio_t), RAM_PROFILE);
 
     worker->context_pool = genericpoolCreateWithDefaultAllocatorAndCapacity(GSTATE.masterpool_context_pools,
                                                                             sizeof(context_t), RAM_PROFILE);
@@ -91,7 +98,7 @@ void workerRun(worker_t *worker)
 
     while (atomicLoadExplicit(&GSTATE.workers_run_flag, memory_order_acquire) == false)
     {
-        if(atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire) == true)
+        if (atomicLoadExplicit(&GSTATE.application_stopping_flag, memory_order_acquire) == true)
         {
             LOGD("Worker %d exited", wid);
             return;
@@ -102,6 +109,10 @@ void workerRun(worker_t *worker)
 
     wloopRun(worker->loop);
 
+    if (worker->wios_pool)
+    {
+        genericpoolDestroy(worker->wios_pool);
+    }
     if (worker->context_pool)
     {
         genericpoolDestroy(worker->context_pool);
@@ -116,6 +127,7 @@ void workerRun(worker_t *worker)
     }
 
     worker->loop                = NULL;
+    worker->wios_pool           = NULL;
     worker->context_pool        = NULL;
     worker->pipetunnel_msg_pool = NULL;
     worker->buffer_pool         = NULL;

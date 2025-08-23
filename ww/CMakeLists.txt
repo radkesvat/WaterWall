@@ -695,7 +695,7 @@ int main() {
     )
     
     if(FREERES_WRAP_COMPILES)
-        message(STATUS "Including FREERS_EH library for cleaner valgrind output")
+        # message(STATUS "Including FREERS_EH library for cleaner valgrind output")
         add_library(FREERS_EH OBJECT utils/freeres_wrap.cc)
         target_compile_definitions(ww PUBLIC WW_CALL_GNU_FREES)
         set(LIBS ${LIBS} "FREERS_EH")

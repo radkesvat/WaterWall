@@ -518,6 +518,7 @@ static inline void memoryZeroAligned32(void *ptr, size_t n)
 // this file, use the 'memoryCopyLarge' above for your use
 void wwMemoryCopyLarge(void *dest, const void *src, intmax_t n);
 
+
 //--------------------string-------------------------------
 
 #ifndef STRINGIFY

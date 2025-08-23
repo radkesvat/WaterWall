@@ -10,7 +10,6 @@
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
 
-
 #if defined(WCRYPTO_BACKEND_OPENSSL)
 
 #include "crypto/openssl_instance.h"
@@ -65,6 +64,7 @@ static void initializeMasterPools(void)
 {
     GSTATE.masterpool_buffer_pools_large   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     GSTATE.masterpool_buffer_pools_small   = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
+    GSTATE.masterpool_wios                 = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     GSTATE.masterpool_context_pools        = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     GSTATE.masterpool_pipetunnel_msg_pools = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
     GSTATE.masterpool_messages             = masterpoolCreateWithCapacity(2 * RAM_PROFILE);
@@ -74,24 +74,26 @@ static void initializeMasterPools(void)
 
 static void initializeShortCuts(void)
 {
-    static const int kShourtcutsCount = 4;
+    static const int kShortcutsCount = 5;
 
     const uintptr_t total_workers = (uintptr_t) WORKERS_COUNT;
 
-    void **space = (void **) memoryAllocate(sizeof(void *) * (uintptr_t) kShourtcutsCount * total_workers);
+    void **space = (void **) memoryAllocate(sizeof(void *) * (uintptr_t) kShortcutsCount * total_workers);
 
     GSTATE.shortcut_loops                = (wloop_t **) (space + (0 * total_workers));
     GSTATE.shortcut_buffer_pools         = (buffer_pool_t **) (space + (1 * total_workers));
-    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (2 * total_workers));
-    GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (3 * total_workers));
+    GSTATE.shortcut_wios_pools           = (generic_pool_t **) (space + (2 * total_workers));
+    GSTATE.shortcut_context_pools        = (generic_pool_t **) (space + (3 * total_workers));
+    GSTATE.shortcut_pipetunnel_msg_pools = (generic_pool_t **) (space + (4 * total_workers));
 
     for (unsigned int wid = 0; wid < total_workers; wid++)
     {
 
-        GSTATE.shortcut_context_pools[wid]        = WORKERS[wid].context_pool;
-        GSTATE.shortcut_pipetunnel_msg_pools[wid] = WORKERS[wid].pipetunnel_msg_pool;
         GSTATE.shortcut_buffer_pools[wid]         = WORKERS[wid].buffer_pool;
         GSTATE.shortcut_loops[wid]                = WORKERS[wid].loop;
+        GSTATE.shortcut_wios_pools[wid]           = WORKERS[wid].wios_pool;
+        GSTATE.shortcut_context_pools[wid]        = WORKERS[wid].context_pool;
+        GSTATE.shortcut_pipetunnel_msg_pools[wid] = WORKERS[wid].pipetunnel_msg_pool;
     }
 }
 
@@ -105,7 +107,7 @@ static void exitHandle(void *userdata, int signum)
     {
         workerExitJoin(getWorker(wid));
     }
-    
+
     if (getTID() == getWorker(0)->tid)
     {
         // we are in the main thread, so we can finish the worker and tear down the global state
@@ -208,12 +210,11 @@ void globalstateUpdateAllocationPadding(uint16_t padding)
  */
 void createGlobalState(const ww_construction_data_t init_data)
 {
-    GSTATE = (ww_global_state_t) {0};
+    GSTATE = (ww_global_state_t){0};
 
     GSTATE.flag_initialized = true;
     atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
     atomicStoreRelaxed(&GSTATE.workers_run_flag, false);
-
 
     // [Section] loggers
     {
@@ -355,7 +356,7 @@ void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1,
     assert(wid < getWorkersCount());
 
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
-    *msg = (worker_msg_t) {.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
+    *msg = (worker_msg_t){.callback = cb, .arg1 = arg1, .arg2 = arg2, .arg3 = arg3};
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));
     ev.loop = getWorkerLoop(wid);
@@ -433,6 +434,7 @@ WW_EXPORT void destroyGlobalState(void)
 
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_large);
     masterpoolDestroy(GSTATE.masterpool_buffer_pools_small);
+    masterpoolDestroy(GSTATE.masterpool_wios);
     masterpoolDestroy(GSTATE.masterpool_context_pools);
     masterpoolDestroy(GSTATE.masterpool_pipetunnel_msg_pools);
 
@@ -448,5 +450,4 @@ WW_EXPORT void destroyGlobalState(void)
 #ifdef WW_CALL_GNU_FREES
     call_freeres();
 #endif
-
 }

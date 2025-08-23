@@ -294,10 +294,10 @@ enum
 #define memorySet           memset
 #define memoryMove          memmove
 #define memoryCompare       memcmp
+#define memoryZero(p,s)     memorySet((p), 0, (s))
 #define stringCompare       strcmp
 #define stringLength        strlen
-#define stringNPrintf       snprintf        
-
+#define stringNPrintf       snprintf
 
 #define discard  (void)
 
