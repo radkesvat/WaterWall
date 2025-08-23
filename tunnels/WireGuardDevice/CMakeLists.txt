@@ -33,7 +33,6 @@ target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_include_directories(WireGuardDevice PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/)
 
 target_link_libraries(WireGuardDevice ww)
-target_precompile_headers(WireGuardDevice REUSE_FROM ww)
-
-
- 
+if(NOT APPLE)
+    target_precompile_headers(WireGuardDevice REUSE_FROM ww)
+endif()

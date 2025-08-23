@@ -30,4 +30,6 @@ add_library(Bridge STATIC
 target_include_directories(Bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(Bridge ww)
-target_precompile_headers(Bridge REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(Bridge REUSE_FROM ww)
+endif()

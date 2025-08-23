@@ -30,4 +30,6 @@ add_library(PacketAsData STATIC
 target_include_directories(PacketAsData PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(PacketAsData ww)
-target_precompile_headers(PacketAsData REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(PacketAsData REUSE_FROM ww)
+endif()

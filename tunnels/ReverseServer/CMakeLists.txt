@@ -30,5 +30,7 @@ add_library(ReverseServer STATIC
 target_include_directories(ReverseServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(ReverseServer ww)
-target_precompile_headers(ReverseServer REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(ReverseServer REUSE_FROM ww)
+endif()
 

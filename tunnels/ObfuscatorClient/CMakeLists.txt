@@ -32,4 +32,6 @@ add_library(ObfuscatorClient STATIC
 target_include_directories(ObfuscatorClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(ObfuscatorClient ww)
-target_precompile_headers(ObfuscatorClient REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(ObfuscatorClient REUSE_FROM ww)
+endif()

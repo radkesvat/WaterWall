@@ -30,4 +30,6 @@ add_library(HalfDuplexServer STATIC
 target_include_directories(HalfDuplexServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(HalfDuplexServer ww)
-target_precompile_headers(HalfDuplexServer REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(HalfDuplexServer REUSE_FROM ww)
+endif()

@@ -39,4 +39,6 @@ if(NOT MSVC)
 endif()
 
 target_link_libraries(PacketToConnection ww)
-target_precompile_headers(PacketToConnection REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(PacketToConnection REUSE_FROM ww)
+endif()

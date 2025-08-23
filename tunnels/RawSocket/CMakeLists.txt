@@ -30,4 +30,6 @@ add_library(RawSocket STATIC
 target_include_directories(RawSocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(RawSocket ww)
-target_precompile_headers(RawSocket REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(RawSocket REUSE_FROM ww)
+endif()

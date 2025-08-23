@@ -178,4 +178,6 @@ endif()
 #==============================================================================
 
 target_link_libraries(TlsClient PRIVATE ww BrotliDec DecompressBrotli crypto ssl)
-target_precompile_headers(TlsClient REUSE_FROM ww)
+if(NOT APPLE)
+    target_precompile_headers(TlsClient REUSE_FROM ww)
+endif()
