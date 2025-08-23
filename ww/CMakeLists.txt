@@ -137,6 +137,7 @@ set_source_files_properties(
 # Target Properties
 ################################################################################
 target_compile_features(ww PUBLIC c_std_11)
+set_target_properties(ww PROPERTIES LANGUAGES C)
 
 ################################################################################
 # Include Directories
@@ -443,6 +444,7 @@ CPMAddPackage(
 if(cjson_ADDED)
     target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
+    target_compile_definitions(ww PUBLIC CJSON_HIDE_SYMBOLS)
 endif()
 target_compile_definitions(ww PUBLIC ENABLE_TARGET_EXPORT=OFF)
 
@@ -452,13 +454,13 @@ CPMAddPackage(
     GITHUB_REPOSITORY robinlinden/libsodium-cmake
     GIT_TAG 24f829c6d1bf88adb05ff3ee594abc367ffc0590
     OPTIONS
-        "SODIUM_MINIMAL ON"
-        "SODIUM_DISABLE_TESTS ON"
-        "BUILD_SHARED_LIBS OFF"
-        "SODIUM_BUILD_TESTS OFF"
-        "SODIUM_BUILD_EXAMPLES OFF"
-        "SODIUM_BUILD_SHARED OFF"
-        "SODIUM_STATIC ON"
+        "SODIUM_MINIMAL=ON"
+        "SODIUM_DISABLE_TESTS=ON"
+        "BUILD_SHARED_LIBS=OFF"
+        "SODIUM_BUILD_TESTS=OFF"
+        "SODIUM_BUILD_EXAMPLES=OFF"
+        "SODIUM_BUILD_SHARED=OFF"
+        "SODIUM_STATIC=ON"
 )
 
 if(NOT MSVC)        
