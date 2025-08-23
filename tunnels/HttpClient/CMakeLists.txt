@@ -69,6 +69,22 @@ if(WW_HAVE_AVX2)
     endif()
 endif()
 
+
+# target_sources(nghttp2_static PRIVATE
+#     $<TARGET_PROPERTY:nghttp2,SOURCES>
+# )
+
+# set_source_files_properties(
+#     ${nghttp2_SOURCE_DIR}/lib/nghttp2_http.c
+#     ${nghttp2_SOURCE_DIR}/lib/nghttp2_helper.c
+#     PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+# )
+
+target_link_libraries(HttpClient nghttp2_static)
+
+
+set_target_properties(nghttp2_static PROPERTIES UNITY_BUILD_BATCH_SIZE 18)
+
 if(NOT APPLE)
     target_precompile_headers(HttpClient REUSE_FROM ww)
 endif()
