@@ -10,7 +10,9 @@ if(POLICY CMP0169)
   set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
 endif()
 
-set(CMAKE_UNITY_BUILD ON)
+# default is off but most of cmake presets enable it
+# we must disable it in order to allow language server work correctly
+set(CMAKE_UNITY_BUILD OFF) 
 set(CMAKE_UNITY_BUILD_BATCH_SIZE 500)
 
 project(Waterwall
@@ -101,6 +103,25 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 #--------------------------------------------------------------------------------
 # Tunnel and Core Feature Inclusion Options
 #--------------------------------------------------------------------------------
+
+# Define conditional variables for platform-specific options
+if(NOT APPLE AND NOT ANDROID)
+  set(TUNDEVICE_SUPPORTED TRUE)
+else()
+  set(TUNDEVICE_SUPPORTED FALSE)
+endif()
+
+if(NOT ANDROID AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD"
+    OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
+  if(LINUX OR (WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
+    set(RAWSOCKET_SUPPORTED TRUE)
+  else()
+    set(RAWSOCKET_SUPPORTED FALSE)
+  endif()
+else()
+  set(RAWSOCKET_SUPPORTED FALSE)
+endif()
+
 option(INCLUDE_TEMPLATE                 "link Template staticly to the core"             TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"      TRUE)
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketToConnection staticly to the core"   TRUE)
@@ -126,8 +147,8 @@ option(INCLUDE_OPENSSL_SERVER           "link OpenSSlServer staticly to the core
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"            TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"     FALSE)
 option(INCLUDE_TROJAN_SOCKS_SERVER      "link TrojanSocksServer staticly to the core"    FALSE)
-option(INCLUDE_HTTP2_SERVER             "link Http2Server staticly to the core"          FALSE)
-option(INCLUDE_HTTP2_CLIENT             "link Http2Client staticly to the core"          FALSE)
+option(INCLUDE_HTTP_SERVER              "link HttpServer staticly to the core"           FALSE)
+option(INCLUDE_HTTP_CLIENT              "link HttpClient staticly to the core"           TRUE)
 option(INCLUDE_PROTOBUF_SERVER          "link ProtoBufServer staticly to the core"       FALSE)
 option(INCLUDE_PROTOBUF_CLIENT          "link ProtoBufClient staticly to the core"       FALSE)
 option(INCLUDE_REVERSE_SERVER           "link ReverseServer staticly to the core"        TRUE)
@@ -149,20 +170,9 @@ option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"   
 option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"            TRUE)
 
 # tun device works on android but requires root access
-if(NOT APPLE AND NOT ANDROID)
-  option(INCLUDE_TUN_DEVICE             "link TunDevice staticly to the core"            TRUE)
-endif()
+option(INCLUDE_TUN_DEVICE               "link TunDevice staticly to the core"            ${TUNDEVICE_SUPPORTED})
 
-if(NOT ANDROID AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD"
-    OR CMAKE_SYSTEM_NAME STREQUAL "OpenBSD" OR CMAKE_SYSTEM_NAME STREQUAL "FreeBSD"))
-
-  if(LINUX OR (WIN32 AND CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"))
-  
-    option(INCLUDE_RAWSOCKET              "link RawSocket staticly to the core"          TRUE)
-    
-  endif()
-
-endif()
+option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"            ${RAWSOCKET_SUPPORTED})
 
 
 
@@ -400,20 +410,20 @@ if(INCLUDE_BRIDGE)
   target_link_libraries(Waterwall Bridge)
 endif()
 
-#http2 server
+#http server
 if(INCLUDE_OPENSSL_SERVER)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP2_SERVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http2)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http2)
-  target_link_libraries(Waterwall Http2Server)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/http)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HttpServer)
+  target_link_libraries(Waterwall HttpServer)
 endif()
 
-#http2 client
-if(INCLUDE_HTTP2_CLIENT)
-  target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP2_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/http2)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/http2)
-  target_link_libraries(Waterwall Http2Client)
+#http client
+if(INCLUDE_HTTP_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_HTTP_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HttpClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HttpClient)
+  target_link_libraries(Waterwall HttpClient)
 endif()
 
 #openssl server
