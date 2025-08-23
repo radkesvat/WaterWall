@@ -85,7 +85,6 @@ add_library(ww STATIC
     instance/wversion.c
     
     # Networking
-    net/http_def.c
     net/packet_tunnel.c
     net/pipe_tunnel.c
     net/sync_dns.c
