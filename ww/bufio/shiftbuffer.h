@@ -30,6 +30,17 @@ typedef struct sbuf_s sbuf_t;
 
 static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, buf array is flexible");
 
+// Small byte-wise copy helper for unaligned, tiny copies to avoid calling memoryCopy
+static inline void sbufByteCopy(void *restrict dst, const void *restrict src, const uint32_t n)
+{
+    uint8_t       *d = (uint8_t *) dst;
+    const uint8_t *s = (const uint8_t *) src;
+    for (uint32_t i = 0; i < n; ++i)
+    {
+        d[i] = s[i];
+    }
+}
+
 /**
  * Destroys the shift buffer and frees its memory.
  */
@@ -277,7 +288,7 @@ static inline uint8_t sbufReadUI8(const sbuf_t *const b)
  */
 static inline void sbufReadUnAlignedUI16(const sbuf_t *const b, uint16_t *const dest)
 {
-    memoryCopy(dest, sbufGetRawPtr(b), sizeof(*dest));
+    sbufByteCopy(dest, sbufGetRawPtr(b), (uint32_t) sizeof(*dest));
 }
 
 /**
@@ -285,7 +296,7 @@ static inline void sbufReadUnAlignedUI16(const sbuf_t *const b, uint16_t *const 
  */
 static inline void sbufReadUnAlignedUI64(const sbuf_t *const b, uint64_t *const dest)
 {
-    memoryCopy(dest, sbufGetRawPtr(b), sizeof(*dest));
+    sbufByteCopy(dest, sbufGetRawPtr(b), (uint32_t) sizeof(*dest));
 }
 
 /**
@@ -293,7 +304,7 @@ static inline void sbufReadUnAlignedUI64(const sbuf_t *const b, uint64_t *const 
  */
 static inline void sbufWriteUnAlignedI32(sbuf_t *const b, const int32_t data)
 {
-    memoryCopy(sbufGetMutablePtr(b), &data, sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
 }
 
 /**
@@ -301,7 +312,7 @@ static inline void sbufWriteUnAlignedI32(sbuf_t *const b, const int32_t data)
  */
 static inline void sbufWriteUnAlignedUI32(sbuf_t *const b, const uint32_t data)
 {
-    memoryCopy(sbufGetMutablePtr(b), &data, sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
 }
 
 /**
@@ -309,7 +320,7 @@ static inline void sbufWriteUnAlignedUI32(sbuf_t *const b, const uint32_t data)
  */
 static inline void sbufWriteUnAlignedI16(sbuf_t *const b, const int16_t data)
 {
-    memoryCopy(sbufGetMutablePtr(b), &data, sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
 }
 
 /**
@@ -317,7 +328,7 @@ static inline void sbufWriteUnAlignedI16(sbuf_t *const b, const int16_t data)
  */
 static inline void sbufWriteUnAlignedUI16(sbuf_t *const b, const uint16_t data)
 {
-    memoryCopy(sbufGetMutablePtr(b), &data, sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
 }
 
 // Aligned
