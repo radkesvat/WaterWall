@@ -10,9 +10,8 @@ if(POLICY CMP0169)
   set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
 endif()
 
-# default is off but most of cmake presets enable it
-# we must disable it in order to allow language server work correctly
-set(CMAKE_UNITY_BUILD OFF) 
+# CMAKE_UNITY_BUILD is off by default but most of cmake presets enable it
+# it must be disabled in order to allow language server work correctly
 set(CMAKE_UNITY_BUILD_BATCH_SIZE 500)
 
 project(Waterwall
