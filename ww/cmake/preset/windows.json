@@ -63,7 +63,7 @@
             "inherits": [
                 "host-windows",
                 "target-windows-x86-64",
-                "vs2019",
+                "vs2022",
                 "ccache",
                 "unity",
                 "default"
