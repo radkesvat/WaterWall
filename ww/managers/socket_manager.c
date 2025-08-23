@@ -1194,10 +1194,10 @@ static void initializeSocketManagerPools(void)
 static void detectSystemCapabilities(void)
 {
 #ifdef OS_UNIX
-    state->iptables_installed = checkCommandAvailable("iptables");
-    state->lsof_installed     = checkCommandAvailable("lsof");
+    socketmanager_gstate->iptables_installed = checkCommandAvailable("iptables");
+    socketmanager_gstate->lsof_installed     = checkCommandAvailable("lsof");
 #if SUPPORT_V6
-    state->ip6tables_installed = checkCommandAvailable("ip6tables");
+    socketmanager_gstate->ip6tables_installed = checkCommandAvailable("ip6tables");
 #endif
 #endif
 }
@@ -1228,7 +1228,7 @@ static void cleanupFilters(void)
 {
     for (size_t i = 0; i < kFilterLevels; i++)
     {
-        // c_foreach(filter, filters_t, state->filters[i])
+        // c_foreach(filter, filters_t, socketmanager_gstate->filters[i])
         // {
         //     if ((*filter.ref)->listen_ios != NULL)
         //     {

@@ -165,7 +165,7 @@ void signalmanagerStart(void)
 
 #ifndef OS_WIN
 
-    if (state->handle_sigquit)
+    if (signalmanager_gstate->handle_sigquit)
     {
         if (signal(SIGQUIT, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -173,7 +173,7 @@ void signalmanagerStart(void)
             _Exit(1);
         }
     }
-    if (state->handle_sighup)
+    if (signalmanager_gstate->handle_sighup)
     {
         if (signal(SIGHUP, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -227,7 +227,7 @@ void signalmanagerStart(void)
 
 #ifndef OS_WIN
 
-    if (state->handle_sigpipe)
+    if (signalmanager_gstate->handle_sigpipe)
     {
         if (signal(SIGPIPE, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -236,7 +236,7 @@ void signalmanagerStart(void)
         }
     }
 
-    if (state->handle_sigalrm)
+    if (signalmanager_gstate->handle_sigalrm)
     {
         if (signal(SIGALRM, multiplexedSignalHandler) == SIG_ERR)
         {
