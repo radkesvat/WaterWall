@@ -124,12 +124,12 @@
 #include "tunnels/client/wolfssl/wolfssl_client.h"
 #endif
 
-#ifdef INCLUDE_HTTP2_SERVER
+#ifdef INCLUDE_HTTP_SERVER
 #include "tunnels/server/http2/http2_server.h"
 #endif
 
-#ifdef INCLUDE_HTTP2_CLIENT
-#include "tunnels/client/http2/http2_client.h"
+#ifdef INCLUDE_HTTP_CLIENT
+#include "tunnels/HttpClient/include/interface.h"
 #endif
 
 #ifdef INCLUDE_PROTOBUF_SERVER
@@ -335,8 +335,8 @@ void loadImportedTunnelsIntoCore(void)
     USING(Http2Server);
 #endif
 
-#ifdef INCLUDE_HTTP2_CLIENT
-    USING(Http2Client);
+#ifdef INCLUDE_HTTP_CLIENT
+    USING(HttpClient);
 #endif
 
 #ifdef INCLUDE_PROTOBUF_SERVER
