@@ -607,8 +607,17 @@ set(LIBS ${LIBS} mimalloc-static)
 ################################################################################
 # Final Configuration and Linking
 ################################################################################
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
-message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
+
+# Architecture definitions
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(WW_IS_64_BIT 1)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=1 WW_COMPILE_FOR_32BIT=0)
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(WW_IS_64_BIT 0)
+    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=0 WW_COMPILE_FOR_32BIT=1)
+else()
+    message(FATAL_ERROR "Unknown pointer size")
+endif()
 
 # ASM library configuration for Linux x86_64
 if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
@@ -621,14 +630,9 @@ if(LINUX AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     endif()
 endif()
 
-# Architecture definitions
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=1 WW_COMPILE_FOR_32BIT=0)
-elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
-    target_compile_definitions(ww PUBLIC WW_COMPILE_FOR_64BIT=0 WW_COMPILE_FOR_32BIT=1)
-else()
-    message(FATAL_ERROR "Unknown pointer size")
-endif()
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h.in ${CMAKE_CURRENT_SOURCE_DIR}/wconfig.h)
+message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 
 # Build type definitions
 target_compile_definitions(ww PUBLIC 
