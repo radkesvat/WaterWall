@@ -326,7 +326,7 @@ _Noreturn void terminateProgram(int exit_code)
     }
     else
     {
-        printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
+        printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n"
                    "Since signal manager is not initialized, we cannot run exit handlers, so just exiting now",
                    exit_code);
     }
