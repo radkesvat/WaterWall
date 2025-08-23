@@ -41,10 +41,10 @@ typedef struct line_s
     wid_t       wid;
     uint8_t     auth_cur;
     uint8_t     established : 1;
-    uint8_t     recalculate_checksum : 1; // used for packet tunnels, ip layer checksum
-    uint8_t
-        do_not_recalculate_transport_checksum : 1; // used for packet tunnels, skip transport layer checksum (rare used)
-
+    uint8_t     recalculate_checksum : 1;    // used for packet tunnels
+    uint8_t     skip_transport_checksum : 1; // used for packet tunnels, skip transport layer checksum (rare used)
+                                             // if forexample the payload if packet is not a valid transport
+                                             // payload(fragmented ip packets)
     routing_context_t routing_context;
 
     generic_pool_t **pools;
