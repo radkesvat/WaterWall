@@ -6,7 +6,7 @@
 
 enum
 {
-    kQCap = 8
+    kContextQueueCap = 8
 };
 
 
@@ -14,7 +14,7 @@ context_queue_t contextqueueCreate(void)
 {
 
     context_queue_t cq;
-    cq.q = ww_context_queue_t_with_capacity(kBufferStreamQCap);
+    cq.q = ww_context_queue_t_with_capacity(kContextQueueCap);
     return cq;
 }
 
