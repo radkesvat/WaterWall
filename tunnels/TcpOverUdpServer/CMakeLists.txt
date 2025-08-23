@@ -54,3 +54,4 @@ target_include_directories(TcpOverUdpServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/
 # target_link_libraries(TcpOverUdpServer fec)
 
 target_link_libraries(TcpOverUdpServer ww  kcp)
+target_precompile_headers(TcpOverUdpServer REUSE_FROM ww)

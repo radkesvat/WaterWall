@@ -30,5 +30,5 @@ add_library(UdpListener STATIC
 target_include_directories(UdpListener PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(UdpListener ww)
-
+target_precompile_headers(UdpListener REUSE_FROM ww)
 

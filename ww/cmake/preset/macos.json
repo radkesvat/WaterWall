@@ -11,6 +11,7 @@
                 "target-macos",
                 "xcode",
                 "ccache",
+                "unity",
                 "default"
             ]
         }

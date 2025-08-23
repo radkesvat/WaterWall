@@ -36,5 +36,4 @@ target_include_directories(IpManipulator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/com
 
 
 target_link_libraries(IpManipulator ww)
-
-
+target_precompile_headers(IpManipulator REUSE_FROM ww)

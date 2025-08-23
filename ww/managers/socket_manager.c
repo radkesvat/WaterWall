@@ -78,7 +78,7 @@ typedef struct socket_manager_s
 
 } socket_manager_state_t;
 
-static socket_manager_state_t *state = NULL;
+static socket_manager_state_t *socketmanager_gstate = NULL;
 
 static void distributeTcpSocket(wio_t *io, uint16_t local_port);
 static void distributeUdpPayload(udp_payload_t pl);
@@ -111,16 +111,16 @@ void socketacceptresultDestroy(socket_accept_result_t *sar)
 {
     const wid_t wid = sar->wid;
 
-    mutexLock(&(state->tcp_pools[wid].mutex));
-    genericpoolReuseItem(state->tcp_pools[wid].pool, sar);
-    mutexUnlock(&(state->tcp_pools[wid].mutex));
+    mutexLock(&(socketmanager_gstate->tcp_pools[wid].mutex));
+    genericpoolReuseItem(socketmanager_gstate->tcp_pools[wid].pool, sar);
+    mutexUnlock(&(socketmanager_gstate->tcp_pools[wid].mutex));
 }
 
 static udp_payload_t *newUdpPayload(wid_t wid)
 {
-    mutexLock(&(state->udp_pools[wid].mutex));
-    udp_payload_t *item = genericpoolGetItem(state->udp_pools[wid].pool);
-    mutexUnlock(&(state->udp_pools[wid].mutex));
+    mutexLock(&(socketmanager_gstate->udp_pools[wid].mutex));
+    udp_payload_t *item = genericpoolGetItem(socketmanager_gstate->udp_pools[wid].pool);
+    mutexUnlock(&(socketmanager_gstate->udp_pools[wid].mutex));
     return item;
 }
 
@@ -128,9 +128,9 @@ void udppayloadDestroy(udp_payload_t *upl)
 {
     const wid_t wid = upl->wid;
 
-    mutexLock(&(state->udp_pools[wid].mutex));
-    genericpoolReuseItem(state->udp_pools[wid].pool, upl);
-    mutexUnlock(&(state->udp_pools[wid].mutex));
+    mutexLock(&(socketmanager_gstate->udp_pools[wid].mutex));
+    genericpoolReuseItem(socketmanager_gstate->udp_pools[wid].pool, upl);
+    mutexUnlock(&(socketmanager_gstate->udp_pools[wid].mutex));
 }
 
 static bool executeIptablesRule(const char *protocol, unsigned int port_min, unsigned int port_max,
@@ -245,28 +245,28 @@ static idle_table_t *getOrCreateBalanceTable(const char *balance_group_name)
     hash_t         name_hash = calcHashBytes(balance_group_name, stringLength(balance_group_name));
     idle_table_t *b_table   = NULL;
 
-    mutexLock(&(state->mutex));
+    mutexLock(&(socketmanager_gstate->mutex));
 
-    balancegroup_registry_t_iter find_result = balancegroup_registry_t_find(&(state->balance_groups), name_hash);
+    balancegroup_registry_t_iter find_result = balancegroup_registry_t_find(&(socketmanager_gstate->balance_groups), name_hash);
 
-    if (find_result.ref == balancegroup_registry_t_end(&(state->balance_groups)).ref)
+    if (find_result.ref == balancegroup_registry_t_end(&(socketmanager_gstate->balance_groups)).ref)
     {
-        b_table = idleTableCreate(state->worker->loop);
-        balancegroup_registry_t_insert(&(state->balance_groups), name_hash, b_table);
+        b_table = idleTableCreate(socketmanager_gstate->worker->loop);
+        balancegroup_registry_t_insert(&(socketmanager_gstate->balance_groups), name_hash, b_table);
     }
     else
     {
         b_table = (find_result.ref->second);
     }
 
-    mutexUnlock(&(state->mutex));
+    mutexUnlock(&(socketmanager_gstate->mutex));
 
     return b_table;
 }
 
 void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onAccept cb)
 {
-    if (state->started)
+    if (socketmanager_gstate->started)
     {
         LOGF("SocketManager: cannot register after accept thread starts");
         terminateProgram(1);
@@ -282,9 +282,9 @@ void socketacceptorRegister(tunnel_t *tunnel, socket_filter_option_t option, onA
 
     *filter = (socket_filter_t) {.tunnel = tunnel, .option = option, .cb = cb, .listen_io = NULL};
 
-    mutexLock(&(state->mutex));
-    filters_t_push(&(state->filters[priority]), filter);
-    mutexUnlock(&(state->mutex));
+    mutexLock(&(socketmanager_gstate->mutex));
+    filters_t_push(&(socketmanager_gstate->filters[priority]), filter);
+    mutexUnlock(&(socketmanager_gstate->mutex));
 }
 
 static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_port)
@@ -293,9 +293,9 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
 
     wid_t wid = getNextDistributionWID();
 
-    mutexLock(&(state->tcp_pools[wid].mutex));
-    socket_accept_result_t *result = genericpoolGetItem(state->tcp_pools[wid].pool);
-    mutexUnlock(&(state->tcp_pools[wid].mutex));
+    mutexLock(&(socketmanager_gstate->tcp_pools[wid].mutex));
+    socket_accept_result_t *result = genericpoolGetItem(socketmanager_gstate->tcp_pools[wid].pool);
+    mutexUnlock(&(socketmanager_gstate->tcp_pools[wid].mutex));
 
     *result = (socket_accept_result_t) {
         .io             = io,
@@ -309,7 +309,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
 
     ev.userdata = result;
 
-    if (wid == state->wid)
+    if (wid == socketmanager_gstate->wid)
     {
         filter->cb(&ev);
     }
@@ -392,7 +392,7 @@ static bool handleBalancedFilter(socket_filter_t *filter, const socket_filter_op
         *src_hashed = true;
     }
 
-    idle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+    idle_item_t *idle_item = idletableGetIdleItemByHash(socketmanager_gstate->wid, option.shared_balance_table, *src_hash);
 
     if (idle_item)
     {
@@ -425,7 +425,7 @@ static void finalizeTcpDistribution(socket_filter_t **balance_selection_filters,
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idletableCreateItem(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
+        idletableCreateItem(filter->option.shared_balance_table, src_hash, filter, NULL, socketmanager_gstate->wid,
                             filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                        : filter->option.balance_group_interval);
         if (filter->option.no_delay)
@@ -470,7 +470,7 @@ static void distributeTcpSocket(wio_t *io, uint16_t local_port)
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
-        c_foreach(k, filters_t, state->filters[ri])
+        c_foreach(k, filters_t, socketmanager_gstate->filters[ri])
         {
             socket_filter_t       *filter = *(k.ref);
             socket_filter_option_t option = filter->option;
@@ -544,19 +544,19 @@ static void onAcceptTcpMultiPort(wio_t *io)
 
 static multiport_backend_t getDefaultMultiPortBackend(void)
 {
-    if (state->iptables_installed)
+    if (socketmanager_gstate->iptables_installed)
     {
         return kMultiportBackendIptables;
     }
     return kMultiportBackendSockets;
 }
 
-static bool getInterfaceHostString(const char *interface, char *host_if)
+static bool getInterfaceHostString(const char *if_name, char *host_if)
 {
     ip4_addr_t if_ip;
-    if (! getInterfaceIp(interface, &if_ip, stringLength(interface)))
+    if (! getInterfaceIp(if_name, &if_ip, stringLength(if_name)))
     {
-        LOGF("SocketManager: Could not get interface \"%s\" ip", interface);
+        LOGF("SocketManager: Could not get interface \"%s\" ip", if_name);
         terminateProgram(1);
         return false;
     }
@@ -608,21 +608,21 @@ static uint16_t selectMainPortForIptables(socket_filter_t *filter, wloop_t *loop
 
 static void initializeIptablesIfNeeded(void)
 {
-    if (! state->iptables_installed)
+    if (! socketmanager_gstate->iptables_installed)
     {
         LOGF("SocketManager: multi port backend \"iptables\" colud not start, error: not installed");
         terminateProgram(1);
     }
 
-    state->iptables_used = true;
-    if (! state->iptable_cleaned)
+    socketmanager_gstate->iptables_used = true;
+    if (! socketmanager_gstate->iptable_cleaned)
     {
         if (! resetIptables(false))
         {
             LOGF("SocketManager: could not clear iptables rules");
             terminateProgram(1);
         }
-        state->iptable_cleaned = true;
+        socketmanager_gstate->iptable_cleaned = true;
     }
 }
 
@@ -692,7 +692,7 @@ static void listenTcp(wloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
-        c_foreach(k, filters_t, state->filters[ri])
+        c_foreach(k, filters_t, socketmanager_gstate->filters[ri])
         {
             socket_filter_t *filter = *(k.ref);
             if (filter->option.multiport_backend == kMultiportBackendDefault)
@@ -744,9 +744,9 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
 
 static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
 {
-    mutexLock(&(state->udp_pools[post_pl.wid].mutex));
-    udp_payload_t *pl = genericpoolGetItem(state->udp_pools[post_pl.wid].pool);
-    mutexUnlock(&(state->udp_pools[post_pl.wid].mutex));
+    mutexLock(&(socketmanager_gstate->udp_pools[post_pl.wid].mutex));
+    udp_payload_t *pl = genericpoolGetItem(socketmanager_gstate->udp_pools[post_pl.wid].pool);
+    mutexUnlock(&(socketmanager_gstate->udp_pools[post_pl.wid].mutex));
     *pl = post_pl;
 
     pl->tunnel           = filter->tunnel;
@@ -754,7 +754,7 @@ static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
     wevent_t ev          = (wevent_t) {.loop = worker_loop, .cb = filter->cb};
     ev.userdata          = (void *) pl;
 
-    if (pl->wid == state->wid)
+    if (pl->wid == socketmanager_gstate->wid)
     {
         filter->cb(&ev);
         return;
@@ -797,7 +797,7 @@ static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter
         *src_hashed = true;
     }
 
-    idle_item_t *idle_item = idletableGetIdleItemByHash(state->wid, option.shared_balance_table, *src_hash);
+    idle_item_t *idle_item = idletableGetIdleItemByHash(socketmanager_gstate->wid, option.shared_balance_table, *src_hash);
 
     if (idle_item)
     {
@@ -825,7 +825,7 @@ static void finalizeUdpDistribution(socket_filter_t **balance_selection_filters,
     if (balance_selection_filters_length > 0)
     {
         socket_filter_t *filter = balance_selection_filters[fastRand() % balance_selection_filters_length];
-        idletableCreateItem(filter->option.shared_balance_table, src_hash, filter, NULL, state->wid,
+        idletableCreateItem(filter->option.shared_balance_table, src_hash, filter, NULL, socketmanager_gstate->wid,
                             filter->option.balance_group_interval == 0 ? kDefaultBalanceInterval
                                                                        : filter->option.balance_group_interval);
         postUdpPayload(pl, filter);
@@ -851,7 +851,7 @@ static void distributeUdpPayload(const udp_payload_t pl)
 
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
-        c_foreach(k, filters_t, state->filters[ri])
+        c_foreach(k, filters_t, socketmanager_gstate->filters[ri])
         {
             socket_filter_t       *filter = *(k.ref);
             socket_filter_option_t option = filter->option;
@@ -1060,7 +1060,7 @@ static void listenUdp(wloop_t *loop, uint8_t *ports_overlapped)
 {
     for (int ri = (kFilterLevels - 1); ri >= 0; ri--)
     {
-        c_foreach(k, filters_t, state->filters[ri])
+        c_foreach(k, filters_t, socketmanager_gstate->filters[ri])
         {
             socket_filter_t *filter = *(k.ref);
             if (filter->option.multiport_backend == kMultiportBackendDefault)
@@ -1111,7 +1111,7 @@ static void writeUdpThisLoop(wevent_t *ev)
 
 void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u peer_addr)
 {
-    if (wid_from == state->wid)
+    if (wid_from == socketmanager_gstate->wid)
     {
         wioSetPeerAddr(socket_io->io, (struct sockaddr *) &peer_addr, sizeof(sockaddr_u));
         int     nwrite = wioWrite(socket_io->io, buf);
@@ -1134,59 +1134,59 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u 
 
 struct socket_manager_s *socketmanagerGet(void)
 {
-    return state;
+    return socketmanager_gstate;
 }
 
 void socketmanagerSet(struct socket_manager_s *new_state)
 {
-    assert(state == NULL);
-    state = new_state;
+    assert(socketmanager_gstate == NULL);
+    socketmanager_gstate = new_state;
 }
 
 void socketmanagerStart(void)
 {
-    assert(state != NULL);
+    assert(socketmanager_gstate != NULL);
 
-    assert(state && state->worker->loop && ! state->started);
+    assert(socketmanager_gstate && socketmanager_gstate->worker->loop && ! socketmanager_gstate->started);
 
-    mutexLock(&(state->mutex));
+    mutexLock(&(socketmanager_gstate->mutex));
 
     {
         uint8_t ports_overlapped[65536] = {0};
-        listenTcp(state->worker->loop, ports_overlapped);
+        listenTcp(socketmanager_gstate->worker->loop, ports_overlapped);
     }
     {
         uint8_t ports_overlapped[65536] = {0};
-        listenUdp(state->worker->loop, ports_overlapped);
+        listenUdp(socketmanager_gstate->worker->loop, ports_overlapped);
     }
-    state->started = true;
-    mutexUnlock(&(state->mutex));
+    socketmanager_gstate->started = true;
+    mutexUnlock(&(socketmanager_gstate->mutex));
 }
 
 static void initializeSocketManagerPools(void)
 {
-    state->udp_pools = memoryAllocate(sizeof(*state->udp_pools) * getWorkersCount());
-    memorySet(state->udp_pools, 0, sizeof(*state->udp_pools) * getWorkersCount());
+    socketmanager_gstate->udp_pools = memoryAllocate(sizeof(*socketmanager_gstate->udp_pools) * getWorkersCount());
+    memorySet(socketmanager_gstate->udp_pools, 0, sizeof(*socketmanager_gstate->udp_pools) * getWorkersCount());
 
-    state->tcp_pools = memoryAllocate(sizeof(*state->tcp_pools) * getWorkersCount());
-    memorySet(state->tcp_pools, 0, sizeof(*state->tcp_pools) * getWorkersCount());
+    socketmanager_gstate->tcp_pools = memoryAllocate(sizeof(*socketmanager_gstate->tcp_pools) * getWorkersCount());
+    memorySet(socketmanager_gstate->tcp_pools, 0, sizeof(*socketmanager_gstate->tcp_pools) * getWorkersCount());
 
-    state->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
-    state->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    socketmanager_gstate->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
+    socketmanager_gstate->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
 
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
-        state->udp_pools[i].pool = genericpoolCreateWithCapacity(
-            state->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
-        mutexInit(&(state->udp_pools[i].mutex));
+        socketmanager_gstate->udp_pools[i].pool = genericpoolCreateWithCapacity(
+            socketmanager_gstate->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
+        mutexInit(&(socketmanager_gstate->udp_pools[i].mutex));
 
-        state->tcp_pools[i].pool = genericpoolCreateWithCapacity(
-            state->mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
-        mutexInit(&(state->tcp_pools[i].mutex));
+        socketmanager_gstate->tcp_pools[i].pool = genericpoolCreateWithCapacity(
+            socketmanager_gstate->mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
+        mutexInit(&(socketmanager_gstate->tcp_pools[i].mutex));
 
 #ifdef DEBUG
-        state->udp_pools[i].pool->no_thread_check = true;
-        state->tcp_pools[i].pool->no_thread_check = true;
+        socketmanager_gstate->udp_pools[i].pool->no_thread_check = true;
+        socketmanager_gstate->tcp_pools[i].pool->no_thread_check = true;
 #endif
     }
 }
@@ -1204,24 +1204,24 @@ static void detectSystemCapabilities(void)
 
 socket_manager_state_t *socketmanagerCreate(void)
 {
-    assert(state == NULL);
-    state = memoryAllocate(sizeof(socket_manager_state_t));
-    memorySet(state, 0, sizeof(socket_manager_state_t));
+    assert(socketmanager_gstate == NULL);
+    socketmanager_gstate = memoryAllocate(sizeof(socket_manager_state_t));
+    memorySet(socketmanager_gstate, 0, sizeof(socket_manager_state_t));
 
     assert(getWID() == 0);
-    state->worker = getWorker(0);
-    state->wid    = 0;
+    socketmanager_gstate->worker = getWorker(0);
+    socketmanager_gstate->wid    = 0;
 
     for (size_t i = 0; i < kFilterLevels; i++)
     {
-        state->filters[i] = filters_t_init();
+        socketmanager_gstate->filters[i] = filters_t_init();
     }
 
-    mutexInit(&state->mutex);
+    mutexInit(&socketmanager_gstate->mutex);
     initializeSocketManagerPools();
     detectSystemCapabilities();
 
-    return state;
+    return socketmanager_gstate;
 }
 
 static void cleanupFilters(void)
@@ -1248,7 +1248,7 @@ static void cleanupFilters(void)
         //     socketfilteroptionDeInit(&((*filter.ref)->option));
         //     memoryFree(*filter.ref);
         // }
-        filters_t_drop(&(state->filters[i]));
+        filters_t_drop(&(socketmanager_gstate->filters[i]));
     }
 }
 
@@ -1256,29 +1256,29 @@ static void destroyPools(void)
 {
     for (unsigned int i = 0; i < getWorkersCount(); ++i)
     {
-        mutexDestroy(&(state->udp_pools[i].mutex));
-        genericpoolDestroy(state->udp_pools[i].pool);
-        mutexDestroy(&(state->tcp_pools[i].mutex));
-        genericpoolDestroy(state->tcp_pools[i].pool);
+        mutexDestroy(&(socketmanager_gstate->udp_pools[i].mutex));
+        genericpoolDestroy(socketmanager_gstate->udp_pools[i].pool);
+        mutexDestroy(&(socketmanager_gstate->tcp_pools[i].mutex));
+        genericpoolDestroy(socketmanager_gstate->tcp_pools[i].pool);
     }
 
-    memoryFree(state->udp_pools);
-    memoryFree(state->tcp_pools);
-    masterpoolDestroy(state->mp_tcp);
-    masterpoolDestroy(state->mp_udp);
+    memoryFree(socketmanager_gstate->udp_pools);
+    memoryFree(socketmanager_gstate->tcp_pools);
+    masterpoolDestroy(socketmanager_gstate->mp_tcp);
+    masterpoolDestroy(socketmanager_gstate->mp_udp);
 }
 
 void socketmanagerDestroy(void)
 {
-    assert(state != NULL);
+    assert(socketmanager_gstate != NULL);
 
-    if (state->iptables_used)
+    if (socketmanager_gstate->iptables_used)
     {
         resetIptables(true);
     }
 
     cleanupFilters();
     destroyPools();
-    memoryFree(state);
-    state = NULL;
+    memoryFree(socketmanager_gstate);
+    socketmanager_gstate = NULL;
 }

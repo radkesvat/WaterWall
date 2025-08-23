@@ -30,5 +30,5 @@ add_library(UdpStatelessSocket STATIC
 target_include_directories(UdpStatelessSocket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(UdpStatelessSocket ww)
-
+target_precompile_headers(UdpStatelessSocket REUSE_FROM ww)
 

@@ -85,7 +85,6 @@ static inline long long varintDecode(const unsigned char* buf, int* len) {
 
 WW_DEFINE_MINMAX_INTEGRAL(signed char, schar, Schar)
 WW_DEFINE_MINMAX_INTEGRAL(unsigned char, uchar, Uchar)
-WW_DEFINE_MINMAX_INTEGRAL(char, char, Char)
 WW_DEFINE_MINMAX_INTEGRAL(short, short, Short)
 WW_DEFINE_MINMAX_INTEGRAL(unsigned short, ushort, Ushort)
 WW_DEFINE_MINMAX_INTEGRAL(int, int, Int)
@@ -108,7 +107,6 @@ static inline long double wwMaxLDouble(long double a, long double b) { return fm
     _Generic((a),                                                                                                      \
              signed char: wwMaxSchar,                                                                                  \
              unsigned char: wwMaxUchar,                                                                                \
-             char: wwMaxChar,                                                                                          \
              short: wwMaxShort,                                                                                        \
              unsigned short: wwMaxUshort,                                                                              \
              int: wwMaxInt,                                                                                            \
@@ -126,7 +124,6 @@ static inline long double wwMaxLDouble(long double a, long double b) { return fm
     _Generic((a),                                                                                                      \
              signed char: wwMinSchar,                                                                                  \
              unsigned char: wwMinUchar,                                                                                \
-             char: wwMinChar,                                                                                          \
              short: wwMinShort,                                                                                        \
              unsigned short: wwMinUshort,                                                                              \
              int: wwMinInt,                                                                                            \

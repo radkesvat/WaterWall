@@ -17,7 +17,7 @@
 
 enum
 {
-    kVecCap         = 32,
+    kIdleTableCap   = 32,
     kDefaultTimeout = 1000 // 1 second
 };
 
@@ -76,12 +76,12 @@ idle_table_t *idleTableCreate(wloop_t *loop)
 
     idle_table_t *newtable = (idle_table_t *) ALIGN2(ptr, kCpuLineCacheSize); // NOLINT
 
-    *newtable = (idle_table_t) {.memptr         = ptr,
-                                 .loop           = loop,
-                                 .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, INFINITE),
-                                 .hqueue         = heapq_idles_t_with_capacity(kVecCap),
-                                 .hmap           = hmap_idles_t_with_capacity(kVecCap),
-                                 .last_update_ms = wloopNowMS(loop)};
+    *newtable = (idle_table_t){.memptr         = ptr,
+                               .loop           = loop,
+                               .idle_handle    = wtimerAdd(loop, idleCallBack, kDefaultTimeout, INFINITE),
+                               .hqueue         = heapq_idles_t_with_capacity(kIdleTableCap),
+                               .hmap           = hmap_idles_t_with_capacity(kIdleTableCap),
+                               .last_update_ms = wloopNowMS(loop)};
 
     mutexInit(&(newtable->mutex));
     weventSetUserData(newtable->idle_handle, newtable);
@@ -100,18 +100,18 @@ idle_table_t *idleTableCreate(wloop_t *loop)
  * @return Pointer to the idle item; NULL if insertion fails.
  */
 idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
-                                  uint64_t age_ms)
+                                 uint64_t age_ms)
 {
     assert(self);
     idle_item_t *item = memoryAllocate(sizeof(idle_item_t));
     mutexLock(&(self->mutex));
 
-    *item = (idle_item_t) {.expire_at_ms = wloopNowMS(self->loop) + age_ms,
-                            .hash         = key,
-                            .wid          = wid,
-                            .userdata     = userdata,
-                            .cb           = cb,
-                            .table        = self};
+    *item = (idle_item_t){.expire_at_ms = wloopNowMS(self->loop) + age_ms,
+                          .hash         = key,
+                          .wid          = wid,
+                          .userdata     = userdata,
+                          .cb           = cb,
+                          .table        = self};
 
     // LOGD("add to expire on idle table, wid: %ld, hash: %lx, expire_at_ms: %lu", wid, key, item->expire_at_ms);
     if (! hmap_idles_t_insert(&(self->hmap), item->hash, item).inserted)
@@ -263,7 +263,7 @@ void idleCallBack(wtimer_t *timer)
 {
     uint64_t next_timeout = kDefaultTimeout;
 
-    idle_table_t *self  = weventGetUserdata(timer);
+    idle_table_t  *self  = weventGetUserdata(timer);
     const uint64_t now   = wloopNowMS(self->loop);
     self->last_update_ms = now;
     mutexLock(&(self->mutex));

@@ -272,7 +272,15 @@
             "cacheVariables": {
                 "WW_ENABLE_AVX_512": true
             }
+        },
+        {
+            "name": "unity",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_UNITY_BUILD": true
+            }
         }
+        
     ],
     "buildPresets": [
         {

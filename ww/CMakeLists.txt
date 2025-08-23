@@ -125,10 +125,6 @@ add_library(ww STATIC
 )
 
 set_source_files_properties(
-    managers/signal_manager.c
-    managers/socket_manager.c
-    managers/node_manager.c
-    managers/memory_manager.c
     devices/capture/capture_linux.c
     devices/raw/raw_linux.c
     devices/raw/raw_windows.c
@@ -140,12 +136,7 @@ set_source_files_properties(
 ################################################################################
 # Target Properties
 ################################################################################
-set_target_properties(ww 
-    PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF
-)
+target_compile_features(ww PUBLIC c_std_11)
 
 ################################################################################
 # Include Directories
@@ -243,7 +234,9 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
     
     # Check compiler support for instruction sets
     if(MSVC)
-        check_c_compiler_flag("/arch:SSE2" COMPILER_SUPPORTS_SSE3) # SSE3 is included in SSE2 support on MSVC
+        # For MSVC x64: SSE/SSE2/SSE3 are enabled by default, no /arch flag needed
+        # x64 build - SSE3 is always available
+        set(COMPILER_SUPPORTS_SSE3 TRUE)
         check_c_compiler_flag("/arch:AVX2" COMPILER_SUPPORTS_AVX2)
         check_c_compiler_flag("/arch:AVX512" COMPILER_SUPPORTS_AVX512F)
     else()
@@ -285,7 +278,6 @@ if(HAVE_X86INTRIN_H OR HAVE_IMMINTRIN_H AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT 
 
     # AVX512F Configuration
     if(COMPILER_SUPPORTS_AVX512F)
-        message(STATUS "Compiler supports AVX512F")
         if(WW_ENABLE_AVX_512)
             message(STATUS "Using AVX512F")
             if(MSVC)
@@ -452,7 +444,7 @@ if(cjson_ADDED)
     target_include_directories(ww PUBLIC ${cjson_SOURCE_DIR})
     target_sources(ww PRIVATE ${cjson_SOURCE_DIR}/cJSON.c)
 endif()
-target_compile_definitions(ww PRIVATE ENABLE_TARGET_EXPORT=OFF)
+target_compile_definitions(ww PUBLIC ENABLE_TARGET_EXPORT=OFF)
 
 # LibSodium library
 CPMAddPackage(
@@ -703,7 +695,7 @@ int main() {
     if(FREERES_WRAP_COMPILES)
         message(STATUS "Including FREERS_EH library for cleaner valgrind output")
         add_library(FREERS_EH OBJECT utils/freeres_wrap.cc)
-        target_compile_definitions(ww PRIVATE WW_CALL_GNU_FREES)
+        target_compile_definitions(ww PUBLIC WW_CALL_GNU_FREES)
         set(LIBS ${LIBS} "FREERS_EH")
     else()
         message(STATUS "__gnu_cxx::__freeres not available - skipping FREERS_EH")
@@ -711,7 +703,19 @@ int main() {
 endif()
 
 target_link_libraries(ww PUBLIC ${LIBS})
-target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
+
+# Symbol stripping for release builds
+if(MSVC)
+    # For MSVC: disable debug info generation and strip symbols in release
+    target_link_options(ww PUBLIC 
+        $<$<CONFIG:Release>:/DEBUG:NONE>
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>
+    )
+else()
+    # For GCC/Clang: use -s flag to strip symbols
+    target_link_options(ww PUBLIC $<$<CONFIG:Release>:-s>)
+endif()
 
 # Disable Unity Build for targets that cannot use it
 set_target_properties(sodium PROPERTIES UNITY_BUILD OFF)

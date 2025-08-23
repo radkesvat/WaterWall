@@ -30,5 +30,5 @@ add_library(IpOverrider STATIC
 target_include_directories(IpOverrider PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(IpOverrider ww)
-
+target_precompile_headers(IpOverrider REUSE_FROM ww)
 

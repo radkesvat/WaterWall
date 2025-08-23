@@ -7,8 +7,8 @@
 
 enum
 {
-    kVecCap     = 8,
-    kNodeMapCap = 36
+    kNmConfigsVectorCap = 8,
+    kNodeMapCap         = 36
 };
 
 #define i_type map_node_t // NOLINT
@@ -37,7 +37,7 @@ typedef struct node_manager_s
     vec_configs_t configs;
 } node_manager_t;
 
-static node_manager_t *state;
+static node_manager_t *nodemanager_gstate;
 
 static int createTunnelInstances(node_manager_config_t *cfg, tunnel_t **t_array, int max_size)
 {
@@ -86,7 +86,7 @@ static void finalizeTunnelChains(node_manager_config_t *cfg, tunnel_t **t_array,
             tunnelchainFinalize(tunnelGetChain(tunnel));
             vec_chains_t_push(&cfg->chains, tunnelGetChain(tunnel));
 
-            uint16_t index = 0;
+            uint16_t index      = 0;
             uint16_t mem_offset = 0;
             for (int tci = 0; tci < tunnelGetChain(tunnel)->tunnels.len; tci++)
             {
@@ -102,20 +102,20 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
 {
     for (int i = 0; i < tunnels_count; i++)
     {
-        if (t_array[i]->next == NULL && t_array[i]->prev == NULL && !(t_array[i]->node->flags & kNodeFlagNoChain))
+        if (t_array[i]->next == NULL && t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagNoChain))
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") is not chained", t_array[i]->node->name);
             terminateProgram(1);
         }
 
-        if (t_array[i]->next == NULL && !(t_array[i]->node->flags & kNodeFlagChainEnd))
+        if (t_array[i]->next == NULL && ! (t_array[i]->node->flags & kNodeFlagChainEnd))
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but dose not have "
                  "flagkNodeFlagChainEnd",
                  t_array[i]->node->name);
             terminateProgram(1);
         }
-        if (t_array[i]->prev == NULL && !(t_array[i]->node->flags & kNodeFlagChainHead))
+        if (t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagChainHead))
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but dose not have "
                  "flagkNodeFlagChainHead",
@@ -139,7 +139,7 @@ static void startTunnels(tunnel_t **t_array, int tunnels_count)
     for (int i = 0; i < tunnels_count; i++)
     {
         assert(t_array[i] != NULL);
-        tunnel_t *tunnel = t_array[i];
+        tunnel_t *tunnel                = t_array[i];
         tunnelGetChain(tunnel)->started = true;
         tunnel->onStart(tunnel);
     }
@@ -175,7 +175,7 @@ static void runNodes(node_manager_config_t *cfg)
     };
 
     tunnel_t *t_array[kMaxTarraySize] = {0};
-    int tunnels_count = createTunnelInstances(cfg, t_array, kMaxTarraySize);
+    int       tunnels_count           = createTunnelInstances(cfg, t_array, kMaxTarraySize);
 
     if (tunnels_count == 0)
     {
@@ -194,7 +194,7 @@ static void runNodes(node_manager_config_t *cfg)
 static void validateNodeChainPath(node_t *start_node, node_manager_config_t *cfg)
 {
     node_t *current_node = start_node;
-    int path_length = 0;
+    int     path_length  = 0;
 
     while (current_node->hash_next != 0)
     {
@@ -202,10 +202,10 @@ static void validateNodeChainPath(node_t *start_node, node_manager_config_t *cfg
         node_t *next_node = nodemanagerGetConfigNodeByHash(cfg, current_node->hash_next);
         if (next_node == NULL)
         {
-            LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", 
-                 cfg->config_file->file_path, cfg->config_file->name);
-            LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"", 
-                 current_node->name, current_node->next);
+            LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", cfg->config_file->file_path,
+                 cfg->config_file->name);
+            LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"", current_node->name,
+                 current_node->next);
             terminateProgram(1);
         }
         current_node = next_node;
@@ -253,23 +253,23 @@ static void cycleProcess(node_manager_config_t *cfg)
     validateChainHeadNodes(cfg);
 }
 
-static void parseNodeJsonFields(cJSON *node_json, node_manager_config_t *cfg, 
-                                char **node_name, char **node_type, char **node_next, int *node_version)
+static void parseNodeJsonFields(cJSON *node_json, node_manager_config_t *cfg, char **node_name, char **node_type,
+                                char **node_next, int *node_version)
 {
-    if (!getStringFromJsonObject(node_name, node_json, "name"))
+    if (! getStringFromJsonObject(node_name, node_json, "name"))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->name (string field) was empty or invalid",
              cfg->config_file->file_path);
         terminateProgram(1);
     }
 
-    if (!getStringFromJsonObject(node_type, node_json, "type"))
+    if (! getStringFromJsonObject(node_type, node_json, "type"))
     {
         LOGF("JSON Error: config file \"%s\" -> nodes[x]->type (string field) was empty or invalid",
              cfg->config_file->file_path);
         terminateProgram(1);
     }
-    
+
     getStringFromJsonObject(node_next, node_json, "next");
     getIntFromJsonObjectOrDefault(node_version, node_json, "version", 0);
 }
@@ -277,53 +277,53 @@ static void parseNodeJsonFields(cJSON *node_json, node_manager_config_t *cfg,
 static node_t *createAndLoadNode(const char *node_type, hash_t hash_type)
 {
     node_t *new_node = nodemanagerNewNode();
-    *new_node = nodelibraryLoadByTypeHash(hash_type);
-    
+    *new_node        = nodelibraryLoadByTypeHash(hash_type);
+
     if (new_node->hash_type != hash_type)
     {
-        LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", 
-             node_type, hash_type);
+        LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", node_type,
+             hash_type);
         terminateProgram(1);
     }
-    
+
     return new_node;
 }
 
-static void setupNodeProperties(node_t *node, char *node_name, char *node_type, char *node_next,
-                               int node_version, hash_t hash_name, hash_t hash_type, hash_t hash_next,
-                               cJSON *node_json, node_manager_config_t *cfg)
+static void setupNodeProperties(node_t *node, char *node_name, char *node_type, char *node_next, int node_version,
+                                hash_t hash_name, hash_t hash_type, hash_t hash_next, cJSON *node_json,
+                                node_manager_config_t *cfg)
 {
-    node->name = node_name;
-    node->type = node_type;
-    node->next = node_next;
-    node->hash_name = hash_name;
-    node->hash_type = hash_type;
-    node->hash_next = hash_next;
-    node->version = (uint32_t)node_version;
-    node->node_json = node_json;
-    node->node_settings_json = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
+    node->name                = node_name;
+    node->type                = node_type;
+    node->next                = node_next;
+    node->hash_name           = hash_name;
+    node->hash_type           = hash_type;
+    node->hash_next           = hash_next;
+    node->version             = (uint32_t) node_version;
+    node->node_json           = node_json;
+    node->node_settings_json  = cJSON_GetObjectItemCaseSensitive(node_json, "settings");
     node->node_manager_config = cfg;
 }
 
 static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
 {
     map_node_t *map = &(cfg->node_map);
-    
+
     if (map_node_t_contains(map, node->hash_name))
     {
         LOGF("NodeManager: duplicate node \"%s\" (hash: %lx) ", node->name, node->hash_name);
         terminateProgram(1);
     }
-    
+
     map_node_t_insert(map, node->hash_name, node);
 }
 
 void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
 {
-    char *node_name = NULL;
-    char *node_type = NULL;
-    char *node_next = NULL;
-    int node_version = 0;
+    char *node_name    = NULL;
+    char *node_type    = NULL;
+    char *node_next    = NULL;
+    int   node_version = 0;
 
     parseNodeJsonFields(node_json, cfg, &node_name, &node_type, &node_next, &node_version);
 
@@ -332,8 +332,8 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     hash_t hash_next = node_next != NULL ? calcHashBytes(node_next, strlen(node_next)) : 0x0;
 
     node_t *new_node = createAndLoadNode(node_type, hash_type);
-    setupNodeProperties(new_node, node_name, node_type, node_next, node_version, 
-                       hash_name, hash_type, hash_next, node_json, cfg);
+    setupNodeProperties(new_node, node_name, node_type, node_next, node_version, hash_name, hash_type, hash_next,
+                        node_json, cfg);
     registerNodeInMap(new_node, cfg);
 }
 
@@ -362,7 +362,7 @@ node_t *nodemanagerNewNode(void)
 static void createAllNodeInstances(node_manager_config_t *cfg)
 {
     cJSON *nodes_json = cfg->config_file->nodes;
-    cJSON *node_json = NULL;
+    cJSON *node_json  = NULL;
     cJSON_ArrayForEach(node_json, nodes_json)
     {
         nodemanagerCreateNodeInstance(cfg, node_json);
@@ -379,43 +379,40 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
 
 struct node_manager_s *nodemanagerGetState(void)
 {
-    return state;
+    return nodemanager_gstate;
 }
 
 void nodemanagerSetState(struct node_manager_s *new_state)
 {
-    assert(state == NULL);
-    state = new_state;
+    assert(nodemanager_gstate == NULL);
+    nodemanager_gstate = new_state;
 }
 
 static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file)
 {
     node_manager_config_t *cfg = memoryAllocate(sizeof(node_manager_config_t));
-    *cfg = (node_manager_config_t) {
-        .config_file = config_file, 
-        .node_map = map_node_t_with_capacity(kNodeMapCap), 
-        .chains = vec_chains_t_init()
-    };
+    *cfg                       = (node_manager_config_t){
+                              .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
     return cfg;
 }
 
 void nodemanagerRunConfigFile(config_file_t *config_file)
 {
     node_manager_config_t *cfg = createNodeManagerConfig(config_file);
-    vec_configs_t_push(&(state->configs), cfg);
+    vec_configs_t_push(&(nodemanager_gstate->configs), cfg);
     startInstallingConfigFile(cfg);
 }
 
 node_manager_t *nodemanagerCreate(void)
 {
-    assert(state == NULL);
+    assert(nodemanager_gstate == NULL);
 
-    state = memoryAllocate(sizeof(node_manager_t));
-    memorySet(state, 0, sizeof(node_manager_t));
+    nodemanager_gstate = memoryAllocate(sizeof(node_manager_t));
+    memorySet(nodemanager_gstate, 0, sizeof(node_manager_t));
 
-    state->configs = vec_configs_t_with_capacity(kVecCap);
+    nodemanager_gstate->configs = vec_configs_t_with_capacity(kNmConfigsVectorCap);
 
-    return state;
+    return nodemanager_gstate;
 }
 
 void nodemanagerDestroyNode(node_t *node)
@@ -439,12 +436,12 @@ void nodemanagerDestroyConfig(node_manager_config_t *cfg)
         node_t *node = (node_key_pair.ref)->second;
         nodemanagerDestroyNode(node);
     }
-    
+
     c_foreach(chain, vec_chains_t, cfg->chains)
     {
         tunnelchainDestroy(*chain.ref);
     }
-    
+
     map_node_t_drop(&cfg->node_map);
     vec_chains_t_drop(&cfg->chains);
     configfileDestroy(cfg->config_file);
@@ -453,17 +450,17 @@ void nodemanagerDestroyConfig(node_manager_config_t *cfg)
 
 void nodemanagerDestroy(void)
 {
-    if (state == NULL)
+    if (nodemanager_gstate == NULL)
     {
         return;
     }
-    
-    c_foreach(conf, vec_configs_t, state->configs)
+
+    c_foreach(conf, vec_configs_t, nodemanager_gstate->configs)
     {
         nodemanagerDestroyConfig(*conf.ref);
     }
-    
-    vec_configs_t_drop(&state->configs);
-    memoryFree(state);
-    state = NULL;
+
+    vec_configs_t_drop(&nodemanager_gstate->configs);
+    memoryFree(nodemanager_gstate);
+    nodemanager_gstate = NULL;
 }

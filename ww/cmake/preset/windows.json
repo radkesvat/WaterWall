@@ -21,6 +21,7 @@
                 "target-windows",
                 "vs2022",
                 "ccache",
+                "unity",
                 "default"
             ]
         },
@@ -31,6 +32,7 @@
                 "target-windows-arm32",
                 "vs2022",
                 "ccache",
+                "unity",
                 "default"
             ]
         },
@@ -41,6 +43,7 @@
                 "target-windows-arm64",
                 "vs2022",
                 "ccache",
+                "unity",
                 "default"
             ]
         },
@@ -51,6 +54,7 @@
                 "target-windows-x86",
                 "vs2022",
                 "ccache",
+                "unity",
                 "default"
             ]
         },
@@ -59,8 +63,9 @@
             "inherits": [
                 "host-windows",
                 "target-windows-x86-64",
-                "vs2022",
+                "vs2019",
                 "ccache",
+                "unity",
                 "default"
             ]
         },
@@ -72,6 +77,7 @@
                 "ninja",
                 "clang",
                 "ccache",
+                "unity",
                 "default"
             ]
         },
@@ -84,6 +90,7 @@
                 "ninja",
                 "gcc",
                 "ccache",
+                "unity",
                 "default"
             ]
         }

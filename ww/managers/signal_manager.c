@@ -1,26 +1,26 @@
 #include "signal_manager.h"
 #include "global_state.h"
 
-static signal_manager_t *state = NULL;
+static signal_manager_t *signalmanager_gstate = NULL;
 
 
 void registerAtExitCallBack(SignalHandler handle, void *userdata)
 {
-    assert(state != NULL);
-    assert(state->handlers_len < kMaxSigHandles);
-    mutexLock(&(state->mutex));
+    assert(signalmanager_gstate != NULL);
+    assert(signalmanager_gstate->handlers_len < kMaxSigHandles);
+    mutexLock(&(signalmanager_gstate->mutex));
     for (int i = kMaxSigHandles - 1; i >= 0; i--)
     {
-        if (state->handlers[i].handle == NULL)
+        if (signalmanager_gstate->handlers[i].handle == NULL)
         {
-            state->handlers[i] = (signal_handler_t){.handle = handle, .userdata = userdata};
-            state->handlers_len++;
-            mutexUnlock(&(state->mutex));
+            signalmanager_gstate->handlers[i] = (signal_handler_t){.handle = handle, .userdata = userdata};
+            signalmanager_gstate->handlers_len++;
+            mutexUnlock(&(signalmanager_gstate->mutex));
 
             return;
         }
     }
-    mutexUnlock(&(state->mutex));
+    mutexUnlock(&(signalmanager_gstate->mutex));
 
     printError("SignalManager: Too many atexit handlers, max is %d", kMaxSigHandles);
     _Exit(1);
@@ -28,22 +28,22 @@ void registerAtExitCallBack(SignalHandler handle, void *userdata)
 
 void removeAtExitCallBack(SignalHandler handle, void *userdata)
 {
-    assert(state != NULL);
-    mutexLock(&(state->mutex));
+    assert(signalmanager_gstate != NULL);
+    mutexLock(&(signalmanager_gstate->mutex));
 
     for (int i = 0; i < kMaxSigHandles; i++)
     {
-        if (state->handlers[i].handle == handle && state->handlers[i].userdata == userdata)
+        if (signalmanager_gstate->handlers[i].handle == handle && signalmanager_gstate->handlers[i].userdata == userdata)
         {
-            state->handlers[i] = (signal_handler_t){.handle = NULL, .userdata = NULL};
-            state->handlers_len--;
-            mutexUnlock(&(state->mutex));
+            signalmanager_gstate->handlers[i] = (signal_handler_t){.handle = NULL, .userdata = NULL};
+            signalmanager_gstate->handlers_len--;
+            mutexUnlock(&(signalmanager_gstate->mutex));
 
             return;
         }
     }
     // not found...
-    mutexUnlock(&(state->mutex));
+    mutexUnlock(&(signalmanager_gstate->mutex));
 }
 
 static bool exit_handler_ran_once = false;
@@ -65,11 +65,11 @@ static void exitHandler(void)
 
     for (unsigned int i = 0; i < kMaxSigHandles; i++)
     {
-        if (state->handlers[i].handle != NULL)
+        if (signalmanager_gstate->handlers[i].handle != NULL)
         {
             // written = write(STDOUT_FILENO, ".", 1);
             // discard written;
-            state->handlers[i].handle(state->handlers[i].userdata, 0);
+            signalmanager_gstate->handlers[i].handle(signalmanager_gstate->handlers[i].userdata, 0);
         }
     }
 }
@@ -107,7 +107,7 @@ static void multiplexedSignalHandler(int signum)
     int     written = write(STDOUT_FILENO, message, length);
     discard written;
 
-    if (state->raise_defaults)
+    if (signalmanager_gstate->raise_defaults)
     {
         signal(signum, SIG_DFL);
     }
@@ -122,7 +122,7 @@ static void multiplexedSignalHandler(int signum)
     exitHandler();
 
     // allowing normal exit
-    if (state->raise_defaults)
+    if (signalmanager_gstate->raise_defaults)
     {
         raise(signum);
 
@@ -135,15 +135,15 @@ static void multiplexedSignalHandler(int signum)
 
 void signalmanagerStart(void)
 {
-    assert(state != NULL);
+    assert(signalmanager_gstate != NULL);
 
-    if (state->started)
+    if (signalmanager_gstate->started)
     {
         printError("Error double signalmanagerStart()");
         _Exit(1);
     }
 
-    state->started = true;
+    signalmanager_gstate->started = true;
 
 #ifdef OS_WIN
     // Register the console control handler
@@ -154,7 +154,7 @@ void signalmanagerStart(void)
     }
 #endif
 
-    if (state->handle_sigint)
+    if (signalmanager_gstate->handle_sigint)
     {
         if (signal(SIGINT, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -184,7 +184,7 @@ void signalmanagerStart(void)
 
 #endif
 
-    if (state->handle_sigill)
+    if (signalmanager_gstate->handle_sigill)
     {
         if (signal(SIGILL, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -192,7 +192,7 @@ void signalmanagerStart(void)
             _Exit(1);
         }
     }
-    if (state->handle_sigfpe)
+    if (signalmanager_gstate->handle_sigfpe)
     {
         if (signal(SIGFPE, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -200,7 +200,7 @@ void signalmanagerStart(void)
             _Exit(1);
         }
     }
-    if (state->handle_sigabrt)
+    if (signalmanager_gstate->handle_sigabrt)
     {
         if (signal(SIGABRT, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -208,7 +208,7 @@ void signalmanagerStart(void)
             _Exit(1);
         }
     }
-    if (state->handle_sigsegv)
+    if (signalmanager_gstate->handle_sigsegv)
     {
         if (signal(SIGSEGV, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -216,7 +216,7 @@ void signalmanagerStart(void)
             _Exit(1);
         }
     }
-    if (state->handle_sigterm)
+    if (signalmanager_gstate->handle_sigterm)
     {
         if (signal(SIGTERM, multiplexedSignalHandler) == SIG_ERR)
         {
@@ -264,10 +264,10 @@ void signalmanagerStart(void)
 // }
 signal_manager_t *signalmanagerCreate(void)
 {
-    assert(state == NULL);
-    state = memoryAllocate(sizeof(signal_manager_t));
+    assert(signalmanager_gstate == NULL);
+    signalmanager_gstate = memoryAllocate(sizeof(signal_manager_t));
 
-    *state = (signal_manager_t){.handlers_len   = 0,
+    *signalmanager_gstate = (signal_manager_t){.handlers_len   = 0,
                                 .started        = false,
                                 .raise_defaults = true,
                                 .handle_sigint  = true,
@@ -281,37 +281,37 @@ signal_manager_t *signalmanagerCreate(void)
                                 .handle_sigpipe = true,
                                 .handle_sigalrm = true};
 
-    mutexInit(&(state->mutex));
-    return state;
+    mutexInit(&(signalmanager_gstate->mutex));
+    return signalmanager_gstate;
 }
 
 signal_manager_t *signalmanagerGet(void)
 {
-    assert(state != NULL);
-    return state;
+    assert(signalmanager_gstate != NULL);
+    return signalmanager_gstate;
 }
 
 void signalmanagerSet(signal_manager_t *sm)
 {
-    assert(state == NULL);
-    state = sm;
+    assert(signalmanager_gstate == NULL);
+    signalmanager_gstate = sm;
 }
 void signalmanagerDestroy(void)
 {
-    assert(state != NULL);
-    mutexDestroy(&(state->mutex));
-    memoryFree(state);
+    assert(signalmanager_gstate != NULL);
+    mutexDestroy(&(signalmanager_gstate->mutex));
+    memoryFree(signalmanager_gstate);
 }
 
 _Noreturn void terminateProgram(int exit_code)
 {
 
-    if (state)
+    if (signalmanager_gstate)
     {
         printError("SignalManager: Terminating program with exit-code %d, please read above logs to understand why\n",
                    exit_code);
 
-        if (state->double_terminated)
+        if (signalmanager_gstate->double_terminated)
         {
             assert(false);
             const char msg[]   = "double terminated.\n";
@@ -319,7 +319,7 @@ _Noreturn void terminateProgram(int exit_code)
             discard    written;
             exit(exit_code);
         }
-        state->double_terminated = true;
+        signalmanager_gstate->double_terminated = true;
 
         exitHandler();
         // terminateCurrentThread();

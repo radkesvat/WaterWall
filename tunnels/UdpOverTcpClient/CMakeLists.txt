@@ -30,5 +30,5 @@ add_library(UdpOverTcpClient STATIC
 target_include_directories(UdpOverTcpClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(UdpOverTcpClient ww)
-
+target_precompile_headers(UdpOverTcpClient REUSE_FROM ww)
 
