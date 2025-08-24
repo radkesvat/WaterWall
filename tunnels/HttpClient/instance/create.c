@@ -20,7 +20,7 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
     t->fnPauseD   = &httpclientTunnelDownStreamPause;
     t->fnResumeD  = &httpclientTunnelDownStreamResume;
 
-    t->onPrepair = &httpclientTunnelOnPrepair;
+    t->onPrepare = &httpclientTunnelOnPrepair;
     t->onStart   = &httpclientTunnelOnStart;
     t->onDestroy = &httpclientTunnelDestroy;
     

@@ -2,8 +2,8 @@
 
 #include "wwapi.h"
 
-#include "http_def.h"
 #include "http2_def.h"
+#include "http_def.h"
 #include "nghttp2/nghttp2.h"
 
 enum http2_actions
@@ -19,12 +19,12 @@ typedef struct http2_action_s
 {
     enum http2_actions action_id;
     line_t            *stream_line;
-    sbuf_t    *buf;
+    sbuf_t            *buf;
 
 } http2_action_t;
 
 #define i_type action_queue_t
-#define i_key  http2_action_t 
+#define i_key  http2_action_t
 #include "stc/deque.h"
 
 typedef struct http2_client_child_con_state_s
@@ -41,7 +41,7 @@ typedef struct http2_client_child_con_state_s
 
 } http2_client_child_con_state_t;
 
-typedef struct httpclient_tstate_s
+typedef struct httpclient_lstate_s
 {
     http2_client_child_con_state_t root;
     action_queue_t                 actions;
@@ -64,12 +64,32 @@ typedef struct httpclient_tstate_s
     bool                           handshake_completed;
     bool                           init_sent;
     bool                           no_ping_ack;
-} httpclient_tstate_t;
-
-typedef struct httpclient_lstate_s
-{
-    int unused;
 } httpclient_lstate_t;
+
+#define i_type    vec_cons              // NOLINT
+#define i_key     httpclient_lstate_t * // NOLINT
+#define i_use_cmp                       // NOLINT
+#include "stc/vec.h"
+
+typedef struct thread_connection_pool_s
+{
+    vec_cons cons;
+    size_t   round_index;
+} thread_connection_pool_t;
+
+typedef struct httpclient_tstate_s
+{
+    nghttp2_session_callbacks *cbs;
+    nghttp2_option            *ngoptions;
+    char                      *scheme;
+    char                      *path;
+    char                      *host; // authority
+    enum http_content_type     content_type;
+    size_t                     concurrency;
+    int                        host_port;
+    int                        last_iid;
+    thread_connection_pool_t   thread_cpool[];
+} httpclient_tstate_t;
 
 enum
 {

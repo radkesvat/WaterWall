@@ -28,7 +28,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
     t->fnPauseD   = &ptcTunnelDownStreamPause;
     t->fnResumeD  = &ptcTunnelDownStreamResume;
 
-    t->onPrepair = &ptcTunnelOnPrepair;
+    t->onPrepare = &ptcTunnelOnPrepair;
     t->onStart   = &ptcTunnelOnStart;
     t->onDestroy = &ptcTunnelDestroy;
 

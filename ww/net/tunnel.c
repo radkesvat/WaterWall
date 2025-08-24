@@ -67,28 +67,28 @@ void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 }
 
 // Default downstream initialization function
-void tunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
+void tunnelDefaultDownStreamInit(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
     self->prev->fnInitD(self->prev, line);
 }
 
 // Default downstream establishment function
-void tunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
+void tunnelDefaultDownStreamEst(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
     self->prev->fnEstD(self->prev, line);
 }
 
 // Default downstream finalization function
-void tunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line)
+void tunnelDefaultDownStreamFinish(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
     self->prev->fnFinD(self->prev, line);
 }
 
 // Default downstream payload function
-void tunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
+void tunnelDefaultDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     assert(self->prev != NULL);
     self->prev->fnPayloadD(self->prev, line, payload);
@@ -162,7 +162,7 @@ void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset)
 }
 
 // Default function to prepare the tunnel
-void tunnelDefaultOnPrepair(tunnel_t *t)
+void tunnelDefaultOnPrepare(tunnel_t *t)
 {
     discard t;
 }
@@ -179,8 +179,8 @@ void tunnelDefaultOnStart(tunnel_t *t)
 // Creates a new tunnel instance
 tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 {
-    tstate_size = tunnelGetCorrectAllignedStateSize(tstate_size);
-    lstate_size = tunnelGetCorrectAllignedLineStateSize(lstate_size);
+    tstate_size = tunnelGetCorrectAlignedStateSize(tstate_size);
+    lstate_size = tunnelGetCorrectAlignedLineStateSize(lstate_size);
 
     size_t tsize = sizeof(tunnel_t) + tstate_size;
     // ensure we have enough space to offset the allocation by line cache (for alignment)
@@ -201,20 +201,20 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
 
     *tunnel_ptr = (tunnel_t) {.memptr      = ptr,
                               .fnInitU     = &tunnelDefaultUpStreamInit,
-                              .fnInitD     = &tunnelDefaultdownStreamInit,
+                              .fnInitD     = &tunnelDefaultDownStreamInit,
                               .fnPayloadU  = &tunnelDefaultUpStreamPayload,
-                              .fnPayloadD  = &tunnelDefaultdownStreamPayload,
+                              .fnPayloadD  = &tunnelDefaultDownStreamPayload,
                               .fnEstU      = &tunnelDefaultUpStreamEst,
-                              .fnEstD      = &tunnelDefaultdownStreamEst,
+                              .fnEstD      = &tunnelDefaultDownStreamEst,
                               .fnFinU      = &tunnelDefaultUpStreamFin,
-                              .fnFinD      = &tunnelDefaultdownStreamFinish,
+                              .fnFinD      = &tunnelDefaultDownStreamFinish,
                               .fnPauseU    = &tunnelDefaultUpStreamPause,
                               .fnPauseD    = &tunnelDefaultDownStreamPause,
                               .fnResumeU   = &tunnelDefaultUpStreamResume,
                               .fnResumeD   = &tunnelDefaultDownStreamResume,
                               .onChain     = &tunnelDefaultOnChain,
                               .onIndex     = &tunnelDefaultOnIndex,
-                              .onPrepair   = &tunnelDefaultOnPrepair,
+                              .onPrepare   = &tunnelDefaultOnPrepare,
                               .onStart     = &tunnelDefaultOnStart,
                               .tstate_size = tstate_size,
                               .lstate_size = lstate_size,

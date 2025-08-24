@@ -394,7 +394,7 @@ static void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *l)
  * @param t Pointer to the tunnel.
  * @param l Pointer to the line.
  */
-static void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *l)
+static void pipetunnelDefaultDownStreamInit(tunnel_t *t, line_t *l)
 {
     discard t;
     discard l;
@@ -407,7 +407,7 @@ static void pipetunnelDefaultdownStreamInit(tunnel_t *t, line_t *l)
  * @param t Pointer to the tunnel.
  * @param l Pointer to the line.
  */
-static void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *l)
+static void pipetunnelDefaultDownStreamEst(tunnel_t *t, line_t *l)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
@@ -436,7 +436,7 @@ static void pipetunnelDefaultdownStreamEst(tunnel_t *t, line_t *l)
  * @param t Pointer to the tunnel.
  * @param l Pointer to the line.
  */
-static void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *l)
+static void pipetunnelDefaultDownStreamFin(tunnel_t *t, line_t *l)
 {
     assert(lineIsAlive(l));
 
@@ -469,7 +469,7 @@ static void pipetunnelDefaultdownStreamFin(tunnel_t *t, line_t *l)
  * @param l Pointer to the line.
  * @param payload Pointer to the payload.
  */
-static void pipetunnelDefaultdownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *payload)
+static void pipetunnelDefaultDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *payload)
 {
     pipetunnel_line_state_t *lstate = (pipetunnel_line_state_t *) lineGetState(l, t);
 
@@ -585,7 +585,7 @@ static void pipetunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_
 static void pipetunnelDefaultOnPrepair(tunnel_t *t)
 {
     tunnel_t *child = *(tunnel_t **) tunnelGetState(t);
-    child->onPrepair(child);
+    child->onPrepare(child);
 }
 
 /**
@@ -616,13 +616,13 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
     }
 
     pt->fnInitU    = &pipetunnelDefaultUpStreamInit;
-    pt->fnInitD    = &pipetunnelDefaultdownStreamInit;
+    pt->fnInitD    = &pipetunnelDefaultDownStreamInit;
     pt->fnPayloadU = &pipetunnelDefaultUpStreamPayload;
-    pt->fnPayloadD = &pipetunnelDefaultdownStreamPayload;
+    pt->fnPayloadD = &pipetunnelDefaultDownStreamPayload;
     pt->fnEstU     = &pipetunnelDefaultUpStreamEst;
-    pt->fnEstD     = &pipetunnelDefaultdownStreamEst;
+    pt->fnEstD     = &pipetunnelDefaultDownStreamEst;
     pt->fnFinU     = &pipetunnelDefaultUpStreamFin;
-    pt->fnFinD     = &pipetunnelDefaultdownStreamFin;
+    pt->fnFinD     = &pipetunnelDefaultDownStreamFin;
     pt->fnPauseU   = &pipetunnelDefaultUpStreamPause;
     pt->fnPauseD   = &pipetunnelDefaultDownStreamPause;
     pt->fnResumeU  = &pipetunnelDefaultUpStreamResume;
@@ -630,7 +630,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
 
     pt->onChain   = &pipetunnelDefaultOnChain;
     pt->onIndex   = &pipetunnelDefaultOnIndex;
-    pt->onPrepair = &pipetunnelDefaultOnPrepair;
+    pt->onPrepare = &pipetunnelDefaultOnPrepair;
     pt->onStart   = &pipetunnelDefaultOnStart;
 
     pt->onDestroy = &pipetunnelDestroy;

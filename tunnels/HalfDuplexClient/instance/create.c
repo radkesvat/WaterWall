@@ -20,7 +20,7 @@ tunnel_t *halfduplexclientTunnelCreate(node_t *node)
     t->fnPauseD   = &halfduplexclientTunnelDownStreamPause;
     t->fnResumeD  = &halfduplexclientTunnelDownStreamResume;
 
-    t->onPrepair = &halfduplexclientTunnelOnPrepair;
+    t->onPrepare = &halfduplexclientTunnelOnPrepair;
     t->onStart   = &halfduplexclientTunnelOnStart;
     t->onDestroy = &halfduplexclientTunnelDestroy;
 

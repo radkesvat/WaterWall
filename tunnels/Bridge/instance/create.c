@@ -20,7 +20,7 @@ tunnel_t *bridgeTunnelCreate(node_t *node)
     t->fnPauseD   = &bridgeTunnelDownStreamPause;
     t->fnResumeD  = &bridgeTunnelDownStreamResume;
 
-    t->onPrepair = &bridgeTunnelOnPrepair;
+    t->onPrepare = &bridgeTunnelOnPrepair;
     t->onStart   = &bridgeTunnelOnStart;
     t->onDestroy = &bridgeTunnelDestroy;
 

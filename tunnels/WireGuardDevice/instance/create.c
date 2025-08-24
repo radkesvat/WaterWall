@@ -75,7 +75,7 @@ static tunnel_t *createBaseTunnel(node_t *node)
 
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
-    t->onPrepair = &wireguarddeviceTunnelOnPrepair;
+    t->onPrepare = &wireguarddeviceTunnelOnPrepair;
     t->onStart   = &wireguarddeviceTunnelOnStart;
 
     wgd_tstate_t *state = tunnelGetState(t);

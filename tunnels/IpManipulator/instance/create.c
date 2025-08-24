@@ -12,7 +12,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
 
     t->fnPayloadU = &ipmanipulatorUpStreamPayload;
     t->fnPayloadD = &ipmanipulatorDownStreamPayload;
-    t->onPrepair  = &ipmanipulatorOnPrepair;
+    t->onPrepare  = &ipmanipulatorOnPrepair;
     t->onStart    = &ipmanipulatorOnStart;
     t->onDestroy  = &ipmanipulatorDestroy;
 

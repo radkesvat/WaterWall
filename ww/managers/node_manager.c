@@ -130,7 +130,7 @@ static void prepareTunnels(tunnel_t **t_array, int tunnels_count)
     for (int i = 0; i < tunnels_count; i++)
     {
         assert(t_array[i] != NULL);
-        t_array[i]->onPrepair(t_array[i]);
+        t_array[i]->onPrepare(t_array[i]);
     }
 }
 

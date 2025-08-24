@@ -58,7 +58,7 @@ static void setupTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &udplistenerTunnelDownStreamPause;
     t->fnResumeD  = &udplistenerTunnelDownStreamResume;
 
-    t->onPrepair = &udplistenerTunnelOnPrepair;
+    t->onPrepare = &udplistenerTunnelOnPrepair;
     t->onStart   = &udplistenerTunnelOnStart;
     t->onDestroy = &udplistenerTunnelDestroy;
 }

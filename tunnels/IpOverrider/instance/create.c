@@ -8,7 +8,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
 
     t->fnPayloadU = &ipoverriderUpStreamPayload;
     t->fnPayloadD = &ipoverriderDownStreamPayload;
-    t->onPrepair  = &ipoverriderOnPrepair;
+    t->onPrepare  = &ipoverriderOnPrepair;
     t->onStart    = &ipoverriderOnStart;
     t->onDestroy  = &ipoverriderDestroy;
 

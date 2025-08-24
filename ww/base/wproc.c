@@ -31,13 +31,7 @@ bool isAdmin(void)
     return is_admin;
 }
 
-/**
- * @brief Attempts to elevate the privileges of the current process.
- *
- * @param app_name The executable name of the application.
- * @param fail_msg The error message to display if elevation fails.
- * @return bool true on success, false otherwise.
- */
+
 bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
     discard app_name;
@@ -99,13 +93,7 @@ bool isAdmin(void)
     return true;
 }
 
-/**
- * @brief Stub for non-Windows platforms.
- *
- * @param app_name The executable name of the application.
- * @param fail_msg The error message, unused on non-Windows.
- * @return bool Always returns true.
- */
+
 bool elevatePrivileges(const char *app_name, char *fail_msg)
 {
     discard app_name;

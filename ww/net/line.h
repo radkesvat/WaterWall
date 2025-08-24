@@ -13,7 +13,7 @@ typedef atomic_uint line_refc_t;
 /*
     The line struct represents a connection, it has two ends ( Down-end < --------- > Up-end)
 
-    if forexample a write on the Down-end blocks, it pauses the Up-end and vice versa
+    if for example a write on the Down-end blocks, it pauses the Up-end and vice versa
 
     each context creation will increase refc on the line, so the line will never gets destroyed
     before the contexts that reference it

@@ -20,7 +20,7 @@ tunnel_t *udpovertcpclientTunnelCreate(node_t *node)
     t->fnPauseD   = &udpovertcpclientTunnelDownStreamPause;
     t->fnResumeD  = &udpovertcpclientTunnelDownStreamResume;
 
-    t->onPrepair = &udpovertcpclientTunnelOnPrepair;
+    t->onPrepare = &udpovertcpclientTunnelOnPrepair;
     t->onStart   = &udpovertcpclientTunnelOnStart;
     t->onDestroy = &udpovertcpclientTunnelDestroy;
     

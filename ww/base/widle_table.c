@@ -47,15 +47,7 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct idle_table_s
 
 void idleCallBack(wtimer_t *timer);
 
-/**
- * @brief Creates and initializes a new idle table.
- *
- * Allocates memory aligned to cache boundaries, initializes the internal heap and map,
- * and starts the timer callback.
- *
- * @param loop Pointer to the event loop.
- * @return Pointer to the newly created idle table.
- */
+
 idle_table_t *idleTableCreate(wloop_t *loop)
 {
     wloopUpdateTime(loop);
@@ -88,17 +80,7 @@ idle_table_t *idleTableCreate(wloop_t *loop)
     return newtable;
 }
 
-/**
- * @brief Creates a new idle item and inserts it into the table.
- *
- * @param self Pointer to the idle table.
- * @param key Hash key used for the item.
- * @param userdata User data pointer.
- * @param cb Callback to be invoked upon expiration.
- * @param wid Worker ID.
- * @param age_ms Expiration delay in milliseconds.
- * @return Pointer to the idle item; NULL if insertion fails.
- */
+
 idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata, ExpireCallBack cb, wid_t wid,
                                  uint64_t age_ms)
 {
@@ -126,15 +108,7 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
     return item;
 }
 
-/**
- * @brief Keeps an idle item alive for at least the specified duration.
- *
- * Updates the item's expiration based on current loop time.
- *
- * @param self Pointer to the idle table.
- * @param item Idle item to update.
- * @param age_ms Time in milliseconds to extend the item.
- */
+
 void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint64_t age_ms)
 {
     if (item->removed)
@@ -151,14 +125,7 @@ void idletableKeepIdleItemForAtleast(idle_table_t *self, idle_item_t *item, uint
     // mutexUnlock(&(self->mutex));
 }
 
-/**
- * @brief Retrieves an idle item from the table by its hash key.
- *
- * @param wid Worker ID.
- * @param self Pointer to the idle table.
- * @param key Hash key of the idle item.
- * @return Pointer to the idle item if found; NULL otherwise.
- */
+
 idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
@@ -173,16 +140,7 @@ idle_item_t *idletableGetIdleItemByHash(wid_t wid, idle_table_t *self, hash_t ke
     return (find_result.ref->second);
 }
 
-/**
- * @brief Removes an idle item from the table by its hash key.
- *
- * Performs a lazy deletion by marking the item as removed.
- *
- * @param wid Worker ID.
- * @param self Pointer to the idle table.
- * @param key Hash key of the idle item.
- * @return true if the item was found and removed; false otherwise.
- */
+
 bool idletableRemoveIdleItemByHash(wid_t wid, idle_table_t *self, hash_t key)
 {
     mutexLock(&(self->mutex));
@@ -252,13 +210,7 @@ static void beforeCloseCallBack(wevent_t *ev)
     }
 }
 
-/**
- * @brief Timer callback for processing idle items.
- *
- * Iterates through idle items in the heap and processes those that have expired.
- *
- * @param timer Pointer to the timer.
- */
+
 void idleCallBack(wtimer_t *timer)
 {
     uint64_t next_timeout = kDefaultTimeout;
@@ -306,13 +258,7 @@ void idleCallBack(wtimer_t *timer)
     wtimerReset(timer, (uint32_t) (next_timeout));
 }
 
-/**
- * @brief Destroys the idle table and releases all resources.
- *
- * Deletes the timer handle, frees all idle items, drops internal data structures, and frees allocated memory.
- *
- * @param self Pointer to the idle table.
- */
+
 void idletableDestroy(idle_table_t *self)
 {
     // if our loop is destroyed then the loop it self has freed the timer handle

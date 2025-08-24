@@ -11,7 +11,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseU   = &tcpconnectorTunnelUpStreamPause;
     t->fnResumeU  = &tcpconnectorTunnelUpStreamResume;
 
-    t->onPrepair = &tcpconnectorTunnelOnPrepair;
+    t->onPrepare = &tcpconnectorTunnelOnPrepair;
     t->onStart   = &tcpconnectorTunnelOnStart;
     t->onDestroy = &tcpconnectorTunnelDestroy;
 }

@@ -45,7 +45,7 @@ void packettunnelDefaultUpStreamResume(tunnel_t *self, line_t *line)
 }
 
 // Default downstream initialization function
-void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
+void packettunnelDefaultDownStreamInit(tunnel_t *self, line_t *line)
 {
     discard self;
     discard line;
@@ -54,7 +54,7 @@ void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line)
 }
 
 // Default downstream establishment function
-void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
+void packettunnelDefaultDownStreamEst(tunnel_t *self, line_t *line)
 {
     discard self;
     discard line;
@@ -70,7 +70,7 @@ void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line)
 }
 
 // Default downstream finalization function
-void packettunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
+void packettunnelDefaultDownStreamFin(tunnel_t *self, line_t *line)
 {
     assert(self->prev != NULL);
     // LOGD("packet tunnel received Finish, forcing line to recreate");
@@ -85,7 +85,7 @@ void packettunnelDefaultdownStreamFin(tunnel_t *self, line_t *line)
 }
 
 // Default downstream payload function
-void packettunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
+void packettunnelDefaultDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload)
 {
     discard self;
     discard line;
@@ -125,10 +125,10 @@ tunnel_t *packettunnelCreate(node_t *node, uint16_t tstate_size, uint16_t lstate
     t->fnPauseU   = packettunnelDefaultUpStreamPause;
     t->fnResumeU  = packettunnelDefaultUpStreamResume;
 
-    t->fnInitD    = packettunnelDefaultdownStreamInit;
-    t->fnEstD     = packettunnelDefaultdownStreamEst;
-    t->fnFinD     = packettunnelDefaultdownStreamFin;
-    t->fnPayloadD = packettunnelDefaultdownStreamPayload;
+    t->fnInitD    = packettunnelDefaultDownStreamInit;
+    t->fnEstD     = packettunnelDefaultDownStreamEst;
+    t->fnFinD     = packettunnelDefaultDownStreamFin;
+    t->fnPayloadD = packettunnelDefaultDownStreamPayload;
     t->fnPauseD   = packettunnelDefaultDownStreamPause;
     t->fnResumeD  = packettunnelDefaultDownStreamResume;
 

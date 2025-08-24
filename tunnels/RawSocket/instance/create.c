@@ -20,7 +20,7 @@ tunnel_t *rawsocketCreate(node_t *node)
     t->fnPauseD   = &rawsocketDownStreamPause;
     t->fnResumeD  = &rawsocketDownStreamResume;
 
-    t->onPrepair = &rawsocketOnPrepair;
+    t->onPrepare = &rawsocketOnPrepair;
     t->onStart   = &rawsocketOnStart;
     t->onDestroy = &rawsocketDestroy;
 

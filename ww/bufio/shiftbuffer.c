@@ -1,11 +1,6 @@
 #include "shiftbuffer.h"
 #include "wlibc.h"
 
-// #define LEFTPADDING  ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 10) : (1U << 8)) - (sizeof(uint32_t) * 3))
-// #define RIGHTPADDING ((RAM_PROFILE >= kRamProfileS2Memory ? (1U << 9) : (1U << 7)))
-
-// #define TOTALPADDING ((uint32_t) (sizeof(sbuf_t) + (LEFTPADDING + RIGHTPADDING)))
-
 void sbufDestroy(sbuf_t *b)
 {
     if (UNLIKELY(b->is_temporary))

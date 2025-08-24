@@ -20,7 +20,7 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     t->fnPauseD   = &tundeviceTunnelDownStreamPause;
     t->fnResumeD  = &tundeviceTunnelDownStreamResume;
 
-    t->onPrepair = &tundeviceTunnelOnPrepair;
+    t->onPrepare = &tundeviceTunnelOnPrepair;
     t->onStart   = &tundeviceTunnelOnStart;
     t->onDestroy = &tundeviceTunnelDestroy;
 

@@ -76,7 +76,7 @@ struct tunnel_s
 
     TunnelChainFn  onChain;
     TunnelIndexFn  onIndex;
-    TunnelStatusCb onPrepair;
+    TunnelStatusCb onPrepare;
     TunnelStatusCb onStart;
     TunnelStatusCb onDestroy;
 
@@ -201,7 +201,7 @@ void tunnelDefaultUpStreamResume(tunnel_t *self, line_t *line);
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void tunnelDefaultdownStreamInit(tunnel_t *self, line_t *line);
+void tunnelDefaultDownStreamInit(tunnel_t *self, line_t *line);
 
 /**
  * @brief Default downstream establishment function.
@@ -209,7 +209,7 @@ void tunnelDefaultdownStreamInit(tunnel_t *self, line_t *line);
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void tunnelDefaultdownStreamEst(tunnel_t *self, line_t *line);
+void tunnelDefaultDownStreamEst(tunnel_t *self, line_t *line);
 
 /**
  * @brief Default downstream finish function.
@@ -217,7 +217,7 @@ void tunnelDefaultdownStreamEst(tunnel_t *self, line_t *line);
  * @param self Pointer to the tunnel.
  * @param line Pointer to the line.
  */
-void tunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line);
+void tunnelDefaultDownStreamFinish(tunnel_t *self, line_t *line);
 
 /**
  * @brief Default downstream payload function.
@@ -226,7 +226,7 @@ void tunnelDefaultdownStreamFinish(tunnel_t *self, line_t *line);
  * @param line Pointer to the line.
  * @param payload Pointer to the payload.
  */
-void tunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
+void tunnelDefaultDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
 
 /**
  * @brief Default downstream pause function.
@@ -266,7 +266,7 @@ void tunnelDefaultOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
  *
  * @param t Pointer to the tunnel.
  */
-void tunnelDefaultOnPrepair(tunnel_t *t);
+void tunnelDefaultOnPrepare(tunnel_t *t);
 
 /**
  * @brief Default function to start the tunnel.
@@ -336,7 +336,7 @@ static uint32_t tunnelGetLineStateSize(tunnel_t *self)
  * @param size Size to be aligned.
  * @return uint16_t Correctly aligned state size.
  */
-static uint16_t tunnelGetCorrectAllignedStateSize(uint32_t size)
+static uint16_t tunnelGetCorrectAlignedStateSize(uint32_t size)
 {
     return (size + kCpuLineCacheSize - 1) & ~(kCpuLineCacheSize - 1);
 }
@@ -347,7 +347,7 @@ static uint16_t tunnelGetCorrectAllignedStateSize(uint32_t size)
  * @param size Size to be aligned.
  * @return uint16_t Correctly aligned line state size.
  */
-static uint16_t tunnelGetCorrectAllignedLineStateSize(uint16_t size)
+static uint16_t tunnelGetCorrectAlignedLineStateSize(uint16_t size)
 {
     return (size + kCpuLineCacheSize - 1) & ~(kCpuLineCacheSize - 1);
 }

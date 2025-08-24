@@ -20,7 +20,7 @@ tunnel_t *obfuscatorclientTunnelCreate(node_t *node)
     t->fnPauseD   = &obfuscatorclientTunnelDownStreamPause;
     t->fnResumeD  = &obfuscatorclientTunnelDownStreamResume;
 
-    t->onPrepair = &obfuscatorclientTunnelOnPrepair;
+    t->onPrepare = &obfuscatorclientTunnelOnPrepair;
     t->onStart   = &obfuscatorclientTunnelOnStart;
     t->onDestroy = &obfuscatorclientTunnelDestroy;
 

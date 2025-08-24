@@ -20,7 +20,7 @@ tunnel_t *dataaspacketTunnelCreate(node_t *node)
     t->fnPauseD   = &dataaspacketTunnelDownStreamPause;
     t->fnResumeD  = &dataaspacketTunnelDownStreamResume;
 
-    t->onPrepair = &dataaspacketTunnelOnPrepair;
+    t->onPrepare = &dataaspacketTunnelOnPrepair;
     t->onStart   = &dataaspacketTunnelOnStart;
     t->onDestroy = &dataaspacketTunnelDestroy;
     

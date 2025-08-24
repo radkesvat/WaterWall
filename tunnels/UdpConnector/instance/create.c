@@ -18,7 +18,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &udpconnectorTunnelDownStreamPause;
     t->fnResumeD  = &udpconnectorTunnelDownStreamResume;
 
-    t->onPrepair = &udpconnectorTunnelOnPrepair;
+    t->onPrepare = &udpconnectorTunnelOnPrepair;
     t->onStart   = &udpconnectorTunnelOnStart;
     t->onDestroy = &udpconnectorTunnelDestroy;
 }

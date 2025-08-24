@@ -23,7 +23,7 @@ static void configureTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &tlsclientTunnelDownStreamPause;
     t->fnResumeD  = &tlsclientTunnelDownStreamResume;
 
-    t->onPrepair = &tlsclientTunnelOnPrepair;
+    t->onPrepare = &tlsclientTunnelOnPrepair;
     t->onStart   = &tlsclientTunnelOnStart;
     t->onDestroy = &tlsclientTunnelDestroy;
 }

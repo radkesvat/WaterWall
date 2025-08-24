@@ -20,7 +20,7 @@ tunnel_t *templateTunnelCreate(node_t *node)
     t->fnPauseD   = &templateTunnelDownStreamPause;
     t->fnResumeD  = &templateTunnelDownStreamResume;
 
-    t->onPrepair = &templateTunnelOnPrepair;
+    t->onPrepare = &templateTunnelOnPrepair;
     t->onStart   = &templateTunnelOnStart;
     t->onDestroy = &templateTunnelDestroy;
     

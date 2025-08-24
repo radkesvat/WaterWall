@@ -10,9 +10,9 @@ void packettunnelDefaultUpStreamPayload(tunnel_t *self, line_t *line, sbuf_t *pa
 void packettunnelDefaultUpStreamPause(tunnel_t *self, line_t *line);
 void packettunnelDefaultUpStreamResume(tunnel_t *self, line_t *line);
 
-void packettunnelDefaultdownStreamInit(tunnel_t *self, line_t *line);
-void packettunnelDefaultdownStreamEst(tunnel_t *self, line_t *line);
-void packettunnelDefaultdownStreamFin(tunnel_t *self, line_t *line);
-void packettunnelDefaultdownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
+void packettunnelDefaultDownStreamInit(tunnel_t *self, line_t *line);
+void packettunnelDefaultDownStreamEst(tunnel_t *self, line_t *line);
+void packettunnelDefaultDownStreamFin(tunnel_t *self, line_t *line);
+void packettunnelDefaultDownStreamPayload(tunnel_t *self, line_t *line, sbuf_t *payload);
 void packettunnelDefaultDownStreamPause(tunnel_t *self, line_t *line);
 void packettunnelDefaultDownStreamResume(tunnel_t *self, line_t *line);

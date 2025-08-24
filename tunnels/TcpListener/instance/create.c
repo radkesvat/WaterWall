@@ -58,7 +58,7 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->fnPauseD   = &tcplistenerTunnelDownStreamPause;
     t->fnResumeD  = &tcplistenerTunnelDownStreamResume;
 
-    t->onPrepair = &tcplistenerTunnelOnPrepair;
+    t->onPrepare = &tcplistenerTunnelOnPrepair;
     t->onStart   = &tcplistenerTunnelOnStart;
     t->onDestroy = &tcplistenerTunnelDestroy;
 }

@@ -24,7 +24,7 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     t->fnPauseD   = &reverseserverTunnelDownStreamPause;
     t->fnResumeD  = &reverseserverTunnelDownStreamResume;
 
-    t->onPrepair = &reverseserverTunnelOnPrepair;
+    t->onPrepare = &reverseserverTunnelOnPrepair;
     t->onStart   = &reverseserverTunnelOnStart;
     t->onDestroy = &reverseserverTunnelDestroy;
 

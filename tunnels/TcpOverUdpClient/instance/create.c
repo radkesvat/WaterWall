@@ -20,7 +20,7 @@ tunnel_t *tcpoverudpclientTunnelCreate(node_t *node)
     t->fnPauseD   = &tcpoverudpclientTunnelDownStreamPause;
     t->fnResumeD  = &tcpoverudpclientTunnelDownStreamResume;
 
-    t->onPrepair = &tcpoverudpclientTunnelOnPrepair;
+    t->onPrepare = &tcpoverudpclientTunnelOnPrepair;
     t->onStart   = &tcpoverudpclientTunnelOnStart;
     t->onDestroy = &tcpoverudpclientTunnelDestroy;
 
