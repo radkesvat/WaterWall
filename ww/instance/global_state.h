@@ -92,13 +92,26 @@ extern ww_global_state_t global_ww_state;
 #define WORKER_ADDITIONS 1 // 1 for lwip thread (included in workers_count)
 
 /*!
+ * @brief Get the number of total workers.
+ *        This includes additional threads that is created during startup
+ *        but they may not have an event loop instance!
+ *        
+ *        note that threads that tunnels may create are not counted as workers (eg TunDevice node)
+ * @return The number of workers.
+ */
+static inline wid_t getTotalWorkersCount(void)
+{
+    return (wid_t) WORKERS_COUNT;
+}
+
+/*!
  * @brief Get the number of workers.
  *
  * @return The number of workers.
  */
 static inline wid_t getWorkersCount(void)
 {
-    return (wid_t) WORKERS_COUNT;
+    return (wid_t) WORKERS_COUNT - WORKER_ADDITIONS;
 }
 
 /*!
@@ -174,9 +187,9 @@ static inline wid_t getNextDistributionWID(void)
     wid_t wid = atomicAddExplicit(&GSTATE.distribute_wid, 1, memory_order_relaxed);
 
     // we dont consider lwip thread
-    if (wid >= getWorkersCount() - WORKER_ADDITIONS)
+    if (wid >= getWorkersCount())
     {
-        atomicStoreRelaxed(&GSTATE.distribute_wid, 0);
+        atomicStoreRelaxed(&GSTATE.distribute_wid, 1);
         wid = 0;
     }
 

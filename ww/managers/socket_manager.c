@@ -885,7 +885,7 @@ static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
     udpsock_t *socket      = weventGetUserdata(io);
     uint16_t   local_port  = sockaddrPort(wioGetLocaladdrU(io));
     uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
-    wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount() - WORKER_ADDITIONS);
+    wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount());
 
     if (GSTATE.application_stopping_flag)
     {
@@ -906,7 +906,7 @@ static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
 #ifdef OS_UNIX
     udpsock_t *socket      = weventGetUserdata(io);
     uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
-    wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount() - WORKER_ADDITIONS);
+    wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount());
     uint16_t   real_local_port = sockaddrPort(wioGetLocaladdrU(io)); // default fallback
 
     if (GSTATE.application_stopping_flag)
@@ -1165,16 +1165,16 @@ void socketmanagerStart(void)
 
 static void initializeSocketManagerPools(void)
 {
-    socketmanager_gstate->udp_pools = memoryAllocate(sizeof(*socketmanager_gstate->udp_pools) * getWorkersCount());
-    memorySet(socketmanager_gstate->udp_pools, 0, sizeof(*socketmanager_gstate->udp_pools) * getWorkersCount());
+    socketmanager_gstate->udp_pools = memoryAllocate(sizeof(*socketmanager_gstate->udp_pools) * getTotalWorkersCount());
+    memorySet(socketmanager_gstate->udp_pools, 0, sizeof(*socketmanager_gstate->udp_pools) * getTotalWorkersCount());
 
-    socketmanager_gstate->tcp_pools = memoryAllocate(sizeof(*socketmanager_gstate->tcp_pools) * getWorkersCount());
-    memorySet(socketmanager_gstate->tcp_pools, 0, sizeof(*socketmanager_gstate->tcp_pools) * getWorkersCount());
+    socketmanager_gstate->tcp_pools = memoryAllocate(sizeof(*socketmanager_gstate->tcp_pools) * getTotalWorkersCount());
+    memorySet(socketmanager_gstate->tcp_pools, 0, sizeof(*socketmanager_gstate->tcp_pools) * getTotalWorkersCount());
 
     socketmanager_gstate->mp_udp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
     socketmanager_gstate->mp_tcp = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));
 
-    for (unsigned int i = 0; i < getWorkersCount(); ++i)
+    for (unsigned int i = 0; i < getTotalWorkersCount(); ++i)
     {
         socketmanager_gstate->udp_pools[i].pool = genericpoolCreateWithCapacity(
             socketmanager_gstate->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
@@ -1254,7 +1254,7 @@ static void cleanupFilters(void)
 
 static void destroyPools(void)
 {
-    for (unsigned int i = 0; i < getWorkersCount(); ++i)
+    for (unsigned int i = 0; i < getTotalWorkersCount(); ++i)
     {
         mutexDestroy(&(socketmanager_gstate->udp_pools[i].mutex));
         genericpoolDestroy(socketmanager_gstate->udp_pools[i].pool);

@@ -31,7 +31,7 @@ void tunnelchainInsert(tunnel_chain_t *tci, tunnel_t *t)
 
 tunnel_chain_t *tunnelchainCreate(wid_t workers_count)
 {
-    size_t          size = sizeof(tunnel_chain_t) + sizeof(void *) * getWorkersCount();
+    size_t          size = sizeof(tunnel_chain_t) + sizeof(void *) * getTotalWorkersCount();
     tunnel_chain_t *tc   = memoryAllocate(size);
     memorySet(tc, 0, size);
     tc->workers_count = workers_count;

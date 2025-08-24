@@ -136,7 +136,7 @@ static void tcpipInitDone(void *arg)
     GSTATE.flag_lwip_initialized = 1;
     GSTATE.lwip_process_v4_hook  = wwDefaultInternalLwipIpv4Hook;
     // lwip thread worker id is set to invalid value (larger than workers 0 index)
-    tl_wid          = getWorkersCount() - 1; // lwip is the last worker
+    tl_wid          = getTotalWorkersCount() - 1; // lwip is the last worker
     GSTATE.lwip_wid = tl_wid;
 }
 
@@ -193,7 +193,7 @@ void setGlobalState(struct ww_global_state_s *state)
  */
 void globalstateUpdateAllocationPadding(uint16_t padding)
 {
-    for (wid_t wi = 0; wi < getWorkersCount(); wi++)
+    for (wid_t wi = 0; wi < getTotalWorkersCount(); wi++)
     {
         bufferpoolUpdateAllocationPaddings(getWorkerBufferPool(wi), padding, padding);
     }
@@ -260,13 +260,13 @@ void createGlobalState(const ww_construction_data_t init_data)
 
         initializeMasterPools();
 
-        for (wid_t i = 0; i < getWorkersCount() - WORKER_ADDITIONS; ++i)
+        for (wid_t i = 0; i < getWorkersCount(); ++i)
         {
             workerInit(getWorker(i), i, true);
         }
 
         // WORKER_ADDITIONS 1 : lwip worker dose not have event loop
-        workerInit(getWorker(getWorkersCount() - 1), getWorkersCount() - 1, false);
+        workerInit(getWorker(getTotalWorkersCount() - 1), getTotalWorkersCount() - 1, false);
 
         initializeShortCuts();
     }

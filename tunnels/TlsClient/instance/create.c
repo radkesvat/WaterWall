@@ -205,7 +205,7 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
 
     configureTunnelCallbacks(t);
 
-    int                 worker_count = getWorkersCount() - WORKER_ADDITIONS;
+    int                 worker_count = getWorkersCount();
     tlsclient_tstate_t *ts           = tunnelGetState(t);
     const cJSON        *settings     = node->node_settings_json;
 

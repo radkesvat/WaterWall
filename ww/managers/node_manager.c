@@ -70,7 +70,7 @@ static void assignChainsToTunnels(tunnel_t **t_array, int tunnels_count)
         tunnel_t *tunnel = t_array[i];
         if (tunnel->chain == NULL)
         {
-            tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount() - WORKER_ADDITIONS);
+            tunnel_chain_t *tc = tunnelchainCreate(getWorkersCount());
             tunnel->onChain(tunnel, tc);
         }
     }
@@ -157,7 +157,7 @@ static void initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
             assert(tunnelGetChain(tunnel)->packet_chain_init_sent == false);
 
             tunnelGetChain(tunnel)->packet_chain_init_sent = true;
-            for (wid_t wi = 0; wi < getWorkersCount() - WORKER_ADDITIONS; wi++)
+            for (wid_t wi = 0; wi < getWorkersCount(); wi++)
             {
                 line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(tunnel), wi);
                 tunnelNextUpStreamInit(tunnel, l);

@@ -5,7 +5,7 @@
 tunnel_t *reverseserverTunnelCreate(node_t *node)
 {
 
-    int wc = getWorkersCount() - WORKER_ADDITIONS;
+    int wc = getWorkersCount();
 
     tunnel_t *t = tunnelCreate(node, sizeof(reverseserver_tstate_t) + (wc * sizeof(reverseserver_thread_box_t)),
                                sizeof(reverseserver_lstate_t));

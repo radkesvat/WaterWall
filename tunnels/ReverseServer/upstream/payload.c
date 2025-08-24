@@ -170,7 +170,7 @@ static bool tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
     sbuf_t *dbuf   = dls->buffering;
     dls->buffering = NULL;
 
-    for (wid_t wi = 0; wi < getWorkersCount() - WORKER_ADDITIONS; wi++)
+    for (wid_t wi = 0; wi < getWorkersCount(); wi++)
     {
         if (wi != lineGetWID(d) && ts->threadlocal_pool[wi].u_count > 0)
         {

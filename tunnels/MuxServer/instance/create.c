@@ -4,7 +4,7 @@
 
 tunnel_t *muxserverTunnelCreate(node_t *node)
 {
-    int wc = getWorkersCount() - WORKER_ADDITIONS;
+    int wc = getWorkersCount();
 
     tunnel_t *t = tunnelCreate(node, sizeof(muxserver_tstate_t) + (wc * sizeof(line_t *)), sizeof(muxserver_lstate_t));
 

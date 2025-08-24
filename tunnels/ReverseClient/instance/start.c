@@ -4,7 +4,7 @@
 
 void reverseclientTunnelOnStart(tunnel_t *t)
 {
-    int wc = getWorkersCount() - WORKER_ADDITIONS;
+    int wc = getWorkersCount();
 
     for (int i = 0; i < wc; i++)
     {

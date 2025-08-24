@@ -33,7 +33,7 @@ void dataaspacketTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->line == NULL)
     {
-        for (wid_t wi = 0; wi < getWorkersCount() - WORKER_ADDITIONS; wi++)
+        for (wid_t wi = 0; wi < getWorkersCount(); wi++)
         {
             if (wi == lineGetWID(l))
             {
