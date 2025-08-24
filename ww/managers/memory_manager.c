@@ -8,9 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-
-
-#if !ALLOCATOR_BYPASS
+#if ! ALLOCATOR_BYPASS
 
 void memorymanagerInit(void)
 {
@@ -21,7 +19,7 @@ void memorymanagerInit(void)
     mi_option_enable(mi_option_allow_large_os_pages);
     mi_option_enable(mi_option_eager_commit);
     mi_option_enable(mi_option_large_os_pages);
-    // mi_option_set(mi_option_reserve_huge_os_pages, 1); 
+    // mi_option_set(mi_option_reserve_huge_os_pages, 1);
 }
 
 struct dedicated_memory_s
@@ -71,6 +69,12 @@ void *memoryReAllocate(void *ptr, size_t size)
 {
     return mi_realloc(ptr, size);
 }
+
+void *memoryCalloc(size_t n, size_t size)
+{
+    return mi_calloc(n, size);
+}
+
 void memoryFree(void *ptr)
 {
     mi_free(ptr);
@@ -121,12 +125,9 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 
 #else
 
-
 void memorymanagerInit(void)
 {
-
 }
-
 
 void *memoryAllocate(size_t size)
 {
@@ -137,11 +138,14 @@ void *memoryAllocate(size_t size)
     return ptr;
 }
 
-
-
 void *memoryReAllocate(void *ptr, size_t size)
 {
     return realloc(ptr, size);
+}
+
+void *memoryCalloc(size_t n, size_t size)
+{
+    return calloc(n, size);
 }
 
 void memoryFree(void *ptr)
@@ -176,7 +180,6 @@ void memoryDedicatedFree(dedicated_memory_t *dm, void *ptr)
 }
 
 #endif
-
 
 void *memoryAllocateZero(size_t size)
 {

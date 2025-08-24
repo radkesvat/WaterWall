@@ -28,6 +28,7 @@ _Noreturn void terminateProgram(int exit_code); // in signal_manager.c
 void *memoryAllocate(size_t size);
 void *memoryAllocateZero(size_t size);
 void *memoryReAllocate(void *ptr, size_t size);
+void *memoryCalloc(size_t n,size_t size);
 void  memoryFree(void *ptr);
 
 void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
@@ -36,7 +37,7 @@ void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
 /* STC lib will use our custom allocators*/
 #define c_malloc(sz)               memoryAllocate((size_t) (sz))
-#define c_calloc(n, sz)            memoryAllocateZero((size_t) ((n) * (sz)))
+#define c_calloc(n, sz)            memoryCalloc((size_t) (n), (size_t) (sz))
 #define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t) (sz))
 #define c_free(ptr, sz)            memoryFree(ptr)
 
