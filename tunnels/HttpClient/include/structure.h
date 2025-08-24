@@ -44,9 +44,11 @@ typedef struct http2_client_child_con_state_s
 typedef struct httpclient_lstate_s
 {
     http2_client_child_con_state_t root;
+    context_queue_t                cq_u;
+    context_queue_t                cq_d;
+    buffer_queue_t                 bq;
     action_queue_t                 actions;
     nghttp2_session               *session;
-    context_queue_t               *queue;
     wtimer_t                      *ping_timer;
     tunnel_t                      *tunnel;
     line_t                        *line;
@@ -88,13 +90,16 @@ typedef struct httpclient_tstate_s
     size_t                     concurrency;
     int                        host_port;
     int                        last_iid;
-    thread_connection_pool_t   thread_cpool[];
+    bool                       discard_settings_frame;
+
+    thread_connection_pool_t thread_cpool[];
 } httpclient_tstate_t;
 
 enum
 {
-    kTunnelStateSize = sizeof(httpclient_tstate_t),
-    kLineStateSize   = sizeof(httpclient_lstate_t)
+    kTunnelStateSize            = sizeof(httpclient_tstate_t),
+    kLineStateSize              = sizeof(httpclient_lstate_t),
+    kDefaultHttp2MuxConcurrency = 1
 };
 
 WW_EXPORT void         httpclientTunnelDestroy(tunnel_t *t);
@@ -122,3 +127,36 @@ void httpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void httpclientLinestateInitialize(httpclient_lstate_t *ls);
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
+
+static void *httpclientNgh2CustomMemoryAllocate(size_t size, void *mem_user_data)
+{
+    discard mem_user_data;
+    return memoryAllocate(size);
+}
+
+static void *httpclientNgh2CustomMemoryReAllocate(void *ptr, size_t size, void *mem_user_data)
+{
+    discard mem_user_data;
+    return memoryReAllocate(ptr, size);
+}
+static void *httpclientNgh2CustomMemoryCalloc(size_t n, size_t size, void *mem_user_data)
+{
+    discard mem_user_data;
+    return memoryCalloc(n, size);
+}
+static void httpclientNgh2CustomMemoryFree(void *ptr, void *mem_user_data)
+{
+    discard mem_user_data;
+    memoryFree(ptr);
+}
+
+int httpclientV2OnHeaderCallBack(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name,
+                                 size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags, void *userdata);
+
+int httpclientV2OnDataChunkRecvCallBack(nghttp2_session *session, uint8_t flags, int32_t stream_id, const uint8_t *data,
+                                        size_t len, void *userdata);
+
+int httpclientV2OnFrameRecvCallBack(nghttp2_session *session, const nghttp2_frame *frame, void *userdata);
+
+int httpclientV2OnStreamClosedCallBack(nghttp2_session *session, int32_t stream_id, uint32_t error_code,
+                                       void *userdata);

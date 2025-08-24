@@ -9,7 +9,9 @@ add_library(HttpClient STATIC
                     instance/chain.c
                     instance/index.c
                     common/helpers.c
+                    common/h2_helpers.c
                     common/line_state.c
+                    common/http_def.c
 
 
                     http2/upstream/init.c
