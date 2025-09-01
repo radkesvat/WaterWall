@@ -35,7 +35,7 @@ void *memoryDedicatedAllocate(dedicated_memory_t *dm, size_t size);
 void *memoryDedicatedReallocate(dedicated_memory_t *dm, void *ptr, size_t size);
 void  memoryDedicatedFree(dedicated_memory_t *dm, void *ptr);
 
-/* STC lib will use our custom allocators*/
+/* STC lib will use our custom allocators (since we used custom fork (radkesvat/stc)) */
 #define c_malloc(sz)               memoryAllocate((size_t) (sz))
 #define c_calloc(n, sz)            memoryCalloc((size_t) (n), (size_t) (sz))
 #define c_realloc(ptr, old_sz, sz) memoryReAllocate(ptr, (size_t) (sz))
@@ -505,7 +505,7 @@ static inline void memoryZeroAligned32(void *ptr, size_t n)
         maxptr[i] = 0;
     }
 
-    // Handle remaining bytes (should be 0 since n is multiple of 32, but just in case)
+    // Handle remaining bytes
     uint8_t *byteptr = (uint8_t *) ptr;
     for (i = (n / maxsize) * maxsize; i < n; i++)
     {
