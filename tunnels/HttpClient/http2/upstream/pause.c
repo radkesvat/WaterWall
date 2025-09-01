@@ -2,7 +2,7 @@
 
 #include "loggers/network_logger.h"
 
-void httpclientTunnelUpStreamPause(tunnel_t *t, line_t *l)
+void httpclientV2TunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
     tunnelNextUpStreamPause(t, l);
 }

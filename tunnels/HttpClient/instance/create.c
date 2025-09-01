@@ -2,25 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-
-
 tunnel_t *httpclientTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(httpclient_tstate_t), sizeof(httpclient_lstate_t));
-
-    t->fnInitU    = &httpclientTunnelUpStreamInit;
-    t->fnEstU     = &httpclientTunnelUpStreamEst;
-    t->fnFinU     = &httpclientTunnelUpStreamFinish;
-    t->fnPayloadU = &httpclientTunnelUpStreamPayload;
-    t->fnPauseU   = &httpclientTunnelUpStreamPause;
-    t->fnResumeU  = &httpclientTunnelUpStreamResume;
-
-    t->fnInitD    = &httpclientTunnelDownStreamInit;
-    t->fnEstD     = &httpclientTunnelDownStreamEst;
-    t->fnFinD     = &httpclientTunnelDownStreamFinish;
-    t->fnPayloadD = &httpclientTunnelDownStreamPayload;
-    t->fnPauseD   = &httpclientTunnelDownStreamPause;
-    t->fnResumeD  = &httpclientTunnelDownStreamResume;
 
     t->onPrepare = &httpclientTunnelOnPrepair;
     t->onStart   = &httpclientTunnelOnStart;
@@ -45,18 +29,34 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
-
     httpclient_tstate_t *ts = tunnelGetState(t);
 
-    // nghttp2_session_callbacks_new(&(ts->cbs));
-    // nghttp2_session_callbacks_set_on_header_callback(ts->cbs, httpclientV2OnHeaderCallBack);
-    // nghttp2_session_callbacks_set_on_data_chunk_recv_callback(ts->cbs, httpclientV2OnDataChunkRecvCallBack);
-    // nghttp2_session_callbacks_set_on_frame_recv_callback(ts->cbs, httpclientV2OnFrameRecvCallBack);
-    // nghttp2_session_callbacks_set_on_stream_close_callback(ts->cbs, httpclientV2OnStreamClosedCallBack);
-
-    for (size_t i = 0; i < getWorkersCount(); i++)
+    if (hv_d == 2.0)
     {
-        ts->thread_cpool[i] = (thread_connection_pool_t) {.round_index = 0, .cons = vec_cons_with_capacity(8)};
+        t->fnInitU    = &httpclientV2TunnelUpStreamInit;
+        t->fnEstU     = &httpclientV2TunnelUpStreamEst;
+        t->fnFinU     = &httpclientV2TunnelUpStreamFinish;
+        t->fnPayloadU = &httpclientV2TunnelUpStreamPayload;
+        t->fnPauseU   = &httpclientV2TunnelUpStreamPause;
+        t->fnResumeU  = &httpclientV2TunnelUpStreamResume;
+
+        t->fnInitD    = &httpclientV2TunnelDownStreamInit;
+        t->fnEstD     = &httpclientV2TunnelDownStreamEst;
+        t->fnFinD     = &httpclientV2TunnelDownStreamFinish;
+        t->fnPayloadD = &httpclientV2TunnelDownStreamPayload;
+        t->fnPauseD   = &httpclientV2TunnelDownStreamPause;
+        t->fnResumeD  = &httpclientV2TunnelDownStreamResume;
+
+        nghttp2_session_callbacks_new(&(ts->cbs));
+        nghttp2_session_callbacks_set_on_header_callback(ts->cbs, httpclientV2OnHeaderCallBack);
+        nghttp2_session_callbacks_set_on_data_chunk_recv_callback(ts->cbs, httpclientV2OnDataChunkRecvCallBack);
+        nghttp2_session_callbacks_set_on_frame_recv_callback(ts->cbs, httpclientV2OnFrameRecvCallBack);
+        nghttp2_session_callbacks_set_on_stream_close_callback(ts->cbs, httpclientV2OnStreamClosedCallBack);
+
+        nghttp2_option_new(&(ts->ngoptions));
+        nghttp2_option_set_peer_max_concurrent_streams(ts->ngoptions, 0xffffffffU);
+        nghttp2_option_set_no_http_messaging(ts->ngoptions, 1);
+        nghttp2_option_set_no_auto_window_update(ts->ngoptions, 1);
     }
 
     if (! getStringFromJsonObject(&(ts->host), settings, "host"))
@@ -81,21 +81,7 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
         memoryFree(content_type_buf);
     }
 
-    int int_concurrency;
-    getIntFromJsonObjectOrDefault(&(int_concurrency), settings, "concurrency", kDefaultHttp2MuxConcurrency);
-    ts->concurrency = int_concurrency;
-
-    nghttp2_option_new(&(ts->ngoptions));
-    nghttp2_option_set_peer_max_concurrent_streams(ts->ngoptions, 0xffffffffU);
-    nghttp2_option_set_no_http_messaging(ts->ngoptions, 1);
-    nghttp2_option_set_no_auto_window_update(ts->ngoptions, 1);
     // nghttp2_option_set_no_http_messaging use this with grpc?
-    
-    // nghttp2_mem mem = {.mem_user_data = NULL, // Optional: pass your context here
-    //                    .malloc        = &httpclientNgh2CustomMemoryAllocate,
-    //                    .free          = &httpclientNgh2CustomMemoryFree,
-    //                    .calloc        = &httpclientNgh2CustomMemoryCalloc,
-    //                    .realloc       = &httpclientNgh2CustomMemoryReAllocate};
 
     return t;
 }
