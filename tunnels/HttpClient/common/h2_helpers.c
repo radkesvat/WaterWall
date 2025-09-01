@@ -135,6 +135,7 @@ int httpclientV2OnDataChunkRecvCallBack(nghttp2_session *session, uint8_t flags,
 {
     discard session;
     discard flags;
+    discard stream_id;
     if (UNLIKELY(userdata == NULL || len <= 0))
     {
         return 0;
