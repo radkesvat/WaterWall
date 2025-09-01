@@ -58,7 +58,7 @@ static void flushWriteQueue(httpclient_lstate_t *ls)
 static sbuf_t *httpclientV2GetNgHttp2SendableData(httpclient_lstate_t *ls)
 {
     char  *buf = NULL;
-    size_t len = nghttp2_session_mem_send2(ls->session, (const uint8_t **) &buf);
+    uint32_t len = (uint32_t) nghttp2_session_mem_send2(ls->session, (const uint8_t **) &buf);
 
     if (len > 0)
     {
@@ -145,8 +145,8 @@ int httpclientV2OnDataChunkRecvCallBack(nghttp2_session *session, uint8_t flags,
     httpclient_lstate_t *ls = (httpclient_lstate_t *) userdata;
 
     sbuf_t *buf = bufferpoolGetLargeBuffer(getWorkerBufferPool(lineGetWID(ls->line)));
-    sbufSetLength(buf, len);
-    sbufWriteLarge(buf, data, len);
+    sbufSetLength(buf, (uint32_t) len);
+    sbufWriteLarge(buf, data,(uint32_t) len);
 
     contextqueuePush(&ls->cq_d, contextCreatePayload(ls->line, buf));
 

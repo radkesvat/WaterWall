@@ -6,11 +6,14 @@ void httpclientV2TunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     httpclient_lstate_t *ls = lineGetState(l, t);
 
-    size_t len = 0;
+    uint32_t len = 0;
     while ((len = sbufGetLength(buf)) > 0)
     {
-        size_t        consumed = min(1 << 15UL, (ssize_t) len);
-        nghttp2_ssize ret      = nghttp2_session_mem_recv2(ls->session, (const uint8_t *) sbufGetRawPtr(buf), consumed);
+
+        uint32_t consumed = min(1 << 15UL, len);
+
+        nghttp2_ssize ret = nghttp2_session_mem_recv2(ls->session, (const uint8_t *) sbufGetRawPtr(buf), consumed);
+
         sbufShiftRight(buf, consumed);
 
         if (ret != (nghttp2_ssize) consumed)
@@ -34,7 +37,6 @@ void httpclientV2TunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineUnlock(l);
             return;
         }
-
 
         while (contextqueueLen(&ls->cq) > 0)
         {
@@ -71,13 +73,15 @@ void httpclientV2TunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
             httpclientV2LinestateDestroy(ls);
-            
+
             tunnelNextUpStreamFinish(t, l);
             tunnelPrevDownStreamFinish(t, l);
 
             lineUnlock(l);
             return;
         }
+        
+        lineUnlock(l);
     }
 
     bufferpoolReuseBuffer(lineGetBufferPool(l), buf);
