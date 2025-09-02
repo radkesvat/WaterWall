@@ -66,7 +66,6 @@ static void setupHttp2Stream(httpclient_lstate_t *con)
                                         "Gecko) Chrome/122.0.0.0 Safari/537.36");
     nvs[nvlen++] = makeNV("Sec-Ch-Ua-Platform", "\"Windows\"");
 
-
     con->stream_id = nghttp2_submit_headers(con->session, flags, -1, NULL, &nvs[0], nvlen, con);
 
     assert(con->stream_id == 0);
@@ -84,11 +83,13 @@ static void setupHttp2Stream(httpclient_lstate_t *con)
 
 void httpclientV2LinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, wid_t wid)
 {
+    static const int kBufferQueueCap = 4;
 
     httpclient_tstate_t *ts = tunnelGetState(t);
 
-    *ls = (httpclient_lstate_t){.cq                = contextqueueCreate(),
+    *ls = (httpclient_lstate_t){.cq                  = contextqueueCreate(),
                                 .cq_d                = contextqueueCreate(),
+                                .bq                  = bufferqueueCreate(kBufferQueueCap),
                                 .session             = NULL,
                                 .tunnel              = t,
                                 .line                = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid),
@@ -98,8 +99,6 @@ void httpclientV2LinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, wid_t
                                 .method              = ts->content_type == kApplicationGrpc ? kHttpPost : kHttpGet,
                                 .content_type        = ts->content_type,
                                 .host_port           = ts->host_port,
-                                .childs_added        = 0,
-                                .error               = 0,
                                 .handshake_completed = false,
                                 .init_sent           = false
 
@@ -120,7 +119,6 @@ void httpclientV2LinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, wid_t
     };
     nghttp2_submit_settings(ls->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings));
     setupHttp2Stream(ls);
-
 }
 
 void httpclientV2LinestateDestroy(httpclient_lstate_t *ls)

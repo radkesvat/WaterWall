@@ -8,27 +8,22 @@
 
 typedef struct httpclient_lstate_s
 {
-    context_queue_t cq;
-    context_queue_t cq_d;
-
-    buffer_queue_t bq;
-
+    context_queue_t  cq;
+    context_queue_t  cq_d;
+    buffer_queue_t   bq;
     nghttp2_session *session;
     tunnel_t        *tunnel;
     line_t          *line;
-    const char      *path;
-    const char      *host; // authority
-    const char      *scheme;
 
+    const char            *path;
+    const char            *host; // authority
+    const char            *scheme;
     enum http_method       method;
     enum http_content_type content_type;
-
-    size_t childs_added;
-    int    error;
-    int    host_port;
-    int    stream_id;
-    bool   handshake_completed;
-    bool   init_sent;
+    int                    host_port;
+    int                    stream_id;
+    bool                   handshake_completed;
+    bool                   init_sent;
 } httpclient_lstate_t;
 
 typedef struct httpclient_tstate_s
@@ -97,4 +92,3 @@ int httpclientV2OnStreamClosedCallBack(nghttp2_session *session, int32_t stream_
                                        void *userdata);
 
 nghttp2_nv makeNV(const char *name, const char *value);
-
