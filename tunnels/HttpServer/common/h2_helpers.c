@@ -9,18 +9,6 @@ static inline void printFrameHd(const nghttp2_frame_hd *hd)
          hd->stream_id);
 }
 
-static inline nghttp2_nv makeNV(const char *name, const char *value)
-{
-    nghttp2_nv nv;
-    nv.name     = (uint8_t *) name;
-    nv.value    = (uint8_t *) value;
-    nv.namelen  = stringLength(name);
-    nv.valuelen = stringLength(value);
-    nv.flags    = NGHTTP2_NV_FLAG_NONE;
-    return nv;
-}
-
-
 sbuf_t *httpserverV2MakeFrame(bool is_grpc, unsigned int stream_id, sbuf_t *buf)
 {
     http2_flag flags = kHttP2FlagNone;

@@ -2,17 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static inline nghttp2_nv makeNV(const char *name, const char *value)
-{
-    nghttp2_nv nv;
-    nv.name     = (uint8_t *) name;
-    nv.value    = (uint8_t *) value;
-    nv.namelen  = stringLength(name);
-    nv.valuelen = stringLength(value);
-    nv.flags    = NGHTTP2_NV_FLAG_NONE;
-    return nv;
-}
-
 
 void httpclientV2TunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {

@@ -74,3 +74,14 @@ int httpserverV2OnFrameRecvCallBack(nghttp2_session *session, const nghttp2_fram
 
 int httpserverV2OnStreamClosedCallBack(nghttp2_session *session, int32_t stream_id, uint32_t error_code,
                                        void *userdata);
+                                       
+static inline nghttp2_nv makeNV(const char *name, const char *value)
+{
+    nghttp2_nv nv;
+    nv.name     = (uint8_t *) name;
+    nv.value    = (uint8_t *) value;
+    nv.namelen  = stringLength(name);
+    nv.valuelen = stringLength(value);
+    nv.flags    = NGHTTP2_NV_FLAG_NONE;
+    return nv;
+}
