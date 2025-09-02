@@ -80,6 +80,10 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
         ts->content_type = httpContentTypeEnum(content_type_buf);
         memoryFree(content_type_buf);
     }
+    else
+    {
+        ts->content_type = kContentTypeNone;
+    }
 
     // nghttp2_option_set_no_http_messaging use this with grpc?
 

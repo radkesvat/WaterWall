@@ -42,7 +42,6 @@ CPMAddPackage(
     OPTIONS 
     "ENABLE_APP OFF"
     "ENABLE_HPACK_TOOLS OFF"
-    # nghttp2-specific toggles — BUILD_SHARED_LIBS is not used by nghttp2
     "BUILD_SHARED_LIBS OFF"
     "BUILD_STATIC_LIBS ON"
     "ENABLE_STATIC_CRT ON" 
@@ -71,19 +70,7 @@ if(WW_HAVE_AVX2)
     endif()
 endif()
 
-
-# target_sources(nghttp2_static PRIVATE
-#     $<TARGET_PROPERTY:nghttp2,SOURCES>
-# )
-
-# set_source_files_properties(
-#     ${nghttp2_SOURCE_DIR}/lib/nghttp2_http.c
-#     ${nghttp2_SOURCE_DIR}/lib/nghttp2_helper.c
-#     PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
-# )
-
 target_link_libraries(HttpClient nghttp2_static)
-
 
 set_target_properties(nghttp2_static PROPERTIES UNITY_BUILD_BATCH_SIZE 18)
 

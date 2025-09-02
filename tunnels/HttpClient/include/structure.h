@@ -32,11 +32,9 @@ typedef struct httpclient_tstate_s
     nghttp2_option            *ngoptions;
     char                      *scheme;
     char                      *path;
-    char                      *host; // authority
+    char                      *host; // authority in http/2
     enum http_content_type     content_type;
     int                        host_port;
-    int                        last_iid;
-    bool                       discard_settings_frame;
 
 } httpclient_tstate_t;
 
@@ -74,8 +72,6 @@ void httpclientV2TunnelDownStreamResume(tunnel_t *t, line_t *l);
 void httpclientV2LinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, wid_t wid);
 void httpclientV2LinestateDestroy(httpclient_lstate_t *ls);
 
-void takeHttp2Connection(httpclient_lstate_t *con, tunnel_t *t, wid_t wid);
-
 sbuf_t *httpclientV2MakeFrame(bool is_grpc, unsigned int stream_id, sbuf_t *buf);
 
 bool httpclientV2PullAndSendNgHttp2SendableData(tunnel_t *t, httpclient_lstate_t *ls);
@@ -91,4 +87,3 @@ int httpclientV2OnFrameRecvCallBack(nghttp2_session *session, const nghttp2_fram
 int httpclientV2OnStreamClosedCallBack(nghttp2_session *session, int32_t stream_id, uint32_t error_code,
                                        void *userdata);
 
-nghttp2_nv makeNV(const char *name, const char *value);
