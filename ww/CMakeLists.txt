@@ -123,15 +123,6 @@ add_library(ww STATIC
     loggers/internal_logger.c
 )
 
-set_source_files_properties(
-    devices/capture/capture_linux.c
-    devices/raw/raw_linux.c
-    devices/raw/raw_windows.c
-    devices/capture/capture_windows.c
-    base/wlsem.c
-    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
-)
-
 ################################################################################
 # Target Properties
 ################################################################################
@@ -737,7 +728,14 @@ set_target_properties(sodium PROPERTIES UNITY_BUILD OFF)
 # set_target_properties(ww_lwip PROPERTIES UNITY_BUILD_BATCH_SIZE 16)
 set_target_properties(ww PROPERTIES UNITY_BUILD_BATCH_SIZE 500)
 
-
+set_source_files_properties(
+    devices/capture/capture_linux.c
+    devices/raw/raw_linux.c
+    devices/raw/raw_windows.c
+    devices/capture/capture_windows.c
+    base/wlsem.c
+    PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON
+)
 
 ################################################################################
 # Sanitizer Options (Debug builds only)
