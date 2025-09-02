@@ -10,7 +10,6 @@ add_library(HttpServer STATIC
                     common/helpers.c
                     common/h2_helpers.c
                     common/line_state.c
-                    common/http_def.c
 
 
                     http2/upstream/init.c
@@ -33,6 +32,16 @@ add_library(HttpServer STATIC
 target_include_directories(HttpServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 target_link_libraries(HttpServer ww)
+
+if(NOT TUNNELS_HTTP_DEF_SET)
+    set(TUNNELS_HTTP_DEF_SET TRUE CACHE INTERNAL "")
+    add_library(http_def OBJECT
+        common/http_def.c
+    )
+    target_include_directories(http_def PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+endif()
+
+target_link_libraries(HttpServer http_def)
 
 CPMAddPackage(
     NAME nghttp2

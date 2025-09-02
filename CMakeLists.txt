@@ -11,7 +11,7 @@ if(POLICY CMP0169)
 endif()
 
 # CMAKE_UNITY_BUILD is off by default but most of cmake presets enable it
-# it must be disabled in order to allow language server work correctly
+# it must be disabled in order to allow language server to work correctly
 set(CMAKE_UNITY_BUILD_BATCH_SIZE 500)
 
 project(Waterwall
@@ -104,8 +104,10 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 #--------------------------------------------------------------------------------
 
 # Define conditional variables for platform-specific options
+
+
 if(NOT APPLE AND NOT ANDROID)
-  set(TUNDEVICE_SUPPORTED TRUE)
+  set(TUNDEVICE_SUPPORTED TRUE) # tun device works on android but requires root access
 else()
   set(TUNDEVICE_SUPPORTED FALSE)
 endif()
@@ -167,10 +169,7 @@ option(INCLUDE_BGP4_SERVER              "link Bgp4Server staticly to the core"  
 option(INCLUDE_BGP4_CLIENT              "link Bgp4Client staticly to the core"           FALSE)
 option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"            TRUE)
 option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"            TRUE)
-
-# tun device works on android but requires root access
 option(INCLUDE_TUN_DEVICE               "link TunDevice staticly to the core"            ${TUNDEVICE_SUPPORTED})
-
 option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"            ${RAWSOCKET_SUPPORTED})
 
 
@@ -228,9 +227,8 @@ target_link_libraries(Waterwall ww)
 
 #first setting these variables to false, so we can use them in the tunnels CMakeLists.txt files
 
-set(TUNNELS_KCP_INCLUDE_SET FALSE CACHE INTERNAL "") #if any tunnel has kcp, it will set this to true
-
-  
+set(TUNNELS_KCP_INCLUDE_SET FALSE CACHE INTERNAL "") #if any tunnel has kcp
+set(TUNNELS_HTTP_DEF_SET FALSE CACHE INTERNAL "")    #if any tunnel compiles http_def.c
 
 #template
 if(INCLUDE_TEMPLATE)
@@ -653,15 +651,6 @@ endif()
 #------------------------------------------------------------------------------------------
 # Final Configuration
 #------------------------------------------------------------------------------------------
-if(BUILD_OPENSSL_GLOBALS)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/shared/openssl)
-endif()
-
 target_compile_definitions(Waterwall PUBLIC WATERWALL_VERSION=${Waterwall_VERSION})
-
-if(OPENSSL_VERSION)
-  message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
-endif()
 
 message(STATUS "Waterwall version: ${Waterwall_VERSION}")
