@@ -123,10 +123,8 @@ static inline void lineUnRefInternal(line_t *const l)
 
     debugAssertZeroBuf(&l->tunnels_line_state[0], genericpoolGetItemSize(l->pools[wid]) - sizeof(line_t));
 
-    // assert(l->up_state == NULL);
-    // assert(l->dw_state == NULL);
 
-    // assert(l->src_ctx.domain == NULL); // impossible (source domain?) (no need to assert)
+
 
     if (l->routing_context.dest_ctx.domain != NULL && ! l->routing_context.dest_ctx.domain_constant)
     {
