@@ -125,7 +125,7 @@
 #endif
 
 #ifdef INCLUDE_HTTP_SERVER
-#include "tunnels/server/http2/http2_server.h"
+#include "tunnels/HttpServer/include/interface.h"
 #endif
 
 #ifdef INCLUDE_HTTP_CLIENT
@@ -331,8 +331,8 @@ void loadImportedTunnelsIntoCore(void)
     USING(WolfSSLClient);
 #endif
 
-#ifdef INCLUDE_HTTP2_SERVER
-    USING(Http2Server);
+#ifdef INCLUDE_HTTP_SERVER
+    USING(HttpServer);
 #endif
 
 #ifdef INCLUDE_HTTP_CLIENT
