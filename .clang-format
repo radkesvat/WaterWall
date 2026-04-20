@@ -8,6 +8,7 @@ AlignEscapedNewlines: Right
 AlignOperands: 'true'
 AlignTrailingComments: 'true'
 AllowAllArgumentsOnNextLine: 'true'
+BinPackArguments: 'false'
 AllowShortFunctionsOnASingleLine: InlineOnly
 AlwaysBreakAfterDefinitionReturnType: None
 Language: Cpp
