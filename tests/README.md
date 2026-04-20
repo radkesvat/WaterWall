@@ -1,4 +1,4 @@
-+# Waterwall Integration Tests
+# Waterwall Integration Tests
 
 These tests run the real `Waterwall` binary with synthetic chains built from:
 
