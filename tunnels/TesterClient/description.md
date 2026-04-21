@@ -23,8 +23,11 @@ The tunnel uses deterministic payload sizes and deterministic byte patterns deri
 
 - chunk index
 - byte offset inside the chunk
-- worker id
+- per-flow test id
 - direction (`request` versus `response`)
+
+The first request byte carries that per-flow id so a real transport hop can remap the connection onto a different
+worker without breaking verification.
 
 Current stream-mode chunk sizes are:
 

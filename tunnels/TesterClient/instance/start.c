@@ -18,7 +18,8 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
     discard arg3;
 
     testerclientLinestateInitialize(ls, lineGetBufferPool(l));
-    slot->line      = l;
+    ls->flow_id = (uint8_t) wid;
+    slot->line = l;
     slot->completed = false;
 
     if (! withLineLocked(l, tunnelNextUpStreamInit, t))

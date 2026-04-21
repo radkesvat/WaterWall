@@ -18,6 +18,8 @@ It is meant for validating tunnel correctness and data integrity, not for servin
 ## Request And Response Pattern
 
 `TesterServer` uses the same deterministic chunk sizes and direction-specific byte pattern as `TesterClient`.
+The pattern is keyed by the client-selected per-flow id carried in the first request byte, not by the server's local
+worker id.
 
 Current stream-mode chunk sizes are:
 

@@ -35,6 +35,7 @@ typedef struct testerclient_lstate_s
 
     uint8_t request_tx_index;
     uint8_t response_rx_index;
+    uint8_t flow_id;
     uint32_t request_tx_offset;
 
     bool    est_received;

@@ -25,6 +25,7 @@ typedef struct testerserver_lstate_s
 
     uint8_t request_rx_index;
     uint8_t response_tx_index;
+    uint8_t flow_id;
     uint32_t response_tx_offset;
 
     bool    response_ready;

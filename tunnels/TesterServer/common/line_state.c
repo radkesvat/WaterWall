@@ -9,6 +9,7 @@ void testerserverLinestateInitialize(testerserver_lstate_t *ls, buffer_pool_t *p
         .response_queue          = bufferqueueCreate(8),
         .request_rx_index        = 0,
         .response_tx_index       = 0,
+        .flow_id                 = 0,
         .response_ready          = false,
         .response_paused         = false,
         .response_send_scheduled = false,

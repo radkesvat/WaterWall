@@ -37,29 +37,52 @@ static inline const uint32_t *testerserverGetChunkTable(tunnel_t *t)
     return ts->packet_mode ? kTesterServerPacketChunkSizes : kTesterServerChunkSizes;
 }
 
-static uint8_t testerserverPatternByte(uint32_t offset, uint8_t chunk_index, wid_t wid,
+static uint8_t testerserverFlowMarker(uint8_t flow_id, testerserver_direction_e direction)
+{
+    return (uint8_t) (flow_id ^ ((direction == kTesterServerDirectionResponse) ? 0xC3U : 0x3CU));
+}
+
+static uint8_t testerserverPatternByte(uint32_t offset, uint8_t chunk_index, uint8_t flow_id,
                                        testerserver_direction_e direction)
 {
+    // The first request byte encodes the client-selected flow id so this chain end
+    // can verify and mirror the sequence independently of its local worker id.
+    if (chunk_index == 0 && offset == 0)
+    {
+        return testerserverFlowMarker(flow_id, direction);
+    }
+
     uint32_t value = offset;
     value ^= value >> 13;
     value *= 0x45d9f3bu;
     value ^= ((uint32_t) chunk_index + 1U) * 0x27d4eb2du;
-    value ^= ((uint32_t) wid + 1U) * 0x165667b1u;
+    value ^= ((uint32_t) flow_id + 1U) * 0x165667b1u;
     value ^= (direction == kTesterServerDirectionResponse) ? 0xA5A5A5A5u : 0x5A5A5A5Au;
     value ^= value >> 16;
     return (uint8_t) value;
 }
 
-static void testerserverFillPayload(line_t *l, sbuf_t *buf, uint8_t chunk_index, uint32_t chunk_offset,
-                                    testerserver_direction_e direction)
+static uint8_t testerserverDecodeFlowId(uint8_t marker, testerserver_direction_e direction)
+{
+    return (uint8_t) (marker ^ ((direction == kTesterServerDirectionResponse) ? 0xC3U : 0x3CU));
+}
+
+static uint8_t testerserverGetFlowId(tunnel_t *t, line_t *l)
+{
+    testerserver_lstate_t *ls = lineGetState(l, t);
+
+    return ls->flow_id;
+}
+
+static void testerserverFillPayloadForFlow(uint8_t flow_id, sbuf_t *buf, uint8_t chunk_index, uint32_t chunk_offset,
+                                           testerserver_direction_e direction)
 {
     uint32_t payload_len = sbufGetLength(buf);
     uint8_t *ptr         = sbufGetMutablePtr(buf);
-    wid_t    wid         = lineGetWID(l);
 
     for (uint32_t i = 0; i < payload_len; ++i)
     {
-        ptr[i] = testerserverPatternByte(chunk_offset + i, chunk_index, wid, direction);
+        ptr[i] = testerserverPatternByte(chunk_offset + i, chunk_index, flow_id, direction);
     }
 }
 
@@ -129,7 +152,7 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
     }
 
     sbufSetLength(buf, payload_len);
-    testerserverFillPayload(l, buf, chunk_index, chunk_offset, direction);
+    testerserverFillPayloadForFlow(testerserverGetFlowId(t, l), buf, chunk_index, chunk_offset, direction);
 
     return buf;
 }
@@ -137,9 +160,10 @@ sbuf_t *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, u
 bool testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_index, testerserver_direction_e direction,
                              uint32_t *bad_offset, uint8_t *expected, uint8_t *actual)
 {
+    testerserver_lstate_t *ls          = lineGetState(l, t);
     const uint8_t *ptr         = sbufGetRawPtr(buf);
     uint32_t       payload_len = sbufGetLength(buf);
-    wid_t          wid         = lineGetWID(l);
+    uint8_t        flow_id     = ls->flow_id;
 
     if (payload_len != testerserverGetChunkSize(t, chunk_index))
     {
@@ -150,9 +174,15 @@ bool testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_
         return false;
     }
 
+    if (direction == kTesterServerDirectionRequest && chunk_index == 0)
+    {
+        ls->flow_id = testerserverDecodeFlowId(ptr[0], direction);
+        return true;
+    }
+
     for (uint32_t i = 0; i < payload_len; ++i)
     {
-        uint8_t expected_byte = testerserverPatternByte(i, chunk_index, wid, direction);
+        uint8_t expected_byte = testerserverPatternByte(i, chunk_index, flow_id, direction);
         if (ptr[i] != expected_byte)
         {
             if (bad_offset != NULL)

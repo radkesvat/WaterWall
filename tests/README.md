@@ -68,8 +68,6 @@ buffer.
 
 Some scenarios are still better treated as future work:
 
-- local `TcpConnector -> TcpListener` loopback chains currently interact with the tester's worker-derived byte pattern
-  assumptions, so they need a small tester semantic change before they become stable positive tests
 - `TlsClient` and `TlsServer` need a certificate arrangement that matches `TlsClient`'s real verification behavior
   before they can be added as portable integration tests
 
