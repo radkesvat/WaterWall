@@ -440,6 +440,34 @@ static void setupNodeProperties(node_t *node, char *node_name, char *node_type, 
 }
 
 /**
+ * @brief Reject duplicate singleton node types inside one config.
+ *
+ * @param node Node being registered.
+ * @param cfg Node manager config.
+ */
+static void validateSingletonNodeType(node_t *node, node_manager_config_t *cfg)
+{
+    if ((node->flags & kNodeFlagSingleton) == 0)
+    {
+        return;
+    }
+
+    c_foreach(existing_pair, map_node_t, cfg->node_map)
+    {
+        node_t *existing_node = existing_pair.ref->second;
+        if (existing_node->hash_type != node->hash_type)
+        {
+            continue;
+        }
+
+        LOGF("NodeManager: singleton node type \"%s\" can only appear once per config file \"%s\" "
+             "(conflicting nodes: \"%s\" and \"%s\")",
+             node->type, cfg->config_file->file_path, existing_node->name, node->name);
+        terminateProgram(1);
+    }
+}
+
+/**
  * @brief Insert node into config map and reject duplicate names.
  *
  * @param node Node object.
@@ -455,6 +483,7 @@ static void registerNodeInMap(node_t *node, node_manager_config_t *cfg)
         terminateProgram(1);
     }
 
+    validateSingletonNodeType(node, cfg);
     map_node_t_insert(map, node->hash_name, node);
 }
 
