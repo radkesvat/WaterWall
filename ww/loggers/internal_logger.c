@@ -70,7 +70,7 @@ logger_t *createInternalLogger(const char *log_file, bool console)
     }
     else if (path_accepted)
     {
-        // no logger
+        loggerSetHandler(internal_logger, internalLoggerHandle);
     }
 
     return internal_logger;
