@@ -256,6 +256,10 @@
 #include "tunnels/Disturber/include/interface.h"
 #endif
 
+#ifdef INCLUDE_BLACKHOLE
+#include "tunnels/BlackHole/include/interface.h"
+#endif
+
 #ifdef INCLUDE_SPEEDLIMIT
 #include "tunnels/SpeedLimit/include/interface.h"
 #endif
@@ -513,6 +517,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_DISTURBER
     USING(Disturber);
+#endif
+
+#ifdef INCLUDE_BLACKHOLE
+    USING(BlackHole);
 #endif
 
 #ifdef INCLUDE_SPEEDLIMIT
