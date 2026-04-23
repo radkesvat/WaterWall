@@ -268,6 +268,7 @@ enum
 
 #ifdef COMPILER_MSVC
 
+#define WW_ATTR_ALIGNED(n)            __declspec(align(n))
 #define MSVC_ATTR_ALIGNED_LINE_CACHE __declspec(align(CPULINECACHESIZE))
 #define MSVC_ATTR_ALIGNED_16         __declspec(align(16))
 #define MSVC_ATTR_ALIGNED_32         __declspec(align(32))
@@ -277,6 +278,7 @@ enum
 
 #else
 
+#define WW_ATTR_ALIGNED(n)           __attribute__((aligned(n)))
 #define MSVC_ATTR_ALIGNED_LINE_CACHE
 #define MSVC_ATTR_ALIGNED_16
 #define MSVC_ATTR_ALIGNED_32
@@ -289,6 +291,12 @@ enum
 #define MUSTALIGN2(n, w)    assert(((w) & ((w) -1)) == 0); /* alignment w is not a power of two */
 
 #define ALIGN2(n, w)        (uintptr_t)(((uintptr_t)(n) + ((uintptr_t)(w) -1)) & ~(((uintptr_t)(w)) -1))
+
+#define STACK_ALLOCATE_ALIGNED(type, name, alignment)                                                \
+    WW_ATTR_ALIGNED(alignment) uint8_t name##_storage[ALIGN2(sizeof(type), alignment)];              \
+    type *name = (type *) (void *) name##_storage
+
+#define STACK_ALLOCATE_CACHE_ALIGNED(type, name) STACK_ALLOCATE_ALIGNED(type, name, kCpuLineCacheSize)
 
 #define memoryCopy          memcpy
 #define memorySet           memset

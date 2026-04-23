@@ -12,6 +12,71 @@
 #include <stdlib.h>
 #include <string.h>
 
+static bool memoryAlignmentIsValid(size_t alignment)
+{
+    return alignment != 0 && (alignment & (alignment - 1)) == 0;
+}
+
+static size_t memoryGetAlignedHeaderSize(size_t alignment)
+{
+    return max(alignment, sizeof(void *));
+}
+
+void *memoryAllocateAligned(size_t size, size_t alignment)
+{
+    if (! memoryAlignmentIsValid(alignment))
+    {
+        return NULL;
+    }
+
+    const size_t header_size = memoryGetAlignedHeaderSize(alignment);
+
+    if (size > SIZE_MAX - header_size - (alignment - 1))
+    {
+        return NULL;
+    }
+
+    void *base = memoryAllocate(size + header_size + (alignment - 1));
+    if (base == NULL)
+    {
+        return NULL;
+    }
+
+    uintptr_t aligned = ALIGN2((uintptr_t) base + header_size, alignment);
+    ((void **) aligned)[-1] = base;
+    return (void *) aligned;
+}
+
+void *memoryAllocateAlignedZero(size_t size, size_t alignment)
+{
+    void *ptr = memoryAllocateAligned(size, alignment);
+    if (ptr != NULL)
+    {
+        memorySet(ptr, 0, size);
+    }
+    return ptr;
+}
+
+void *memoryAllocateCacheAligned(size_t size)
+{
+    return memoryAllocateAligned(size, kCpuLineCacheSize);
+}
+
+void *memoryAllocateCacheAlignedZero(size_t size)
+{
+    return memoryAllocateAlignedZero(size, kCpuLineCacheSize);
+}
+
+void memoryFreeAligned(void *ptr)
+{
+    if (ptr == NULL)
+    {
+        return;
+    }
+
+    memoryFree(((void **) ptr)[-1]);
+}
+
 #if ! ALLOCATOR_BYPASS
 
 /**

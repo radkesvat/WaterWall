@@ -17,11 +17,11 @@ enum
 
 #define i_type map_node_t // NOLINT
 #define i_key  hash_t     // NOLINT
-#define i_val  node_t *   // NOLINT
+#define i_val  node_t  *  // NOLINT
 #include "stc/hmap.h"
 
 #define i_type vec_chains_t     // NOLINT
-#define i_key  tunnel_chain_t * // NOLINT
+#define i_key  tunnel_chain_t  *// NOLINT
 #include "stc/vec.h"
 
 typedef struct node_manager_config_s
@@ -33,7 +33,7 @@ typedef struct node_manager_config_s
 } node_manager_config_t;
 
 #define i_type vec_configs_t           // NOLINT
-#define i_key  node_manager_config_t * // NOLINT
+#define i_key  node_manager_config_t  *// NOLINT
 #include "stc/vec.h"
 
 typedef struct node_manager_s
@@ -140,14 +140,16 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
             terminateProgram(1);
         }
 
-        if (t_array[i]->next == NULL && ! (t_array[i]->node->flags & kNodeFlagChainEnd))
+        if (t_array[i]->next == NULL && ! (t_array[i]->node->flags & kNodeFlagChainEnd) &&
+            ! (t_array[i]->node->flags & kNodeFlagNoChain))
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") at the end of the chain but dose not have "
                  "flagkNodeFlagChainEnd",
                  t_array[i]->node->name);
             terminateProgram(1);
         }
-        if (t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagChainHead))
+        if (t_array[i]->prev == NULL && ! (t_array[i]->node->flags & kNodeFlagChainHead) &&
+            ! (t_array[i]->node->flags & kNodeFlagNoChain))
         {
             LOGF("NodeManager: node startup failure: node (\"%s\") at the start of the chain but dose not have "
                  "flagkNodeFlagChainHead",
@@ -195,7 +197,7 @@ static void startTunnels(tunnel_t **t_array, int tunnels_count)
     }
 }
 
-static void initializeLineOnTargetWorker(void* worker, void *_tunnel, void *_line, void *arg3)
+static void initializeLineOnTargetWorker(void *worker, void *_tunnel, void *_line, void *arg3)
 {
     discard worker;
     discard arg3;
@@ -203,14 +205,16 @@ static void initializeLineOnTargetWorker(void* worker, void *_tunnel, void *_lin
     assert(_line != NULL);
 
     tunnel_t *tunnel = (tunnel_t *) _tunnel;
-    line_t *line    = (line_t *) _line;
+    line_t   *line   = (line_t *) _line;
 
-    assert(lineGetWID(line)  == getWID());
+    assert(lineGetWID(line) == getWID());
 
     tunnelNextUpStreamInit(tunnel, line);
-    if(!lineIsAlive(line)){
+    if (! lineIsAlive(line))
+    {
         LOGF("NodeManager: node startup failure: line initialization failed for node (\"%s\") on worker %d",
-             tunnel->node->name, getWID());
+             tunnel->node->name,
+             getWID());
         terminateProgram(1);
     }
 }
@@ -237,7 +241,6 @@ static void initializePacketTunnels(tunnel_t **t_array, int tunnels_count)
             {
                 line_t *l = tunnelchainGetWorkerPacketLine(tunnelGetChain(tunnel), wi);
                 sendWorkerMessageForceQueue(wi, &initializeLineOnTargetWorker, tunnel, l, NULL);
-       
             }
         }
     }
@@ -290,9 +293,11 @@ static void validateNodeChainPath(node_t *start_node, node_manager_config_t *cfg
         node_t *next_node = nodemanagerGetConfigNodeByHash(cfg, current_node->hash_next);
         if (next_node == NULL)
         {
-            LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)", cfg->config_file->file_path,
+            LOGF("Node Map Failure: Error in config file!  (path: %s)  (name: %s)",
+                 cfg->config_file->file_path,
                  cfg->config_file->name);
-            LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"", current_node->name,
+            LOGF("Node Map Failure: node \"%s\" could not find it's next node \"%s\"",
+                 current_node->name,
                  current_node->next);
             terminateProgram(1);
         }
@@ -401,7 +406,8 @@ static node_t *createAndLoadNode(const char *node_type, hash_t hash_type)
 
     if (new_node->hash_type != hash_type)
     {
-        LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ", node_type,
+        LOGF("NodeManager: node creation failure: library \"%s\" (hash: %lx) could not be loaded ",
+             node_type,
              hash_type);
         terminateProgram(1);
     }
@@ -462,7 +468,10 @@ static void validateSingletonNodeType(node_t *node, node_manager_config_t *cfg)
 
         LOGF("NodeManager: singleton node type \"%s\" can only appear once per config file \"%s\" "
              "(conflicting nodes: \"%s\" and \"%s\")",
-             node->type, cfg->config_file->file_path, existing_node->name, node->name);
+             node->type,
+             cfg->config_file->file_path,
+             existing_node->name,
+             node->name);
         terminateProgram(1);
     }
 }
@@ -501,8 +510,8 @@ void nodemanagerCreateNodeInstance(node_manager_config_t *cfg, cJSON *node_json)
     hash_t hash_next = node_next != NULL ? calcHashBytes(node_next, strlen(node_next)) : 0x0;
 
     node_t *new_node = createAndLoadNode(node_type, hash_type);
-    setupNodeProperties(new_node, node_name, node_type, node_next, node_version, hash_name, hash_type, hash_next,
-                        node_json, cfg);
+    setupNodeProperties(
+        new_node, node_name, node_type, node_next, node_version, hash_name, hash_type, hash_next, node_json, cfg);
     registerNodeInMap(new_node, cfg);
 }
 
@@ -576,8 +585,8 @@ void nodemanagerSetState(struct node_manager_s *new_state)
 static node_manager_config_t *createNodeManagerConfig(config_file_t *config_file)
 {
     node_manager_config_t *cfg = memoryAllocate(sizeof(node_manager_config_t));
-    *cfg                       = (node_manager_config_t){
-                              .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
+    *cfg                       = (node_manager_config_t) {
+        .config_file = config_file, .node_map = map_node_t_with_capacity(kNodeMapCap), .chains = vec_chains_t_init()};
     return cfg;
 }
 
