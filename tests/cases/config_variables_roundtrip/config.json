@@ -14,24 +14,6 @@
     "delay_max_ms": 0
   },
   "nodes": [
-    {
-      "name": "tester-client",
-      "type": "TesterClient",
-      "next": "disturber"
-    },
-    {
-      "name": "disturber",
-      "type": "Disturber",
-      "settings": {
-        "delay_min_ms": $delay_min_ms$,
-        "delay_max_ms": $delay_max_ms$ // comment after substituted value
-      },
-      "next": "tester-server"
-    },
-    {
-      "name": "tester-server",
-      "type": "TesterServer"
-    },
 
     {
       "name": "tester-client-2",
