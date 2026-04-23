@@ -54,6 +54,21 @@ static bool getandvalidateAlpnSetting(tlsclient_tstate_t *ts, const cJSON *setti
     return true;
 }
 
+static void getX25519MLKEM768Setting(tlsclient_tstate_t *ts, const cJSON *settings)
+{
+    getBoolFromJsonObjectOrDefault(&ts->x25519mlkem768_enabled, settings, "x25519mlkem768", true);
+}
+
+static const char *getSupportedGroupsList(bool x25519mlkem768_enabled)
+{
+    if (x25519mlkem768_enabled)
+    {
+        return "X25519MLKEM768:X25519:P-256:P-384:P-521";
+    }
+
+    return "X25519:P-256:P-384:P-521";
+}
+
 static void *createAlpnFormat(const char *alpn_string, size_t alpn_len)
 {
     struct
@@ -92,7 +107,7 @@ static bool loadCaCertificates(SSL_CTX *ssl_ctx)
     return true;
 }
 
-static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
+static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool x25519mlkem768_enabled)
 {
     SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_client_method());
 
@@ -127,9 +142,7 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
     SSL_CTX_set_session_cache_mode(ssl_ctx, SSL_SESS_CACHE_CLIENT);
     SSL_CTX_set_timeout(ssl_ctx, 7200); // 2 hours, typical for browsers
 
-    // Set supported groups to match Chrome
-    // Chrome now supports X25519MLKEM768 (post-quantum) + traditional curves
-    if (! SSL_CTX_set1_groups_list(ssl_ctx, "X25519MLKEM768:X25519:P-256:P-384:P-521"))
+    if (! SSL_CTX_set1_groups_list(ssl_ctx, getSupportedGroupsList(x25519mlkem768_enabled)))
     {
         LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set groups list for SSL_CTX");
         SSL_CTX_free(ssl_ctx);
@@ -176,22 +189,19 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len)
     return ssl_ctx;
 }
 
-static bool createSslContexts(tlsclient_tstate_t *ts, void *alpn_format, size_t alpn_len, int worker_count, tunnel_t *t)
+static bool createSslContextPool(SSL_CTX ***out_contexts, void *alpn_format, size_t alpn_len, int worker_count,
+                                 bool x25519mlkem768_enabled)
 {
-    ts->threadlocal_ssl_contexts = (SSL_CTX **) memoryAllocate(worker_count * sizeof(SSL_CTX *));
+    *out_contexts = memoryAllocate((size_t) worker_count * sizeof(SSL_CTX *));
+    memoryZero(*out_contexts, (size_t) worker_count * sizeof(SSL_CTX *));
 
     for (int i = 0; i < worker_count; i++)
     {
-        ts->threadlocal_ssl_contexts[i] = setupSslContext(alpn_format, alpn_len);
+        (*out_contexts)[i] = setupSslContext(alpn_format, alpn_len, x25519mlkem768_enabled);
 
-        if (ts->threadlocal_ssl_contexts[i] == NULL)
+        if ((*out_contexts)[i] == NULL)
         {
             LOGF("TlsClient: Could not create ssl context");
-            memoryFree(ts->sni);
-            memoryFree(ts->alpn);
-            memoryFree(alpn_format);
-            memoryFree((void *) ts->threadlocal_ssl_contexts);
-            tunnelDestroy(t);
             return false;
         }
     }
@@ -213,6 +223,8 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     {
         return NULL;
     }
+
+    getX25519MLKEM768Setting(ts, settings);
     // We want to build up exact chrome handshake, so we dont ask for alpn settings
 
     // getBoolFromJsonObjectOrDefault(&(ts->verify), settings, "verify", true);
@@ -228,8 +240,11 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     const uint8_t chrome_alpn[] = {2, 'h', '2', // HTTP/2
                                    8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
 
-    if (! createSslContexts(ts, (void *) &chrome_alpn[0], sizeof(chrome_alpn), worker_count, t))
+    if (! createSslContextPool(&(ts->threadlocal_ssl_contexts), (void *) &chrome_alpn[0], sizeof(chrome_alpn),
+                               worker_count, ts->x25519mlkem768_enabled))
     {
+        tlsclientTunnelstateDestroy(ts);
+        tunnelDestroy(t);
         return NULL;
     }
 

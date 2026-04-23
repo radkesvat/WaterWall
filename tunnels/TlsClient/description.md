@@ -43,7 +43,8 @@ That arrangement lets:
   "name": "tls-client",
   "type": "TlsClient",
   "settings": {
-    "sni": "example.com"
+    "sni": "example.com",
+    "x25519mlkem768": true
   },
   "next": "tcp-connector"
 }
@@ -68,12 +69,35 @@ That arrangement lets:
 
 ## Optional `settings` Fields
 
-The current create path does not expose useful optional runtime settings.
+- `x25519mlkem768` `(boolean, default: true)`
+  Controls whether `TlsClient` advertises the `X25519MLKEM768` hybrid post-quantum group.
+
+  When this is left enabled, the tunnel stays closer to current Chrome TLS behavior.
+
+  If you disable it:
+
+  - the generated ClientHello becomes smaller
+  - the tunnel no longer mimics Chrome as closely
+  - you lose the Chrome-like `X25519MLKEM768` key share behavior
 
 Important current-implementation notes:
 
 - a field named `alpn` exists in the source, but the active create path does not use a JSON ALPN value
 - a field named `verify` exists in the source, but certificate verification is currently always enabled in code
+
+## Tunnel API
+
+`TlsClient` exposes an API that can generate a raw TLS ClientHello buffer.
+
+Accepted request format:
+
+- `generateTlsHello:<sni>`
+  Generates a ClientHello using the tunnel's configured behavior.
+
+Important note:
+
+- the API follows the tunnel's `settings.x25519mlkem768` value
+- if that setting is disabled, the generated ClientHello is smaller but less Chrome-like
 
 ## Detailed Behavior
 
@@ -227,6 +251,8 @@ The bundled BoringSSL client handshake logic is patched so the advertised cipher
 The context also pins the advertised key exchange and signature preferences.
 
 - supported groups are configured explicitly rather than using library defaults
+- by default, that supported-groups list includes `X25519MLKEM768` to stay aligned with current Chrome-like behavior
+- if `settings.x25519mlkem768` is set to `false`, the tunnel falls back to a non-`X25519MLKEM768` groups list and becomes less Chrome-like
 - signature algorithms are configured explicitly in Chrome-like order
 - this reduces drift across BoringSSL updates and keeps the ClientHello layout predictable
 

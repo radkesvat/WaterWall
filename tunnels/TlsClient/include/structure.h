@@ -12,6 +12,7 @@ typedef struct tlsclient_tstate_s
     char *alpn;
     char *sni;
     bool  verify;
+    bool  x25519mlkem768_enabled;
 
     // state
     SSL_CTX **threadlocal_ssl_contexts;
@@ -84,3 +85,4 @@ void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientPrintSSLState(const SSL *ssl);
 void tlsclientPrintSSLError(void);
 void tlsclientPrintSSLErrorAndAbort(void);
+void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts);

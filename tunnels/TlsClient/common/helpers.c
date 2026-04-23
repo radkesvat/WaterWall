@@ -26,3 +26,40 @@ void tlsclientPrintSSLErrorAndAbort(void)
     abort();
 }
 
+static void tlsclientFreeSslContextPool(SSL_CTX ***contexts)
+{
+    if (contexts == NULL || *contexts == NULL)
+    {
+        return;
+    }
+
+    int worker_count = getWorkersCount();
+    for (int i = 0; i < worker_count; ++i)
+    {
+        if ((*contexts)[i] != NULL)
+        {
+            SSL_CTX_free((*contexts)[i]);
+        }
+    }
+
+    memoryFree(*contexts);
+    *contexts = NULL;
+}
+
+void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts)
+{
+    if (ts == NULL)
+    {
+        return;
+    }
+
+    tlsclientFreeSslContextPool(&ts->threadlocal_ssl_contexts);
+
+    memoryFree(ts->alpn);
+    memoryFree(ts->sni);
+
+    ts->alpn                            = NULL;
+    ts->sni                             = NULL;
+    ts->verify                          = false;
+    ts->x25519mlkem768_enabled          = false;
+}
