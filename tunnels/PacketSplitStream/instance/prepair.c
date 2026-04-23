@@ -4,8 +4,16 @@
 
 void packetsplitstreamTunnelOnPrepair(tunnel_t *t)
 {
-    // the 'up' and 'down' tunnels are already added to chain and OnPrepair call back gets called automatically on them.
-    
-    discard t;
+    packetsplitstream_tstate_t *ts = tunnelGetState(t);
+    if (ts->up_tunnel == NULL || ts->down_tunnel == NULL)
+    {
+        LOGF("PacketSplitStream: onPrepare called but up or down tunnel is not set "
+        "(up: %s, down: %s)", ts->up_tunnel ? "set" : "not set", ts->down_tunnel ? "set" : "not set");
+        terminateProgram(1);
+        return;
+    }
+
+    ts->up_tunnel->onPrepare(ts->up_tunnel);
+    ts->down_tunnel->onPrepare(ts->down_tunnel);
 }
 

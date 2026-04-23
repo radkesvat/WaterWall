@@ -22,6 +22,7 @@ tunnel_t *packetsplitstreamTunnelCreate(node_t *node)
 
     t->onDestroy = &packetsplitstreamTunnelDestroy;
     t->onChain   = &packetsplitstreamTunnelOnChain;
+    t->onPrepare = &packetsplitstreamTunnelOnPrepair;
     t->onStart   = &packetsplitstreamTunnelOnStart;
 
     if (nodeHasNext(node))
@@ -31,8 +32,8 @@ tunnel_t *packetsplitstreamTunnelCreate(node_t *node)
         return NULL;
     }
 
-    const cJSON *settings = node->node_settings_json;
-    char        *up_name  = NULL;
+    const cJSON *settings  = node->node_settings_json;
+    char        *up_name   = NULL;
     char        *down_name = NULL;
 
     if (! getStringFromJsonObject(&up_name, settings, "up"))
