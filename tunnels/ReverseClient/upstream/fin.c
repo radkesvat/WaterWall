@@ -12,10 +12,11 @@ void reverseclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     line_t* ul = dls->u;
     line_t* dl = dls->d;
 
-    tunnelNextUpStreamFinish(t, ul);
 
     reverseclientLinestateDestroy(lineGetState(ul, t));
     reverseclientLinestateDestroy(dls);
+
+    tunnelNextUpStreamFinish(t, ul);
 
     lineDestroy(ul);
     lineDestroy(dl);

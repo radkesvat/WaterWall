@@ -31,13 +31,13 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         uls->idle_handle = NULL;
 
+        atomicIncRelaxed(&(ts->reverse_cons));
+
         if (! withLineLocked(dl, tunnelPrevDownStreamInit, t))
         {
             reuseBuffer(buf);
             return;
         }
-
-        atomicIncRelaxed(&(ts->reverse_cons));
 
         uls->pair_connected = true;
 
