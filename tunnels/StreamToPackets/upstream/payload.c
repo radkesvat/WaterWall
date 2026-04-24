@@ -4,6 +4,7 @@
 
 void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    streamtopackets_tstate_t *ts          = tunnelGetState(t);
     line_t                   *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l));
     streamtopackets_lstate_t *line_ls     = lineGetState(l, t);
 
@@ -30,6 +31,18 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! streamtopacketsTryReadIPv4Packet(&(line_ls->read_stream), &packet_buffer))
         {
             break;
+        }
+
+        if (ts->sensitive_mode && streamtopacketsFrameMatchesFillByte(packet_buffer, kSensitivePingByte))
+        {
+            LOGD("StreamToPackets: received sensitive-mode ping, sending pong");
+            lineReuseBuffer(l, packet_buffer);
+            if (! streamtopacketsSendSensitivePong(t, l))
+            {
+                lineUnlock(l);
+                return;
+            }
+            continue;
         }
 
         tunnelNextUpStreamPayload(t, packet_line, packet_buffer);

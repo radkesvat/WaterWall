@@ -2,13 +2,24 @@
 
 #include "loggers/network_logger.h"
 
-static void streamtopacketsDropOneByte(buffer_stream_t *stream)
+bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte)
 {
-    sbuf_t *skip_buf = bufferstreamReadExact(stream, 1);
-    if (skip_buf)
+    if (sbufGetLength(packet) != kSensitivePayloadSize)
     {
-        bufferpoolReuseBuffer(stream->pool, skip_buf);
+        return false;
     }
+
+    const uint8_t *data = sbufGetRawPtr(packet);
+
+    for (uint32_t i = 0; i < kSensitivePayloadSize; ++i)
+    {
+        if (data[i] != fill_byte)
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool streamtopacketsReadStreamIsOverflowed(buffer_stream_t *read_stream)
@@ -53,4 +64,24 @@ bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_o
 
 }
 
+bool streamtopacketsSendSensitivePong(tunnel_t *t, line_t *stream_line)
+{
+    sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(stream_line));
+
+    if (sbufGetLeftCapacity(buf) < kHeaderSize)
+    {
+        LOGW("StreamToPackets: dropping sensitive-mode pong because left padding is smaller than header size");
+        lineReuseBuffer(stream_line, buf);
+        return true;
+    }
+
+    sbufSetLength(buf, kSensitivePayloadSize);
+    memorySet(sbufGetMutablePtr(buf), kSensitivePongByte, kSensitivePayloadSize);
+
+    sbufShiftLeft(buf, kHeaderSize);
+    sbufWriteUnAlignedUI16(buf, htons((uint16_t) kSensitivePayloadSize));
+
+    tunnelPrevDownStreamPayload(t, stream_line, buf);
+    return lineIsAlive(stream_line);
+}
 

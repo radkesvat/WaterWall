@@ -15,4 +15,6 @@ void streamtopacketsTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     packet_ls->paused = false;
     packet_ls->line   = l;
+
+    discard withLineLocked(l, tunnelPrevDownStreamEst, t);
 }

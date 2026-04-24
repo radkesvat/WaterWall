@@ -4,7 +4,7 @@
 
 typedef struct streamtopackets_tstate_s
 {
-    int unused;
+    bool sensitive_mode;
 } streamtopackets_tstate_t;
 
 typedef struct streamtopackets_lstate_s
@@ -17,10 +17,13 @@ typedef struct streamtopackets_lstate_s
 
 enum
 {
-    kTunnelStateSize = sizeof(streamtopackets_tstate_t),
-    kLineStateSize   = sizeof(streamtopackets_lstate_t),
-    kMaxBufferSize   = 65536 * 2, // Maximum buffer size for reading data packets
-    kHeaderSize      = 2          // add 2 bytes to packet to store real size
+    kTunnelStateSize             = sizeof(streamtopackets_tstate_t),
+    kLineStateSize               = sizeof(streamtopackets_lstate_t),
+    kMaxBufferSize               = 65536 * 2, // Maximum buffer size for reading data packets
+    kHeaderSize                  = 2,         // add 2 bytes to packet to store real size
+    kSensitivePayloadSize        = 5,
+    kSensitivePingByte           = 0xFF,
+    kSensitivePongByte           = 0xDD
 };
 
 WW_EXPORT void         streamtopacketsTunnelDestroy(tunnel_t *t);
@@ -52,3 +55,5 @@ void streamtopacketsLinestateReset(streamtopackets_lstate_t *ls);
 
 bool streamtopacketsReadStreamIsOverflowed(buffer_stream_t *read_stream);
 bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out);
+bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte);
+bool streamtopacketsSendSensitivePong(tunnel_t *t, line_t *stream_line);

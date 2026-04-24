@@ -21,7 +21,7 @@ node_t nodeStreamToPacketsGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
              .required_padding_left = kHeaderSize,
-             .layer_group           = kNodeLayerAnything,
+             .layer_group           = kNodeLayer3 | kNodeLayer4,
              .layer_group_next_node = kNodeLayerAnything,
              .layer_group_prev_node = kNodeLayerAnything,
              .can_have_next         = true,

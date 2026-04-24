@@ -41,7 +41,9 @@ In this pattern, server2 rebuilds packets from the framed TCP stream created by 
 {
   "name": "stream-to-packet",
   "type": "StreamToPackets",
-  "settings": {},
+  "settings": {
+    "sensitive-mode": true
+  },
   "next": "packet-node"
 }
 ```
@@ -65,7 +67,8 @@ There are no required tunnel-specific settings in the current implementation.
 
 ## Optional `settings` Fields
 
-There are no tunnel-specific optional settings in the current implementation.
+- `sensitive-mode` `(boolean)`
+  Enables sensitive-mode heartbeat handling for framed 5-byte control packets.
 
 ## Detailed Behavior
 
@@ -122,6 +125,14 @@ When the active upstream data line finishes:
 - active line reference is cleared
 - parser buffer is reset
 
+### Sensitive mode heartbeat
+
+When `sensitive-mode` is enabled:
+
+- if `StreamToPackets` reconstructs a framed 5-byte payload where every byte is `0xFF`, it treats that frame as a heartbeat ping instead of a real packet
+- it replies downstream on the same stream line with a framed 5-byte payload of `0xDD`
+- neither the ping nor the pong is forwarded to the packet side
+
 ### Buffering limits
 
 The frame parser uses a fixed-size read stream.
@@ -134,7 +145,6 @@ If buffered data exceeds that size, the read stream is emptied.
 
 ## Notes And Caveats
 
-- `StreamToPackets` has no tunnel-specific JSON settings today.
 - This node expects framed bytes in `2-byte length + payload` format.
 - It should usually be paired with `PacketsToStream` on the opposite side.
 - Upstream `est` plus downstream `init`, `fin`, `pause`, and `resume` are not part of the intended normal callback path for this tunnel.

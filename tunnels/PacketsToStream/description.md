@@ -38,7 +38,11 @@ This works because `PacketsToStream` and `StreamToPackets` use the same 2-byte f
 {
   "name": "packet-to-stream",
   "type": "PacketsToStream",
-  "settings": {},
+  "settings": {
+    "sensitive-mode": true,
+    "interval-ms": 50,
+    "tolerance-ms": 150
+  },
   "next": "stream-node"
 }
 ```
@@ -62,7 +66,14 @@ There are no required tunnel-specific settings in the current implementation.
 
 ## Optional `settings` Fields
 
-There are no tunnel-specific optional settings in the current implementation.
+- `sensitive-mode` `(boolean)`
+  Enables sensitive-mode heartbeat handling for the worker-local stream line.
+
+- `interval-ms` `(integer, default: 50)`
+  Client-side only. Heartbeat send interval in milliseconds when `sensitive-mode` is enabled.
+
+- `tolerance-ms` `(integer, default: 150)`
+  Client-side only. Maximum time to wait for a heartbeat reply before the current stream line is closed and recreated.
 
 ## Detailed Behavior
 
@@ -140,6 +151,17 @@ If the stream-facing line toward the next node finishes:
 
 This keeps the packet-facing role stable while allowing automatic recreation of the stream-side line.
 
+### Sensitive mode heartbeat
+
+When `sensitive-mode` is enabled:
+
+- every `interval-ms`, `PacketsToStream` sends a framed 5-byte `0xFF` heartbeat upstream on the current stream-facing line
+- it does not send another heartbeat while the previous one is still waiting for a reply
+- if a framed 5-byte `0xDD` reply comes back on that same active line, the heartbeat is considered successful and is not emitted to the packet side
+- if no reply arrives within `tolerance-ms`, the current stream-facing line is finished locally, discarded, and recreated using the same worker-local bridge state
+
+This heartbeat lives entirely on the stream side and does not close the shared worker packet line.
+
 ### Buffering limits
 
 The read stream uses a fixed overflow limit.
@@ -152,7 +174,6 @@ If buffered return data grows beyond that limit, the read stream is emptied.
 
 ## Notes And Caveats
 
-- `PacketsToStream` has no tunnel-specific JSON settings today.
 - This node is framing-based (`2-byte length + payload`), not IPv4-length based.
 - Pair it with `StreamToPackets` on the other side to restore packet boundaries.
 - Upstream `est`, `pause`, `resume`, and `finish`, plus downstream `init`, are not part of the intended normal callback path for this tunnel.

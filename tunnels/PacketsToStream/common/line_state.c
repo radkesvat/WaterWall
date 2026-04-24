@@ -6,7 +6,10 @@ void packetstostreamLinestateInitialize(packetstostream_lstate_t *ls, buffer_poo
 {
     *ls = (packetstostream_lstate_t) {.line        = NULL,
                                       .read_stream = bufferstreamCreate(pool, kHeaderSize),
+                                      .ping_sent_at_ms = 0,
+                                      .pong_deadline_ms = 0,
                                       .paused      = false,
+                                      .awaiting_pong = false,
                                       .recreate_scheduled = false};
 }
 
