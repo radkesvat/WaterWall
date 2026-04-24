@@ -39,9 +39,10 @@ enum node_flags
 enum node_layer_group
 {
     kNodeLayerNone     = (1 << 0),
-    kNodeLayerAnything = (1 << 1),
     kNodeLayer3        = (1 << 2),
-    kNodeLayer4        = (1 << 3)
+    kNodeLayer4        = (1 << 3),
+    kNodeLayerAnything = kNodeLayer3 | kNodeLayer4
+
 };
 
 typedef struct node_s node_t;
