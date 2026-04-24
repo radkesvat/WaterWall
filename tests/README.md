@@ -49,15 +49,24 @@ Practical rule:
 - `encryption_small_frame_roundtrip`
   Verifies the encryption pair with `max-frame-size=4096`, so the framing logic is exercised even when the harness uses
   larger stream buffers.
+- `connection_fisher_roundtrip`
+  Verifies that `ConnectionFisherClient` and `ConnectionFisherServer` complete their `5`-byte probe handshake and
+  preserve the tester roundtrip across a real TCP loopback transport.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.
+- `packets_stream_bridge_roundtrip`
+  Verifies that `PacketsToStream` and `StreamToPackets` preserve packet boundaries and payload integrity across their
+  worker-packet-line to stream-line bridge.
 - `halfduplex_roundtrip`
   Verifies that `HalfDuplexClient` and `HalfDuplexServer` split and reconstruct one logical line correctly.
 - `mux_counter_roundtrip`
   Verifies basic `MuxClient` and `MuxServer` framing in counter mode.
 - `mux_timer_roundtrip`
   Verifies the same MUX pair in timer mode.
+- `reverse_tcp_bridge_roundtrip`
+  Verifies `ReverseClient` and `ReverseServer` across a real TCP loopback transport while a paired `Bridge` links
+  `TesterClient` to the reverse-server local side and `TesterServer` to the reverse-client local side.
 
 ## Case selection notes
 
