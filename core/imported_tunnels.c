@@ -68,6 +68,14 @@
 #include "tunnels/KeepAliveServer/include/interface.h"
 #endif
 
+#ifdef INCLUDE_CONNECTION_FISHER_CLIENT
+#include "tunnels/ConnectionFisherClient/include/interface.h"
+#endif
+
+#ifdef INCLUDE_CONNECTION_FISHER_SERVER
+#include "tunnels/ConnectionFisherServer/include/interface.h"
+#endif
+
 #ifdef INCLUDE_LAYER3_TCP_MANIPULATOR
 #include "tunnels/layer3/tcp/manipulator/tcp_manipulator.h"
 #endif
@@ -329,6 +337,14 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_KEEPALIVE_SERVER
     USING(KeepAliveServer);
+#endif
+
+#ifdef INCLUDE_CONNECTION_FISHER_CLIENT
+    USING(ConnectionFisherClient);
+#endif
+
+#ifdef INCLUDE_CONNECTION_FISHER_SERVER
+    USING(ConnectionFisherServer);
 #endif
 
 #ifdef INCLUDE_LAYER3_TCP_MANIPULATOR

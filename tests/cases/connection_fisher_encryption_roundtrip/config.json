@@ -1,0 +1,70 @@
+{
+  "name": "connection-fisher-encryption-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "connection-fisher-client"
+    },
+    {
+      "name": "connection-fisher-client",
+      "type": "ConnectionFisherClient",
+      "settings": {
+        "simultaneous-tries-perline": 3
+      },
+      "next": "enc-client"
+    },
+    {
+      "name": "enc-client",
+      "type": "EncryptionClient",
+      "settings": {
+        "algorithm": "chacha20-poly1305",
+        "password": "integration-secret",
+        "salt": "integration-suite",
+        "kdf-iterations": 12000
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41012,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41012,
+        "nodelay": true
+      },
+      "next": "enc-server"
+    },
+    {
+      "name": "enc-server",
+      "type": "EncryptionServer",
+      "settings": {
+        "algorithm": "chacha20-poly1305",
+        "password": "integration-secret",
+        "salt": "integration-suite",
+        "kdf-iterations": 12000
+      },
+      "next": "connection-fisher-server"
+    },
+    {
+      "name": "connection-fisher-server",
+      "type": "ConnectionFisherServer",
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

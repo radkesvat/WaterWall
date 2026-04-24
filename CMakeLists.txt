@@ -149,6 +149,8 @@ option(INCLUDE_PING_CLIENT              "link PingClient staticly to the core"  
 option(INCLUDE_PING_SERVER              "link PingServer staticly to the core"           TRUE)
 option(INCLUDE_KEEPALIVE_CLIENT         "link KeepAliveClient staticly to the core"      TRUE)
 option(INCLUDE_KEEPALIVE_SERVER         "link KeepAliveServer staticly to the core"      TRUE)
+option(INCLUDE_CONNECTION_FISHER_CLIENT "link ConnectionFisherClient staticly to the core" TRUE)
+option(INCLUDE_CONNECTION_FISHER_SERVER "link ConnectionFisherServer staticly to the core" TRUE)
 option(INCLUDE_TCP_LISTENER             "link TcpListener staticly to the core"          TRUE)
 option(INCLUDE_UDP_LISTENER             "link UdpListener staticly to the core"          TRUE)
 option(INCLUDE_LISTENER                 "link Listener staticly to the core"             FALSE)
@@ -400,6 +402,22 @@ if(INCLUDE_KEEPALIVE_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KeepAliveServer)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KeepAliveServer)
   target_link_libraries(Waterwall KeepAliveServer)
+endif()
+
+#connection fisher client
+if(INCLUDE_CONNECTION_FISHER_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_CONNECTION_FISHER_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionFisherClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionFisherClient)
+  target_link_libraries(Waterwall ConnectionFisherClient)
+endif()
+
+#connection fisher server
+if(INCLUDE_CONNECTION_FISHER_SERVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_CONNECTION_FISHER_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionFisherServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionFisherServer)
+  target_link_libraries(Waterwall ConnectionFisherServer)
 endif()
 
 

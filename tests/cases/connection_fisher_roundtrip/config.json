@@ -1,0 +1,48 @@
+{
+  "name": "connection-fisher-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "connection-fisher-client"
+    },
+    {
+      "name": "connection-fisher-client",
+      "type": "ConnectionFisherClient",
+      "settings": {
+        "simultaneous-tries-perline": 3
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41011,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41011,
+        "nodelay": true
+      },
+      "next": "connection-fisher-server"
+    },
+    {
+      "name": "connection-fisher-server",
+      "type": "ConnectionFisherServer",
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
