@@ -76,7 +76,7 @@ void wireguardInit(void)
     testWireGuardImpl();
 #endif
 
-    blake2s_ctx_t ctx;
+    blake2s_ctx_t ctx = {0};
     // Pre-calculate chaining key hash
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
     blake2sUpdate(&ctx, CONSTRUCTION, sizeof(CONSTRUCTION)); // 96 226
@@ -210,7 +210,7 @@ static void generateCookieSecret(wireguard_device_t *device)
 static void generatePeerCookie(wireguard_device_t *device, uint8_t *cookie, uint8_t *source_addr_port,
                                size_t source_length)
 {
-    blake2s_ctx_t ctx;
+    blake2s_ctx_t ctx = {0};
 
     if (wireguardExpired(device->cookie_secret_millis, COOKIE_SECRET_MAX_AGE))
     {
@@ -238,7 +238,7 @@ static void wireguardMac(uint8_t *dst, const void *message, size_t len, const ui
 
 static void wireguardMacKey(uint8_t *key, const uint8_t *public_key, const uint8_t *label, size_t label_len)
 {
-    blake2s_ctx_t ctx;
+    blake2s_ctx_t ctx = {0};
     blake2sInit(&ctx, WIREGUARD_SESSION_KEY_LEN, NULL, 0);
     blake2sUpdate(&ctx, label, label_len);
     blake2sUpdate(&ctx, public_key, WIREGUARD_PUBLIC_KEY_LEN);
@@ -247,7 +247,7 @@ static void wireguardMacKey(uint8_t *key, const uint8_t *public_key, const uint8
 
 static void wireguardMixHash(uint8_t *hash, const uint8_t *src, size_t src_len)
 {
-    blake2s_ctx_t ctx;
+    blake2s_ctx_t ctx = {0};
     blake2sInit(&ctx, WIREGUARD_HASH_LEN, NULL, 0);
     blake2sUpdate(&ctx, hash, WIREGUARD_HASH_LEN);
     blake2sUpdate(&ctx, src, src_len);
@@ -257,7 +257,7 @@ static void wireguardMixHash(uint8_t *hash, const uint8_t *src, size_t src_len)
 static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, const uint8_t *text, size_t text_len)
 {
     // Adapted from appendix example in RFC2104 to use BLAKE2S instead of MD5 - https://tools.ietf.org/html/rfc2104
-    blake2s_ctx_t ctx;
+    blake2s_ctx_t ctx = {0};
     uint8_t       k_ipad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // inner padding - key XORd with ipad
     uint8_t       k_opad[WIREGUARD_BLAKE2S_BLOCK_SIZE]; // outer padding - key XORd with opad
 
@@ -266,7 +266,7 @@ static void wireguardHmac(uint8_t *digest, const uint8_t *key, size_t key_len, c
     // if key is longer than BLAKE2S_BLOCK_SIZE bytes reset it to key=BLAKE2S(key)
     if (key_len > WIREGUARD_BLAKE2S_BLOCK_SIZE)
     {
-        blake2s_ctx_t tctx;
+        blake2s_ctx_t tctx = {0};
         blake2sInit(&tctx, WIREGUARD_HASH_LEN, NULL, 0);
         blake2sUpdate(&tctx, key, key_len);
         blake2sFinal(&tctx, tk);
