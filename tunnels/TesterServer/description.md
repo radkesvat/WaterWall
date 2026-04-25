@@ -14,6 +14,8 @@ It is meant for validating tunnel correctness and data integrity, not for servin
 - sends the fixed `11`-chunk response sequence back downstream
 - aborts the process on any size, order, byte-pattern, or lifecycle mismatch
 - in `packet-mode`, uses the worker packet line and never expects normal runtime `Finish`
+- optionally wraps packet-mode request and response chunks in a synthetic IPv4 packet with configured source,
+  destination, protocol, and TTL
 
 ## Request And Response Pattern
 
@@ -32,8 +34,8 @@ Current stream-mode chunk sizes are:
 - `4096`
 - `32768`
 - `32769`
-- `16777216`
-- `33554432`
+- `1048576`
+- `2097152`
 
 Current packet-mode chunk sizes are:
 
@@ -46,6 +48,20 @@ Current packet-mode chunk sizes are:
 - `256`
 - `512`
 - `1024`
+- `1499`
+- `1500`
+
+Current `packet-ipv4` chunk sizes are:
+
+- `21`
+- `22`
+- `24`
+- `52`
+- `84`
+- `148`
+- `276`
+- `532`
+- `1044`
 - `1499`
 - `1500`
 
@@ -81,6 +97,25 @@ Packet mode:
 }
 ```
 
+Packet mode with synthetic IPv4 packets:
+
+```json
+{
+  "name": "tester-server",
+  "type": "TesterServer",
+  "settings": {
+    "packet-mode": true,
+    "packet-init-on-start": true,
+    "packet-ipv4": {
+      "source-ip": "198.51.100.10",
+      "dest-ip": "203.0.113.20",
+      "protocol": 253,
+      "ttl": 64
+    }
+  }
+}
+```
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -104,6 +139,33 @@ Packet mode:
   - each verified request packet produces one deterministic response packet
   - the worker packet line remains alive for the lifetime of the chain
   - receiving normal runtime `Finish` on that packet line is treated as a bug
+
+- `packet-init-on-start` `(boolean)`
+  Only meaningful when `packet-mode=true`.
+  When `true`, `TesterServer` initializes its packet-line state once per worker during tunnel startup if it has not
+  already been initialized by an upstream packet-line `Init`.
+  Default: `false`
+
+- `packet-ipv4` `(object)`
+  Optional synthetic IPv4 envelope mode for `packet-mode`.
+  When present, each packet-mode request and response chunk is treated as a complete IPv4 packet instead of opaque
+  packet payload bytes.
+
+  Required child fields:
+  - `source-ip` `(string)`
+    Required IPv4 source address for request packets arriving from upstream. Response packets use the reverse direction
+    automatically.
+  - `dest-ip` `(string)`
+    Required IPv4 destination address for request packets arriving from upstream. Response packets use the reverse
+    direction automatically.
+
+  Optional child fields:
+  - `protocol` `(integer)`
+    IPv4 protocol number written into synthetic response headers and required again during request verification.
+    Default: `253`
+  - `ttl` `(integer)`
+    IPv4 TTL written into synthetic response headers.
+    Default: `64`
 
 ## Detailed Behavior
 
@@ -130,6 +192,8 @@ In stream mode:
 In packet mode:
 
 - each packet payload must match exactly one expected request chunk
+- when `packet-ipv4` is enabled, that packet must be a complete non-fragmented IPv4 packet with the configured
+  protocol and the expected source and destination addresses for that direction
 - after a request packet is verified, a response packet for the same chunk index is queued
 - downstream response sending is scheduled on the line worker loop so request verification can complete cleanly first
 
@@ -164,3 +228,5 @@ bug because packet lines are shared worker state, not per-connection lines.
   `DownStreamFinish` are intentionally disabled because this node is a chain end
 - in packet mode, `TesterServer` now generates the deterministic response pattern instead of merely reflecting request
   bytes, so both directions are validated consistently
+- in `packet-ipv4` mode the documented chunk sizes include the `20`-byte IPv4 header, so the verified synthetic
+  payload body is `chunk-size - 20`

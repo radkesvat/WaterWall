@@ -16,6 +16,7 @@ It is meant for validating tunnel composition and payload integrity, not for pro
 - fails fast on any size, order, byte-pattern, or timeout mismatch
 - in normal stream mode, logs success after the full response is verified and exits the program once all workers complete
 - in `packet-mode`, reuses the worker packet line and never expects normal runtime `Finish`
+- optionally wraps packet-mode payloads in a synthetic IPv4 packet with configured source, destination, protocol, and TTL
 
 ## Request And Response Pattern
 
@@ -40,8 +41,8 @@ Current stream-mode chunk sizes are:
 - `4096`
 - `32768`
 - `32769`
-- `16777216`
-- `33554432`
+- `1048576`
+- `2097152`
 
 Current packet-mode chunk sizes are:
 
@@ -54,6 +55,20 @@ Current packet-mode chunk sizes are:
 - `256`
 - `512`
 - `1024`
+- `1499`
+- `1500`
+
+Current `packet-ipv4` chunk sizes are:
+
+- `21`
+- `22`
+- `24`
+- `52`
+- `84`
+- `148`
+- `276`
+- `532`
+- `1044`
 - `1499`
 - `1500`
 
@@ -95,6 +110,25 @@ Packet mode:
 }
 ```
 
+Packet mode with synthetic IPv4 packets:
+
+```json
+{
+  "name": "tester-client",
+  "type": "TesterClient",
+  "settings": {
+    "packet-mode": true,
+    "packet-ipv4": {
+      "source-ip": "198.51.100.10",
+      "dest-ip": "203.0.113.20",
+      "protocol": 253,
+      "ttl": 64
+    }
+  },
+  "next": "packet-node"
+}
+```
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -122,6 +156,38 @@ Packet mode:
   - no normal runtime `Finish` is expected on that packet line
   - the small buffer pool must provide at least `1500` bytes of writable payload capacity
 
+- `packet-start-immediately` `(boolean)`
+  Only meaningful when `packet-mode=true`.
+  When `true`, `TesterClient` does not wait for downstream `Est` and starts request scheduling directly from startup on
+  each worker packet line.
+  Default: `false`
+
+- `packet-start-delay-ms` `(integer)`
+  Only meaningful when `packet-mode=true`.
+  Non-negative startup delay used only by the immediate-start packet path.
+  When `packet-start-immediately=true` and this value is greater than `0`, request sending is delayed by this many
+  milliseconds after the worker packet line is initialized.
+  Default: `0`
+
+- `packet-ipv4` `(object)`
+  Optional synthetic IPv4 envelope mode for `packet-mode`.
+  When present, each packet-mode request and response chunk is sent as a complete IPv4 packet instead of opaque packet
+  payload bytes.
+
+  Required child fields:
+  - `source-ip` `(string)`
+    Required IPv4 source address for request packets. Response packets use the reverse direction automatically.
+  - `dest-ip` `(string)`
+    Required IPv4 destination address for request packets. Response packets use the reverse direction automatically.
+
+  Optional child fields:
+  - `protocol` `(integer)`
+    IPv4 protocol number written into the synthetic header and required again during verification.
+    Default: `253`
+  - `ttl` `(integer)`
+    IPv4 TTL written into the synthetic header.
+    Default: `64`
+
 ## Detailed Behavior
 
 ### Startup and line creation
@@ -131,6 +197,8 @@ On tunnel start, `TesterClient` schedules one startup task per chain worker. Eac
 - picks the worker packet line when `packet-mode` is enabled, otherwise creates a fresh normal line
 - initializes this tunnel's per-line state immediately
 - sends upstream `Init` to the next tunnel while holding a temporary line reference
+- if `packet-start-immediately=true`, marks packet-mode establishment locally and schedules request sending without
+  waiting for downstream `Est`
 - arms a `30000 ms` watchdog for that worker line
 
 ### Establishment and request send
@@ -158,6 +226,8 @@ In stream mode:
 In packet mode:
 
 - each incoming packet payload must match exactly one expected response chunk
+- when `packet-ipv4` is enabled, that packet must be a complete non-fragmented IPv4 packet with the configured
+  protocol and the expected source and destination addresses for that direction
 - extra packets, early packets, or wrong-size packets are treated as failure
 - successful completion marks the worker packet line test as done without closing the packet line
 
@@ -175,5 +245,7 @@ closable connection lines.
 - `TesterClient` is a synthetic validation tunnel, not a transport adapter.
 - the watchdog currently aborts the process if a worker line does not complete within `30000 ms`
 - `TesterClient` keeps one completion slot per worker and currently supports at most `254` chain workers
+- in `packet-ipv4` mode the documented chunk sizes include the `20`-byte IPv4 header, so the verified synthetic
+  payload body is `chunk-size - 20`
 - `UpStreamInit`, `UpStreamEst`, `UpStreamPayload`, `UpStreamPause`, `UpStreamResume`, and `UpStreamFinish` are
   intentionally disabled because this node is a chain head
