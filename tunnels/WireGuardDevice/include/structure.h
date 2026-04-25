@@ -13,6 +13,7 @@ typedef struct wgd_tstate_s
 
     tunnel_t *tunnel;
     wmutex_t  mutex;
+    bool      transport_side_is_next;
 
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;
@@ -57,6 +58,11 @@ void wireguarddeviceLinestateInitialize(wgd_lstate_t *ls);
 void wireguarddeviceLinestateDestroy(wgd_lstate_t *ls);
 void wireguarddeviceStateLock(wgd_tstate_t *state);
 void wireguarddeviceStateUnlock(wgd_tstate_t *state);
+bool wireguarddeviceTransportSideIsNext(const wgd_tstate_t *state);
+void wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf);
+void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf);
+void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr);
 bool              wireguarddeviceCheckPeerAllowedIp(const wireguard_peer_t *peer, const ip_addr_t *ipaddr);
 

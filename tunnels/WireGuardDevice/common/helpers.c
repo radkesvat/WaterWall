@@ -76,6 +76,39 @@ void wireguarddeviceStateUnlock(wgd_tstate_t *state)
     mutexUnlock(&state->mutex);
 }
 
+bool wireguarddeviceTransportSideIsNext(const wgd_tstate_t *state)
+{
+    assert(state != NULL);
+
+    return state->transport_side_is_next;
+}
+
+void wireguarddeviceForwardTransportPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
+{
+    tunnel_t *tunnel = state->tunnel;
+
+    if (wireguarddeviceTransportSideIsNext(state))
+    {
+        tunnelNextUpStreamPayload(tunnel, line, buf);
+        return;
+    }
+
+    tunnelPrevDownStreamPayload(tunnel, line, buf);
+}
+
+void wireguarddeviceForwardInnerPacket(wgd_tstate_t *state, line_t *line, sbuf_t *buf)
+{
+    tunnel_t *tunnel = state->tunnel;
+
+    if (wireguarddeviceTransportSideIsNext(state))
+    {
+        tunnelPrevDownStreamPayload(tunnel, line, buf);
+        return;
+    }
+
+    tunnelNextUpStreamPayload(tunnel, line, buf);
+}
+
 wireguard_peer_t *wireguarddevicePeerLookupByAllowedIp(wireguard_device_t *device, const ip_addr_t *ipaddr)
 {
     wireguard_peer_t *result      = NULL;
@@ -142,7 +175,7 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_pee
 
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), &endpoint_ip, endpoint_port);
     wireguarddeviceStateUnlock(ts);
-    tunnelNextUpStreamPayload(tunnel, line, q);
+    wireguarddeviceForwardTransportPacket(ts, line, q);
     wireguarddeviceStateLock(ts);
     return ERR_OK;
     // return udpSendTo(device->udp_pcb, q, &peer->ip, peer->port);
@@ -156,7 +189,7 @@ err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_ad
 
     addresscontextSetIpPort(&(line->routing_context.dest_ctx), ipaddr, port);
     wireguarddeviceStateUnlock(ts);
-    tunnelNextUpStreamPayload(tunnel, line, q);
+    wireguarddeviceForwardTransportPacket(ts, line, q);
     wireguarddeviceStateLock(ts);
     return ERR_OK;
     // return udpSendTo(device->udp_pcb, q, ipaddr, port);

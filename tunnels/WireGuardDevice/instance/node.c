@@ -21,9 +21,9 @@ node_t nodeWireGuardDeviceGet(void)
              .instance              = NULL,
              .flags                 = kNodeFlagNone,
              .required_padding_left = WIREGUARD_AUTHTAG_LEN,
-             .layer_group           = kNodeLayer3,
-             .layer_group_next_node = kNodeLayer3,
-             .layer_group_prev_node = kNodeLayer3,
+             .layer_group           = kNodeLayerAnything,
+             .layer_group_next_node = kNodeLayerAnything,
+             .layer_group_prev_node = kNodeLayerAnything,
              .can_have_next         = true,
              .can_have_prev         = true,
     };

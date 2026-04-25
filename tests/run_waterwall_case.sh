@@ -24,7 +24,7 @@ set -euo pipefail
 shopt -s nullglob
 
 readonly TESTER_SUCCESS_REGEX='TesterClient: all [0-9]+ worker lines completed successfully'
-readonly TEST_WORKERS=4
+readonly DEFAULT_TEST_WORKERS=4
 readonly TEST_RAM_PROFILE='client'
 
 if [[ $# -lt 3 ]]; then
@@ -71,6 +71,15 @@ trap cleanup EXIT
 
 cp -R "$case_dir"/. "$run_dir"/
 
+test_workers=$DEFAULT_TEST_WORKERS
+if [[ -f "$run_dir/workers.txt" ]]; then
+  test_workers=$(tr -d '[:space:]' < "$run_dir/workers.txt")
+  if [[ ! "$test_workers" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Invalid workers.txt in case directory: expected a positive integer, got '$test_workers'" >&2
+    exit 2
+  fi
+fi
+
 cat >"$run_dir/core.json" <<EOF
 {
   "log": {
@@ -84,7 +93,7 @@ cat >"$run_dir/core.json" <<EOF
     "config.json"
   ],
   "misc": {
-    "workers": $TEST_WORKERS,
+    "workers": $test_workers,
     "ram-profile": "$TEST_RAM_PROFILE",
     "mtu": 1500
   }

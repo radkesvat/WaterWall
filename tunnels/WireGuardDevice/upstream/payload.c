@@ -146,7 +146,7 @@ static err_t wireguardifOutput(wireguard_device_t *device, sbuf_t *q, const ip_a
     return ERR_RTE;
 }
 
-void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard l;
 
@@ -200,4 +200,17 @@ void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     wireguarddeviceStateUnlock(state);
+}
+
+void wireguarddeviceTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    wgd_tstate_t *state = tunnelGetState(t);
+
+    if (wireguarddeviceTransportSideIsNext(state))
+    {
+        wireguarddeviceHandleInnerPayload(t, l, buf);
+        return;
+    }
+
+    wireguarddeviceHandleTransportPayload(t, l, buf);
 }

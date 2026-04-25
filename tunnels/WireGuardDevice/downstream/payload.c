@@ -190,12 +190,11 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
                                 wireguarddeviceCheckPeerAllowedIp(peer, &source))
                             {
                                 wgd_tstate_t *ts     = (wgd_tstate_t *) device;
-                                tunnel_t     *tunnel = ts->tunnel;
-                                line_t       *line   = tunnelchainGetWorkerPacketLine(tunnel->chain, getWID());
+                                line_t       *line   = tunnelchainGetWorkerPacketLine(ts->tunnel->chain, getWID());
 
                                 sbufSetLength(buf, packet_len);
                                 wireguarddeviceStateUnlock(ts);
-                                tunnelPrevDownStreamPayload(tunnel, line, buf);
+                                wireguarddeviceForwardInnerPacket(ts, line, buf);
                                 wireguarddeviceStateLock(ts);
 
                                 // buf is owned by previous packet layer now
@@ -458,13 +457,27 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), p);
 }
 
-void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+void wireguarddeviceHandleTransportPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     wgd_tstate_t *state = tunnelGetState(t);
+
     wireguarddeviceStateLock(state);
 
     wireguardifNetworkRx((wireguard_device_t *) tunnelGetState(t), buf, &l->routing_context.src_ctx.ip_address,
                          l->routing_context.src_ctx.port);
 
     wireguarddeviceStateUnlock(state);
+}
+
+void wireguarddeviceTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    wgd_tstate_t *state = tunnelGetState(t);
+
+    if (wireguarddeviceTransportSideIsNext(state))
+    {
+        wireguarddeviceHandleTransportPayload(t, l, buf);
+        return;
+    }
+
+    wireguarddeviceHandleInnerPayload(t, l, buf);
 }

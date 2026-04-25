@@ -1,0 +1,84 @@
+{
+  "name": "wireguard-udpstateless-packet-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "packet-start-immediately": true,
+        "packet-start-delay-ms": 1000,
+        "packet-ipv4": {
+          "source-ip": "10.44.0.1",
+          "dest-ip": "10.44.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
+      "next": "wg-client"
+    },
+    {
+      "name": "wg-client",
+      "type": "WireGuardDevice",
+      "settings": {
+        "privatekey": "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=",
+        "peers": [
+          {
+            "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
+            "allowedips": "10.44.0.2/32",
+            "endpoint": "127.0.0.1:42131",
+            "persistentkeepalive": 1
+          }
+        ]
+      },
+      "next": "udp-client"
+    },
+    {
+      "name": "udp-client",
+      "type": "UdpStatelessSocket",
+      "settings": {
+        "listen-address": "127.0.0.1",
+        "listen-port": 42130
+      }
+    },
+    {
+      "name": "udp-server",
+      "type": "UdpStatelessSocket",
+      "settings": {
+        "listen-address": "127.0.0.1",
+        "listen-port": 42131
+      },
+      "next": "wg-server"
+    },
+    {
+      "name": "wg-server",
+      "type": "WireGuardDevice",
+      "settings": {
+        "privatekey": "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
+        "peers": [
+          {
+            "publickey": "dDUfRvZSDy8jZBsB4kQflTO+iwlLbR+jgb840fumqUM=",
+            "allowedips": "10.44.0.1/32",
+            "endpoint": "127.0.0.1:42132",
+            "persistentkeepalive": 1
+          }
+        ]
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-init-on-start": true,
+        "packet-ipv4": {
+          "source-ip": "10.44.0.1",
+          "dest-ip": "10.44.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      }
+    }
+  ]
+}

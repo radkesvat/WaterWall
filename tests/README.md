@@ -27,10 +27,13 @@ Practical rule:
 
 - `cases/<name>/config.json`
   One Waterwall config file for a test case.
+- `cases/<name>/workers.txt`
+  Optional worker-count override for a case.
+  If omitted, the runner uses its default worker count.
 - `run_waterwall_case.sh`
   The low-level single-case runner.
   It creates a temporary `core.json`, launches `Waterwall`, watches the tester log, and fails on crash or timeout.
-  The generated `core.json` uses a single worker so each registered case stays lightweight and deterministic.
+  The generated `core.json` uses `4` workers by default, unless the case directory provides `workers.txt`.
   The generated `core.json` uses the `client` RAM profile so stream cases are not bottlenecked by the minimal 4 KB
   large-buffer size.
 - `CMakeLists.txt`
@@ -67,6 +70,9 @@ Practical rule:
 - `reverse_tcp_bridge_roundtrip`
   Verifies `ReverseClient` and `ReverseServer` across a real TCP loopback transport while a paired `Bridge` links
   `TesterClient` to the reverse-server local side and `TesterServer` to the reverse-client local side.
+- `wireguard_udpstateless_packet_roundtrip`
+  Verifies two `WireGuardDevice` nodes across real UDP loopback sockets, using packet-mode testers with IPv4 packet
+  payloads so AllowedIPs routing and transport encryption are both exercised end to end.
 
 ## Case selection notes
 
@@ -83,9 +89,10 @@ Some scenarios are still better treated as future work:
 ## Adding a new tunnel test
 
 1. Create `tests/cases/<name>/config.json`.
-2. Use `TesterClient` as the chain head and `TesterServer` as the chain end.
-3. Insert the tunnel pair you want to validate between them.
-4. Add the case to [tests/CMakeLists.txt](/root/WaterWall/tests/CMakeLists.txt).
+2. Add `tests/cases/<name>/workers.txt` only if the case needs a non-default worker count.
+3. Use `TesterClient` as the chain head and `TesterServer` as the chain end.
+4. Insert the tunnel pair you want to validate between them.
+5. Add the case to [tests/CMakeLists.txt](/root/WaterWall/tests/CMakeLists.txt).
 
 Example shape:
 
