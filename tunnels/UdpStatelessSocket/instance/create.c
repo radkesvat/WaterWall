@@ -13,6 +13,13 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     t->fnPauseU   = &udpstatelesssocketTunnelUpStreamPause;
     t->fnResumeU  = &udpstatelesssocketTunnelUpStreamResume;
 
+    t->fnInitD    = &udpstatelesssocketTunnelDownStreamInit;
+    t->fnEstD     = &udpstatelesssocketTunnelDownStreamEst;
+    t->fnFinD     = &udpstatelesssocketTunnelDownStreamFinish;
+    t->fnPayloadD = &udpstatelesssocketTunnelDownStreamPayload;
+    t->fnPauseD   = &udpstatelesssocketTunnelDownStreamPause;
+    t->fnResumeD  = &udpstatelesssocketTunnelDownStreamResume;
+
     t->onPrepare = &udpstatelesssocketTunnelOnPrepair;
     t->onStart   = &udpstatelesssocketTunnelOnStart;
     t->onDestroy = &udpstatelesssocketTunnelDestroy;
