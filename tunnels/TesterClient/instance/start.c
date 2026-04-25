@@ -32,6 +32,20 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         return;
     }
 
+    if (ts->packet_mode && ts->packet_start_immediately)
+    {
+        ls->est_received = true;
+        if (ts->packet_start_delay_ms > 0)
+        {
+            ls->request_send_scheduled = true;
+            lineScheduleDelayedTask(l, testerclientRequestSendTask, ts->packet_start_delay_ms, t);
+        }
+        else
+        {
+            testerclientScheduleRequestSend(t, l, ls);
+        }
+    }
+
     lineScheduleDelayedTask(l, testerclientWatchdogTask, kTesterClientWatchdogMs, t);
 }
 

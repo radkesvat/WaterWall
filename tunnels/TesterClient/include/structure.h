@@ -7,7 +7,9 @@ enum
     kTesterClientChunkCount = 11,
     kTesterClientMaxWorkers = 254,
     kTesterClientStartDelayMs = 50,
-    kTesterClientWatchdogMs = 30000
+    kTesterClientWatchdogMs = 30000,
+    kTesterClientPacketIpv4ProtocolDefault = 253,
+    kTesterClientPacketIpv4TtlDefault = 64
 };
 
 typedef enum testerclient_direction_e
@@ -26,6 +28,14 @@ typedef struct testerclient_tstate_s
 {
     atomic_uint                 completed_workers;
     bool                        packet_mode;
+    bool                        packet_start_immediately;
+    bool                        packet_ipv4_mode;
+    uint32_t                    packet_ipv4_source_addr;
+    uint32_t                    packet_ipv4_dest_addr;
+    uint32_t                    packet_start_delay_ms;
+    uint8_t                     packet_ipv4_protocol;
+    uint8_t                     packet_ipv4_ttl;
+    atomic_uint                 packet_ipv4_identification;
     testerclient_worker_state_t workers[kTesterClientMaxWorkers];
 } testerclient_tstate_t;
 

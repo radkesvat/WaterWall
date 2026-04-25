@@ -4,7 +4,9 @@
 
 enum
 {
-    kTesterServerChunkCount = 11
+    kTesterServerChunkCount = 11,
+    kTesterServerPacketIpv4ProtocolDefault = 253,
+    kTesterServerPacketIpv4TtlDefault = 64
 };
 
 typedef enum testerserver_direction_e
@@ -15,7 +17,14 @@ typedef enum testerserver_direction_e
 
 typedef struct testerserver_tstate_s
 {
-    bool packet_mode;
+    bool        packet_mode;
+    bool        packet_init_on_start;
+    bool        packet_ipv4_mode;
+    uint32_t    packet_ipv4_source_addr;
+    uint32_t    packet_ipv4_dest_addr;
+    uint8_t     packet_ipv4_protocol;
+    uint8_t     packet_ipv4_ttl;
+    atomic_uint packet_ipv4_identification;
 } testerserver_tstate_t;
 
 typedef struct testerserver_lstate_s
