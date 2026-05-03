@@ -27,7 +27,7 @@ int main(void)
 
     // check address sanitizer works properly
     // int test[3] = {0};
-    // printf(" salamati Ali agha Mofasa %d", test[3]);
+    // printf(" salamati Ali agha Mufasa %d", test[3]);
 
     initWLibc();
 
