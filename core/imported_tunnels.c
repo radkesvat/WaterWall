@@ -105,7 +105,7 @@
 #endif
 
 #ifdef INCLUDE_LOGGER_TUNNEL
-#include "tunnels/logger/logger_tunnel.h"
+#include "tunnels/logger/include/interface.h"
 #endif
 
 #ifdef INCLUDE_TROJAN_AUTH_SERVER
