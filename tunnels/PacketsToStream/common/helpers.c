@@ -296,29 +296,46 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
     }
 
     packetstostream_tstate_t *ts = tunnelGetState(t);
-    ts->worker_timeout_timers[getWID()] = NULL;
+    const wid_t               wid = getWID();
 
     line_t *packet_line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), getWID());
     if (packet_line == NULL || ! lineIsAlive(packet_line))
     {
+        ts->worker_timeout_timers[wid] = NULL;
         return;
     }
 
     packetstostream_lstate_t *ls = lineGetState(packet_line, t);
     if (! ls->awaiting_pong)
     {
+        ts->worker_timeout_timers[wid] = NULL;
         return;
     }
 
-    if (wloopNowMS(getWorkerLoop(lineGetWID(packet_line))) >= ls->pong_deadline_ms)
+    const uint64_t now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
+    if (now < ls->pong_deadline_ms)
     {
-        const uint64_t now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
-        const uint64_t elapsed_ms = (ls->ping_sent_at_ms > 0 && now >= ls->ping_sent_at_ms) ?
-                                        (now - ls->ping_sent_at_ms) :
-                                        ts->tolerance_ms;
+        const uint64_t remaining_ms_u64 = ls->pong_deadline_ms - now;
+        const uint32_t remaining_ms =
+            (remaining_ms_u64 > UINT32_MAX) ? UINT32_MAX : (uint32_t) remaining_ms_u64;
 
-        LOGW("PacketsToStream: sensitive-mode ping timed out after %llums (limit=%u ms), resetting connection",
-             (unsigned long long) elapsed_ms, (unsigned int) ts->tolerance_ms);
-        packetstostreamCloseOutputLineAndScheduleRecreate(t, packet_line, ls);
+        /*
+         * The event loop can schedule timeout callbacks slightly before the
+         * exact millisecond deadline because timer deadlines are tracked in
+         * microseconds but some timeout values are rounded to coarser buckets.
+         * Re-arm the same one-shot timer instead of clearing the slot, otherwise
+         * awaiting_pong could remain stuck forever after a lost ping.
+         */
+        wtimerReset(timer, (remaining_ms == 0) ? 1U : remaining_ms);
+        return;
     }
+
+    ts->worker_timeout_timers[wid] = NULL;
+    const uint64_t elapsed_ms = (ls->ping_sent_at_ms > 0 && now >= ls->ping_sent_at_ms) ?
+                                    (now - ls->ping_sent_at_ms) :
+                                    ts->tolerance_ms;
+
+    LOGW("PacketsToStream: sensitive-mode ping timed out after %llums (limit=%u ms), resetting connection",
+         (unsigned long long) elapsed_ms, (unsigned int) ts->tolerance_ms);
+    packetstostreamCloseOutputLineAndScheduleRecreate(t, packet_line, ls);
 }
