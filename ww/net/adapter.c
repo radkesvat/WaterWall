@@ -30,7 +30,6 @@ void adapterDefaultOnIndexDownEnd(tunnel_t *t, uint16_t index, uint16_t *mem_off
     t->chain_index   = index;
     t->lstate_offset = *mem_offset;
     *mem_offset += t->lstate_size;
-  
 }
 
 /**
@@ -46,6 +45,7 @@ static void disabledPayloadRoutine(tunnel_t *t, line_t *line, sbuf_t *payload)
     discard line;
     discard payload;
     LOGF("Illegal call to payload routine on Adapter %s", t->node->name);
+    assert(false); // print stack trace in debug mode, and terminate in release mode
     terminateProgram(1);
 }
 
@@ -60,6 +60,7 @@ static void disabledRoutine(tunnel_t *t, line_t *line)
     discard t;
     discard line;
     LOGF("Illegal call to routine on Adapter %s", t->node->name);
+    assert(false); // print stack trace in debug mode, and terminate in release mode
     terminateProgram(1);
 }
 
