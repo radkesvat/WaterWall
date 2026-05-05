@@ -7,15 +7,23 @@ It is meant for layer-3 chains where the payload is already a raw IP packet, not
 The current implementation provides these classes of tricks:
 
 - protocol-number swapping
-- TLS ClientHello echo (`EchoSNI`)
+- TLS ClientHello copy (`first-sni`)
+- TLS ClientHello split-route delay (`smuggle-sni`)
+- TLS ClientHello overlap split (`overlap-sni`)
+- TLS ClientHello SYN/FIN overlap (`synfin-sni`)
+- mirrored TCP FIN injection (`smuggle-fin`)
 - TLS ClientHello fragmentation and shuffle (`sni-blender`)
 - TCP flag bit rewriting
+- source and destination port ghost tailing with transport-port remapping
 - final-packet duplication
 
 ## What It Does
 
 - Reads raw packet payload on the upstream and downstream packet paths.
 - Applies enabled packet tricks in place.
+- Can inject a crafted mirrored FIN/ACK packet on a dedicated upstream helper branch.
+- Can hold the third upstream TLS ClientHello packet, overlap it with a crafted fake ClientHello after the fourth packet arrives, send a crafted server-side TLS packet on a helper upstream branch, emit a fake TCP SYN on the same 4-tuple, and then flush the remaining real ClientHello bytes.
+- Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, then emit an enlarged real first TLS chunk, a client-looking FIN packet, a fake TCP SYN, a full crafted fake ClientHello, one valid generated TLS-looking filler packet, and the remaining real TLS bytes immediately on the normal upstream path.
 - Optionally duplicates the final outgoing packet after all other enabled tricks.
 - Marks packets for checksum recalculation when it changes protocol or TCP flags.
 - Can replace one outgoing TLS ClientHello packet with multiple shuffled IP fragments.
@@ -35,6 +43,7 @@ Typical use cases include:
 
 - changing protocol numbers to evade simple filtering
 - sending a crafted TLS ClientHello copy before the real ClientHello
+- sending a mirrored FIN/ACK packet on a helper upstream branch without consuming the original packet
 - fragmenting a TLS ClientHello to alter packet shape
 - testing how a path behaves when TCP control bits are rewritten
 
@@ -49,14 +58,34 @@ Typical use cases include:
     "protoswap-tcp-2": 254,
     "protoswap-udp": 252,
     "first-sni": "cover.example.net",
-    "echo-sni-count": 3,
-    "echo-sni-replay-delay": 20,
-    "echo-sni-final-delay": 50,
-    "echo-sni-ttl": 1,
-    "echo-sni-random-tcp-sequence": true,
+    "first-sni-count": 3,
+    "first-sni-replay-delay": 20,
+    "first-sni-final-delay": 50,
+    "first-sni-ttl": 1,
+    "first-sni-random-tcp-sequence": true,
+    "overlap-sni": "decoy.example.net",
+    "overlap-sni-delay-ms": 250,
+    "overlap-sni-syn-ttl": 3,
+    "synfin-sni": "decoy.example.net",
+    "synfin-sni-syn-ttl": 3,
+    "synfin-sni-fin-ttl": 5,
+    "synfin-sni-fake-ttl": 1,
+    "synfin-sni-additional-range-min": 32,
+    "synfin-sni-additional-range-max": 96,
+    "synfin-sni-random-syn-checksum": false,
+    "synfin-sni-random-fin-checksum": false,
+    "synfin-sni-random-syn-sequence": false,
+    "synfin-sni-random-fin-sequence": false,
+    "synfin-sni-use-rst": false,
+    "crafted-server-hello-upstream-node": "server-hello-helper",
+    "smuggle-fin": true,
+    "fin-sni-delay-ms": 250,
+    "real-fin-upstream-node": "packet-to-stream-real-fin",
     "sni-blender": true,
     "sni-blender-packets": 4,
     "packet-duplicate": 2,
+    "source-port-ghost": true,
+    "dest-port-ghost": true,
     "up-tcp-bit-psh": "off",
     "up-tcp-bit-ack": "toggle",
     "dw-tcp-bit-syn": "packet->ack"
@@ -121,45 +150,229 @@ If none of the supported trick settings are present, tunnel creation fails with:
 
   This is applied as the last step of `IpManipulator`, after all other enabled tricks have finished shaping the packet.
 
-### EchoSNI settings
+### first-sni settings
 
 - `first-sni` `(string)`
-  Enables the EchoSNI trick and sets the SNI that will be written into the crafted TLS ClientHello copy.
+  Enables the `first-sni` trick and sets the SNI that will be written into the crafted TLS ClientHello copy.
 
-- `echo-sni-ttl` `(integer)`
+- `first-sni-ttl` `(integer)`
   Optional.
 
-  When present, the crafted EchoSNI packet is sent with this IPv4 TTL value.
+  When present, the crafted `first-sni` packet is sent with this IPv4 TTL value.
 
-- `echo-sni-count` `(integer)`
+- `first-sni-count` `(integer)`
   Optional.
 
-  Number of crafted EchoSNI packets to send before the original ClientHello.
+  Number of crafted `first-sni` packets to send before the original ClientHello.
 
   Defaults to `1`.
 
-- `echo-sni-replay-delay` `(integer)`
+- `first-sni-replay-delay` `(integer)`
   Optional.
 
-  Delay in milliseconds between crafted EchoSNI replays after the first one.
+  Delay in milliseconds between crafted `first-sni` replays after the first one.
 
   Defaults to `0`.
 
-  This value only matters when `echo-sni-count` is greater than `1`.
+  This value only matters when `first-sni-count` is greater than `1`.
 
-- `echo-sni-final-delay` `(integer)`
+- `first-sni-final-delay` `(integer)`
   Optional.
 
-  Delay in milliseconds between the last crafted EchoSNI packet and the original ClientHello.
+  Delay in milliseconds between the last crafted `first-sni` packet and the original ClientHello.
 
   Defaults to `0`.
 
-- `echo-sni-random-tcp-sequence` `(boolean)`
+- `first-sni-random-tcp-sequence` `(boolean)`
   Optional.
 
-  When `true`, the crafted EchoSNI packet gets a fresh random TCP sequence number before it is sent.
+  When `true`, the crafted `first-sni` packet gets a fresh random TCP sequence number before it is sent.
 
-  When `false` or omitted, the crafted EchoSNI packet keeps the original TCP sequence number.
+  When `false` or omitted, the crafted `first-sni` packet keeps the original TCP sequence number.
+
+### smuggle-sni settings
+
+- `smuggle-sni` `(string)`
+  Enables the `smuggle-sni` trick and sets the SNI that will be written into the delayed fake TLS ClientHello copy.
+
+- `smuggle-sni-delay-ms` `(integer)`
+  Optional.
+
+  Delay in milliseconds between sending the real captured ClientHello to `real-sni-upstream-node` and sending the crafted `smuggle-sni` packet to the normal next tunnel.
+
+  Defaults to `0`.
+
+- `real-sni-upstream-node` `(string)`
+  Required when `smuggle-sni` is enabled.
+
+  Names another node in the same config that will receive the real captured ClientHello on the upstream path.
+
+  In the current design this should be a dedicated branch head, not the same node as the normal `next`.
+
+### overlap-sni settings
+
+- `overlap-sni` `(string)`
+  Enables the `overlap-sni` trick and sets the SNI that will be written into the crafted Chrome-like TLS ClientHello.
+
+  In the current implementation, the first two upstream packets pass unchanged, the third packet is held, and the fourth packet completes the captured real TLS ClientHello. `IpManipulator` then generates its own Chrome-like TLS ClientHello, rejects the flow if the real SNI starts before the generated hello length, otherwise sends:
+  - packet `Y` with the first generated-length bytes from the real captured ClientHello
+  - one crafted server-side TLS packet through `crafted-server-hello-upstream-node`, built from the real downstream `SYN|ACK` header and a built-in server-hello payload
+  - one fake zero-payload TCP `SYN` packet on the same 4-tuple
+  - packet `X` with the generated fake ClientHello bytes on the same TCP sequence range, delayed through the overlap delay channel
+  - the remaining real captured ClientHello bytes in additional delayed TCP packets
+
+- `overlap-sni-delay-ms` `(integer)`
+  Optional.
+
+  Delay in milliseconds applied to overlap-sni packets that are sent after the fake TCP `SYN`, and to later upstream packets on the same flow while the overlap delay window remains active.
+
+  Defaults to `0`.
+
+  The overlap delay window duration itself is a code-level constant in the current implementation.
+
+- `overlap-sni-syn-ttl` `(integer)`
+  Optional.
+
+  When present, overrides the IPv4 TTL of the fake overlap-sni TCP `SYN` packet.
+
+  Valid range: `0` to `255`
+
+  When omitted, the fake TCP `SYN` keeps the original packet TTL.
+
+- `crafted-server-hello-upstream-node` `(string)`
+  Required when `overlap-sni` is enabled.
+
+  Names another node in the same config that will receive the crafted server-side TLS packet on the upstream path.
+
+  In the current design this should be a dedicated branch head, not the same node as the normal `next`.
+
+`smuggle-sni` and `overlap-sni` are mutually exclusive in the current implementation.
+
+### synfin-sni settings
+
+- `synfin-sni` `(string)`
+  Enables the `synfin-sni` trick and sets the SNI that will be written into the crafted Chrome-like TLS ClientHello.
+
+  In the current implementation, the first two upstream packets pass unchanged, the third packet is held, and the fourth packet completes the captured real TLS ClientHello. `IpManipulator` then generates its own Chrome-like TLS ClientHello, rejects the flow if the real SNI starts before the generated hello length, otherwise sends:
+  - one real TLS data packet carrying the first `generated-length + extra-range` bytes from the captured real ClientHello on the original TCP sequence range
+  - one zero-payload client-side close packet on the sequence number immediately after that first real chunk
+  - one fake zero-payload TCP `SYN` packet on the same 4-tuple
+  - one full crafted TLS data packet carrying the generated fake ClientHello on the original captured first-data TCP sequence range
+  - one additional valid generated TLS-looking data packet whose payload length fills only that extra configured overlap range immediately after the crafted fake ClientHello on that same original sequence space
+  - the remaining real captured ClientHello bytes in additional immediate TCP packets
+
+  By default that close packet is `FIN|ACK`. When `synfin-sni-use-rst` is enabled, `IpManipulator` sends `RST|ACK` instead on the same post-fake-data sequence number.
+
+  The fake `SYN` is rebuilt from the original captured `SYN` header template for that flow, so when checksum randomization is disabled it preserves the original SYN-style TCP header shape instead of cloning a later data packet. `IpManipulator` first sends the real first-data chunk so the destination server consumes the real beginning of the ClientHello, then emits the close packet and fake `SYN`, and only after that sends the generated fake ClientHello plus one valid generated TLS-looking filler packet on the original captured first-data sequence range. The configured extra overlap is chosen randomly per flow and is clamped so the real first-data chunk still stops before the real SNI hostname bytes.
+
+- `synfin-sni-additional-range-min` `(integer)`
+  Optional.
+
+  Minimum number of extra real ClientHello payload bytes to append to the first real `packet_y` chunk beyond the crafted fake ClientHello length.
+
+  When present without `synfin-sni-additional-range-max`, this value is also used as the fixed extra overlap length.
+
+  Valid range: `0` to `65535`
+
+  Defaults to `0`.
+
+- `synfin-sni-additional-range-max` `(integer)`
+  Optional.
+
+  Maximum number of extra real ClientHello payload bytes to append to the first real `packet_y` chunk beyond the crafted fake ClientHello length.
+
+  `IpManipulator` chooses one random value per flow inside the configured range, then clamps it so the enlarged real first chunk still ends before the real SNI hostname bytes and before the captured ClientHello payload ends. That same chosen extra length is then filled on the original captured sequence range by one valid generated TLS-looking data packet sent immediately after `packet_x`.
+
+  Valid range: `0` to `65535`
+
+  Defaults to `0`.
+
+- `synfin-sni-syn-ttl` `(integer)`
+  Optional.
+
+  When present, overrides the IPv4 TTL of the crafted `SYN` packet.
+
+  Valid range: `0` to `255`
+
+  When omitted, the crafted `SYN` keeps the captured packet TTL.
+
+- `synfin-sni-fin-ttl` `(integer)`
+  Optional.
+
+  When present, overrides the IPv4 TTL of the crafted close packet (`FIN|ACK` by default, `RST|ACK` when `synfin-sni-use-rst` is enabled).
+
+  Valid range: `0` to `255`
+
+  When omitted, the crafted `FIN` keeps the captured packet TTL.
+
+- `synfin-sni-fake-ttl` `(integer)`
+  Optional.
+
+  When present, overrides the IPv4 TTL of the full crafted fake ClientHello packet that carries the generated `synfin-sni` payload bytes.
+
+  This does not affect the enlarged real first TLS data packet, the generated TLS-looking filler packet after `packet_x`, or the remaining real captured ClientHello tails.
+
+  Valid range: `0` to `255`
+
+  When omitted, the full crafted fake ClientHello packet keeps the captured packet TTL.
+
+- `synfin-sni-random-syn-checksum` `(boolean)`
+  Optional.
+
+  When `true`, the crafted `SYN` is sent with randomized IPv4 and TCP checksum fields instead of a recomputed valid checksum.
+
+  Defaults to `false`.
+
+- `synfin-sni-random-fin-checksum` `(boolean)`
+  Optional.
+
+  When `true`, the crafted close packet is sent with randomized IPv4 and TCP checksum fields instead of a recomputed valid checksum.
+
+  Defaults to `false`.
+
+- `synfin-sni-random-syn-sequence` `(boolean)`
+  Optional.
+
+  When `true`, the crafted `SYN` uses a fresh random TCP sequence number.
+
+  When `false` or omitted, the crafted `SYN` uses the captured sequence pattern (`real_seq - 1`).
+
+- `synfin-sni-random-fin-sequence` `(boolean)`
+  Optional.
+
+  When `true`, the crafted close packet uses a fresh random TCP sequence number.
+
+  When `false` or omitted, the crafted close packet uses the TCP sequence number immediately after the fake generated ClientHello payload.
+
+- `synfin-sni-use-rst` `(boolean)`
+  Optional.
+
+  When `true`, `IpManipulator` sends `RST|ACK` instead of `FIN|ACK` for the crafted client-side close packet that is emitted before the fake `SYN`.
+
+  Defaults to `false`.
+
+`0` is a real IPv4 TTL override, not a sentinel for "leave the original TTL unchanged". Omit the TTL field entirely if you want `IpManipulator` to preserve the captured packet TTL for that packet class.
+
+`smuggle-sni`, `overlap-sni`, and `synfin-sni` are mutually exclusive in the current implementation.
+
+### smuggle-fin settings
+
+- `smuggle-fin` `(boolean)`
+  Enables the `smuggle-fin` trick.
+
+- `fin-sni-delay-ms` `(integer)`
+  Optional.
+
+  Delay in milliseconds between receiving the expected downstream echoed `FIN|ACK` and replaying the queued packets through the normal pipeline.
+
+  Defaults to `0`.
+
+- `real-fin-upstream-node` `(string)`
+  Required when `smuggle-fin` is enabled.
+
+  Names another node in the same config that will receive the crafted mirrored FIN/ACK packet on the upstream path.
+
+  In the current design this should be a dedicated branch head, not the same node as the normal `next`.
 
 ### TCP flag rewrite settings
 
@@ -210,6 +423,20 @@ Supported values are:
   When `true`, directions with configured TCP-bit rewrite actions append the original TCP flags byte to the end of the TCP transport payload before rewriting flags.
 
   Directions with no TCP-bit rewrite actions treat that final payload byte as the transported original flags, restore the TCP flags from it, and shrink the packet by one byte.
+
+### Port ghost settings
+
+- `source-port-ghost` `(boolean)`
+  Optional.
+
+  When `true`, `IpManipulator` appends the original source port to the end of whole IPv4 TCP or UDP packets, then rewrites the live transport source port to a deterministic pseudo-random high port derived from the original tuple.
+
+- `dest-port-ghost` `(boolean)`
+  Optional.
+
+  When `true`, `IpManipulator` appends the original destination port to the end of whole IPv4 TCP or UDP packets, then rewrites the live transport destination port to a deterministic pseudo-random high port derived from the original tuple.
+
+If both are enabled, `IpManipulator` appends the source port bytes first and the destination port bytes second.
 
 ## Detailed Behavior
 
@@ -262,7 +489,7 @@ Important details from the current code:
 
 Before crafting fragments, the tunnel applies any pending checksum recalculation on the original packet, then marks each crafted packet for checksum recalculation before forwarding.
 
-### EchoSNI
+### first-sni
 
 This trick is upstream-only and only applies to IPv4 TCP packets that begin with a TLS ClientHello carrying an SNI extension.
 
@@ -272,12 +499,53 @@ Behavior:
 - parse the first host-name entry in the TLS server-name extension
 - clone the packet and replace only the copied packet's SNI with `first-sni`
 - send the modified copy first
-- if `echo-sni-ttl` is set, update the crafted packet TTL to that value
-- if `echo-sni-random-tcp-sequence` is `true`, randomize the crafted packet's TCP sequence number
+- if `first-sni-ttl` is set, update the crafted packet TTL to that value
+- if `first-sni-random-tcp-sequence` is `true`, randomize the crafted packet's TCP sequence number
 - recompute the crafted packet checksum before send
 - then forward the original packet using the original `line->recalculate_checksum` intent
+- when replay or final delays are configured, `IpManipulator` keeps a short shared flow record for that TCP 4-tuple and delays later upstream packets on the same flow so they cannot overtake the held original ClientHello
 
 If `first-sni` is longer or shorter than the original SNI, the copied packet updates the relevant TLS and IPv4 length fields.
+
+If the ClientHello contains a TLS 1.3 `pre_shared_key` extension with PSK binders and the configured `first-sni` would actually change the SNI bytes, the trick skips crafting the fake packet and leaves the original packet path alone. `IpManipulator` does not own the PSK secret needed to recompute valid binders.
+
+### smuggle-sni
+
+This trick is upstream-only and only applies to IPv4 TCP packets that begin with a TLS ClientHello carrying an SNI extension.
+
+Behavior:
+
+- detect an upstream TLS ClientHello
+- clone the packet and replace only the copied packet's SNI with `smuggle-sni`
+- send the real captured ClientHello through `real-sni-upstream-node` immediately
+- wait `smuggle-sni-delay-ms`
+- send the modified `smuggle-sni` copy through the normal top-level `next` tunnel
+- leave every non-ClientHello packet on the normal path unchanged
+
+`smuggle-sni` does not keep per-flow connection state. It only sends one immediate real ClientHello to `real-sni-upstream-node` and schedules one delayed crafted `smuggle-sni` copy on the normal branch.
+
+If the ClientHello contains a TLS 1.3 `pre_shared_key` extension with PSK binders and the configured `smuggle-sni` would actually change the SNI bytes, the trick skips crafting the fake packet and leaves the original packet on the normal path. `IpManipulator` does not have the PSK secret required to recompute valid binders.
+
+### smuggle-fin
+
+This trick is upstream-only and only applies to whole IPv4 TCP packets that already carry ACK and transport payload.
+
+Behavior:
+
+- clone the original IPv4 and TCP headers into a header-only packet
+- swap the copied packet's source and destination IPv4 addresses
+- swap the copied packet's TCP source and destination ports
+- turn the copied packet into a pure `FIN|ACK` packet with no transport payload
+- mirror the TCP sequence and acknowledgement numbers from the original packet so the crafted packet looks like the reverse direction
+- send the crafted packet immediately through `real-fin-upstream-node`
+- pause this worker packet path inside `IpManipulator`
+- queue later upstream and downstream packets on that worker instead of forwarding them immediately
+- ignore the first downstream packet that exactly matches the crafted `FIN|ACK`
+- wait `fin-sni-delay-ms`
+- replay the queued packets in arrival order through the normal pipeline
+- keep the remembered flow in the internal table after that success so the expected echoed `FIN|ACK` is not treated as a real connection-closing FIN event for this trick
+
+Packets without TCP payload, packets that are already `SYN`, `FIN`, or `RST`, and non-TCP or fragmented IPv4 packets are left alone.
 
 ### TCP flag rewriting
 
@@ -303,13 +571,29 @@ If `bit-transport` is enabled:
 - restore directions copy that byte back into the TCP flags field and reduce the IPv4 packet length by one byte
 - fragmented IPv4 packets are skipped so the tunnel only operates on whole TCP packets with a real TCP header and transport payload
 
+### Port ghost tailing
+
+The port-ghost trick only applies to whole IPv4 TCP or UDP packets.
+
+When `source-port-ghost` and/or `dest-port-ghost` are enabled:
+
+- the selected original TCP or UDP port bytes are appended at the end of the transport packet payload
+- the matching live TCP or UDP port fields are rewritten to deterministic pseudo-random high ports derived from the original tuple
+- downstream packets that still carry those transported port bytes restore the original live port fields and shrink the packet back to its original length
+- IPv4 total length is increased to cover the appended ghost bytes
+- UDP length is also increased when the packet is UDP
+- `line->recalculate_checksum` is set so a later packet writer rebuilds checksums
+- fragmented IPv4 packets are skipped
+
 ## Notes And Caveats
 
 - This tunnel is for raw packet chains, not normal byte-stream chains.
 - Only IPv4 packets are modified by the current implementation.
-- `EchoSNI` is upstream-only and rewrites the first TLS host-name entry in the crafted copy.
+- `first-sni` is upstream-only and rewrites the first TLS host-name entry in the crafted copy.
+- `smuggle-sni` is upstream-only and sends the real matching ClientHello immediately to `real-sni-upstream-node`, then delays the crafted `smuggle-sni` copy to the normal `next` branch.
+- `smuggle-fin` is upstream-only and injects a crafted mirrored FIN/ACK packet to `real-fin-upstream-node`, then temporarily queues later packets on that worker until the expected downstream echo is seen and the optional `fin-sni-delay-ms` window expires.
 - `sni-blender` is upstream-only. The downstream half of that trick is currently a no-op.
 - The tunnel relies on later packet-writing code to honor `line->recalculate_checksum` and rebuild packet checksums.
 - `sni-blender-packets` is required when `sni-blender` is enabled.
-- `echo-sni-random-tcp-sequence` affects only the crafted EchoSNI copy, not the original packet.
+- `first-sni-random-tcp-sequence` affects only the crafted `first-sni` copy, not the original packet.
 - The struct contains `trick_sni_blender_packets_delay_max`, but current JSON parsing does not expose or use it.

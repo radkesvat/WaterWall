@@ -107,9 +107,10 @@ static bool restoreFlagsFromTransportPayload(sbuf_t *buf, struct ip_hdr *ipheade
         return false;
     }
 
-    uint8_t *packet         = sbufGetMutablePtr(buf);
-    uint8_t  restored_flags = packet[ip_total_len - 1U];
-    uint16_t restored_len   = (uint16_t) (ip_total_len - 1U);
+    uint8_t *packet            = sbufGetMutablePtr(buf);
+    uint32_t flags_offset      = (uint32_t) ip_total_len - 1U;
+    uint8_t  restored_flags    = packet[flags_offset];
+    uint16_t restored_len      = (uint16_t) (ip_total_len - 1U);
 
     TCPH_FLAGS_SET(tcp_header, restored_flags);
     IPH_LEN_SET(ipheader, lwip_htons(restored_len));
