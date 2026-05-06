@@ -153,6 +153,8 @@ Important:
 
 - use `-C Release` with the current Linux CTest preset in this repo, otherwise CTest may look for a `Debug` binary
 - run commands from the repo root
+- `ctest --preset linux-gcc` always reads the `build/linux-gcc-x64` tree, so if your IDE or CMake menu is building a
+  different preset or build directory you may be testing a different binary than the one your menu just ran
 
 ## What `run_waterwall_case.sh` does
 
