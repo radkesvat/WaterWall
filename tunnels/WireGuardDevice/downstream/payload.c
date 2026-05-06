@@ -434,7 +434,13 @@ static void wireguardifNetworkRx(wireguard_device_t *device, sbuf_t *p, const ip
                 // Update the peer location
                 updatePeerAddr(peer, addr, port);
 
-                // Don't send anything out - we stay quiet until the next initiation message
+                // Retry promptly with the learned cookie so early inner packets
+                // do not get dropped while we wait for the periodic loop.
+                if (wireguardifStartHandshake(device, peer, true) != ERR_OK)
+                {
+                    peer->send_handshake     = true;
+                    peer->last_initiation_tx = 0;
+                }
             }
         }
         break;

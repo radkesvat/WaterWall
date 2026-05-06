@@ -3,6 +3,8 @@
 
 #include "loggers/network_logger.h"
 
+static bool wireguardifCanSendInitiation(wireguard_peer_t *peer);
+
 static sbuf_t *wireguarddeviceCreateiateHandshake(wireguard_device_t *device, wireguard_peer_t *peer,
                                                   message_handshake_initiation_t *msg, err_t *error)
 {
@@ -33,11 +35,16 @@ static sbuf_t *wireguarddeviceCreateiateHandshake(wireguard_device_t *device, wi
     return buf;
 }
 
-static err_t wireguardStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
+err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force)
 {
     err_t                          result;
     sbuf_t                        *buf;
     message_handshake_initiation_t msg;
+
+    if ((! force) && (! wireguardifCanSendInitiation(peer)))
+    {
+        return ERR_WOULDBLOCK;
+    }
 
     buf = wireguarddeviceCreateiateHandshake(device, peer, &msg, &result);
     if (buf)
@@ -155,7 +162,7 @@ void wireguarddeviceLoop(wireguard_device_t *device)
             if (shouldSendInitiation(peer))
             {
                 LOGD("Sending handshake to peer %s", ipAddrNetworkToAddress(&peer->ip));
-                wireguardStartHandshake(device, peer);
+                wireguardifStartHandshake(device, peer, false);
             }
 
             if ((peer->curr_keypair.valid) || (peer->prev_keypair.valid))
