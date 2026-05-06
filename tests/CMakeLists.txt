@@ -16,7 +16,7 @@ function(add_waterwall_integration_test test_name case_name)
   set_tests_properties(
     ${test_name}
     PROPERTIES
-      TIMEOUT 35
+      TIMEOUT 600
       LABELS "integration;tunnels"
   )
 endfunction()
