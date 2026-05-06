@@ -116,6 +116,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     const cJSON           *settings = node->node_settings_json;
     int                    packet_start_delay_ms = 0;
 
+    getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_start_immediately, settings, "packet-start-immediately", false);
     getIntFromJsonObjectOrDefault(&packet_start_delay_ms, settings, "packet-start-delay-ms", 0);

@@ -169,6 +169,14 @@ Packet mode with synthetic IPv4 packets:
   milliseconds after the worker packet line is initialized.
   Default: `0`
 
+- `allow-early-response` `(boolean)`
+  Only meaningful in normal stream mode.
+  When `false`, any downstream payload that arrives before the full request sequence is sent is treated as a failure.
+  Default: `false`
+
+  When `true`, early downstream payload is accepted and verified normally. This is useful for validating genuinely
+  bidirectional transports where response bytes may arrive while the request side is still active.
+
 - `packet-ipv4` `(object)`
   Optional synthetic IPv4 envelope mode for `packet-mode`.
   When present, each packet-mode request and response chunk is sent as a complete IPv4 packet instead of opaque packet
@@ -220,6 +228,7 @@ In stream mode:
 
 - buffers are staged in a `buffer_stream_t`
 - each complete expected chunk is read and verified in order
+- with `allow-early-response=false`, any response payload before request completion is treated as failure
 - trailing bytes after the expected sequence are treated as failure
 - once verification completes, that worker is marked successful
 

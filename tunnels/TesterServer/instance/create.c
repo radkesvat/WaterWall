@@ -117,6 +117,7 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
 
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_init_on_start, settings, "packet-init-on-start", false);
+    getBoolFromJsonObjectOrDefault(&ts->streaming_response, settings, "streaming-response", false);
 
     if (ts->packet_init_on_start && ! ts->packet_mode)
     {

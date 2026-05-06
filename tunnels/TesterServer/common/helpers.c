@@ -391,9 +391,14 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
             return;
         }
     }
-    else if (! ls->response_ready)
+    else
     {
-        return;
+        uint8_t response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? kTesterServerChunkCount : 0);
+
+        if (ls->response_paused || ls->response_tx_index >= response_limit)
+        {
+            return;
+        }
     }
 
     ls->response_send_scheduled = true;
@@ -432,7 +437,9 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    while (! ls->response_paused && ls->response_tx_index < kTesterServerChunkCount)
+    uint8_t response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? kTesterServerChunkCount : 0);
+
+    while (! ls->response_paused && ls->response_tx_index < response_limit)
     {
         uint32_t chunk_size = testerserverGetChunkSize(t, ls->response_tx_index);
         uint32_t remaining  = chunk_size - ls->response_tx_offset;

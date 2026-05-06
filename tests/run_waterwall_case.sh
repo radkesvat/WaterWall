@@ -124,6 +124,7 @@ while true; do
       success_seen=1
     fi
 
+    # if [[ $success_seen -eq 1 ]]; then
     if [[ $status -eq 0 && $success_seen -eq 1 ]]; then
       exit 0
     fi

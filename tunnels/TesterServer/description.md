@@ -146,6 +146,15 @@ Packet mode with synthetic IPv4 packets:
   already been initialized by an upstream packet-line `Init`.
   Default: `false`
 
+- `streaming-response` `(boolean)`
+  Only meaningful in normal stream mode.
+  When `false`, the full deterministic response sequence is held back until the full request sequence has been
+  verified.
+  Default: `false`
+
+  When `true`, response chunks become eligible to send as soon as the matching request chunks are verified. This is
+  useful for validating bidirectional transports where the response must overlap the request.
+
 - `packet-ipv4` `(object)`
   Optional synthetic IPv4 envelope mode for `packet-mode`.
   When present, each packet-mode request and response chunk is treated as a complete IPv4 packet instead of opaque
@@ -203,7 +212,8 @@ Responses always go back on the downstream path with `tunnelPrevDownStreamPayloa
 
 In stream mode:
 
-- once the full request sequence is verified, all response chunks are sent in order
+- with `streaming-response=false`, all response chunks are sent only after the full request sequence is verified
+- with `streaming-response=true`, response chunks are sent in order as request verification advances
 - upstream `Pause` and `Resume` toggle response sending for backpressure
 
 In packet mode:

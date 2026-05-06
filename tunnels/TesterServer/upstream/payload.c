@@ -52,6 +52,7 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     bufferstreamPush(&ls->read_stream, buf);
+    bool request_progressed = false;
 
     if (bufferstreamGetBufLen(&ls->read_stream) > testerserverGetRemainingBytes(t, ls->request_rx_index))
     {
@@ -80,6 +81,7 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         lineReuseBuffer(l, chunk_buffer);
         ls->request_rx_index += 1;
+        request_progressed = true;
     }
 
     if (ls->request_rx_index == kTesterServerChunkCount)
@@ -91,6 +93,12 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
 
         ls->response_ready = true;
+        testerserverScheduleResponseSend(t, l, ls);
+        return;
+    }
+
+    if (request_progressed && ts->streaming_response)
+    {
         testerserverScheduleResponseSend(t, l, ls);
     }
 }

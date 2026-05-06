@@ -27,6 +27,7 @@ typedef struct testerclient_worker_state_s
 typedef struct testerclient_tstate_s
 {
     atomic_uint                 completed_workers;
+    bool                        allow_early_response;
     bool                        packet_mode;
     bool                        packet_start_immediately;
     bool                        packet_ipv4_mode;

@@ -66,6 +66,23 @@ Practical rule:
   a real UDP loopback transport while multiple workers create independent UDP peers against one shared listener socket.
 - `halfduplex_roundtrip`
   Verifies that `HalfDuplexClient` and `HalfDuplexServer` split and reconstruct one logical line correctly.
+- `http1_bidirectional_roundtrip`
+  Verifies that `HttpClient(http1)` and `HttpServer(http1, full-duplex=true)` can stream request and response bodies at
+  the same time when chained directly.
+- `http1_bidirectional_tcp_loopback`
+  Verifies the same HTTP/1.1 bidirectional body-streaming behavior across a real TCP loopback transport.
+- `http2_bidirectional_roundtrip`
+  Verifies that direct HTTP/2 request and response DATA can overlap correctly through `HttpClient` and `HttpServer`.
+- `http2_bidirectional_tcp_loopback`
+  Verifies the same direct HTTP/2 bidirectional behavior across a real TCP loopback transport.
+- `http_websocket_bidirectional_roundtrip`
+  Verifies HTTP/1.1 WebSocket handshake plus bidirectional framed payload transport when the pair is chained directly.
+- `http_websocket_bidirectional_tcp_loopback`
+  Verifies the same WebSocket transport across a real TCP loopback transport.
+- `http_upgrade_custom_bidirectional_roundtrip`
+  Verifies a custom HTTP/1.1 upgrade token plus raw post-upgrade byte forwarding when the pair is chained directly.
+- `http_upgrade_custom_bidirectional_tcp_loopback`
+  Verifies the same custom-upgrade raw bidirectional transport across a real TCP loopback transport.
 - `mux_counter_roundtrip`
   Verifies basic `MuxClient` and `MuxServer` framing in counter mode.
 - `mux_timer_roundtrip`
@@ -88,6 +105,10 @@ Some scenarios are still better treated as future work:
 
 - `TlsClient` and `TlsServer` need a certificate arrangement that matches `TlsClient`'s real verification behavior
   before they can be added as portable integration tests
+- default `h2c` upgrade remains a manual future-work case for bidirectional integrity testing in the current
+  single-stream model.
+  `nghttp2_session_upgrade2()` opens stream `1` half-closed on both sides, so a truthful tester-driven bidirectional
+  round-trip over that original upgraded stream is not currently representable as a passing integration case.
 
 ## Adding a new tunnel test
 
@@ -111,6 +132,14 @@ Example shape:
   ]
 }
 ```
+
+For tunnels that are meant to prove real bidirectional overlap, the test harness also supports:
+
+- `TesterClient.settings.allow-early-response=true`
+- `TesterServer.settings.streaming-response=true`
+
+Those options let response bytes arrive before the client has finished sending the full request sequence, which is
+important for validating full-duplex transports such as the HTTP cases above.
 
 ## Running locally
 

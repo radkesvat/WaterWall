@@ -19,6 +19,7 @@ typedef struct testerserver_tstate_s
 {
     bool        packet_mode;
     bool        packet_init_on_start;
+    bool        streaming_response;
     bool        packet_ipv4_mode;
     uint32_t    packet_ipv4_source_addr;
     uint32_t    packet_ipv4_dest_addr;

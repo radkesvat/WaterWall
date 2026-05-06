@@ -58,7 +58,7 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (! ls->request_complete)
+    if (! ls->request_complete && ! ts->allow_early_response)
     {
         lineReuseBuffer(l, buf);
         testerclientFail(t, l, "received response payload before request send completed");
