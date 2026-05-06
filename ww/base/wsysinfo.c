@@ -6,6 +6,28 @@
 #include "wsysinfo.h"
 #include "wlibc.h"
 
+static double normalizeLoadThreshold(double threshold)
+{
+    if (threshold < 0.0)
+    {
+        return 0.0;
+    }
+
+    // The API documents thresholds in the 0.0..1.0 range. Accept percentage
+    // style values too so callers do not need to agree on one convention.
+    if (threshold > 1.0)
+    {
+        threshold /= 100.0;
+    }
+
+    if (threshold > 1.0)
+    {
+        return 1.0;
+    }
+
+    return threshold;
+}
+
 #if defined(OS_MAC)
 #include <mach/host_info.h>
 #include <mach/mach_host.h>
@@ -20,6 +42,8 @@
  */
 bool isSystemUnderLoad(double threshold)
 {
+    threshold = normalizeLoadThreshold(threshold);
+
     host_cpu_load_info_data_t cpuinfo;
     mach_msg_type_number_t    count = HOST_CPU_LOAD_INFO_COUNT;
 
@@ -36,7 +60,7 @@ bool isSystemUnderLoad(double threshold)
     }
 
     unsigned long long idle_ticks = cpuinfo.cpu_ticks[CPU_STATE_IDLE];
-    double             load       = 100.0 * (1.0 - ((double) idle_ticks / total_ticks));
+    double             load       = 1.0 - ((double) idle_ticks / total_ticks);
 
     // Check if the load exceeds the threshold
     return load > threshold ? 1 : 0;
@@ -46,6 +70,8 @@ bool isSystemUnderLoad(double threshold)
 
 bool isSystemUnderLoad(double threshold)
 {
+    threshold = normalizeLoadThreshold(threshold);
+
     FILE *fp = fopen("/proc/stat", "r");
     if (! fp)
     {
@@ -66,7 +92,7 @@ bool isSystemUnderLoad(double threshold)
         total_cpu_time = (double) (user + nice + system + idle + iowait + irq + softirq + steal);
         idle_cpu_time  = (double) (idle + iowait);
 
-        load = 100.0 * (1.0 - (idle_cpu_time / total_cpu_time));
+        load = 1.0 - (idle_cpu_time / total_cpu_time);
     }
     else
     {
@@ -86,6 +112,8 @@ bool isSystemUnderLoad(double threshold)
 #include <pdhmsg.h>
 bool isSystemUnderLoad(double threshold)
 {
+    threshold = normalizeLoadThreshold(threshold);
+
     static PDH_HQUERY   cpu_query   = NULL;
     static PDH_HCOUNTER cpu_counter = NULL;
     static int          initialized = 0;
@@ -129,7 +157,7 @@ bool isSystemUnderLoad(double threshold)
     }
 
     // Check CPU usage against the threshold
-    double cpu_usage = cpu_value.doubleValue;
+    double cpu_usage = cpu_value.doubleValue / 100.0;
     if (cpu_usage > threshold)
     {
         return 1; // System is under heavy CPU load
