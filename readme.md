@@ -28,6 +28,23 @@ If you're familiar with network protocol structures:
 * These files are written in English
 * They provide advanced documentation and implementation details
 
+## Quick Build (Fresh Ubuntu / Generic Linux VPS)
+
+You can build **WaterWall** on a fresh Ubuntu (or most Debian-based) VPS with just two commands:
+
+```bash
+apt purge cmake -y || apt-get update && apt-get install -y snapd build-essential ninja-build ccache && snap install cmake --classic
+```
+
+```bash
+git clone https://github.com/radkesvat/WaterWall && cd WaterWall && cmake --preset linux-gcc-x64 && cmake --build --preset linux-gcc-x64
+```
+
+This will install all required dependencies, fetch the project, and compile it using the provided CMake presets.
+
+> **Note:** The first command ensures a modern version of CMake via `snap`, which is required for the preset-based build system.
+
+
 ## Questions & Suggestions
 
 Feel free to reach out in my small [Telegram group](https://t.me/radkesvat_group) if you have any questions about this project, networking, or programming in general. I’m also happy to hear your suggestions and feedback!
