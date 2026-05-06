@@ -11,6 +11,7 @@ In practice, this node is used at the end of a chain.
 - Resolves a domain name if needed.
 - Forwards upstream payload from the previous node to the remote UDP peer.
 - Forwards datagrams received from the remote UDP peer back downstream.
+- Drops datagrams that arrive from a peer other than the selected remote endpoint.
 - Tracks the UDP line with idle timeouts.
 
 This node acts like a chain end. Its downstream entry callbacks are disabled because the socket is created from upstream `init`.
@@ -66,9 +67,7 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 ## Optional `settings` Fields
 
 - `reuseaddr` `(boolean)`
-  Parsed from JSON by the current implementation.
-
-  Important note: this field does not currently control runtime behavior. On Unix builds, the connector enables `SO_REUSEADDR` unconditionally for the created UDP socket.
+  Enables `SO_REUSEADDR` on the created UDP socket.
 
 ## Detailed Behavior
 
@@ -152,7 +151,7 @@ If `port` uses `random(x,y)`, the destination port is chosen once during line in
 
 ## Notes And Caveats
 
-- `reuseaddr` is currently parsed but does not actually change behavior.
 - Domain resolution in this path is synchronous.
 - Paused reads drop inbound datagrams instead of buffering them.
 - Downstream `est` is only triggered after the first packet is received from the remote side.
+- Inbound datagrams from unexpected peers are ignored.

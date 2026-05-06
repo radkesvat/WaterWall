@@ -2,6 +2,26 @@
 
 #include "loggers/network_logger.h"
 
+static bool udpconnectorPayloadSockAddrEquals(const sockaddr_u *lhs, const sockaddr_u *rhs)
+{
+    if (lhs == NULL || rhs == NULL || lhs->sa.sa_family != rhs->sa.sa_family)
+    {
+        return false;
+    }
+
+    switch (lhs->sa.sa_family)
+    {
+    case AF_INET:
+        return lhs->sin.sin_port == rhs->sin.sin_port && lhs->sin.sin_addr.s_addr == rhs->sin.sin_addr.s_addr;
+    case AF_INET6:
+        return lhs->sin6.sin6_port == rhs->sin6.sin6_port &&
+               memoryCompare(lhs->sin6.sin6_addr.s6_addr, rhs->sin6.sin6_addr.s6_addr,
+                             sizeof(lhs->sin6.sin6_addr.s6_addr)) == 0;
+    default:
+        return false;
+    }
+}
+
 void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
@@ -19,13 +39,13 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     // LOGD("writing %d bytes", sbufGetLength(buf));
 
-
-    // this code is not required, cuz we dont change the destination address of the UDP socket
-    // address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
-    // sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
-    // wioSetPeerAddr(ls->io, &addr.sa, sockaddrLen(&addr));
-   
     idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kUdpKeepExpireTime);
-    
+
+    // recvfrom() mutates io->peeraddr, so refresh the selected remote peer before every send.
+    if (! udpconnectorPayloadSockAddrEquals(wioGetPeerAddrU(io), &ls->peer_addr))
+    {
+        wioSetPeerAddr(io, &ls->peer_addr.sa, sockaddrLen(&ls->peer_addr));
+    }
+
     wioWrite(io, buf);
 }

@@ -26,13 +26,13 @@ typedef struct udpconnector_tstate_s
 
 typedef struct udpconnector_lstate_s
 {
-
-    tunnel_t     *tunnel;          // reference to the tunnel
-    line_t       *line;            // reference to the line
-    wio_t        *io;              // IO handle for the connection (socket)
-    idle_item_t *idle_handle;     // reference to the idle item for this connection
-    bool          read_paused : 1; // whether the read is paused
-    bool          established : 1; // whether anything received to send est downstream once
+    tunnel_t    *tunnel;       // reference to the tunnel
+    line_t      *line;         // reference to the line
+    wio_t       *io;           // IO handle for the connection (socket)
+    idle_item_t *idle_handle;  // reference to the idle item for this connection
+    sockaddr_u   peer_addr;    // selected remote peer for this line
+    bool         read_paused : 1; // whether the read is paused
+    bool         established : 1; // whether anything received to send est downstream once
 
 } udpconnector_lstate_t;
 
@@ -40,7 +40,7 @@ enum
 {
     kTunnelStateSize   = sizeof(udpconnector_tstate_t),
     kLineStateSize     = sizeof(udpconnector_lstate_t),
-    kUdpInitExpireTime  = 30 * 1000,
+    kUdpInitExpireTime = 30 * 1000,
     kUdpKeepExpireTime = 300 * 1000
 };
 

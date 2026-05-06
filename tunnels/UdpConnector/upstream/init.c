@@ -2,12 +2,25 @@
 
 #include "loggers/network_logger.h"
 
-static int createAndBindSocket(void)
+static int createAndBindSocket(int family, bool reuse_addr)
 {
     sockaddr_u host_addr = {0};
-    sockaddrSetIpAddressPort(&host_addr, "0.0.0.0", 0);
 
-    int sockfd = socket(host_addr.sa.sa_family, SOCK_DGRAM, 0);
+    const char *bind_address = family == AF_INET6 ? "::" : "0.0.0.0";
+
+    if (family != AF_INET && family != AF_INET6)
+    {
+        LOGE("UdpConnector: unsupported socket family %d", family);
+        return -1;
+    }
+
+    if (sockaddrSetIpAddressPort(&host_addr, bind_address, 0) != 0)
+    {
+        LOGE("UdpConnector: could not prepare bind address %s", bind_address);
+        return -1;
+    }
+
+    int sockfd = socket(family, SOCK_DGRAM, 0);
     if (sockfd < 0)
     {
         LOGE("UdpConnector: socket fd < 0");
@@ -29,13 +42,17 @@ static int createAndBindSocket(void)
         return -1;
     }
 
-#ifdef OS_UNIX
-    socketOptionReuseAddr(sockfd, 1);
-#endif
+    if (reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
+    {
+        LOGE("UdpConnector: set socket reuseaddr failed");
+        closesocket(sockfd);
+        return -1;
+    }
 
     if (bind(sockfd, &host_addr.sa, sockaddrLen(&host_addr)) < 0)
     {
         LOGE("UdpConnector: UDP bind failed;");
+        closesocket(sockfd);
         return -1;
     }
 
@@ -91,8 +108,29 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
     udpconnector_lstate_t *ls = lineGetState(l, t);
+    address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
+    address_context_t     *src_ctx  = lineGetSourceAddressContext(l);
 
-    int sockfd = createAndBindSocket();
+    setupDestinationAddress(ts, dest_ctx, src_ctx);
+    setupDestinationPort(ts, dest_ctx, src_ctx);
+
+    if (! resolveDomainIfNeeded(dest_ctx))
+    {
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
+    if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
+    {
+        LOGE("UdpConnector: destination address or port is not initialized");
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
+    sockaddr_u addr   = addresscontextToSockAddr(dest_ctx);
+    int        family = addr.sa.sa_family;
+
+    int sockfd = createAndBindSocket(family, ts->reuse_addr);
     if (sockfd < 0)
     {
         tunnelPrevDownStreamFinish(t, l);
@@ -103,6 +141,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     wio_t   *io   = wioGet(loop, sockfd);
 
     udpconnectorLinestateInitialize(ls, t, l, io);
+    ls->peer_addr = addr;
 
     ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
                                           udpconnectorOnIdleConnectionExpire, lineGetWID(l), kUdpInitExpireTime);
@@ -115,23 +154,8 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
                                               udpconnectorOnIdleConnectionExpire, lineGetWID(l), kUdpInitExpireTime);
     }
 
+    wioSetCallBackClose(io, udpconnectorOnClose);
     wioSetCallBackRead(io, udpconnectorOnRecvFrom);
-    wioRead(io);
-
-    address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
-    address_context_t *src_ctx  = lineGetSourceAddressContext(l);
-
-    setupDestinationAddress(ts, dest_ctx, src_ctx);
-    setupDestinationPort(ts, dest_ctx, src_ctx);
-
-    if (! resolveDomainIfNeeded(dest_ctx))
-    {
-        udpconnectorLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
-
-    sockaddr_u addr = addresscontextToSockAddr(dest_ctx);
     wioSetPeerAddr(ls->io, &addr.sa, sockaddrLen(&addr));
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
@@ -142,4 +166,6 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         LOGD("UdpConnector: Communication begin FD:%x [%s] => [%s]", wioGetFD(io),
              SOCKADDR_STR(wioGetLocaladdr(io), localaddrstr), SOCKADDR_STR(wioGetPeerAddr(io), peeraddrstr));
     }
+
+    wioRead(io);
 }
