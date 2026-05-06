@@ -5,7 +5,7 @@
 typedef struct udpstatelesssocket_tstate_s
 {
     TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
-    tunnel_t* write_tunnel; // tunnel to write data to
+    tunnel_t                *write_tunnel;        // tunnel to write data to
 
     // These fields are read from json
     char    *listen_address; // address to listen on (ip)
@@ -15,6 +15,8 @@ typedef struct udpstatelesssocket_tstate_s
     wio_t *io;     // socket file descriptor
     wid_t  io_wid; // the worker id that created the io
 
+    sockaddr_u cached_peer_addr; // last owner-worker peer selected for outbound sends
+    bool       cached_peer_valid;
 } udpstatelesssocket_tstate_t;
 
 typedef struct udpstatelesssocket_lstate_s
@@ -55,4 +57,5 @@ void udpstatelesssocketLinestateInitialize(udpstatelesssocket_lstate_t *ls);
 void udpstatelesssocketLinestateDestroy(udpstatelesssocket_lstate_t *ls);
 
 void udpstatelesssocketOnRecvFrom(wio_t *io, sbuf_t *buf);
-void udpstatelesssocketLocalThreadSocketUpStream(tunnel_t *t ,line_t *l, sbuf_t *buf);
+void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void udpstatelesssocketLocalThreadSocketUpStream(void *worker, void *arg1, void *arg2, void *arg3);

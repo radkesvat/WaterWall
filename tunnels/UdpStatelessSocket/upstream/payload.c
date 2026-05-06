@@ -4,15 +4,5 @@
 
 void udpstatelesssocketTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    // sharing the exact code with downstream side (bidirectional tunnel)
-    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
-
-    if (lineGetWID(l) != state->io_wid)
-    {
-        lineScheduleTaskWithBuf(l, (LineTaskFnWithBuf) udpstatelesssocketLocalThreadSocketUpStream, t, buf);
-    }
-    else
-    {
-        udpstatelesssocketLocalThreadSocketUpStream(t, l, buf);
-    }
+    udpstatelesssocketTunnelWritePayload(t, l, buf);
 }
