@@ -28,6 +28,7 @@ void httpserverTunnelDestroy(tunnel_t *t)
     memoryFree(ts->expected_method);
     memoryFree(ts->websocket_origin);
     memoryFree(ts->websocket_subprotocol);
+    memoryFree(ts->upgrade_protocol);
 
     tunnelDestroy(t);
 }

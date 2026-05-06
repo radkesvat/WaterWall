@@ -140,7 +140,9 @@ Examples:
 - `upgrade` `(boolean)`
   Only meaningful when `http-version` is `both`.
 
-  If enabled, the tunnel starts with an HTTP/1.1 request containing:
+  If enabled, the tunnel starts with an HTTP/1.1 upgrade request.
+
+  Default upgrade protocol:
   - `Connection: Upgrade, HTTP2-Settings`
   - `Upgrade: h2c`
   - `HTTP2-Settings: ...`
@@ -148,6 +150,20 @@ Examples:
   Default:
   - `true` when `http-version` is `both`
   - `false` otherwise
+
+- `upgrade-protocol` `(string)`
+  Optional HTTP/1.1 upgrade protocol token to request instead of the default `h2c`.
+
+  When this is set to a value other than `h2c`:
+  - the opening request uses `Connection: Upgrade`
+  - the opening request uses `Upgrade: <your-token>`
+  - after a successful `101`, the tunnel switches to raw bidirectional byte forwarding
+
+- `upgrade-request-headers` `(object)`
+  Optional extra headers to include only on the HTTP/1.1 upgrade request.
+
+- `upgrade-response-headers` `(object)`
+  Optional required headers that must appear in the HTTP/1.1 `101` response before the upgrade is accepted.
 
 - `content-type` `(string)`
   Optional content type to emit automatically.
@@ -184,6 +200,13 @@ Examples:
 
   Current limitation:
   `HttpClient` does not implement WebSocket extensions internally. If the peer negotiates any extension in the handshake response, the connection is rejected.
+
+- `full-duplex` `(boolean)`
+  Optional config-symmetry flag for HTTP transport mode.
+  Default: `false`
+
+  Current implementation note:
+  `HttpClient` already keeps the HTTP/1.1 request body open with chunked transfer encoding until Waterwall upstream `Finish`, so request and response bodies can stream at the same time without extra client-side state changes. The matching `HttpServer` option controls whether request-end is reflected into Waterwall `Finish`.
 
 - `verbose` `(boolean)`
   Enables extra debug logging for protocol selection, handshakes, and framing flow.
@@ -225,6 +248,12 @@ That means:
 - request headers include `Transfer-Encoding: chunked`
 - each upstream payload buffer becomes one or more chunked body pieces
 - upstream `Finish` sends the final `0\r\n\r\n` chunk
+- response body bytes may arrive before that final chunk, so HTTP/1.1 request and response bodies can stream concurrently on the same connection
+
+For `http-version = both` plus `upgrade = true`:
+
+- if the server accepts `h2c`, any payload buffered while waiting for `101` is flushed afterward as HTTP/2 DATA on stream `1`
+- if a custom `upgrade-protocol` is accepted with `101`, the tunnel switches to raw bidirectional byte forwarding after the HTTP headers
 
 The implementation uses `required_padding_left = 16` so it can prepend chunk prefixes or HTTP/2 frame headers efficiently with `sbufShiftLeft()` when possible.
 
@@ -260,13 +289,16 @@ Upstream `Finish` becomes an empty DATA frame with `END_STREAM`, or `END_STREAM`
 When `http-version` is `both` and `upgrade` is enabled:
 
 - the tunnel begins with HTTP/1.1
-- the request advertises `Upgrade: h2c`
+- the request advertises either `Upgrade: h2c` or the configured `upgrade-protocol`
 - upstream request payload is buffered until the protocol choice is known
 
 If the response is:
 
 - `101 Switching Protocols` with `Upgrade: h2c`
   the tunnel creates an nghttp2 session, applies the advertised `HTTP2-Settings`, and continues as HTTP/2
+
+- `101 Switching Protocols` with a configured non-`h2c` `upgrade-protocol`
+  the tunnel stops doing HTTP body framing and continues as raw bidirectional byte forwarding
 
 - a normal non-`101` response
   the tunnel stays in HTTP/1.1 mode and flushes buffered request payload as chunked body data

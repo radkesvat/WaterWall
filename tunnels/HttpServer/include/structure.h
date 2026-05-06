@@ -18,7 +18,8 @@ typedef enum httpserver_runtime_proto_e
 {
     kHttpServerRuntimeUnknown = 0,
     kHttpServerRuntimeHttp1   = 1,
-    kHttpServerRuntimeHttp2   = 2
+    kHttpServerRuntimeHttp2   = 2,
+    kHttpServerRuntimeUpgradedRaw = 3
 } httpserver_runtime_proto_t;
 
 typedef enum httpserver_h1_body_mode_e
@@ -90,8 +91,11 @@ typedef struct httpserver_tstate_s
     char *expected_method;
     char *websocket_origin;
     char *websocket_subprotocol;
+    char *upgrade_protocol;
 
     const cJSON *headers;
+    const cJSON *upgrade_request_headers;
+    const cJSON *upgrade_response_headers;
 
     enum http_method       expected_method_enum;
     enum http_content_type content_type;
@@ -100,6 +104,7 @@ typedef struct httpserver_tstate_s
     httpserver_version_mode_t version_mode;
     bool                     enable_upgrade;
     bool                     websocket_enabled;
+    bool                     full_duplex;
     bool                     verbose;
 } httpserver_tstate_t;
 
@@ -158,12 +163,14 @@ bool httpserverTransportSendWebSocketData(tunnel_t *t, line_t *l, httpserver_lst
 bool httpserverTransportSendWebSocketClose(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 
+bool httpserverTransportPrepareHttp2Session(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportEnsureHttp2Session(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportSubmitHttp2ResponseHeaders(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, bool end_stream);
 bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *payload,
                                            bool end_stream);
 
 bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf);
 bool httpserverTransportDetectRuntimeProtocol(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);

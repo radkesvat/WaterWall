@@ -125,11 +125,15 @@ static void parseUpgradeMode(httpserver_tstate_t *ts, const cJSON *settings)
 {
     bool default_upgrade = (ts->version_mode == kHttpServerVersionModeBoth);
     getBoolFromJsonObjectOrDefault(&ts->enable_upgrade, settings, "upgrade", default_upgrade);
+    getStringFromJsonObject(&ts->upgrade_protocol, settings, "upgrade-protocol");
+    ts->upgrade_request_headers  = cJSON_GetObjectItemCaseSensitive(settings, "upgrade-request-headers");
+    ts->upgrade_response_headers = cJSON_GetObjectItemCaseSensitive(settings, "upgrade-response-headers");
 }
 
 static void parseWebSocketMode(httpserver_tstate_t *ts, const cJSON *settings)
 {
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+    getBoolFromJsonObjectOrDefault(&ts->full_duplex, settings, "full-duplex", false);
     getBoolFromJsonObjectOrDefault(&ts->websocket_enabled, settings, "websocket", false);
 
     if (ts->websocket_enabled)

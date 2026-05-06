@@ -31,6 +31,7 @@ void httpclientTunnelDestroy(tunnel_t *t)
     memoryFree(ts->websocket_origin);
     memoryFree(ts->websocket_subprotocol);
     memoryFree(ts->websocket_extensions);
+    memoryFree(ts->upgrade_protocol);
     memoryFree(ts->upgrade_settings_payload);
     memoryFree(ts->upgrade_settings_b64);
 

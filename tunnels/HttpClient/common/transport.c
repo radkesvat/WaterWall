@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 #include "utils/sha1.h"
 
+#include <ctype.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -12,6 +13,7 @@ typedef struct httpclient_h1_response_info_s
     int     status_code;
     bool    transfer_chunked;
     bool    connection_upgrade;
+    bool    has_upgrade_header;
     bool    upgrade_h2c;
     bool    upgrade_websocket;
     bool    has_content_length;
@@ -22,6 +24,7 @@ typedef struct httpclient_h1_response_info_s
     char    sec_websocket_accept[128];
     char    sec_websocket_protocol[128];
     char    sec_websocket_extensions[256];
+    char    upgrade_value[256];
 } httpclient_h1_response_info_t;
 
 enum
@@ -137,6 +140,26 @@ static bool httpclientHeaderNameEquals(const char *value, const char *name)
     return httpclientStringCaseEquals(value, name);
 }
 
+static const char *httpclientUpgradeProtocol(const httpclient_tstate_t *ts)
+{
+    if (ts == NULL || ts->upgrade_protocol == NULL || ts->upgrade_protocol[0] == '\0')
+    {
+        return "h2c";
+    }
+
+    return ts->upgrade_protocol;
+}
+
+static bool httpclientUpgradeIsH2C(const httpclient_tstate_t *ts)
+{
+    return ts != NULL && httpclientStringCaseEquals(httpclientUpgradeProtocol(ts), "h2c");
+}
+
+static bool httpclientUpgradeIsCustom(const httpclient_tstate_t *ts)
+{
+    return ts != NULL && ! httpclientUpgradeIsH2C(ts);
+}
+
 static bool httpclientShouldSkipExtraHeader(const char *name, bool upgrade_to_h2, bool websocket_mode)
 {
     if (name == NULL)
@@ -167,6 +190,131 @@ static bool httpclientShouldSkipExtraHeader(const char *name, bool upgrade_to_h2
     }
 
     return httpclientHeaderNameEquals(name, "connection") || httpclientHeaderNameEquals(name, "transfer-encoding");
+}
+
+static bool httpclientShouldSkipUpgradeExtraHeader(const char *name)
+{
+    if (name == NULL)
+    {
+        return true;
+    }
+
+    return httpclientHeaderNameEquals(name, "connection") || httpclientHeaderNameEquals(name, "upgrade") ||
+           httpclientHeaderNameEquals(name, "http2-settings");
+}
+
+static bool httpclientFindHeaderValue(const char *headers, const char *name, char *out, size_t out_cap)
+{
+    if (headers == NULL || name == NULL || out == NULL || out_cap == 0)
+    {
+        return false;
+    }
+
+    out[0] = '\0';
+
+    const char *line = strstr(headers, "\r\n");
+    if (line == NULL)
+    {
+        return false;
+    }
+    line += 2;
+
+    while (*line != '\0')
+    {
+        const char *next = strstr(line, "\r\n");
+        if (next == NULL)
+        {
+            break;
+        }
+
+        if (next == line)
+        {
+            break;
+        }
+
+        const char *colon = strchr(line, ':');
+        if (colon != NULL && colon < next)
+        {
+            size_t key_len = (size_t) (colon - line);
+            if (strlen(name) == key_len)
+            {
+                bool match = true;
+                for (size_t i = 0; i < key_len; ++i)
+                {
+                    if ((char) tolower((unsigned char) line[i]) != (char) tolower((unsigned char) name[i]))
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    const char *value_begin = colon + 1;
+                    while (value_begin < next && (*value_begin == ' ' || *value_begin == '\t'))
+                    {
+                        ++value_begin;
+                    }
+
+                    const char *value_end = next;
+                    while (value_end > value_begin && (value_end[-1] == ' ' || value_end[-1] == '\t'))
+                    {
+                        --value_end;
+                    }
+
+                    size_t value_len = (size_t) (value_end - value_begin);
+                    if (value_len >= out_cap)
+                    {
+                        value_len = out_cap - 1U;
+                    }
+
+                    memoryCopy(out, value_begin, value_len);
+                    out[value_len] = '\0';
+                    return true;
+                }
+            }
+        }
+
+        line = next + 2;
+    }
+
+    return false;
+}
+
+static bool httpclientValidateRequiredHeaders(const char *headers, const cJSON *required)
+{
+    if (! cJSON_IsObject(required))
+    {
+        return true;
+    }
+
+    char found_value[1024];
+
+    cJSON *header = NULL;
+    cJSON_ArrayForEach(header, required)
+    {
+        if (! cJSON_IsString(header) || header->valuestring == NULL || header->string == NULL)
+        {
+            continue;
+        }
+
+        if (httpclientShouldSkipUpgradeExtraHeader(header->string))
+        {
+            continue;
+        }
+
+        if (! httpclientFindHeaderValue(headers, header->string, found_value, sizeof(found_value)))
+        {
+            return false;
+        }
+
+        if (! httpclientStringCaseEquals(found_value, header->valuestring))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static void httpclientBuildWebSocketAccept(const char *key, char *out, size_t out_cap)
@@ -394,7 +542,10 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
 {
     httpclient_tstate_t *ts = tunnelGetState(t);
     httpclient_lstate_t *ls = lineGetState(l, t);
-    bool                 websocket_mode = ts->websocket_enabled;
+    bool                 websocket_mode  = ts->websocket_enabled;
+    bool                 upgrade_requested = upgrade_to_h2 && ! websocket_mode;
+    bool                 custom_upgrade  = upgrade_requested && httpclientUpgradeIsCustom(ts);
+    const char          *upgrade_proto   = upgrade_requested ? httpclientUpgradeProtocol(ts) : NULL;
 
     char host_line[512];
     int  host_len = 0;
@@ -421,7 +572,8 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
     if (ts->verbose)
     {
         LOGD("HttpClient: sending HTTP/1.1 request method=%s host=%s path=%s websocket=%s h2c-upgrade=%s", method,
-             host_line, ts->path, websocket_mode ? "true" : "false", upgrade_to_h2 ? "true" : "false");
+             host_line, ts->path, websocket_mode ? "true" : "false",
+             (upgrade_requested && ! custom_upgrade) ? "true" : "false");
     }
 
     if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "%s %s HTTP/1.1\r\n", method, ts->path) ||
@@ -480,23 +632,60 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
             return false;
         }
     }
-    else if (upgrade_to_h2)
+    else if (upgrade_requested)
     {
-        if (ts->upgrade_settings_b64 == NULL || ts->upgrade_settings_payload == NULL || ts->upgrade_settings_payload_len == 0)
+        if (! custom_upgrade &&
+            (ts->upgrade_settings_b64 == NULL || ts->upgrade_settings_payload == NULL || ts->upgrade_settings_payload_len == 0))
         {
             LOGE("HttpClient: HTTP2-Settings is not initialized");
             memoryFree(header_buf);
             return false;
         }
 
-        if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Connection: Upgrade, HTTP2-Settings\r\n") ||
-            ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Upgrade: h2c\r\n") ||
-            ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "HTTP2-Settings: %s\r\n",
-                              ts->upgrade_settings_b64))
+        if (! custom_upgrade)
+        {
+            if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset,
+                                  "Connection: Upgrade, HTTP2-Settings\r\n") ||
+                ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Upgrade: h2c\r\n") ||
+                ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "HTTP2-Settings: %s\r\n",
+                                  ts->upgrade_settings_b64))
+            {
+                LOGE("HttpClient: request headers are too large");
+                memoryFree(header_buf);
+                return false;
+            }
+        }
+        else if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Connection: Upgrade\r\n") ||
+                 ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Upgrade: %s\r\n", upgrade_proto))
         {
             LOGE("HttpClient: request headers are too large");
             memoryFree(header_buf);
             return false;
+        }
+
+        if (cJSON_IsObject(ts->upgrade_request_headers))
+        {
+            cJSON *header = NULL;
+            cJSON_ArrayForEach(header, ts->upgrade_request_headers)
+            {
+                if (! cJSON_IsString(header) || header->valuestring == NULL || header->string == NULL)
+                {
+                    continue;
+                }
+
+                if (httpclientShouldSkipUpgradeExtraHeader(header->string))
+                {
+                    continue;
+                }
+
+                if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "%s: %s\r\n", header->string,
+                                      header->valuestring))
+                {
+                    LOGE("HttpClient: request headers are too large");
+                    memoryFree(header_buf);
+                    return false;
+                }
+            }
         }
     }
     else
@@ -680,11 +869,20 @@ static bool parseHttp1ResponseHeaders(const char *headers, httpclient_h1_respons
             }
             else if (httpclientStringCaseEquals(key, "Upgrade") && httpclientStringCaseContains(value, "h2c"))
             {
+                info->has_upgrade_header = true;
+                snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_h2c = true;
             }
             else if (httpclientStringCaseEquals(key, "Upgrade") && httpclientStringCaseContains(value, "websocket"))
             {
+                info->has_upgrade_header = true;
+                snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_websocket = true;
+            }
+            else if (httpclientStringCaseEquals(key, "Upgrade"))
+            {
+                info->has_upgrade_header = true;
+                snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
             }
             else if (httpclientStringCaseEquals(key, "Content-Length"))
             {
@@ -1246,12 +1444,6 @@ bool httpclientTransportHandleUpgradeAccepted(tunnel_t *t, line_t *l, httpclient
         return false;
     }
 
-    if (bufferqueueGetBufCount(&ls->pending_up) > 0)
-    {
-        LOGE("HttpClient: h2c upgrade does not support request body payloads on the original HTTP/1.1 request");
-        return false;
-    }
-
     if (ls->session == NULL)
     {
         nghttp2_session_callbacks_set_on_header_callback(ts->cbs, httpclientOnHeaderCallback);
@@ -1283,6 +1475,22 @@ bool httpclientTransportHandleUpgradeAccepted(tunnel_t *t, line_t *l, httpclient
     }
 
     return sendNghttp2Outbound(t, l, ls);
+}
+
+static bool httpclientTransportHandleCustomUpgradeAccepted(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    httpclient_tstate_t *ts = tunnelGetState(t);
+
+    ls->runtime_proto = kHttpClientRuntimeUpgradedRaw;
+
+    if (ts->verbose)
+    {
+        LOGD("HttpClient: accepted HTTP/1.1 custom upgrade protocol=%s", httpclientUpgradeProtocol(ts));
+    }
+
+    discard t;
+    discard l;
+    return true;
 }
 
 bool httpclientTransportSendWebSocketData(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *payload,
@@ -1542,6 +1750,12 @@ bool httpclientTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpclient_ls
 
     uint32_t payload_len = (payload == NULL) ? 0 : sbufGetLength(payload);
 
+    if (httpclientVerboseEnabled(t))
+    {
+        LOGD("HttpClient: sending HTTP/2 DATA stream_id=%d payload_len=%u end_stream=%s", ls->h2_stream_id,
+             payload_len, end_stream ? "true" : "false");
+    }
+
     if (payload_len == 0 && payload != NULL && ! end_stream)
     {
         lineReuseBuffer(l, payload);
@@ -1677,6 +1891,15 @@ bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate
                 return false;
             }
         }
+        else if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw)
+        {
+            tunnelNextUpStreamPayload(t, l, buf);
+
+            if (! lineIsAlive(l))
+            {
+                return false;
+            }
+        }
         else if (ls->runtime_proto == kHttpClientRuntimeHttp2)
         {
             if (! httpclientTransportSendHttp2DataFrame(t, l, ls, buf, false))
@@ -1695,6 +1918,29 @@ bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate
         {
             bufferqueuePushFront(&ls->pending_up, buf);
             return true;
+        }
+    }
+
+    return true;
+}
+
+static bool httpclientTransportDrainRawDown(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    while (! bufferstreamIsEmpty(&ls->in_stream))
+    {
+        sbuf_t *buf = bufferstreamIdealRead(&ls->in_stream);
+
+        if (ls->prev_finished)
+        {
+            lineReuseBuffer(l, buf);
+            continue;
+        }
+
+        tunnelPrevDownStreamPayload(t, l, buf);
+
+        if (! lineIsAlive(l))
+        {
+            return false;
         }
     }
 
@@ -1826,11 +2072,11 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
         httpclient_h1_response_info_t info;
         bool                          parsed_ok = parseHttp1ResponseHeaders(header_text, &info);
 
-        memoryFree(header_text);
         lineReuseBuffer(l, header_buf);
 
         if (! parsed_ok)
         {
+            memoryFree(header_text);
             LOGE("HttpClient: invalid HTTP/1.1 response headers");
             return false;
         }
@@ -1855,6 +2101,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
                      info.status_code, info.connection_upgrade ? "true" : "false",
                      info.upgrade_websocket ? "true" : "false",
                      info.has_sec_websocket_accept ? "true" : "false");
+                memoryFree(header_text);
                 return false;
             }
 
@@ -1865,6 +2112,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             {
                 LOGE("HttpClient: websocket Sec-WebSocket-Accept validation failed expected=%s got=%s", expected_accept,
                      info.has_sec_websocket_accept ? info.sec_websocket_accept : "<none>");
+                memoryFree(header_text);
                 return false;
             }
 
@@ -1876,12 +2124,14 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
                     LOGE("HttpClient: websocket subprotocol negotiation failed expected=%s got=%s",
                          ts->websocket_subprotocol,
                          info.has_sec_websocket_protocol ? info.sec_websocket_protocol : "<none>");
+                    memoryFree(header_text);
                     return false;
                 }
             }
             else if (info.has_sec_websocket_protocol)
             {
                 LOGE("HttpClient: websocket server selected an unexpected subprotocol=%s", info.sec_websocket_protocol);
+                memoryFree(header_text);
                 return false;
             }
 
@@ -1889,6 +2139,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             {
                 LOGE("HttpClient: websocket server selected unsupported extensions=%s",
                      info.sec_websocket_extensions);
+                memoryFree(header_text);
                 return false;
             }
 
@@ -1905,15 +2156,47 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 
             if (! httpclientTransportFlushPendingUp(t, l, ls))
             {
+                memoryFree(header_text);
                 return false;
             }
 
+            memoryFree(header_text);
             return httpclientTransportDrainWebSocketDown(t, l, ls);
         }
 
         if (info.status_code == 101)
         {
-            if (ls->runtime_proto == kHttpClientRuntimeWaitUpgrade && info.connection_upgrade && info.upgrade_h2c)
+            if (ls->runtime_proto == kHttpClientRuntimeWaitUpgrade && info.connection_upgrade &&
+                httpclientUpgradeIsCustom(ts) && info.has_upgrade_header &&
+                httpclientStringCaseContainsToken(info.upgrade_value, httpclientUpgradeProtocol(ts)) &&
+                httpclientValidateRequiredHeaders(header_text, ts->upgrade_response_headers))
+            {
+                ls->h1_headers_parsed = true;
+
+                if (! httpclientTransportHandleCustomUpgradeAccepted(t, l, ls))
+                {
+                    memoryFree(header_text);
+                    return false;
+                }
+
+                memoryFree(header_text);
+
+                if (! httpclientTransportDrainRawDown(t, l, ls))
+                {
+                    return lineIsAlive(l) ? false : true;
+                }
+
+                if (! httpclientTransportFlushPendingUp(t, l, ls))
+                {
+                    return lineIsAlive(l) ? false : true;
+                }
+
+                return true;
+            }
+
+            if (ls->runtime_proto == kHttpClientRuntimeWaitUpgrade && info.connection_upgrade &&
+                httpclientUpgradeIsH2C(ts) && info.upgrade_h2c &&
+                httpclientValidateRequiredHeaders(header_text, ts->upgrade_response_headers))
             {
                 ls->h1_upgrade_accepted = true;
                 ls->runtime_proto       = kHttpClientRuntimeAfterUpgrade;
@@ -1921,8 +2204,11 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 
                 if (! httpclientTransportHandleUpgradeAccepted(t, l, ls))
                 {
+                    memoryFree(header_text);
                     return false;
                 }
+
+                memoryFree(header_text);
 
                 while (! bufferstreamIsEmpty(&ls->in_stream))
                 {
@@ -1936,12 +2222,14 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
                 return httpclientTransportFlushPendingUp(t, l, ls);
             }
 
+            memoryFree(header_text);
             LOGE("HttpClient: unexpected HTTP/1.1 101 response");
             return false;
         }
 
         if (info.status_code >= 100 && info.status_code < 200)
         {
+            memoryFree(header_text);
             continue;
         }
 
@@ -1959,6 +2247,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
         if (info.transfer_chunked && info.has_content_length)
         {
             LOGE("HttpClient: invalid HTTP/1.1 response (both Transfer-Encoding and Content-Length)");
+            memoryFree(header_text);
             return false;
         }
 
@@ -1977,6 +2266,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
         {
             ls->h1_body_mode      = kHttpClientH1BodyNone;
             ls->response_complete = true;
+            memoryFree(header_text);
             return true;
         }
 
@@ -2000,6 +2290,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             ls->h1_body_mode = kHttpClientH1BodyUntilClose;
         }
 
+        memoryFree(header_text);
         return httpclientTransportFlushPendingUp(t, l, ls);
     }
 

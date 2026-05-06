@@ -1,0 +1,61 @@
+{
+  "name": "http-upgrade-h2c-bidirectional-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "upgrade.example.test",
+        "path": "/ww/upgrade",
+        "scheme": "http",
+        "port": 80,
+        "method": "POST",
+        "http-version": "both",
+        "upgrade": true,
+        "full-duplex": true,
+        "upgrade-request-headers": {
+          "x-h2c-upgrade": "client-probe"
+        },
+        "upgrade-response-headers": {
+          "x-h2c-accepted": "server-ack"
+        }
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "both",
+        "upgrade": true,
+        "host": "upgrade.example.test",
+        "path": "/ww/upgrade",
+        "method": "POST",
+        "status": 200,
+        "full-duplex": true,
+        "upgrade-request-headers": {
+          "x-h2c-upgrade": "client-probe"
+        },
+        "upgrade-response-headers": {
+          "x-h2c-accepted": "server-ack"
+        }
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

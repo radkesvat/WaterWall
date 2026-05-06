@@ -181,13 +181,17 @@ static void parsePortAndUpgrade(httpclient_tstate_t *ts, const cJSON *settings)
     bool default_upgrade = (ts->version_mode == kHttpClientVersionModeBoth);
     getBoolFromJsonObjectOrDefault(&ts->enable_upgrade, settings, "upgrade", default_upgrade);
 
-    ts->headers = cJSON_GetObjectItemCaseSensitive(settings, "headers");
+    ts->headers                  = cJSON_GetObjectItemCaseSensitive(settings, "headers");
+    ts->upgrade_request_headers  = cJSON_GetObjectItemCaseSensitive(settings, "upgrade-request-headers");
+    ts->upgrade_response_headers = cJSON_GetObjectItemCaseSensitive(settings, "upgrade-response-headers");
+    getStringFromJsonObject(&ts->upgrade_protocol, settings, "upgrade-protocol");
 }
 
 static void parseUserAgentAndWebSocket(httpclient_tstate_t *ts, const cJSON *settings)
 {
     getStringFromJsonObjectOrDefault(&ts->user_agent, settings, "user-agent", "WaterWall/1.x");
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+    getBoolFromJsonObjectOrDefault(&ts->full_duplex, settings, "full-duplex", false);
 
     getBoolFromJsonObjectOrDefault(&ts->websocket_enabled, settings, "websocket", false);
 

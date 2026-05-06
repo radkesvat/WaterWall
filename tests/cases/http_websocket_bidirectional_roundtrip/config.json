@@ -1,0 +1,49 @@
+{
+  "name": "http-websocket-bidirectional-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "ws.example.test",
+        "path": "/ww/ws",
+        "scheme": "http",
+        "port": 80,
+        "http-version": "1.1",
+        "websocket": true,
+        "websocket-origin": "https://origin.example.test",
+        "websocket-subprotocol": "waterwall-binary"
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "1.1",
+        "host": "ws.example.test",
+        "path": "/ww/ws",
+        "status": 200,
+        "websocket": true,
+        "websocket-origin": "https://origin.example.test",
+        "websocket-subprotocol": "waterwall-binary"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

@@ -46,6 +46,20 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw)
+    {
+        if (ls->prev_finished)
+        {
+            lineReuseBuffer(l, buf);
+            lineUnlock(l);
+            return;
+        }
+
+        tunnelPrevDownStreamPayload(t, l, buf);
+        lineUnlock(l);
+        return;
+    }
+
     if (ts->websocket_enabled && ls->websocket_active)
     {
         bufferstreamPush(&ls->in_stream, buf);

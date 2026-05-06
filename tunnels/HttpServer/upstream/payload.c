@@ -21,6 +21,38 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     lineLock(l);
 
+    if (ts->verbose)
+    {
+        LOGD("HttpServer: upstream payload runtime=%d len=%u", ls->runtime_proto, sbufGetLength(buf));
+    }
+
+    if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
+    {
+        tunnelNextUpStreamPayload(t, l, buf);
+
+        if (! lineIsAlive(l))
+        {
+            lineUnlock(l);
+            return;
+        }
+
+        if (! httpserverTransportFlushPendingDown(t, l, ls))
+        {
+            if (! lineIsAlive(l))
+            {
+                lineUnlock(l);
+                return;
+            }
+
+            failAndCloseU(t, l, ls);
+            lineUnlock(l);
+            return;
+        }
+
+        lineUnlock(l);
+        return;
+    }
+
     if (ls->runtime_proto == kHttpServerRuntimeHttp2)
     {
         if (! httpserverTransportFeedHttp2Input(t, l, ls, buf))
@@ -129,6 +161,12 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! httpserverTransportHandleHttp1RequestHeaderPhase(t, l, ls))
     {
+        if (! lineIsAlive(l))
+        {
+            lineUnlock(l);
+            return;
+        }
+
         failAndCloseU(t, l, ls);
         lineUnlock(l);
         return;
@@ -167,6 +205,38 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineUnlock(l);
             return;
         }
+        lineUnlock(l);
+        return;
+    }
+
+    if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
+    {
+        if (! httpserverTransportDrainRawUp(t, l, ls))
+        {
+            if (! lineIsAlive(l))
+            {
+                lineUnlock(l);
+                return;
+            }
+
+            failAndCloseU(t, l, ls);
+            lineUnlock(l);
+            return;
+        }
+
+        if (! httpserverTransportFlushPendingDown(t, l, ls))
+        {
+            if (! lineIsAlive(l))
+            {
+                lineUnlock(l);
+                return;
+            }
+
+            failAndCloseU(t, l, ls);
+            lineUnlock(l);
+            return;
+        }
+
         lineUnlock(l);
         return;
     }

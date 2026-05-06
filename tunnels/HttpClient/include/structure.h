@@ -20,7 +20,8 @@ typedef enum httpclient_runtime_proto_e
     kHttpClientRuntimeHttp1        = 1,
     kHttpClientRuntimeHttp2        = 2,
     kHttpClientRuntimeWaitUpgrade  = 3,
-    kHttpClientRuntimeAfterUpgrade = 4
+    kHttpClientRuntimeAfterUpgrade = 4,
+    kHttpClientRuntimeUpgradedRaw  = 5
 } httpclient_runtime_proto_t;
 
 typedef enum httpclient_h1_body_mode_e
@@ -44,8 +45,11 @@ typedef struct httpclient_tstate_s
     char *websocket_origin;
     char *websocket_subprotocol;
     char *websocket_extensions;
+    char *upgrade_protocol;
 
     const cJSON *headers;
+    const cJSON *upgrade_request_headers;
+    const cJSON *upgrade_response_headers;
 
     enum http_method       method_enum;
     enum http_content_type content_type;
@@ -59,6 +63,7 @@ typedef struct httpclient_tstate_s
     httpclient_version_mode_t version_mode;
     bool                      enable_upgrade;
     bool                      websocket_enabled;
+    bool                      full_duplex;
     bool                      verbose;
 } httpclient_tstate_t;
 

@@ -1,0 +1,68 @@
+{
+  "name": "http1-bidirectional-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "http1.example.test",
+        "path": "/ww/http1",
+        "scheme": "http",
+        "port": 41101,
+        "method": "POST",
+        "http-version": "1.1",
+        "full-duplex": true
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41101,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41101,
+        "nodelay": true
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "1.1",
+        "host": "http1.example.test",
+        "path": "/ww/http1",
+        "method": "POST",
+        "status": 200,
+        "full-duplex": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "name": "http-upgrade-custom-bidirectional-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "raw.example.test",
+        "path": "/ww/raw-upgrade",
+        "scheme": "http",
+        "port": 80,
+        "method": "POST",
+        "http-version": "both",
+        "upgrade": true,
+        "upgrade-protocol": "waterwall-raw-test",
+        "full-duplex": true,
+        "upgrade-request-headers": {
+          "x-raw-upgrade": "allow"
+        },
+        "upgrade-response-headers": {
+          "x-raw-accepted": "yes"
+        }
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "both",
+        "upgrade": true,
+        "upgrade-protocol": "waterwall-raw-test",
+        "host": "raw.example.test",
+        "path": "/ww/raw-upgrade",
+        "method": "POST",
+        "status": 200,
+        "full-duplex": true,
+        "upgrade-request-headers": {
+          "x-raw-upgrade": "allow"
+        },
+        "upgrade-response-headers": {
+          "x-raw-accepted": "yes"
+        }
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

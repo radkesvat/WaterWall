@@ -65,11 +65,16 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw)
+    {
+        tunnelNextUpStreamPayload(t, l, buf);
+        lineUnlock(l);
+        return;
+    }
+
     if (ls->runtime_proto == kHttpClientRuntimeWaitUpgrade)
     {
-        LOGE("HttpClient: h2c upgrade mode does not support request body payloads");
-        lineReuseBuffer(l, buf);
-        failAndCloseU(t, l, ls);
+        bufferqueuePushBack(&ls->pending_up, buf);
         lineUnlock(l);
         return;
     }

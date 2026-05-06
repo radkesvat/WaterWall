@@ -105,7 +105,9 @@ If omitted, the current implementation defaults to:
 - `upgrade` `(boolean)`
   Only meaningful when `http-version` is `both`.
 
-  If enabled, the server accepts HTTP/1.1 requests that ask to upgrade with:
+  If enabled, the server can accept HTTP/1.1 upgrade requests.
+
+  Default upgrade protocol:
   - `Connection: Upgrade, HTTP2-Settings`
   - `Upgrade: h2c`
   - `HTTP2-Settings: ...`
@@ -113,6 +115,20 @@ If omitted, the current implementation defaults to:
   Default:
   - `true` when `http-version` is `both`
   - `false` otherwise
+
+- `upgrade-protocol` `(string)`
+  Optional HTTP/1.1 upgrade protocol token to accept instead of the default `h2c`.
+
+  When this is set to a value other than `h2c`:
+  - the server expects `Connection: Upgrade`
+  - the server expects `Upgrade: <your-token>`
+  - after a successful `101`, the tunnel switches to raw bidirectional byte forwarding
+
+- `upgrade-request-headers` `(object)`
+  Optional required headers that must appear on the HTTP/1.1 upgrade request before the upgrade is accepted.
+
+- `upgrade-response-headers` `(object)`
+  Optional extra headers to include only on the HTTP/1.1 `101 Switching Protocols` response.
 
 - `host` `(string)`
   Optional expected HTTP `Host`.
@@ -162,6 +178,17 @@ If omitted, the current implementation defaults to:
 
 - `websocket-subprotocol` `(string)`
   Optional subprotocol to require and echo back in the handshake response.
+
+- `full-duplex` `(boolean)`
+  Keeps HTTP request-end from being reflected into Waterwall upstream `Finish`.
+  Default: `false`
+
+  When enabled:
+  - HTTP/1.1 request-body completion is tracked internally
+  - direct HTTP/2 or upgraded h2c request `END_STREAM` is tracked internally
+  - the service-facing Waterwall line remains open until the real transport line finishes
+
+  This is the mode to use when you want plain HTTP/1.1 or h2c to behave more like a bidirectional transport instead of a strict request-end-driven service boundary.
 
 - `verbose` `(boolean)`
   Enables extra debug logging for protocol detection, handshakes, and framing flow.
@@ -215,13 +242,19 @@ Supported request body styles are:
 Behavior after header parsing:
 
 - no body:
-  the next tunnel immediately receives upstream `Finish`
+  with `full-duplex = false`, the next tunnel immediately receives upstream `Finish`
 - `Content-Length` body:
   exactly that many bytes are forwarded upstream
 - chunked body:
   chunk framing is removed and chunk payload is forwarded upstream
 
 Trailer blocks are consumed internally.
+
+With `full-duplex = true`:
+
+- request-body completion is remembered internally instead of immediately sending Waterwall upstream `Finish`
+- response bytes may continue to flow downstream on the same line
+- chunked HTTP/1.1 requests can therefore behave like a long-lived bidirectional transport
 
 ### WebSocket handling
 
@@ -262,7 +295,7 @@ Current session settings include:
 - `MAX_FRAME_SIZE = 32 KiB`
 
 Request DATA frames are forwarded upstream as plain payload.
-`END_STREAM` on the request becomes upstream `Finish`.
+`END_STREAM` on the request becomes upstream `Finish` only when `full-duplex = false`.
 
 Response payload from the next tunnel is turned into HTTP/2 DATA frames on the same stream.
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
@@ -273,7 +306,7 @@ Extra streams can be rejected with `RST_STREAM REFUSED_STREAM`.
 
 When `http-version` is `both` and `upgrade` is enabled, the server can accept a valid HTTP/1.1 upgrade request.
 
-The current code requires these pieces together:
+For default `h2c`, the current code requires these pieces together:
 
 - `Connection: Upgrade`
 - `Connection: HTTP2-Settings`
@@ -286,6 +319,16 @@ If present:
 - decodes the peer's `HTTP2-Settings`
 - upgrades nghttp2 state
 - continues the request on HTTP/2 stream `1`
+
+If the original upgrade request already carries an HTTP/1.1 body, the upgrade is ignored conservatively and the line stays on ordinary HTTP/1.1 parsing.
+
+If `upgrade-protocol` is set to a non-`h2c` value instead:
+
+- the tunnel validates that custom `Upgrade:` token
+- validates any configured `upgrade-request-headers`
+- sends `101 Switching Protocols`
+- adds any configured `upgrade-response-headers`
+- then forwards bytes bidirectionally without further HTTP body framing
 
 ### Data ownership at tunnel boundaries
 

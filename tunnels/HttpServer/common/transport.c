@@ -13,6 +13,7 @@ typedef struct httpserver_h1_request_info_s
     char method[32];
     char path[2048];
     char host[512];
+    char upgrade_value[256];
     char http2_settings[512];
     char sec_websocket_key[128];
     char sec_websocket_protocol[256];
@@ -21,6 +22,7 @@ typedef struct httpserver_h1_request_info_s
     bool    transfer_chunked;
     bool    connection_upgrade;
     bool    connection_http2_settings;
+    bool    has_upgrade_header;
     bool    upgrade_h2c;
     bool    upgrade_websocket;
     bool    has_http2_settings;
@@ -44,6 +46,15 @@ enum
 };
 
 static const char *kWebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+static int  httpserverOnHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name,
+                                       size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags,
+                                       void *userdata);
+static int  httpserverOnDataChunkRecvCallback(nghttp2_session *session, uint8_t flags, int32_t stream_id,
+                                              const uint8_t *data, size_t len, void *userdata);
+static int  httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata);
+static int  httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t stream_id, uint32_t error_code,
+                                             void *userdata);
 
 static bool httpserverVerboseEnabled(tunnel_t *t)
 {
@@ -255,6 +266,26 @@ static bool httpserverHeaderNameEquals(const char *value, const char *name)
     return httpserverStringCaseEquals(value, name);
 }
 
+static const char *httpserverUpgradeProtocol(const httpserver_tstate_t *ts)
+{
+    if (ts == NULL || ts->upgrade_protocol == NULL || ts->upgrade_protocol[0] == '\0')
+    {
+        return "h2c";
+    }
+
+    return ts->upgrade_protocol;
+}
+
+static bool httpserverUpgradeIsH2C(const httpserver_tstate_t *ts)
+{
+    return ts != NULL && httpserverStringCaseEquals(httpserverUpgradeProtocol(ts), "h2c");
+}
+
+static bool httpserverUpgradeIsCustom(const httpserver_tstate_t *ts)
+{
+    return ts != NULL && ! httpserverUpgradeIsH2C(ts);
+}
+
 static bool httpserverShouldSkipExtraHeader(const char *name, bool websocket_mode)
 {
     if (name == NULL)
@@ -278,6 +309,131 @@ static bool httpserverShouldSkipExtraHeader(const char *name, bool websocket_mod
     }
 
     return httpserverHeaderNameEquals(name, "connection") || httpserverHeaderNameEquals(name, "transfer-encoding");
+}
+
+static bool httpserverShouldSkipUpgradeExtraHeader(const char *name)
+{
+    if (name == NULL)
+    {
+        return true;
+    }
+
+    return httpserverHeaderNameEquals(name, "connection") || httpserverHeaderNameEquals(name, "upgrade") ||
+           httpserverHeaderNameEquals(name, "http2-settings");
+}
+
+static bool httpserverFindHeaderValue(const char *headers, const char *name, char *out, size_t out_cap)
+{
+    if (headers == NULL || name == NULL || out == NULL || out_cap == 0)
+    {
+        return false;
+    }
+
+    out[0] = '\0';
+
+    const char *line = strstr(headers, "\r\n");
+    if (line == NULL)
+    {
+        return false;
+    }
+    line += 2;
+
+    while (*line != '\0')
+    {
+        const char *next = strstr(line, "\r\n");
+        if (next == NULL)
+        {
+            break;
+        }
+
+        if (next == line)
+        {
+            break;
+        }
+
+        const char *colon = strchr(line, ':');
+        if (colon != NULL && colon < next)
+        {
+            size_t key_len = (size_t) (colon - line);
+            if (strlen(name) == key_len)
+            {
+                bool match = true;
+                for (size_t i = 0; i < key_len; ++i)
+                {
+                    if ((char) tolower((unsigned char) line[i]) != (char) tolower((unsigned char) name[i]))
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    const char *value_begin = colon + 1;
+                    while (value_begin < next && (*value_begin == ' ' || *value_begin == '\t'))
+                    {
+                        ++value_begin;
+                    }
+
+                    const char *value_end = next;
+                    while (value_end > value_begin && (value_end[-1] == ' ' || value_end[-1] == '\t'))
+                    {
+                        --value_end;
+                    }
+
+                    size_t value_len = (size_t) (value_end - value_begin);
+                    if (value_len >= out_cap)
+                    {
+                        value_len = out_cap - 1U;
+                    }
+
+                    memoryCopy(out, value_begin, value_len);
+                    out[value_len] = '\0';
+                    return true;
+                }
+            }
+        }
+
+        line = next + 2;
+    }
+
+    return false;
+}
+
+static bool httpserverValidateRequiredHeaders(const char *headers, const cJSON *required)
+{
+    if (! cJSON_IsObject(required))
+    {
+        return true;
+    }
+
+    char found_value[1024];
+
+    cJSON *header = NULL;
+    cJSON_ArrayForEach(header, required)
+    {
+        if (! cJSON_IsString(header) || header->valuestring == NULL || header->string == NULL)
+        {
+            continue;
+        }
+
+        if (httpserverShouldSkipUpgradeExtraHeader(header->string))
+        {
+            continue;
+        }
+
+        if (! httpserverFindHeaderValue(headers, header->string, found_value, sizeof(found_value)))
+        {
+            return false;
+        }
+
+        if (! httpserverStringCaseEquals(found_value, header->valuestring))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static void httpserverBuildWebSocketAccept(const char *key, char *out, size_t out_cap)
@@ -612,6 +768,66 @@ static bool httpserverTransportSendHttp1WebSocketResponseHeaders(tunnel_t *t, li
     return ok;
 }
 
+static bool httpserverTransportSendHttp1UpgradeResponseHeaders(tunnel_t *t, line_t *l, const char *protocol)
+{
+    httpserver_tstate_t *ts = tunnelGetState(t);
+
+    if (protocol == NULL || protocol[0] == '\0')
+    {
+        return false;
+    }
+
+    if (ts->verbose)
+    {
+        LOGD("HttpServer: accepting HTTP/1.1 upgrade protocol=%s", protocol);
+    }
+
+    char *header_buf = memoryAllocate(kHttpServerMaxHeaderBytes);
+    int   offset     = 0;
+
+    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "HTTP/1.1 101 Switching Protocols\r\n") ||
+        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Connection: Upgrade\r\n") ||
+        ! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "Upgrade: %s\r\n", protocol))
+    {
+        memoryFree(header_buf);
+        return false;
+    }
+
+    if (cJSON_IsObject(ts->upgrade_response_headers))
+    {
+        cJSON *header = NULL;
+        cJSON_ArrayForEach(header, ts->upgrade_response_headers)
+        {
+            if (! cJSON_IsString(header) || header->valuestring == NULL || header->string == NULL)
+            {
+                continue;
+            }
+
+            if (httpserverShouldSkipUpgradeExtraHeader(header->string))
+            {
+                continue;
+            }
+
+            if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "%s: %s\r\n", header->string,
+                                  header->valuestring))
+            {
+                memoryFree(header_buf);
+                return false;
+            }
+        }
+    }
+
+    if (! appendHeaderFmt(header_buf, kHttpServerMaxHeaderBytes, &offset, "\r\n"))
+    {
+        memoryFree(header_buf);
+        return false;
+    }
+
+    bool ok = sendBytesDown(t, l, header_buf, (uint32_t) offset);
+    memoryFree(header_buf);
+    return ok;
+}
+
 bool httpserverTransportSendHttp1FinalChunk(tunnel_t *t, line_t *l)
 {
     return sendTextDown(t, l, "0\r\n\r\n");
@@ -787,11 +1003,20 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
             }
             else if (httpserverStringCaseEquals(key, "Upgrade") && httpserverStringCaseContains(value, "h2c"))
             {
+                info->has_upgrade_header = true;
+                snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_h2c = true;
             }
             else if (httpserverStringCaseEquals(key, "Upgrade") && httpserverStringCaseContains(value, "websocket"))
             {
+                info->has_upgrade_header = true;
+                snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_websocket = true;
+            }
+            else if (httpserverStringCaseEquals(key, "Upgrade"))
+            {
+                info->has_upgrade_header = true;
+                snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
             }
             else if (httpserverStringCaseEquals(key, "HTTP2-Settings"))
             {
@@ -985,6 +1210,52 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     return true;
 }
 
+static bool httpserverTransportEnsureHttp2SessionInternal(tunnel_t *t, line_t *l, httpserver_lstate_t *ls,
+                                                          bool flush_outbound)
+{
+    if (ls->session != NULL)
+    {
+        ls->runtime_proto = kHttpServerRuntimeHttp2;
+        return flush_outbound ? sendNghttp2Outbound(t, l, ls) : true;
+    }
+
+    httpserver_tstate_t *ts = tunnelGetState(t);
+
+    nghttp2_session_callbacks_set_on_header_callback(ts->cbs, httpserverOnHeaderCallback);
+    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(ts->cbs, httpserverOnDataChunkRecvCallback);
+    nghttp2_session_callbacks_set_on_frame_recv_callback(ts->cbs, httpserverOnFrameRecvCallback);
+    nghttp2_session_callbacks_set_on_stream_close_callback(ts->cbs, httpserverOnStreamClosedCallback);
+
+    if (nghttp2_session_server_new3(&ls->session, ts->cbs, ls, ts->ngoptions, NULL) != 0)
+    {
+        LOGE("HttpServer: nghttp2_session_server_new3 failed");
+        return false;
+    }
+
+    nghttp2_settings_entry settings[] = {
+        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
+        {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
+        {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpServerHttp2FrameBytes},
+        {NGHTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL, ts->websocket_enabled ? 1U : 0U}
+    };
+
+    if (nghttp2_submit_settings(ls->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings)) != 0)
+    {
+        LOGE("HttpServer: nghttp2_submit_settings failed");
+        return false;
+    }
+
+    ls->runtime_proto = kHttpServerRuntimeHttp2;
+
+    if (ts->verbose)
+    {
+        LOGD("HttpServer: initialized HTTP/2 server session websocket=%s flush-outbound=%s",
+             ts->websocket_enabled ? "true" : "false", flush_outbound ? "true" : "false");
+    }
+
+    return flush_outbound ? sendNghttp2Outbound(t, l, ls) : true;
+}
+
 static bool validateWebSocketHttp2Request(const httpserver_tstate_t *ts, const httpserver_lstate_t *ls)
 {
     if (! ls->websocket_h2_method_seen || ! ls->websocket_h2_protocol_seen || ! ls->websocket_h2_path_seen ||
@@ -1123,6 +1394,12 @@ static int httpserverOnDataChunkRecvCallback(nghttp2_session *session, uint8_t f
         return 0;
     }
 
+    httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+    if (ts->verbose)
+    {
+        LOGD("HttpServer: received HTTP/2 DATA stream_id=%d payload_len=%zu flags=0x%02x", stream_id, len, flags);
+    }
+
     buffer_pool_t *pool      = lineGetBufferPool(ls->line);
     uint32_t       max_chunk = bufferpoolGetLargeBufferSize(pool);
     if (max_chunk == 0)
@@ -1138,7 +1415,6 @@ static int httpserverOnDataChunkRecvCallback(nghttp2_session *session, uint8_t f
         sbuf_t  *buf   = httpserverAllocBufferForLength(ls->line, chunk);
         sbufSetLength(buf, chunk);
         sbufWriteLarge(buf, ptr, chunk);
-        httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
         if (ts->websocket_enabled)
         {
             bufferstreamPush(&ls->in_stream, buf);
@@ -1181,6 +1457,11 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
         }
 
         httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+        if (ts->verbose)
+        {
+            LOGD("HttpServer: received HTTP/2 request headers stream_id=%d flags=0x%02x", frame->hd.stream_id,
+                 frame->hd.flags);
+        }
         if (ts->websocket_enabled)
         {
             ls->websocket_active = validateWebSocketHttp2Request(ts, ls);
@@ -1195,11 +1476,16 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
 
     if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM && frame->hd.stream_id == ls->h2_stream_id)
     {
+        httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+        if (ts->verbose)
+        {
+            LOGD("HttpServer: received HTTP/2 END_STREAM stream_id=%d websocket=%s full-duplex=%s",
+                 frame->hd.stream_id, ts->websocket_enabled ? "true" : "false", ts->full_duplex ? "true" : "false");
+        }
         if (! ls->h2_request_finished)
         {
             ls->h2_request_finished = true;
-            httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
-            if (! ts->websocket_enabled)
+            if (! ts->websocket_enabled && ! ts->full_duplex)
             {
                 contextqueuePush(&ls->events_up, contextCreateFin(ls->line));
             }
@@ -1226,7 +1512,7 @@ static int httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t st
     {
         ls->h2_request_finished = true;
         httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
-        if (! ts->websocket_enabled)
+        if (! ts->websocket_enabled && ! ts->full_duplex)
         {
             contextqueuePush(&ls->events_up, contextCreateFin(ls->line));
         }
@@ -1237,50 +1523,16 @@ static int httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t st
 
 bool httpserverTransportEnsureHttp2Session(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
-    if (ls->session != NULL)
-    {
-        ls->runtime_proto = kHttpServerRuntimeHttp2;
-        return true;
-    }
+    return httpserverTransportEnsureHttp2SessionInternal(t, l, ls, true);
+}
 
-    httpserver_tstate_t *ts = tunnelGetState(t);
-
-    nghttp2_session_callbacks_set_on_header_callback(ts->cbs, httpserverOnHeaderCallback);
-    nghttp2_session_callbacks_set_on_data_chunk_recv_callback(ts->cbs, httpserverOnDataChunkRecvCallback);
-    nghttp2_session_callbacks_set_on_frame_recv_callback(ts->cbs, httpserverOnFrameRecvCallback);
-    nghttp2_session_callbacks_set_on_stream_close_callback(ts->cbs, httpserverOnStreamClosedCallback);
-
-    if (nghttp2_session_server_new3(&ls->session, ts->cbs, ls, ts->ngoptions, NULL) != 0)
-    {
-        LOGE("HttpServer: nghttp2_session_server_new3 failed");
-        return false;
-    }
-
-    nghttp2_settings_entry settings[] = {
-        {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1},
-        {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, (1U << 20)},
-        {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, (uint32_t) kHttpServerHttp2FrameBytes},
-        {NGHTTP2_SETTINGS_ENABLE_CONNECT_PROTOCOL, ts->websocket_enabled ? 1U : 0U}
-    };
-
-    if (nghttp2_submit_settings(ls->session, NGHTTP2_FLAG_NONE, settings, ARRAY_SIZE(settings)) != 0)
-    {
-        LOGE("HttpServer: nghttp2_submit_settings failed");
-        return false;
-    }
-
-    ls->runtime_proto = kHttpServerRuntimeHttp2;
-
-    if (ts->verbose)
-    {
-        LOGD("HttpServer: initialized HTTP/2 server session websocket=%s", ts->websocket_enabled ? "true" : "false");
-    }
-
-    return sendNghttp2Outbound(t, l, ls);
+bool httpserverTransportPrepareHttp2Session(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    return httpserverTransportEnsureHttp2SessionInternal(t, l, ls, false);
 }
 
 static bool httpserverTransportApplyUpgradeSettingsAndOpenStream(tunnel_t *t, line_t *l, httpserver_lstate_t *ls,
-                                                                 const char *h2_settings_value)
+                                                                 const char *h2_settings_value, bool flush_outbound)
 {
     uint8_t settings_payload[256];
     size_t  settings_len = 0;
@@ -1297,7 +1549,7 @@ static bool httpserverTransportApplyUpgradeSettingsAndOpenStream(tunnel_t *t, li
         return false;
     }
 
-    if (! httpserverTransportEnsureHttp2Session(t, l, ls))
+    if (! httpserverTransportPrepareHttp2Session(t, l, ls))
     {
         return false;
     }
@@ -1311,7 +1563,7 @@ static bool httpserverTransportApplyUpgradeSettingsAndOpenStream(tunnel_t *t, li
     ls->h2_stream_id  = 1;
     ls->runtime_proto = kHttpServerRuntimeHttp2;
 
-    return sendNghttp2Outbound(t, l, ls);
+    return flush_outbound ? sendNghttp2Outbound(t, l, ls) : true;
 }
 
 bool httpserverTransportSubmitHttp2ResponseHeaders(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, bool end_stream)
@@ -1782,6 +2034,15 @@ bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lsta
                 return false;
             }
         }
+        else if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
+        {
+            tunnelPrevDownStreamPayload(t, l, buf);
+
+            if (! lineIsAlive(l))
+            {
+                return false;
+            }
+        }
         else if (ls->runtime_proto == kHttpServerRuntimeHttp2)
         {
             if (! ls->h2_response_headers_sent)
@@ -1819,6 +2080,29 @@ bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lsta
         {
             bufferqueuePushFront(&ls->pending_down, buf);
             return true;
+        }
+    }
+
+    return true;
+}
+
+bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    while (! bufferstreamIsEmpty(&ls->in_stream))
+    {
+        sbuf_t *buf = bufferstreamIdealRead(&ls->in_stream);
+
+        if (ls->next_finished)
+        {
+            lineReuseBuffer(l, buf);
+            continue;
+        }
+
+        tunnelNextUpStreamPayload(t, l, buf);
+
+        if (! lineIsAlive(l))
+        {
+            return false;
         }
     }
 
@@ -2009,17 +2293,18 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     httpserver_h1_request_info_t info;
     bool                         parsed_ok = parseHttp1RequestHeaders(header_text, &info);
 
-    memoryFree(header_text);
     lineReuseBuffer(l, header_buf);
 
     if (! parsed_ok)
     {
+        memoryFree(header_text);
         LOGE("HttpServer: invalid HTTP/1.1 request headers");
         return false;
     }
 
     if (info.transfer_chunked && info.has_content_length)
     {
+        memoryFree(header_text);
         LOGE("HttpServer: invalid HTTP/1.1 request (both Transfer-Encoding and Content-Length)");
         return false;
     }
@@ -2037,6 +2322,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
         if (! validateWebSocketHttp1Request(ts, &info))
         {
+            memoryFree(header_text);
             return false;
         }
 
@@ -2046,6 +2332,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
         if (! httpserverTransportSendHttp1WebSocketResponseHeaders(t, l, &info))
         {
+            memoryFree(header_text);
             return false;
         }
 
@@ -2053,14 +2340,17 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
         if (! httpserverTransportFlushPendingDown(t, l, ls))
         {
+            memoryFree(header_text);
             return false;
         }
 
+        memoryFree(header_text);
         return httpserverTransportDrainWebSocketUp(t, l, ls);
     }
 
     if (! validateHttp1Request(ts, &info))
     {
+        memoryFree(header_text);
         return false;
     }
 
@@ -2071,50 +2361,87 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
              info.has_content_length ? "true" : "false");
     }
 
-    if (ts->version_mode == kHttpServerVersionModeBoth && ts->enable_upgrade && info.connection_upgrade &&
-        info.connection_http2_settings && info.upgrade_h2c && info.has_http2_settings)
+    if (ts->version_mode == kHttpServerVersionModeBoth && ts->enable_upgrade && info.connection_upgrade)
     {
         bool request_has_body = info.transfer_chunked || (info.has_content_length && info.content_length > 0);
 
-        if (request_has_body)
+        if (httpserverUpgradeIsCustom(ts) && info.has_upgrade_header &&
+            httpserverStringCaseContainsToken(info.upgrade_value, httpserverUpgradeProtocol(ts)) &&
+            httpserverValidateRequiredHeaders(header_text, ts->upgrade_request_headers))
         {
-            LOGW("HttpServer: ignoring h2c upgrade request that carries an HTTP/1.1 request body");
+            if (request_has_body)
+            {
+                LOGW("HttpServer: ignoring upgrade request protocol=%s because the original HTTP/1.1 request carries a body",
+                     httpserverUpgradeProtocol(ts));
+            }
+            else
+            {
+                ls->runtime_proto     = kHttpServerRuntimeUpgradedRaw;
+                ls->h1_headers_parsed = true;
+
+                if (! httpserverTransportSendHttp1UpgradeResponseHeaders(t, l, httpserverUpgradeProtocol(ts)))
+                {
+                    memoryFree(header_text);
+                    return false;
+                }
+
+                memoryFree(header_text);
+
+                if (! httpserverTransportDrainRawUp(t, l, ls))
+                {
+                    return lineIsAlive(l) ? false : true;
+                }
+
+                if (! httpserverTransportFlushPendingDown(t, l, ls))
+                {
+                    return lineIsAlive(l) ? false : true;
+                }
+
+                return true;
+            }
         }
-        else
+
+        if (httpserverUpgradeIsH2C(ts) && info.connection_http2_settings && info.upgrade_h2c &&
+            info.has_http2_settings &&
+            httpserverValidateRequiredHeaders(header_text, ts->upgrade_request_headers))
         {
-            if (! sendTextDown(t, l, HTTP2_UPGRADE_RESPONSE))
+            if (request_has_body)
             {
-                return false;
+                LOGW("HttpServer: ignoring h2c upgrade request that carries an HTTP/1.1 request body");
             }
-
-            ls->h1_headers_parsed = true;
-            if (! httpserverTransportApplyUpgradeSettingsAndOpenStream(t, l, ls, info.http2_settings))
+            else
             {
-                return false;
-            }
+                ls->h1_headers_parsed = true;
+                if (! httpserverTransportApplyUpgradeSettingsAndOpenStream(t, l, ls, info.http2_settings, false))
+                {
+                    memoryFree(header_text);
+                    return false;
+                }
 
-            while (! bufferstreamIsEmpty(&ls->in_stream))
-            {
-                sbuf_t *leftover = bufferstreamIdealRead(&ls->in_stream);
-                if (! httpserverTransportFeedHttp2Input(t, l, ls, leftover))
+                if (! httpserverTransportSendHttp1UpgradeResponseHeaders(t, l, "h2c"))
+                {
+                    memoryFree(header_text);
+                    return false;
+                }
+
+                memoryFree(header_text);
+
+                if (! sendNghttp2Outbound(t, l, ls))
                 {
                     return false;
                 }
-            }
 
-            if (! ls->next_finished)
-            {
-                ls->next_finished       = true;
-                ls->h2_request_finished = true;
-                tunnelNextUpStreamFinish(t, l);
-            }
+                while (! bufferstreamIsEmpty(&ls->in_stream))
+                {
+                    sbuf_t *leftover = bufferstreamIdealRead(&ls->in_stream);
+                    if (! httpserverTransportFeedHttp2Input(t, l, ls, leftover))
+                    {
+                        return false;
+                    }
+                }
 
-            if (! lineIsAlive(l))
-            {
-                return true;
+                return httpserverTransportFlushPendingDown(t, l, ls);
             }
-
-            return httpserverTransportFlushPendingDown(t, l, ls);
         }
     }
 
@@ -2131,26 +2458,32 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     {
         ls->h1_body_mode      = kHttpServerH1BodyContentLen;
         ls->h1_body_remaining = info.content_length;
-        if (ls->h1_body_remaining == 0 && ! ls->next_finished)
+        if (ls->h1_body_remaining == 0)
         {
-            ls->next_finished       = true;
             ls->h1_request_finished = true;
-            tunnelNextUpStreamFinish(t, l);
-            return true;
+            if (! ts->full_duplex && ! ls->next_finished)
+            {
+                ls->next_finished = true;
+                memoryFree(header_text);
+                tunnelNextUpStreamFinish(t, l);
+                return true;
+            }
         }
     }
     else
     {
         ls->h1_body_mode = kHttpServerH1BodyNone;
-        if (! ls->next_finished)
+        ls->h1_request_finished = true;
+        if (! ts->full_duplex && ! ls->next_finished)
         {
-            ls->next_finished       = true;
-            ls->h1_request_finished = true;
+            ls->next_finished = true;
+            memoryFree(header_text);
             tunnelNextUpStreamFinish(t, l);
             return true;
         }
     }
 
+    memoryFree(header_text);
     return httpserverTransportFlushPendingDown(t, l, ls);
 }
 
@@ -2195,6 +2528,8 @@ static bool parseChunkSizeLine(sbuf_t *line_buf, uint64_t *chunk_len)
 
 bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
+    httpserver_tstate_t *ts = tunnelGetState(t);
+
     while (true)
     {
         if (ls->h1_chunk_expected < 0)
@@ -2237,9 +2572,12 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
                     {
                         if (! ls->next_finished)
                         {
-                            ls->next_finished       = true;
                             ls->h1_request_finished = true;
-                            tunnelNextUpStreamFinish(t, l);
+                            if (! ts->full_duplex)
+                            {
+                                ls->next_finished = true;
+                                tunnelNextUpStreamFinish(t, l);
+                            }
                         }
 
                         return true;
@@ -2288,6 +2626,8 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
 
 bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
+    httpserver_tstate_t *ts = tunnelGetState(t);
+
     if (ls->h1_body_mode == kHttpServerH1BodyNone || ls->next_finished)
     {
         return true;
@@ -2320,9 +2660,12 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
 
     if (ls->h1_body_remaining == 0 && ! ls->next_finished)
     {
-        ls->next_finished       = true;
         ls->h1_request_finished = true;
-        tunnelNextUpStreamFinish(t, l);
+        if (! ts->full_duplex)
+        {
+            ls->next_finished = true;
+            tunnelNextUpStreamFinish(t, l);
+        }
         return true;
     }
 

@@ -44,7 +44,7 @@ void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->version_mode == kHttpServerVersionModeHttp2)
     {
-        if (! httpserverTransportEnsureHttp2Session(t, l, ls))
+        if (! httpserverTransportPrepareHttp2Session(t, l, ls))
         {
             closeOrDestroyLine(t, l, ls);
         }

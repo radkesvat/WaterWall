@@ -1,0 +1,84 @@
+{
+  "name": "http-upgrade-custom-bidirectional-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "raw.example.test",
+        "path": "/ww/raw-upgrade",
+        "scheme": "http",
+        "port": 41105,
+        "method": "POST",
+        "http-version": "both",
+        "upgrade": true,
+        "upgrade-protocol": "waterwall-raw-test",
+        "full-duplex": true,
+        "upgrade-request-headers": {
+          "x-raw-upgrade": "allow"
+        },
+        "upgrade-response-headers": {
+          "x-raw-accepted": "yes"
+        }
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41105,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41105,
+        "nodelay": true
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "both",
+        "upgrade": true,
+        "upgrade-protocol": "waterwall-raw-test",
+        "host": "raw.example.test",
+        "path": "/ww/raw-upgrade",
+        "method": "POST",
+        "status": 200,
+        "full-duplex": true,
+        "upgrade-request-headers": {
+          "x-raw-upgrade": "allow"
+        },
+        "upgrade-response-headers": {
+          "x-raw-accepted": "yes"
+        }
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}
