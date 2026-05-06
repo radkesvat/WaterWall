@@ -859,10 +859,10 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         }
     }
 
-    bool appended_tail = false;
-    if (sbufGetMaximumWriteableSize(payload) >= 2)
+    bool     appended_tail = false;
+    uint32_t old_len       = sbufGetLength(payload);
+    if (sbufGetMaximumWriteableSize(payload) >= old_len + 2)
     {
-        uint32_t old_len = sbufGetLength(payload);
         sbufSetLength(payload, old_len + 2);
         memoryCopy((uint8_t *) sbufGetMutablePtr(payload) + old_len, "\r\n", 2);
         appended_tail = true;
