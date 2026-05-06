@@ -229,6 +229,7 @@ tunnel_t *tunnelCreate(node_t *node, uint32_t tstate_size, uint32_t lstate_size)
                               .onIndex     = &tunnelDefaultOnIndex,
                               .onPrepare   = &tunnelDefaultOnPrepare,
                               .onStart     = &tunnelDefaultOnStart,
+                              .onDestroy   = &tunnelDestroy,
                               .tstate_size = tstate_size,
                               .lstate_size = lstate_size,
                               .node        = node};

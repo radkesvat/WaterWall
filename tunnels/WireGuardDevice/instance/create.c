@@ -88,11 +88,16 @@ static bool decodeAndInitializeDevice(wireguard_device_t *device, const char *pr
 static tunnel_t *createBaseTunnel(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(wgd_tstate_t), 0);
+    if (t == NULL)
+    {
+        return NULL;
+    }
 
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
     t->onPrepare = &wireguarddeviceTunnelOnPrepair;
     t->onStart   = &wireguarddeviceTunnelOnStart;
+    t->onDestroy = &wireguarddeviceTunnelDestroy;
 
     wgd_tstate_t *state = tunnelGetState(t);
     state->tunnel = t;
@@ -407,6 +412,11 @@ static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_ini
 tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
 {
     tunnel_t *t = createBaseTunnel(node);
+    if (t == NULL)
+    {
+        return NULL;
+    }
+
     wgd_tstate_t *state = tunnelGetState(t);
     char *device_private_key = NULL;
 
@@ -415,13 +425,13 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     if (!checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: WireGuardDevice->settings (object field) : The object was empty or invalid");
-        return NULL;
+        goto fail;
     }
 
     if (!getStringFromJsonObject(&device_private_key, node->node_settings_json, "privatekey"))
     {
         LOGF("JSON Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
-        return NULL;
+        goto fail;
     }
 
     wireguard_device_init_data_t device_configuration = {0};
@@ -435,13 +445,17 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     
     if (!validatePeersArray(peers_array))
     {
-        return NULL;
+        goto fail;
     }
 
     if (!processAllPeers(peers_array, device))
     {
-        return NULL;
+        goto fail;
     }
 
     return t;
+
+fail:
+    wireguarddeviceTunnelDestroy(t);
+    return NULL;
 }
