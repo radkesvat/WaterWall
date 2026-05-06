@@ -104,7 +104,7 @@ void lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
 
     *msg = (line_task_msg_no_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = NULL};
 
-    sendWorkerMessageForceQueue(lineGetWID(line), (WorkerMessageCalback) lineRunScheduledtaskNoBuf, line, (void *) msg,
+    sendWorkerMessageForceQueue(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, line, (void *) msg,
                                 NULL);
 }
 
@@ -125,7 +125,7 @@ void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
 
     *msg = (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
 
-    sendWorkerMessageForceQueue(lineGetWID(line), (WorkerMessageCalback) lineRunScheduledtaskWithBuf, line,
+    sendWorkerMessageForceQueue(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, line,
                                 (void *) msg, NULL);
 }
 
@@ -146,7 +146,7 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
 
     *msg = (line_task_msg_no_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = NULL};
 
-    sendWorkerMessageTimed(lineGetWID(line), (WorkerMessageCalback) lineRunScheduledtaskNoBuf, delay_ms, line,(void *) msg,
+    sendWorkerMessageTimed(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, delay_ms, line,(void *) msg,
                            NULL);
 }
 
@@ -168,6 +168,6 @@ void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
 
     *msg = (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
 
-    sendWorkerMessageTimed(lineGetWID(line), (WorkerMessageCalback) lineRunScheduledtaskWithBuf, delay_ms, line,
+    sendWorkerMessageTimed(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, delay_ms, line,
                            (void *) msg, NULL);
 }

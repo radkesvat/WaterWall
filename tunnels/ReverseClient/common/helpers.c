@@ -55,7 +55,7 @@ void reverseclientInitiateConnectOnWorker(tunnel_t *t, wid_t wid, bool delay)
     }
     ts->threadlocal_pool[wid].connecting_cons_count += 1;
 
-    sendWorkerMessageForceQueue(wid, (WorkerMessageCalback) reverseclientBeginConnectMessageReceived, t, NULL, NULL);
+    sendWorkerMessageForceQueue(wid, (WorkerMessageCallback) reverseclientBeginConnectMessageReceived, t, NULL, NULL);
 }
 
 void reverseclientOnStarvedConnectionExpire(idle_item_t *idle_con)

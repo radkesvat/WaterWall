@@ -109,14 +109,14 @@ static void ipmanipulatorRecycleCapturedPacketOnWorker(worker_t *worker, void *a
 static void ipmanipulatorScheduleCapturedPacketNormal(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     lineLock(l);
-    sendWorkerMessageForceQueue(lineGetWID(l), (WorkerMessageCalback) ipmanipulatorReplayCapturedPacketOnWorker, t, l,
+    sendWorkerMessageForceQueue(lineGetWID(l), (WorkerMessageCallback) ipmanipulatorReplayCapturedPacketOnWorker, t, l,
                                 buf);
 }
 
 static void ipmanipulatorScheduleCapturedPacketReuse(line_t *l, sbuf_t *buf)
 {
     lineLock(l);
-    sendWorkerMessageForceQueue(lineGetWID(l), (WorkerMessageCalback) ipmanipulatorRecycleCapturedPacketOnWorker, l,
+    sendWorkerMessageForceQueue(lineGetWID(l), (WorkerMessageCallback) ipmanipulatorRecycleCapturedPacketOnWorker, l,
                                 buf, NULL);
 }
 
@@ -184,7 +184,7 @@ static void ipmanipulatorSchedulePrestartTimeout(tunnel_t *t, uint32_t slot_inde
         .generation  = generation,
     };
 
-    sendWorkerMessageTimed(getWID(), (WorkerMessageCalback) ipmanipulatorReleasePendingPrestartOnWorker,
+    sendWorkerMessageTimed(getWID(), (WorkerMessageCallback) ipmanipulatorReleasePendingPrestartOnWorker,
                            kIpManipulatorTlsPrestartTimeoutMs, t, msg, NULL);
 }
 

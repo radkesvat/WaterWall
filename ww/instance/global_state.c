@@ -331,7 +331,7 @@ void createGlobalState(const ww_construction_data_t init_data)
  * @param arg2 The second argument.
  * @param arg3 The third argument.
  */
-void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3)
+void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3)
 {
 
     if (getWID() == wid)
@@ -344,7 +344,7 @@ void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg
     sendWorkerMessageForceQueue(wid, cb, arg1, arg2, arg3);
 }
 
-void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3)
+void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3)
 {
     worker_msg_t *msg;
 
@@ -367,7 +367,7 @@ static void runTimedTask(wtimer_t *timer)
 {
     worker_msg_t *msg = weventGetUserdata(timer);
 
-    WorkerMessageCalback cb = msg->callback;
+    WorkerMessageCallback cb = msg->callback;
     cb(getWorker(getWID()), msg->arg1, msg->arg2, msg->arg3);
 
     masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
@@ -385,7 +385,7 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
     if (UNLIKELY(k_timer == NULL))
     {
         // fallback to immediate execution if timer creation fails
-        WorkerMessageCalback cb = msg->callback;
+        WorkerMessageCallback cb = msg->callback;
         cb(worker, msg->arg1, msg->arg2, msg->arg3);
         masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
         return;
@@ -394,7 +394,7 @@ static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
     weventSetUserData(k_timer, msg);
 }
 
-void sendWorkerMessageTimed(wid_t wid, WorkerMessageCalback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
+void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
 {
 
     assert(wid < getWorkersCount());
@@ -423,7 +423,7 @@ void sendWorkerMessageTimed(wid_t wid, WorkerMessageCalback cb, uint32_t delay_m
     worker_msg_t *queue_msg;
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(queue_msg), 1, NULL);
     *queue_msg = (worker_msg_t) {
-        .callback = (WorkerMessageCalback) setupTimedTask, .arg1 = (void *) delay_ms_uiptr, .arg2 = msg, .arg3 = NULL};
+        .callback = (WorkerMessageCallback) setupTimedTask, .arg1 = (void *) delay_ms_uiptr, .arg2 = msg, .arg3 = NULL};
 
     wevent_t ev;
     memorySet(&ev, 0, sizeof(ev));

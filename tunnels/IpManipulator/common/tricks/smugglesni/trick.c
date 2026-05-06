@@ -357,7 +357,7 @@ static void smugglesnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *bu
     }
 
     lineLock(l);
-    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCalback) smugglesnitrickRunDelayedNormal, delay_ms, t, l, buf);
+    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCallback) smugglesnitrickRunDelayedNormal, delay_ms, t, l, buf);
 }
 
 static sbuf_t *smugglesnitrickAllocateRequestBuffer(uint32_t len)

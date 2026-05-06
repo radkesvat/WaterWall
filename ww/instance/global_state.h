@@ -25,11 +25,11 @@ typedef struct
 } logger_construction_data_t;
 
 typedef err_t (*LwipV4Hook)(struct pbuf *, struct netif *);
-typedef void (*WorkerMessageCalback)(void *, void *, void *, void *);
+typedef void (*WorkerMessageCallback)(void *, void *, void *, void *);
 
 typedef struct worker_msg_s
 {
-    WorkerMessageCalback callback;
+    WorkerMessageCallback callback;
     void                *arg1;
     void                *arg2;
     void                *arg3;
@@ -212,13 +212,13 @@ static inline wid_t getNextDistributionWID(void)
  * @param arg2 The second argument.
  * @param arg3 The third argument.
  */
-void sendWorkerMessage(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3);
+void sendWorkerMessage(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3);
 
 // same as above but dose not do a dircet call if the wid is the same as the current worker
-void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCalback cb, void *arg1, void *arg2, void *arg3);
+void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCallback cb, void *arg1, void *arg2, void *arg3);
 
 // same as above but with a delay in ms, this is useful for waiting some time before executing the task
-void sendWorkerMessageTimed(wid_t wid, WorkerMessageCalback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
+void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3);
 
 /*!
  * @brief Runs the main thread.

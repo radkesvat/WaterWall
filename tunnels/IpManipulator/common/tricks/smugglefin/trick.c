@@ -438,7 +438,7 @@ static void smugglefintrickScheduleQueuedRelease(tunnel_t *t, line_t *l, uint32_
     }
 
     lineLock(l);
-    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCalback) smugglefintrickRunDelayedRelease, delay_ms, t, l,
+    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCallback) smugglefintrickRunDelayedRelease, delay_ms, t, l,
                            NULL);
 }
 

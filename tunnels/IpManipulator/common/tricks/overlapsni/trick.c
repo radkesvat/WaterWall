@@ -856,7 +856,7 @@ static bool overlapsnitrickScheduleNormalSend(tunnel_t *t, line_t *l, sbuf_t *bu
     }
 
     lineLock(l);
-    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCalback) overlapsnitrickRunDelayedNormal, delay_ms, t, l, buf);
+    sendWorkerMessageTimed(lineGetWID(l), (WorkerMessageCallback) overlapsnitrickRunDelayedNormal, delay_ms, t, l, buf);
     return lineIsAlive(l);
 }
 

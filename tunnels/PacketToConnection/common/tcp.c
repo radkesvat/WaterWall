@@ -68,7 +68,7 @@ void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 
     atomicInc(&lstate->messages);
 
-    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCalback) localThreadSendFin, lstate, NULL, NULL);
+    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCallback) localThreadSendFin, lstate, NULL, NULL);
 }
 
 static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
@@ -172,7 +172,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
 
     atomicInc(&lstate->messages);
 
-    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCalback) localThreadPtcTcpRecvCallback, lstate, buf, NULL);
+    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCallback) localThreadPtcTcpRecvCallback, lstate, buf, NULL);
 
     // bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoad(&lstate->messages) == 0);
     // lstate->stack_owned_locked = doing_direct_stack;
@@ -257,7 +257,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
 
     atomicInc(&lstate->messages);
     // i think its better to offload it right away, direct calling will hold the tcpip stack for longer time
-    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCalback) localThreadPtcAcceptCallBack, lstate, NULL, NULL);
+    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCallback) localThreadPtcAcceptCallBack, lstate, NULL, NULL);
 
     // bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoad(&lstate->messages) == 0);
     // lstate->stack_owned_locked = doing_direct_stack;
