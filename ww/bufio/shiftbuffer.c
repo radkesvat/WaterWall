@@ -116,13 +116,14 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 
 sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_t bytes)
 {
+    uint32_t dest_length = sbufGetLength(dest);
+
     assert(bytes <= sbufGetLength(source));
-    assert(bytes <= sbufGetMaximumWriteableSize(dest));
+    assert(dest_length <= UINT32_MAX - bytes);
+    assert(dest_length + bytes <= sbufGetMaximumWriteableSize(dest));
 
-    // dest = sbufReserveSpace(dest, bytes);
-
-    sbufWriteBuf(dest, source, bytes);
-    sbufSetLength(dest, sbufGetLength(dest) + bytes);
+    memoryCopyLarge(sbufGetMutablePtr(dest) + dest_length, sbufGetRawPtr(source), bytes);
+    sbufSetLength(dest, dest_length + bytes);
 
     sbufShiftRight(source, bytes);
 

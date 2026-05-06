@@ -175,7 +175,11 @@ static inline uint32_t sbufGetLeftCapacityNoPadding(const sbuf_t *const b)
 }
 
 /**
- *  Get maximum writeable size of the buffer 
+ * Gets the maximum total payload length that can be addressed from the current cursor.
+ *
+ * Important: this is not the spare growth available beyond the current payload length.
+ * If you want to append `extra` bytes without moving `curpos`, compare against
+ * `sbufGetLength(b) + extra` (or subtract the current length first).
  */
 static inline uint32_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
 {
