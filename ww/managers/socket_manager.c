@@ -986,7 +986,7 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
     char peeraddrstr[SOCKADDR_STRLEN]  = {0};
     LOGE("SocketManager: could not find consumer for Udp socket  [%s] <= [%s]",
          SOCKADDR_STR(wioGetLocaladdrU(upl.sock->io), localaddrstr),
-         SOCKADDR_STR(wioGetPeerAddrU(upl.sock->io), peeraddrstr));
+         SOCKADDR_STR((sockaddr_u *) &upl.peer_addr, peeraddrstr));
 }
 
 /**
@@ -1059,7 +1059,7 @@ static bool handleUdpBalancedFilter(socket_filter_t *filter, const socket_filter
     if (! *src_hashed)
     {
         ip_addr_t paddr;
-        sockaddrToIpAddr(wioGetPeerAddrU(pl.sock->io), &paddr);
+        sockaddrToIpAddr((sockaddr_u *) &pl.peer_addr, &paddr);
         *src_hash   = ipaddrCalcHashNoPort(paddr);
         *src_hashed = true;
     }
@@ -1112,7 +1112,8 @@ static void finalizeUdpDistribution(socket_filter_t **balance_selection_filters,
 static void distributeUdpPayload(const udp_payload_t pl)
 {
     ip_addr_t paddr;
-    sockaddrToIpAddr(wioGetPeerAddrU(pl.sock->io), &paddr);
+    // Use the per-packet snapshot: the shared listener socket peer address can change before worker dispatch runs.
+    sockaddrToIpAddr((sockaddr_u *) &pl.peer_addr, &paddr);
 
     uint16_t local_port = pl.real_localport;
 

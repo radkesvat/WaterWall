@@ -3,18 +3,15 @@
 #include "loggers/network_logger.h"
 
 void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_t *t, udpsock_t *uio,
-                                    uint16_t real_localport)
+                                    uint16_t real_localport, const sockaddr_u *peer_addr)
 {
+    assert(peer_addr != NULL);
 
-    addresscontextFromSockAddrWithProtocol(&(l->routing_context.src_ctx), (sockaddr_u *) wioGetPeerAddr(uio->io),
-                                           IP_PROTO_UDP);
+    addresscontextFromSockAddrWithProtocol(&(l->routing_context.src_ctx), peer_addr, IP_PROTO_UDP);
     l->routing_context.local_listener_port = real_localport;
 
-    // sockaddrToIpAddr((const sockaddr_u *) wioGetPeerAddr(uio->io), &(l->routing_context.src_ctx.ip_address));
-    // addresscontextSetPort(&(l->routing_context.src_ctx), real_localport);
-
     *ls = (udplistener_lstate_t) {
-        .line = l, .uio = uio, .tunnel = t, .read_paused = false, .peer_addr = *(sockaddr_u *) wioGetPeerAddr(uio->io)};
+        .line = l, .uio = uio, .tunnel = t, .read_paused = false, .peer_addr = *peer_addr};
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
@@ -26,7 +23,7 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
         LOGD("UdpListener: Accepted FD:%x  [%s] <= [%s]", wioGetFD(uio->io), SOCKADDR_STR(&log_localaddr, localaddrstr),
-             SOCKADDR_STR(wioGetPeerAddr(uio->io), peeraddrstr));
+             SOCKADDR_STR((sockaddr_u *) peer_addr, peeraddrstr));
     }
 }
 

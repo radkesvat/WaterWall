@@ -1,0 +1,50 @@
+{
+  "name": "udp-listener-packet-bridge-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "packet-start-immediately": true,
+        "packet-start-delay-ms": 100
+      },
+      "next": "packets-to-stream"
+    },
+    {
+      "name": "packets-to-stream",
+      "type": "PacketsToStream",
+      "next": "udp-connector"
+    },
+    {
+      "name": "udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42141,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42141
+      },
+      "next": "stream-to-packets"
+    },
+    {
+      "name": "stream-to-packets",
+      "type": "StreamToPackets",
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true
+      }
+    }
+  ]
+}

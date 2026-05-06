@@ -28,7 +28,8 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     sbuf_t       *buf            = data->buf;
     uint16_t      real_localport = data->real_localport;
 
-    hash_t peeraddr_hash = sockaddrCalcHashWithPort((sockaddr_u *) wioGetPeerAddr(sock->io));
+    // Hash the packet snapshot, not the shared socket's mutable peer address.
+    hash_t peeraddr_hash = sockaddrCalcHashWithPort(&data->peer_addr);
 
     idle_item_t *idle = idletableGetIdleItemByHash(wid, table, peeraddr_hash);
     // if idle is NULL, it means this is the first packet from this peer, so we need to create a new connection
@@ -48,7 +49,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
 
         udplistener_lstate_t *ls = lineGetState(l, t);
 
-        udplistenerLinestateInitialize(ls, l, t, sock, real_localport);
+        udplistenerLinestateInitialize(ls, l, t, sock, real_localport, &data->peer_addr);
 
         if (! withLineLocked(l, tunnelNextUpStreamInit, t))
         {

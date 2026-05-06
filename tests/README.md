@@ -61,6 +61,9 @@ Practical rule:
 - `packets_stream_bridge_roundtrip`
   Verifies that `PacketsToStream` and `StreamToPackets` preserve packet boundaries and payload integrity across their
   worker-packet-line to stream-line bridge.
+- `udp_listener_packet_bridge_roundtrip`
+  Verifies that `PacketsToStream -> UdpConnector -> UdpListener -> StreamToPackets` preserves packet integrity across
+  a real UDP loopback transport while multiple workers create independent UDP peers against one shared listener socket.
 - `halfduplex_roundtrip`
   Verifies that `HalfDuplexClient` and `HalfDuplexServer` split and reconstruct one logical line correctly.
 - `mux_counter_roundtrip`
