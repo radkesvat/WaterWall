@@ -10,13 +10,13 @@ function(add_waterwall_integration_test test_name case_name)
       "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
       "$<TARGET_FILE:Waterwall>"
       "${case_dir}"
-      "90"
+      "15"
   )
 
   set_tests_properties(
     ${test_name}
     PROPERTIES
-      TIMEOUT 600
+      TIMEOUT 120
       LABELS "integration;tunnels"
   )
 endfunction()
