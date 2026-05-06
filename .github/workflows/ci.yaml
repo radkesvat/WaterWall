@@ -331,7 +331,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ matrix.msys }}
-          update: true
+          update: false
           pacboy: >-
             ccache:p
             cmake:p
