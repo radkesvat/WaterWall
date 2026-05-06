@@ -10,7 +10,7 @@ function(add_waterwall_integration_test test_name case_name)
       "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
       "$<TARGET_FILE:Waterwall>"
       "${case_dir}"
-      "30"
+      "90"
   )
 
   set_tests_properties(
