@@ -25,6 +25,7 @@ typedef struct
 } logger_construction_data_t;
 
 typedef err_t (*LwipV4Hook)(struct pbuf *, struct netif *);
+//real:                               worker*, void* arg1, void* arg2, void* arg3
 typedef void (*WorkerMessageCallback)(void *, void *, void *, void *);
 
 typedef struct worker_msg_s
