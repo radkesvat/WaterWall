@@ -145,7 +145,7 @@ important for validating full-duplex transports such as the HTTP cases above.
 
 ```sh
 cmake --preset linux-gcc-x64
-cmake --build --preset linux-gcc-x64 --target Waterwall test
+cmake --build --preset linux-gcc-x64 --target Waterwall
 ctest --preset linux-gcc -C Release --output-on-failure
 ```
 
@@ -155,6 +155,10 @@ Important:
 - run commands from the repo root
 - `ctest --preset linux-gcc` always reads the `build/linux-gcc-x64` tree, so if your IDE or CMake menu is building a
   different preset or build directory you may be testing a different binary than the one your menu just ran
+- do not combine `Waterwall` and `test` in one `cmake --build ... --target ...` command with Ninja.
+  Build `Waterwall` first, then run `ctest` separately.
+  When both targets are requested together, Ninja may start the `test` target while the `Waterwall` executable is still
+  being linked, which can produce misleading failures such as `Permission denied` against the binary path
 
 ## What `run_waterwall_case.sh` does
 
@@ -263,7 +267,7 @@ Typical loop for editing one case:
 
 ```sh
 cmake --preset linux-gcc-x64
-cmake --build --preset linux-gcc-x64 --target Waterwall test
+cmake --build --preset linux-gcc-x64 --target Waterwall
 ctest --preset linux-gcc -C Release --output-on-failure -R '^waterwall\.disturber_passthrough$'
 ```
 

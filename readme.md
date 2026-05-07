@@ -33,7 +33,7 @@ If you're familiar with network protocol structures:
 You can build **WaterWall** on a fresh Ubuntu (or most Debian-based) VPS with just two commands:
 
 ```bash
-apt purge cmake -y || apt-get update && apt-get install -y snapd build-essential ninja-build ccache && snap install cmake --classic
+apt-get purge -y cmake; apt-get update; apt-get install -y snapd build-essential ninja-build ccache; snap install cmake --classic
 ```
 
 ```bash
