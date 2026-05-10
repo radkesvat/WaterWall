@@ -143,15 +143,17 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     udpconnectorLinestateInitialize(ls, t, l, io);
     ls->peer_addr = addr;
 
-    ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
-                                          udpconnectorOnIdleConnectionExpire, lineGetWID(l), kUdpInitExpireTime);
-
-    while (ls->idle_handle == NULL)
+    ls->idle_handle =
+        idletableCreateItem(ts->idle_table, udpconnectorIdleKey(io), ls, udpconnectorOnIdleConnectionExpire,
+                            lineGetWID(l), kUdpInitExpireTime);
+    if (UNLIKELY(ls->idle_handle == NULL))
     {
-        // a very rare case where the socket FD from another thread is still present in the idle table
-        cycleDelay(100);
-        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
-                                              udpconnectorOnIdleConnectionExpire, lineGetWID(l), kUdpInitExpireTime);
+        LOGE("UdpConnector: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));
+        weventSetUserData(io, NULL);
+        udpconnectorLinestateDestroy(ls);
+        wioClose(io);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
     }
 
     wioSetCallBackClose(io, udpconnectorOnClose);

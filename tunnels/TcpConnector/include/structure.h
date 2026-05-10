@@ -45,6 +45,11 @@ enum
     kPauseQueueCapacity = 2
 };
 
+static inline hash_t tcpconnectorIdleKey(const wio_t *io)
+{
+    return (hash_t) wioGetID((wio_t *) io);
+}
+
 typedef enum tcpconnector_strategy
 {
     kTcpConnectorStrategyRandom = 0,

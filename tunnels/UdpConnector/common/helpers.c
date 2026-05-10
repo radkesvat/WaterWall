@@ -84,7 +84,7 @@ void udpconnectorOnClose(wio_t *io)
 
         udpconnector_tstate_t *ts = tunnelGetState(ls->tunnel);
 
-        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(io));
+        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, udpconnectorIdleKey(io));
         if (! removed)
         {
             LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(io));

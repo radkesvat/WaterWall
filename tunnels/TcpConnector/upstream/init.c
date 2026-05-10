@@ -119,15 +119,16 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->io = io;
     weventSetUserData(io, ls);
 
-    ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
-                                  lineGetWID(l), kReadWriteTimeoutMs);
-
-    while (ls->idle_handle == NULL)
+    ls->idle_handle = idletableCreateItem(ts->idle_table, tcpconnectorIdleKey(io), ls,
+                                          tcpconnectorOnIdleConnectionExpire, lineGetWID(l), kReadWriteTimeoutMs);
+    if (UNLIKELY(ls->idle_handle == NULL))
     {
-        // a very rare case where the socket FD from another thread is still present in the idle table
-        cycleDelay(100);
-        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls, tcpconnectorOnIdleConnectionExpire,
-                                      lineGetWID(l), kReadWriteTimeoutMs);
+        LOGE("TcpConnector: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));
+        weventSetUserData(io, NULL);
+        wioClose(io);
+        tcpconnectorLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
     }
 
     wioSetCallBackConnect(io, tcpconnectorOnOutBoundConnected);

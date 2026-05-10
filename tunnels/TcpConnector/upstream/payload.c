@@ -7,7 +7,7 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcpconnector_tstate_t *t
     LOGE("TcpConnector: Upstream write queue overflow, size: %d , limit: %d", 
          bufferqueueGetBufLen(&ls->pause_queue), kMaxPauseQueueSize);
 
-    bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(ls->io));
+    bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcpconnectorIdleKey(ls->io));
     if (!removed)
     {
         LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));

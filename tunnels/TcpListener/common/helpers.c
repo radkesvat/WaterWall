@@ -31,7 +31,7 @@ static void onClose(wio_t *io)
         tcplistener_tstate_t *ts = tunnelGetState(t);
 
         weventSetUserData(ls->io, NULL);
-        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, wioGetFD(io));
+        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcplistenerIdleKey(io));
         if (! removed)
         {
             LOGF("TcpListener: failed to remove idle item for FD:%x ", wioGetFD(io));
@@ -91,14 +91,16 @@ void tcplistenerOnInboundConnected(wevent_t *ev)
     wioSetCallBackClose(io, onClose);
     // wioSetReadTimeout(io, 1600 * 1000);
 
-    ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
+    ls->idle_handle = idletableCreateItem(ts->idle_table, tcplistenerIdleKey(io), ls,
                                           tcplistenerOnIdleConnectionExpire, wid, kDefaultKeepAliveTimeOutMs);
-    while (ls->idle_handle == NULL)
+    if (UNLIKELY(ls->idle_handle == NULL))
     {
-        // a very rare case where the socket FD from another thread is still present in the idle table
-        cycleDelay(100);
-        ls->idle_handle = idletableCreateItem(ts->idle_table, (hash_t) (wioGetFD(io)), ls,
-                                              tcplistenerOnIdleConnectionExpire, wid, kDefaultKeepAliveTimeOutMs);
+        LOGE("TcpListener: failed to register idle item for io id:%u FD:%x", wioGetID(io), wioGetFD(io));
+        weventSetUserData(io, NULL);
+        wioClose(io);
+        tcplistenerLinestateDestroy(ls);
+        lineDestroy(l);
+        return;
     }
 
     // send the init packet

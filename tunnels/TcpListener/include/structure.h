@@ -43,6 +43,11 @@ enum
     kPauseQueueCapacity = 2
 };
 
+static inline hash_t tcplistenerIdleKey(const wio_t *io)
+{
+    return (hash_t) wioGetID((wio_t *) io);
+}
+
 WW_EXPORT void         tcplistenerTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *tcplistenerTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcplistenerTunnelApi(tunnel_t *instance, sbuf_t *message);

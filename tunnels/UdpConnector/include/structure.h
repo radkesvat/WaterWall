@@ -44,6 +44,11 @@ enum
     kUdpKeepExpireTime = 300 * 1000
 };
 
+static inline hash_t udpconnectorIdleKey(const wio_t *io)
+{
+    return (hash_t) wioGetID((wio_t *) io);
+}
+
 WW_EXPORT void         udpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *udpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
