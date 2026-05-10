@@ -29,6 +29,12 @@
 // Global instance of the ww_global_state_t structure.
 ww_global_state_t global_ww_state = {0};
 
+typedef struct timed_worker_msg_s
+{
+    worker_msg_t base;
+    uint64_t     deadline_us;
+} timed_worker_msg_t;
+
 // --- Static helper functions ---
 
 static err_t wwDefaultInternalLwipIpv4Hook(struct pbuf *p, struct netif *inp)
@@ -42,7 +48,7 @@ static pool_item_t *allocWorkerMessage(master_pool_t *pool, void *userdata)
 {
     discard userdata;
     discard pool;
-    return memoryAllocate(sizeof(worker_msg_t));
+    return memoryAllocate(sizeof(timed_worker_msg_t));
 }
 
 static void destroyWorkerMessage(master_pool_t *pool, master_pool_item_t *item, void *userdata)
@@ -365,33 +371,52 @@ void sendWorkerMessageForceQueue(wid_t wid, WorkerMessageCallback cb, void *arg1
 
 static void runTimedTask(wtimer_t *timer)
 {
-    worker_msg_t *msg = weventGetUserdata(timer);
+    timed_worker_msg_t *timed_msg = weventGetUserdata(timer);
+    wloop_t            *loop      = weventGetLoop(timer);
+    const uint64_t      now_us    = wloopNowUS(loop);
 
-    WorkerMessageCallback cb = msg->callback;
-    cb(getWorker(getWID()), msg->arg1, msg->arg2, msg->arg3);
+    if (now_us < timed_msg->deadline_us)
+    {
+        const uint64_t remaining_us = timed_msg->deadline_us - now_us;
+        uint32_t       remaining_ms =
+            (remaining_us > ((uint64_t) UINT32_MAX * 1000ULL)) ? UINT32_MAX : (uint32_t) ((remaining_us + 999ULL) / 1000ULL);
 
-    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
+        if (remaining_ms == 0)
+        {
+            remaining_ms = 1;
+        }
+
+        // Some timeout buckets are rounded early, so do not release delayed work before its true deadline.
+        wtimerReset(timer, remaining_ms);
+        return;
+    }
+
+    WorkerMessageCallback cb = timed_msg->base.callback;
+    cb(getWorker(getWID()), timed_msg->base.arg1, timed_msg->base.arg2, timed_msg->base.arg3);
+
+    masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &timed_msg, 1, NULL);
     wtimerDelete(timer);
 }
 
 static void setupTimedTask(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
 
-    uint32_t      delay_ms = (uint32_t) (uintptr_t) arg1;
-    worker_msg_t *msg      = (worker_msg_t *) arg2;
-    discard       arg3;
+    uint32_t           delay_ms   = (uint32_t) (uintptr_t) arg1;
+    timed_worker_msg_t *timed_msg = (timed_worker_msg_t *) arg2;
+    discard            arg3;
 
     wtimer_t *k_timer = wtimerAdd(worker->loop, runTimedTask, delay_ms, 1);
     if (UNLIKELY(k_timer == NULL))
     {
         // fallback to immediate execution if timer creation fails
-        WorkerMessageCallback cb = msg->callback;
-        cb(worker, msg->arg1, msg->arg2, msg->arg3);
-        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &msg, 1, NULL);
+        WorkerMessageCallback cb = timed_msg->base.callback;
+        cb(worker, timed_msg->base.arg1, timed_msg->base.arg2, timed_msg->base.arg3);
+        masterpoolReuseItems(GSTATE.masterpool_messages, (void **) &timed_msg, 1, NULL);
         return;
     }
 
-    weventSetUserData(k_timer, msg);
+    timed_msg->deadline_us = wloopNowUS(worker->loop) + ((uint64_t) delay_ms * 1000ULL);
+    weventSetUserData(k_timer, timed_msg);
 }
 
 void sendWorkerMessageTimed(wid_t wid, WorkerMessageCallback cb, uint32_t delay_ms, void *arg1, void *arg2, void *arg3)
