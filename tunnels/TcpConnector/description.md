@@ -33,6 +33,32 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 }
 ```
 
+### Weighted Multi-Destination Example
+
+```json
+{
+  "name": "outbound-tcp",
+  "type": "TcpConnector",
+  "settings": {
+    "addresses": [
+      {
+        "address": "192.0.2.10",
+        "port": 443,
+        "weight": 5
+      },
+      {
+        "address": "198.51.100.20",
+        "port": "dest_context->port",
+        "weight": 1
+      }
+    ],
+    "nodelay": true,
+    "fastopen": false,
+    "reuseaddr": false
+  }
+}
+```
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -45,8 +71,16 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 
 ### `settings`
 
+- Either `address` + `port`, or `addresses`
+
+  Choose exactly one style:
+  - legacy single-destination fields: `address` and `port`
+  - weighted multi-destination field: `addresses` (the parser also accepts `adresses`)
+
+  Do not mix `addresses` with the top-level `address` / `port` fields.
+
 - `address` `(string)`
-  Destination address selection.
+  Destination address selection for the legacy single-destination form.
 
   Supported values in the current implementation:
   - a constant IPv4 address
@@ -62,12 +96,27 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   - `"src_context->address"`
 
 - `port` `(number or special string)`
-  Destination port selection.
+  Destination port selection for the legacy single-destination form.
 
   Supported values in the current implementation:
   - a constant number such as `443`
   - `"src_context->port"`
   - `"dest_context->port"`
+
+- `addresses` `(array of objects)`
+  Weighted destination list.
+
+  The parser also accepts the alias `adresses`, but `addresses` is the documented spelling.
+
+  Each object must contain:
+  - `address`
+  - `port`
+  - `weight`
+
+  `address` and `port` inside each element support the same forms as the legacy top-level fields.
+
+  `weight` must be a positive integer.
+  Each new line chooses exactly one element from the array, with probability proportional to its weight.
 
 ## Optional `settings` Fields
 
@@ -121,6 +170,9 @@ The normal flow is:
 - `dest_context->address`
 
 The same is true for `port`.
+
+When `addresses` is used, the same selection rules apply inside each array element.
+The connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
 
 This makes `TcpConnector` useful in chains where earlier nodes decode or rewrite routing information. For example, a protocol-aware node can fill `dest_context`, and `TcpConnector` can connect to that decoded target.
 

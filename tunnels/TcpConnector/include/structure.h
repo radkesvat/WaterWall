@@ -19,7 +19,20 @@ typedef struct tcpconnector_tstate_s
     // These options are evaluatde at start
     // constant destination address to avoid copy, can contain the domain name, used if possible
     address_context_t constant_dest_addr;
+
+    struct tcpconnector_destination_s *destinations;
+    uint32_t                           destinations_count;
+    uint64_t                           destinations_weight_total;
 } tcpconnector_tstate_t;
+
+typedef struct tcpconnector_destination_s
+{
+    dynamic_value_t   dest_addr_selected;
+    dynamic_value_t   dest_port_selected;
+    address_context_t constant_dest_addr;
+    uint64_t          outbound_ip_range;
+    uint32_t          weight;
+} tcpconnector_destination_t;
 
 typedef struct tcpconnector_lstate_s
 {
@@ -48,6 +61,12 @@ enum
 static inline hash_t tcpconnectorIdleKey(const wio_t *io)
 {
     return (hash_t) wioGetID((wio_t *) io);
+}
+
+static inline void tcpconnectorDestinationDeinit(tcpconnector_destination_t *destination)
+{
+    dynamicvalueDestroy(destination->dest_addr_selected);
+    dynamicvalueDestroy(destination->dest_port_selected);
 }
 
 typedef enum tcpconnector_strategy
@@ -89,7 +108,7 @@ void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
 void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
 
-bool tcpconnectorApplyFreeBindRandomDestIp(tunnel_t *self, address_context_t *dest_ctx);
+bool tcpconnectorApplyFreeBindRandomDestIp(address_context_t *dest_ctx, uint64_t outbound_ip_range);
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate);
 void tcpconnectorOnOutBoundConnected(wio_t *upstream_io);
 void tcpconnectorOnWriteComplete(wio_t *io);

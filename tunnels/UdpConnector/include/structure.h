@@ -22,7 +22,21 @@ typedef struct udpconnector_tstate_s
 
     uint16_t random_dest_port_x; // lower bound of random port range (used when dest_port_selected.status == kDvsRandom)
     uint16_t random_dest_port_y; // upper bound of random port range (used when dest_port_selected.status == kDvsRandom)
+
+    struct udpconnector_destination_s *destinations;
+    uint32_t                           destinations_count;
+    uint64_t                           destinations_weight_total;
 } udpconnector_tstate_t;
+
+typedef struct udpconnector_destination_s
+{
+    dynamic_value_t   dest_addr_selected;
+    dynamic_value_t   dest_port_selected;
+    address_context_t constant_dest_addr;
+    uint16_t          random_dest_port_x;
+    uint16_t          random_dest_port_y;
+    uint32_t          weight;
+} udpconnector_destination_t;
 
 typedef struct udpconnector_lstate_s
 {
@@ -47,6 +61,12 @@ enum
 static inline hash_t udpconnectorIdleKey(const wio_t *io)
 {
     return (hash_t) wioGetID((wio_t *) io);
+}
+
+static inline void udpconnectorDestinationDeinit(udpconnector_destination_t *destination)
+{
+    dynamicvalueDestroy(destination->dest_addr_selected);
+    dynamicvalueDestroy(destination->dest_port_selected);
 }
 
 WW_EXPORT void         udpconnectorTunnelDestroy(tunnel_t *t);

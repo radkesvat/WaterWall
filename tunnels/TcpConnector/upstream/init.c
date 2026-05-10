@@ -2,6 +2,65 @@
 
 #include "loggers/network_logger.h"
 
+static const tcpconnector_destination_t *selectWeightedDestination(const tcpconnector_tstate_t *ts)
+{
+    if (ts->destinations_count == 0)
+    {
+        return NULL;
+    }
+
+    assert(ts->destinations_weight_total > 0);
+
+    uint64_t pick       = fastRand64() % ts->destinations_weight_total;
+    uint64_t cumulative = 0;
+
+    for (uint32_t i = 0; i < ts->destinations_count; ++i)
+    {
+        cumulative += ts->destinations[i].weight;
+        if (pick < cumulative)
+        {
+            return &ts->destinations[i];
+        }
+    }
+
+    return &ts->destinations[ts->destinations_count - 1];
+}
+
+static void setupDestinationAddress(const dynamic_value_t *dest_addr_selected, const address_context_t *constant_dest_addr,
+                                    address_context_t *dest_ctx, address_context_t *src_ctx)
+{
+    switch ((tcpconnector_strategy_e) dest_addr_selected->status)
+    {
+    case kTcpConnectorStrategyFromSource:
+        addresscontextAddrCopy(dest_ctx, src_ctx);
+        break;
+    case kTcpConnectorStrategyConstant:
+        addresscontextAddrCopy(dest_ctx, constant_dest_addr);
+        break;
+    default:
+    case kTcpConnectorStrategyFromDest:
+        addresscontextSetProtocol(dest_ctx, IPPROTO_TCP);
+        break;
+    }
+}
+
+static void setupDestinationPort(const dynamic_value_t *dest_port_selected, const address_context_t *constant_dest_addr,
+                                 address_context_t *dest_ctx, address_context_t *src_ctx)
+{
+    switch ((tcpconnector_strategy_e) dest_port_selected->status)
+    {
+    case kTcpConnectorStrategyFromSource:
+        addresscontextCopyPort(dest_ctx, src_ctx);
+        break;
+    case kTcpConnectorStrategyConstant:
+        addresscontextCopyPort(dest_ctx, (address_context_t *) constant_dest_addr);
+        break;
+    default:
+    case kTcpConnectorStrategyFromDest:
+        break;
+    }
+}
+
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
@@ -16,35 +75,22 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     // findout how to deal with destination address
     address_context_t *dest_ctx = &(l->routing_context.dest_ctx);
     address_context_t *src_ctx  = &(l->routing_context.src_ctx);
+    const dynamic_value_t    *dest_addr_selected = &ts->dest_addr_selected;
+    const dynamic_value_t    *dest_port_selected = &ts->dest_port_selected;
+    const address_context_t  *constant_dest_addr = &ts->constant_dest_addr;
+    uint64_t                  outbound_ip_range  = ts->outbound_ip_range;
+    const tcpconnector_destination_t *selected_destination = selectWeightedDestination(ts);
 
-    switch ((tcpconnector_strategy_e) ts->dest_addr_selected.status)
+    if (selected_destination != NULL)
     {
-    case kTcpConnectorStrategyFromSource:
-        addresscontextAddrCopy(dest_ctx, src_ctx);
-        break;
-    case kTcpConnectorStrategyConstant:
-        addresscontextAddrCopy(dest_ctx, &(ts->constant_dest_addr));
-        break;
-    default:
-    case kTcpConnectorStrategyFromDest:
-        addresscontextSetProtocol(dest_ctx, IPPROTO_TCP);
-
-        break;
+        dest_addr_selected = &selected_destination->dest_addr_selected;
+        dest_port_selected = &selected_destination->dest_port_selected;
+        constant_dest_addr = &selected_destination->constant_dest_addr;
+        outbound_ip_range  = selected_destination->outbound_ip_range;
     }
 
-    // findout how to deal with destination port
-    switch ((tcpconnector_strategy_e) ts->dest_port_selected.status)
-    {
-    case kTcpConnectorStrategyFromSource:
-        addresscontextCopyPort(dest_ctx, src_ctx);
-        break;
-    case kTcpConnectorStrategyConstant:
-        addresscontextCopyPort(dest_ctx, &(ts->constant_dest_addr));
-        break;
-    default:
-    case kTcpConnectorStrategyFromDest:
-        break;
-    }
+    setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, src_ctx);
+    setupDestinationPort(dest_port_selected, constant_dest_addr, dest_ctx, src_ctx);
 
     // resolve domain name if needed (TODO : make it async and consider domain strategy)
     if (! dest_ctx->type_ip)
@@ -63,9 +109,9 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 
     // apply free bind if needed
-    if (ts->outbound_ip_range > 0)
+    if (outbound_ip_range > 0)
     {
-        if (! tcpconnectorApplyFreeBindRandomDestIp(t, dest_ctx))
+        if (! tcpconnectorApplyFreeBindRandomDestIp(dest_ctx, outbound_ip_range))
         {
             goto fail;
         }

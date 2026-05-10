@@ -23,34 +23,70 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &udpconnectorTunnelDestroy;
 }
 
-static bool parseAddressSettings(udpconnector_tstate_t *state, const cJSON *settings)
+static bool parseDestinationWeight(const cJSON *settings, int index, uint32_t *weight)
 {
-    state->dest_addr_selected =
-        parseDynamicStrValueFromJsonObject(settings, "address", 2, "src_context->address", "dest_context->address");
-
-    if (state->dest_addr_selected.status == kDvsEmpty)
+    const cJSON *jweight = cJSON_GetObjectItemCaseSensitive(settings, "weight");
+    if (! cJSON_IsNumber(jweight) || jweight->valueint <= 0 || jweight->valuedouble != (double) jweight->valueint)
     {
-        LOGF("JSON Error: UdpConnector->settings->address (string field) : The vaule was empty or invalid");
+        LOGF("JSON Error: UdpConnector->settings->addresses[%d]->weight (positive integer field) : The value was empty or invalid",
+             index);
         return false;
     }
 
-    if (state->dest_addr_selected.status == kDvsConstant)
+    *weight = (uint32_t) jweight->valueint;
+    return true;
+}
+
+static const cJSON *getDestinationArraySettings(const cJSON *settings)
+{
+    const cJSON *jaddresses = cJSON_GetObjectItemCaseSensitive(settings, "addresses");
+    const cJSON *jadresses  = cJSON_GetObjectItemCaseSensitive(settings, "adresses");
+
+    if (jaddresses != NULL && jadresses != NULL)
     {
-        if (addressIsIp(state->dest_addr_selected.string))
+        LOGF("JSON Error: UdpConnector->settings : Use either \"addresses\" or \"adresses\", not both");
+        terminateProgram(1);
+    }
+
+    if (jaddresses != NULL)
+    {
+        return jaddresses;
+    }
+
+    return jadresses;
+}
+
+static bool parseAddressSettings(dynamic_value_t *dest_addr_selected, address_context_t *constant_dest_addr,
+                                 const cJSON *settings, const char *error_path)
+{
+    *dest_addr_selected =
+        parseDynamicStrValueFromJsonObject(settings, "address", 2, "src_context->address", "dest_context->address");
+
+    if (dest_addr_selected->status == kDvsEmpty)
+    {
+        LOGF("JSON Error: %s->address (string field) : The vaule was empty or invalid", error_path);
+        return false;
+    }
+
+    if (dest_addr_selected->status == kDvsConstant)
+    {
+        if (addressIsIp(dest_addr_selected->string))
         {
-            addresscontextSetIpAddress(&state->constant_dest_addr, state->dest_addr_selected.string);
+            addresscontextSetIpAddress(constant_dest_addr, dest_addr_selected->string);
         }
         else
         {
-            addresscontextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.string,
-                                            stringLength(state->dest_addr_selected.string));
+            addresscontextDomainSetConstMem(constant_dest_addr, dest_addr_selected->string,
+                                            (uint8_t) stringLength(dest_addr_selected->string));
         }
     }
 
     return true;
 }
 
-static bool parseRandomPortRange(const char *port_str, udpconnector_tstate_t *state, tunnel_t *t)
+static bool parseRandomPortRange(const char *port_str, dynamic_value_t *dest_port_selected,
+                                 address_context_t *constant_dest_addr, uint16_t *random_dest_port_x,
+                                 uint16_t *random_dest_port_y, const char *error_path)
 {
     const char *start = port_str + 7;
     const char *comma = strchr(start, ',');
@@ -58,8 +94,7 @@ static bool parseRandomPortRange(const char *port_str, udpconnector_tstate_t *st
 
     if (comma == NULL || end == NULL || comma >= end)
     {
-        LOGF("JSON Error: UdpConnector->settings->port: Invalid random port format, expected 'random(x,y)'");
-        tunnelDestroy(t);
+        LOGF("JSON Error: %s->port: Invalid random port format, expected 'random(x,y)'", error_path);
         return false;
     }
 
@@ -67,8 +102,7 @@ static bool parseRandomPortRange(const char *port_str, udpconnector_tstate_t *st
     size_t x_len     = comma - start;
     if (x_len >= sizeof(x_str))
     {
-        LOGF("JSON Error: UdpConnector->settings->port: X value too long in random port range");
-        tunnelDestroy(t);
+        LOGF("JSON Error: %s->port: X value too long in random port range", error_path);
         return false;
     }
 
@@ -79,8 +113,7 @@ static bool parseRandomPortRange(const char *port_str, udpconnector_tstate_t *st
     size_t y_len     = end - (comma + 1);
     if (y_len >= sizeof(y_str))
     {
-        LOGF("JSON Error: UdpConnector->settings->port: Y value too long in random port range");
-        tunnelDestroy(t);
+        LOGF("JSON Error: %s->port: Y value too long in random port range", error_path);
         return false;
     }
 
@@ -95,80 +128,161 @@ static bool parseRandomPortRange(const char *port_str, udpconnector_tstate_t *st
     if (*x_endptr != '\0' || *y_endptr != '\0' || x_long < 0 || x_long > UINT16_MAX ||
         y_long < 0 || y_long > UINT16_MAX || x_long > y_long)
     {
-        LOGF("JSON Error: UdpConnector->settings->port: Invalid random port range values or x > y");
-        tunnelDestroy(t);
+        LOGF("JSON Error: %s->port: Invalid random port range values or x > y", error_path);
         return false;
     }
 
     uint16_t x_port = (uint16_t) x_long;
     uint16_t y_port = (uint16_t) y_long;
 
-    addresscontextSetPort(&(state->constant_dest_addr), 0);
-    state->dest_port_selected.status = kDvsRandom;
-    state->random_dest_port_x = x_port;
-    state->random_dest_port_y = y_port;
+    addresscontextSetPort(constant_dest_addr, 0);
+    dest_port_selected->status = kDvsRandom;
+    *random_dest_port_x        = x_port;
+    *random_dest_port_y        = y_port;
 
     LOGD("UdpConnector: Parsed random port range [%u, %u]", x_port, y_port);
     return true;
 }
 
-static bool parsePortAsNumber(const char *port_str, udpconnector_tstate_t *state, tunnel_t *t)
+static bool parsePortAsNumber(const char *port_str, address_context_t *constant_dest_addr, const char *error_path)
 {
     char *endptr;
     long  port_long = strtol(port_str, &endptr, 10);
 
     if (*endptr != '\0' || port_long < 0 || port_long > UINT16_MAX)
     {
-        LOGF("JSON Error: UdpConnector->settings->port: Expected 'random(x,y)' format or valid port number");
-        tunnelDestroy(t);
+        LOGF("JSON Error: %s->port: Expected 'random(x,y)' format or valid port number", error_path);
         return false;
     }
 
     uint16_t port = (uint16_t) port_long;
-    addresscontextSetPort(&(state->constant_dest_addr), port);
+    addresscontextSetPort(constant_dest_addr, port);
     return true;
 }
 
-static bool parsePortStringSettings(const char *port_str, udpconnector_tstate_t *state, tunnel_t *t)
+static bool parsePortStringSettings(const char *port_str, dynamic_value_t *dest_port_selected,
+                                    address_context_t *constant_dest_addr, uint16_t *random_dest_port_x,
+                                    uint16_t *random_dest_port_y, const char *error_path)
 {
     if (stringLength(port_str) < 1)
     {
-        LOGF("JSON Error: UdpConnector->settings->port (string | int field) : The vaule was empty or invalid");
+        LOGF("JSON Error: %s->port (string | int field) : The vaule was empty or invalid", error_path);
         return false;
     }
 
     if (strncmp(port_str, "random(", 7) == 0)
     {
-        return parseRandomPortRange(port_str, state, t);
+        return parseRandomPortRange(port_str, dest_port_selected, constant_dest_addr, random_dest_port_x,
+                                    random_dest_port_y, error_path);
     }
 
-    return parsePortAsNumber(port_str, state, t);
+    return parsePortAsNumber(port_str, constant_dest_addr, error_path);
 }
 
-static bool parsePortSettings(udpconnector_tstate_t *state, const cJSON *settings, tunnel_t *t)
+static bool parsePortSettings(dynamic_value_t *dest_port_selected, address_context_t *constant_dest_addr,
+                              uint16_t *random_dest_port_x, uint16_t *random_dest_port_y, const cJSON *settings,
+                              const char *error_path)
 {
     const cJSON *jstr = cJSON_GetObjectItemCaseSensitive(settings, "port");
 
     if (cJSON_IsString(jstr) && (jstr->valuestring != NULL))
     {
-        return parsePortStringSettings(jstr->valuestring, state, t);
+        return parsePortStringSettings(jstr->valuestring, dest_port_selected, constant_dest_addr, random_dest_port_x,
+                                       random_dest_port_y, error_path);
     }
 
-    state->dest_port_selected = parseDynamicNumericValueFromJsonObject(settings, "port", 3, "src_context->port",
-                                                                       "dest_context->port", "random[x,y]");
+    *dest_port_selected =
+        parseDynamicNumericValueFromJsonObject(settings, "port", 3, "src_context->port", "dest_context->port",
+                                              "random[x,y]");
 
-    if (state->dest_port_selected.status == kDvsEmpty)
+    if (dest_port_selected->status == kDvsEmpty)
     {
-        LOGF("JSON Error: UdpConnector->settings->port (number field) : The vaule was empty or invalid");
-        tunnelDestroy(t);
+        LOGF("JSON Error: %s->port (number field) : The vaule was empty or invalid", error_path);
         return false;
     }
 
-    if (state->dest_port_selected.status == kDvsConstant)
+    if (dest_port_selected->status == kDvsConstant)
     {
-        addresscontextSetPort(&(state->constant_dest_addr), state->dest_port_selected.integer);
+        addresscontextSetPort(constant_dest_addr, (uint16_t) dest_port_selected->integer);
     }
 
+    return true;
+}
+
+static void cleanupDestinationArray(udpconnector_tstate_t *state)
+{
+    if (state->destinations == NULL)
+    {
+        return;
+    }
+
+    for (uint32_t i = 0; i < state->destinations_count; ++i)
+    {
+        udpconnectorDestinationDeinit(&state->destinations[i]);
+    }
+
+    memoryFree(state->destinations);
+    state->destinations              = NULL;
+    state->destinations_count        = 0;
+    state->destinations_weight_total = 0;
+}
+
+static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *jaddresses = getDestinationArraySettings(settings);
+
+    if (jaddresses == NULL)
+    {
+        return false;
+    }
+
+    if (! cJSON_IsArray(jaddresses) || cJSON_GetArraySize(jaddresses) <= 0)
+    {
+        LOGF("JSON Error: UdpConnector->settings->addresses (array field) : The value was empty or invalid");
+        terminateProgram(1);
+    }
+
+    if (cJSON_GetObjectItemCaseSensitive(settings, "address") != NULL ||
+        cJSON_GetObjectItemCaseSensitive(settings, "port") != NULL)
+    {
+        LOGF("JSON Error: UdpConnector->settings : Use either \"address\"/\"port\" or \"addresses\", not both");
+        terminateProgram(1);
+    }
+
+    const int destination_count = cJSON_GetArraySize(jaddresses);
+    state->destinations         = memoryAllocateZero(sizeof(*state->destinations) * (size_t) destination_count);
+    state->destinations_count   = (uint32_t) destination_count;
+
+    int          index = 0;
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, jaddresses)
+    {
+        if (! cJSON_IsObject(entry) || entry->child == NULL)
+        {
+            LOGF("JSON Error: UdpConnector->settings->addresses[%d] (object field) : The value was empty or invalid",
+                 index);
+            cleanupDestinationArray(state);
+            terminateProgram(1);
+        }
+
+        udpconnector_destination_t *destination = &state->destinations[index];
+        char                        error_path[96];
+        snprintf(error_path, sizeof(error_path), "UdpConnector->settings->addresses[%d]", index);
+
+        if (! parseAddressSettings(&destination->dest_addr_selected, &destination->constant_dest_addr, entry,
+                                   error_path) ||
+            ! parsePortSettings(&destination->dest_port_selected, &destination->constant_dest_addr,
+                                &destination->random_dest_port_x, &destination->random_dest_port_y, entry,
+                                error_path) ||
+            ! parseDestinationWeight(entry, index, &destination->weight))
+        {
+            cleanupDestinationArray(state);
+            return false;
+        }
+
+        state->destinations_weight_total += destination->weight;
+        index++;
+    }
     return true;
 }
 
@@ -189,14 +303,26 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
 
     getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
 
-    if (!parseAddressSettings(state, settings))
+    if (getDestinationArraySettings(settings) != NULL)
     {
-        return NULL;
+        if (! parseDestinationArray(state, settings))
+        {
+            return NULL;
+        }
     }
-
-    if (!parsePortSettings(state, settings, t))
+    else
     {
-        return NULL;
+        if (! parseAddressSettings(&state->dest_addr_selected, &state->constant_dest_addr, settings,
+                                   "UdpConnector->settings"))
+        {
+            return NULL;
+        }
+
+        if (! parsePortSettings(&state->dest_port_selected, &state->constant_dest_addr, &state->random_dest_port_x,
+                                &state->random_dest_port_y, settings, "UdpConnector->settings"))
+        {
+            return NULL;
+        }
     }
     state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
 

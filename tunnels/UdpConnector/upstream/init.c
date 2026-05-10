@@ -2,6 +2,30 @@
 
 #include "loggers/network_logger.h"
 
+static const udpconnector_destination_t *selectWeightedDestination(const udpconnector_tstate_t *ts)
+{
+    if (ts->destinations_count == 0)
+    {
+        return NULL;
+    }
+
+    assert(ts->destinations_weight_total > 0);
+
+    uint64_t pick       = fastRand64() % ts->destinations_weight_total;
+    uint64_t cumulative = 0;
+
+    for (uint32_t i = 0; i < ts->destinations_count; ++i)
+    {
+        cumulative += ts->destinations[i].weight;
+        if (pick < cumulative)
+        {
+            return &ts->destinations[i];
+        }
+    }
+
+    return &ts->destinations[ts->destinations_count - 1];
+}
+
 static int createAndBindSocket(int family, bool reuse_addr)
 {
     sockaddr_u host_addr = {0};
@@ -59,15 +83,16 @@ static int createAndBindSocket(int family, bool reuse_addr)
     return sockfd;
 }
 
-static void setupDestinationAddress(udpconnector_tstate_t *ts, address_context_t *dest_ctx, address_context_t *src_ctx)
+static void setupDestinationAddress(const dynamic_value_t *dest_addr_selected, const address_context_t *constant_dest_addr,
+                                    address_context_t *dest_ctx, address_context_t *src_ctx)
 {
-    switch (ts->dest_addr_selected.status)
+    switch (dest_addr_selected->status)
     {
     case kDvsFromSource:
         addresscontextAddrCopy(dest_ctx, src_ctx);
         break;
     case kDvsConstant:
-        addresscontextAddrCopy(dest_ctx, &(ts->constant_dest_addr));
+        addresscontextAddrCopy(dest_ctx, constant_dest_addr);
         break;
     default:
     case kDvsFromDest:
@@ -75,19 +100,21 @@ static void setupDestinationAddress(udpconnector_tstate_t *ts, address_context_t
     }
 }
 
-static void setupDestinationPort(udpconnector_tstate_t *ts, address_context_t *dest_ctx, address_context_t *src_ctx)
+static void setupDestinationPort(const dynamic_value_t *dest_port_selected, const address_context_t *constant_dest_addr,
+                                 uint16_t random_dest_port_x, uint16_t random_dest_port_y, address_context_t *dest_ctx,
+                                 address_context_t *src_ctx)
 {
-    switch (ts->dest_port_selected.status)
+    switch (dest_port_selected->status)
     {
     case kDvsFromSource:
         addresscontextCopyPort(dest_ctx, src_ctx);
         break;
     case kDvsConstant:
-        addresscontextCopyPort(dest_ctx, &(ts->constant_dest_addr));
+        addresscontextCopyPort(dest_ctx, (address_context_t *) constant_dest_addr);
         break;
     case kDvsRandom:
-        addresscontextSetPort(dest_ctx, (fastRand() % (ts->random_dest_port_y - ts->random_dest_port_x + 1)) +
-                                            ts->random_dest_port_x);
+        addresscontextSetPort(dest_ctx, (fastRand() % (random_dest_port_y - random_dest_port_x + 1)) +
+                                            random_dest_port_x);
         break;
     default:
     case kDvsFromDest:
@@ -110,9 +137,25 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     udpconnector_lstate_t *ls = lineGetState(l, t);
     address_context_t     *dest_ctx = lineGetDestinationAddressContext(l);
     address_context_t     *src_ctx  = lineGetSourceAddressContext(l);
+    const dynamic_value_t *dest_addr_selected = &ts->dest_addr_selected;
+    const dynamic_value_t *dest_port_selected = &ts->dest_port_selected;
+    const address_context_t *constant_dest_addr = &ts->constant_dest_addr;
+    uint16_t random_dest_port_x = ts->random_dest_port_x;
+    uint16_t random_dest_port_y = ts->random_dest_port_y;
+    const udpconnector_destination_t *selected_destination = selectWeightedDestination(ts);
 
-    setupDestinationAddress(ts, dest_ctx, src_ctx);
-    setupDestinationPort(ts, dest_ctx, src_ctx);
+    if (selected_destination != NULL)
+    {
+        dest_addr_selected = &selected_destination->dest_addr_selected;
+        dest_port_selected = &selected_destination->dest_port_selected;
+        constant_dest_addr = &selected_destination->constant_dest_addr;
+        random_dest_port_x = selected_destination->random_dest_port_x;
+        random_dest_port_y = selected_destination->random_dest_port_y;
+    }
+
+    setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, src_ctx);
+    setupDestinationPort(dest_port_selected, constant_dest_addr, random_dest_port_x, random_dest_port_y, dest_ctx,
+                         src_ctx);
 
     if (! resolveDomainIfNeeded(dest_ctx))
     {

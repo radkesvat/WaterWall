@@ -32,31 +32,40 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
     return true;
 }
 
-static bool parseDestinationAddress(tcpconnector_tstate_t *state, const cJSON *settings)
+static bool parseDestinationWeight(const cJSON *settings, int index, uint32_t *weight)
 {
-    state->dest_addr_selected = parseDynamicStrValueFromJsonObject(settings, "address", 2, "src_context->address", "dest_context->address");
-
-    if (state->dest_addr_selected.status == kDvsEmpty)
+    const cJSON *jweight = cJSON_GetObjectItemCaseSensitive(settings, "weight");
+    if (! cJSON_IsNumber(jweight) || jweight->valueint <= 0 || jweight->valuedouble != (double) jweight->valueint)
     {
-        LOGF("JSON Error: TcpConnector->settings->address (string field) : The vaule was empty or invalid");
+        LOGF("JSON Error: TcpConnector->settings->addresses[%d]->weight (positive integer field) : The value was empty or invalid",
+             index);
         return false;
     }
 
-    state->constant_dest_addr.ip_address.type = getIpVersion(state->dest_addr_selected.string);
-
-    if (state->constant_dest_addr.ip_address.type == IPADDR_TYPE_ANY)
-    {
-        state->constant_dest_addr.type_ip = false;
-    }
-    else
-    {
-        state->constant_dest_addr.type_ip = true;
-    }
-
+    *weight = (uint32_t) jweight->valueint;
     return true;
 }
 
-static void configureIpv4Range(tcpconnector_tstate_t *state, int prefix_length)
+static const cJSON *getDestinationArraySettings(const cJSON *settings)
+{
+    const cJSON *jaddresses = cJSON_GetObjectItemCaseSensitive(settings, "addresses");
+    const cJSON *jadresses  = cJSON_GetObjectItemCaseSensitive(settings, "adresses");
+
+    if (jaddresses != NULL && jadresses != NULL)
+    {
+        LOGF("JSON Error: TcpConnector->settings : Use either \"addresses\" or \"adresses\", not both");
+        terminateProgram(1);
+    }
+
+    if (jaddresses != NULL)
+    {
+        return jaddresses;
+    }
+
+    return jadresses;
+}
+
+static void configureIpv4RangeValue(uint64_t *outbound_ip_range, int prefix_length)
 {
     if (prefix_length > 32)
     {
@@ -65,15 +74,15 @@ static void configureIpv4Range(tcpconnector_tstate_t *state, int prefix_length)
     }
     else if (prefix_length == 32)
     {
-        state->outbound_ip_range = 0;
+        *outbound_ip_range = 0;
     }
     else
     {
-        state->outbound_ip_range = (0xFFFFFFFF & (0x1 << (32 - prefix_length)));
+        *outbound_ip_range = (0xFFFFFFFFULL & (0x1ULL << (32 - prefix_length)));
     }
 }
 
-static void configureIpv6Range(tcpconnector_tstate_t *state, int prefix_length)
+static void configureIpv6RangeValue(uint64_t *outbound_ip_range, int prefix_length)
 {
     if (64 > prefix_length)
     {
@@ -82,76 +91,175 @@ static void configureIpv6Range(tcpconnector_tstate_t *state, int prefix_length)
     }
     else if (prefix_length == 64)
     {
-        state->outbound_ip_range = 0xFFFFFFFFFFFFFFFFULL;
+        *outbound_ip_range = 0xFFFFFFFFFFFFFFFFULL;
     }
     else
     {
-        state->outbound_ip_range = (0xFFFFFFFFFFFFFFFFULL & (0x1ULL << (128 - prefix_length)));
+        *outbound_ip_range = (0xFFFFFFFFFFFFFFFFULL & (0x1ULL << (128 - prefix_length)));
     }
 }
 
-static void parseSubnetRange(tcpconnector_tstate_t *state, char *slash)
+static bool parseDestinationAddress(dynamic_value_t *dest_addr_selected, address_context_t *constant_dest_addr,
+                                    uint64_t *outbound_ip_range, const cJSON *settings, const char *error_path)
 {
-    *slash = '\0';
-    int prefix_length = atoi(slash + 1);
+    *dest_addr_selected =
+        parseDynamicStrValueFromJsonObject(settings, "address", 2, "src_context->address", "dest_context->address");
 
-    if (prefix_length < 0)
+    if (dest_addr_selected->status == kDvsEmpty)
     {
-        LOGF("TcpConnector: outbound ip/subnet range is invalid");
-        terminateProgram(1);
+        LOGF("JSON Error: %s->address (string field) : The vaule was empty or invalid", error_path);
+        return false;
     }
 
-    if (state->constant_dest_addr.ip_address.type == AF_INET)
+    *outbound_ip_range = 0;
+
+    if (dest_addr_selected->status != kDvsConstant)
     {
-        configureIpv4Range(state, prefix_length);
+        return true;
     }
-    else if (state->constant_dest_addr.ip_address.type == AF_INET6)
+
+    char *address_value = dest_addr_selected->string;
+    char *slash         = stringChr(address_value, '/');
+    if (slash != NULL)
     {
-        configureIpv6Range(state, prefix_length);
+        *slash = '\0';
     }
+
+    if (addressIsIp(address_value))
+    {
+        if (! addresscontextSetIpAddress(constant_dest_addr, address_value))
+        {
+            LOGF("JSON Error: %s->address (string field) : The vaule was empty or invalid", error_path);
+            return false;
+        }
+
+        if (slash != NULL)
+        {
+            int prefix_length = atoi(slash + 1);
+
+            if (prefix_length < 0)
+            {
+                LOGF("TcpConnector: outbound ip/subnet range is invalid");
+                terminateProgram(1);
+            }
+
+            if (constant_dest_addr->ip_address.type == IPADDR_TYPE_V4)
+            {
+                configureIpv4RangeValue(outbound_ip_range, prefix_length);
+            }
+            else if (constant_dest_addr->ip_address.type == IPADDR_TYPE_V6)
+            {
+                configureIpv6RangeValue(outbound_ip_range, prefix_length);
+            }
+        }
+    }
+    else
+    {
+        if (slash != NULL)
+        {
+            LOGF("JSON Error: %s->address (string field) : CIDR suffix is only valid for IP addresses", error_path);
+            return false;
+        }
+
+        addresscontextDomainSetConstMem(constant_dest_addr, address_value, (uint8_t) stringLength(address_value));
+    }
+
+    return true;
 }
 
-static void configureConstantAddress(tcpconnector_tstate_t *state)
+static bool parseDestinationPort(dynamic_value_t *dest_port_selected, address_context_t *constant_dest_addr,
+                                 const cJSON *settings, const char *error_path)
 {
-    if (state->dest_addr_selected.status != kDvsConstant)
+    *dest_port_selected =
+        parseDynamicNumericValueFromJsonObject(settings, "port", 2, "src_context->port", "dest_context->port");
+
+    if (dest_port_selected->status == kDvsEmpty)
+    {
+        LOGF("JSON Error: %s->port (number field) : The vaule was empty or invalid", error_path);
+        return false;
+    }
+
+    if (dest_port_selected->status == kDvsConstant)
+    {
+        addresscontextSetPort(constant_dest_addr, (uint16_t) dest_port_selected->integer);
+    }
+
+    return true;
+}
+
+static void cleanupDestinationArray(tcpconnector_tstate_t *state)
+{
+    if (state->destinations == NULL)
     {
         return;
     }
 
-    char *slash = stringChr(state->dest_addr_selected.string, '/');
-    if (slash != NULL)
+    for (uint32_t i = 0; i < state->destinations_count; ++i)
     {
-        parseSubnetRange(state, slash);
+        tcpconnectorDestinationDeinit(&state->destinations[i]);
     }
 
-    if (state->constant_dest_addr.type_ip == false)
-    {
-        addresscontextDomainSetConstMem(&(state->constant_dest_addr), state->dest_addr_selected.string,
-                                        (uint8_t) stringLength(state->dest_addr_selected.string));
-    }
-    else
-    {
-        sockaddr_u temp;
-        sockaddrSetIpAddress(&(temp), state->dest_addr_selected.string);
-        sockaddrToIpAddr(&temp, &(state->constant_dest_addr.ip_address));
-    }
+    memoryFree(state->destinations);
+    state->destinations              = NULL;
+    state->destinations_count        = 0;
+    state->destinations_weight_total = 0;
 }
 
-static bool parseDestinationPort(tcpconnector_tstate_t *state, const cJSON *settings)
+static bool parseDestinationArray(tcpconnector_tstate_t *state, const cJSON *settings)
 {
-    state->dest_port_selected = parseDynamicNumericValueFromJsonObject(settings, "port", 2, "src_context->port", "dest_context->port");
+    const cJSON *jaddresses = getDestinationArraySettings(settings);
 
-    if (state->dest_port_selected.status == kDvsEmpty)
+    if (jaddresses == NULL)
     {
-        LOGF("JSON Error: TcpConnector->settings->port (number field) : The vaule was empty or invalid");
         return false;
     }
 
-    if (state->dest_port_selected.status == kDvsConstant)
+    if (! cJSON_IsArray(jaddresses) || cJSON_GetArraySize(jaddresses) <= 0)
     {
-        addresscontextSetPort(&(state->constant_dest_addr), (uint16_t) state->dest_port_selected.integer);
+        LOGF("JSON Error: TcpConnector->settings->addresses (array field) : The value was empty or invalid");
+        terminateProgram(1);
     }
 
+    if (cJSON_GetObjectItemCaseSensitive(settings, "address") != NULL ||
+        cJSON_GetObjectItemCaseSensitive(settings, "port") != NULL)
+    {
+        LOGF("JSON Error: TcpConnector->settings : Use either \"address\"/\"port\" or \"addresses\", not both");
+        terminateProgram(1);
+    }
+
+    const int destination_count = cJSON_GetArraySize(jaddresses);
+    state->destinations         = memoryAllocateZero(sizeof(*state->destinations) * (size_t) destination_count);
+    state->destinations_count   = (uint32_t) destination_count;
+
+    int          index = 0;
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, jaddresses)
+    {
+        if (! cJSON_IsObject(entry) || entry->child == NULL)
+        {
+            LOGF("JSON Error: TcpConnector->settings->addresses[%d] (object field) : The value was empty or invalid",
+                 index);
+            cleanupDestinationArray(state);
+            terminateProgram(1);
+        }
+
+        tcpconnector_destination_t *destination = &state->destinations[index];
+        char                        error_path[96];
+        snprintf(error_path, sizeof(error_path), "TcpConnector->settings->addresses[%d]", index);
+
+        if (! parseDestinationAddress(&destination->dest_addr_selected, &destination->constant_dest_addr,
+                                      &destination->outbound_ip_range, entry, error_path) ||
+            ! parseDestinationPort(&destination->dest_port_selected, &destination->constant_dest_addr, entry,
+                                   error_path) ||
+            ! parseDestinationWeight(entry, index, &destination->weight))
+        {
+            cleanupDestinationArray(state);
+            return false;
+        }
+
+        state->destinations_weight_total += destination->weight;
+        index++;
+    }
     return true;
 }
 
@@ -169,16 +277,26 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (!parseDestinationAddress(state, settings))
+    if (getDestinationArraySettings(settings) != NULL)
     {
-        return NULL;
+        if (! parseDestinationArray(state, settings))
+        {
+            return NULL;
+        }
     }
-
-    configureConstantAddress(state);
-
-    if (!parseDestinationPort(state, settings))
+    else
     {
-        return NULL;
+        if (! parseDestinationAddress(&state->dest_addr_selected, &state->constant_dest_addr,
+                                      &state->outbound_ip_range, settings, "TcpConnector->settings"))
+        {
+            return NULL;
+        }
+
+        if (! parseDestinationPort(&state->dest_port_selected, &state->constant_dest_addr, settings,
+                                   "TcpConnector->settings"))
+        {
+            return NULL;
+        }
     }
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);

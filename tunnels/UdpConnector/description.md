@@ -30,6 +30,30 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 }
 ```
 
+### Weighted Multi-Destination Example
+
+```json
+{
+  "name": "udp-out",
+  "type": "UdpConnector",
+  "settings": {
+    "addresses": [
+      {
+        "address": "1.1.1.1",
+        "port": 53,
+        "weight": 3
+      },
+      {
+        "address": "8.8.8.8",
+        "port": "random(40000,40100)",
+        "weight": 1
+      }
+    ],
+    "reuseaddr": true
+  }
+}
+```
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -42,8 +66,16 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 
 ### `settings`
 
+- Either `address` + `port`, or `addresses`
+
+  Choose exactly one style:
+  - legacy single-destination fields: `address` and `port`
+  - weighted multi-destination field: `addresses` (the parser also accepts `adresses`)
+
+  Do not mix `addresses` with the top-level `address` / `port` fields.
+
 - `address` `(string)`
-  Destination address selection.
+  Destination address selection for the legacy single-destination form.
 
   Supported values in the current implementation:
   - a constant IPv4 address
@@ -53,7 +85,7 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
   - `"dest_context->address"`
 
 - `port` `(number or string)`
-  Destination port selection.
+  Destination port selection for the legacy single-destination form.
 
   Supported values in the current implementation:
   - a constant number such as `53`
@@ -63,6 +95,21 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
   - `"random(x,y)"`
 
   The `random(x,y)` form chooses one random port in the inclusive range `[x, y]` during line initialization.
+
+- `addresses` `(array of objects)`
+  Weighted destination list.
+
+  The parser also accepts the alias `adresses`, but `addresses` is the documented spelling.
+
+  Each object must contain:
+  - `address`
+  - `port`
+  - `weight`
+
+  `address` and `port` inside each element support the same forms as the legacy top-level fields.
+
+  `weight` must be a positive integer.
+  Each new line chooses exactly one element from the array, with probability proportional to its weight.
 
 ## Optional `settings` Fields
 
@@ -103,6 +150,9 @@ The destination port can come from:
 - `random(x,y)`
 
 This makes `UdpConnector` useful after nodes that fill routing context dynamically.
+
+When `addresses` is used, the same selection rules apply inside each array element.
+The connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
 
 ### Domain resolution
 
