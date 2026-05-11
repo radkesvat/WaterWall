@@ -9,6 +9,7 @@ add_library(HttpClient STATIC
                     instance/chain.c
                     instance/index.c
                     common/transport.c
+                    common/split.c
                     common/line_state.c
                     common/helpers.c
                     upstream/init.c

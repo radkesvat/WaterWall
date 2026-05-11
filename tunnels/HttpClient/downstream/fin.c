@@ -7,6 +7,12 @@ void httpclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     httpclient_lstate_t *ls = lineGetState(l, t);
     httpclient_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->split_role == kHttpClientSplitRoleUpload || ls->split_role == kHttpClientSplitRoleDownload)
+    {
+        httpclientSplitDownStreamFinish(t, l);
+        return;
+    }
+
     lineLock(l);
 
     ls->next_finished = true;

@@ -32,7 +32,11 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .websocket_h2_status_seen       = false,
                                  .websocket_h2_protocol_seen     = false,
                                  .websocket_h2_extensions_seen   = false,
-                                 .websocket_h2_status_code       = 0};
+                                 .websocket_h2_status_code       = 0,
+                                 .split_role                     = kHttpClientSplitRoleNone,
+                                 .split_main_line                = NULL,
+                                 .split_upload_line              = NULL,
+                                 .split_download_line            = NULL};
 }
 
 void httpclientLinestateDestroy(httpclient_lstate_t *ls)

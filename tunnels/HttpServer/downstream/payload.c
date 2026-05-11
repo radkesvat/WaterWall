@@ -19,6 +19,12 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     httpserver_lstate_t *ls = lineGetState(l, t);
     httpserver_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->split_role == kHttpServerSplitRoleMain)
+    {
+        httpserverSplitDownStreamPayload(t, l, buf);
+        return;
+    }
+
     lineLock(l);
 
     if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)

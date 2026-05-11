@@ -9,6 +9,7 @@ void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t 
                                 .session                  = NULL,
                                 .in_stream                = bufferstreamCreate(lineGetBufferPool(l), 0),
                                 .pending_down             = bufferqueueCreate(kHttpServerBufferQueueCap),
+                                .split_pending_up         = bufferqueueCreate(kHttpServerBufferQueueCap),
                                 .events_up                = contextqueueCreate(),
                                 .runtime_proto            = kHttpServerRuntimeUnknown,
                                 .h2_stream_id             = 0,
@@ -34,7 +35,12 @@ void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t 
                                 .websocket_h2_authority_seen = false,
                                 .websocket_h2_version_seen   = false,
                                 .websocket_h2_subprotocol_seen = false,
-                                .websocket_h2_origin_seen      = false};
+                                .websocket_h2_origin_seen      = false,
+                                .split_role                    = kHttpServerSplitRoleNone,
+                                .split_main_line               = NULL,
+                                .split_upload_line             = NULL,
+                                .split_download_line           = NULL,
+                                .split_hash                    = 0};
 }
 
 void httpserverLinestateDestroy(httpserver_lstate_t *ls)
@@ -47,6 +53,7 @@ void httpserverLinestateDestroy(httpserver_lstate_t *ls)
 
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_down);
+    bufferqueueDestroy(&ls->split_pending_up);
     contextqueueDestroy(&ls->events_up);
 
     memoryZeroAligned32(ls, sizeof(*ls));

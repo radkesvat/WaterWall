@@ -76,6 +76,38 @@ static bool strEqualsAnyIgnoreCase(const char *value, const char *a, const char 
     return ret;
 }
 
+static bool parseSplitPlacement(const char *value, httpclient_split_placement_t *out, const char *field_name)
+{
+    if (value == NULL || out == NULL)
+    {
+        return false;
+    }
+
+    if (strEqualsAnyIgnoreCase(value, "query", "query-parameter", "query-param", "param"))
+    {
+        *out = kHttpClientSplitPlacementQuery;
+        return true;
+    }
+    if (strEqualsAnyIgnoreCase(value, "header", "http-header", NULL, NULL))
+    {
+        *out = kHttpClientSplitPlacementHeader;
+        return true;
+    }
+    if (strEqualsAnyIgnoreCase(value, "cookie", "cookies", NULL, NULL))
+    {
+        *out = kHttpClientSplitPlacementCookie;
+        return true;
+    }
+    if (strEqualsAnyIgnoreCase(value, "path", "path-segment", "path-template", NULL))
+    {
+        *out = kHttpClientSplitPlacementPath;
+        return true;
+    }
+
+    LOGF("JSON Error: HttpClient->settings->%s supports: query, header, cookie, path", field_name);
+    return false;
+}
+
 static bool parseHttpVersionMode(httpclient_tstate_t *ts, const cJSON *settings)
 {
     const cJSON *hv = cJSON_GetObjectItemCaseSensitive(settings, "http-version");
@@ -123,6 +155,37 @@ static bool parseHttpVersionMode(httpclient_tstate_t *ts, const cJSON *settings)
     return true;
 }
 
+static bool parseHttp1TransportMode(httpclient_tstate_t *ts, const cJSON *settings)
+{
+    ts->h1_transport_mode = kHttpClientH1TransportSingle;
+
+    const cJSON *mode = cJSON_GetObjectItemCaseSensitive(settings, "http1-mode");
+    if (! cJSON_IsString(mode) || mode->valuestring == NULL)
+    {
+        bool split_enabled = false;
+        if (getBoolFromJsonObject(&split_enabled, settings, "http1-split") && split_enabled)
+        {
+            ts->h1_transport_mode = kHttpClientH1TransportSplit;
+        }
+        return true;
+    }
+
+    if (strEqualsAnyIgnoreCase(mode->valuestring, "single", "classic", "full-duplex", "legacy"))
+    {
+        ts->h1_transport_mode = kHttpClientH1TransportSingle;
+        return true;
+    }
+
+    if (strEqualsAnyIgnoreCase(mode->valuestring, "split", "half-duplex", "dual", "dual-connection"))
+    {
+        ts->h1_transport_mode = kHttpClientH1TransportSplit;
+        return true;
+    }
+
+    LOGF("JSON Error: HttpClient->settings->http1-mode supports: single, split");
+    return false;
+}
+
 static bool parseHttpMethod(httpclient_tstate_t *ts, const cJSON *settings)
 {
     if (! getStringFromJsonObjectOrDefault(&ts->method, settings, "method", "POST"))
@@ -137,6 +200,143 @@ static bool parseHttpMethod(httpclient_tstate_t *ts, const cJSON *settings)
         return false;
     }
 
+    return true;
+}
+
+static bool parseSplitMethod(char **dest, enum http_method *method_enum, const cJSON *root, const cJSON *side,
+                             const char *root_key, const char *side_key, const char *def, const char *log_name)
+{
+    if (side != NULL && getStringFromJsonObject(dest, side, side_key))
+    {
+        ;
+    }
+    else if (! getStringFromJsonObject(dest, root, root_key))
+    {
+        *dest = stringDuplicate(def);
+    }
+
+    *method_enum = httpMethodEnum(*dest);
+    if (*method_enum == kHttpCustomMethod)
+    {
+        LOGF("JSON Error: HttpClient->settings->%s is invalid: %s", log_name, *dest);
+        return false;
+    }
+
+    return true;
+}
+
+static void parseSplitString(char **dest, const cJSON *root, const cJSON *side, const char *root_key,
+                             const char *side_key, const char *def)
+{
+    if (side != NULL && getStringFromJsonObject(dest, side, side_key))
+    {
+        return;
+    }
+
+    if (getStringFromJsonObject(dest, root, root_key))
+    {
+        return;
+    }
+
+    *dest = stringDuplicate(def);
+}
+
+static bool parseHttp1SplitSettings(httpclient_tstate_t *ts, const cJSON *settings)
+{
+    if (ts->h1_transport_mode != kHttpClientH1TransportSplit)
+    {
+        return true;
+    }
+
+    if (ts->version_mode != kHttpClientVersionModeHttp1)
+    {
+        LOGF("JSON Error: HttpClient split HTTP/1 transport requires http-version = 1/http1");
+        return false;
+    }
+
+    if (ts->websocket_enabled)
+    {
+        LOGF("JSON Error: HttpClient split HTTP/1 transport cannot be combined with websocket mode");
+        return false;
+    }
+
+    const cJSON *split = cJSON_GetObjectItemCaseSensitive(settings, "split");
+    if (! cJSON_IsObject(split))
+    {
+        split = settings;
+    }
+
+    const cJSON *upload   = cJSON_GetObjectItemCaseSensitive(split, "upload");
+    const cJSON *download = cJSON_GetObjectItemCaseSensitive(split, "download");
+    if (! cJSON_IsObject(upload))
+    {
+        upload = NULL;
+    }
+    if (! cJSON_IsObject(download))
+    {
+        download = NULL;
+    }
+
+    if (! parseSplitMethod(&ts->split_upload_method, &ts->split_upload_method_enum, split, upload, "upload-method",
+                           "method", ts->method, "split.upload-method") ||
+        ! parseSplitMethod(&ts->split_download_method, &ts->split_download_method_enum, split, download,
+                           "download-method", "method", "GET", "split.download-method"))
+    {
+        return false;
+    }
+
+    parseSplitString(&ts->split_upload_path, split, upload, "upload-path", "path", ts->path);
+    parseSplitString(&ts->split_download_path, split, download, "download-path", "path", ts->path);
+    parseSplitString(&ts->split_id_name, split, NULL, "id-name", "name", "wwid");
+    parseSplitString(&ts->split_direction_name, split, NULL, "direction-name", "name", "wwdir");
+    parseSplitString(&ts->split_upload_value, split, NULL, "upload-value", "value", "upload");
+    parseSplitString(&ts->split_download_value, split, NULL, "download-value", "value", "download");
+    parseSplitString(&ts->split_cache_bypass_name, split, NULL, "cache-bypass-name", "name", "wwcb");
+    parseSplitString(&ts->split_token_name, split, NULL, "token-name", "name", "X-Waterwall-Token");
+    getStringFromJsonObject(&ts->split_token, split, "token");
+
+    char *placement = NULL;
+    getStringFromJsonObjectOrDefault(&placement, split, "id-placement", "query");
+    bool ok = parseSplitPlacement(placement, &ts->split_id_placement, "split.id-placement");
+    memoryFree(placement);
+    if (! ok)
+    {
+        return false;
+    }
+
+    placement = NULL;
+    getStringFromJsonObjectOrDefault(&placement, split, "direction-placement", "query");
+    ok = parseSplitPlacement(placement, &ts->split_direction_placement, "split.direction-placement");
+    memoryFree(placement);
+    if (! ok)
+    {
+        return false;
+    }
+
+    placement = NULL;
+    getStringFromJsonObjectOrDefault(&placement, split, "token-placement", "header");
+    ok = parseSplitPlacement(placement, &ts->split_token_placement, "split.token-placement");
+    memoryFree(placement);
+    if (! ok)
+    {
+        return false;
+    }
+
+    getBoolFromJsonObjectOrDefault(&ts->split_cache_bypass, split, "cache-bypass", true);
+
+    ts->split_upload_headers = cJSON_GetObjectItemCaseSensitive(split, "upload-headers");
+    if (! cJSON_IsObject(ts->split_upload_headers) && upload != NULL)
+    {
+        ts->split_upload_headers = cJSON_GetObjectItemCaseSensitive(upload, "headers");
+    }
+
+    ts->split_download_headers = cJSON_GetObjectItemCaseSensitive(split, "download-headers");
+    if (! cJSON_IsObject(ts->split_download_headers) && download != NULL)
+    {
+        ts->split_download_headers = cJSON_GetObjectItemCaseSensitive(download, "headers");
+    }
+
+    ts->split_identifier = fastRand64() % 10000000;
     return true;
 }
 
@@ -299,7 +499,8 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! parseHttpVersionMode(ts, settings) || ! parseRequiredFields(ts, settings))
+    if (! parseHttpVersionMode(ts, settings) || ! parseHttp1TransportMode(ts, settings) ||
+        ! parseRequiredFields(ts, settings))
     {
         httpclientTunnelDestroy(t);
         return NULL;
@@ -307,6 +508,12 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
 
     parsePortAndUpgrade(ts, settings);
     parseUserAgentAndWebSocket(ts, settings);
+
+    if (! parseHttp1SplitSettings(ts, settings))
+    {
+        httpclientTunnelDestroy(t);
+        return NULL;
+    }
 
     if (! initializeNghttp2State(ts))
     {

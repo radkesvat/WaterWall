@@ -7,6 +7,12 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     httpclient_lstate_t *ls = lineGetState(l, t);
     httpclient_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->split_role == kHttpClientSplitRoleMain)
+    {
+        httpclientSplitUpStreamFinish(t, l);
+        return;
+    }
+
     lineLock(l);
 
     if (ts->websocket_enabled && ls->websocket_active)

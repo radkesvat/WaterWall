@@ -208,6 +208,37 @@ Examples:
   Current implementation note:
   `HttpClient` already keeps the HTTP/1.1 request body open with chunked transfer encoding until Waterwall upstream `Finish`, so request and response bodies can stream at the same time without extra client-side state changes. The matching `HttpServer` option controls whether request-end is reflected into Waterwall `Finish`.
 
+- `http1-mode` `(string)`
+  Selects the HTTP/1.1 transport shape.
+
+  Supported values:
+  - `"single"`: the existing behavior, one HTTP/1.1 connection with chunked request and response bodies
+  - `"split"`: two HTTP/1.1 connections, one upload request and one download request
+
+  Default: `"single"`
+
+- `split` `(object)`
+  Optional settings for `http1-mode = "split"`.
+
+  Split mode requires `http-version = 1` and cannot be combined with `websocket`.
+
+  Common fields:
+  - `upload-method` default: the top-level `method`
+  - `download-method` default: `"GET"`
+  - `upload-path` default: the top-level `path`
+  - `download-path` default: the top-level `path`
+  - `upload-headers` / `download-headers`: extra per-half request headers
+  - `id-placement`: `"query"`, `"header"`, `"cookie"`, or `"path"`; default `"query"`
+  - `id-name`: default `"wwid"`
+  - `direction-placement`: `"query"`, `"header"`, `"cookie"`, or `"path"`; default `"query"`
+  - `direction-name`: default `"wwdir"`
+  - `upload-value` / `download-value`: default `"upload"` / `"download"`
+  - `cache-bypass`: default `true`
+  - `cache-bypass-name`: default `"wwcb"`
+  - `token`, `token-placement`, `token-name`: optional shared token metadata
+
+  Path templates may contain `{id}`, `{direction}`, `{cache}`, and `{token}`.
+
 - `verbose` `(boolean)`
   Enables extra debug logging for protocol selection, handshakes, and framing flow.
   Default: `false`
@@ -238,6 +269,53 @@ In `websocket` mode:
 - HTTP/1.1 sends a standard WebSocket upgrade request
 - direct HTTP/2 waits for `SETTINGS_ENABLE_CONNECT_PROTOCOL = 1` and then sends an extended `CONNECT` request
 - `http-version = both` plus `upgrade = true` stays on HTTP/1.1 for WebSocket, because the same opening request cannot safely be both `h2c` upgrade and WebSocket upgrade
+
+### Split HTTP/1.1 mode
+
+With `http1-mode = "split"`, `HttpClient` creates two upstream transport lines for each Waterwall line:
+
+- upload line: sends request body chunks to the server
+- download line: sends a bodyless request and receives response body chunks
+
+The two HTTP requests carry the same generated identifier plus a direction marker. By default these are query parameters, for example:
+
+```json
+{
+  "http-version": 1,
+  "http1-mode": "split",
+  "host": "cdn.example",
+  "path": "/tunnel",
+  "split": {
+    "upload-method": "POST",
+    "download-method": "GET",
+    "id-placement": "query",
+    "id-name": "sid",
+    "direction-name": "part",
+    "cache-bypass": true,
+    "upload-headers": {
+      "Cache-Control": "no-store"
+    },
+    "download-headers": {
+      "Accept": "application/octet-stream"
+    }
+  }
+}
+```
+
+For path-based IDs:
+
+```json
+{
+  "http-version": 1,
+  "http1-mode": "split",
+  "host": "cdn.example",
+  "split": {
+    "upload-path": "/u/{id}",
+    "download-path": "/d/{id}/{cache}",
+    "id-placement": "path"
+  }
+}
+```
 
 ### HTTP/1.1 request body behavior
 

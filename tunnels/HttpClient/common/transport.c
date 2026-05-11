@@ -538,14 +538,262 @@ static bool httpclientSendWebSocketControlFrame(tunnel_t *t, line_t *l, httpclie
     return httpclientSendRawUp(t, l, ls, buf);
 }
 
+static const char *httpclientSplitDirectionValue(const httpclient_tstate_t *ts, httpclient_split_role_t role)
+{
+    return role == kHttpClientSplitRoleDownload ? ts->split_download_value : ts->split_upload_value;
+}
+
+static const char *httpclientSplitMethod(const httpclient_tstate_t *ts, httpclient_split_role_t role)
+{
+    return role == kHttpClientSplitRoleDownload ? ts->split_download_method : ts->split_upload_method;
+}
+
+static const char *httpclientSplitPath(const httpclient_tstate_t *ts, httpclient_split_role_t role)
+{
+    return role == kHttpClientSplitRoleDownload ? ts->split_download_path : ts->split_upload_path;
+}
+
+static enum http_method httpclientEffectiveMethodEnum(const httpclient_tstate_t *ts, const httpclient_lstate_t *ls)
+{
+    if (ls->split_role == kHttpClientSplitRoleDownload)
+    {
+        return ts->split_download_method_enum;
+    }
+    if (ls->split_role == kHttpClientSplitRoleUpload)
+    {
+        return ts->split_upload_method_enum;
+    }
+    return ts->method_enum;
+}
+
+static bool httpclientAppendString(char *dst, size_t cap, size_t *offset, const char *value)
+{
+    size_t len = value == NULL ? 0 : strlen(value);
+    if (*offset + len >= cap)
+    {
+        return false;
+    }
+
+    if (len > 0)
+    {
+        memoryCopy(dst + *offset, value, len);
+        *offset += len;
+    }
+    dst[*offset] = '\0';
+    return true;
+}
+
+static bool httpclientAppendQueryParam(char *path, size_t cap, size_t *off, bool first, const char *name,
+                                       const char *value)
+{
+    char sep[2] = {first ? '?' : '&', '\0'};
+    return httpclientAppendString(path, cap, off, sep) && httpclientAppendString(path, cap, off, name) &&
+           httpclientAppendString(path, cap, off, "=") && httpclientAppendString(path, cap, off, value);
+}
+
+static char *httpclientBuildSplitPath(const httpclient_tstate_t *ts, const httpclient_lstate_t *ls)
+{
+    const char *base      = httpclientSplitPath(ts, ls->split_role);
+    const char *direction = httpclientSplitDirectionValue(ts, ls->split_role);
+    const char *id        = ls->split_id;
+    const char *token     = ts->split_token == NULL ? "" : ts->split_token;
+
+    char cache_value[32];
+    snprintf(cache_value, sizeof(cache_value), "%016" PRIx64, fastRand64());
+
+    size_t cap = strlen(base) + (strlen(id) * 2U) + (strlen(direction) * 2U) + (strlen(cache_value) * 2U) +
+                 (strlen(token) * 2U) +
+                 strlen(ts->split_id_name) + strlen(ts->split_direction_name) +
+                 strlen(ts->split_cache_bypass_name) + 128;
+    char *path = memoryAllocate(cap);
+    size_t off = 0;
+
+    for (size_t i = 0; base[i] != '\0';)
+    {
+        if (strncmp(base + i, "{id}", 4) == 0)
+        {
+            if (! httpclientAppendString(path, cap, &off, id))
+            {
+                memoryFree(path);
+                return NULL;
+            }
+            i += 4;
+            continue;
+        }
+        if (strncmp(base + i, "{direction}", 11) == 0)
+        {
+            if (! httpclientAppendString(path, cap, &off, direction))
+            {
+                memoryFree(path);
+                return NULL;
+            }
+            i += 11;
+            continue;
+        }
+        if (strncmp(base + i, "{cache}", 7) == 0)
+        {
+            if (! httpclientAppendString(path, cap, &off, cache_value))
+            {
+                memoryFree(path);
+                return NULL;
+            }
+            i += 7;
+            continue;
+        }
+        if (strncmp(base + i, "{token}", 7) == 0)
+        {
+            if (! httpclientAppendString(path, cap, &off, token))
+            {
+                memoryFree(path);
+                return NULL;
+            }
+            i += 7;
+            continue;
+        }
+
+        if (off + 1 >= cap)
+        {
+            memoryFree(path);
+            return NULL;
+        }
+        path[off++] = base[i++];
+        path[off]   = '\0';
+    }
+
+    bool has_query = strchr(path, '?') != NULL;
+    bool first     = ! has_query;
+
+    if (ts->split_id_placement == kHttpClientSplitPlacementQuery)
+    {
+        if (! httpclientAppendQueryParam(path, cap, &off, first, ts->split_id_name, id))
+        {
+            memoryFree(path);
+            return NULL;
+        }
+        first = false;
+    }
+
+    if (ts->split_direction_placement == kHttpClientSplitPlacementQuery)
+    {
+        if (! httpclientAppendQueryParam(path, cap, &off, first, ts->split_direction_name, direction))
+        {
+            memoryFree(path);
+            return NULL;
+        }
+        first = false;
+    }
+
+    if (ts->split_cache_bypass)
+    {
+        if (! httpclientAppendQueryParam(path, cap, &off, first, ts->split_cache_bypass_name, cache_value))
+        {
+            memoryFree(path);
+            return NULL;
+        }
+    }
+
+    return path;
+}
+
+static bool httpclientAppendSplitPlacementHeaders(char *header_buf, size_t cap, int *offset,
+                                                  const httpclient_tstate_t *ts, const httpclient_lstate_t *ls)
+{
+    const char *direction = httpclientSplitDirectionValue(ts, ls->split_role);
+
+    if (ts->split_id_placement == kHttpClientSplitPlacementHeader &&
+        ! appendHeaderFmt(header_buf, cap, offset, "%s: %s\r\n", ts->split_id_name, ls->split_id))
+    {
+        return false;
+    }
+
+    if (ts->split_direction_placement == kHttpClientSplitPlacementHeader &&
+        ! appendHeaderFmt(header_buf, cap, offset, "%s: %s\r\n", ts->split_direction_name, direction))
+    {
+        return false;
+    }
+
+    if (ts->split_token != NULL && ts->split_token_placement == kHttpClientSplitPlacementHeader &&
+        ! appendHeaderFmt(header_buf, cap, offset, "%s: %s\r\n", ts->split_token_name, ts->split_token))
+    {
+        return false;
+    }
+
+    bool needs_cookie = ts->split_id_placement == kHttpClientSplitPlacementCookie ||
+                        ts->split_direction_placement == kHttpClientSplitPlacementCookie ||
+                        (ts->split_token != NULL && ts->split_token_placement == kHttpClientSplitPlacementCookie);
+    if (! needs_cookie)
+    {
+        return true;
+    }
+
+    if (! appendHeaderFmt(header_buf, cap, offset, "Cookie: "))
+    {
+        return false;
+    }
+
+    bool first = true;
+    if (ts->split_id_placement == kHttpClientSplitPlacementCookie)
+    {
+        if (! appendHeaderFmt(header_buf, cap, offset, "%s%s=%s", first ? "" : "; ", ts->split_id_name, ls->split_id))
+        {
+            return false;
+        }
+        first = false;
+    }
+    if (ts->split_direction_placement == kHttpClientSplitPlacementCookie)
+    {
+        if (! appendHeaderFmt(header_buf, cap, offset, "%s%s=%s", first ? "" : "; ", ts->split_direction_name,
+                              direction))
+        {
+            return false;
+        }
+        first = false;
+    }
+    if (ts->split_token != NULL && ts->split_token_placement == kHttpClientSplitPlacementCookie)
+    {
+        if (! appendHeaderFmt(header_buf, cap, offset, "%s%s=%s", first ? "" : "; ", ts->split_token_name,
+                              ts->split_token))
+        {
+            return false;
+        }
+    }
+
+    return appendHeaderFmt(header_buf, cap, offset, "\r\n");
+}
+
+static line_t *httpclientDownstreamTargetLine(httpclient_lstate_t *ls, line_t *fallback)
+{
+    if (ls->split_role == kHttpClientSplitRoleDownload && ls->split_main_line != NULL)
+    {
+        return ls->split_main_line;
+    }
+    return fallback;
+}
+
+static bool httpclientForwardDownstreamPayload(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *buf)
+{
+    line_t *target = httpclientDownstreamTargetLine(ls, l);
+    if (target == NULL || ! lineIsAlive(target))
+    {
+        lineReuseBuffer(l, buf);
+        return false;
+    }
+    return withLineLockedWithBuf(target, tunnelPrevDownStreamPayload, t, buf);
+}
+
 bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upgrade_to_h2)
 {
     httpclient_tstate_t *ts = tunnelGetState(t);
     httpclient_lstate_t *ls = lineGetState(l, t);
-    bool                 websocket_mode  = ts->websocket_enabled;
+    bool                 split_mode      = (ts->h1_transport_mode == kHttpClientH1TransportSplit) &&
+                                           (ls->split_role == kHttpClientSplitRoleUpload ||
+                                            ls->split_role == kHttpClientSplitRoleDownload);
+    bool                 websocket_mode  = split_mode ? false : ts->websocket_enabled;
     bool                 upgrade_requested = upgrade_to_h2 && ! websocket_mode;
     bool                 custom_upgrade  = upgrade_requested && httpclientUpgradeIsCustom(ts);
     const char          *upgrade_proto   = upgrade_requested ? httpclientUpgradeProtocol(ts) : NULL;
+    bool                 request_has_body = ! split_mode || ls->split_role == kHttpClientSplitRoleUpload;
+    char                *split_path      = NULL;
 
     char host_line[512];
     int  host_len = 0;
@@ -567,21 +815,34 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
     char *header_buf = memoryAllocate(kHttpClientMaxHeaderBytes);
     int  offset = 0;
 
-    const char *method = websocket_mode ? "GET" : ts->method;
+    const char *method = websocket_mode ? "GET" : (split_mode ? httpclientSplitMethod(ts, ls->split_role) : ts->method);
+    const char *path   = ts->path;
+    if (split_mode)
+    {
+        split_path = httpclientBuildSplitPath(ts, ls);
+        if (split_path == NULL)
+        {
+            LOGE("HttpClient: failed to build split HTTP/1.1 request path");
+            memoryFree(header_buf);
+            return false;
+        }
+        path = split_path;
+    }
 
     if (ts->verbose)
     {
         LOGD("HttpClient: sending HTTP/1.1 request method=%s host=%s path=%s websocket=%s h2c-upgrade=%s", method,
-             host_line, ts->path, websocket_mode ? "true" : "false",
+             host_line, path, websocket_mode ? "true" : "false",
              (upgrade_requested && ! custom_upgrade) ? "true" : "false");
     }
 
-    if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "%s %s HTTP/1.1\r\n", method, ts->path) ||
+    if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "%s %s HTTP/1.1\r\n", method, path) ||
         ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Host: %s\r\n", host_line) ||
         ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "User-Agent: %s\r\n", ts->user_agent) ||
         ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Accept: */*\r\n"))
     {
         LOGE("HttpClient: request headers are too large");
+        memoryFree(split_path);
         memoryFree(header_buf);
         return false;
     }
@@ -591,6 +852,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
         if (! httpclientGenerateWebSocketKey(ls))
         {
             LOGE("HttpClient: failed to generate Sec-WebSocket-Key");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -602,6 +864,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                               ls->websocket_key))
         {
             LOGE("HttpClient: websocket request headers are too large");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -610,6 +873,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
             ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Origin: %s\r\n", ts->websocket_origin))
         {
             LOGE("HttpClient: websocket request headers are too large");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -619,6 +883,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                               ts->websocket_subprotocol))
         {
             LOGE("HttpClient: websocket request headers are too large");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -628,6 +893,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                               ts->websocket_extensions))
         {
             LOGE("HttpClient: websocket request headers are too large");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -638,6 +904,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
             (ts->upgrade_settings_b64 == NULL || ts->upgrade_settings_payload == NULL || ts->upgrade_settings_payload_len == 0))
         {
             LOGE("HttpClient: HTTP2-Settings is not initialized");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -651,6 +918,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                                   ts->upgrade_settings_b64))
             {
                 LOGE("HttpClient: request headers are too large");
+                memoryFree(split_path);
                 memoryFree(header_buf);
                 return false;
             }
@@ -659,6 +927,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                  ! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "Upgrade: %s\r\n", upgrade_proto))
         {
             LOGE("HttpClient: request headers are too large");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -682,6 +951,7 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                                       header->valuestring))
                 {
                     LOGE("HttpClient: request headers are too large");
+                    memoryFree(split_path);
                     memoryFree(header_buf);
                     return false;
                 }
@@ -690,10 +960,22 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
     }
     else
     {
-        if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset,
-                              "Connection: keep-alive\r\nTransfer-Encoding: chunked\r\n"))
+        if (request_has_body)
+        {
+            if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset,
+                                  "Connection: keep-alive\r\nTransfer-Encoding: chunked\r\n"))
+            {
+                LOGE("HttpClient: request headers are too large");
+                memoryFree(split_path);
+                memoryFree(header_buf);
+                return false;
+            }
+        }
+        else if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset,
+                                   "Connection: keep-alive\r\nCache-Control: no-store\r\nPragma: no-cache\r\n"))
         {
             LOGE("HttpClient: request headers are too large");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
@@ -705,9 +987,18 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                               httpContentTypeStr(ts->content_type)))
         {
             LOGE("HttpClient: request headers are too large");
+            memoryFree(split_path);
             memoryFree(header_buf);
             return false;
         }
+    }
+
+    if (split_mode && ! httpclientAppendSplitPlacementHeaders(header_buf, kHttpClientMaxHeaderBytes, &offset, ts, ls))
+    {
+        LOGE("HttpClient: split request headers are too large");
+        memoryFree(split_path);
+        memoryFree(header_buf);
+        return false;
     }
 
     if (cJSON_IsObject(ts->headers))
@@ -729,6 +1020,39 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
                                   header->valuestring))
             {
                 LOGE("HttpClient: request headers are too large");
+                memoryFree(split_path);
+                memoryFree(header_buf);
+                return false;
+            }
+        }
+    }
+
+    const cJSON *side_headers = NULL;
+    if (split_mode)
+    {
+        side_headers = ls->split_role == kHttpClientSplitRoleDownload ? ts->split_download_headers
+                                                                      : ts->split_upload_headers;
+    }
+    if (cJSON_IsObject(side_headers))
+    {
+        cJSON *header = NULL;
+        cJSON_ArrayForEach(header, side_headers)
+        {
+            if (! cJSON_IsString(header) || header->valuestring == NULL || header->string == NULL)
+            {
+                continue;
+            }
+
+            if (httpclientShouldSkipExtraHeader(header->string, false, false))
+            {
+                continue;
+            }
+
+            if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "%s: %s\r\n", header->string,
+                                  header->valuestring))
+            {
+                LOGE("HttpClient: split request headers are too large");
+                memoryFree(split_path);
                 memoryFree(header_buf);
                 return false;
             }
@@ -738,13 +1062,20 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
     if (! appendHeaderFmt(header_buf, kHttpClientMaxHeaderBytes, &offset, "\r\n"))
     {
         LOGE("HttpClient: request headers are too large");
+        memoryFree(split_path);
         memoryFree(header_buf);
         return false;
     }
 
     bool ok = sendBytesUp(t, l, header_buf, (uint32_t) offset);
+    memoryFree(split_path);
     memoryFree(header_buf);
     return ok;
+}
+
+bool httpclientTransportSendHttp1SplitRequestHeaders(tunnel_t *t, line_t *l)
+{
+    return httpclientTransportSendHttp1RequestHeaders(t, l, false);
 }
 
 bool httpclientTransportSendHttp1FinalChunk(tunnel_t *t, line_t *l)
@@ -1703,7 +2034,7 @@ bool httpclientTransportDrainWebSocketDown(tunnel_t *t, line_t *l, httpclient_ls
             return false;
         }
 
-        if (payload != NULL && ! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
+        if (payload != NULL && ! httpclientForwardDownstreamPayload(t, l, ls, payload))
         {
             return false;
         }
@@ -1936,9 +2267,7 @@ static bool httpclientTransportDrainRawDown(tunnel_t *t, line_t *l, httpclient_l
             continue;
         }
 
-        tunnelPrevDownStreamPayload(t, l, buf);
-
-        if (! lineIsAlive(l))
+        if (! httpclientForwardDownstreamPayload(t, l, ls, buf))
         {
             return false;
         }
@@ -2257,7 +2586,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             response_has_no_body = true;
         }
 
-        if (ts->method_enum == kHttpHead)
+        if (httpclientEffectiveMethodEnum(ts, ls) == kHttpHead)
         {
             response_has_no_body = true;
         }
@@ -2415,7 +2744,7 @@ bool httpclientTransportDrainHttp1ChunkedBody(tunnel_t *t, line_t *l, httpclient
 
             sbufSetLength(chunk_with_tail, (uint32_t) ls->h1_chunk_expected);
 
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, chunk_with_tail))
+            if (! httpclientForwardDownstreamPayload(t, l, ls, chunk_with_tail))
             {
                 return false;
             }
@@ -2443,7 +2772,7 @@ bool httpclientTransportDrainHttp1Body(tunnel_t *t, line_t *l, httpclient_lstate
         while (! bufferstreamIsEmpty(&ls->in_stream))
         {
             sbuf_t *buf = bufferstreamIdealRead(&ls->in_stream);
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+            if (! httpclientForwardDownstreamPayload(t, l, ls, buf))
             {
                 return false;
             }
@@ -2465,7 +2794,7 @@ bool httpclientTransportDrainHttp1Body(tunnel_t *t, line_t *l, httpclient_lstate
 
         ls->h1_body_remaining -= (int64_t) to_read;
 
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+        if (! httpclientForwardDownstreamPayload(t, l, ls, buf))
         {
             return false;
         }

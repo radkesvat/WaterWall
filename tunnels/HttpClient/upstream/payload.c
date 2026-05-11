@@ -19,6 +19,12 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     httpclient_lstate_t *ls = lineGetState(l, t);
     httpclient_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->split_role == kHttpClientSplitRoleMain)
+    {
+        httpclientSplitUpStreamPayload(t, l, buf);
+        return;
+    }
+
     lineLock(l);
 
     if (ts->websocket_enabled)

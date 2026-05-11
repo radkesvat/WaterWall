@@ -7,6 +7,11 @@
 #include "http_def.h"
 #include "nghttp2/nghttp2.h"
 
+#define i_type hmap_httpserver_split_t        // NOLINT
+#define i_key  hash_t                         // NOLINT
+#define i_val  struct httpserver_lstate_s *   // NOLINT
+#include "stc/hmap.h"
+
 typedef enum httpserver_version_mode_e
 {
     kHttpServerVersionModeHttp1 = 1,
@@ -28,6 +33,29 @@ typedef enum httpserver_h1_body_mode_e
     kHttpServerH1BodyChunked    = 1,
     kHttpServerH1BodyContentLen = 2
 } httpserver_h1_body_mode_t;
+
+typedef enum httpserver_h1_transport_mode_e
+{
+    kHttpServerH1TransportSingle = 0,
+    kHttpServerH1TransportSplit  = 1
+} httpserver_h1_transport_mode_t;
+
+typedef enum httpserver_split_role_e
+{
+    kHttpServerSplitRoleNone     = 0,
+    kHttpServerSplitRoleUnknown  = 1,
+    kHttpServerSplitRoleUpload   = 2,
+    kHttpServerSplitRoleDownload = 3,
+    kHttpServerSplitRoleMain     = 4
+} httpserver_split_role_t;
+
+typedef enum httpserver_split_placement_e
+{
+    kHttpServerSplitPlacementQuery  = 0,
+    kHttpServerSplitPlacementHeader = 1,
+    kHttpServerSplitPlacementCookie = 2,
+    kHttpServerSplitPlacementPath   = 3
+} httpserver_split_placement_t;
 
 typedef struct httpserver_lstate_s
 {
@@ -79,6 +107,13 @@ typedef struct httpserver_lstate_s
     char websocket_h2_version[16];
     char websocket_h2_subprotocol[256];
     char websocket_h2_origin[512];
+
+    httpserver_split_role_t split_role;
+    line_t                 *split_main_line;
+    line_t                 *split_upload_line;
+    line_t                 *split_download_line;
+    buffer_queue_t          split_pending_up;
+    hash_t                  split_hash;
 } httpserver_lstate_t;
 
 typedef struct httpserver_tstate_s
@@ -92,19 +127,45 @@ typedef struct httpserver_tstate_s
     char *websocket_origin;
     char *websocket_subprotocol;
     char *upgrade_protocol;
+    char *split_upload_method;
+    char *split_download_method;
+    char *split_upload_path;
+    char *split_download_path;
+    char *split_id_name;
+    char *split_direction_name;
+    char *split_upload_value;
+    char *split_download_value;
+    char *split_cache_bypass_name;
+    char *split_token;
+    char *split_token_name;
 
     const cJSON *headers;
     const cJSON *upgrade_request_headers;
     const cJSON *upgrade_response_headers;
+    const cJSON *split_upload_headers;
+    const cJSON *split_download_headers;
 
     enum http_method       expected_method_enum;
+    enum http_method       split_upload_method_enum;
+    enum http_method       split_download_method_enum;
     enum http_content_type content_type;
     int                    status_code;
 
+    wmutex_t split_upload_map_mutex;
+    wmutex_t split_download_map_mutex;
+    hmap_httpserver_split_t split_upload_map;
+    hmap_httpserver_split_t split_download_map;
+
     httpserver_version_mode_t version_mode;
+    httpserver_h1_transport_mode_t h1_transport_mode;
+    httpserver_split_placement_t   split_id_placement;
+    httpserver_split_placement_t   split_direction_placement;
+    httpserver_split_placement_t   split_token_placement;
     bool                     enable_upgrade;
     bool                     websocket_enabled;
     bool                     full_duplex;
+    bool                     split_cache_bypass;
+    bool                     split_maps_initialized;
     bool                     verbose;
 } httpserver_tstate_t;
 
@@ -118,6 +179,7 @@ enum
     kHttpServerBufferQueueCap   = 8,
     kHttpServerMaxHeaderBytes   = 64 * 1024,
     kHttpServerHttp2FrameBytes  = 32 * 1024,
+    kHttpServerSplitMaxBuffering = 65535 * 2,
     kHttpServerDefaultHttp1Port = 80,
     kHttpServerDefaultHttpsPort = 443
 };
@@ -177,3 +239,10 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 void httpserverTransportCloseBothDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+
+bool httpserverSplitIsEnabled(tunnel_t *t);
+void httpserverSplitUpStreamInit(tunnel_t *t, line_t *l);
+void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void httpserverSplitUpStreamFinish(tunnel_t *t, line_t *l);
+void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l);

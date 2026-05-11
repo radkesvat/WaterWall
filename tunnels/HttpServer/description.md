@@ -190,6 +190,34 @@ If omitted, the current implementation defaults to:
 
   This is the mode to use when you want plain HTTP/1.1 or h2c to behave more like a bidirectional transport instead of a strict request-end-driven service boundary.
 
+- `http1-mode` `(string)`
+  Selects the HTTP/1.1 transport shape.
+
+  Supported values:
+  - `"single"`: the existing one-connection HTTP/1.1 behavior
+  - `"split"`: pair separate upload and download HTTP/1.1 connections into one logical Waterwall line
+
+  Default: `"single"`
+
+- `split` `(object)`
+  Optional settings for `http1-mode = "split"`.
+
+  Split mode requires `http-version = 1` and cannot be combined with `websocket`.
+
+  Common fields:
+  - `upload-method` default: the top-level `method`
+  - `download-method` default: `"GET"`
+  - `upload-path` default: the top-level `path`
+  - `download-path` default: the top-level `path`
+  - `id-placement`: `"query"`, `"header"`, `"cookie"`, or `"path"`; default `"query"`
+  - `id-name`: default `"wwid"`
+  - `direction-placement`: `"query"`, `"header"`, `"cookie"`, or `"path"`; default `"query"`
+  - `direction-name`: default `"wwdir"`
+  - `upload-value` / `download-value`: default `"upload"` / `"download"`
+  - `token`, `token-placement`, `token-name`: optional required shared token metadata
+
+  Path templates may contain `{id}`, `{direction}`, `{cache}`, and `{token}`.
+
 - `verbose` `(boolean)`
   Enables extra debug logging for protocol detection, handshakes, and framing flow.
   Default: `false`
@@ -255,6 +283,52 @@ With `full-duplex = true`:
 - request-body completion is remembered internally instead of immediately sending Waterwall upstream `Finish`
 - response bytes may continue to flow downstream on the same line
 - chunked HTTP/1.1 requests can therefore behave like a long-lived bidirectional transport
+
+### Split HTTP/1.1 mode
+
+With `http1-mode = "split"`, `HttpServer` treats incoming HTTP/1.1 connections as transport halves:
+
+- upload request: its request body is decoded and forwarded upstream
+- download request: it receives the response body as a chunked HTTP/1.1 response
+
+The server pairs both halves by the configured identifier and direction metadata, then creates one normal Waterwall line toward the next node. The download response headers may be sent before the upload half arrives, which keeps CDN/proxy download requests visibly active.
+
+Example:
+
+```json
+{
+  "http-version": 1,
+  "http1-mode": "split",
+  "path": "/tunnel",
+  "split": {
+    "upload-method": "POST",
+    "download-method": "GET",
+    "id-placement": "query",
+    "id-name": "sid",
+    "direction-name": "part",
+    "token": "shared-edge-token",
+    "token-placement": "header",
+    "token-name": "X-Tunnel-Token"
+  },
+  "headers": {
+    "Cache-Control": "no-store"
+  }
+}
+```
+
+For path-template pairing:
+
+```json
+{
+  "http-version": 1,
+  "http1-mode": "split",
+  "split": {
+    "upload-path": "/u/{id}",
+    "download-path": "/d/{id}/{cache}",
+    "id-placement": "path"
+  }
+}
+```
 
 ### WebSocket handling
 

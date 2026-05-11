@@ -613,6 +613,35 @@ static bool httpserverSendWebSocketControlFrame(tunnel_t *t, line_t *l, httpserv
     return httpserverSendRawDown(t, l, ls, buf);
 }
 
+static line_t *httpserverUpstreamTargetLine(httpserver_lstate_t *ls, line_t *fallback)
+{
+    if (ls->split_role == kHttpServerSplitRoleUpload && ls->split_main_line != NULL)
+    {
+        return ls->split_main_line;
+    }
+    return fallback;
+}
+
+static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
+{
+    line_t *target = httpserverUpstreamTargetLine(ls, l);
+    if (target == NULL || ! lineIsAlive(target))
+    {
+        lineReuseBuffer(l, buf);
+        return false;
+    }
+    return withLineLockedWithBuf(target, tunnelNextUpStreamPayload, t, buf);
+}
+
+static void httpserverForwardUpstreamFinish(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    line_t *target = httpserverUpstreamTargetLine(ls, l);
+    if (target != NULL && lineIsAlive(target))
+    {
+        tunnelNextUpStreamFinish(t, target);
+    }
+}
+
 static const char *statusReasonPhrase(int status_code)
 {
     const char *reason = httpStatusStr((enum http_status) status_code);
@@ -1998,7 +2027,7 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
             return false;
         }
 
-        if (payload != NULL && ! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, payload))
+        if (payload != NULL && ! httpserverForwardUpstreamPayload(t, l, ls, payload))
         {
             return false;
         }
@@ -2098,7 +2127,8 @@ bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *
             continue;
         }
 
-        tunnelNextUpStreamPayload(t, l, buf);
+        line_t *target = httpserverUpstreamTargetLine(ls, l);
+        tunnelNextUpStreamPayload(t, target, buf);
 
         if (! lineIsAlive(l))
         {
@@ -2465,7 +2495,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
             {
                 ls->next_finished = true;
                 memoryFree(header_text);
-                tunnelNextUpStreamFinish(t, l);
+                httpserverForwardUpstreamFinish(t, l, ls);
                 return true;
             }
         }
@@ -2478,7 +2508,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
         {
             ls->next_finished = true;
             memoryFree(header_text);
-            tunnelNextUpStreamFinish(t, l);
+            httpserverForwardUpstreamFinish(t, l, ls);
             return true;
         }
     }
@@ -2576,7 +2606,7 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
                             if (! ts->full_duplex)
                             {
                                 ls->next_finished = true;
-                                tunnelNextUpStreamFinish(t, l);
+                                httpserverForwardUpstreamFinish(t, l, ls);
                             }
                         }
 
@@ -2613,7 +2643,7 @@ bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, htt
 
             sbufSetLength(chunk_with_tail, (uint32_t) ls->h1_chunk_expected);
 
-            if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, chunk_with_tail))
+            if (! httpserverForwardUpstreamPayload(t, l, ls, chunk_with_tail))
             {
                 return false;
             }
@@ -2652,7 +2682,7 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
         sbuf_t *buf = bufferstreamReadExact(&ls->in_stream, to_read);
         ls->h1_body_remaining -= (int64_t) to_read;
 
-        if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
+        if (! httpserverForwardUpstreamPayload(t, l, ls, buf))
         {
             return false;
         }
@@ -2664,7 +2694,7 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
         if (! ts->full_duplex)
         {
             ls->next_finished = true;
-            tunnelNextUpStreamFinish(t, l);
+            httpserverForwardUpstreamFinish(t, l, ls);
         }
         return true;
     }
@@ -2686,7 +2716,7 @@ void httpserverTransportCloseBothDirections(tunnel_t *t, line_t *l, httpserver_l
 
     if (close_next)
     {
-        tunnelNextUpStreamFinish(t, l);
+        httpserverForwardUpstreamFinish(t, l, ls);
     }
 
     if (lineIsAlive(l) && close_prev)

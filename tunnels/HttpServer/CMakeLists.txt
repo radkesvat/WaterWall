@@ -10,6 +10,7 @@ add_library(HttpServer STATIC
                     common/helpers.c
                     common/line_state.c
                     common/transport.c
+                    common/split.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c

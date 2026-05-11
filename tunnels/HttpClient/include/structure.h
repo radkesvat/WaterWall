@@ -32,6 +32,28 @@ typedef enum httpclient_h1_body_mode_e
     kHttpClientH1BodyUntilClose   = 3
 } httpclient_h1_body_mode_t;
 
+typedef enum httpclient_h1_transport_mode_e
+{
+    kHttpClientH1TransportSingle = 0,
+    kHttpClientH1TransportSplit  = 1
+} httpclient_h1_transport_mode_t;
+
+typedef enum httpclient_split_role_e
+{
+    kHttpClientSplitRoleNone     = 0,
+    kHttpClientSplitRoleMain     = 1,
+    kHttpClientSplitRoleUpload   = 2,
+    kHttpClientSplitRoleDownload = 3
+} httpclient_split_role_t;
+
+typedef enum httpclient_split_placement_e
+{
+    kHttpClientSplitPlacementQuery  = 0,
+    kHttpClientSplitPlacementHeader = 1,
+    kHttpClientSplitPlacementCookie = 2,
+    kHttpClientSplitPlacementPath   = 3
+} httpclient_split_placement_t;
+
 typedef struct httpclient_tstate_s
 {
     nghttp2_session_callbacks *cbs;
@@ -46,12 +68,27 @@ typedef struct httpclient_tstate_s
     char *websocket_subprotocol;
     char *websocket_extensions;
     char *upgrade_protocol;
+    char *split_upload_method;
+    char *split_download_method;
+    char *split_upload_path;
+    char *split_download_path;
+    char *split_id_name;
+    char *split_direction_name;
+    char *split_upload_value;
+    char *split_download_value;
+    char *split_cache_bypass_name;
+    char *split_token;
+    char *split_token_name;
 
     const cJSON *headers;
     const cJSON *upgrade_request_headers;
     const cJSON *upgrade_response_headers;
+    const cJSON *split_upload_headers;
+    const cJSON *split_download_headers;
 
     enum http_method       method_enum;
+    enum http_method       split_upload_method_enum;
+    enum http_method       split_download_method_enum;
     enum http_content_type content_type;
 
     int host_port;
@@ -61,9 +98,15 @@ typedef struct httpclient_tstate_s
     char    *upgrade_settings_b64;
 
     httpclient_version_mode_t version_mode;
+    httpclient_h1_transport_mode_t h1_transport_mode;
+    httpclient_split_placement_t   split_id_placement;
+    httpclient_split_placement_t   split_direction_placement;
+    httpclient_split_placement_t   split_token_placement;
+    atomic_ullong                  split_identifier;
     bool                      enable_upgrade;
     bool                      websocket_enabled;
     bool                      full_duplex;
+    bool                      split_cache_bypass;
     bool                      verbose;
 } httpclient_tstate_t;
 
@@ -110,6 +153,12 @@ typedef struct httpclient_lstate_s
     char websocket_key[32];
     char websocket_h2_protocol[128];
     char websocket_h2_extensions[256];
+
+    httpclient_split_role_t split_role;
+    line_t                 *split_main_line;
+    line_t                 *split_upload_line;
+    line_t                 *split_download_line;
+    char                    split_id[48];
 } httpclient_lstate_t;
 
 enum
@@ -164,6 +213,7 @@ bool bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end);
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len);
 
 bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upgrade_to_h2);
+bool httpclientTransportSendHttp1SplitRequestHeaders(tunnel_t *t, line_t *l);
 bool httpclientTransportSendHttp1FinalChunk(tunnel_t *t, line_t *l);
 bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *payload);
 bool httpclientTransportSendWebSocketData(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *payload,
@@ -182,3 +232,10 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 bool httpclientTransportDrainHttp1ChunkedBody(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 bool httpclientTransportDrainHttp1Body(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 void httpclientTransportCloseBothDirections(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
+
+bool httpclientSplitIsEnabled(tunnel_t *t);
+void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l);
+void httpclientSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l);
+void httpclientSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void httpclientSplitDownStreamFinish(tunnel_t *t, line_t *l);

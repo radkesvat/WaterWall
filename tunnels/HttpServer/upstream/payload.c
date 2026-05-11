@@ -19,6 +19,13 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     httpserver_lstate_t *ls = lineGetState(l, t);
     httpserver_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->split_role == kHttpServerSplitRoleUnknown || ls->split_role == kHttpServerSplitRoleUpload ||
+        ls->split_role == kHttpServerSplitRoleDownload)
+    {
+        httpserverSplitUpStreamPayload(t, l, buf);
+        return;
+    }
+
     lineLock(l);
 
     if (ts->verbose)

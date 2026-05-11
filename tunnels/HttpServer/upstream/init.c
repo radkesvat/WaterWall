@@ -16,6 +16,12 @@ static void closeOrDestroyLine(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 
 void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
+    if (httpserverSplitIsEnabled(t))
+    {
+        httpserverSplitUpStreamInit(t, l);
+        return;
+    }
+
     httpserver_tstate_t *ts = tunnelGetState(t);
     httpserver_lstate_t *ls = lineGetState(l, t);
 

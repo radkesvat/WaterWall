@@ -19,6 +19,12 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     httpserver_lstate_t *ls = lineGetState(l, t);
     httpserver_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->split_role == kHttpServerSplitRoleMain)
+    {
+        httpserverSplitDownStreamFinish(t, l);
+        return;
+    }
+
     lineLock(l);
 
     ls->next_finished = true;

@@ -19,6 +19,12 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     httpclient_lstate_t *ls = lineGetState(l, t);
     httpclient_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->split_role == kHttpClientSplitRoleUpload || ls->split_role == kHttpClientSplitRoleDownload)
+    {
+        httpclientSplitDownStreamPayload(t, l, buf);
+        return;
+    }
+
     lineLock(l);
 
     if (ls->runtime_proto == kHttpClientRuntimeHttp2)
