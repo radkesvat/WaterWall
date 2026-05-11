@@ -22,7 +22,7 @@ static bool sendDownloadIntro(tunnel_t *t, halfduplexclient_lstate_t *ls, sbuf_t
     
     if (!lineIsAlive(download_line))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(download_line)), buf);
+        lineReuseBuffer(download_line, buf);
         lineUnlock(download_line);
         return false;
     }
@@ -69,7 +69,7 @@ static void handleFirstPacket(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexcli
     
     sbuf_t *intro_upload_payload = createUploadIntroPayload(t, buf, cid_bytes, sizeof(cids));
     
-    bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+    lineReuseBuffer(l, buf);
     
     line_t *upload_line = ls->upload_line;
     tunnelNextUpStreamPayload(t, upload_line, intro_upload_payload);

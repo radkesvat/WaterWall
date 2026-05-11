@@ -166,7 +166,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! udpstatelesssocketGetLinePeerAddr(l, &addr))
         {
             LOGE("UdpStatelessSocket: outbound destination address is not ready");
-            bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+            lineReuseBuffer(l, buf);
             return;
         }
 

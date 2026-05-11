@@ -49,13 +49,13 @@ void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (UNLIKELY(state->raw_device->up == false))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+        lineReuseBuffer(l, buf);
         LOGW("RawSocket: device is down, cannot write packet");
         return;
     }
 
     if (! rawdeviceWrite(state->raw_device, buf))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+        lineReuseBuffer(l, buf);
     }
 }
