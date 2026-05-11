@@ -24,7 +24,8 @@ typedef struct rawsocket_tstate_s
     tunnel_t* write_tunnel; // tunnel to write data to
 
     capture_device_t *capture_device;
-    char             *capture_ip;
+    ipmask_t         *capture_ranges;
+    uint32_t          capture_range_count;
     char             *capture_device_name;
     uint32_t          except_fwmark;
 

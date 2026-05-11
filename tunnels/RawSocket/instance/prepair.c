@@ -17,8 +17,8 @@ void rawsocketOnPrepair(tunnel_t *t)
         state->write_tunnel = t->next;
     }
 
-    state->capture_device =
-        caputredeviceCreate(state->capture_device_name, state->capture_ip, t, rawsocketOnIPPacketReceived);
+    state->capture_device = caputredeviceCreate(state->capture_device_name, state->capture_ranges,
+                                                state->capture_range_count, t, rawsocketOnIPPacketReceived);
 
     if (state->capture_device == NULL)
     {

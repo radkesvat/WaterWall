@@ -169,6 +169,75 @@ static BOOL (*WinDivertSend)(HANDLE handle, const VOID *pPacket, UINT packetLen,
 static BOOL (*WinDivertShutdown)(HANDLE handle, WINDIVERT_SHUTDOWN how);
 static BOOL (*WinDivertClose)(HANDLE handle);
 
+static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
+{
+    uint32_t mask_host = lwip_ntohl(mask->u_addr.ip4.addr);
+    uint8_t  prefix    = 0;
+
+    while ((mask_host & 0x80000000U) != 0)
+    {
+        ++prefix;
+        mask_host <<= 1U;
+    }
+
+    return prefix;
+}
+
+static void capturedeviceFormatIpv4(uint32_t addr_host, char *dest, size_t dest_len)
+{
+    stringNPrintf(dest, dest_len, "%u.%u.%u.%u", (addr_host >> 24U) & 0xFFU, (addr_host >> 16U) & 0xFFU,
+                  (addr_host >> 8U) & 0xFFU, addr_host & 0xFFU);
+}
+
+static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count)
+{
+    size_t filter_len = 10U; // "ip and (" + ")" + NUL
+
+    for (uint32_t i = 0; i < range_count; ++i)
+    {
+        filter_len += 80U;
+    }
+
+    char  *filter = memoryAllocate(filter_len);
+    size_t offset = 0;
+
+    offset += (size_t) stringNPrintf(filter + offset, filter_len - offset, "ip and (");
+
+    for (uint32_t i = 0; i < range_count; ++i)
+    {
+        const uint32_t ip_host   = lwip_ntohl(ranges[i].ip.u_addr.ip4.addr);
+        const uint32_t mask_host = lwip_ntohl(ranges[i].mask.u_addr.ip4.addr);
+        const uint32_t min_host  = ip_host & mask_host;
+        const uint32_t max_host  = min_host | ~mask_host;
+
+        char min_ip[16];
+        char max_ip[16];
+
+        capturedeviceFormatIpv4(min_host, min_ip, sizeof(min_ip));
+        capturedeviceFormatIpv4(max_host, max_ip, sizeof(max_ip));
+
+        if (i > 0)
+        {
+            offset += (size_t) stringNPrintf(filter + offset, filter_len - offset, " or ");
+        }
+
+        if (capturedeviceIpv4MaskPrefixLength(&ranges[i].mask) == 32)
+        {
+            offset +=
+                (size_t) stringNPrintf(filter + offset, filter_len - offset, "ip.SrcAddr == %s", min_ip);
+        }
+        else
+        {
+            offset += (size_t) stringNPrintf(filter + offset, filter_len - offset,
+                                             "(ip.SrcAddr >= %s and ip.SrcAddr <= %s)", min_ip, max_ip);
+        }
+    }
+
+    stringNPrintf(filter + offset, filter_len - offset, ")");
+
+    return filter;
+}
+
 /**
  * Writes the WinDivert DLL bytes to a temporary file on disk
  * @param dllBytes Pointer to the DLL binary data
@@ -460,9 +529,14 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
     memoryCopy(target, &proc, sizeof(FARPROC));
     return true;
 }
-capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
-                                      CaptureReadEventHandle cb)
+capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
+                                      uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb)
 {
+    if (capture_ranges == NULL || capture_range_count == 0)
+    {
+        LOGE("CaptureDevice: no capture ranges configured");
+        return NULL;
+    }
 
     if (GSTATE.windivert_dll_handle == NULL)
     {
@@ -500,8 +574,7 @@ capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, 
                                 .reader_message_pool = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
                                 .reader_buffer_pool  = reader_bpool};
 
-    memorySet(cdev->filter, 0, sizeof(cdev->filter));
-    stringNPrintf(cdev->filter, sizeof(cdev->filter), "ip.SrcAddr == %s", capture_ip);
+    cdev->filter = capturedeviceBuildWinDivertFilter(capture_ranges, capture_range_count);
 
     masterpoolInstallCallBacks(cdev->reader_message_pool, allocCaptureMsgPoolHandle, destroyCaptureMsgPoolHandle);
 
@@ -515,6 +588,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
         caputredeviceBringDown(cdev);
     }
     memoryFree(cdev->name);
+    memoryFree(cdev->filter);
     bufferpoolDestroy(cdev->reader_buffer_pool);
     masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
     masterpoolDestroy(cdev->reader_message_pool);

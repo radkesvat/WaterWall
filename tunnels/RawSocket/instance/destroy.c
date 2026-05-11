@@ -6,9 +6,9 @@ void rawsocketDestroy(tunnel_t *t)
 {
     rawsocket_tstate_t *state = tunnelGetState(t);
 
-    if (state->capture_ip)
+    if (state->capture_ranges)
     {
-        memoryFree(state->capture_ip);
+        memoryFree(state->capture_ranges);
     }
     if (state->capture_device_name)
     {

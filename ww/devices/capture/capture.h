@@ -18,14 +18,15 @@ typedef struct capture_device_s
     char *name;
 #ifdef OS_WIN
     HANDLE handle;
-    char   filter[128];
+    char  *filter;
 
 #else
     int      socket;
     int      linux_pipe_fds[2]; // used for signaling read thread to stop
     uint32_t queue_number;
-    char    *bringup_command;
-    char    *bringdown_command;
+    char   **bringup_commands;
+    char   **bringdown_commands;
+    uint32_t command_count;
     int      netfilter_queue_number;
 #endif
     bool      drop_captured_packet;
@@ -47,7 +48,7 @@ typedef struct capture_device_s
 bool caputredeviceBringUp(capture_device_t *cdev);
 bool caputredeviceBringDown(capture_device_t *cdev);
 
-capture_device_t *caputredeviceCreate(const char *name, const char *capture_ip, void *userdata,
-                                      CaptureReadEventHandle cb);
+capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
+                                      uint32_t capture_range_count, void *userdata, CaptureReadEventHandle cb);
 
 void capturedeviceDestroy(capture_device_t *cdev);

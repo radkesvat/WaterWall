@@ -33,7 +33,10 @@ Payload reaching `RawSocket` from upstream or downstream is treated as an IP pac
     "capture-device-name": "capture-in",
     "raw-device-name": "raw-out",
     "capture-filter-mode": "source-ip",
-    "capture-ip": "192.0.2.10",
+    "capture-ips": [
+      "192.0.2.10",
+      "198.51.100.0/24"
+    ],
     "mark": 10
   },
   "next": "next-node-name"
@@ -61,10 +64,11 @@ Payload reaching `RawSocket` from upstream or downstream is treated as an IP pac
 
   Important note: the current implementation only accepts `"source-ip"`. If `"dest-ip"` is selected, tunnel creation fails with a message telling you to use `TunDevice` for outgoing capture instead.
 
-- `capture-ip` `(string)`
-  IP address used by the capture device filter.
+- `capture-ips` `(array of strings)`
+  IPv4 addresses or IPv4 CIDR ranges used by the capture device filter.
 
-  In practice this should be treated as required. The implementation logs an error if it is missing, and the capture-device creation path expects a valid IP string.
+  Each item may be a single IPv4 address such as `"192.0.2.10"` or a CIDR range such as `"198.51.100.0/24"`.
+  IPv6 entries are rejected. The legacy `capture-ip` string is still accepted as a single-entry `/32` filter.
 
 ## Optional `settings` Fields
 
@@ -90,7 +94,7 @@ Payload reaching `RawSocket` from upstream or downstream is treated as an IP pac
 During `onPrepare`, `RawSocket`:
 
 - decides which adjacent tunnel should receive captured packets
-- creates the capture device using `capture-ip`
+- creates the capture device using `capture-ips`
 - creates the raw output device
 - brings both devices up
 
@@ -112,12 +116,12 @@ Both upstream and downstream payload handlers write to the same raw output devic
 
 ### Capture filter behavior
 
-The capture device is configured using `capture-ip`.
+The capture device is configured using `capture-ips`.
 
 Current implementation behavior:
 
-- on Windows, the capture filter is built as `ip.SrcAddr == <capture-ip>`
-- on Linux, netfilter rules are created around the configured `capture-ip`
+- on Windows, the capture filter is built from equivalent `ip.SrcAddr` equality or inclusive range checks
+- on Linux, one netfilter queue rule is created for each configured IPv4 address or CIDR range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
 
 ### Checksum behavior
@@ -138,5 +142,5 @@ If you need a virtual interface model or packet handling that is closer to route
 
 - The current receive path only forwards IPv4 packets.
 - `capture-filter-mode` is effectively limited to `"source-ip"` right now.
-- `capture-ip` should be provided explicitly.
+- `capture-ips` should be provided explicitly.
 - Platform support depends on the raw/capture backend available on the operating system.
