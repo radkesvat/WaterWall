@@ -10,6 +10,7 @@ add_library(TunDevice STATIC
                     instance/index.c
                     common/helpers.c
                     common/line_state.c
+                    common/routes.c
                     upstream/init.c
                     upstream/est.c
                     upstream/fin.c

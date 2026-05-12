@@ -33,7 +33,29 @@ Payload coming from either side and reaching `TunDevice` is written into the TUN
   "settings": {
     "device-name": "tun0",
     "device-ip": "10.10.0.1/24",
-    "device-mtu": 1500
+    "device-mtu": 1500,
+    "route-table": "off"
+  },
+  "next": "next-node-name"
+}
+```
+
+Full-route example with local ranges excluded:
+
+```json
+{
+  "name": "tun0-adapter",
+  "type": "TunDevice",
+  "settings": {
+    "device-name": "tun0",
+    "device-ip": "10.10.0.1/24",
+    "device-mtu": 1500,
+    "route-table": "main",
+    "route-exclude-cidrs": [
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16"
+    ]
   },
   "next": "next-node-name"
 }
@@ -69,6 +91,38 @@ Payload coming from either side and reaching `TunDevice` is written into the TUN
 
   Default: global MTU size used by WaterWall.
 
+- `route-table` `(string)`
+  Controls native system route installation.
+
+  Default: `"off"`
+
+  Supported values:
+  - `"off"`: do not install routes
+  - `"main"` or `"auto"`: install routes into the normal platform routing table
+  - Linux only: a numeric or named routing table accepted by `ip route`
+
+- `system-route` `(boolean)`
+  Convenience switch for full-device routing. If this is `true` and `route-table` is not set, it behaves like `"route-table": "main"`.
+
+  Default: `false`
+
+- `route-cidrs` `(array of strings)`
+  CIDRs to route toward the TUN interface when routing is enabled.
+
+  Default: full route for the family of `device-ip`, either `"0.0.0.0/0"` or `"::/0"`.
+  Default routes are installed as split `/1` routes so the existing system default route does not need to be replaced.
+
+- `route-exclude-cidrs` `(array of strings)`
+  CIDRs to leave out of the routes installed by `route-cidrs`.
+
+  This is useful when `route-cidrs` is global and some local, management, or upstream endpoint ranges must keep using the existing system route.
+
+- `post-up-script` `(string)`
+  Optional shell command to run after the interface is up and native routes are installed.
+
+- `pre-down-script` `(string)`
+  Optional shell command to run before native routes are removed and the interface is brought down.
+
 ## Detailed Behavior
 
 ### Device setup
@@ -79,6 +133,8 @@ During `onPrepare`, `TunDevice`:
 - creates the TUN device
 - assigns the configured IP/subnet
 - brings the device up
+- optionally installs native system routes
+- optionally runs `post-up-script`
 
 The actual device creation is deferred until prepare time because the tunnel needs chain context to know which side should receive packets.
 
@@ -120,4 +176,7 @@ Most connection-style callbacks such as `init`, `est`, `finish`, `pause`, and `r
 - The current receive path only forwards IPv4 packets.
 - `device-ip` must be a valid CIDR string.
 - On Windows, the implementation requires administrative privileges to load and manage the tunnel driver.
+- On macOS, the requested name should be an `utunN` name; if no concrete `utun` unit is requested, macOS assigns the actual interface name.
+- Native system route setup is disabled by default. If enabled, routes are removed during destroy in reverse install order.
+- On Windows and macOS, `route-table` values other than `"main"` or `"auto"` are rejected.
 - Platform support depends on build and operating system support for TUN devices.

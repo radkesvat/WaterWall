@@ -21,6 +21,14 @@ typedef struct tundevice_tstate_s
     int      subnet_mask; // only subnet mask
     uint16_t mtu;         // device mtu, default is GLOBAL_MTU_SIZE
 
+    bool    system_route_enabled;
+    char   *route_table;
+    char  **system_routes;
+    size_t  system_route_count;
+    size_t  system_routes_installed;
+    char   *post_up_script;
+    char   *pre_down_script;
+
     tun_device_t *tdev;
 
 } tundevice_tstate_t;
@@ -61,6 +69,11 @@ void tundeviceTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void tundeviceLinestateInitialize(tundevice_lstate_t *ls);
 void tundeviceLinestateDestroy(tundevice_lstate_t *ls);
+
+bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings);
+bool tundeviceApplySystemRoutes(tundevice_tstate_t *state);
+void tundeviceCleanupSystemRoutes(tundevice_tstate_t *state);
+void tundeviceFreeRouteSettings(tundevice_tstate_t *state);
 
 void tundeviceOnIPPacketReceived(struct tun_device_s *tdev, void *userdata, sbuf_t *buf, wid_t wid);
 void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf);

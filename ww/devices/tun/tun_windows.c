@@ -8,7 +8,10 @@
 #include "wintun.h"
 #include "wplatform.h"
 #include "wproc.h"
+#include <ctype.h>
+#include <errno.h>
 #include <iphlpapi.h>
+#include <netioapi.h>
 
 #include <tchar.h>
 
@@ -17,7 +20,6 @@
 
 enum
 {
-    kReadPacketSize             = 1500, // its ok to be >= mtu
     kTunWriteChannelQueueMax    = 1024,
     kMaxReadDistributeQueueSize = 128
 };
@@ -41,6 +43,114 @@ static WINTUN_RECEIVE_PACKET_FUNC             *WintunReceivePacket;
 static WINTUN_RELEASE_RECEIVE_PACKET_FUNC     *WintunReleaseReceivePacket;
 static WINTUN_ALLOCATE_SEND_PACKET_FUNC       *WintunAllocateSendPacket;
 static WINTUN_SEND_PACKET_FUNC                *WintunSendPacket;
+
+static uint16_t tunDeviceMtu(const tun_device_t *tdev)
+{
+    return tdev->mtu > 0 ? tdev->mtu : GLOBAL_MTU_SIZE;
+}
+
+static bool tunWindowsSetMtu(tun_device_t *tdev)
+{
+    NET_LUID    luid;
+    NET_IFINDEX index;
+    MIB_IFROW   if_row;
+
+    if (tdev->adapter_handle == NULL)
+    {
+        LOGE("TunDevice: Cannot set MTU -> No Adapter!");
+        return false;
+    }
+
+    WintunGetAdapterLUID(tdev->adapter_handle, &luid);
+
+    NETIO_STATUS status = ConvertInterfaceLuidToIndex(&luid, &index);
+    if (status != NO_ERROR)
+    {
+        LOGE("TunDevice: failed to resolve adapter interface index, code: %lu", status);
+        return false;
+    }
+
+    memorySet(&if_row, 0, sizeof(if_row));
+    if_row.dwIndex = index;
+    DWORD last_error = GetIfEntry(&if_row);
+    if (last_error != NO_ERROR)
+    {
+        LOGE("TunDevice: failed to query adapter interface row, code: %lu", last_error);
+        return false;
+    }
+
+    if_row.dwMtu = tunDeviceMtu(tdev);
+    last_error = SetIfEntry(&if_row);
+    if (last_error != NO_ERROR)
+    {
+        LOGE("TunDevice: failed to set adapter MTU, code: %lu", last_error);
+        return false;
+    }
+
+    return true;
+}
+
+static bool routeTableIsMain(const char *route_table)
+{
+    return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;
+}
+
+static bool tunWindowsParseRouteCidr(const char *cidr, SOCKADDR_INET *addr, UINT8 *prefix)
+{
+    if (cidr == NULL || cidr[0] == '\0')
+    {
+        return false;
+    }
+
+    const char *slash = stringChr(cidr, '/');
+    if (slash == NULL || slash == cidr || slash[1] == '\0')
+    {
+        return false;
+    }
+
+    size_t ip_len = (size_t) (slash - cidr);
+    if (ip_len >= INET6_ADDRSTRLEN)
+    {
+        return false;
+    }
+
+    char ip_part[INET6_ADDRSTRLEN];
+    memoryCopy(ip_part, cidr, ip_len);
+    ip_part[ip_len] = '\0';
+
+    errno         = 0;
+    char *end_ptr = NULL;
+    long  prefix_l = strtol(slash + 1, &end_ptr, 10);
+    if (errno != 0 || end_ptr == slash + 1 || *end_ptr != '\0')
+    {
+        return false;
+    }
+
+    memorySet(addr, 0, sizeof(*addr));
+    if (inet_pton(AF_INET, ip_part, &addr->Ipv4.sin_addr) == 1)
+    {
+        if (prefix_l < 0 || prefix_l > 32)
+        {
+            return false;
+        }
+        addr->Ipv4.sin_family = AF_INET;
+        *prefix               = (UINT8) prefix_l;
+        return true;
+    }
+
+    if (inet_pton(AF_INET6, ip_part, &addr->Ipv6.sin6_addr) == 1)
+    {
+        if (prefix_l < 0 || prefix_l > 128)
+        {
+            return false;
+        }
+        addr->Ipv6.sin6_family = AF_INET6;
+        *prefix                = (UINT8) prefix_l;
+        return true;
+    }
+
+    return false;
+}
 
 /**
  * Writes the Wintun DLL bytes to a temporary file on disk
@@ -77,7 +187,7 @@ static TCHAR *writeDllToTempFile(const unsigned char *dllBytes, size_t dllSize)
 
     // Write the DLL bytes to the file
     DWORD bytesWritten;
-    if (! WriteFile(hFile, dllBytes, (DWORD) dllSize, &bytesWritten, NULL))
+    if (! WriteFile(hFile, dllBytes, (DWORD) dllSize, &bytesWritten, NULL) || bytesWritten != (DWORD) dllSize)
     {
         LOGE("TunDevice: Failed to write temporary file");
         CloseHandle(hFile);
@@ -121,6 +231,8 @@ static void tunWindowsStartup(void)
     LOGD("TunDevice: DLL loaded successfully");
 
     GSTATE.wintun_dll_handle = hModule;
+    DeleteFile(tempDllPath);
+    free(tempDllPath);
 }
 
 /**
@@ -225,13 +337,29 @@ static WTHREAD_ROUTINE(routineReadFromTun)
     while (atomicLoadRelaxed(&(tdev->running)))
     {
         bufs[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        bufs[queued_count] = sbufReserveSpace(bufs[queued_count], kReadPacketSize);
+        bufs[queued_count] = sbufReserveSpace(bufs[queued_count], tunDeviceMtu(tdev));
 
         DWORD packet_size;
         BYTE *packet = WintunReceivePacket(Session, &packet_size);
 
         if (packet)
         {
+            if (UNLIKELY(packet_size > tunDeviceMtu(tdev)))
+            {
+                LOGE("TunDevice: ReadThread: read packet size %lu exceeds device MTU %u", packet_size,
+                     tunDeviceMtu(tdev));
+                WintunReleaseReceivePacket(Session, packet);
+                bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
+
+                for (unsigned int i = 0; i < queued_count; i++)
+                {
+                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
+                }
+                LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice "
+                     "'device-mtu'");
+                terminateProgram(1);
+            }
+
             sbufSetLength(bufs[queued_count], packet_size);
             memoryCopyLarge(sbufGetMutablePtr(bufs[queued_count]), packet, packet_size);
 
@@ -241,21 +369,6 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             {
                 LOGD("TunDevice: ReadThread: Read %lu bytes from device %s", packet_size, tdev->name);
                 // printPacket(Packet, PacketSize);
-            }
-
-            if (UNLIKELY(sbufGetLength(bufs[queued_count]) > GLOBAL_MTU_SIZE))
-            {
-                LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
-                     sbufGetLength(bufs[queued_count]), GLOBAL_MTU_SIZE);
-                LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
-                     "the "
-                     "'misc' section");
-
-                for (unsigned int i = 0; i < queued_count; i++)
-                {
-                    bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[i]);
-                }
-                terminateProgram(1);
             }
 
             if (queued_count < kMaxReadDistributeQueueSize - 1)
@@ -338,10 +451,10 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             return 0;
         }
 
-        if (UNLIKELY(GLOBAL_MTU_SIZE < sbufGetLength(buf)))
+        if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
         {
-            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
-                 GLOBAL_MTU_SIZE);
+            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u", sbufGetLength(buf),
+                 tunDeviceMtu(tdev));
 
             bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
             continue;
@@ -393,10 +506,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
                                        bufferpoolGetLargeBufferPadding(getWorkerBufferPool(getWID())),
                                        bufferpoolGetSmallBufferPadding(getWorkerBufferPool(getWID())));
 
-    char cmdbuf[200];
-    stringNPrintf(cmdbuf, sizeof(cmdbuf), "netsh interface ipv4 set subinterface %s mtu=%d", tdev->name,
-                  GLOBAL_MTU_SIZE);
-    if (execCmd(cmdbuf).exit_code != 0)
+    if (! tunWindowsSetMtu(tdev))
     {
         LOGE("TunDevice: error setting MTU size");
         return false;
@@ -411,6 +521,9 @@ bool tundeviceBringUp(tun_device_t *tdev)
     {
         DWORD lastError = GetLastError();
         LOGE("TunDevice: Failed to start session, code: %lu", lastError);
+        chanClose(tdev->writer_buffer_channel);
+        chanFree(tdev->writer_buffer_channel);
+        tdev->writer_buffer_channel = NULL;
         return false;
     }
 
@@ -461,13 +574,6 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
 bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
-    ULONG ip_binary;
-    if (! (inet_pton(AF_INET, ip_presentation, &ip_binary) == 1))
-    {
-        LOGE("TunDevice: Cannot set IP -> Invalid IP address: %s", ip_presentation);
-        return false;
-    }
-
     if (tdev->adapter_handle == NULL)
     {
         LOGE("TunDevice: Cannot set IP -> No Adapter!");
@@ -483,11 +589,34 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     MIB_UNICASTIPADDRESS_ROW *AddressRow = &tdev->address_row;
     InitializeUnicastIpAddressEntry(AddressRow);
     WintunGetAdapterLUID(tdev->adapter_handle, &AddressRow->InterfaceLuid);
-    AddressRow->Address.Ipv4.sin_family           = AF_INET;
-    AddressRow->Address.Ipv4.sin_addr.S_un.S_addr = ip_binary;
-    AddressRow->OnLinkPrefixLength                = (uint8_t) subnet;
-    AddressRow->DadState                          = IpDadStatePreferred;
-    DWORD LastError                               = CreateUnicastIpAddressEntry(AddressRow);
+
+    if (inet_pton(AF_INET, ip_presentation, &AddressRow->Address.Ipv4.sin_addr) == 1)
+    {
+        if (subnet > 32)
+        {
+            LOGE("TunDevice: Cannot set IP -> Invalid IPv4 prefix: %u", subnet);
+            return false;
+        }
+        AddressRow->Address.Ipv4.sin_family = AF_INET;
+    }
+    else if (inet_pton(AF_INET6, ip_presentation, &AddressRow->Address.Ipv6.sin6_addr) == 1)
+    {
+        if (subnet > 128)
+        {
+            LOGE("TunDevice: Cannot set IP -> Invalid IPv6 prefix: %u", subnet);
+            return false;
+        }
+        AddressRow->Address.Ipv6.sin6_family = AF_INET6;
+    }
+    else
+    {
+        LOGE("TunDevice: Cannot set IP -> Invalid IP address: %s", ip_presentation);
+        return false;
+    }
+
+    AddressRow->OnLinkPrefixLength = (uint8_t) subnet;
+    AddressRow->DadState           = IpDadStatePreferred;
+    DWORD LastError                = CreateUnicastIpAddressEntry(AddressRow);
     if (LastError != ERROR_SUCCESS && LastError != ERROR_OBJECT_ALREADY_EXISTS)
     {
         LOGE("TunDevice: Failed to set IP address, code: %lu", LastError);
@@ -498,13 +627,6 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
 
 bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
-    ULONG ip_binary;
-    if (! (inet_pton(AF_INET, ip_presentation, &ip_binary) == 1))
-    {
-        LOGE("TunDevice: Cannot unset IP -> Invalid IP address: %s", ip_presentation);
-        return false;
-    }
-
     if (tdev->adapter_handle == NULL)
     {
         LOGE("TunDevice: Cannot unset IP -> No Adapter!");
@@ -520,15 +642,121 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
     MIB_UNICASTIPADDRESS_ROW *AddressRow = &tdev->address_row;
     InitializeUnicastIpAddressEntry(AddressRow);
     WintunGetAdapterLUID(tdev->adapter_handle, &AddressRow->InterfaceLuid);
-    AddressRow->Address.Ipv4.sin_family           = AF_INET;
-    AddressRow->Address.Ipv4.sin_addr.S_un.S_addr = ip_binary;
-    AddressRow->OnLinkPrefixLength                = (uint8_t) subnet;
-    DWORD LastError                               = DeleteUnicastIpAddressEntry(AddressRow);
+    if (inet_pton(AF_INET, ip_presentation, &AddressRow->Address.Ipv4.sin_addr) == 1)
+    {
+        if (subnet > 32)
+        {
+            LOGE("TunDevice: Cannot unset IP -> Invalid IPv4 prefix: %u", subnet);
+            return false;
+        }
+        AddressRow->Address.Ipv4.sin_family = AF_INET;
+    }
+    else if (inet_pton(AF_INET6, ip_presentation, &AddressRow->Address.Ipv6.sin6_addr) == 1)
+    {
+        if (subnet > 128)
+        {
+            LOGE("TunDevice: Cannot unset IP -> Invalid IPv6 prefix: %u", subnet);
+            return false;
+        }
+        AddressRow->Address.Ipv6.sin6_family = AF_INET6;
+    }
+    else
+    {
+        LOGE("TunDevice: Cannot unset IP -> Invalid IP address: %s", ip_presentation);
+        return false;
+    }
+
+    AddressRow->OnLinkPrefixLength = (uint8_t) subnet;
+    DWORD LastError                = DeleteUnicastIpAddressEntry(AddressRow);
     if (LastError != ERROR_SUCCESS && LastError != ERROR_NOT_FOUND)
     {
         LOGE("TunDevice: Failed to unassign IP address, code: %lu", LastError);
         return false;
     }
+    return true;
+}
+
+bool tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_table)
+{
+    if (! routeTableIsMain(route_table))
+    {
+        LOGE("TunDevice: route-table '%s' is not supported on Windows", route_table);
+        return false;
+    }
+
+    if (tdev->adapter_handle == NULL)
+    {
+        LOGE("TunDevice: Cannot add route -> No Adapter!");
+        return false;
+    }
+
+    SOCKADDR_INET prefix_addr;
+    UINT8         prefix_len;
+    if (! tunWindowsParseRouteCidr(cidr, &prefix_addr, &prefix_len))
+    {
+        LOGE("TunDevice: invalid route CIDR: %s", cidr);
+        return false;
+    }
+
+    MIB_IPFORWARD_ROW2 row;
+    InitializeIpForwardEntry(&row);
+    WintunGetAdapterLUID(tdev->adapter_handle, &row.InterfaceLuid);
+    row.DestinationPrefix.Prefix       = prefix_addr;
+    row.DestinationPrefix.PrefixLength = prefix_len;
+    row.NextHop.si_family              = prefix_addr.si_family;
+    row.Protocol                       = MIB_IPPROTO_NETMGMT;
+    row.Metric                         = 0;
+    row.ValidLifetime                  = 0xFFFFFFFF;
+    row.PreferredLifetime              = 0xFFFFFFFF;
+
+    NETIO_STATUS status = CreateIpForwardEntry2(&row);
+    if (status != NO_ERROR)
+    {
+        LOGE("TunDevice: failed to add system route %s, code: %lu", cidr, status);
+        return false;
+    }
+
+    LOGI("TunDevice: added system route %s on %s", cidr, tdev->name);
+    return true;
+}
+
+bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table)
+{
+    if (! routeTableIsMain(route_table))
+    {
+        LOGE("TunDevice: route-table '%s' is not supported on Windows", route_table);
+        return false;
+    }
+
+    if (tdev->adapter_handle == NULL)
+    {
+        LOGE("TunDevice: Cannot remove route -> No Adapter!");
+        return false;
+    }
+
+    SOCKADDR_INET prefix_addr;
+    UINT8         prefix_len;
+    if (! tunWindowsParseRouteCidr(cidr, &prefix_addr, &prefix_len))
+    {
+        LOGE("TunDevice: invalid route CIDR: %s", cidr);
+        return false;
+    }
+
+    MIB_IPFORWARD_ROW2 row;
+    InitializeIpForwardEntry(&row);
+    WintunGetAdapterLUID(tdev->adapter_handle, &row.InterfaceLuid);
+    row.DestinationPrefix.Prefix       = prefix_addr;
+    row.DestinationPrefix.PrefixLength = prefix_len;
+    row.NextHop.si_family              = prefix_addr.si_family;
+
+    NETIO_STATUS status = DeleteIpForwardEntry2(&row);
+    if (status != NO_ERROR && status != ERROR_NOT_FOUND)
+    {
+        LOGE("TunDevice: failed to remove system route %s, code: %lu", cidr, status);
+        return false;
+    }
+
+    LOGI("TunDevice: removed system route %s on %s", cidr, tdev->name);
     return true;
 }
 
@@ -642,19 +870,23 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
 
     LOGI("TunDevice: WinTun loaded successfully");
 
+    uint32_t worker_large_buffer_size = bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID()));
+    uint32_t worker_small_buffer_size = bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()));
+    worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu);
+
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
 
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                         worker_large_buffer_size,
+                         worker_small_buffer_size
 
         );
 
     buffer_pool_t *writer_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
 
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                         worker_large_buffer_size,
+                         worker_small_buffer_size
 
         );
 
@@ -703,19 +935,12 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    GUID example_guid = {0xDEADC0DE, 0xFADE, 0xC01D, {0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66}};
-
-    LOGI("TunDevice: Creating adapter with GUID: %08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", example_guid.Data1,
-         example_guid.Data2, example_guid.Data3, example_guid.Data4[0], example_guid.Data4[1], example_guid.Data4[2],
-         example_guid.Data4[3], example_guid.Data4[4], example_guid.Data4[5], example_guid.Data4[6],
-         example_guid.Data4[7]);
-
-    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(tdev->name_w, L"Waterwall Adapter", &example_guid);
+    WINTUN_ADAPTER_HANDLE adapter = WintunCreateAdapter(tdev->name_w, L"Waterwall Adapter", NULL);
     if (! adapter)
     {
         LastError = GetLastError();
         LOGE("TunDevice: Failed to create adapter! code: %lu", LastError);
-
+        tundeviceDestroy(tdev);
         return NULL;
     }
     tdev->adapter_handle = adapter;

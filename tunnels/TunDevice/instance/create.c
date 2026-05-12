@@ -2,6 +2,12 @@
 
 #include "loggers/network_logger.h"
 
+static tunnel_t *tundeviceTunnelCreateFail(tunnel_t *t)
+{
+    tundeviceTunnelDestroy(t);
+    return NULL;
+}
+
 tunnel_t *tundeviceTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(tundevice_tstate_t), sizeof(tundevice_lstate_t));
@@ -30,26 +36,26 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     if (! checkJsonIsObjectAndHasChild(settings))
     {
-        LOGF("JSON Error: TcpListener->settings (object field) : The object was empty or invalid");
-        return NULL;
+        LOGF("JSON Error: TunDevice->settings (object field) : The object was empty or invalid");
+        return tundeviceTunnelCreateFail(t);
     }
 
     if (! getStringFromJsonObject(&(state->name), settings, "device-name"))
     {
         LOGF("JSON Error: TunDevice->settings->device-name (string field) : The data was empty or invalid");
-        return NULL;
+        return tundeviceTunnelCreateFail(t);
     }
 
     if (! getStringFromJsonObject(&(state->ip_subnet), settings, "device-ip"))
     {
-        LOGF("JSON Error: TunDevice->settings->device-name (string field) : The data was empty or invalid");
-        return NULL;
+        LOGF("JSON Error: TunDevice->settings->device-ip (string field) : The data was empty or invalid");
+        return tundeviceTunnelCreateFail(t);
     }
 
     if (! verifyIPCdir(state->ip_subnet))
     {
         LOGF("TunDevice: verifyIPCdir failed, check the ip and subnet that you given");
-        return NULL;
+        return tundeviceTunnelCreateFail(t);
     }
 
     char *slash       = strchr(state->ip_subnet, '/');
@@ -63,8 +69,19 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
 
     int dev_mtu = 0;
     getIntFromJsonObjectOrDefault(&dev_mtu, settings, "device-mtu", GLOBAL_MTU_SIZE);
+    if (dev_mtu <= 0 || dev_mtu > UINT16_MAX)
+    {
+        LOGF("JSON Error: TunDevice->settings->device-mtu must be between 1 and %u", UINT16_MAX);
+        return tundeviceTunnelCreateFail(t);
+    }
 
     state->mtu = dev_mtu;
+
+    if (! tundeviceLoadRouteSettings(state, settings))
+    {
+        return tundeviceTunnelCreateFail(t);
+    }
+
     // tun creation must be done in prepair or start padding, in create method paddings are not calculated yout
 
     // on windows we need admin to load win tun driver

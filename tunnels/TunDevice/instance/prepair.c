@@ -16,7 +16,7 @@ void tundeviceTunnelOnPrepair(tunnel_t *t)
         state->write_tunnel = t->next;
     }
 
-    state->tdev = tundeviceCreate(state->name, false,state->mtu, t, tundeviceOnIPPacketReceived);
+    state->tdev = tundeviceCreate(state->name, false, state->mtu, t, tundeviceOnIPPacketReceived);
 
     if (state->tdev == NULL)
     {
@@ -24,7 +24,36 @@ void tundeviceTunnelOnPrepair(tunnel_t *t)
         terminateProgram(1);
     }
 
-    tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int) state->subnet_mask);
+    if (! tundeviceAssignIP(state->tdev, state->ip_present, (unsigned int) state->subnet_mask))
+    {
+        tundeviceDestroy(state->tdev);
+        state->tdev = NULL;
+        LOGF("TunDevice: could not assign device IP");
+        terminateProgram(1);
+    }
 
-    tundeviceBringUp(state->tdev);
+    if (! tundeviceBringUp(state->tdev))
+    {
+        tundeviceDestroy(state->tdev);
+        state->tdev = NULL;
+        LOGF("TunDevice: could not bring device up");
+        terminateProgram(1);
+    }
+
+    if (! tundeviceApplySystemRoutes(state))
+    {
+        tundeviceDestroy(state->tdev);
+        state->tdev = NULL;
+        LOGF("TunDevice: could not install system routes");
+        terminateProgram(1);
+    }
+
+    if (state->post_up_script != NULL && execCmd(state->post_up_script).exit_code != 0)
+    {
+        tundeviceCleanupSystemRoutes(state);
+        tundeviceDestroy(state->tdev);
+        state->tdev = NULL;
+        LOGF("TunDevice: post-up-script failed");
+        terminateProgram(1);
+    }
 }

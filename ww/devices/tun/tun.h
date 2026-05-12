@@ -65,4 +65,6 @@ bool          tundeviceBringUp(tun_device_t *tdev);
 bool          tundeviceBringDown(tun_device_t *tdev);
 bool          tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
 bool          tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet);
+bool          tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
+bool          tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table);
 bool          tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);

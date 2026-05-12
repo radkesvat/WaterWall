@@ -6,10 +6,12 @@
 #include "wproc.h"
 
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 
 #include <netinet/ip.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <sys/ioctl.h>
 
@@ -26,10 +28,158 @@
 
 enum
 {
-    kReadPacketSize             = 1500, // its ok to be >= mtu
     kTunWriteChannelQueueMax    = 1024,
     kMaxReadDistributeQueueSize = 128
 };
+
+static uint16_t tunDeviceMtu(const tun_device_t *tdev)
+{
+    return tdev->mtu > 0 ? tdev->mtu : GLOBAL_MTU_SIZE;
+}
+
+static uint32_t ipv4PrefixToMask(unsigned int prefix)
+{
+    assert(prefix <= 32);
+
+    if (prefix == 0)
+    {
+        return 0;
+    }
+
+    return htonl(UINT32_MAX << (32U - prefix));
+}
+
+static bool tunSetNonBlocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+    {
+        LOGW("TunDevice: failed to get fd flags for O_NONBLOCK: %s", strerror(errno));
+        return false;
+    }
+
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    {
+        LOGW("TunDevice: failed to set O_NONBLOCK: %s", strerror(errno));
+        return false;
+    }
+
+    return true;
+}
+
+static bool tunSetMtuByName(const char *name, uint16_t mtu)
+{
+    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0)
+    {
+        LOGE("TunDevice: failed to create socket for MTU setting");
+        return false;
+    }
+
+    struct ifreq ifr;
+    memorySet(&ifr, 0, sizeof(ifr));
+    stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    ifr.ifr_mtu                = mtu;
+
+    bool ok = true;
+    if (ioctl(sock_fd, SIOCSIFMTU, &ifr) < 0)
+    {
+        LOGE("TunDevice: failed to set MTU to %u for %s: %s", mtu, ifr.ifr_name, strerror(errno));
+        ok = false;
+    }
+
+    close(sock_fd);
+    return ok;
+}
+
+static bool tunSetStateByName(const char *name, bool up)
+{
+    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0)
+    {
+        LOGE("TunDevice: failed to create socket for interface state setting");
+        return false;
+    }
+
+    struct ifreq ifr;
+    memorySet(&ifr, 0, sizeof(ifr));
+    stringCopyN(ifr.ifr_name, name, IFNAMSIZ);
+    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+    bool ok = true;
+    if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) < 0)
+    {
+        LOGE("TunDevice: failed to get interface flags for %s: %s", name, strerror(errno));
+        ok = false;
+        goto done;
+    }
+
+    if (up)
+    {
+        ifr.ifr_flags |= IFF_UP;
+    }
+    else
+    {
+        ifr.ifr_flags &= (short) ~IFF_UP;
+    }
+
+    if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) < 0)
+    {
+        LOGE("TunDevice: failed to set interface flags for %s: %s", name, strerror(errno));
+        ok = false;
+    }
+
+done:
+    close(sock_fd);
+    return ok;
+}
+
+static bool routeCommandArgIsSafe(const char *arg)
+{
+    if (arg == NULL || arg[0] == '\0')
+    {
+        return false;
+    }
+
+    for (const char *p = arg; *p != '\0'; ++p)
+    {
+        if (! (isalnum((unsigned char) *p) || *p == '_' || *p == '-' || *p == '.' || *p == ':' || *p == '/'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool routeTableIsMain(const char *route_table)
+{
+    return route_table == NULL || stringCompare(route_table, "main") == 0 || stringCompare(route_table, "auto") == 0;
+}
+
+static bool routeTableArgIsSafe(const char *route_table)
+{
+    if (route_table == NULL)
+    {
+        return true;
+    }
+
+    if (route_table[0] == '\0')
+    {
+        return false;
+    }
+
+    for (const char *p = route_table; *p != '\0'; ++p)
+    {
+        if (! (isalnum((unsigned char) *p) || *p == '_' || *p == '-' || *p == '.'))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 
 /**
@@ -114,16 +264,17 @@ static int tunDrainPackets(tun_device_t *tdev)
 {
     uint8_t queued_count = 0;
     sbuf_t *bufs[kMaxReadDistributeQueueSize];
+    uint32_t read_size = tunDeviceMtu(tdev);
 
     for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
     {
         bufs[queued_count] = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
-        bufs[queued_count] = sbufReserveSpace(bufs[queued_count], kReadPacketSize);
+        bufs[queued_count] = sbufReserveSpace(bufs[queued_count], read_size);
 
         int nread;
         for (;;)
         {
-            nread = (int) read(tdev->handle, sbufGetMutablePtr(bufs[queued_count]), kReadPacketSize);
+            nread = (int) read(tdev->handle, sbufGetMutablePtr(bufs[queued_count]), read_size);
             if (nread < 0 && errno == EINTR)
             {
                 continue;
@@ -169,12 +320,11 @@ static int tunDrainPackets(tun_device_t *tdev)
 
         sbufSetLength(bufs[queued_count], nread);
 
-        if (UNLIKELY(sbufGetLength(bufs[queued_count]) > GLOBAL_MTU_SIZE))
+        if (UNLIKELY(sbufGetLength(bufs[queued_count]) > read_size))
         {
-            LOGE("TunDevice: ReadThread: read packet size %d exceeds GLOBAL_MTU_SIZE %d",
-                 sbufGetLength(bufs[queued_count]), GLOBAL_MTU_SIZE);
-            LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in the '"
-                 "misc' section");
+            LOGE("TunDevice: ReadThread: read packet size %d exceeds device MTU %u",
+                 sbufGetLength(bufs[queued_count]), read_size);
+            LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice 'device-mtu'");
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             terminateProgram(1);
         }
@@ -280,10 +430,10 @@ static WTHREAD_ROUTINE(routineWriteToTun)
         }
 
         
-        if (UNLIKELY(GLOBAL_MTU_SIZE < sbufGetLength(buf)))
+        if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
         {
-            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds GLOBAL_MTU_SIZE %d", sbufGetLength(buf),
-                 GLOBAL_MTU_SIZE);
+            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u", sbufGetLength(buf),
+                 tunDeviceMtu(tdev));
 
             bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
             continue;
@@ -309,9 +459,8 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
             if (errno == EMSGSIZE)
             {
-                LOGF("TunDevice: This is related to the MTU size, (core.json) please set a correct value for 'mtu' in "
-                     "the "
-                     "'misc' section");
+                LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice "
+                     "'device-mtu'");
                 terminateProgram(1);
             }
             continue;
@@ -346,15 +495,80 @@ bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf)
 // Unassign IP address from TUN device
 bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
+#ifdef OS_LINUX
+    int family = strchr(ip_presentation, ':') != NULL ? AF_INET6 : AF_INET;
+    int fd     = socket(family, SOCK_DGRAM, 0);
+    if (fd < 0)
+    {
+        LOGE("TunDevice: failed to create socket for IP removal: %s", strerror(errno));
+        return false;
+    }
+
+    bool ok = true;
+    if (family == AF_INET)
+    {
+        struct ifreq ifr;
+        memorySet(&ifr, 0, sizeof(ifr));
+        stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+        struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+        addr->sin_family         = AF_INET;
+        if (inet_pton(AF_INET, ip_presentation, &addr->sin_addr) != 1)
+        {
+            LOGE("TunDevice: Cannot unset IP -> Invalid IPv4 address: %s", ip_presentation);
+            ok = false;
+            goto linux_done;
+        }
+
+        if (ioctl(fd, SIOCDIFADDR, &ifr) < 0 && errno != EADDRNOTAVAIL)
+        {
+            LOGE("TunDevice: error unassigning IPv4 address from %s: %s", tdev->name, strerror(errno));
+            ok = false;
+        }
+    }
+    else
+    {
+        struct ifreq ifr;
+        memorySet(&ifr, 0, sizeof(ifr));
+        stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+        if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0)
+        {
+            LOGE("TunDevice: failed to get interface index for %s: %s", tdev->name, strerror(errno));
+            ok = false;
+            goto linux_done;
+        }
+
+        struct in6_ifreq ifr6;
+        memorySet(&ifr6, 0, sizeof(ifr6));
+        ifr6.ifr6_ifindex   = ifr.ifr_ifindex;
+        ifr6.ifr6_prefixlen = subnet;
+        if (inet_pton(AF_INET6, ip_presentation, &ifr6.ifr6_addr) != 1)
+        {
+            LOGE("TunDevice: Cannot unset IP -> Invalid IPv6 address: %s", ip_presentation);
+            ok = false;
+            goto linux_done;
+        }
+
+        if (ioctl(fd, SIOCDIFADDR, &ifr6) < 0 && errno != EADDRNOTAVAIL)
+        {
+            LOGE("TunDevice: error unassigning IPv6 address from %s: %s", tdev->name, strerror(errno));
+            ok = false;
+        }
+    }
+
+linux_done:
+    close(fd);
+    if (ok)
+    {
+        LOGD("TunDevice: ip address removed from %s", tdev->name);
+    }
+    return ok;
+#else
     char command[128];
 
-#ifdef OS_LINUX
-    snprintf(command, sizeof(command), "ip addr del %s/%d  dev %s", ip_presentation, subnet, tdev->name);
-#elif defined(OS_BSD)
     snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
-#else
-#error "Unsupported OS"
-#endif
 
     if (execCmd(command).exit_code != 0)
     {
@@ -363,20 +577,111 @@ bool tundeviceUnAssignIP(tun_device_t *tdev, const char *ip_presentation, unsign
     }
     LOGD("TunDevice: ip address removed from %s", tdev->name);
     return true;
+#endif
 }
 
 // Assign IP address to TUN device
 bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned int subnet)
 {
+#ifdef OS_LINUX
+    if (subnet <= 32)
+    {
+        struct ifreq ifr;
+        memorySet(&ifr, 0, sizeof(ifr));
+        stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+        ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+
+        struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+        addr->sin_family         = AF_INET;
+        if (inet_pton(AF_INET, ip_presentation, &addr->sin_addr) == 1)
+        {
+            int fd = socket(AF_INET, SOCK_DGRAM, 0);
+            if (fd < 0)
+            {
+                LOGE("TunDevice: failed to create socket for IPv4 assignment: %s", strerror(errno));
+                return false;
+            }
+
+            bool ok = true;
+            if (ioctl(fd, SIOCSIFADDR, &ifr) < 0)
+            {
+                LOGE("TunDevice: error setting IPv4 address on %s: %s", tdev->name, strerror(errno));
+                ok = false;
+            }
+
+            if (ok)
+            {
+                struct sockaddr_in *mask = (struct sockaddr_in *) &ifr.ifr_netmask;
+                memorySet(mask, 0, sizeof(*mask));
+                mask->sin_family      = AF_INET;
+                mask->sin_addr.s_addr = ipv4PrefixToMask(subnet);
+                if (ioctl(fd, SIOCSIFNETMASK, &ifr) < 0)
+                {
+                    LOGE("TunDevice: error setting IPv4 netmask on %s: %s", tdev->name, strerror(errno));
+                    ok = false;
+                }
+            }
+
+            close(fd);
+            if (ok)
+            {
+                LOGD("TunDevice: ip address %s/%d assigned to dev %s", ip_presentation, subnet, tdev->name);
+            }
+            return ok;
+        }
+    }
+
+    if (subnet <= 128)
+    {
+        struct in6_addr in6_addr;
+        if (inet_pton(AF_INET6, ip_presentation, &in6_addr) == 1)
+        {
+            int fd = socket(AF_INET6, SOCK_DGRAM, 0);
+            if (fd < 0)
+            {
+                LOGE("TunDevice: failed to create socket for IPv6 assignment: %s", strerror(errno));
+                return false;
+            }
+
+            struct ifreq ifr;
+            memorySet(&ifr, 0, sizeof(ifr));
+            stringCopyN(ifr.ifr_name, tdev->name, IFNAMSIZ);
+            ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+            if (ioctl(fd, SIOCGIFINDEX, &ifr) < 0)
+            {
+                LOGE("TunDevice: failed to get interface index for %s: %s", tdev->name, strerror(errno));
+                close(fd);
+                return false;
+            }
+
+            struct in6_ifreq ifr6;
+            memorySet(&ifr6, 0, sizeof(ifr6));
+            ifr6.ifr6_addr      = in6_addr;
+            ifr6.ifr6_prefixlen = subnet;
+            ifr6.ifr6_ifindex   = ifr.ifr_ifindex;
+
+            bool ok = true;
+            if (ioctl(fd, SIOCSIFADDR, &ifr6) < 0 && errno != EEXIST)
+            {
+                LOGE("TunDevice: error setting IPv6 address on %s: %s", tdev->name, strerror(errno));
+                ok = false;
+            }
+            close(fd);
+
+            if (ok)
+            {
+                LOGD("TunDevice: ip address %s/%d assigned to dev %s", ip_presentation, subnet, tdev->name);
+            }
+            return ok;
+        }
+    }
+
+    LOGE("TunDevice: Cannot set IP -> Invalid IP address or prefix: %s/%u", ip_presentation, subnet);
+    return false;
+#else
     char command[128];
 
-#ifdef OS_LINUX
-    snprintf(command, sizeof(command), "ip addr add %s/%d dev %s", ip_presentation, subnet, tdev->name);
-#elif defined(OS_BSD)
     snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
-#else
-#error "Unsupported OS"
-#endif
 
     if (execCmd(command).exit_code != 0)
     {
@@ -385,6 +690,115 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     }
     LOGD("TunDevice: ip address %s/%d assigned to dev %s", ip_presentation, subnet, tdev->name);
     return true;
+#endif
+}
+
+bool tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_table)
+{
+    if (! routeCommandArgIsSafe(tdev->name) || ! routeCommandArgIsSafe(cidr) || ! routeTableArgIsSafe(route_table))
+    {
+        LOGE("TunDevice: invalid route argument");
+        return false;
+    }
+
+#ifdef OS_LINUX
+    char        command[512];
+    const char *family = stringChr(cidr, ':') != NULL ? "-6" : "-4";
+
+    if (routeTableIsMain(route_table))
+    {
+        stringNPrintf(command, sizeof(command), "ip %s route add %s dev %s", family, cidr, tdev->name);
+    }
+    else
+    {
+        stringNPrintf(command, sizeof(command), "ip %s route add %s dev %s table %s", family, cidr, tdev->name,
+                      route_table);
+    }
+
+    if (execCmd(command).exit_code != 0)
+    {
+        LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: added system route %s on %s", cidr, tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    if (! routeTableIsMain(route_table))
+    {
+        LOGE("TunDevice: route-table '%s' is not supported on this platform", route_table);
+        return false;
+    }
+
+    char        command[512];
+    const char *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
+    stringNPrintf(command, sizeof(command), "route -n add %s %s -interface %s", family, cidr, tdev->name);
+
+    if (execCmd(command).exit_code != 0)
+    {
+        LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: added system route %s on %s", cidr, tdev->name);
+    return true;
+#else
+#error "Unsupported OS"
+#endif
+}
+
+bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *route_table)
+{
+    if (! routeCommandArgIsSafe(tdev->name) || ! routeCommandArgIsSafe(cidr) || ! routeTableArgIsSafe(route_table))
+    {
+        LOGE("TunDevice: invalid route argument");
+        return false;
+    }
+
+#ifdef OS_LINUX
+    char        command[512];
+    const char *family = stringChr(cidr, ':') != NULL ? "-6" : "-4";
+
+    if (routeTableIsMain(route_table))
+    {
+        stringNPrintf(command, sizeof(command), "ip %s route del %s dev %s", family, cidr, tdev->name);
+    }
+    else
+    {
+        stringNPrintf(command, sizeof(command), "ip %s route del %s dev %s table %s", family, cidr, tdev->name,
+                      route_table);
+    }
+
+    if (execCmd(command).exit_code != 0)
+    {
+        LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: removed system route %s on %s", cidr, tdev->name);
+    return true;
+#elif defined(OS_BSD)
+    if (! routeTableIsMain(route_table))
+    {
+        LOGE("TunDevice: route-table '%s' is not supported on this platform", route_table);
+        return false;
+    }
+
+    char        command[512];
+    const char *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
+    stringNPrintf(command, sizeof(command), "route -n delete %s %s -interface %s", family, cidr, tdev->name);
+
+    if (execCmd(command).exit_code != 0)
+    {
+        LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
+        return false;
+    }
+
+    LOGI("TunDevice: removed system route %s on %s", cidr, tdev->name);
+    return true;
+#else
+#error "Unsupported OS"
+#endif
 }
 
 // Bring TUN device up
@@ -406,9 +820,7 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
     tdev->writer_buffer_channel = chanOpen(sizeof(void *), kTunWriteChannelQueueMax);
 
-    char command[128];
-    snprintf(command, sizeof(command), "ip link set dev %s up", tdev->name);
-    if (execCmd(command).exit_code != 0)
+    if (! tunSetStateByName(tdev->name, true))
     {
         LOGE("TunDevice: error bringing device %s up", tdev->name);
         if (tdev->writer_buffer_channel != NULL)
@@ -455,9 +867,7 @@ bool tundeviceBringDown(tun_device_t *tdev)
 
     bool bring_down_ok = true;
 
-    char command[128];
-    snprintf(command, sizeof(command), "ip link set dev %s down", tdev->name);
-    if (execCmd(command).exit_code != 0)
+    if (! tunSetStateByName(tdev->name, false))
     {
         LOGE("TunDevice: error bringing %s down", tdev->name);
         bring_down_ok = false;
@@ -516,37 +926,14 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock_fd >= 0)
+    if (! tunSetMtuByName(ifr.ifr_name, mtu))
     {
-        ifr.ifr_mtu = GLOBAL_MTU_SIZE;
-        if (ioctl(sock_fd, SIOCSIFMTU, &ifr) < 0)
-        {
-            LOGE("TunDevice: failed to set MTU to %d for %s", GLOBAL_MTU_SIZE, ifr.ifr_name);
-            // Not fatal, continue
-        }
-        close(sock_fd);
-    }
-    else
-    {
-        LOGE("TunDevice: failed to create socket for MTU setting");
+        close(fd);
+        return NULL;
     }
 
     // Set TUN fd non-blocking (BSD)
-    {
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (flags >= 0)
-        {
-            if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
-            {
-                LOGW("TunDevice: failed to set O_NONBLOCK: %s", strerror(errno));
-            }
-        }
-        else
-        {
-            LOGW("TunDevice: failed to get fd flags for O_NONBLOCK: %s", strerror(errno));
-        }
-    }
+    tunSetNonBlocking(fd);
 
 #else
 
@@ -573,50 +960,31 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
         return NULL;
     }
 
-    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock_fd >= 0)
+    if (! tunSetMtuByName(ifr.ifr_name, mtu))
     {
-        ifr.ifr_mtu = GLOBAL_MTU_SIZE;
-        if (ioctl(sock_fd, SIOCSIFMTU, &ifr) < 0)
-        {
-            LOGE("TunDevice: failed to set MTU to %d for %s", GLOBAL_MTU_SIZE, ifr.ifr_name);
-            // Not fatal, continue
-        }
-        close(sock_fd);
-    }
-    else
-    {
-        LOGE("TunDevice: failed to create socket for MTU setting");
+        close(fd);
+        return NULL;
     }
 
     // Set TUN fd non-blocking (Linux)
-    {
-        int flags = fcntl(fd, F_GETFL, 0);
-        if (flags >= 0)
-        {
-            if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
-            {
-                LOGW("TunDevice: failed to set O_NONBLOCK: %s", strerror(errno));
-            }
-        }
-        else
-        {
-            LOGW("TunDevice: failed to get fd flags for O_NONBLOCK: %s", strerror(errno));
-        }
-    }
+    tunSetNonBlocking(fd);
 #endif
+
+    uint32_t worker_large_buffer_size = bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID()));
+    uint32_t worker_small_buffer_size = bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()));
+    worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu);
 
     buffer_pool_t *reader_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                         worker_large_buffer_size,
+                         worker_small_buffer_size
 
         );
 
     buffer_pool_t *writer_bpool =
         bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         bufferpoolGetLargeBufferSize(getWorkerBufferPool(getWID())),
-                         bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()))
+                         worker_large_buffer_size,
+                         worker_small_buffer_size
 
         );
 
