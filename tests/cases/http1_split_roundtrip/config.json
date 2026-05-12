@@ -1,0 +1,85 @@
+{
+  "name": "http1-split-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "split.example.test",
+        "path": "/ww/split",
+        "scheme": "http",
+        "port": 80,
+        "method": "POST",
+        "http-version": "1.1",
+        "http1-mode": "split",
+        "headers": {
+          "X-Waterwall-Test": "split-direct"
+        },
+        "split": {
+          "upload-method": "POST",
+          "download-method": "GET",
+          "id-placement": "query",
+          "id-name": "sid",
+          "direction-placement": "query",
+          "direction-name": "part",
+          "upload-value": "up",
+          "download-value": "down",
+          "cache-bypass": true,
+          "cache-bypass-name": "cb",
+          "token": "edge-token-direct",
+          "token-placement": "header",
+          "token-name": "X-Waterwall-Token",
+          "upload-headers": {
+            "X-Waterwall-Half": "upload"
+          },
+          "download-headers": {
+            "X-Waterwall-Half": "download",
+            "Accept": "application/octet-stream"
+          }
+        }
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "1.1",
+        "http1-mode": "split",
+        "host": "split.example.test",
+        "path": "/ww/split",
+        "method": "POST",
+        "status": 200,
+        "split": {
+          "upload-method": "POST",
+          "download-method": "GET",
+          "id-placement": "query",
+          "id-name": "sid",
+          "direction-placement": "query",
+          "direction-name": "part",
+          "upload-value": "up",
+          "download-value": "down",
+          "token": "edge-token-direct",
+          "token-placement": "header",
+          "token-name": "X-Waterwall-Token"
+        }
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

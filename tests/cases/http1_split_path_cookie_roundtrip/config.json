@@ -1,0 +1,74 @@
+{
+  "name": "http1-split-path-cookie-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "split-path.example.test",
+        "scheme": "http",
+        "port": 80,
+        "method": "PATCH",
+        "http-version": 1,
+        "http1-split": true,
+        "split": {
+          "upload-method": "PATCH",
+          "download-method": "GET",
+          "upload-path": "/ww/u/{id}/{cache}",
+          "download-path": "/ww/d/{id}/{cache}",
+          "id-placement": "path",
+          "direction-placement": "cookie",
+          "direction-name": "wwpart",
+          "upload-value": "upload-half",
+          "download-value": "download-half",
+          "token": "header-token",
+          "token-placement": "header",
+          "token-name": "X-Split-Token",
+          "cache-bypass": false
+        }
+      },
+      "next": "http-server"
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "host": "split-path.example.test",
+        "method": "PATCH",
+        "http-version": 1,
+        "http1-split": true,
+        "status": 200,
+        "split": {
+          "upload-method": "PATCH",
+          "download-method": "GET",
+          "upload-path": "/ww/u/{id}/{cache}",
+          "download-path": "/ww/d/{id}/{cache}",
+          "id-placement": "path",
+          "direction-placement": "cookie",
+          "direction-name": "wwpart",
+          "upload-value": "upload-half",
+          "download-value": "download-half",
+          "token": "header-token",
+          "token-placement": "header",
+          "token-name": "X-Split-Token"
+        }
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}

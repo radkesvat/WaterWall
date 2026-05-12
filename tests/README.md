@@ -71,6 +71,17 @@ Practical rule:
   the same time when chained directly.
 - `http1_bidirectional_tcp_loopback`
   Verifies the same HTTP/1.1 bidirectional body-streaming behavior across a real TCP loopback transport.
+- `http1_split_roundtrip`
+  Verifies that `HttpClient(http1-mode=split)` opens separate upload/download HTTP/1.1 requests, that
+  `HttpServer(http1-mode=split)` pairs them by query/header metadata, and that the merged logical stream preserves the
+  tester payload sequence across all workers.
+- `http1_split_tcp_loopback`
+  Verifies the split HTTP/1.1 transport across real TCP loopback sockets, including a custom upload method, separate
+  upload/download paths, a header-carried pair ID, query-carried direction, cookie-carried token, and cache-bypass
+  query parameter generation.
+- `http1_split_path_cookie_roundtrip`
+  Verifies alternate split metadata placement using path-carried IDs, cookie-carried direction markers, a header token,
+  path-template cache values, and the `http1-split=true` compatibility alias.
 - `http2_bidirectional_roundtrip`
   Verifies that direct HTTP/2 request and response DATA can overlap correctly through `HttpClient` and `HttpServer`.
 - `http2_bidirectional_tcp_loopback`
