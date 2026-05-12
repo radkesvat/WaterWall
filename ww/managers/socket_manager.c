@@ -770,30 +770,49 @@ static multiport_backend_t getDefaultMultiPortBackend(void)
  */
 static bool getInterfaceHostString(const char *if_name, char *host_if)
 {
-    ip4_addr_t if_ip;
-    if (! getInterfaceIp(if_name, &if_ip, stringLength(if_name)))
+    if (! getInterfaceIpString(if_name, host_if, INET_ADDRSTRLEN))
     {
         LOGF("SocketManager: Could not get interface \"%s\" ip", if_name);
         terminateProgram(1);
         return false;
     }
-    ip4AddrAddressToNetwork(host_if, &if_ip);
     return true;
 }
 
 /**
- * @brief Create TCP listener optionally bound to configured interface IP.
+ * @brief Choose bind host while preserving device binding when supported.
  */
-static wio_t *createTcpServerWithInterface(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
-                                           void (*callback)(wio_t *))
+static const char *getSocketBindHost(socket_filter_t *filter, const char *host, char *host_if)
 {
-    if (filter->option.interface_name != NULL)
+    if (filter->option.interface_name == NULL || socketOptionBindToDeviceSupported())
     {
-        char host_if[60] = {0};
-        getInterfaceHostString(filter->option.interface_name, host_if);
-        return wloopCreateTcpServer(loop, host_if, port, callback);
+        return host;
     }
-    return wloopCreateTcpServer(loop, host, port, callback);
+
+    getInterfaceHostString(filter->option.interface_name, host_if);
+    return host_if;
+}
+
+/**
+ * @brief Create TCP listener with configured socket options.
+ */
+static wio_t *createTcpServerWithSocketOptions(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+                                               void (*callback)(wio_t *))
+{
+    char        host_if[INET_ADDRSTRLEN] = {0};
+    const char *bind_host                = getSocketBindHost(filter, host, host_if);
+    return wloopCreateTcpServerWithOptions(loop, bind_host, port, callback, filter->option.interface_name,
+                                           filter->option.fwmark);
+}
+
+/**
+ * @brief Create UDP listener with configured socket options.
+ */
+static wio_t *createUdpServerWithSocketOptions(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port)
+{
+    char        host_if[INET_ADDRSTRLEN] = {0};
+    const char *bind_host                = getSocketBindHost(filter, host, host_if);
+    return wloopCreateUdpServerWithOptions(loop, bind_host, port, filter->option.interface_name, filter->option.fwmark);
 }
 
 /**
@@ -809,7 +828,8 @@ static uint16_t selectMainPortForIptables(socket_filter_t *filter, wloop_t *loop
             continue;
         }
 
-        filter->listen_io = createTcpServerWithInterface(loop, filter, host, (uint16_t) main_port, onAcceptTcpMultiPort);
+        filter->listen_io =
+            createTcpServerWithSocketOptions(loop, filter, host, (uint16_t) main_port, onAcceptTcpMultiPort);
         if (filter->listen_io == NULL)
         {
             continue;
@@ -892,7 +912,7 @@ static void listenTcpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         }
         ports_overlapped[p] = 1;
 
-        filter->listen_ios[i] = createTcpServerWithInterface(loop, filter, host, p, onAcceptTcpSinglePort);
+        filter->listen_ios[i] = createTcpServerWithSocketOptions(loop, filter, host, p, onAcceptTcpSinglePort);
 
         if (filter->listen_ios[i] == NULL)
         {
@@ -919,7 +939,7 @@ static void listenTcpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     ports_overlapped[port] = 1;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "TCP");
 
-    filter->listen_io = createTcpServerWithInterface(loop, filter, host, port, onAcceptTcpSinglePort);
+    filter->listen_io = createTcpServerWithSocketOptions(loop, filter, host, port, onAcceptTcpSinglePort);
 
     if (filter->listen_io == NULL)
     {
@@ -1239,7 +1259,7 @@ static void listenUdpSinglePort(wloop_t *loop, socket_filter_t *filter, char *ho
     }
     ports_overlapped[port] = 1;
     LOGI("SocketManager: listening on %s:[%u] (%s)", host, port, "UDP");
-    filter->listen_io = wloopCreateUdpServer(loop, host, port);
+    filter->listen_io = createUdpServerWithSocketOptions(loop, filter, host, port);
 
     if (filter->listen_io == NULL)
     {
@@ -1270,7 +1290,7 @@ static void listenUdpMultiPortIptables(wloop_t *loop, socket_filter_t *filter, c
             continue;
         }
 
-        filter->listen_io = wloopCreateUdpServer(loop, host, (uint16_t) p);
+        filter->listen_io = createUdpServerWithSocketOptions(loop, filter, host, (uint16_t) p);
         if (filter->listen_io != NULL)
         {
             ports_overlapped[(uint16_t) p] = 1;
@@ -1323,7 +1343,7 @@ static void listenUdpMultiPortSockets(wloop_t *loop, socket_filter_t *filter, ch
         }
         ports_overlapped[p] = 1;
 
-        wio_t *udp_io = wloopCreateUdpServer(loop, host, p);
+        wio_t *udp_io = createUdpServerWithSocketOptions(loop, filter, host, p);
         if (udp_io == NULL)
         {
             LOGW("SocketManager: could not listen on %s:[%u] , skipped...", host, p);

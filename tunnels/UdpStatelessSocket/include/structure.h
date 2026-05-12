@@ -9,6 +9,7 @@ typedef struct udpstatelesssocket_tstate_s
 
     // These fields are read from json
     char    *listen_address; // address to listen on (ip)
+    char    *interface_name; // optional network device for the UDP socket
     uint16_t listen_port;    // port to listen on
     int      fwmark;         // fwmark to set on the socket
 
@@ -17,6 +18,7 @@ typedef struct udpstatelesssocket_tstate_s
 
     sockaddr_u cached_peer_addr; // last owner-worker peer selected for outbound sends
     bool       cached_peer_valid;
+    bool       source_ip_configured;
 } udpstatelesssocket_tstate_t;
 
 typedef struct udpstatelesssocket_lstate_s

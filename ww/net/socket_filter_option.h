@@ -38,6 +38,7 @@ typedef struct socket_filter_option_s
     uint16_t            port_max;
     bool                fast_open;
     bool                no_delay;
+    int                 fwmark;
     unsigned int        balance_group_interval;
 
     vec_ipmask_t white_list;

@@ -446,6 +446,62 @@ WW_INLINE int udpBroadCast(int sockfd, int on DEFAULT(1))
 }
 
 /**
+ * @brief Check whether this build exposes a device-binding socket option.
+ *
+ * @return true when `socketOptionBindToDevice()` can restrict a socket by interface name.
+ */
+WW_INLINE bool socketOptionBindToDeviceSupported(void)
+{
+#if defined(OS_LINUX) && defined(SO_BINDTODEVICE)
+    return true;
+#else
+    return false;
+#endif
+}
+
+/**
+ * @brief Bind a socket to a network device when the platform supports it.
+ *
+ * @param sockfd Socket descriptor.
+ * @param interface_name Interface/device name, for example `eth0`.
+ * @return `setsockopt` result, or `0` on platforms without this option.
+ */
+WW_INLINE int socketOptionBindToDevice(int sockfd, const char *interface_name)
+{
+    if (interface_name == NULL || interface_name[0] == '\0')
+    {
+        return 0;
+    }
+
+#if defined(OS_LINUX) && defined(SO_BINDTODEVICE)
+    return setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, interface_name,
+                      (socklen_t) (stringLength(interface_name) + 1));
+#else
+    discard sockfd;
+    discard interface_name;
+    return 0;
+#endif
+}
+
+/**
+ * @brief Apply a firewall mark to a socket when the platform supports it.
+ *
+ * @param sockfd Socket descriptor.
+ * @param fwmark Mark value to apply.
+ * @return `setsockopt` result, or `0` on platforms without this option.
+ */
+WW_INLINE int socketOptionSetFwMark(int sockfd, int fwmark)
+{
+#if defined(OS_LINUX) && defined(SO_MARK)
+    return setsockopt(sockfd, SOL_SOCKET, SO_MARK, (const char *) &fwmark, sizeof(fwmark));
+#else
+    discard sockfd;
+    discard fwmark;
+    return 0;
+#endif
+}
+
+/**
  * @brief Restrict an IPv6 socket to IPv6 only.
  *
  * @param sockfd Socket descriptor.
@@ -896,6 +952,15 @@ bool verifyIPCdir(const char *ipc);
  * @return `true` on success, otherwise `false`.
  */
 bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen);
+/**
+ * @brief Get IPv4 address text for a local network interface.
+ *
+ * @param if_name Interface name.
+ * @param host_buffer Output string buffer.
+ * @param host_buffer_len Output buffer size.
+ * @return `true` on success, otherwise `false`.
+ */
+bool getInterfaceIpString(const char *if_name, char *host_buffer, size_t host_buffer_len);
 
 
 

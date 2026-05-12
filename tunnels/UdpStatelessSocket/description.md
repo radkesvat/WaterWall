@@ -34,7 +34,10 @@ or the reverse, depending on chain wiring.
   "type": "UdpStatelessSocket",
   "settings": {
     "listen-address": "0.0.0.0",
-    "listen-port": 51820
+    "listen-port": 51820,
+    "interface": "eth0",
+    "fwmark": 10,
+    "source-ip": "192.0.2.10"
   }
 }
 ```
@@ -63,7 +66,18 @@ or the reverse, depending on chain wiring.
 
 ## Optional `settings` Fields
 
-There are no tunnel-specific optional settings currently parsed by the implementation.
+- `interface` `(string)`
+  Restricts the UDP socket to a local network device where supported.
+  On Linux this uses `SO_BINDTODEVICE`. On platforms without device binding, WaterWall falls back to binding the socket to the interface's IPv4 address when `source-ip` is not set.
+
+- `fwmark` `(integer)`
+  Linux-style socket mark.
+  When the platform provides `SO_MARK`, this value is applied to the UDP socket before bind.
+  Default: not set
+
+- `source-ip` `(string)`
+  Uses a specific local source IP for the UDP socket.
+  For this stateless socket, `source-ip` is treated as an override for `listen-address`, because the same bound UDP socket is used for both receiving and sending.
 
 ## Detailed Behavior
 
@@ -128,4 +142,5 @@ Its init, est, fin, pause, and resume callbacks are effectively no-ops because t
 - `UdpStatelessSocket` is intended for stateless UDP traffic, especially around `WireGuardDevice`.
 - The tunnel depends on valid routing context for outbound sends. In particular, `dest_ctx` must be initialized before sending payload.
 - This node does not create per-peer connection state.
-- The current JSON parser requires only `listen-address` and `listen-port`.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
+- The JSON parser requires `listen-address` and `listen-port`; `source-ip` may override the effective local bind address.

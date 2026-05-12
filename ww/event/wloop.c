@@ -1127,7 +1127,25 @@ wio_t *wSendTo(wloop_t *loop, int sockfd, sbuf_t *buf, wwrite_cb write_cb)
 }
 
 //-----------------top-level apis---------------------------------------------
-wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e type, wio_side_e side)
+static bool wioApplySocketOptions(int sockfd, const char *interface_name, int fwmark)
+{
+    if (socketOptionBindToDevice(sockfd, interface_name) != 0)
+    {
+        printError("set socket interface failed, call: setsockopt(SO_BINDTODEVICE)");
+        return false;
+    }
+
+    if (fwmark >= 0 && socketOptionSetFwMark(sockfd, fwmark) != 0)
+    {
+        printError("set socket fwmark failed, call: setsockopt(SO_MARK)");
+        return false;
+    }
+
+    return true;
+}
+
+wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio_type_e type, wio_side_e side,
+                                  const char *interface_name, int fwmark)
 {
     int sock_type = (type & WIO_TYPE_SOCK_STREAM)  ? SOCK_STREAM
                     : (type & WIO_TYPE_SOCK_DGRAM) ? SOCK_DGRAM
@@ -1159,6 +1177,12 @@ wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e typ
     if (sockfd < 0)
     {
         printError("syscall return error, call: socket , value: %d\n", sockfd);
+        return NULL;
+    }
+
+    if (! wioApplySocketOptions(sockfd, interface_name, fwmark))
+    {
+        closesocket(sockfd);
         return NULL;
     }
 
@@ -1223,15 +1247,26 @@ wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e typ
     return io;
 }
 
-wio_t *wloopCreateTcpServer(wloop_t *loop, const char *host, int port, waccept_cb accept_cb)
+wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e type, wio_side_e side)
 {
-    wio_t *io = wioCreateSocket(loop, host, port, WIO_TYPE_TCP, WIO_SERVER_SIDE);
+    return wioCreateSocketWithOptions(loop, host, port, type, side, NULL, -1);
+}
+
+wio_t *wloopCreateTcpServerWithOptions(wloop_t *loop, const char *host, int port, waccept_cb accept_cb,
+                                       const char *interface_name, int fwmark)
+{
+    wio_t *io = wioCreateSocketWithOptions(loop, host, port, WIO_TYPE_TCP, WIO_SERVER_SIDE, interface_name, fwmark);
     if (io == NULL)
         return NULL;
     wioSetCallBackAccept(io, accept_cb);
     if (wioAccept(io) != 0)
         return NULL;
     return io;
+}
+
+wio_t *wloopCreateTcpServer(wloop_t *loop, const char *host, int port, waccept_cb accept_cb)
+{
+    return wloopCreateTcpServerWithOptions(loop, host, port, accept_cb, NULL, -1);
 }
 
 wio_t *wloopCreateTcpClient(wloop_t *loop, const char *host, int port, wconnect_cb connect_cb, wclose_cb close_cb)
@@ -1248,7 +1283,12 @@ wio_t *wloopCreateTcpClient(wloop_t *loop, const char *host, int port, wconnect_
 
 wio_t *wloopCreateUdpServer(wloop_t *loop, const char *host, int port)
 {
-    return wioCreateSocket(loop, host, port, WIO_TYPE_UDP, WIO_SERVER_SIDE);
+    return wloopCreateUdpServerWithOptions(loop, host, port, NULL, -1);
+}
+
+wio_t *wloopCreateUdpServerWithOptions(wloop_t *loop, const char *host, int port, const char *interface_name, int fwmark)
+{
+    return wioCreateSocketWithOptions(loop, host, port, WIO_TYPE_UDP, WIO_SERVER_SIDE, interface_name, fwmark);
 }
 
 wio_t *wloopCreateUdpClient(wloop_t *loop, const char *host, int port)

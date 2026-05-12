@@ -19,6 +19,9 @@ typedef struct udpconnector_tstate_s
     address_context_t constant_dest_addr; // constant destination address for the connection
     bool              reuse_addr;         // whether to reuse address
     int               domain_strategy;    // DNS resolution strategy
+    int               fwmark;             // firewall mark on linux (beta)
+    char             *interface_name;     // optional network device for outbound sockets
+    char             *source_ip;          // optional local source IP for outbound sockets
 
     uint16_t random_dest_port_x; // lower bound of random port range (used when dest_port_selected.status == kDvsRandom)
     uint16_t random_dest_port_y; // upper bound of random port range (used when dest_port_selected.status == kDvsRandom)

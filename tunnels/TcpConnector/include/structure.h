@@ -14,6 +14,8 @@ typedef struct tcpconnector_tstate_s
     bool            option_reuse_addr;    // apply reuse address option on sockets
     int             domain_strategy;      // prefer ipv4 or ipv6
     int             fwmark;               // firewall mark on linux (beta)
+    char           *interface_name;       // optional network device for outbound sockets
+    char           *source_ip;            // optional local source IP for outbound sockets
     uint64_t        outbound_ip_range;    // range for outbound ip (this means free bind)
 
     // These options are evaluatde at start

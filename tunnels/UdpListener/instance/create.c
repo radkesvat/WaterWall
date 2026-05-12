@@ -152,6 +152,7 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, udplistener_t
     getStringFromJsonObject(&(filter_opt->interface_name), settings, "interface");
     getStringFromJsonObject(&(filter_opt->balance_group_name), settings, "balance-group");
     getIntFromJsonObject((int *) &(filter_opt->balance_group_interval), settings, "balance-interval");
+    getIntFromJsonObjectOrDefault(&(filter_opt->fwmark), settings, "fwmark", -1);
 
     parsePortSection(state, settings);
     configureMultiportBackend(filter_opt, state, settings);

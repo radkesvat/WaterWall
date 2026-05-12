@@ -11,10 +11,19 @@ void socketfilteroptionInit(socket_filter_option_t *sfo)
     sfo->black_list         = vec_ipmask_t_with_capacity(8);
     sfo->balance_group_name = NULL;
     sfo->interface_name     = NULL;
+    sfo->fwmark             = -1;
 }
 
 void socketfilteroptionDeInit(socket_filter_option_t *sfo)
 {
     vec_ipmask_t_drop(&sfo->white_list);
     vec_ipmask_t_drop(&sfo->black_list);
+    if (sfo->balance_group_name != NULL)
+    {
+        memoryFree(sfo->balance_group_name);
+    }
+    if (sfo->interface_name != NULL)
+    {
+        memoryFree(sfo->interface_name);
+    }
 }

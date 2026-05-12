@@ -61,6 +61,65 @@ static void setupDestinationPort(const dynamic_value_t *dest_port_selected, cons
     }
 }
 
+static const char *getSourceBindIp(const tcpconnector_tstate_t *ts, char *interface_ip, size_t interface_ip_len)
+{
+    if (ts->source_ip != NULL)
+    {
+        return ts->source_ip;
+    }
+
+    if (ts->interface_name == NULL || socketOptionBindToDeviceSupported())
+    {
+        return NULL;
+    }
+
+    if (! getInterfaceIpString(ts->interface_name, interface_ip, interface_ip_len))
+    {
+        LOGE("TcpConnector: could not get interface \"%s\" ip", ts->interface_name);
+        return NULL;
+    }
+
+    return interface_ip;
+}
+
+static bool bindSourceIpIfNeeded(int sockfd, int addr_type, const tcpconnector_tstate_t *ts)
+{
+    char        interface_ip[INET_ADDRSTRLEN] = {0};
+    const char *source_ip = getSourceBindIp(ts, interface_ip, sizeof(interface_ip));
+
+    if (source_ip == NULL)
+    {
+        if (ts->source_ip == NULL && ts->interface_name != NULL && ! socketOptionBindToDeviceSupported())
+        {
+            return false;
+        }
+        return true;
+    }
+
+    sockaddr_u local_addr;
+    memorySet(&local_addr, 0, sizeof(local_addr));
+
+    if (sockaddrSetIpAddressPort(&local_addr, source_ip, 0) != 0)
+    {
+        LOGE("TcpConnector: could not prepare source-ip %s", source_ip);
+        return false;
+    }
+
+    if (local_addr.sa.sa_family != addr_type)
+    {
+        LOGE("TcpConnector: source-ip address family does not match destination address family");
+        return false;
+    }
+
+    if (bind(sockfd, &local_addr.sa, sockaddrLen(&local_addr)) < 0)
+    {
+        LOGE("TcpConnector: bind source-ip failed");
+        return false;
+    }
+
+    return true;
+}
+
 void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
@@ -137,6 +196,12 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         tcpNoDelay(sockfd, 1);
     }
 
+    if (socketOptionBindToDevice(sockfd, ts->interface_name) != 0)
+    {
+        LOGE("TcpConnector: setsockopt SO_BINDTODEVICE error");
+        goto fail;
+    }
+
 #ifdef TCP_FASTOPEN
     if (ts->option_tcp_fast_open)
     {
@@ -145,16 +210,25 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 #endif
 
-#if defined(SO_MARK)
     if (ts->fwmark != kFwMarkInvalid)
     {
-        if (setsockopt(sockfd, SOL_SOCKET, SO_MARK, &ts->fwmark, sizeof(ts->fwmark)) < 0)
+        if (socketOptionSetFwMark(sockfd, ts->fwmark) < 0)
         {
             LOGE("TcpConnector: setsockopt SO_MARK error");
             goto fail;
         }
     }
-#endif
+
+    if (ts->option_reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
+    {
+        LOGE("TcpConnector: set socket reuseaddr failed");
+        goto fail;
+    }
+
+    if (! bindSourceIpIfNeeded(sockfd, addr_type, ts))
+    {
+        goto fail;
+    }
 
     wio_t *io = wioGet(loop, sockfd);
     assert(io != NULL);
@@ -186,6 +260,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     return;
 fail:
+    SAFE_CLOSESOCKET(sockfd);
     tcpconnectorLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
 }

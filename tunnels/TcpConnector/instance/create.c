@@ -300,6 +300,15 @@ tunnel_t *tcpconnectorTunnelCreate(node_t *node)
     }
 
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
+    getStringFromJsonObject(&(state->interface_name), settings, "interface");
+    getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
+    if (state->source_ip != NULL && ! addressIsIp(state->source_ip))
+    {
+        LOGF("JSON Error: TcpConnector->settings->source-ip (string field) : The value must be a valid IP address");
+        memoryFree(state->source_ip);
+        state->source_ip = NULL;
+        return NULL;
+    }
 
     state->idle_table = idleTableCreate(getWorkerLoop(getWID()));
 

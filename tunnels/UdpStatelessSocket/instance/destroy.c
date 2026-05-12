@@ -15,6 +15,10 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t)
     {
         memoryFree(state->listen_address);
     }
+    if (state->interface_name)
+    {
+        memoryFree(state->interface_name);
+    }
 
     tunnelDestroy(t);
 }

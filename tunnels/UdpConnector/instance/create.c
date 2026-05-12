@@ -302,6 +302,16 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     }
 
     getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
+    getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
+    getStringFromJsonObject(&(state->interface_name), settings, "interface");
+    getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
+    if (state->source_ip != NULL && ! addressIsIp(state->source_ip))
+    {
+        LOGF("JSON Error: UdpConnector->settings->source-ip (string field) : The value must be a valid IP address");
+        memoryFree(state->source_ip);
+        state->source_ip = NULL;
+        return NULL;
+    }
 
     if (getDestinationArraySettings(settings) != NULL)
     {

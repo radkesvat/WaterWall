@@ -399,10 +399,14 @@ WW_EXPORT wio_t* wSendTo(wloop_t* loop, int sockfd, sbuf_t* buf,  wwrite_cb writ
 // side == WIO_SERVER_SIDE ? bind ->
 // type & WIO_TYPE_SOCK_STREAM ? listen ->
 WW_EXPORT wio_t* wioCreateSocket(wloop_t* loop, const char* host, int port, wio_type_e type DEFAULT(WIO_TYPE_TCP), wio_side_e side DEFAULT(WIO_SERVER_SIDE));
+WW_EXPORT wio_t* wioCreateSocketWithOptions(wloop_t* loop, const char* host, int port, wio_type_e type,
+                                            wio_side_e side, const char* interface_name, int fwmark);
 
 // @tcp_server: wioCreateSocket(loop, host, port, WIO_TYPE_TCP, WIO_SERVER_SIDE) -> wioSetCallBackAccept -> wioAccept
 // @see examples/tcp_echo_server.c
 WW_EXPORT wio_t* wloopCreateTcpServer(wloop_t* loop, const char* host, int port, waccept_cb accept_cb);
+WW_EXPORT wio_t* wloopCreateTcpServerWithOptions(wloop_t* loop, const char* host, int port, waccept_cb accept_cb,
+                                                 const char* interface_name, int fwmark);
 
 // @tcp_client: wioCreateSocket(loop, host, port, WIO_TYPE_TCP, WIO_CLIENT_SIDE) -> wioSetCallBackConnect -> wioSetCallBackClose -> wioConnect
 // @see examples/nc.c
@@ -411,6 +415,8 @@ WW_EXPORT wio_t* wloopCreateTcpClient(wloop_t* loop, const char* host, int port,
 // @udp_server: wioCreateSocket(loop, host, port, WIO_TYPE_UDP, WIO_SERVER_SIDE)
 // @see examples/udp_echo_server.c
 WW_EXPORT wio_t* wloopCreateUdpServer(wloop_t* loop, const char* host, int port);
+WW_EXPORT wio_t* wloopCreateUdpServerWithOptions(wloop_t* loop, const char* host, int port,
+                                                 const char* interface_name, int fwmark);
 
 // @udp_server: wioCreateSocket(loop, host, port, WIO_TYPE_UDP, WIO_CLIENT_SIDE)
 // @see examples/nc.c

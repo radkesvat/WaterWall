@@ -25,6 +25,7 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
     "address": "0.0.0.0",
     "port": [20000, 20100],
     "interface": "eth0",
+    "fwmark": 10,
     "balance-group": "udp-public",
     "balance-interval": 30000,
     "multiport-backend": "socket",
@@ -65,8 +66,15 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
 ## Optional `settings` Fields
 
 - `interface` `(string)`
-  Binds the listener using the IP address of a local network interface.
+  Restricts the listener to a local network interface.
   Example: `"eth0"`
+
+  On Linux this uses `SO_BINDTODEVICE`. On platforms without device binding, WaterWall falls back to binding the listener using the interface's IPv4 address.
+
+- `fwmark` `(integer)`
+  Linux-style socket mark.
+  When the platform provides `SO_MARK`, this value is applied to the listening socket before bind.
+  Default: not set
 
 - `balance-group` `(string)`
   Places this listener into a socket-manager balance group shared with other compatible listeners on the same port.
@@ -152,4 +160,5 @@ Filtering and balancing are handled through the shared socket manager:
 
 - The current implementation parses `whitelist`, but it does not parse a `blacklist` field from JSON.
 - `port` is currently parsed as a number or a two-item array.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused peer lines drop inbound datagrams instead of buffering them.

@@ -11,7 +11,7 @@ In practice, this node is used at the end of a chain.
 - Opens an outbound TCP socket.
 - Forwards upstream payloads from the previous node to the remote socket.
 - Forwards remote socket payloads back downstream to the previous node.
-- Applies optional socket options such as `TCP_NODELAY`, `TCP_FASTOPEN`, and `SO_MARK` when supported by the platform.
+- Applies optional socket options such as `TCP_NODELAY`, `TCP_FASTOPEN`, `SO_REUSEADDR`, `SO_MARK`, device binding, and source-IP binding when supported by the platform.
 
 This node behaves like a chain end. Its downstream entry callbacks are disabled because the outbound connection is initiated from upstream `init`.
 
@@ -28,6 +28,8 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     "fastopen": false,
     "reuseaddr": false,
     "fwmark": 10,
+    "interface": "eth0",
+    "source-ip": "192.0.2.10",
     "domain-strategy": 0
   }
 }
@@ -129,15 +131,21 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   Default: `false`
 
 - `reuseaddr` `(boolean)`
-  Parsed from JSON and stored in the tunnel state.
+  Enables `SO_REUSEADDR` on the outbound socket.
   Default: `false`
-
-  Note: in the current implementation this option is not applied to the socket with `setsockopt`.
 
 - `fwmark` `(integer)`
   Linux-style socket mark.
-  When the platform provides `SO_MARK`, this value is applied to the outbound socket.
+  When the platform provides `SO_MARK`, this value is applied to the outbound socket before connect.
   Default: not set
+
+- `interface` `(string)`
+  Restricts the outbound socket to a local network device where supported.
+  On Linux this uses `SO_BINDTODEVICE`. On platforms without device binding, WaterWall falls back to binding the socket to the interface's IPv4 address.
+
+- `source-ip` `(string)`
+  Binds the outbound socket to a specific local source IP with an ephemeral source port before connect.
+  This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
 
 - `domain-strategy` `(integer)`
   Parsed and stored in the tunnel state.
@@ -204,9 +212,10 @@ After the destination is ready, `TcpConnector` creates a TCP socket and may appl
 
 - `TCP_NODELAY` when `nodelay` is enabled
 - `TCP_FASTOPEN` when `fastopen` is enabled and the platform supports it
+- `SO_REUSEADDR` when `reuseaddr` is enabled
 - `SO_MARK` when `fwmark` is set and the platform supports it
-
-The code currently parses `reuseaddr`, but it does not call `SO_REUSEADDR` for the outbound socket.
+- `SO_BINDTODEVICE` when `interface` is set and the platform supports it
+- `bind(source-ip, 0)` when `source-ip` is set
 
 ### Data flow direction
 
@@ -235,5 +244,5 @@ Each outbound connection is tracked in an idle table with a timeout of about `30
 
 - This node is meant to be used as an outbound chain end.
 - `domain-strategy` is currently stored but not actively used by the connector path.
-- `reuseaddr` is currently parsed but not applied.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - DNS resolution in this path is synchronous.

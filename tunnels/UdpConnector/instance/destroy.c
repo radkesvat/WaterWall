@@ -19,6 +19,14 @@ void udpconnectorTunnelDestroy(tunnel_t *t)
 
     dynamicvalueDestroy(ts->dest_addr_selected);
     dynamicvalueDestroy(ts->dest_port_selected);
+    if (ts->interface_name != NULL)
+    {
+        memoryFree(ts->interface_name);
+    }
+    if (ts->source_ip != NULL)
+    {
+        memoryFree(ts->source_ip);
+    }
 
     tunnelDestroy(t);
 }

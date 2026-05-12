@@ -603,7 +603,9 @@ bool verifyIPCdir(const char *ipc)
 
 bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
 {
-    if (! if_name || ! ip_buffer || buflen < INET_ADDRSTRLEN)
+    discard buflen;
+
+    if (! if_name || if_name[0] == '\0' || ! ip_buffer)
     {
         return false;
     }
@@ -711,4 +713,27 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
     freeifaddrs(ifaddr);
     return false;
 #endif
+}
+
+bool getInterfaceIpString(const char *if_name, char *host_buffer, size_t host_buffer_len)
+{
+    if (host_buffer == NULL || host_buffer_len < INET_ADDRSTRLEN)
+    {
+        return false;
+    }
+
+    ip4_addr_t if_ip;
+    if (! getInterfaceIp(if_name, &if_ip, 0))
+    {
+        return false;
+    }
+
+    const char *ip_str = ip4AddrNetworkToAddress(&if_ip);
+    if (ip_str == NULL || stringLength(ip_str) + 1 > host_buffer_len)
+    {
+        return false;
+    }
+
+    stringCopy(host_buffer, ip_str);
+    return true;
 }

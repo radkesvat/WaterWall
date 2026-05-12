@@ -26,11 +26,32 @@ static const udpconnector_destination_t *selectWeightedDestination(const udpconn
     return &ts->destinations[ts->destinations_count - 1];
 }
 
-static int createAndBindSocket(int family, bool reuse_addr)
+static const char *getSourceBindIp(const udpconnector_tstate_t *ts, char *interface_ip, size_t interface_ip_len)
+{
+    if (ts->source_ip != NULL)
+    {
+        return ts->source_ip;
+    }
+
+    if (ts->interface_name == NULL || socketOptionBindToDeviceSupported())
+    {
+        return NULL;
+    }
+
+    if (! getInterfaceIpString(ts->interface_name, interface_ip, interface_ip_len))
+    {
+        LOGE("UdpConnector: could not get interface \"%s\" ip", ts->interface_name);
+        return NULL;
+    }
+
+    return interface_ip;
+}
+
+static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
 {
     sockaddr_u host_addr = {0};
-
-    const char *bind_address = family == AF_INET6 ? "::" : "0.0.0.0";
+    char       interface_ip[INET_ADDRSTRLEN] = {0};
+    const char *bind_address = getSourceBindIp(ts, interface_ip, sizeof(interface_ip));
 
     if (family != AF_INET && family != AF_INET6)
     {
@@ -38,9 +59,23 @@ static int createAndBindSocket(int family, bool reuse_addr)
         return -1;
     }
 
+    if (bind_address == NULL)
+    {
+        if (ts->source_ip == NULL && ts->interface_name != NULL && ! socketOptionBindToDeviceSupported())
+        {
+            return -1;
+        }
+        bind_address = family == AF_INET6 ? "::" : "0.0.0.0";
+    }
+
     if (sockaddrSetIpAddressPort(&host_addr, bind_address, 0) != 0)
     {
         LOGE("UdpConnector: could not prepare bind address %s", bind_address);
+        return -1;
+    }
+    if (host_addr.sa.sa_family != family)
+    {
+        LOGE("UdpConnector: source-ip address family does not match destination address family");
         return -1;
     }
 
@@ -66,7 +101,21 @@ static int createAndBindSocket(int family, bool reuse_addr)
         return -1;
     }
 
-    if (reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
+    if (socketOptionBindToDevice(sockfd, ts->interface_name) != 0)
+    {
+        LOGE("UdpConnector: setsockopt SO_BINDTODEVICE error");
+        closesocket(sockfd);
+        return -1;
+    }
+
+    if (ts->fwmark >= 0 && socketOptionSetFwMark(sockfd, ts->fwmark) != 0)
+    {
+        LOGE("UdpConnector: setsockopt SO_MARK error");
+        closesocket(sockfd);
+        return -1;
+    }
+
+    if (ts->reuse_addr && socketOptionReuseAddr(sockfd, 1) != 0)
     {
         LOGE("UdpConnector: set socket reuseaddr failed");
         closesocket(sockfd);
@@ -173,7 +222,7 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     sockaddr_u addr   = addresscontextToSockAddr(dest_ctx);
     int        family = addr.sa.sa_family;
 
-    int sockfd = createAndBindSocket(family, ts->reuse_addr);
+    int sockfd = createAndBindSocket(family, ts);
     if (sockfd < 0)
     {
         tunnelPrevDownStreamFinish(t, l);

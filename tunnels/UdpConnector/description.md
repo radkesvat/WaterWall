@@ -13,6 +13,7 @@ In practice, this node is used at the end of a chain.
 - Forwards datagrams received from the remote UDP peer back downstream.
 - Drops datagrams that arrive from a peer other than the selected remote endpoint.
 - Tracks the UDP line with idle timeouts.
+- Applies optional socket options such as `SO_REUSEADDR`, `SO_MARK`, device binding, and source-IP binding when supported by the platform.
 
 This node acts like a chain end. Its downstream entry callbacks are disabled because the socket is created from upstream `init`.
 
@@ -25,7 +26,10 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
   "settings": {
     "address": "example.com",
     "port": "random(40000,40100)",
-    "reuseaddr": true
+    "reuseaddr": true,
+    "fwmark": 10,
+    "interface": "eth0",
+    "source-ip": "192.0.2.10"
   }
 }
 ```
@@ -116,6 +120,19 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
 - `reuseaddr` `(boolean)`
   Enables `SO_REUSEADDR` on the created UDP socket.
 
+- `fwmark` `(integer)`
+  Linux-style socket mark.
+  When the platform provides `SO_MARK`, this value is applied to the UDP socket before bind.
+  Default: not set
+
+- `interface` `(string)`
+  Restricts the UDP socket to a local network device where supported.
+  On Linux this uses `SO_BINDTODEVICE`. On platforms without device binding, WaterWall falls back to binding the socket to the interface's IPv4 address.
+
+- `source-ip` `(string)`
+  Binds the UDP socket to a specific local source IP with an ephemeral source port.
+  This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
+
 ## Detailed Behavior
 
 ### Socket setup
@@ -124,7 +141,8 @@ During upstream `init`, `UdpConnector`:
 
 - creates a UDP socket
 - enlarges the send and receive socket buffers to about `4 MB`
-- binds the socket to `0.0.0.0:0`
+- applies optional `interface`, `fwmark`, and `reuseaddr` socket options
+- binds the socket to `source-ip:0` when `source-ip` is configured, otherwise to the wildcard address for the selected address family
 - starts reading immediately
 - stores line state and idle tracking for the new socket
 - computes the destination address and port for this line
@@ -202,6 +220,7 @@ If `port` uses `random(x,y)`, the destination port is chosen once during line in
 ## Notes And Caveats
 
 - Domain resolution in this path is synchronous.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused reads drop inbound datagrams instead of buffering them.
 - Downstream `est` is only triggered after the first packet is received from the remote side.
 - Inbound datagrams from unexpected peers are ignored.

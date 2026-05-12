@@ -26,6 +26,7 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
     "port": 443,
     "nodelay": true,
     "interface": "eth0",
+    "fwmark": 10,
     "balance-group": "public-443",
     "balance-interval": 30000,
     "multiport-backend": "socket",
@@ -72,10 +73,15 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
   Default: `false`
 
 - `interface` `(string)`
-  Binds the listener using the IP address of a local network interface.
+  Restricts the listener to a local network interface.
   Example: `"eth0"`
 
-  When this field is present, the socket manager resolves the interface address and uses that address for the actual listen socket.
+  On Linux this uses `SO_BINDTODEVICE`. On platforms without device binding, WaterWall falls back to binding the listener using the interface's IPv4 address.
+
+- `fwmark` `(integer)`
+  Linux-style socket mark.
+  When the platform provides `SO_MARK`, this value is applied to the listening socket before bind.
+  Default: not set
 
 - `balance-group` `(string)`
   Places this listener into a balance group with other listeners on the same port.
@@ -164,4 +170,5 @@ If you want `iptables` specifically, set it explicitly.
 
 - The current `TcpListener` implementation parses `whitelist`, but it does not parse a `blacklist` field from JSON.
 - The current parser expects `port` as a number or a two-item array, not a string range.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - This node is designed to be used as an inbound entry point in the chain.
