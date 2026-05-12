@@ -1,0 +1,34 @@
+{
+  "name": "tcp-over-udp-fec-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "tou-client"
+    },
+    {
+      "name": "tou-client",
+      "type": "TcpOverUdpClient",
+      "settings": {
+        "fec": true,
+        "fec-data-shards": 4,
+        "fec-parity-shards": 2
+      },
+      "next": "tou-server"
+    },
+    {
+      "name": "tou-server",
+      "type": "TcpOverUdpServer",
+      "settings": {
+        "fec": true,
+        "fec-data-shards": 4,
+        "fec-parity-shards": 2
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

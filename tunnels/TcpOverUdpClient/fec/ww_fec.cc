@@ -23,6 +23,25 @@ struct tcpoverudp_fec_decoder_s
     FEC fec;
 };
 
+static void tcpoverudpFecEncoderResetBlock(tcpoverudp_fec_encoder_t *encoder)
+{
+    for (row_type &shard : encoder->shards)
+    {
+        shard.reset();
+    }
+    encoder->pkt_idx = 0;
+}
+
+static void tcpoverudpFecEncoderSkipParity(tcpoverudp_fec_encoder_t *encoder, size_t first_parity_index)
+{
+    byte dummy[fecHeaderSize] = {};
+
+    for (size_t i = first_parity_index; i < encoder->data_shards + encoder->parity_shards; ++i)
+    {
+        encoder->fec.MarkFEC(dummy);
+    }
+}
+
 static inline int tcpoverudpFecRxLimit(uint8_t data_shards, uint8_t parity_shards)
 {
     return (int) (3U * (uint32_t) (data_shards + parity_shards));
@@ -38,7 +57,7 @@ static bool tcpoverudpFecEmitRecoveredShard(const row_type &shard, tcpoverudp_fe
     uint16_t shard_size = 0;
     decode16u((byte *) shard->data(), &shard_size);
 
-    if (shard_size < 2 || shard_size > shard->size())
+    if (shard_size < 2 || (size_t) shard_size > shard->size())
     {
         return false;
     }
@@ -99,56 +118,65 @@ extern "C" bool tcpoverudpFecEncodePacket(tcpoverudp_fec_encoder_t *encoder, con
         return false;
     }
 
+    bool   block_ready       = false;
+    size_t next_parity_index = encoder->data_shards;
+
     try
     {
-        std::vector<byte> data_packet(packet_len + fecHeaderSizePlus2);
-        std::copy_n(packet, packet_len, data_packet.data() + fecHeaderSizePlus2);
-        encoder->fec.MarkData(data_packet.data(), (uint16_t) packet_len);
-
-        if (! emit(ctx, data_packet.data(), data_packet.size()))
-        {
-            return false;
-        }
-
         const size_t shard_len = packet_len + 2U;
-        encoder->shards[encoder->pkt_idx] =
-            std::make_shared<std::vector<byte>>(data_packet.data() + fecHeaderSize, data_packet.data() + fecHeaderSize + shard_len);
+        row_type     shard     = std::make_shared<std::vector<byte>>(shard_len);
+        encode16u(shard->data(), (uint16_t) shard_len);
+        std::copy_n(packet, packet_len, shard->data() + 2);
+
+        std::vector<byte> data_packet(fecHeaderSize + shard_len);
+        std::copy_n(shard->data(), shard_len, data_packet.data() + fecHeaderSize);
+        encoder->fec.MarkData(data_packet.data(), (uint16_t) packet_len);
+        encoder->shards[encoder->pkt_idx] = shard;
 
         encoder->pkt_idx += 1;
+        bool emit_ok = emit(ctx, data_packet.data(), data_packet.size());
+
         if (encoder->pkt_idx != encoder->data_shards)
         {
-            return true;
+            return emit_ok;
         }
 
+        block_ready = true;
         encoder->fec.Encode(encoder->shards);
 
         for (size_t i = encoder->data_shards; i < encoder->data_shards + encoder->parity_shards; ++i)
         {
+            next_parity_index = i;
+
             if (encoder->shards[i] == nullptr)
             {
+                tcpoverudpFecEncoderSkipParity(encoder, next_parity_index);
+                tcpoverudpFecEncoderResetBlock(encoder);
                 return false;
             }
 
             std::vector<byte> parity_packet(fecHeaderSize + encoder->shards[i]->size());
             std::copy_n(encoder->shards[i]->data(), encoder->shards[i]->size(), parity_packet.data() + fecHeaderSize);
             encoder->fec.MarkFEC(parity_packet.data());
+            next_parity_index = i + 1;
 
             if (! emit(ctx, parity_packet.data(), parity_packet.size()))
             {
-                return false;
+                emit_ok = false;
             }
         }
 
-        for (row_type &shard : encoder->shards)
-        {
-            shard.reset();
-        }
-        encoder->pkt_idx = 0;
+        tcpoverudpFecEncoderResetBlock(encoder);
 
-        return true;
+        return emit_ok;
     }
     catch (...)
     {
+        if (block_ready || encoder->pkt_idx == encoder->data_shards)
+        {
+            tcpoverudpFecEncoderSkipParity(encoder, next_parity_index);
+            tcpoverudpFecEncoderResetBlock(encoder);
+        }
         return false;
     }
 }

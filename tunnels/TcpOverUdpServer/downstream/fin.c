@@ -29,17 +29,16 @@ void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     uint8_t close_buf[kFrameHeaderLength] = {kFrameFlagClose};
     ikcp_send(ls->k_handle, (const char *) close_buf, (int) sizeof(close_buf));
 
-    if (tcpoverudpserverUpdateKcp(ls, true))
+    if (! tcpoverudpserverUpdateKcp(ls, true))
     {
-        tcpoverudpserverLinestateDestroy(ls);
-        if (lineIsAlive(l))
-        {
-            tunnelPrevDownStreamFinish(t, l);
-        }
+        lineUnlock(l);
+        return;
     }
-    else
+
+    tcpoverudpserverLinestateDestroy(ls);
+    if (lineIsAlive(l))
     {
-        tcpoverudpserverLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
     }
 
     lineUnlock(l);

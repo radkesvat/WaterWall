@@ -58,6 +58,10 @@ Practical rule:
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.
+- `tcp_over_udp_roundtrip`
+  Verifies that `TcpOverUdpClient` and `TcpOverUdpServer` preserve stream integrity through their KCP datagram path.
+- `tcp_over_udp_fec_roundtrip`
+  Verifies the same TCP-over-UDP pair with Reed-Solomon FEC enabled on both peers.
 - `packets_stream_bridge_roundtrip`
   Verifies that `PacketsToStream` and `StreamToPackets` preserve packet boundaries and payload integrity across their
   worker-packet-line to stream-line bridge.

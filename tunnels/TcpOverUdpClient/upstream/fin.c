@@ -29,17 +29,16 @@ void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     uint8_t close_buf[kFrameHeaderLength] = {kFrameFlagClose};
     ikcp_send(ls->k_handle, (const char *) close_buf, (int) sizeof(close_buf));
 
-    if (tcpoverudpclientUpdateKcp(ls, true))
+    if (! tcpoverudpclientUpdateKcp(ls, true))
     {
-        tcpoverudpclientLinestateDestroy(ls);
-        if (lineIsAlive(l))
-        {
-            tunnelNextUpStreamFinish(t, l);
-        }
+        lineUnlock(l);
+        return;
     }
-    else
+
+    tcpoverudpclientLinestateDestroy(ls);
+    if (lineIsAlive(l))
     {
-        tcpoverudpclientLinestateDestroy(ls);
+        tunnelNextUpStreamFinish(t, l);
     }
 
     lineUnlock(l);

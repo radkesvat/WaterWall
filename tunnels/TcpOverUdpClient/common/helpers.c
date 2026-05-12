@@ -59,8 +59,7 @@ bool tcpoverudpclientInputKcpPacket(void *ctx, const uint8_t *packet, size_t pac
         return false;
     }
 
-    ikcp_input(ls->k_handle, (const char *) packet, (long) packet_len);
-    return true;
+    return ikcp_input(ls->k_handle, (const char *) packet, (long) packet_len) >= 0;
 }
 
 bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
@@ -101,6 +100,15 @@ bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush)
 
     lineUnlock(l);
     return ret;
+}
+
+static uint32_t tcpoverudpclientGetNextKcpDelay(tcpoverudpclient_lstate_t *ls, uint64 current_time)
+{
+    IUINT32 current32        = (IUINT32) current_time;
+    IUINT32 next_update_time = ikcp_check(ls->k_handle, current32);
+    IINT32  delay            = (IINT32) (next_update_time - current32);
+
+    return delay <= 0 ? 1U : (uint32_t) delay;
 }
 
 void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
@@ -145,8 +153,7 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
 
     if (tcpoverudpclientUpdateKcp(ls, false))
     {
-        uint64_t next_update_time = ikcp_check(ls->k_handle, (IUINT32) current_time);
-        wtimerReset(timer, (uint32_t) (next_update_time - current_time));
+        wtimerReset(timer, tcpoverudpclientGetNextKcpDelay(ls, current_time));
     }
 }
 

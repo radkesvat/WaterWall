@@ -21,6 +21,24 @@ function(add_waterwall_integration_test test_name case_name)
   )
 endfunction()
 
+if(TARGET tcp_over_udp_fec)
+  add_executable(tcp_over_udp_fec_test tcp_over_udp_fec_test.cc)
+  target_compile_features(tcp_over_udp_fec_test PRIVATE cxx_std_17)
+  target_link_libraries(tcp_over_udp_fec_test PRIVATE tcp_over_udp_fec)
+
+  add_test(
+    NAME waterwall.tcp_over_udp_fec_unit
+    COMMAND $<TARGET_FILE:tcp_over_udp_fec_test>
+  )
+
+  set_tests_properties(
+    waterwall.tcp_over_udp_fec_unit
+    PROPERTIES
+      TIMEOUT 30
+      LABELS "unit;tunnels;fec"
+  )
+endif()
+
 add_waterwall_integration_test(waterwall.disturber_passthrough disturber_passthrough)
 add_waterwall_integration_test(waterwall.obfuscator_roundtrip obfuscator_roundtrip)
 add_waterwall_integration_test(waterwall.obfuscator_tls_record_roundtrip obfuscator_tls_record_roundtrip)
@@ -30,6 +48,8 @@ add_waterwall_integration_test(waterwall.keepalive_roundtrip keepalive_roundtrip
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)
 add_waterwall_integration_test(waterwall.udp_over_tcp_roundtrip udp_over_tcp_roundtrip)
+add_waterwall_integration_test(waterwall.tcp_over_udp_roundtrip tcp_over_udp_roundtrip)
+add_waterwall_integration_test(waterwall.tcp_over_udp_fec_roundtrip tcp_over_udp_fec_roundtrip)
 add_waterwall_integration_test(waterwall.halfduplex_roundtrip halfduplex_roundtrip)
 add_waterwall_integration_test(waterwall.http1_bidirectional_roundtrip http1_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http1_bidirectional_tcp_loopback http1_bidirectional_tcp_loopback)
