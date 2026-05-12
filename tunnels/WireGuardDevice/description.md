@@ -14,7 +14,7 @@ In Waterwall, the usual split is:
 
 - `UdpStatelessSocket` owns the outer UDP socket
 - `WireGuardDevice` owns WireGuard crypto, peer state, routing, handshake, keepalive, and rekey logic
-- `TunDevice`, `RawSocket`, `PacketToConnection`, or another packet-oriented node owns the inner packet side
+- `TunDevice`, `RawSocket`, `PacketsToConnection`, or another packet-oriented node owns the inner packet side
 
 ## What It Does
 
@@ -61,7 +61,7 @@ Common packet-side neighbors include:
 
 - `TunDevice`
 - `RawSocket`
-- `PacketToConnection`
+- `PacketsToConnection`
 - `PacketsToStream` / `StreamToPackets`
 - packet-mode `TesterClient` / `TesterServer`
 
@@ -338,7 +338,7 @@ Conceptually:
 
 - UDP datagrams arrive at `UdpStatelessSocket`
 - `WireGuardDevice` decrypts and authenticates them
-- inner packets continue to `TunDevice`, `RawSocket`, `PacketToConnection`, or another packet-side node
+- inner packets continue to `TunDevice`, `RawSocket`, `PacketsToConnection`, or another packet-side node
 
 ### 3. Verified loopback-style packet test shape
 

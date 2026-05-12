@@ -138,7 +138,7 @@ option(INCLUDE_TEMPLATE                 "link Template staticly to the core"    
 option(INCLUDE_TESTER_CLIENT            "link TesterClient staticly to the core"             TRUE)
 option(INCLUDE_TESTER_SERVER            "link TesterServer staticly to the core"             TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"          TRUE)
-option(INCLUDE_PACKET_TO_CONNECTION     "link PacketToConnection staticly to the core"       TRUE)
+option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"       TRUE)
 option(INCLUDE_STREAM_TO_PACKETS        "link StreamToPackets staticly to the core"          TRUE)
 option(INCLUDE__PACKETS_TO_STREAM        "link PacketsToStream staticly to the core"         TRUE)
 option(INCLUDE_PACKET_SPLIT_STREAM      "link PacketSplitStream staticly to the core"        TRUE)
@@ -311,9 +311,9 @@ endif()
 #packet to connection
 if(INCLUDE_PACKET_TO_CONNECTION)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_PACKET_TO_CONNECTION=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketToConnection)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketToConnection)
-  target_link_libraries(Waterwall PacketToConnection)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketsToConnection)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketsToConnection)
+  target_link_libraries(Waterwall PacketsToConnection)
 endif()
 
 #data as packet

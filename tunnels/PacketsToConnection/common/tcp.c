@@ -25,7 +25,7 @@ void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 
     if (err != ERR_OK)
     {
-        LOGD("PacketToConnection: tcp connection error %d", err);
+        LOGD("PacketsToConnection: tcp connection error %d", err);
     }
 
     if (ls == NULL)
@@ -80,7 +80,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     wid_t owner_wid = lineGetWID(ls->line);
     if (UNLIKELY(getWID() != owner_wid))
     {
-        LOGW("PacketToConnection: tcp recv callback arrived on worker %u for line owned by worker %u; closing flow",
+        LOGW("PacketsToConnection: tcp recv callback arrived on worker %u for line owned by worker %u; closing flow",
              (unsigned int) getWID(), (unsigned int) owner_wid);
         pbuf_free(p);
         ptcDetachTcpPcbLocked(ls);
@@ -139,7 +139,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
     const wid_t owner_wid = route_ctx->packet_wid;
     if (UNLIKELY(getWID() != owner_wid))
     {
-        LOGW("PacketToConnection: tcp accept callback arrived on worker %u for route owned by worker %u; dropping flow",
+        LOGW("PacketsToConnection: tcp accept callback arrived on worker %u for route owned by worker %u; dropping flow",
              (unsigned int) getWID(), (unsigned int) owner_wid);
         tcp_abort(newpcb);
         return ERR_ABRT;
@@ -175,7 +175,7 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
         stringCopyN(local_ip, ipAddrNetworkToAddress(&newpcb->local_ip), 40);
         stringCopyN(remote_ip, ipAddrNetworkToAddress(&newpcb->remote_ip), 40);
 
-        LOGD("PacketToConnection: new tcp flow accepted [%s:%u] <= [%s:%u]", local_ip,
+        LOGD("PacketsToConnection: new tcp flow accepted [%s:%u] <= [%s:%u]", local_ip,
              (unsigned int) newpcb->local_port, remote_ip, (unsigned int) newpcb->remote_port);
     }
 

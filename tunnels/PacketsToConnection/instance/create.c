@@ -11,7 +11,7 @@ static bool ptcLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
 
     if (udp_idle_timeout_ms < 1)
     {
-        LOGF("JSON Error: PacketToConnection->settings->udp-idle-timeout-ms (int field) : expected a value >= 1");
+        LOGF("JSON Error: PacketsToConnection->settings->udp-idle-timeout-ms (int field) : expected a value >= 1");
         return false;
     }
 
@@ -47,7 +47,7 @@ tunnel_t *ptcTunnelCreate(node_t *node)
 
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
-        LOGF("JSON Error: PacketToConnection->settings (object field) : expected an object");
+        LOGF("JSON Error: PacketsToConnection->settings (object field) : expected an object");
         tunnelDestroy(t);
         return NULL;
     }

@@ -25,7 +25,7 @@
 #endif
 
 #ifdef INCLUDE_PACKET_TO_CONNECTION
-#include "tunnels/PacketToConnection/include/interface.h"
+#include "tunnels/PacketsToConnection/include/interface.h"
 #endif
 
 #ifdef INCLUDE__PACKETS_TO_STREAM
@@ -300,7 +300,7 @@ void loadImportedTunnelsIntoCore(void)
 #endif
 
 #ifdef INCLUDE_PACKET_TO_CONNECTION
-    USING(PacketToConnection);
+    USING(PacketsToConnection);
 #endif
 
 #ifdef INCLUDE__PACKETS_TO_STREAM

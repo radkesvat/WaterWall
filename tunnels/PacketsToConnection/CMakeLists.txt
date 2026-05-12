@@ -1,5 +1,5 @@
 
-add_library(PacketToConnection STATIC
+add_library(PacketsToConnection STATIC
                     instance/create.c
                     instance/destroy.c
                     instance/api.c
@@ -30,16 +30,16 @@ add_library(PacketToConnection STATIC
   
 )
 
-target_include_directories(PacketToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_include_directories(PacketToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/)
+target_include_directories(PacketsToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(PacketsToConnection PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/)
 
 # in this moduel we get this warring, but we assert that the alignment is correct
 # it is also checkable with UBSAN
 if(NOT MSVC)
-    target_compile_options(PacketToConnection PRIVATE -Wno-address-of-packed-member)
+    target_compile_options(PacketsToConnection PRIVATE -Wno-address-of-packed-member)
 endif()
 
-target_link_libraries(PacketToConnection ww)
+target_link_libraries(PacketsToConnection ww)
 if(NOT APPLE)
-    target_precompile_headers(PacketToConnection REUSE_FROM ww)
+    target_precompile_headers(PacketsToConnection REUSE_FROM ww)
 endif()

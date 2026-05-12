@@ -437,7 +437,7 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
     }
     else
     {
-        LOGF("JSON Error: PacketToConnection->settings->fake-dns must be a boolean or object");
+        LOGF("JSON Error: PacketsToConnection->settings->fake-dns must be a boolean or object");
         return false;
     }
 
@@ -454,11 +454,11 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
     int        cache_size = kPtcFakeDnsDefaultRecords;
 
     if (! ptcFakeDnsLoadIpv4Setting(&listen_addr, fake_dns_object, "address", "198.18.0.2",
-                                    "PacketToConnection->settings->fake-dns->address") ||
+                                    "PacketsToConnection->settings->fake-dns->address") ||
         ! ptcFakeDnsLoadIpv4Setting(&network, fake_dns_object, "network", "100.64.0.0",
-                                    "PacketToConnection->settings->fake-dns->network") ||
+                                    "PacketsToConnection->settings->fake-dns->network") ||
         ! ptcFakeDnsLoadIpv4Setting(&netmask, fake_dns_object, "netmask", "255.192.0.0",
-                                    "PacketToConnection->settings->fake-dns->netmask"))
+                                    "PacketsToConnection->settings->fake-dns->netmask"))
     {
         return false;
     }
@@ -472,19 +472,19 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
 
     if (port < 1 || port > UINT16_MAX)
     {
-        LOGF("JSON Error: PacketToConnection->settings->fake-dns->port must be in range [1, 65535]");
+        LOGF("JSON Error: PacketsToConnection->settings->fake-dns->port must be in range [1, 65535]");
         return false;
     }
 
     if (ttl < 0)
     {
-        LOGF("JSON Error: PacketToConnection->settings->fake-dns->ttl must be zero or greater");
+        LOGF("JSON Error: PacketsToConnection->settings->fake-dns->ttl must be zero or greater");
         return false;
     }
 
     if (cache_size < 1)
     {
-        LOGF("JSON Error: PacketToConnection->settings->fake-dns->cache-size must be at least 1");
+        LOGF("JSON Error: PacketsToConnection->settings->fake-dns->cache-size must be at least 1");
         return false;
     }
 
@@ -494,7 +494,7 @@ bool ptcFakeDnsLoadSettings(ptc_tstate_t *ts, const cJSON *settings)
 
     if (host_mask == 0 || (uint32_t) cache_size > host_mask)
     {
-        LOGF("JSON Error: PacketToConnection->settings->fake-dns->cache-size does not fit in configured network");
+        LOGF("JSON Error: PacketsToConnection->settings->fake-dns->cache-size does not fit in configured network");
         return false;
     }
 
@@ -618,7 +618,7 @@ bool ptcFakeDnsHandleIpv4UdpPacket(tunnel_t *t, line_t *packet_line, sbuf_t *buf
 #ifdef DEBUG
     if (! lineIsAlive(packet_line))
     {
-        LOGF("PacketToConnection: packet line died while sending fake DNS response");
+        LOGF("PacketsToConnection: packet line died while sending fake DNS response");
         terminateProgram(1);
     }
     lineUnlock(packet_line);

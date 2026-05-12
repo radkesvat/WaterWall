@@ -65,7 +65,7 @@ static void ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
 #ifdef DEBUG
     if (! lineIsAlive(packet_line))
     {
-        LOGF("PacketToConnection: packet line died during runtime, packet tunnel contract was violated");
+        LOGF("PacketsToConnection: packet line died during runtime, packet tunnel contract was violated");
         terminateProgram(1);
     }
 

@@ -50,7 +50,7 @@ typedef struct
 #define NETIF_FLAG_PRETEND_UDP NETIF_FLAG_PRETEND
 #endif
 
-#define NETIF_FLAG_L3TO4 NETIF_FLAG_PRETEND // Backward-compatible PacketToConnection alias
+#define NETIF_FLAG_L3TO4 NETIF_FLAG_PRETEND // Backward-compatible PacketsToConnection alias
 
 // ------------------------------------------------------------------------
 // Generic IP Function Macros

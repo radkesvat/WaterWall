@@ -3,9 +3,9 @@
 
 #include "loggers/network_logger.h"
 
-node_t nodePacketToConnectionGet(void)
+node_t nodePacketsToConnectionGet(void)
 {
-    const char *type_name     = "PacketToConnection";
+    const char *type_name     = "PacketsToConnection";
     node_t      node_ptc = {
              .name                  = NULL,
              .type                  = stringDuplicate(type_name),

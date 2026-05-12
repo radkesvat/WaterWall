@@ -61,7 +61,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
     const wid_t owner_wid = route_ctx->packet_wid;
     if (UNLIKELY(getWID() != owner_wid))
     {
-        LOGW("PacketToConnection: udp recv callback arrived on worker %u for route owned by worker %u; dropping datagram",
+        LOGW("PacketsToConnection: udp recv callback arrived on worker %u for route owned by worker %u; dropping datagram",
              (unsigned int) getWID(), (unsigned int) owner_wid);
         pbuf_free(p);
         return;
@@ -116,7 +116,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
 
         if (! ptc_udp_flow_map_t_insert(&route_ctx->udp_flows, key, line).inserted)
         {
-            LOGW("PacketToConnection: duplicate UDP flow detected while creating a line, dropping datagram");
+            LOGW("PacketsToConnection: duplicate UDP flow detected while creating a line, dropping datagram");
             ptcLinestateDestroy(ls);
             lineDestroy(line);
             pbuf_free(p);
@@ -131,7 +131,7 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
             stringCopyN(src_ip, ipAddrNetworkToAddress(addr), 40);
             stringCopyN(dst_ip, ipAddrNetworkToAddress(&local_ip), 40);
 
-            LOGD("PacketToConnection: new udp flow accepted [%s:%u] <= [%s:%u]", dst_ip,
+            LOGD("PacketsToConnection: new udp flow accepted [%s:%u] <= [%s:%u]", dst_ip,
                  (unsigned int) upcb->local_port, src_ip, (unsigned int) port);
         }
     }

@@ -1,6 +1,6 @@
-# PacketToConnection
+# PacketsToConnection
 
-`PacketToConnection` is a packet-to-transport bridge built on lwIP.
+`PacketsToConnection` is a packet-to-transport bridge built on lwIP.
 
 It accepts raw IPv4 packets on the packet side, injects them into lwIP, and exposes the resulting transport flows as normal Waterwall `line_t` connections toward the next tunnel.
 
@@ -10,8 +10,8 @@ This node is for chains that start from packet traffic and then want to enter Wa
 
 Conceptually:
 
-- packet side -> `PacketToConnection` -> normal Waterwall service chain
-- service-chain responses -> `PacketToConnection` -> raw IP packets back to the packet side
+- packet side -> `PacketsToConnection` -> normal Waterwall service chain
+- service-chain responses -> `PacketsToConnection` -> raw IP packets back to the packet side
 
 It is closer to a small in-process transport stack bridge than to a framing adapter.
 
@@ -24,7 +24,7 @@ It is closer to a small in-process transport stack bridge than to a framing adap
 
 `TunDevice` owns the real packet adapter side.
 
-`PacketToConnection` owns the lwIP transport bridge side.
+`PacketsToConnection` owns the lwIP transport bridge side.
 
 ## Current Protocol Support
 
@@ -42,7 +42,7 @@ Unsupported packets are dropped conservatively.
 
 Upstream payload must be a full IPv4 packet.
 
-For each destination IPv4 address, `PacketToConnection` creates an lwIP `netif` on demand.
+For each destination IPv4 address, `PacketsToConnection` creates an lwIP `netif` on demand.
 
 For each destination port on that `netif`:
 
@@ -53,7 +53,7 @@ For each destination port on that `netif`:
 
 When lwIP accepts a TCP connection:
 
-- `PacketToConnection` creates a real Waterwall line
+- `PacketsToConnection` creates a real Waterwall line
 - fills the line source/destination address context from the TCP tuple
 - schedules upstream `Init`
 - forwards later payload with upstream `Payload`
@@ -66,7 +66,7 @@ UDP is tracked per worker, per destination route, and per source tuple.
 
 When the first datagram for a UDP flow arrives:
 
-- `PacketToConnection` creates a real Waterwall line for that flow
+- `PacketsToConnection` creates a real Waterwall line for that flow
 - fills source/destination address context
 - schedules upstream `Init`
 - forwards datagrams with upstream `Payload`
@@ -95,11 +95,11 @@ When the network side closes a flow:
 - lwIP state is detached first
 - this tunnel destroys its own line state
 - if upstream `Init` was already sent, upstream `Finish` is propagated
-- the internally created line is then destroyed by `PacketToConnection`
+- the internally created line is then destroyed by `PacketsToConnection`
 
 When the next tunnel sends downstream `Finish`:
 
-- `PacketToConnection` closes the lwIP side
+- `PacketsToConnection` closes the lwIP side
 - destroys its own line state
 - destroys the internally created line
 
@@ -137,7 +137,7 @@ This is intentional and should be treated as a current limitation of the UDP pat
 
 ## JSON Settings
 
-`PacketToConnection` currently supports:
+`PacketsToConnection` currently supports:
 
 - `udp-idle-timeout-ms` `(int, default: 300000)`
   Controls how long an idle UDP flow line is kept alive before the tunnel closes it.
@@ -163,7 +163,7 @@ The legacy key `mapdns` is accepted as an alias for `fake-dns`.
 ```json
 {
   "name": "ptc",
-  "type": "PacketToConnection",
+  "type": "PacketsToConnection",
   "settings": {
     "udp-idle-timeout-ms": 120000,
     "fake-dns": {
@@ -182,13 +182,13 @@ The legacy key `mapdns` is accepted as an alias for `fake-dns`.
 Example packet-to-service chain:
 
 ```text
-TunDevice <--> PacketToConnection <--> TcpConnector
+TunDevice <--> PacketsToConnection <--> TcpConnector
 ```
 
 or:
 
 ```text
-WireGuardDevice <--> PacketToConnection <--> HttpClient
+WireGuardDevice <--> PacketsToConnection <--> HttpClient
 ```
 
 The key idea is that the previous side is packet-oriented, while the next side is normal Waterwall connection-oriented chaining.
@@ -205,4 +205,4 @@ The key idea is that the previous side is packet-oriented, while the next side i
 
 Use `PacketsToStream` when you only need to preserve packet boundaries over a stream transport.
 
-Use `PacketToConnection` when you need lwIP to reconstruct transport flows and expose them as normal Waterwall lines.
+Use `PacketsToConnection` when you need lwIP to reconstruct transport flows and expose them as normal Waterwall lines.

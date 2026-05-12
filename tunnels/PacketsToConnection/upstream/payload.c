@@ -108,7 +108,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
     interface_route_context_t *route_ctx = ptcFindOrCreateRouteContextV4(t, lineGetWID(l), &dest_ip.u_addr.ip4);
     if (route_ctx == NULL)
     {
-        LOGW("PacketToConnection: failed to create virtual netif for destination");
+        LOGW("PacketsToConnection: failed to create virtual netif for destination");
         lineReuseBuffer(l, buf);
         return;
     }
@@ -118,7 +118,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
     case IP_PROTO_TCP:
         if (ptcEnsureTcpListener(route_ctx, t, &dest_ip, 0) != ERR_OK)
         {
-            LOGW("PacketToConnection: failed to create pretend TCP gateway");
+            LOGW("PacketsToConnection: failed to create pretend TCP gateway");
             lineReuseBuffer(l, buf);
             return;
         }
@@ -127,7 +127,7 @@ static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
     case IP_PROTO_UDP:
         if (ptcEnsureUdpListener(route_ctx, t, &dest_ip, 0) != ERR_OK)
         {
-            LOGW("PacketToConnection: failed to create pretend UDP gateway");
+            LOGW("PacketsToConnection: failed to create pretend UDP gateway");
             lineReuseBuffer(l, buf);
             return;
         }
