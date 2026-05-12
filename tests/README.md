@@ -104,6 +104,9 @@ Practical rule:
   Verifies basic `MuxClient` and `MuxServer` framing in counter mode.
 - `mux_timer_roundtrip`
   Verifies the same MUX pair in timer mode.
+- `mux_fixed_connections_count_roundtrip`
+  Verifies the same MUX pair in fixed connection count mode with two parent mux connections per worker while
+  `ConnectionFisherClient` creates multiple child lines per worker.
 - `reverse_tcp_bridge_roundtrip`
   Verifies `ReverseClient` and `ReverseServer` across a real TCP loopback transport while a paired `Bridge` links
   `TesterClient` to the reverse-server local side and `TesterServer` to the reverse-client local side.

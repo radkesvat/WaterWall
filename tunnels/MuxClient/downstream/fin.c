@@ -9,10 +9,7 @@ void muxclientTunnelDownStreamFinish(tunnel_t *t, line_t *parent_l)
 
     muxclient_tstate_t *ts  = tunnelGetState(t);
     wid_t               wid = lineGetWID(parent_l);
-    if (ts->unsatisfied_lines[wid] == parent_l)
-    {
-        ts->unsatisfied_lines[wid] = NULL;
-    }
+    muxclientForgetParentLine(ts, wid, parent_l);
 
     lineLock(parent_l);
     parent_ls->parent_finishing = true;

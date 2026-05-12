@@ -57,6 +57,20 @@ Counter mode:
 }
 ```
 
+Fixed connection count mode:
+
+```json
+{
+  "name": "mux-client",
+  "type": "MuxClient",
+  "settings": {
+    "mode": "fixed-connections-count",
+    "per-worker-connections-count": 2
+  },
+  "next": "outbound-transport"
+}
+```
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -78,6 +92,7 @@ Counter mode:
   Supported values:
   - `"timer"`
   - `"counter"`
+  - `"fixed-connections-count"`
 
 - `connection-duration` `(integer, milliseconds)`
   Required when `mode` is `"timer"`.
@@ -90,6 +105,13 @@ Counter mode:
   Required when `mode` is `"counter"`.
 
   Maximum number of child lines that may be attached to one parent transport line.
+
+  This value must be greater than `0`.
+
+- `per-worker-connections-count` `(integer)`
+  Required when `mode` is `"fixed-connections-count"`.
+
+  Number of parent transport lines `MuxClient` keeps available per worker.
 
   This value must be greater than `0`.
 
@@ -111,7 +133,9 @@ Counter mode:
 
 Each child line gets a 32-bit connection id (`cid`). That id is used inside MUX frames so the remote `MuxServer` can map traffic back to the correct child stream.
 
-`MuxClient` keeps one current reusable parent line per worker. The code calls this the unsatisfied line. As long as that parent is still allowed to accept more children, new child lines will join it.
+In timer and counter modes, `MuxClient` keeps one current reusable parent line per worker. The code calls this the unsatisfied line. As long as that parent is still allowed to accept more children, new child lines will join it.
+
+In fixed connection count mode, `MuxClient` keeps a fixed-size parent pool per worker. When a worker first needs a mux parent, it opens `per-worker-connections-count` parent transport lines for that worker. New child lines are assigned to the least-loaded parent in that worker's pool, with a round-robin tie break, and no additional parent lines are opened while the pool slots are alive.
 
 ### When a new parent connection is opened
 
@@ -124,13 +148,16 @@ When a child line arrives:
 
 Once the `Open` frame is sent successfully, `MuxClient` immediately reports downstream establishment to the child line.
 
+In fixed connection count mode, the first child on a worker creates that worker's fixed parent pool. Later child lines reuse those parents instead of creating more. If a parent slot is closed by the transport side, a later child can recreate that slot, but the active pool size for the worker is still capped by `per-worker-connections-count`.
+
 ### Exhaustion rules
 
 The current parent line becomes exhausted in one of these ways:
 
 - timer mode: its age becomes greater than `connection-duration`
 - counter mode: its child count reaches `connection-capacity`
-- absolute hard limit: child count reaches `4294967295`
+- fixed connection count mode: parent lines are not exhausted by age or child count
+- absolute hard limit: the parent connection id reaches `4294967295`
 
 An exhausted parent line is not closed immediately. It simply stops accepting new child lines. Existing child streams continue using it until they finish.
 
@@ -192,4 +219,5 @@ If that limit is exceeded, `MuxClient` closes the parent line and finishes all c
 - `mode` is mandatory in the current implementation.
 - `connection-duration` is only valid in timer mode.
 - `connection-capacity` is only valid in counter mode.
+- `per-worker-connections-count` is only valid in fixed connection count mode.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation, so this node is not meant to be used as a generic chain endpoint.

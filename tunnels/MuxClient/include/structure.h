@@ -13,10 +13,14 @@ typedef uint32_t cid_t;
 
 typedef struct muxclient_tstate_s
 {
-    uint8_t  concurrency_mode; // 1: timer, 2: counter
+    uint8_t  concurrency_mode; // timer, counter, fixed-connections-count
     uint32_t concurrency_duration;
     uint32_t concurrency_capacity;
+    uint32_t fixed_connections_count;
     uint32_t child_buffer_limit;
+
+    line_t  **fixed_parent_lines;
+    uint32_t *fixed_next_parent_indexes;
 
     line_t *unsatisfied_lines[]; // lines (per worker) that still want child connections
 } muxclient_tstate_t;
@@ -47,6 +51,7 @@ enum
     kLineStateSize          = sizeof(muxclient_lstate_t),
     kConcurrencyModeTimer   = kDvsFirstOption,
     kConcurrencyModeCounter = kDvsSecondOption,
+    kConcurrencyModeFixedConnectionsCount = kDvsThirdOption,
     kMaxMainChannelBufferSize = 1024 * 1024, // 1MB
     kMuxDefaultChildBufferLimit = 8 * 1024 * 1024,
     kMuxChildBufferResumeThreshold = 512 * 1024,
@@ -120,6 +125,8 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
 void muxclientLinestateDestroy(muxclient_lstate_t *ls);
 
 bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstate_t *ls);
+void muxclientForgetParentLine(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l);
+line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l);
 
 void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *child);
 void muxclientLeaveConnection(muxclient_lstate_t *child);

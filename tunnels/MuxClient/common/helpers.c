@@ -54,6 +54,12 @@ bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstat
 {
     assert(ls->is_child == false);
 
+    if (ls->connection_id == CID_MAX)
+    {
+        LOGE("MuxClient: Connection exhausted, connection id reached maximum value: %u", CID_MAX);
+        return true;
+    }
+
     if (ls->children_count == CID_MAX)
     {
         LOGE("MuxClient: Connection exhausted, children count reached maximum value: %u", CID_MAX);
@@ -78,8 +84,138 @@ bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstat
         return true;
     }
 
+    if (ts->concurrency_mode == kConcurrencyModeFixedConnectionsCount)
+    {
+        return false;
+    }
+
     assert(false);
     return true;
+}
+
+static line_t **muxclientFixedParentSlot(muxclient_tstate_t *ts, wid_t wid, uint32_t index)
+{
+    return &ts->fixed_parent_lines[((size_t) wid * (size_t) ts->fixed_connections_count) + (size_t) index];
+}
+
+void muxclientForgetParentLine(muxclient_tstate_t *ts, wid_t wid, line_t *parent_l)
+{
+    if (ts->concurrency_mode == kConcurrencyModeFixedConnectionsCount)
+    {
+        for (uint32_t i = 0; i < ts->fixed_connections_count; ++i)
+        {
+            line_t **slot = muxclientFixedParentSlot(ts, wid, i);
+            if (*slot == parent_l)
+            {
+                *slot = NULL;
+                return;
+            }
+        }
+        return;
+    }
+
+    if (ts->unsatisfied_lines[wid] == parent_l)
+    {
+        ts->unsatisfied_lines[wid] = NULL;
+    }
+}
+
+static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **parent_l_out)
+{
+    line_t             *parent_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
+    muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
+
+    muxclientLinestateInitialize(parent_ls, parent_l, false, 0);
+
+    if (! withLineLocked(parent_l, tunnelNextUpStreamInit, t))
+    {
+        *parent_l_out = NULL;
+        return false;
+    }
+
+    *parent_l_out = parent_l;
+    return true;
+}
+
+static line_t *muxclientGetFixedParentLineForNewChild(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid)
+{
+    assert(ts->fixed_connections_count > 0);
+
+    for (uint32_t i = 0; i < ts->fixed_connections_count; ++i)
+    {
+        line_t **slot = muxclientFixedParentSlot(ts, wid, i);
+        if (*slot != NULL)
+        {
+            continue;
+        }
+
+        line_t *parent_l = NULL;
+        if (! muxclientCreateParentLine(t, wid, &parent_l))
+        {
+            return NULL;
+        }
+        *slot = parent_l;
+    }
+
+    uint32_t start_index = ts->fixed_next_parent_indexes[wid] % ts->fixed_connections_count;
+    uint32_t best_index  = start_index;
+    uint32_t best_count  = UINT32_MAX;
+    bool     found       = false;
+
+    for (uint32_t i = 0; i < ts->fixed_connections_count; ++i)
+    {
+        uint32_t idx = (start_index + i) % ts->fixed_connections_count;
+        line_t  *parent_l = *muxclientFixedParentSlot(ts, wid, idx);
+        assert(parent_l != NULL);
+
+        muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
+        assert(parent_ls->is_child == false);
+
+        if (parent_ls->parent_finishing || muxclientCheckConnectionIsExhausted(ts, parent_ls))
+        {
+            continue;
+        }
+
+        if (! found || parent_ls->children_count < best_count)
+        {
+            best_index = idx;
+            best_count = parent_ls->children_count;
+            found      = true;
+        }
+    }
+
+    if (! found)
+    {
+        return NULL;
+    }
+
+    ts->fixed_next_parent_indexes[wid] = (best_index + 1U) % ts->fixed_connections_count;
+    return *muxclientFixedParentSlot(ts, wid, best_index);
+}
+
+line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
+{
+    muxclient_tstate_t *ts  = tunnelGetState(t);
+    wid_t               wid = lineGetWID(child_l);
+
+    if (ts->concurrency_mode == kConcurrencyModeFixedConnectionsCount)
+    {
+        return muxclientGetFixedParentLineForNewChild(t, ts, wid);
+    }
+
+    if (ts->unsatisfied_lines[wid] == NULL ||
+        muxclientCheckConnectionIsExhausted(ts, lineGetState(ts->unsatisfied_lines[wid], t)))
+    {
+        line_t *parent_l = NULL;
+        if (! muxclientCreateParentLine(t, wid, &parent_l))
+        {
+            return NULL;
+        }
+
+        ts->unsatisfied_lines[wid] = parent_l;
+    }
+
+    return ts->unsatisfied_lines[wid];
 }
 
 void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag)

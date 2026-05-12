@@ -1,0 +1,41 @@
+{
+  "name": "mux-fixed-connections-count-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "connection-fisher-client"
+    },
+    {
+      "name": "connection-fisher-client",
+      "type": "ConnectionFisherClient",
+      "settings": {
+        "simultaneous-tries-perline": 3
+      },
+      "next": "mux-client"
+    },
+    {
+      "name": "mux-client",
+      "type": "MuxClient",
+      "settings": {
+        "mode": "fixed-connections-count",
+        "per-worker-connections-count": 2
+      },
+      "next": "mux-server"
+    },
+    {
+      "name": "mux-server",
+      "type": "MuxServer",
+      "next": "connection-fisher-server"
+    },
+    {
+      "name": "connection-fisher-server",
+      "type": "ConnectionFisherServer",
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

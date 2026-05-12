@@ -4,28 +4,13 @@
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
 {
-    muxclient_tstate_t *ts       = tunnelGetState(t);
     muxclient_lstate_t *child_ls = lineGetState(child_l, t);
-    wid_t               wid      = lineGetWID(child_l);
-
-    if (ts->unsatisfied_lines[wid] == NULL ||
-        muxclientCheckConnectionIsExhausted(ts, lineGetState(ts->unsatisfied_lines[wid], t)))
+    line_t             *parent_l  = muxclientGetParentLineForNewChild(t, child_l);
+    if (parent_l == NULL)
     {
-        line_t             *parent_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
-        muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
-
-        muxclientLinestateInitialize(parent_ls, parent_l, false, 0);
-
-        if (! withLineLocked(parent_l, tunnelNextUpStreamInit, t))
-        {
-            tunnelPrevDownStreamFinish(t, child_l);
-            return;
-        }
-
-        ts->unsatisfied_lines[wid] = parent_l;
+        tunnelPrevDownStreamFinish(t, child_l);
+        return;
     }
-
-    line_t             *parent_l  = ts->unsatisfied_lines[wid];
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
     assert(parent_ls->connection_id < CID_MAX);
 

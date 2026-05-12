@@ -7,10 +7,7 @@ static void muxclientCloseOwnedParentLineFromUpstreamFinish(tunnel_t *t, muxclie
 {
     lineLock(parent_l);
 
-    if (ts->unsatisfied_lines[wid] == parent_l)
-    {
-        ts->unsatisfied_lines[wid] = NULL;
-    }
+    muxclientForgetParentLine(ts, wid, parent_l);
 
     muxclientLinestateDestroy(parent_ls);
     tunnelNextUpStreamFinish(t, parent_l);

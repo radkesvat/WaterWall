@@ -39,9 +39,11 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
     }
     ts->child_buffer_limit = (uint32_t) child_buffer_limit;
 
-    ts->concurrency_mode = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "timer", "counter").status;
+    ts->concurrency_mode = parseDynamicNumericValueFromJsonObject(settings, "mode", 3, "timer", "counter",
+                                                                  "fixed-connections-count").status;
 
-    if (ts->concurrency_mode != kConcurrencyModeTimer && ts->concurrency_mode != kConcurrencyModeCounter)
+    if (ts->concurrency_mode != kConcurrencyModeTimer && ts->concurrency_mode != kConcurrencyModeCounter &&
+        ts->concurrency_mode != kConcurrencyModeFixedConnectionsCount)
     {
         LOGF("MuxClient: Invalid concurrency mode: %u", ts->concurrency_mode);
         tunnelDestroy(t);
@@ -92,6 +94,40 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
             return NULL;
         }
         ts->concurrency_capacity = counter;
+    }
+
+    if (ts->concurrency_mode == kConcurrencyModeFixedConnectionsCount)
+    {
+        int fixed_connections_count = 0;
+        if (! getIntFromJsonObject(&fixed_connections_count, settings, "per-worker-connections-count"))
+        {
+            LOGF("MuxClient: \"per-worker-connections-count\" is not specified");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        if (fixed_connections_count <= 0)
+        {
+            LOGF("MuxClient: \"per-worker-connections-count\" must be greater than 0, got %d",
+                 fixed_connections_count);
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        size_t fixed_slots_count = (size_t) wc * (size_t) fixed_connections_count;
+        if (fixed_slots_count > (SIZE_MAX / sizeof(line_t *)))
+        {
+            LOGF("MuxClient: \"per-worker-connections-count\" is too large: %d", fixed_connections_count);
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        ts->fixed_connections_count    = (uint32_t) fixed_connections_count;
+        ts->fixed_parent_lines         = memoryAllocate(fixed_slots_count * sizeof(line_t *));
+        ts->fixed_next_parent_indexes  = memoryAllocate((size_t) wc * sizeof(uint32_t));
+
+        memorySet(ts->fixed_parent_lines, 0, fixed_slots_count * sizeof(line_t *));
+        memorySet(ts->fixed_next_parent_indexes, 0, (size_t) wc * sizeof(uint32_t));
     }
 
     return t;
