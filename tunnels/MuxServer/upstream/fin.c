@@ -22,14 +22,29 @@ void muxserverTunnelUpStreamFinish(tunnel_t *t, line_t *parent_l)
 {
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
 
+    lineLock(parent_l);
+    parent_ls->parent_finishing = true;
+
     muxserver_lstate_t *child_ls = parent_ls->child_next;
     while (child_ls)
     {
         muxserver_lstate_t *temp    = child_ls->child_next;
         line_t             *child_l = child_ls->l;
-        muxserverCloseOwnedChildLineFromUpstreamFinish(t, child_l, child_ls);
+
+        if (muxserverFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true))
+        {
+            muxserverCloseOwnedChildLineFromUpstreamFinish(t, child_l, child_ls);
+        }
+
+        if (! lineIsAlive(parent_l))
+        {
+            lineUnlock(parent_l);
+            return;
+        }
+
         child_ls = temp;
     }
 
     muxserverLinestateDestroy(parent_ls);
+    lineUnlock(parent_l);
 }

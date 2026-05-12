@@ -8,22 +8,13 @@ void muxclientTunnelUpStreamResume(tunnel_t *t, line_t *child_l)
 
     assert(child_ls->is_child);
 
-    sbuf_t *resumepacket_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(child_l));
-    muxclientMakeMuxFrame(resumepacket_buf, child_ls->connection_id, kMuxFlagFlowResume);
+    child_ls->paused = false;
 
-    line_t             *parent_line = child_ls->parent->l;
-    muxclient_lstate_t *parent_ls   = lineGetState(parent_line, t);
-
-    parent_ls->last_writer = child_l; // update the last writer to the current child
-
-
-    if (! withLineLockedWithBuf(parent_line, tunnelNextUpStreamPayload, t, resumepacket_buf))
+    muxclient_lstate_t *parent_ls = child_ls->parent;
+    if (parent_ls->parent_finishing)
     {
         return;
     }
 
-    parent_ls->last_writer = NULL; // reset the last writer after sending the payload
-    // parent_ls->paused      = false;
-
-    // tunnelNextUpStreamResume(t, parent_line);
+    (void) muxclientFlushChildPending(t, parent_ls->l, parent_ls, child_l, child_ls, false);
 }

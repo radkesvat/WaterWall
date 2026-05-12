@@ -106,7 +106,8 @@ static void moveChildToFront(muxserver_lstate_t *parent_ls, muxserver_lstate_t *
     parent_ls->child_next = child_ls;
 }
 
-static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
+static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
+                                 muxserver_tstate_t *ts, muxserver_lstate_t *parent_ls,
                                  muxserver_lstate_t *child_ls)
 {
     line_t *child_l = child_ls->l;
@@ -116,7 +117,14 @@ static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
     case kMuxFlagClose:
         LOGD("MuxServer: UpStreamPayload: Close frame received, cid: %u", frame->cid);
         lineReuseBuffer(parent_l, frame_buffer);
-        muxserverCloseOwnedChildLineFromUpstreamPayload(t, child_l, child_ls);
+        if (muxserverFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true))
+        {
+            muxserverCloseOwnedChildLineFromUpstreamPayload(t, child_l, child_ls);
+        }
+        if (! lineIsAlive(parent_l))
+        {
+            return false;
+        }
         break;
 
     case kMuxFlagFlowPause:
@@ -134,7 +142,14 @@ static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
     case kMuxFlagData:
         // LOGD("MuxServer: UpStreamPayload: Data frame received, cid: %u", frame->cid);
         sbufShiftRight(frame_buffer, kMuxFrameLength);
-        tunnelNextUpStreamPayload(t, child_l, frame_buffer);
+        if (child_ls->paused)
+        {
+            return muxserverQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
+        }
+        if (! withLineLockedWithBuf(child_l, tunnelNextUpStreamPayload, t, frame_buffer))
+        {
+            return lineIsAlive(parent_l);
+        }
         break;
 
     default:
@@ -142,6 +157,7 @@ static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
         lineReuseBuffer(parent_l, frame_buffer);
         break;
     }
+    return true;
 }
 
 static bool isOverFlow(buffer_stream_t *read_stream)
@@ -175,6 +191,7 @@ static void handleOverFlow(tunnel_t *t, line_t *parent_l)
 
 void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
 {
+    muxserver_tstate_t *ts        = tunnelGetState(t);
     muxserver_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     bufferstreamPush(&(parent_ls->read_stream), buf);
@@ -215,7 +232,11 @@ void muxserverTunnelUpStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
         moveChildToFront(parent_ls, child_ls);
 
         lineLock(parent_l);
-        processFrameForChild(t, parent_l, &frame, frame_buffer, child_ls);
+        if (! processFrameForChild(t, parent_l, &frame, frame_buffer, ts, parent_ls, child_ls))
+        {
+            lineUnlock(parent_l);
+            return;
+        }
 
         if (! lineIsAlive(parent_l))
         {

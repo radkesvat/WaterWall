@@ -39,6 +39,12 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
     line_t             *parent_l  = parent_ls->l;
     muxclientLeaveConnection(child_ls);
 
+    if (parent_ls->parent_finishing)
+    {
+        muxclientLinestateDestroy(child_ls);
+        return;
+    }
+
     // if (parent_ls->paused)
     // {
     //     parent_ls->paused = false;
@@ -69,7 +75,6 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
 
     if (! withLineLockedWithBuf(parent_l, tunnelNextUpStreamPayload, t, finishpacket_buf))
     {
-        tunnelPrevDownStreamFinish(t, child_l);
         return;
     }
 

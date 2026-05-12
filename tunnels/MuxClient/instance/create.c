@@ -28,6 +28,16 @@ tunnel_t *muxclientTunnelCreate(node_t *node)
 
     const cJSON        *settings = node->node_settings_json;
     muxclient_tstate_t *ts       = tunnelGetState(t);
+    int                 child_buffer_limit = kMuxDefaultChildBufferLimit;
+
+    getIntFromJsonObjectOrDefault(&child_buffer_limit, settings, "child-buffer-limit", kMuxDefaultChildBufferLimit);
+    if (child_buffer_limit <= 0)
+    {
+        LOGF("MuxClient: \"child-buffer-limit\" must be greater than 0, got %d", child_buffer_limit);
+        tunnelDestroy(t);
+        return NULL;
+    }
+    ts->child_buffer_limit = (uint32_t) child_buffer_limit;
 
     ts->concurrency_mode = parseDynamicNumericValueFromJsonObject(settings, "mode", 2, "timer", "counter").status;
 

@@ -95,9 +95,23 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
 
     LOGD("MuxClient: DownStreamPayload: Close frame received, cid: %u", frame->cid);
     lineReuseBuffer(parent_l, frame_buffer);
-    muxclientLeaveConnection(child_ls);
-    muxclientLinestateDestroy(child_ls);
-    tunnelPrevDownStreamFinish(t, child_l);
+
+    bool child_alive = muxclientFlushChildPending(t, parent_l, parent_ls, child_l, child_ls, true);
+    if (! lineIsAlive(parent_l))
+    {
+        return false;
+    }
+
+    if (child_alive)
+    {
+        muxclientLeaveConnection(child_ls);
+        muxclientLinestateDestroy(child_ls);
+        tunnelPrevDownStreamFinish(t, child_l);
+        if (! lineIsAlive(parent_l))
+        {
+            return false;
+        }
+    }
 
     if (muxclientCheckConnectionIsExhausted(ts, parent_ls) && parent_ls->children_count == 0)
     {
@@ -107,7 +121,7 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
     return true;
 }
 
-static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
+static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
                                  muxclient_tstate_t *ts, muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls)
 {
     line_t *child_l = child_ls->l;
@@ -124,7 +138,7 @@ static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
     case kMuxFlagClose:
         if (! handleCloseFrame(t, parent_l, frame, frame_buffer, ts, parent_ls, child_ls))
         {
-            return;
+            return false;
         }
         break;
 
@@ -143,7 +157,14 @@ static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
     case kMuxFlagData:
         // LOGD("MuxClient: DownStreamPayload: Data frame received, cid: %u", frame->cid);
         sbufShiftRight(frame_buffer, kMuxFrameLength);
-        tunnelPrevDownStreamPayload(t, child_l, frame_buffer);
+        if (child_ls->paused)
+        {
+            return muxclientQueueChildPayload(t, parent_l, ts, parent_ls, child_ls, frame_buffer);
+        }
+        if (! withLineLockedWithBuf(child_l, tunnelPrevDownStreamPayload, t, frame_buffer))
+        {
+            return lineIsAlive(parent_l);
+        }
         break;
 
     default:
@@ -151,6 +172,7 @@ static void processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
         lineReuseBuffer(parent_l, frame_buffer);
         break;
     }
+    return true;
 }
 
 static bool isOverFlow(buffer_stream_t *read_stream)
@@ -217,7 +239,11 @@ void muxclientTunnelDownStreamPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf
         moveChildToFront(parent_ls, child_ls);
 
         lineLock(parent_l);
-        processFrameForChild(t, parent_l, &frame, frame_buffer, ts, parent_ls, child_ls);
+        if (! processFrameForChild(t, parent_l, &frame, frame_buffer, ts, parent_ls, child_ls))
+        {
+            lineUnlock(parent_l);
+            return;
+        }
 
         if (! lineIsAlive(parent_l))
         {

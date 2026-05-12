@@ -9,6 +9,12 @@ void muxclientTunnelUpStreamPayload(tunnel_t *t, line_t *child_l, sbuf_t *buf)
 
     assert(child_ls->is_child);
 
+    if (child_ls->parent->parent_finishing)
+    {
+        lineReuseBuffer(child_l, buf);
+        return;
+    }
+
     muxclientMakeMuxFrame(buf, child_ls->connection_id, kMuxFlagData);
 
     line_t *parent_line = child_ls->parent->l;

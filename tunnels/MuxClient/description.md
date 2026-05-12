@@ -95,7 +95,10 @@ Counter mode:
 
 ## Optional `settings` Fields
 
-There are no additional tunnel-specific settings in the current implementation.
+- `child-buffer-limit` `(integer, bytes, optional)`
+  Maximum queued data per paused child line before `MuxClient` locally pauses the parent mux input.
+
+  Default: `8388608` (`8 MB`).
 
 ## Detailed Behavior
 
@@ -166,6 +169,10 @@ For replies, it reads complete frames from the parent line, looks up the child b
 ### Pause and resume behavior
 
 When a child line is paused or resumed by the previous node, `MuxClient` sends a `FlowPause` or `FlowResume` frame for that child's `cid`.
+
+If writing parent-delivered data to a child causes that child to pause, `MuxClient` queues later data for that child and sends `FlowPause` to the remote peer. Queued child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`, so the peer can begin sending before the queue is fully empty.
+
+If one paused child's queue reaches `child-buffer-limit`, `MuxClient` pauses the parent mux input. It resumes the parent input after all child queues are below their configured limit, allowing other child streams to continue.
 
 When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume behaves similarly.
 

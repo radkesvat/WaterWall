@@ -11,11 +11,15 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                       .child_prev     = NULL,
                                       .child_next     = NULL,
                                       .read_stream    = bufferstreamCreate(getWorkerBufferPool(wid), kMuxFrameLength),
+                                      .pending_child_data = bufferqueueCreate(kMuxChildBufferQueueCap),
                                       .creation_epoch = is_child ? 0 : wloopNowMS(getWorkerLoop(wid)),
                                       .connection_id  = connection_id,
                                       .children_count = 0,
                                       .is_child       = is_child,
-                                      .paused         = false};
+                                      .paused         = false,
+                                      .flow_paused_sent = false,
+                                      .parent_input_paused = false,
+                                      .parent_finishing = false};
 }
 
 void muxclientLinestateDestroy(muxclient_lstate_t *ls)
@@ -52,5 +56,6 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
     }
 
     bufferstreamDestroy(&(ls->read_stream));
+    bufferqueueDestroy(&(ls->pending_child_data));
     memoryZeroAligned32(ls, sizeof(muxclient_lstate_t));
 }
