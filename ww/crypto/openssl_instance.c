@@ -97,7 +97,7 @@ ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
             if (! SSL_CTX_load_verify_locations(ctx, ca_file, ca_path))
             {
                 LOGE("OpenSSL Error: ssl ca_file/ca_path failed");
-                goto error;
+                goto ssl_ctx_error;
             }
         }
 
@@ -107,7 +107,7 @@ ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
             if (! SSL_CTX_use_certificate_chain_file(ctx, param->crt_file))
             {
                 LOGE("OpenSSL Error: ssl certificate file error");
-                goto error;
+                goto ssl_ctx_error;
             }
         }
 
@@ -116,12 +116,12 @@ ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
             if (! SSL_CTX_use_PrivateKey_file(ctx, param->key_file, SSL_FILETYPE_PEM))
             {
                 LOGE("OpenSSL Error: ssl private key file error");
-                goto error;
+                goto ssl_ctx_error;
             }
             if (! SSL_CTX_check_private_key(ctx))
             {
                 LOGE("OpenSSL Error: ssl private key file check failed");
-                goto error;
+                goto ssl_ctx_error;
             }
         }
 
@@ -165,7 +165,7 @@ ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
     SSL_CTX_set_verify(ctx, mode, NULL);
 
     return ctx;
-error:
+ssl_ctx_error:
     SSL_CTX_free(ctx);
     return NULL;
 }
