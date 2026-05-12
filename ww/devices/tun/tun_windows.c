@@ -17,7 +17,6 @@
 
 #include "loggers/internal_logger.h"
 
-
 enum
 {
     kTunWriteChannelQueueMax    = 1024,
@@ -44,9 +43,9 @@ static WINTUN_RELEASE_RECEIVE_PACKET_FUNC     *WintunReleaseReceivePacket;
 static WINTUN_ALLOCATE_SEND_PACKET_FUNC       *WintunAllocateSendPacket;
 static WINTUN_SEND_PACKET_FUNC                *WintunSendPacket;
 
-static uint16_t tunDeviceMtu(const tun_device_t *tdev)
+static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 {
-    return tdev->mtu > 0 ? tdev->mtu : GLOBAL_MTU_SIZE;
+    return tdev->mtu;
 }
 
 static bool tunWindowsSetMtu(tun_device_t *tdev)
@@ -71,7 +70,7 @@ static bool tunWindowsSetMtu(tun_device_t *tdev)
     }
 
     memorySet(&if_row, 0, sizeof(if_row));
-    if_row.dwIndex = index;
+    if_row.dwIndex   = index;
     DWORD last_error = GetIfEntry(&if_row);
     if (last_error != NO_ERROR)
     {
@@ -80,7 +79,7 @@ static bool tunWindowsSetMtu(tun_device_t *tdev)
     }
 
     if_row.dwMtu = tunDeviceMtu(tdev);
-    last_error = SetIfEntry(&if_row);
+    last_error   = SetIfEntry(&if_row);
     if (last_error != NO_ERROR)
     {
         LOGE("TunDevice: failed to set adapter MTU, code: %lu", last_error);
@@ -118,8 +117,8 @@ static bool tunWindowsParseRouteCidr(const char *cidr, SOCKADDR_INET *addr, UINT
     memoryCopy(ip_part, cidr, ip_len);
     ip_part[ip_len] = '\0';
 
-    errno         = 0;
-    char *end_ptr = NULL;
+    errno          = 0;
+    char *end_ptr  = NULL;
     long  prefix_l = strtol(slash + 1, &end_ptr, 10);
     if (errno != 0 || end_ptr == slash + 1 || *end_ptr != '\0')
     {
@@ -346,7 +345,8 @@ static WTHREAD_ROUTINE(routineReadFromTun)
         {
             if (UNLIKELY(packet_size > tunDeviceMtu(tdev)))
             {
-                LOGE("TunDevice: ReadThread: read packet size %lu exceeds device MTU %u", packet_size,
+                LOGE("TunDevice: ReadThread: read packet size %lu exceeds device MTU %u",
+                     packet_size,
                      tunDeviceMtu(tdev));
                 WintunReleaseReceivePacket(Session, packet);
                 bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
@@ -392,7 +392,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             // i dont know why it can happen when debugging with gdb
             case ERROR_ENVVAR_NOT_FOUND:
                 continue;
-            break;
+                break;
             // case ERROR_NO_MORE_ITEMS:
             case ERROR_NO_MORE_ITEMS:
                 if (queued_count > 0)
@@ -453,7 +453,8 @@ static WTHREAD_ROUTINE(routineWriteToTun)
 
         if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
         {
-            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u", sbufGetLength(buf),
+            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u",
+                 sbufGetLength(buf),
                  tunDeviceMtu(tdev));
 
             bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
@@ -824,7 +825,13 @@ static bool loadFunctionFromDLL(const char *function_name, void *target)
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
     discard offload;
-    DWORD   LastError;
+    if (mtu <= 16)
+    {
+        LOGE("TunDevice: Invalid MTU size: %u", mtu);
+        return NULL;
+    }
+
+    DWORD LastError;
 
     if (! GSTATE.flag_tundev_windows_initialized)
     {
@@ -874,25 +881,27 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     uint32_t worker_small_buffer_size = bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()));
     worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu);
 
-    buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
+    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small,
+                                                   RAM_PROFILE,
 
-                         worker_large_buffer_size,
-                         worker_small_buffer_size
+                                                   worker_large_buffer_size,
+                                                   worker_small_buffer_size
 
-        );
+    );
 
-    buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
+    buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small,
+                                                   RAM_PROFILE,
 
-                         worker_large_buffer_size,
-                         worker_small_buffer_size
+                                                   worker_large_buffer_size,
+                                                   worker_small_buffer_size
 
-        );
+    );
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){
+    *tdev = (tun_device_t) {
         .name                  = stringDuplicate(name),
         .running               = false,
         .up                    = false,

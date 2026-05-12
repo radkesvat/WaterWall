@@ -10,8 +10,8 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 
-#include <netinet/ip.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <poll.h>
 #include <sys/ioctl.h>
 
@@ -32,9 +32,9 @@ enum
     kMaxReadDistributeQueueSize = 128
 };
 
-static uint16_t tunDeviceMtu(const tun_device_t *tdev)
+static inline uint16_t tunDeviceMtu(const tun_device_t *tdev)
 {
-    return tdev->mtu > 0 ? tdev->mtu : GLOBAL_MTU_SIZE;
+    return tdev->mtu;
 }
 
 static uint32_t ipv4PrefixToMask(unsigned int prefix)
@@ -181,7 +181,6 @@ static bool routeTableArgIsSafe(const char *route_table)
     return true;
 }
 
-
 /**
  * Event message structure for TUN device communication
  */
@@ -262,8 +261,8 @@ static void distributePacketPayloads(tun_device_t *tdev, wid_t target_wid, sbuf_
 // returns 1 to continue, 0 on EOF (caller should exit), -1 on other errors (caller may continue)
 static int tunDrainPackets(tun_device_t *tdev)
 {
-    uint8_t queued_count = 0;
-    sbuf_t *bufs[kMaxReadDistributeQueueSize];
+    uint8_t  queued_count = 0;
+    sbuf_t  *bufs[kMaxReadDistributeQueueSize];
     uint32_t read_size = tunDeviceMtu(tdev);
 
     for (uint32_t i = 0; i < RAM_PROFILE && queued_count < kMaxReadDistributeQueueSize; ++i)
@@ -308,7 +307,8 @@ static int tunDrainPackets(tun_device_t *tdev)
             {
                 return 1;
             }
-            LOGW("TunDevice: failed to read a packet from TUN device, errno is %d (%s), retrying...", saved_errno,
+            LOGW("TunDevice: failed to read a packet from TUN device, errno is %d (%s), retrying...",
+                 saved_errno,
                  strerror(saved_errno));
             return -1;
         }
@@ -323,7 +323,8 @@ static int tunDrainPackets(tun_device_t *tdev)
         if (UNLIKELY(sbufGetLength(bufs[queued_count]) > read_size))
         {
             LOGE("TunDevice: ReadThread: read packet size %d exceeds device MTU %u",
-                 sbufGetLength(bufs[queued_count]), read_size);
+                 sbufGetLength(bufs[queued_count]),
+                 read_size);
             LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice 'device-mtu'");
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             terminateProgram(1);
@@ -389,8 +390,11 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             socklen_t err_len      = sizeof(socket_error);
             getsockopt(tdev->handle, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
             LOGE("TunDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
-                 (fds[0].revents & POLLERR) ? "POLLERR " : "", (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
-                 (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "", socket_error, strerror(socket_error));
+                 (fds[0].revents & POLLERR) ? "POLLERR " : "",
+                 (fds[0].revents & POLLHUP) ? "POLLHUP " : "",
+                 (fds[0].revents & POLLNVAL) ? "POLLNVAL " : "",
+                 socket_error,
+                 strerror(socket_error));
             break;
         }
 
@@ -407,7 +411,8 @@ static WTHREAD_ROUTINE(routineReadFromTun)
 
         // If we get here, poll returned > 0 but none of our expected events occurred
         LOGE("TunDevice: Exit read routine due to unexpected poll events - fd[0].revents=0x%x, fd[1].revents=0x%x",
-             fds[0].revents, fds[1].revents);
+             fds[0].revents,
+             fds[1].revents);
         return 0;
     }
 
@@ -429,16 +434,15 @@ static WTHREAD_ROUTINE(routineWriteToTun)
             return 0;
         }
 
-        
         if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
         {
-            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u", sbufGetLength(buf),
+            LOGW("TunDevice: WriteThread: discarded a packet -> size %d exceeds device MTU %u",
+                 sbufGetLength(buf),
                  tunDeviceMtu(tdev));
 
             bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
             continue;
         }
-
 
         nwrite = write(tdev->handle, sbufGetRawPtr(buf), sbufGetLength(buf));
         bufferpoolReuseBuffer(tdev->writer_buffer_pool, buf);
@@ -711,8 +715,8 @@ bool tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_t
     }
     else
     {
-        stringNPrintf(command, sizeof(command), "ip %s route add %s dev %s table %s", family, cidr, tdev->name,
-                      route_table);
+        stringNPrintf(
+            command, sizeof(command), "ip %s route add %s dev %s table %s", family, cidr, tdev->name, route_table);
     }
 
     if (execCmd(command).exit_code != 0)
@@ -765,8 +769,8 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
     }
     else
     {
-        stringNPrintf(command, sizeof(command), "ip %s route del %s dev %s table %s", family, cidr, tdev->name,
-                      route_table);
+        stringNPrintf(
+            command, sizeof(command), "ip %s route del %s dev %s table %s", family, cidr, tdev->name, route_table);
     }
 
     if (execCmd(command).exit_code != 0)
@@ -896,6 +900,12 @@ bool tundeviceBringDown(tun_device_t *tdev)
 tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void *userdata, TunReadEventHandle cb)
 {
     discard offload; // todo (send/receive offloading)
+    
+    if (mtu <= 16)
+    {
+        LOGE("TunDevice: Invalid MTU size: %u", mtu);
+        return NULL;
+    }
 
     struct ifreq ifr;
 #ifdef OS_BSD
@@ -974,36 +984,38 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, uint16_t mtu, void
     uint32_t worker_small_buffer_size = bufferpoolGetSmallBufferSize(getWorkerBufferPool(getWID()));
     worker_small_buffer_size          = max(worker_small_buffer_size, (uint32_t) mtu);
 
-    buffer_pool_t *reader_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         worker_large_buffer_size,
-                         worker_small_buffer_size
+    buffer_pool_t *reader_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small,
+                                                   RAM_PROFILE,
+                                                   worker_large_buffer_size,
+                                                   worker_small_buffer_size
 
-        );
+    );
 
-    buffer_pool_t *writer_bpool =
-        bufferpoolCreate(GSTATE.masterpool_buffer_pools_large, GSTATE.masterpool_buffer_pools_small, RAM_PROFILE,
-                         worker_large_buffer_size,
-                         worker_small_buffer_size
+    buffer_pool_t *writer_bpool = bufferpoolCreate(GSTATE.masterpool_buffer_pools_large,
+                                                   GSTATE.masterpool_buffer_pools_small,
+                                                   RAM_PROFILE,
+                                                   worker_large_buffer_size,
+                                                   worker_small_buffer_size
 
-        );
+    );
 
     tun_device_t *tdev = memoryAllocate(sizeof(tun_device_t));
 
-    *tdev = (tun_device_t){.name                  = stringDuplicate(ifr.ifr_name),
-                           .running               = false,
-                           .up                    = false,
-                           .routine_reader        = routineReadFromTun,
-                           .routine_writer        = routineWriteToTun,
-                           .handle                = fd,
-                           .read_event_callback   = cb,
-                           .userdata              = userdata,
-                           .writer_buffer_channel = NULL,
-                           .reader_message_pool   = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
-                           .reader_buffer_pool    = reader_bpool,
-                           .writer_buffer_pool    = writer_bpool,
-                           .mtu                   = mtu,
-                           .packets_queued        = 0};
+    *tdev = (tun_device_t) {.name                  = stringDuplicate(ifr.ifr_name),
+                            .running               = false,
+                            .up                    = false,
+                            .routine_reader        = routineReadFromTun,
+                            .routine_writer        = routineWriteToTun,
+                            .handle                = fd,
+                            .read_event_callback   = cb,
+                            .userdata              = userdata,
+                            .writer_buffer_channel = NULL,
+                            .reader_message_pool   = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
+                            .reader_buffer_pool    = reader_bpool,
+                            .writer_buffer_pool    = writer_bpool,
+                            .mtu                   = mtu,
+                            .packets_queued        = 0};
 
     if (pipe(tdev->linux_pipe_fds) != 0)
     {
