@@ -232,6 +232,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 bool httpclientTransportDrainHttp1ChunkedBody(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 bool httpclientTransportDrainHttp1Body(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 void httpclientTransportCloseBothDirections(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
+void httpclientTransportCloseNextDirection(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 
 bool httpclientSplitIsEnabled(tunnel_t *t);
 void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l);

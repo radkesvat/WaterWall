@@ -2702,27 +2702,44 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
     return true;
 }
 
-void httpserverTransportCloseBothDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+static void httpserverTransportCloseDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, bool close_next,
+                                               bool close_prev)
 {
     lineLock(l);
 
-    bool close_next = ! ls->next_finished;
-    bool close_prev = ! ls->prev_finished;
+    bool send_next = close_next && ! ls->next_finished;
+    bool send_prev = close_prev && ! ls->prev_finished;
+    line_t *next_target = send_next ? httpserverUpstreamTargetLine(ls, l) : NULL;
 
     ls->next_finished = true;
     ls->prev_finished = true;
 
     httpserverLinestateDestroy(ls);
 
-    if (close_next)
+    if (next_target != NULL && lineIsAlive(next_target))
     {
-        httpserverForwardUpstreamFinish(t, l, ls);
+        tunnelNextUpStreamFinish(t, next_target);
     }
 
-    if (lineIsAlive(l) && close_prev)
+    if (lineIsAlive(l) && send_prev)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
 
     lineUnlock(l);
+}
+
+void httpserverTransportCloseBothDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    httpserverTransportCloseDirections(t, l, ls, true, true);
+}
+
+void httpserverTransportCloseNextDirection(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    httpserverTransportCloseDirections(t, l, ls, true, false);
+}
+
+void httpserverTransportClosePrevDirection(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    httpserverTransportCloseDirections(t, l, ls, false, true);
 }

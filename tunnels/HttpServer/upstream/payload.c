@@ -8,10 +8,6 @@ static void failAndCloseU(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     {
         httpserverTransportCloseBothDirections(t, l, ls);
     }
-    else
-    {
-        httpserverLinestateDestroy(ls);
-    }
 }
 
 void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -84,7 +80,6 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         if (! lineIsAlive(l))
         {
-            httpserverLinestateDestroy(ls);
             lineUnlock(l);
             return;
         }
@@ -131,7 +126,6 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! lineIsAlive(l))
     {
-        httpserverLinestateDestroy(ls);
         lineUnlock(l);
         return;
     }
@@ -150,7 +144,6 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
             if (! lineIsAlive(l))
             {
-                httpserverLinestateDestroy(ls);
                 lineUnlock(l);
                 return;
             }
@@ -181,7 +174,6 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! lineIsAlive(l))
     {
-        httpserverLinestateDestroy(ls);
         lineUnlock(l);
         return;
     }
@@ -200,7 +192,6 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
             if (! lineIsAlive(l))
             {
-                httpserverLinestateDestroy(ls);
                 lineUnlock(l);
                 return;
             }
@@ -267,7 +258,6 @@ void httpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! lineIsAlive(l))
     {
-        httpserverLinestateDestroy(ls);
         lineUnlock(l);
         return;
     }

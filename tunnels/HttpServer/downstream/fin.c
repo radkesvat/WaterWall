@@ -6,11 +6,7 @@ static void failAndCloseD(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     if (lineIsAlive(l))
     {
-        httpserverTransportCloseBothDirections(t, l, ls);
-    }
-    else
-    {
-        httpserverLinestateDestroy(ls);
+        httpserverTransportClosePrevDirection(t, l, ls);
     }
 }
 

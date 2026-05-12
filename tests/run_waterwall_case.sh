@@ -26,6 +26,7 @@ shopt -s nullglob
 readonly TESTER_SUCCESS_REGEX='TesterClient: all [0-9]+ worker lines completed successfully'
 readonly DEFAULT_TEST_WORKERS=4
 readonly TEST_RAM_PROFILE='client'
+readonly SIGTERM_EXIT_STATUS=$((128 + 15))
 
 if [[ $# -lt 3 ]]; then
   echo "usage: $0 <waterwall-binary> <case-dir> <timeout-seconds>" >&2
@@ -124,9 +125,18 @@ while true; do
       success_seen=1
     fi
 
-    # if [[ $success_seen -eq 1 ]]; then
     if [[ $status -eq 0 && $success_seen -eq 1 ]]; then
       exit 0
+    fi
+
+    if [[ $success_seen -eq 1 && $status -eq $SIGTERM_EXIT_STATUS ]]; then
+      exit 0
+    fi
+
+    if [[ $success_seen -eq 1 ]]; then
+      echo "Waterwall exited after the success marker with non-zero status=$status." >&2
+      dump_logs
+      exit 1
     fi
 
     echo "Waterwall exited before the expected success marker was observed (exit=$status)." >&2
@@ -144,6 +154,16 @@ while true; do
 done
 
 kill -TERM "$pid" 2>/dev/null || true
-wait "$pid" 2>/dev/null || true
+set +e
+wait "$pid"
+status=$?
+set -e
+pid=""
+
+if [[ $status -ne 0 && $status -ne $SIGTERM_EXIT_STATUS ]]; then
+  echo "Waterwall exited after the success marker with non-zero status=$status." >&2
+  dump_logs
+  exit 1
+fi
 
 exit 0

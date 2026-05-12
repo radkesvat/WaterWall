@@ -20,11 +20,7 @@ void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     {
         if (lineIsAlive(l))
         {
-            httpserverTransportCloseBothDirections(t, l, ls);
-        }
-        else
-        {
-            httpserverLinestateDestroy(ls);
+            httpserverTransportCloseNextDirection(t, l, ls);
         }
         lineUnlock(l);
         return;

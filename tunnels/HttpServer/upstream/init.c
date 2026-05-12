@@ -8,10 +8,6 @@ static void closeOrDestroyLine(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     {
         httpserverTransportCloseBothDirections(t, l, ls);
     }
-    else
-    {
-        httpserverLinestateDestroy(ls);
-    }
 }
 
 void httpserverTunnelUpStreamInit(tunnel_t *t, line_t *l)

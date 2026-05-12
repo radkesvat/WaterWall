@@ -8,10 +8,6 @@ static void failAndCloseD(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     {
         httpclientTransportCloseBothDirections(t, l, ls);
     }
-    else
-    {
-        httpclientLinestateDestroy(ls);
-    }
 }
 
 void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -96,7 +92,6 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! lineIsAlive(l))
     {
-        httpclientLinestateDestroy(ls);
         lineUnlock(l);
         return;
     }
@@ -122,7 +117,6 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
             if (! lineIsAlive(l))
             {
-                httpclientLinestateDestroy(ls);
                 lineUnlock(l);
                 return;
             }
@@ -151,7 +145,6 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! lineIsAlive(l))
     {
-        httpclientLinestateDestroy(ls);
         lineUnlock(l);
         return;
     }

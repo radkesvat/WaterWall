@@ -2041,12 +2041,13 @@ bool httpclientTransportDrainWebSocketDown(tunnel_t *t, line_t *l, httpclient_ls
     }
 }
 
-void httpclientTransportCloseBothDirections(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+static void httpclientTransportCloseDirections(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, bool close_next,
+                                               bool close_prev)
 {
     lineLock(l);
 
-    bool close_next = ! ls->next_finished;
-    bool close_prev = ! ls->prev_finished;
+    bool send_next = close_next && ! ls->next_finished;
+    bool send_prev = close_prev && ! ls->prev_finished;
 
     ls->next_finished     = true;
     ls->prev_finished     = true;
@@ -2054,17 +2055,27 @@ void httpclientTransportCloseBothDirections(tunnel_t *t, line_t *l, httpclient_l
 
     httpclientLinestateDestroy(ls);
 
-    if (close_next)
+    if (send_next)
     {
         tunnelNextUpStreamFinish(t, l);
     }
 
-    if (lineIsAlive(l) && close_prev)
+    if (lineIsAlive(l) && send_prev)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
 
     lineUnlock(l);
+}
+
+void httpclientTransportCloseBothDirections(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    httpclientTransportCloseDirections(t, l, ls, true, true);
+}
+
+void httpclientTransportCloseNextDirection(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    httpclientTransportCloseDirections(t, l, ls, true, false);
 }
 
 bool httpclientTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *payload,
@@ -2611,6 +2622,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             if (ls->h1_body_remaining == 0)
             {
                 ls->response_complete = true;
+                memoryFree(header_text);
                 return true;
             }
         }

@@ -21,11 +21,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         {
             if (lineIsAlive(l))
             {
-                httpclientTransportCloseBothDirections(t, l, ls);
-            }
-            else
-            {
-                httpclientLinestateDestroy(ls);
+                httpclientTransportCloseNextDirection(t, l, ls);
             }
             lineUnlock(l);
             return;
@@ -38,11 +34,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             {
                 if (lineIsAlive(l))
                 {
-                    httpclientTransportCloseBothDirections(t, l, ls);
-                }
-                else
-                {
-                    httpclientLinestateDestroy(ls);
+                    httpclientTransportCloseNextDirection(t, l, ls);
                 }
                 lineUnlock(l);
                 return;
@@ -59,11 +51,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             {
                 if (lineIsAlive(l))
                 {
-                    httpclientTransportCloseBothDirections(t, l, ls);
-                }
-                else
-                {
-                    httpclientLinestateDestroy(ls);
+                    httpclientTransportCloseNextDirection(t, l, ls);
                 }
                 lineUnlock(l);
                 return;
@@ -79,11 +67,7 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
             {
                 if (lineIsAlive(l))
                 {
-                    httpclientTransportCloseBothDirections(t, l, ls);
-                }
-                else
-                {
-                    httpclientLinestateDestroy(ls);
+                    httpclientTransportCloseNextDirection(t, l, ls);
                 }
                 lineUnlock(l);
                 return;

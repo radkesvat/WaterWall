@@ -8,10 +8,6 @@ static void failAndCloseDownStream(tunnel_t *t, line_t *l, httpserver_lstate_t *
     {
         httpserverTransportCloseBothDirections(t, l, ls);
     }
-    else
-    {
-        httpserverLinestateDestroy(ls);
-    }
 }
 
 void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)

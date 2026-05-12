@@ -240,6 +240,8 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 bool httpserverTransportDrainHttp1ChunkedRequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 void httpserverTransportCloseBothDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+void httpserverTransportCloseNextDirection(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+void httpserverTransportClosePrevDirection(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 
 bool httpserverSplitIsEnabled(tunnel_t *t);
 void httpserverSplitUpStreamInit(tunnel_t *t, line_t *l);

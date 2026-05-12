@@ -33,6 +33,7 @@ Practical rule:
 - `run_waterwall_case.sh`
   The low-level single-case runner.
   It creates a temporary `core.json`, launches `Waterwall`, watches the tester log, and fails on crash or timeout.
+  After the tester success marker, it terminates Waterwall and still treats unexpected shutdown statuses as failures.
   The generated `core.json` uses `4` workers by default, unless the case directory provides `workers.txt`.
   The generated `core.json` uses the `client` RAM profile so stream cases are not bottlenecked by the minimal 4 KB
   large-buffer size.
@@ -93,7 +94,8 @@ Practical rule:
 - `http_websocket_bidirectional_roundtrip`
   Verifies HTTP/1.1 WebSocket handshake plus bidirectional framed payload transport when the pair is chained directly.
 - `http_websocket_bidirectional_tcp_loopback`
-  Verifies the same WebSocket transport across a real TCP loopback transport.
+  Verifies the same WebSocket transport across a real TCP loopback transport, including clean shutdown after the tester
+  success marker.
 - `http_upgrade_custom_bidirectional_roundtrip`
   Verifies a custom HTTP/1.1 upgrade token plus raw post-upgrade byte forwarding when the pair is chained directly.
 - `http_upgrade_custom_bidirectional_tcp_loopback`
@@ -183,8 +185,9 @@ When you run the helper script directly, it:
 2. writes a temporary `core.json`
 3. launches the real `Waterwall` binary
 4. waits for the built-in tester success log line
-5. fails if `Waterwall` crashes, exits early, or times out
-6. prints logs on failure to help debugging
+5. sends `SIGTERM` after success and checks that Waterwall exits cleanly
+6. fails if `Waterwall` crashes, exits early, exits with an unexpected status after success, or times out
+7. prints logs on failure to help debugging
 
 So `run_waterwall_case.sh` is not a second testing system.
 It is the small runner that powers each integration test invocation.

@@ -8,10 +8,6 @@ static void failAndCloseU(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     {
         httpclientTransportCloseBothDirections(t, l, ls);
     }
-    else
-    {
-        httpclientLinestateDestroy(ls);
-    }
 }
 
 void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
