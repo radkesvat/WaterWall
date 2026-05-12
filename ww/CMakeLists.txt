@@ -337,7 +337,6 @@ elseif(WCRYPTO_BACKEND_OPENSSL)
     set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
     
     target_sources(ww PRIVATE 
-        crypto/openssl_instance.c
         crypto/imp_openssl/aes256gcm.c
         crypto/imp_openssl/blake2s.c
         crypto/imp_openssl/chacha20poly1305.c
@@ -626,6 +625,10 @@ if(PROJECT_REQUIRERS_OPENSSL OR WCRYPTO_BACKEND_OPENSSL)
     if(TARGET OpenSSL::applink)
         list(APPEND LIBS OpenSSL::applink)
     endif()
+
+    target_sources(ww PRIVATE 
+        crypto/openssl_instance.c
+    )
 endif()
 
 
