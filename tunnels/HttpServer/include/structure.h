@@ -7,9 +7,9 @@
 #include "http_def.h"
 #include "nghttp2/nghttp2.h"
 
-#define i_type hmap_httpserver_split_t        // NOLINT
-#define i_key  hash_t                         // NOLINT
-#define i_val  struct httpserver_lstate_s *   // NOLINT
+#define i_type hmap_httpserver_split_t      // NOLINT
+#define i_key  hash_t                       // NOLINT
+#define i_val  struct httpserver_lstate_s  *// NOLINT
 #include "stc/hmap.h"
 
 typedef enum httpserver_version_mode_e
@@ -21,9 +21,9 @@ typedef enum httpserver_version_mode_e
 
 typedef enum httpserver_runtime_proto_e
 {
-    kHttpServerRuntimeUnknown = 0,
-    kHttpServerRuntimeHttp1   = 1,
-    kHttpServerRuntimeHttp2   = 2,
+    kHttpServerRuntimeUnknown     = 0,
+    kHttpServerRuntimeHttp1       = 1,
+    kHttpServerRuntimeHttp2       = 2,
     kHttpServerRuntimeUpgradedRaw = 3
 } httpserver_runtime_proto_t;
 
@@ -75,10 +75,10 @@ typedef struct httpserver_lstate_s
     int64_t h1_chunk_expected;
     int64_t h1_body_remaining;
 
-    bool h1_headers_parsed;
-    bool h1_request_chunked;
-    bool h1_request_finished;
-    bool h1_response_headers_sent;
+    bool                      h1_headers_parsed;
+    bool                      h1_request_chunked;
+    bool                      h1_request_finished;
+    bool                      h1_response_headers_sent;
     httpserver_h1_body_mode_t h1_body_mode;
 
     bool h2_response_headers_sent;
@@ -151,22 +151,23 @@ typedef struct httpserver_tstate_s
     enum http_content_type content_type;
     int                    status_code;
 
-    wmutex_t split_upload_map_mutex;
-    wmutex_t split_download_map_mutex;
+    wmutex_t                split_upload_map_mutex;
+    wmutex_t                split_download_map_mutex;
     hmap_httpserver_split_t split_upload_map;
     hmap_httpserver_split_t split_download_map;
 
-    httpserver_version_mode_t version_mode;
+    httpserver_version_mode_t      version_mode;
     httpserver_h1_transport_mode_t h1_transport_mode;
     httpserver_split_placement_t   split_id_placement;
     httpserver_split_placement_t   split_direction_placement;
     httpserver_split_placement_t   split_token_placement;
-    bool                     enable_upgrade;
-    bool                     websocket_enabled;
-    bool                     full_duplex;
-    bool                     split_cache_bypass;
-    bool                     split_maps_initialized;
-    bool                     verbose;
+    bool                           enable_upgrade;
+    bool                           websocket_enabled;
+    bool                           full_duplex;
+    bool                           split_cache_bypass;
+    bool                           split_maps_initialized;
+    bool                           no_split_upload_buffering_limit;
+    bool                           verbose;
 } httpserver_tstate_t;
 
 enum
@@ -176,12 +177,12 @@ enum
 
     kHttpServerRequiredPaddingLeft = 16,
 
-    kHttpServerBufferQueueCap   = 8,
-    kHttpServerMaxHeaderBytes   = 64 * 1024,
-    kHttpServerHttp2FrameBytes  = 32 * 1024,
+    kHttpServerBufferQueueCap    = 8,
+    kHttpServerMaxHeaderBytes    = 64 * 1024,
+    kHttpServerHttp2FrameBytes   = 32 * 1024,
     kHttpServerSplitMaxBuffering = 65535 * 2,
-    kHttpServerDefaultHttp1Port = 80,
-    kHttpServerDefaultHttpsPort = 443
+    kHttpServerDefaultHttp1Port  = 80,
+    kHttpServerDefaultHttpsPort  = 443
 };
 
 WW_EXPORT void         httpserverTunnelDestroy(tunnel_t *t);
@@ -210,11 +211,11 @@ void httpserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t *l);
 void httpserverLinestateDestroy(httpserver_lstate_t *ls);
 
-bool httpserverStringCaseEquals(const char *a, const char *b);
-bool httpserverStringCaseContains(const char *haystack, const char *needle);
-bool httpserverStringCaseContainsToken(const char *value, const char *token);
-bool httpserverBufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end);
-bool httpserverBufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end);
+bool    httpserverStringCaseEquals(const char *a, const char *b);
+bool    httpserverStringCaseContains(const char *haystack, const char *needle);
+bool    httpserverStringCaseContainsToken(const char *value, const char *token);
+bool    httpserverBufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end);
+bool    httpserverBufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end);
 sbuf_t *httpserverAllocBufferForLength(line_t *l, uint32_t len);
 
 bool httpserverTransportSendHttp1ResponseHeaders(tunnel_t *t, line_t *l);

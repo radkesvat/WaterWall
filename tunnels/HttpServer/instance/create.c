@@ -222,10 +222,22 @@ static bool parseHttp1SplitSettings(httpserver_tstate_t *ts, const cJSON *settin
         download = NULL;
     }
 
-    if (! parseSplitMethod(&ts->split_upload_method, &ts->split_upload_method_enum, split, upload, "upload-method",
-                           "method", ts->expected_method, "split.upload-method") ||
-        ! parseSplitMethod(&ts->split_download_method, &ts->split_download_method_enum, split, download,
-                           "download-method", "method", "GET", "split.download-method"))
+    if (! parseSplitMethod(&ts->split_upload_method,
+                           &ts->split_upload_method_enum,
+                           split,
+                           upload,
+                           "upload-method",
+                           "method",
+                           ts->expected_method,
+                           "split.upload-method") ||
+        ! parseSplitMethod(&ts->split_download_method,
+                           &ts->split_download_method_enum,
+                           split,
+                           download,
+                           "download-method",
+                           "method",
+                           "GET",
+                           "split.download-method"))
     {
         return false;
     }
@@ -283,8 +295,8 @@ static bool parseHttp1SplitSettings(httpserver_tstate_t *ts, const cJSON *settin
 
     mutexInit(&ts->split_upload_map_mutex);
     mutexInit(&ts->split_download_map_mutex);
-    ts->split_upload_map   = hmap_httpserver_split_t_with_capacity(64);
-    ts->split_download_map = hmap_httpserver_split_t_with_capacity(64);
+    ts->split_upload_map       = hmap_httpserver_split_t_with_capacity(64);
+    ts->split_download_map     = hmap_httpserver_split_t_with_capacity(64);
     ts->split_maps_initialized = true;
     return true;
 }
@@ -322,6 +334,9 @@ static bool parseBasicFields(httpserver_tstate_t *ts, const cJSON *settings)
     }
 
     ts->headers = cJSON_GetObjectItemCaseSensitive(settings, "headers");
+
+    getBoolFromJsonObjectOrDefault(
+        &ts->no_split_upload_buffering_limit, settings, "no-split-upload-buffering-limit", false);
 
     return true;
 }

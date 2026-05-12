@@ -8,11 +8,11 @@
 
 typedef struct httpserver_split_request_s
 {
-    char method[32];
-    char path[2048];
-    char host[512];
-    bool transfer_chunked;
-    bool has_content_length;
+    char    method[32];
+    char    path[2048];
+    char    host[512];
+    bool    transfer_chunked;
+    bool    has_content_length;
     int64_t content_length;
 } httpserver_split_request_t;
 
@@ -38,7 +38,7 @@ static bool splitParseContentLength(const char *value, int64_t *out)
         return false;
     }
 
-    char *endp = NULL;
+    char              *endp   = NULL;
     unsigned long long parsed = strtoull(value, &endp, 10);
     if (endp == value)
     {
@@ -63,7 +63,7 @@ static bool splitFindHeaderValue(const char *headers, const char *name, char *ou
         return false;
     }
 
-    out[0] = '\0';
+    out[0]           = '\0';
     const char *line = strstr(headers, "\r\n");
     if (line == NULL)
     {
@@ -97,7 +97,7 @@ static bool splitFindHeaderValue(const char *headers, const char *name, char *ou
                         ++value;
                     }
                     size_t value_len = (size_t) (next - value);
-                    value_len = min(value_len, out_cap - 1U);
+                    value_len        = min(value_len, out_cap - 1U);
                     memoryCopy(out, value, value_len);
                     out[value_len] = '\0';
                     return true;
@@ -120,7 +120,7 @@ static bool splitFindCookieValue(const char *headers, const char *name, char *ou
     }
 
     size_t name_len = strlen(name);
-    char  *saveptr = NULL;
+    char  *saveptr  = NULL;
 #ifdef COMPILER_MSVC
     char *part = strtok_s(cookie, ";", &saveptr);
 #else
@@ -154,8 +154,8 @@ static size_t splitPathPartLen(const char *path)
 
 static bool splitPathTemplateMatches(const char *templ, const char *path)
 {
-    size_t ti = 0;
-    size_t pi = 0;
+    size_t ti   = 0;
+    size_t pi   = 0;
     size_t tlen = splitPathPartLen(templ);
     size_t plen = splitPathPartLen(path);
 
@@ -189,9 +189,8 @@ static bool splitPathTemplateMatches(const char *templ, const char *path)
         }
 
         size_t literal_start = ti;
-        while (ti < tlen && strncmp(templ + ti, "{id}", 4) != 0 &&
-               strncmp(templ + ti, "{direction}", 11) != 0 && strncmp(templ + ti, "{cache}", 7) != 0 &&
-               strncmp(templ + ti, "{token}", 7) != 0)
+        while (ti < tlen && strncmp(templ + ti, "{id}", 4) != 0 && strncmp(templ + ti, "{direction}", 11) != 0 &&
+               strncmp(templ + ti, "{cache}", 7) != 0 && strncmp(templ + ti, "{token}", 7) != 0)
         {
             ++ti;
         }
@@ -245,7 +244,7 @@ static bool splitQueryValue(const char *path, const char *name, char *out, size_
         if (eq != NULL && (size_t) (eq - q) == name_len && strncmp(q, name, name_len) == 0)
         {
             size_t value_len = (size_t) (end - eq - 1);
-            value_len = min(value_len, out_cap - 1U);
+            value_len        = min(value_len, out_cap - 1U);
             memoryCopy(out, eq + 1, value_len);
             out[value_len] = '\0';
             return true;
@@ -269,16 +268,16 @@ static bool splitExtractPathVar(const char *templ, const char *path, const char 
         return false;
     }
 
-    const char *value_start = path + prefix_len;
-    const char *suffix = pos + strlen(token);
-    size_t suffix_len = splitPathPartLen(suffix);
+    const char *value_start      = path + prefix_len;
+    const char *suffix           = pos + strlen(token);
+    size_t      suffix_len       = splitPathPartLen(suffix);
     const char *next_placeholder = strstr(suffix, "{");
     if (next_placeholder != NULL && (size_t) (next_placeholder - suffix) < suffix_len)
     {
         suffix_len = (size_t) (next_placeholder - suffix);
     }
 
-    const char *path_end = path + splitPathPartLen(path);
+    const char *path_end  = path + splitPathPartLen(path);
     const char *value_end = path_end;
     if (suffix_len > 0)
     {
@@ -313,7 +312,7 @@ static bool splitParseRequest(const char *headers, httpserver_split_request_t *i
 {
     *info = (httpserver_split_request_t) {0};
 
-    char *tmp = stringDuplicate(headers);
+    char *tmp      = stringDuplicate(headers);
     char *line_end = strstr(tmp, "\r\n");
     if (line_end == NULL)
     {
@@ -347,12 +346,12 @@ static bool splitParseRequest(const char *headers, httpserver_split_request_t *i
         info->has_content_length = true;
     }
 
-    return !(info->transfer_chunked && info->has_content_length);
+    return ! (info->transfer_chunked && info->has_content_length);
 }
 
 static bool splitExtractPlacedValue(httpserver_split_placement_t placement, const char *name, const char *path,
-                                    const char *headers, const char *path_template, const char *path_token,
-                                    char *out, size_t out_cap)
+                                    const char *headers, const char *path_template, const char *path_token, char *out,
+                                    size_t out_cap)
 {
     switch (placement)
     {
@@ -419,8 +418,14 @@ static httpserver_split_role_t splitDetermineRole(httpserver_tstate_t *ts, const
             return kHttpServerSplitRoleDownload;
         }
     }
-    else if (splitExtractPlacedValue(ts->split_direction_placement, ts->split_direction_name, info->path, headers,
-                                     ts->split_upload_path, "{direction}", direction, sizeof(direction)))
+    else if (splitExtractPlacedValue(ts->split_direction_placement,
+                                     ts->split_direction_name,
+                                     info->path,
+                                     headers,
+                                     ts->split_upload_path,
+                                     "{direction}",
+                                     direction,
+                                     sizeof(direction)))
     {
         if (httpserverStringCaseEquals(direction, ts->split_upload_value))
         {
@@ -432,8 +437,8 @@ static httpserver_split_role_t splitDetermineRole(httpserver_tstate_t *ts, const
         }
     }
 
-    bool upload_match = httpserverStringCaseEquals(info->method, ts->split_upload_method) &&
-                        splitPathTemplateMatches(ts->split_upload_path, info->path);
+    bool upload_match   = httpserverStringCaseEquals(info->method, ts->split_upload_method) &&
+                          splitPathTemplateMatches(ts->split_upload_path, info->path);
     bool download_match = httpserverStringCaseEquals(info->method, ts->split_download_method) &&
                           splitPathTemplateMatches(ts->split_download_path, info->path);
     if (upload_match && ! download_match)
@@ -469,8 +474,14 @@ static bool splitValidateRequest(tunnel_t *t, line_t *l, const httpserver_split_
     if (ts->split_token != NULL)
     {
         char token[256];
-        if (! splitExtractPlacedValue(ts->split_token_placement, ts->split_token_name, info->path, headers,
-                                      path_template, "{token}", token, sizeof(token)) ||
+        if (! splitExtractPlacedValue(ts->split_token_placement,
+                                      ts->split_token_name,
+                                      info->path,
+                                      headers,
+                                      path_template,
+                                      "{token}",
+                                      token,
+                                      sizeof(token)) ||
             stringCompare(token, ts->split_token) != 0)
         {
             LOGW("HttpServer: split HTTP/1.1 token mismatch");
@@ -479,8 +490,8 @@ static bool splitValidateRequest(tunnel_t *t, line_t *l, const httpserver_split_
     }
 
     char id[256];
-    if (! splitExtractPlacedValue(ts->split_id_placement, ts->split_id_name, info->path, headers, path_template,
-                                  "{id}", id, sizeof(id)))
+    if (! splitExtractPlacedValue(
+            ts->split_id_placement, ts->split_id_name, info->path, headers, path_template, "{id}", id, sizeof(id)))
     {
         LOGW("HttpServer: split HTTP/1.1 request has no pairing identifier");
         return false;
@@ -619,10 +630,10 @@ static void splitCloseMain(tunnel_t *t, line_t *main_line, bool send_next_finish
 
 static void splitCloseFromTransport(tunnel_t *t, line_t *l, bool finish_sender)
 {
-    httpserver_lstate_t *ls = lineGetState(l, t);
-    line_t *main_line = ls->split_main_line;
-    line_t *upload_line = ls->split_upload_line;
-    line_t *download_line = ls->split_download_line;
+    httpserver_lstate_t *ls            = lineGetState(l, t);
+    line_t              *main_line     = ls->split_main_line;
+    line_t              *upload_line   = ls->split_upload_line;
+    line_t              *download_line = ls->split_download_line;
 
     if (download_line != NULL && download_line != l && lineIsAlive(download_line))
     {
@@ -659,8 +670,8 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
     httpserver_lstate_t *uls = lineGetState(upload_line, t);
     httpserver_lstate_t *dls = lineGetState(download_line, t);
 
-    line_t *main_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line));
-    httpserver_lstate_t *mls = lineGetState(main_line, t);
+    line_t              *main_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line));
+    httpserver_lstate_t *mls       = lineGetState(main_line, t);
     httpserverLinestateInitialize(mls, t, main_line);
 
     mls->split_role          = kHttpServerSplitRoleMain;
@@ -693,8 +704,8 @@ static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l)
     hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_download_map, ls->split_hash);
     if (it.ref != hmap_httpserver_split_t_end(&ts->split_download_map).ref)
     {
-        httpserver_lstate_t *dls = it.ref->second;
-        line_t *download_line = dls->split_download_line;
+        httpserver_lstate_t *dls           = it.ref->second;
+        line_t              *download_line = dls->split_download_line;
         hmap_httpserver_split_t_erase_at(&ts->split_download_map, it);
         mutexUnlock(&ts->split_download_map_mutex);
         bool ok = lineGetWID(download_line) == lineGetWID(l) && splitPair(t, l, download_line);
@@ -737,8 +748,8 @@ static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l)
     hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_upload_map, ls->split_hash);
     if (it.ref != hmap_httpserver_split_t_end(&ts->split_upload_map).ref)
     {
-        httpserver_lstate_t *uls = it.ref->second;
-        line_t *upload_line = uls->split_upload_line;
+        httpserver_lstate_t *uls         = it.ref->second;
+        line_t              *upload_line = uls->split_upload_line;
         hmap_httpserver_split_t_erase_at(&ts->split_upload_map, it);
         mutexUnlock(&ts->split_upload_map_mutex);
         bool ok = lineGetWID(upload_line) == lineGetWID(l) && splitPair(t, upload_line, l);
@@ -819,27 +830,27 @@ static bool splitHandleHeaders(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     sbuf_t *header_buf = bufferstreamReadExact(&ls->in_stream, header_end);
     lineReuseBuffer(l, header_buf);
 
-    ls->runtime_proto      = kHttpServerRuntimeHttp1;
-    ls->h1_headers_parsed  = true;
-    ls->split_role         = role;
-    ls->split_hash         = hash;
+    ls->runtime_proto     = kHttpServerRuntimeHttp1;
+    ls->h1_headers_parsed = true;
+    ls->split_role        = role;
+    ls->split_hash        = hash;
 
     if (role == kHttpServerSplitRoleUpload)
     {
         ls->split_upload_line = l;
         if (info.transfer_chunked)
         {
-            ls->h1_body_mode = kHttpServerH1BodyChunked;
+            ls->h1_body_mode      = kHttpServerH1BodyChunked;
             ls->h1_chunk_expected = -1;
         }
         else if (info.has_content_length)
         {
-            ls->h1_body_mode = kHttpServerH1BodyContentLen;
+            ls->h1_body_mode      = kHttpServerH1BodyContentLen;
             ls->h1_body_remaining = info.content_length;
         }
         else
         {
-            ls->h1_body_mode = kHttpServerH1BodyNone;
+            ls->h1_body_mode        = kHttpServerH1BodyNone;
             ls->h1_request_finished = true;
         }
     }
@@ -852,7 +863,7 @@ static bool splitHandleHeaders(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
             return false;
         }
         ls->split_download_line = l;
-        ls->h1_body_mode = kHttpServerH1BodyNone;
+        ls->h1_body_mode        = kHttpServerH1BodyNone;
         ls->h1_request_finished = true;
     }
 
@@ -889,8 +900,12 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         else if (bufferstreamGetBufLen(&ls->in_stream) > kHttpServerSplitMaxBuffering)
         {
-            LOGW("HttpServer: split upload buffering exceeded limit before download paired");
-            ok = false;
+            httpserver_tstate_t *ts = tunnelGetState(t);
+            if (! ts->no_split_upload_buffering_limit) // probably running test cases
+            {
+                LOGW("HttpServer: split upload buffering exceeded limit before download paired");
+                ok = false;
+            }
         }
     }
 
@@ -909,8 +924,8 @@ void httpserverSplitUpStreamFinish(tunnel_t *t, line_t *l)
 
 void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    httpserver_lstate_t *mls = lineGetState(l, t);
-    line_t *download_line = mls->split_download_line;
+    httpserver_lstate_t *mls           = lineGetState(l, t);
+    line_t              *download_line = mls->split_download_line;
     if (download_line == NULL || ! lineIsAlive(download_line))
     {
         lineReuseBuffer(l, buf);
@@ -942,9 +957,9 @@ void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    httpserver_lstate_t *mls = lineGetState(l, t);
-    line_t *upload_line = mls->split_upload_line;
-    line_t *download_line = mls->split_download_line;
+    httpserver_lstate_t *mls           = lineGetState(l, t);
+    line_t              *upload_line   = mls->split_upload_line;
+    line_t              *download_line = mls->split_download_line;
 
     if (download_line != NULL && lineIsAlive(download_line))
     {

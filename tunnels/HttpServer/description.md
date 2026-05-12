@@ -224,6 +224,12 @@ If omitted, the current implementation defaults to:
 
   Rejections and protocol errors are still logged even when this is `false`.
 
+` `no-split-upload-buffering-limit` `(boolean)`
+  When enabled, SplitHttp will not close connections if the upload side sends too much data before the corresponding download connection has joined.
+
+  This option is currently considered mainly useful for multi-worker test scenarios, such as http1_bidirectional_tcp_loopback, where the TestClient sends all chunks immediately after the connection is established.
+  Default: `false`
+
 ## Detailed Behavior
 
 ### Lifecycle behavior

@@ -91,7 +91,8 @@
           "token": "cookie-token",
           "token-placement": "cookie",
           "token-name": "wwtoken"
-        }
+        },
+        "no-split-upload-buffering-limit": true
       },
       "next": "tester-server"
     },
