@@ -2,38 +2,31 @@
 
 #include "loggers/network_logger.h"
 
-void ptcLinestateInitialize(ptc_lstate_t *ls, wid_t wid, tunnel_t *t, line_t *l, void *pcb)
+void ptcLinestateInitialize(ptc_lstate_t *ls, tunnel_t *t, line_t *l, ptc_line_kind_t kind, void *pcb)
 {
-    discard wid;
-
-    ls->messages = 0;
-    // this 1 lock will be freed when messages are 0 and line is destroyed
     lineLock(l);
 
+    memoryZeroAligned32(ls, sizeof(*ls));
+    ls->tunnel      = t;
+    ls->line        = l;
     ls->pause_queue = bufferqueueCreate(8);
     ls->ack_queue   = sbuf_ack_queue_t_with_capacity(8);
+    ls->kind        = (uint8_t) kind;
 
-    ls->tunnel  = t;
-    ls->line    = l;
-    ls->tcp_pcb = pcb;
-
-    ls->write_paused = false;
-    ls->read_paused  = false;
-    ls->established  = false;
+    if (kind == kPtcLineKindTcp)
+    {
+        ls->tcp_pcb = pcb;
+    }
+    else if (kind == kPtcLineKindUdp)
+    {
+        ls->udp_pcb = pcb;
+    }
 }
 
 void ptcLinestateDestroy(ptc_lstate_t *ls)
 {
-    // dont call this before line is destroyed
-    assert(! lineIsAlive(ls->line));
-
-    wid_t wid = lineGetWID(ls->line);
-
-    if (ls->timer)
-    {
-        weventSetUserData(ls->timer, NULL);
-        wtimerDelete(ls->timer);
-    }
+    wid_t   wid = lineGetWID(ls->line);
+    line_t *l   = ls->line;
 
     while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
     {
@@ -43,13 +36,13 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
         {
             if ((*i.ref).buf == buf)
             {
-                // lazy remove from ack queue
                 (*i.ref).buf = NULL;
             }
         }
+
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
     }
-    
+
     bufferqueueDestroy(&ls->pause_queue);
 
     c_foreach(i, sbuf_ack_queue_t, ls->ack_queue)
@@ -65,11 +58,11 @@ void ptcLinestateDestroy(ptc_lstate_t *ls)
 #ifdef DEBUG
     LOCK_TCPIP_CORE();
     assert(ls->tcp_pcb == NULL);
-    assert(ls->messages == 0);
+    assert(ls->udp_pcb == NULL);
+    assert(ls->route_ctx == NULL);
     UNLOCK_TCPIP_CORE();
 #endif
 
-    line_t *l = ls->line;
     memoryZeroAligned32(ls, sizeof(ptc_lstate_t));
     lineUnlock(l);
 }

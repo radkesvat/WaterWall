@@ -4,21 +4,26 @@
 
 void ptcTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
-    ptc_lstate_t *lstate = lineGetState(l, t);
+    ptc_lstate_t *ls = lineGetState(l, t);
 
-    // we are on a different worker thread, so we must lock the tcpip mutex
-    LOCK_TCPIP_CORE();
-
-    if (lstate->read_paused && lstate->tcp_pcb != NULL)
+    if (! ls->read_paused)
     {
-        lstate->read_paused = false;
-        if (lstate->is_tcp && lstate->read_paused_len > 0)
-        {
-            tcp_recved(lstate->tcp_pcb, lstate->read_paused_len);
-            lstate->read_paused_len = 0;
-            tcp_output(lstate->tcp_pcb);
-        }
+        return;
     }
 
+    ls->read_paused = false;
+
+    if (ls->kind != kPtcLineKindTcp || ls->read_paused_len == 0)
+    {
+        return;
+    }
+
+    LOCK_TCPIP_CORE();
+    if (ls->tcp_pcb != NULL)
+    {
+        tcp_recved(ls->tcp_pcb, ls->read_paused_len);
+        ls->read_paused_len = 0;
+        tcp_output(ls->tcp_pcb);
+    }
     UNLOCK_TCPIP_CORE();
 }

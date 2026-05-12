@@ -4,13 +4,8 @@
 
 void ptcTunnelDownStreamPause(tunnel_t *t, line_t *l)
 {
-    ptc_lstate_t *lstate = lineGetState(l, t);
+    ptc_lstate_t *ls = lineGetState(l, t);
     assert(lineIsAlive(l));
 
-    if (! lstate->read_paused)
-    {
-        lstate->read_paused = true;
-    }
-
-
+    ls->read_paused = true;
 }

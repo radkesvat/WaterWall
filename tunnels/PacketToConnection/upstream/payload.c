@@ -4,38 +4,34 @@
 
 LWIP_MEMPOOL_DECLARE(RX_POOL, 10, sizeof(my_custom_pbuf_t), "Zero-copy RX PBUF pool")
 
-
-static void my_pbuf_free_custom(struct pbuf  *p)
+static void my_pbuf_free_custom(struct pbuf *p)
 {
-
     my_custom_pbuf_t *custombuf = (my_custom_pbuf_t *) p;
 
     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), custombuf->sbuf);
     LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
 }
 
-static void passToTcpIp(sbuf_t *buf, wid_t wid, struct netif *inp)
+static void passToTcpIp(sbuf_t *buf, struct netif *inp)
 {
-    discard wid;
-    discard inp;
+    my_custom_pbuf_t *custombuf = (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
+    if (custombuf == NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        return;
+    }
 
-    my_custom_pbuf_t *custombuf       = (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
     custombuf->p.custom_free_function = my_pbuf_free_custom;
     custombuf->sbuf                   = buf;
 
-    struct pbuf *p = pbuf_alloced_custom(PBUF_RAW, sbufGetLength(buf), PBUF_REF, &custombuf->p, sbufGetMutablePtr(buf),
-                                         sbufGetLength(buf));
-
-    // struct pbuf *p = pbufAlloc(PBUF_RAW, sbufGetLength(buf), PBUF_REF);
-
-    // p->payload = &buf->buf[0];
-
-    // p->payload = sbufGetMutablePtr(buf);
-    // LOCK_TCPIP_CORE();
-    // inp->input(p, inp);
-    // UNLOCK_TCPIP_CORE();
-
-    // bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
+    struct pbuf *p = pbuf_alloced_custom(
+        PBUF_RAW, sbufGetLength(buf), PBUF_REF, &custombuf->p, sbufGetMutablePtr(buf), sbufGetLength(buf));
+    if (p == NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
+        LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
+        return;
+    }
 
     if (inp->input(p, inp) != ERR_OK)
     {
@@ -43,209 +39,125 @@ static void passToTcpIp(sbuf_t *buf, wid_t wid, struct netif *inp)
     }
 }
 
-static err_t interfaceInit(struct netif *netif)
+static bool ptcValidateIpv4Packet(const sbuf_t *buf, const struct ip_hdr *iphdr)
 {
+    const uint32_t packet_len = sbufGetLength(buf);
 
-    /* later our lwip ip hooks identify this netif form this flag */
-    netif->flags |= NETIF_FLAG_L3TO4;
-    netif->output = ptcNetifOutput;
+    if (UNLIKELY(packet_len < sizeof(struct ip_hdr) || IPH_V(iphdr) != 4))
+    {
+        return false;
+    }
 
-    return ERR_OK;
+    const uint32_t header_len = IPH_HL_BYTES(iphdr);
+    if (UNLIKELY(header_len < sizeof(struct ip_hdr) || header_len > packet_len))
+    {
+        return false;
+    }
+
+    const uint32_t total_len = lwip_ntohs(IPH_LEN(iphdr));
+    if (UNLIKELY(total_len < header_len || total_len > packet_len))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool ptcPacketHasTransportHeader(const sbuf_t *buf, const struct ip_hdr *iphdr, uint32_t min_transport_len)
+{
+    const uint32_t header_len = IPH_HL_BYTES(iphdr);
+    return sbufGetLength(buf) >= header_len + min_transport_len;
 }
 
 static void processV4(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-
-    ptc_tstate_t  *state = tunnelGetState(t);
     struct ip_hdr *iphdr = (struct ip_hdr *) sbufGetMutablePtr(buf);
+    ip_addr_t      dest_ip;
+
+    if (! ptcValidateIpv4Packet(buf, iphdr))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
+
+    const uint16_t total_len = lwip_ntohs(IPH_LEN(iphdr));
+    if (UNLIKELY(sbufGetLength(buf) != total_len))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
 
     if (IPH_PROTO(iphdr) != IP_PROTO_TCP && IPH_PROTO(iphdr) != IP_PROTO_UDP)
     {
-        // LOGW("PacketToConnection: Unknown IP protocol");
-        goto fail;
+        lineReuseBuffer(l, buf);
+        return;
     }
 
-    /** Source IP address of current_header */
-    ip_addr_t current_iphdr_src;
-    /** Destination IP address of current_header */
-    ip_addr_t current_iphdr_dest;
+    ipAddrCopyFromIp4(dest_ip, iphdr->dest);
 
-    /* copy IP addresses to aligned ip_addr_t */
-    ipAddrCopyFromIp4(current_iphdr_dest, iphdr->dest);
-    ipAddrCopyFromIp4(current_iphdr_src, iphdr->src);
-
-    interface_route_context_t *prev = &state->route_context4;
-    interface_route_context_t *cur  = state->route_context4.next;
-
-    while (cur != NULL)
+    if (IPH_PROTO(iphdr) == IP_PROTO_UDP && ptcPacketHasTransportHeader(buf, iphdr, sizeof(struct udp_hdr)))
     {
-        if (ip4AddrEqual(&cur->netif.ip_addr.u_addr.ip4, &current_iphdr_dest.u_addr.ip4))
-        {
-            break;
-        }
-        prev = cur;
-        cur  = cur->next;
-    }
-    if (cur != NULL)
-    {
-        cur->last_tick = getTickMS();
+        struct udp_hdr *udphdr = (struct udp_hdr *) ((uint8_t *) iphdr + IPH_HL_BYTES(iphdr));
 
-        // move node to head if not already at head
-        if (state->route_context4.next != cur)
+        if (ptcFakeDnsHandleIpv4UdpPacket(t, l, buf, iphdr, udphdr))
         {
-            interface_route_context_t *tmp = state->route_context4.next;
-            prev->next                     = cur->next;
-            state->route_context4.next     = cur;
-            cur->next                      = tmp;
+            return;
         }
     }
-    else
+
+    interface_route_context_t *route_ctx = ptcFindOrCreateRouteContextV4(t, lineGetWID(l), &dest_ip.u_addr.ip4);
+    if (route_ctx == NULL)
     {
-
-#if SHOW_ALL_LOGS
-        LOGD("PacketTocConnection: new ip %d.%d.%d.%d", ip4_addr1(&current_iphdr_dest.u_addr.ip4),
-             ip4_addr2(&current_iphdr_dest.u_addr.ip4), ip4_addr3(&current_iphdr_dest.u_addr.ip4),
-             ip4_addr4(&current_iphdr_dest.u_addr.ip4));
-#endif
-
-        cur = (interface_route_context_t *) memoryAllocate(sizeof(interface_route_context_t));
-        memorySet(cur, 0, sizeof(interface_route_context_t));
-
-        cur->tcp_ports = vec_ports_t_with_capacity(16);
-        cur->udp_ports = vec_ports_t_with_capacity(16);
-        ip4_addr_t mask;
-        IP4_ADDR(&mask, 0xFF, 0xFF, 0xFF, 0xFF);
-        ip4_addr_t gw;
-        IP4_ADDR(&gw, 0, 0, 0, 0);
-
-        netif_add(&cur->netif, &current_iphdr_dest.u_addr.ip4, &mask, &gw, t, interfaceInit, ip_input);
-        netif_set_up(&cur->netif);
-
-        cur->last_tick = getTickMS();
-        prev->next     = cur;
+        LOGW("PacketToConnection: failed to create virtual netif for destination");
+        lineReuseBuffer(l, buf);
+        return;
     }
 
     switch (IPH_PROTO(iphdr))
     {
-    case IP_PROTO_TCP: {
-        struct tcp_hdr *tcphdr = (struct tcp_hdr *) ((u8_t *) iphdr + IPH_HL_BYTES(iphdr));
-        // no need to do anything for packets that are not SYN
-        if (TCPH_FLAGS(tcphdr) != TCP_SYN)
+    case IP_PROTO_TCP:
+        if (ptcEnsureTcpListener(route_ctx, t, &dest_ip, 0) != ERR_OK)
         {
-            goto tostack;
+            LOGW("PacketToConnection: failed to create pretend TCP gateway");
+            lineReuseBuffer(l, buf);
+            return;
         }
+        break;
 
-        uint16_t dest_port = lwip_ntohs(tcphdr->dest);
-
-        if (vec_ports_t_find(&cur->tcp_ports, dest_port).ref == vec_ports_t_end(&cur->tcp_ports).ref)
+    case IP_PROTO_UDP:
+        if (ptcEnsureUdpListener(route_ctx, t, &dest_ip, 0) != ERR_OK)
         {
-            vec_ports_t_push_back(&cur->tcp_ports, dest_port);
-#if SHOW_ALL_LOGS
-            LOGD("PacketTocConnection: new tcp port %d", dest_port);
-#endif
-            struct tcp_pcb *pcb;
-
-            // Create a new TCP protocol control block.
-
-            pcb = tcp_new();
-            if (pcb == NULL)
-            {
-                LOGW("PacketToConnection: tcp_new failed");
-                goto fail;
-            }
-
-            // Bind the PCB to all available IP addresses at TCP_PORT.
-            if (tcp_bind(pcb, &current_iphdr_dest, dest_port) != ERR_OK)
-            {
-                tcp_close(pcb);
-
-                LOGW("PacketToConnection: tcp_bind failed");
-                goto fail;
-            }
-            pcb->netif_idx    = netif_get_index(&cur->netif);
-            pcb->callback_arg = t;
-            // Start listening for incoming connections.
-            pcb = tcp_listen(pcb);
-            // Set the accept callback.
-            tcp_accept(pcb, lwipThreadPtcTcpAccptCallback);
+            LOGW("PacketToConnection: failed to create pretend UDP gateway");
+            lineReuseBuffer(l, buf);
+            return;
         }
-    }
-
-    break;
-
-    case IP_PROTO_UDP: {
-        struct udp_hdr *udphdr    = (struct udp_hdr *) ((u8_t *) iphdr + IPH_HL_BYTES(iphdr));
-        uint16_t        dest_port = lwip_ntohs(udphdr->dest);
-        if (vec_ports_t_find(&cur->udp_ports, dest_port).ref == vec_ports_t_end(&cur->udp_ports).ref)
-        {
-            vec_ports_t_push_back(&cur->udp_ports, dest_port);
-
-#if SHOW_ALL_LOGS
-            LOGD("PacketTocConnection: new udp port %d", dest_port);
-#endif
-            struct udp_pcb *pcb;
-            // Create a new TCP protocol control block.
-
-            pcb = udp_new();
-            if (pcb == NULL)
-            {
-                LOGW("PacketToConnection: udp_new failed");
-                goto fail;
-            }
-
-            // Bind the PCB to all available IP addresses at TCP_PORT.
-            if (udp_bind(pcb, &current_iphdr_dest, dest_port) != ERR_OK)
-            {
-                udp_remove(pcb);
-
-                LOGW("PacketToConnection: udp_bind failed");
-                goto fail;
-            }
-            pcb->netif_idx = netif_get_index(&cur->netif);
-
-            udp_recv(pcb, ptcUdpReceived, t);
-        }
-    }
-
-    break;
-
-    case IP_PROTO_ICMP: {
-        // LOGW("PacketToConnection: ICMP packet is not supported");
-        goto fail;
-    }
-    break;
+        break;
 
     default:
-        // LOGW("PacketToConnection: Unknown IP protocol");
-        goto fail;
-        break;
+        lineReuseBuffer(l, buf);
+        return;
     }
 
-tostack:
-    passToTcpIp(buf, lineGetWID(l), &cur->netif);
-
-    return;
-fail:
-    bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
+    passToTcpIp(buf, &route_ctx->netif);
 }
 
 void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    if (UNLIKELY(sbufGetLength(buf) < 1))
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
 
     struct ip_hdr *iphdr = (struct ip_hdr *) sbufGetMutablePtr(buf);
 
     if (IPH_V(iphdr) == 4)
     {
-        // LOGW("PacketToConnection: Only IPv4 is supported");
         LOCK_TCPIP_CORE();
-
         processV4(t, l, buf);
-
         UNLOCK_TCPIP_CORE();
+        return;
     }
-    else
-    {
-        // sad ipv6 packet
-        bufferpoolReuseBuffer(getWorkerBufferPool(lineGetWID(l)), buf);
-    }
+
+    lineReuseBuffer(l, buf);
 }

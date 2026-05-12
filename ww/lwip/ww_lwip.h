@@ -12,6 +12,7 @@
 #include "lwip/ip.h"
 #include "lwip/ip4_frag.h"
 #include "lwip/ip_addr.h"
+#include "lwip/netif.h"
 #include "lwip/pbuf.h"
 #include "lwip/prot/tcp.h"
 #include "lwip/tcpip.h"
@@ -43,7 +44,13 @@ typedef struct
     ip_addr_t mask;
 } ipmask_t;
 
-#define NETIF_FLAG_L3TO4 0x80U // Custom flag for PacketToConnection node
+#ifndef NETIF_FLAG_PRETEND
+#define NETIF_FLAG_PRETEND     0x80U
+#define NETIF_FLAG_PRETEND_TCP NETIF_FLAG_PRETEND
+#define NETIF_FLAG_PRETEND_UDP NETIF_FLAG_PRETEND
+#endif
+
+#define NETIF_FLAG_L3TO4 NETIF_FLAG_PRETEND // Backward-compatible PacketToConnection alias
 
 // ------------------------------------------------------------------------
 // Generic IP Function Macros

@@ -16,8 +16,8 @@ option(WW_STATICLIB "Build as static library" ON)
 option(ASMLIB_OVERRIDE "Try to link against asm lib and override standard functions" OFF)
 
 # Crypto backend options (only one can be enabled)
-option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" OFF)
-option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" ON)
+option(WCRYPTO_BACKEND_SODIUM "Enable Sodium backend" ON)
+option(WCRYPTO_BACKEND_OPENSSL "Enable OpenSSL backend" OFF)
 option(WCRYPTO_BACKEND_SOFTWARE "Enable Software backend" OFF)
 
 # Windows-specific options
@@ -367,7 +367,11 @@ endif()
 # Platform-specific Device Sources
 ################################################################################
 if(APPLE)
-    message(STATUS "No Tun device support for macOS yet")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        target_sources(ww PRIVATE devices/tun/tun_darwin.c)
+    else()
+        message(STATUS "No Tun device support for this Apple platform")
+    endif()
     
 elseif(UNIX AND NOT ANDROID)
     target_sources(ww PRIVATE devices/tun/tun_linux.c)
@@ -632,6 +636,8 @@ endif()
 ################################################################################
 # LWIP Library Configuration
 ################################################################################
+# updating lwip may cause our patching to fail or be incorrect. check with
+# https://github.com/heiher/lwip
 CPMAddPackage(
     NAME lwip
     GIT_REPOSITORY https://github.com/lwip-tcpip/lwip.git
@@ -642,7 +648,18 @@ if(NOT lwip_ADDED)
     message(FATAL_ERROR "LWIP library could not be downloaded")
 endif()
 
-set(LWIP_DIR ${lwip_SOURCE_DIR})
+set(LWIP_ORIGINAL_DIR ${lwip_SOURCE_DIR})
+set(LWIP_DIR ${CMAKE_BINARY_DIR}/patched-deps/lwip)
+set(LWIP_PATCH_STAMP ${LWIP_DIR}/.waterwall-pretend-patch)
+if(NOT EXISTS ${LWIP_PATCH_STAMP} OR ${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake IS_NEWER_THAN ${LWIP_PATCH_STAMP})
+    file(REMOVE_RECURSE ${LWIP_DIR})
+    file(MAKE_DIRECTORY ${LWIP_DIR})
+    file(COPY ${LWIP_ORIGINAL_DIR}/ DESTINATION ${LWIP_DIR} PATTERN ".git" EXCLUDE)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/lwip/pretend_patch.cmake)
+    ww_apply_lwip_pretend_patch(${LWIP_DIR})
+    file(WRITE ${LWIP_PATCH_STAMP} "patched\n")
+endif()
+
 set(WPDPACK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/)
 set(LWIPOPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lwip)
 set(LWIP_CONTRIB_DIR ${LWIPOPTS_DIR}/contrib)

@@ -9,6 +9,7 @@ add_library(PacketToConnection STATIC
                     instance/chain.c
                     instance/index.c
                     common/helpers.c
+                    common/fake_dns.c
                     common/line_state.c
                     common/tcp.c
                     common/udp.c

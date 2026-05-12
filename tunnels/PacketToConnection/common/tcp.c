@@ -2,274 +2,183 @@
 
 #include "loggers/network_logger.h"
 
-static void localThreadSendFin(worker_t *worker, void *arg_lstate, void *arg2, void *arg3)
+static sbuf_t *ptcAllocateTcpReadBuffer(line_t *line, uint32_t len)
 {
-    discard worker;
-    discard arg2;
-    discard arg3;
+    buffer_pool_t *pool = lineGetBufferPool(line);
 
-#if SHOW_ALL_LOGS
-    LOGD("PacketToConnection: closing connection if possible");
-#endif
-    ptc_lstate_t *lstate = (ptc_lstate_t *) arg_lstate;
-    tunnel_t     *t      = lstate->tunnel;
-    line_t       *l      = lstate->line;
-
-    atomicDec(&lstate->messages);
-
-    if (! lineIsAlive(l))
+    if (len <= bufferpoolGetSmallBufferSize(pool))
     {
-        LOCK_TCPIP_CORE();
-        if (lstate->messages == 0)
-        {
-            ptcLinestateDestroy(lstate);
-        }
-        UNLOCK_TCPIP_CORE();
-        return;
+        return bufferpoolGetSmallBuffer(pool);
     }
 
-#if SHOW_ALL_LOGS
-    LOGD("PacketToConnection: sending fin");
-#endif
-    lineLock(l);
-    lineDestroy(l);
-    tunnelNextUpStreamFinish(t, l);
-    lineUnlock(l);
-
-    LOCK_TCPIP_CORE();
-    // we got the lock so we can load relaxed
-    if (atomicLoadRelaxed(&lstate->messages) == 0)
+    if (len <= bufferpoolGetLargeBufferSize(pool))
     {
-        ptcLinestateDestroy(lstate);
+        return bufferpoolGetLargeBuffer(pool);
     }
-    UNLOCK_TCPIP_CORE();
+
+    return sbufCreateWithPadding(len, bufferpoolGetLargeBufferPadding(pool));
 }
 
-// Error callback: called when something goes wrong on the connection.
 void lwipThreadPtcTcpConnectionErrorCallback(void *arg, err_t err)
 {
+    ptc_lstate_t *ls = arg;
+
     if (err != ERR_OK)
     {
         LOGD("PacketToConnection: tcp connection error %d", err);
     }
-    if (arg == NULL)
+
+    if (ls == NULL)
     {
         return;
     }
 
-    ptc_lstate_t *lstate     = (ptc_lstate_t *) arg;
-    wid_t         target_wid = lineGetWID(lstate->line);
-    // wid_t         current_wid = g etWID();
+    ls->tcp_pcb = NULL;
 
-    // here we have the tcpip mutex locked
-    lstate->tcp_pcb->callback_arg = NULL;
-    lstate->tcp_pcb->sent         = NULL;
-    lstate->tcp_pcb               = NULL;
-
-    atomicInc(&lstate->messages);
-
-    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCallback) localThreadSendFin, lstate, NULL, NULL);
-}
-
-static void localThreadPtcTcpRecvCallback(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard       arg3;
-    discard       worker;
-    ptc_lstate_t *lstate = (ptc_lstate_t *) arg1;
-    line_t       *l      = lstate->line;
-    sbuf_t       *buf    = arg2;
-
-    atomicDec(&lstate->messages);
-
-    if (! lineIsAlive(l))
+    if (lineIsAlive(ls->line))
     {
-        bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), buf);
-        LOCK_TCPIP_CORE();
-        if (lstate->messages == 0)
-        {
-            ptcLinestateDestroy(lstate);
-        }
-        UNLOCK_TCPIP_CORE();
-        return;
-    }
-
-// p is impossible to be null, null is handled on tcpip thread before calling this function
-#if SHOW_ALL_LOGS
-    printDebug("PacketToConnection: sending %d bytes\n", sbufGetLength(buf));
-#endif
-
-    uint32_t len = sbufGetLength(buf);
-
-    if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, lstate->tunnel, buf))
-    {
-        return;
-    }
-
-    if (lstate->read_paused)
-    {
-        lstate->read_paused_len += len;
-    }
-    else
-    {
-        LOCK_TCPIP_CORE();
-        if (lstate->tcp_pcb)
-        {
-            tcp_recved(lstate->tcp_pcb, len);
-        }
-        UNLOCK_TCPIP_CORE();
+        lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
     }
 }
 
 err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
 {
-    ptc_lstate_t *lstate = (ptc_lstate_t *) arg;
+    ptc_lstate_t *ls = arg;
 
-    wid_t          wid = getWID();
-    buffer_pool_t *bp  = getWorkerBufferPool(wid);
-    sbuf_t        *buf = NULL;
+    if (ls == NULL || ls->kind != kPtcLineKindTcp || ls->tcp_pcb != tpcb)
+    {
+        if (p != NULL)
+        {
+            pbuf_free(p);
+        }
+        return ERR_OK;
+    }
 
-    // If p is NULL, it means the remote end closed the connection.
     if (err != ERR_OK || p == NULL)
     {
         if (p != NULL)
         {
             pbuf_free(p);
         }
-        assert(tpcb != NULL);
-        tcp_close(tpcb);
 
-        lwipThreadPtcTcpConnectionErrorCallback(lstate, err);
+        ptcDetachTcpPcbLocked(ls);
+        if (tpcb != NULL)
+        {
+            if (tcp_close(tpcb) != ERR_OK)
+            {
+                tcp_abort(tpcb);
+            }
+        }
 
+        if (lineIsAlive(ls->line))
+        {
+            lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
+        }
         return ERR_OK;
     }
 
-    /*
-        This is a chained buffer and we must copy it anyway, so dont bother all nodes for it
-    */
-    if (p->tot_len <= bufferpoolGetLargeBufferSize(bp))
+    wid_t owner_wid = lineGetWID(ls->line);
+    if (UNLIKELY(getWID() != owner_wid))
     {
-
-        if (p->tot_len <= bufferpoolGetSmallBufferSize(bp))
+        LOGW("PacketToConnection: tcp recv callback arrived on worker %u for line owned by worker %u; closing flow",
+             (unsigned int) getWID(), (unsigned int) owner_wid);
+        pbuf_free(p);
+        ptcDetachTcpPcbLocked(ls);
+        if (tcp_close(tpcb) != ERR_OK)
         {
-            buf = bufferpoolGetSmallBuffer(bp);
-        }
-        else
-        {
-            buf = bufferpoolGetLargeBuffer(bp);
+            tcp_abort(tpcb);
         }
 
-        sbufSetLength(buf, p->tot_len);
-        pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
+        if (lineIsAlive(ls->line))
+        {
+            lineScheduleTask(ls->line, ptcCloseLineTask, ls->tunnel);
+        }
+        return ERR_OK;
+    }
+
+    sbuf_t *buf = ptcAllocateTcpReadBuffer(ls->line, p->tot_len);
+
+    sbufSetLength(buf, p->tot_len);
+    pbuf_copy_partial(p, sbufGetMutablePtr(buf), p->tot_len, 0);
+    pbuf_free(p);
+
+    if (lineIsAlive(ls->line))
+    {
+        lineScheduleTaskWithBuf(ls->line, ptcDeliverPayloadTask, ls->tunnel, buf);
     }
     else
     {
-        assert(false); // not implemented
+        lineReuseBuffer(ls->line, buf);
     }
-    pbuf_free(p);
 
-    wid_t target_wid = lineGetWID(lstate->line);
-    // wid_t current_wid = getWID();
-
-    atomicInc(&lstate->messages);
-
-    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCallback) localThreadPtcTcpRecvCallback, lstate, buf, NULL);
-
-    // bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoad(&lstate->messages) == 0);
-    // lstate->stack_owned_locked = doing_direct_stack;
-    // if (! doing_direct_stack)
-    // {
-    //     atomicInc(&lstate->messages);
-    //     sendWorkerMessageForceQueue(target_wid, localThreadPtcTcpRecvCallback, lstate, buf, NULL);
-    // }
-    // else
-    // {
-    //     sendWorkerMessage(target_wid, localThreadPtcTcpRecvCallback, lstate, buf, NULL);
-    // }
     return ERR_OK;
-}
-
-static void localThreadPtcAcceptCallBack(struct worker_s *worker, void *arg1, void *arg2, void *arg3)
-{
-    discard worker;
-    discard arg3;
-    discard arg2;
-
-    ptc_lstate_t *lstate = arg1;
-
-    struct tcp_pcb *newpcb = lstate->tcp_pcb;
-    tunnel_t       *t      = lstate->tunnel;
-    line_t         *l      = lstate->line;
-
-    atomicDec(&lstate->messages);
-
-    if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
-    {
-        char src_ip[40];
-        char dst_ip[40];
-
-        // Replace ipaddr_ntoa with ip4AddrNetworkToAddress
-        stringCopyN(src_ip, ipAddrNetworkToAddress(&newpcb->local_ip), 40);
-        stringCopyN(dst_ip, ipAddrNetworkToAddress(&newpcb->remote_ip), 40);
-
-        LOGD("PacketToConnection: new connection accepted  [%s:%d] <= [%s:%d]", src_ip, newpcb->local_port, dst_ip,
-             newpcb->remote_port);
-    }
-
-    tunnelNextUpStreamInit(t, l);
 }
 
 err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err)
 {
+    interface_route_context_t *route_ctx = arg;
 
     if (err != ERR_OK)
     {
         if (newpcb != NULL)
         {
-            tcp_close(newpcb);
+            tcp_abort(newpcb);
         }
         return err;
     }
-    wid_t current_wid = getWID();
-    wid_t target_wid  = current_wid != GSTATE.lwip_wid ? current_wid : getNextDistributionWID();
 
-    tunnel_t *t = (tunnel_t *) arg;
+    if (route_ctx == NULL || newpcb == NULL)
+    {
+        if (newpcb != NULL)
+        {
+            tcp_abort(newpcb);
+        }
+        return ERR_ARG;
+    }
 
-    line_t *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), target_wid);
+    const wid_t owner_wid = route_ctx->packet_wid;
+    if (UNLIKELY(getWID() != owner_wid))
+    {
+        LOGW("PacketToConnection: tcp accept callback arrived on worker %u for route owned by worker %u; dropping flow",
+             (unsigned int) getWID(), (unsigned int) owner_wid);
+        tcp_abort(newpcb);
+        return ERR_ABRT;
+    }
 
-    ptc_lstate_t *lstate = lineGetState(l, t);
+    tunnel_t *t = route_ctx->tunnel;
+    line_t   *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner_wid);
+    ptc_lstate_t *ls = lineGetState(l, t);
 
-    ptcLinestateInitialize(lstate, target_wid, t, l, newpcb);
-    lstate->is_tcp = true;
+    ptcLinestateInitialize(ls, t, l, kPtcLineKindTcp, newpcb);
 
-    addresscontextSetIpPortProtocol(&l->routing_context.src_ctx, &newpcb->remote_ip, newpcb->remote_port,
+    addresscontextSetIpPortProtocol(lineGetSourceAddressContext(l), &newpcb->remote_ip, newpcb->remote_port,
                                     IP_PROTO_TCP);
+    if (! ptcFakeDnsApplyMappedDestination(t, lineGetDestinationAddressContext(l), &newpcb->local_ip,
+                                           newpcb->local_port, IP_PROTO_TCP))
+    {
+        addresscontextSetIpPortProtocol(lineGetDestinationAddressContext(l), &newpcb->local_ip, newpcb->local_port,
+                                        IP_PROTO_TCP);
+    }
+    lineGetRoutingContext(l)->local_listener_port = newpcb->local_port;
 
-    addresscontextSetIpPort(&l->routing_context.dest_ctx, &newpcb->local_ip, newpcb->local_port);
-
-    newpcb->callback_arg = lstate;
-    newpcb->sent         = ptcTcpSendCompleteCallback;
+    tcp_arg(newpcb, ls);
+    tcp_sent(newpcb, ptcTcpSendCompleteCallback);
+    tcp_recv(newpcb, lwipThreadPtcTcpRecvCallback);
+    tcp_err(newpcb, lwipThreadPtcTcpConnectionErrorCallback);
     tcp_nagle_disable(newpcb);
 
-    // Set the receive callback for the new connection.
-    tcp_recv(newpcb, lwipThreadPtcTcpRecvCallback);
-    // Optionally, set the error callback.
-    tcp_err(newpcb, lwipThreadPtcTcpConnectionErrorCallback);
+    if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
+    {
+        char local_ip[40];
+        char remote_ip[40];
 
-    atomicInc(&lstate->messages);
-    // i think its better to offload it right away, direct calling will hold the tcpip stack for longer time
-    sendWorkerMessageForceQueue(target_wid, (WorkerMessageCallback) localThreadPtcAcceptCallBack, lstate, NULL, NULL);
+        stringCopyN(local_ip, ipAddrNetworkToAddress(&newpcb->local_ip), 40);
+        stringCopyN(remote_ip, ipAddrNetworkToAddress(&newpcb->remote_ip), 40);
 
-    // bool doing_direct_stack    = (current_wid == target_wid) && (atomicLoad(&lstate->messages) == 0);
-    // lstate->stack_owned_locked = doing_direct_stack;
-    // if (! doing_direct_stack)
-    // {
-    //     atomicInc(&lstate->messages);
-    //     sendWorkerMessageForceQueue(target_wid, localThreadPtcAcceptCallBack, lstate, NULL, NULL);
-    // }
-    // else
-    // {
-    //     sendWorkerMessage(target_wid, localThreadPtcAcceptCallBack, lstate, NULL, NULL);
-    // }
+        LOGD("PacketToConnection: new tcp flow accepted [%s:%u] <= [%s:%u]", local_ip,
+             (unsigned int) newpcb->local_port, remote_ip, (unsigned int) newpcb->remote_port);
+    }
 
+    lineScheduleTask(l, ptcOpenLineTask, t);
     return ERR_OK;
 }
