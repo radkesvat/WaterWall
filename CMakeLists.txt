@@ -117,10 +117,10 @@ set(ENABLE_USAN OFF CACHE BOOL "enable undefined behaviour sanitizer" FORCE)
 # Define conditional variables for platform-specific options
 
 
-if(NOT APPLE AND NOT ANDROID)
-  set(TUNDEVICE_SUPPORTED TRUE) # tun device works on android but requires root access
-else()
+if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(TUNDEVICE_SUPPORTED FALSE)
+else()
+  set(TUNDEVICE_SUPPORTED TRUE)
 endif()
 
 if(NOT ANDROID AND NOT (CMAKE_SYSTEM_NAME STREQUAL "NetBSD"
