@@ -103,9 +103,11 @@ char *stringReverse(char *str)
 
 char *stringConcat(const char *s1, const char *s2)
 {
-    char *result = memoryAllocate(stringLength(s1) + stringLength(s2) + 1); // +1 for the null-terminator
-    strcpy(result, s1);
-    strcat(result, s2);
+    size_t len1   = stringLength(s1);
+    size_t len2   = stringLength(s2);
+    char  *result = memoryAllocate(len1 + len2 + 1); // +1 for the null-terminator
+    memoryCopy(result, s1, len1 + 1);
+    memoryCopy(result + len1, s2, len2 + 1);
     return result;
 }
 
