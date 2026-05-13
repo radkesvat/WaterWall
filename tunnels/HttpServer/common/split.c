@@ -4,7 +4,6 @@
 #include "pipe_tunnel.h"
 
 #include <ctype.h>
-#include <inttypes.h>
 
 typedef struct httpserver_split_request_s
 {
@@ -502,56 +501,30 @@ static bool splitValidateRequest(tunnel_t *t, line_t *l, const httpserver_split_
     return true;
 }
 
-static bool splitFindCounterpartWid(tunnel_t *t, httpserver_split_role_t role, hash_t hash, wid_t *wid_out)
+static void splitLockMaps(httpserver_tstate_t *ts)
 {
-    httpserver_tstate_t *ts = tunnelGetState(t);
-    if (role == kHttpServerSplitRoleUpload)
-    {
-        mutexLock(&ts->split_download_map_mutex);
-        hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_download_map, hash);
-        if (it.ref != hmap_httpserver_split_t_end(&ts->split_download_map).ref)
-        {
-            httpserver_lstate_t *dls = it.ref->second;
-            if (dls->split_download_line != NULL)
-            {
-                *wid_out = lineGetWID(dls->split_download_line);
-                mutexUnlock(&ts->split_download_map_mutex);
-                return true;
-            }
-        }
-        mutexUnlock(&ts->split_download_map_mutex);
-        return false;
-    }
-
-    if (role == kHttpServerSplitRoleDownload)
-    {
-        mutexLock(&ts->split_upload_map_mutex);
-        hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_upload_map, hash);
-        if (it.ref != hmap_httpserver_split_t_end(&ts->split_upload_map).ref)
-        {
-            httpserver_lstate_t *uls = it.ref->second;
-            if (uls->split_upload_line != NULL)
-            {
-                *wid_out = lineGetWID(uls->split_upload_line);
-                mutexUnlock(&ts->split_upload_map_mutex);
-                return true;
-            }
-        }
-        mutexUnlock(&ts->split_upload_map_mutex);
-    }
-
-    return false;
+    mutexLock(&ts->split_upload_map_mutex);
+    mutexLock(&ts->split_download_map_mutex);
 }
+
+static void splitUnlockMaps(httpserver_tstate_t *ts)
+{
+    mutexUnlock(&ts->split_download_map_mutex);
+    mutexUnlock(&ts->split_upload_map_mutex);
+}
+
+static void splitRemoveFromMaps(tunnel_t *t, httpserver_lstate_t *ls);
 
 static bool splitPipeCurrentLineToWorker(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, wid_t target_wid)
 {
     sbuf_t *raw = bufferstreamFullRead(&ls->in_stream);
-    httpserverLinestateDestroy(ls);
-
     if (raw == NULL)
     {
         return false;
     }
+
+    splitRemoveFromMaps(t, ls);
+    httpserverLinestateDestroy(ls);
 
     if (pipeTo(t, l, target_wid))
     {
@@ -595,6 +568,39 @@ static void splitRemoveFromMaps(tunnel_t *t, httpserver_lstate_t *ls)
     }
 }
 
+static void splitClearPeerReference(tunnel_t *t, line_t *peer_line, line_t *dead_line)
+{
+    if (peer_line == NULL || peer_line == dead_line || ! lineIsAlive(peer_line))
+    {
+        return;
+    }
+
+    httpserver_lstate_t *peer_ls = lineGetState(peer_line, t);
+    if (peer_ls->split_main_line == dead_line)
+    {
+        peer_ls->split_main_line = NULL;
+    }
+    if (peer_ls->split_upload_line == dead_line)
+    {
+        peer_ls->split_upload_line = NULL;
+    }
+    if (peer_ls->split_download_line == dead_line)
+    {
+        peer_ls->split_download_line = NULL;
+    }
+}
+
+static void splitDetachLine(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    line_t *main_line     = ls->split_main_line;
+    line_t *upload_line   = ls->split_upload_line;
+    line_t *download_line = ls->split_download_line;
+
+    splitClearPeerReference(t, main_line, l);
+    splitClearPeerReference(t, upload_line, l);
+    splitClearPeerReference(t, download_line, l);
+}
+
 static void splitCloseTransport(tunnel_t *t, line_t *l, bool send_down_finish)
 {
     if (l == NULL || ! lineIsAlive(l))
@@ -603,6 +609,7 @@ static void splitCloseTransport(tunnel_t *t, line_t *l, bool send_down_finish)
     }
     httpserver_lstate_t *ls = lineGetState(l, t);
     splitRemoveFromMaps(t, ls);
+    splitDetachLine(t, l, ls);
     httpserverLinestateDestroy(ls);
     if (send_down_finish)
     {
@@ -617,6 +624,7 @@ static void splitCloseMain(tunnel_t *t, line_t *main_line, bool send_next_finish
         return;
     }
     httpserver_lstate_t *main_ls = lineGetState(main_line, t);
+    splitDetachLine(t, main_line, main_ls);
     httpserverLinestateDestroy(main_ls);
     if (send_next_finish)
     {
@@ -695,20 +703,71 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
     return httpserverTransportDrainHttp1RequestBody(t, upload_line, uls);
 }
 
-static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l)
+static void splitApplyParsedHeader(line_t *l, httpserver_lstate_t *ls, size_t header_end,
+                                   const httpserver_split_request_t *info, httpserver_split_role_t role, hash_t hash)
+{
+    sbuf_t *header_buf = bufferstreamReadExact(&ls->in_stream, header_end);
+    lineReuseBuffer(l, header_buf);
+
+    ls->runtime_proto     = kHttpServerRuntimeHttp1;
+    ls->h1_headers_parsed = true;
+    ls->split_role        = role;
+    ls->split_hash        = hash;
+
+    if (role == kHttpServerSplitRoleUpload)
+    {
+        ls->split_upload_line = l;
+        if (info->transfer_chunked)
+        {
+            ls->h1_body_mode      = kHttpServerH1BodyChunked;
+            ls->h1_chunk_expected = -1;
+        }
+        else if (info->has_content_length)
+        {
+            ls->h1_body_mode      = kHttpServerH1BodyContentLen;
+            ls->h1_body_remaining = info->content_length;
+        }
+        else
+        {
+            ls->h1_body_mode        = kHttpServerH1BodyNone;
+            ls->h1_request_finished = true;
+        }
+        return;
+    }
+
+    ls->split_download_line  = l;
+    ls->h1_body_mode         = kHttpServerH1BodyNone;
+    ls->h1_request_finished  = true;
+}
+
+static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l, size_t header_end,
+                                    const httpserver_split_request_t *info, hash_t hash)
 {
     httpserver_tstate_t *ts = tunnelGetState(t);
     httpserver_lstate_t *ls = lineGetState(l, t);
+    line_t              *download_line = NULL;
 
-    mutexLock(&ts->split_download_map_mutex);
-    hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_download_map, ls->split_hash);
+    splitLockMaps(ts);
+    hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_download_map, hash);
     if (it.ref != hmap_httpserver_split_t_end(&ts->split_download_map).ref)
     {
-        httpserver_lstate_t *dls           = it.ref->second;
-        line_t              *download_line = dls->split_download_line;
+        httpserver_lstate_t *dls = it.ref->second;
+        download_line = dls->split_download_line;
+        if (dls->split_role != kHttpServerSplitRoleDownload || download_line == NULL || ! lineIsAlive(download_line))
+        {
+            hmap_httpserver_split_t_erase_at(&ts->split_download_map, it);
+            goto insert_upload;
+        }
+        wid_t                download_wid  = lineGetWID(download_line);
+        if (download_wid != lineGetWID(l))
+        {
+            splitUnlockMaps(ts);
+            return splitPipeCurrentLineToWorker(t, l, ls, download_wid);
+        }
         hmap_httpserver_split_t_erase_at(&ts->split_download_map, it);
-        mutexUnlock(&ts->split_download_map_mutex);
-        bool ok = lineGetWID(download_line) == lineGetWID(l) && splitPair(t, l, download_line);
+        splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleUpload, hash);
+        splitUnlockMaps(ts);
+        bool ok = splitPair(t, l, download_line);
         if (! ok && download_line != NULL && lineIsAlive(download_line))
         {
             lineLock(download_line);
@@ -717,11 +776,11 @@ static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l)
         }
         return ok;
     }
-    mutexUnlock(&ts->split_download_map_mutex);
 
-    mutexLock(&ts->split_upload_map_mutex);
-    bool inserted = hmap_httpserver_split_t_insert(&ts->split_upload_map, ls->split_hash, ls).inserted;
-    mutexUnlock(&ts->split_upload_map_mutex);
+insert_upload:
+    splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleUpload, hash);
+    bool inserted = hmap_httpserver_split_t_insert(&ts->split_upload_map, hash, ls).inserted;
+    splitUnlockMaps(ts);
     if (! inserted)
     {
         LOGW("HttpServer: duplicate split upload request closed");
@@ -730,29 +789,34 @@ static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l)
     return true;
 }
 
-static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l)
+static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l, size_t header_end,
+                                      const httpserver_split_request_t *info, hash_t hash)
 {
     httpserver_tstate_t *ts = tunnelGetState(t);
     httpserver_lstate_t *ls = lineGetState(l, t);
+    line_t              *upload_line = NULL;
 
-    if (! ls->h1_response_headers_sent)
-    {
-        if (! httpserverTransportSendHttp1ResponseHeaders(t, l))
-        {
-            return false;
-        }
-        ls->h1_response_headers_sent = true;
-    }
-
-    mutexLock(&ts->split_upload_map_mutex);
-    hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_upload_map, ls->split_hash);
+    splitLockMaps(ts);
+    hmap_httpserver_split_t_iter it = hmap_httpserver_split_t_find(&ts->split_upload_map, hash);
     if (it.ref != hmap_httpserver_split_t_end(&ts->split_upload_map).ref)
     {
-        httpserver_lstate_t *uls         = it.ref->second;
-        line_t              *upload_line = uls->split_upload_line;
+        httpserver_lstate_t *uls = it.ref->second;
+        upload_line = uls->split_upload_line;
+        if (uls->split_role != kHttpServerSplitRoleUpload || upload_line == NULL || ! lineIsAlive(upload_line))
+        {
+            hmap_httpserver_split_t_erase_at(&ts->split_upload_map, it);
+            goto insert_download;
+        }
+        wid_t                upload_wid  = lineGetWID(upload_line);
+        if (upload_wid != lineGetWID(l))
+        {
+            splitUnlockMaps(ts);
+            return splitPipeCurrentLineToWorker(t, l, ls, upload_wid);
+        }
         hmap_httpserver_split_t_erase_at(&ts->split_upload_map, it);
-        mutexUnlock(&ts->split_upload_map_mutex);
-        bool ok = lineGetWID(upload_line) == lineGetWID(l) && splitPair(t, upload_line, l);
+        splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleDownload, hash);
+        splitUnlockMaps(ts);
+        bool ok = splitPair(t, upload_line, l);
         if (! ok && upload_line != NULL && lineIsAlive(upload_line))
         {
             lineLock(upload_line);
@@ -761,15 +825,23 @@ static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l)
         }
         return ok;
     }
-    mutexUnlock(&ts->split_upload_map_mutex);
 
-    mutexLock(&ts->split_download_map_mutex);
-    bool inserted = hmap_httpserver_split_t_insert(&ts->split_download_map, ls->split_hash, ls).inserted;
-    mutexUnlock(&ts->split_download_map_mutex);
+insert_download:
+    splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleDownload, hash);
+    bool inserted = hmap_httpserver_split_t_insert(&ts->split_download_map, hash, ls).inserted;
+    splitUnlockMaps(ts);
     if (! inserted)
     {
         LOGW("HttpServer: duplicate split download request closed");
         return false;
+    }
+    if (! ls->h1_response_headers_sent)
+    {
+        if (! httpserverTransportSendHttp1ResponseHeaders(t, l))
+        {
+            return false;
+        }
+        ls->h1_response_headers_sent = true;
     }
     return true;
 }
@@ -820,60 +892,21 @@ static bool splitHandleHeaders(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
         return false;
     }
 
-    wid_t counterpart_wid = 0;
-    if (splitFindCounterpartWid(t, role, hash, &counterpart_wid) && counterpart_wid != lineGetWID(l))
+    if (role == kHttpServerSplitRoleDownload &&
+        (info.transfer_chunked || (info.has_content_length && info.content_length > 0)))
     {
+        LOGW("HttpServer: split download request must not carry a body");
         memoryFree(header_text);
-        return splitPipeCurrentLineToWorker(t, l, ls, counterpart_wid);
-    }
-
-    sbuf_t *header_buf = bufferstreamReadExact(&ls->in_stream, header_end);
-    lineReuseBuffer(l, header_buf);
-
-    ls->runtime_proto     = kHttpServerRuntimeHttp1;
-    ls->h1_headers_parsed = true;
-    ls->split_role        = role;
-    ls->split_hash        = hash;
-
-    if (role == kHttpServerSplitRoleUpload)
-    {
-        ls->split_upload_line = l;
-        if (info.transfer_chunked)
-        {
-            ls->h1_body_mode      = kHttpServerH1BodyChunked;
-            ls->h1_chunk_expected = -1;
-        }
-        else if (info.has_content_length)
-        {
-            ls->h1_body_mode      = kHttpServerH1BodyContentLen;
-            ls->h1_body_remaining = info.content_length;
-        }
-        else
-        {
-            ls->h1_body_mode        = kHttpServerH1BodyNone;
-            ls->h1_request_finished = true;
-        }
-    }
-    else
-    {
-        if (info.transfer_chunked || (info.has_content_length && info.content_length > 0))
-        {
-            LOGW("HttpServer: split download request must not carry a body");
-            memoryFree(header_text);
-            return false;
-        }
-        ls->split_download_line = l;
-        ls->h1_body_mode        = kHttpServerH1BodyNone;
-        ls->h1_request_finished = true;
+        return false;
     }
 
     memoryFree(header_text);
 
     if (role == kHttpServerSplitRoleUpload)
     {
-        return splitInsertOrPairUpload(t, l);
+        return splitInsertOrPairUpload(t, l, header_end, &info, hash);
     }
-    return splitInsertOrPairDownload(t, l);
+    return splitInsertOrPairDownload(t, l, header_end, &info, hash);
 }
 
 void httpserverSplitUpStreamInit(tunnel_t *t, line_t *l)
@@ -919,6 +952,14 @@ void httpserverSplitUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 void httpserverSplitUpStreamFinish(tunnel_t *t, line_t *l)
 {
+    httpserver_lstate_t *ls = lineGetState(l, t);
+
+    if (ls->split_role == kHttpServerSplitRoleUpload && (ls->h1_request_finished || ls->next_finished))
+    {
+        splitCloseTransport(t, l, false);
+        return;
+    }
+
     splitCloseFromTransport(t, l, false);
 }
 

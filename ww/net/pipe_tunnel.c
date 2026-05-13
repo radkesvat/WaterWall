@@ -20,6 +20,7 @@ typedef struct pipetunnel_msg_event_s
 {
     tunnel_t *tunnel;
     context_t ctx;
+    wid_t     pool_wid;
 
 } pipetunnel_msg_event_t;
 
@@ -77,6 +78,14 @@ static void sendMessageUp(line_t *l_to, pipetunnel_msg_event_t *msg);
  * @param wid_to WID to send the message to.
  */
 static void sendMessageDown(line_t *l_to, pipetunnel_msg_event_t *msg);
+
+static pipetunnel_msg_event_t *allocatePipeMessage(line_t *source_line)
+{
+    wid_t                    pool_wid = lineGetWID(source_line);
+    pipetunnel_msg_event_t  *msg      = genericpoolGetItem(getWorkerPipeTunnelMsgPool(pool_wid));
+    msg->pool_wid                     = pool_wid;
+    return msg;
+}
 /**
  * @brief Callback for when a message is received upstream.
  *
@@ -151,7 +160,7 @@ static void sendMessageUp(line_t *l_to, pipetunnel_msg_event_t *msg)
             reuseBuffer(msg->ctx.payload);
             msg->ctx.payload = NULL;
         }
-        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(wid_to), msg);
+        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(msg->pool_wid), msg);
         lineUnlock(l_to);
     }
 }
@@ -226,7 +235,7 @@ static void sendMessageDown(line_t *l_to, pipetunnel_msg_event_t *msg)
             reuseBuffer(msg->ctx.payload);
             msg->ctx.payload = NULL;
         }
-        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(wid_to), msg);
+        genericpoolReuseItem(getWorkerPipeTunnelMsgPool(msg->pool_wid), msg);
         lineUnlock(l_to);
     }
 }
@@ -250,7 +259,7 @@ static void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *l)
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .init = true};
 
     msg->tunnel = t;
@@ -277,7 +286,7 @@ static void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *l)
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .est = true};
 
     msg->tunnel = t;
@@ -307,7 +316,7 @@ static void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *l)
     line_t *line_to   = lstate->pair_line;
     lstate->pair_line = NULL;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .fin = true};
 
     msg->tunnel = t;
@@ -336,7 +345,7 @@ static void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *pay
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .payload = payload};
 
     msg->tunnel = t;
@@ -363,7 +372,7 @@ static void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *l)
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .pause = true};
 
     msg->tunnel = t;
@@ -390,7 +399,7 @@ static void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *l)
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .resume = true};
 
     msg->tunnel = t;
@@ -436,7 +445,7 @@ static void pipetunnelDefaultDownStreamEst(tunnel_t *t, line_t *l)
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .est = true};
 
     msg->tunnel = t;
@@ -466,7 +475,7 @@ static void pipetunnelDefaultDownStreamFin(tunnel_t *t, line_t *l)
     line_t *line_to   = lstate->pair_line;
     lstate->pair_line = NULL;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .fin = true};
 
     msg->tunnel = t;
@@ -496,7 +505,7 @@ static void pipetunnelDefaultDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *p
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .payload = payload};
 
     msg->tunnel = t;
@@ -523,7 +532,7 @@ static void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *l)
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .pause = true};
 
     msg->tunnel = t;
@@ -550,7 +559,7 @@ static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *l)
 
     line_t *line_to = lstate->pair_line;
 
-    pipetunnel_msg_event_t *msg = genericpoolGetItem(getWorkerPipeTunnelMsgPool(lineGetWID(l)));
+    pipetunnel_msg_event_t *msg = allocatePipeMessage(l);
     context_t               ctx = {.line = line_to, .resume = true};
 
     msg->tunnel = t;
