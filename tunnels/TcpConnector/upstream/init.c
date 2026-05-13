@@ -139,6 +139,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const address_context_t  *constant_dest_addr = &ts->constant_dest_addr;
     uint64_t                  outbound_ip_range  = ts->outbound_ip_range;
     const tcpconnector_destination_t *selected_destination = selectWeightedDestination(ts);
+    int                       sockfd              = -1;
 
     if (selected_destination != NULL)
     {
@@ -183,7 +184,7 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     assert(dest_ctx->ip_address.type == IPADDR_TYPE_V4 || dest_ctx->ip_address.type == IPADDR_TYPE_V6);
     int addr_type = dest_ctx->ip_address.type == IPADDR_TYPE_V4 ? AF_INET : AF_INET6;
 
-    int sockfd = (int) socket(addr_type, SOCK_STREAM, 0);
+    sockfd = (int) socket(addr_type, SOCK_STREAM, 0);
 
     if (sockfd < 0)
     {
