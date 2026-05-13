@@ -49,6 +49,31 @@ static uint16_t packetsenderStoredLengthForProtocol(uint8_t protocol)
     }
 }
 
+static void packetsenderResolveSourceAddress(const packetsender_tstate_t *state, uint64_t source_index,
+                                             uint32_t *src_addr_host_out, uint32_t *src_addr_network_out)
+{
+    uint64_t remaining = source_index;
+
+    for (uint32_t ri = 0; ri < state->source_range_count; ++ri)
+    {
+        const packetsender_source_range_t *range = &state->source_ranges[ri];
+
+        if (remaining < range->count)
+        {
+            const uint32_t src_addr_host = range->base_host + (uint32_t) remaining;
+            *src_addr_host_out          = src_addr_host;
+            *src_addr_network_out       = lwip_htonl(src_addr_host);
+            return;
+        }
+
+        remaining -= range->count;
+    }
+
+    LOGF("PacketSender: internal error, source index %llu is out of range",
+         (unsigned long long) source_index);
+    terminateProgram(1);
+}
+
 static uint16_t packetsenderSelectSourcePort(const packetsender_tstate_t *state, uint32_t src_addr_host, uint8_t protocol)
 {
     if (! packetsenderProtocolUsesPorts(protocol))
@@ -235,8 +260,10 @@ static void packetsenderResolvePacketView(const packetsender_tstate_t *state, ui
         offset       = (size_t) source_index * state->fixed_packet_length;
     }
 
-    const uint32_t src_addr_host    = state->source_base_host + (uint32_t) source_index;
-    const uint32_t src_addr_network = lwip_htonl(src_addr_host);
+    uint32_t src_addr_host    = 0;
+    uint32_t src_addr_network = 0;
+
+    packetsenderResolveSourceAddress(state, source_index, &src_addr_host, &src_addr_network);
 
     *packet_ptr_out       = state->packet_bytes + offset;
     *packet_len_out       = packet_len;
@@ -437,6 +464,11 @@ void packetsenderPrepareRuntime(tunnel_t *t)
 
         state->protocol_offsets[kPacketSenderProtocolsPerSource] = running_offset;
         bytes_per_source   = running_offset;
+        if (state->source_count > (UINT64_MAX / kPacketSenderProtocolsPerSource))
+        {
+            LOGF("PacketSender: total packet count would overflow");
+            terminateProgram(1);
+        }
         state->total_packets = state->source_count * kPacketSenderProtocolsPerSource;
     }
     else
@@ -473,9 +505,11 @@ void packetsenderPrepareRuntime(tunnel_t *t)
 
     for (uint64_t source_index = 0; source_index < state->source_count; ++source_index)
     {
-        const uint32_t src_addr_host    = state->source_base_host + (uint32_t) source_index;
-        const uint32_t src_addr_network = lwip_htonl(src_addr_host);
+        uint32_t       src_addr_host    = 0;
+        uint32_t       src_addr_network = 0;
         uint8_t       *source_base      = state->packet_bytes + ((size_t) source_index * state->bytes_per_source);
+
+        packetsenderResolveSourceAddress(state, source_index, &src_addr_host, &src_addr_network);
 
         if (state->protocol_mode == kPacketSenderProtocolAll)
         {

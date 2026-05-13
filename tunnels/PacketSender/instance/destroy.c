@@ -6,6 +6,12 @@ void packetsenderTunnelDestroy(tunnel_t *t)
 {
     packetsender_tstate_t *state = tunnelGetState(t);
 
+    if (state->source_ranges != NULL)
+    {
+        memoryFree(state->source_ranges);
+        state->source_ranges = NULL;
+    }
+
     if (state->workers != NULL)
     {
         for (wid_t wi = 0; wi < state->workers_count; ++wi)
@@ -30,4 +36,3 @@ void packetsenderTunnelDestroy(tunnel_t *t)
 
     tunnelDestroy(t);
 }
-
