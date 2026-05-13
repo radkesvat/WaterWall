@@ -12,6 +12,12 @@ static bool packetsenderParseIpv4String(uint32_t *dest, const char *ipbuf, const
 {
     ip4_addr_t parsed_ipv4;
 
+    if (ipbuf == NULL || ipbuf[0] == '\0')
+    {
+        LOGF("JSON Error: %s (string field) : expected a single IPv4 address", json_path);
+        return false;
+    }
+
     if (ip4AddrAddressToNetwork(ipbuf, &parsed_ipv4) == 0)
     {
         LOGF("JSON Error: %s (string field) : expected a single IPv4 address", json_path);
@@ -22,40 +28,109 @@ static bool packetsenderParseIpv4String(uint32_t *dest, const char *ipbuf, const
     return true;
 }
 
-static bool packetsenderLoadSourceRange(packetsender_tstate_t *state, const cJSON *settings)
+static bool packetsenderParseSourceRange(packetsender_source_range_t *range, const char *cidr, const char *json_path)
 {
-    char *cidr = NULL;
+    ip_addr_t ip;
+    ip_addr_t subnet_mask;
+    int       prefix_length = -1;
 
-    if (! getStringFromJsonObject(&cidr, settings, "source-ip4-range"))
+    if (cidr == NULL || cidr[0] == '\0')
     {
-        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string field) : expected an IPv4 CIDR range");
+        LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
         return false;
     }
 
     if (! verifyIPCdir(cidr))
     {
-        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string field) : invalid IPv4 CIDR range");
-        memoryFree(cidr);
+        LOGF("JSON Error: %s (string field) : invalid IPv4 CIDR range", json_path);
         return false;
     }
-
-    ip_addr_t ip;
-    ip_addr_t subnet_mask;
-    int       prefix_length = -1;
 
     if (parseIPWithSubnetMask(cidr, &ip, &subnet_mask) != 4 ||
         sscanf(cidr, "%*[^/]/%d", &prefix_length) != 1 || prefix_length < 0 || prefix_length > 32)
     {
-        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string field) : expected an IPv4 CIDR range");
-        memoryFree(cidr);
+        LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
         return false;
     }
 
-    state->source_base_host      = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
-    state->source_prefix_length  = (uint8_t) prefix_length;
-    state->source_count          = 1ULL << (32U - (uint32_t) prefix_length);
+    range->base_host = lwip_ntohl(ip.u_addr.ip4.addr) & lwip_ntohl(subnet_mask.u_addr.ip4.addr);
+    range->prefix_length = (uint8_t) prefix_length;
+    range->count = 1ULL << (32U - (uint32_t) prefix_length);
+    return true;
+}
 
-    memoryFree(cidr);
+static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *range_json = cJSON_GetObjectItemCaseSensitive(settings, "source-ip4-range");
+
+    if (range_json == NULL)
+    {
+        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 CIDR ranges");
+        return false;
+    }
+
+    const cJSON *items       = range_json;
+    int          range_count = 0;
+
+    if (cJSON_IsString(range_json) && range_json->valuestring != NULL)
+    {
+        range_count = 1;
+    }
+    else if (cJSON_IsArray(range_json))
+    {
+        range_count = cJSON_GetArraySize(range_json);
+    }
+
+    if (range_count <= 0)
+    {
+        LOGF("JSON Error: PacketSender->settings->source-ip4-range (string or array field) : expected one or more IPv4 CIDR ranges");
+        return false;
+    }
+
+    state->source_ranges = memoryAllocateZero((size_t) range_count * sizeof(*(state->source_ranges)));
+    state->source_range_count = (uint32_t) range_count;
+
+    uint64_t total_source_count = 0;
+
+    for (int i = 0; i < range_count; ++i)
+    {
+        const cJSON *item = NULL;
+        char         json_path[128];
+        char        *cidr = NULL;
+
+        if (cJSON_IsArray(items))
+        {
+            item = cJSON_GetArrayItem(items, i);
+            stringNPrintf(json_path, sizeof(json_path), "PacketSender->settings->source-ip4-range[%d]", i);
+            if (! cJSON_IsString(item) || item->valuestring == NULL)
+            {
+                LOGF("JSON Error: %s (string field) : expected an IPv4 CIDR range", json_path);
+                return false;
+            }
+            cidr = item->valuestring;
+        }
+        else
+        {
+            item = items;
+            cidr = item->valuestring;
+            stringCopy(json_path, "PacketSender->settings->source-ip4-range");
+        }
+
+        if (! packetsenderParseSourceRange(&state->source_ranges[i], cidr, json_path))
+        {
+            return false;
+        }
+
+        if (state->source_ranges[i].count > (UINT64_MAX - total_source_count))
+        {
+            LOGF("PacketSender: total source range size overflow");
+            return false;
+        }
+
+        total_source_count += state->source_ranges[i].count;
+    }
+
+    state->source_count = total_source_count;
     return true;
 }
 
@@ -241,7 +316,7 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! packetsenderLoadSourceRange(state, settings) || ! packetsenderLoadDestIpv4(state, settings) ||
+    if (! packetsenderLoadSourceRanges(state, settings) || ! packetsenderLoadDestIpv4(state, settings) ||
         ! packetsenderLoadProtocolMode(state, settings) || ! packetsenderLoadDuration(state, settings) ||
         ! packetsenderLoadDestPort(state, settings) || ! packetsenderLoadSrcPort(state, settings))
     {

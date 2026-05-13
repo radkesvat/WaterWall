@@ -17,15 +17,23 @@ typedef struct packetsender_worker_state_s
     wid_t     wid;
 } packetsender_worker_state_t;
 
+typedef struct packetsender_source_range_s
+{
+    uint32_t base_host;
+    uint64_t count;
+    uint8_t  prefix_length;
+    uint8_t  _padding[7];
+} packetsender_source_range_t;
+
 typedef struct packetsender_tstate_s
 {
-    uint32_t source_base_host;
+    packetsender_source_range_t *source_ranges;
+    uint32_t source_range_count;
     uint32_t dest_addr_host;
     uint32_t dest_addr_network;
     uint32_t duration_ms;
     uint16_t dest_port;
     uint16_t src_port;
-    uint8_t  source_prefix_length;
     uint8_t  protocol_mode;
     bool     src_port_random;
     uint8_t  _padding0;

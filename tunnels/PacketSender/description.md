@@ -5,11 +5,12 @@ store at startup and then schedules those packets smoothly across the configured
 lines.
 
 It is meant for one-way packet generation toward another packet-capable adapter such as `RawSocket`.
+It can also accept multiple IPv4 source ranges and walk them in order, finishing one range before moving to the next.
 
 ## What It Does
 
 - acts as a chain-head packet adapter
-- accepts an IPv4 CIDR source range and one IPv4 destination
+- accepts one or more IPv4 CIDR source ranges and one IPv4 destination
 - pre-generates every packet before transmission begins
 - sends packets on the upstream path with `tunnelNextUpStreamPayload()`
 - never closes the shared worker packet lines during normal runtime
@@ -36,7 +37,10 @@ TCP-only:
   "name": "packet-sender",
   "type": "PacketSender",
   "settings": {
-    "source-ip4-range": "198.51.100.0/24",
+    "source-ip4-range": [
+      "198.51.100.0/24",
+      "203.0.113.0/24"
+    ],
     "dest-ip4": "203.0.113.20",
     "protocol-number": "TCP",
     "duration-ms": 5000,
@@ -80,11 +84,16 @@ All protocols:
 
 ### `settings`
 
-- `source-ip4-range` `(string)`
-  Required IPv4 CIDR range, for example `"198.51.100.0/24"`.
+- `source-ip4-range` `(string or array of strings)`
+  Required IPv4 CIDR range or ordered list of IPv4 CIDR ranges, for example:
+  - `"198.51.100.0/24"`
+  - `["198.51.100.0/24", "203.0.113.0/24"]`
 
-  `PacketSender` normalizes this to the subnet base implied by the prefix and generates one packet source address for
-  every IPv4 address in that subnet.
+  `PacketSender` normalizes each subnet to its base address and generates one packet source address for every IPv4
+  address in each subnet.
+
+  When an array is provided, ranges are consumed in the array order: the first range is exhausted, then the second,
+  then the third, and so on.
 
 - `dest-ip4` `(string)`
   Required destination IPv4 address.
@@ -202,4 +211,5 @@ node.
 - it is intentionally one-way and does not expose a downstream client-facing side
 - `dest-port` and `src-port` are used only for generated TCP and UDP packets
 - when `protocol-number` is `ALL`, the TCP and UDP packets inside the set still use those configured ports
+- when `source-ip4-range` is an array, `PacketSender` walks the ranges in order and does not interleave them
 - because it is a layer-3 chain head, worker packet-line init is supplied by Waterwall's normal packet-chain bootstrap
