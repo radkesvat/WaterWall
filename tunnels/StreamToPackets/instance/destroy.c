@@ -18,10 +18,7 @@ void streamtopacketsTunnelDestroy(tunnel_t *t)
 
             streamtopackets_lstate_t *ls = lineGetState(packet_line, t);
 
-            if (ls->read_stream.pool != NULL)
-            {
-                streamtopacketsLinestateDestroy(ls);
-            }
+            streamtopacketsLinestateDestroy(ls);
         }
     }
 

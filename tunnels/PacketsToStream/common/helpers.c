@@ -47,6 +47,12 @@ static void packetstostreamArmTimeoutTimer(tunnel_t *t, wid_t wid)
 static void packetstostreamDisarmTimeoutTimer(tunnel_t *t, wid_t wid)
 {
     packetstostream_tstate_t *ts = tunnelGetState(t);
+
+    if (ts->worker_timeout_timers == NULL)
+    {
+        return;
+    }
+
     wtimer_t                **timer_slot = &ts->worker_timeout_timers[wid];
 
     if (*timer_slot == NULL)
