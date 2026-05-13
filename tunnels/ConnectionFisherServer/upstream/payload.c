@@ -16,11 +16,13 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
 
     if (ls->phase == kConnectionFisherServerPhaseWaitPayload)
     {
+        buffer_pool_t *pool = lineGetBufferPool(l);
+
         ls->next_init_sent = true;
 
         if (! withLineLocked(l, tunnelNextUpStreamInit, t))
         {
-            lineReuseBuffer(l, buf);
+            bufferpoolReuseBuffer(pool, buf);
             return;
         }
 

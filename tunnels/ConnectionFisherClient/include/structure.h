@@ -68,6 +68,7 @@ bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l);
 bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l);
 bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, line_t *child_l);
 void connectionfisherclientCloseMainLine(tunnel_t *t, line_t *main_l);
+void connectionfisherclientCloseMainLineFromUpstream(tunnel_t *t, line_t *main_l);
 void connectionfisherclientCloseChildLine(tunnel_t *t, line_t *child_l, bool force_close_main);
 void connectionfisherclientCloseChildLineFromDownstream(tunnel_t *t, line_t *child_l, bool force_close_main);
 void connectionfisherclientTimeoutTask(tunnel_t *t, line_t *main_l);

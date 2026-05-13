@@ -46,7 +46,7 @@ bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, l
     return true;
 }
 
-void connectionfisherclientCloseMainLine(tunnel_t *t, line_t *main_l)
+static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *main_l, bool send_downstream_finish)
 {
     if (! lineIsAlive(main_l))
     {
@@ -85,12 +85,22 @@ void connectionfisherclientCloseMainLine(tunnel_t *t, line_t *main_l)
         memoryFree(children);
     }
 
-    if (lineIsAlive(main_l))
+    if (send_downstream_finish && lineIsAlive(main_l))
     {
         tunnelPrevDownStreamFinish(t, main_l);
     }
 
     lineUnlock(main_l);
+}
+
+void connectionfisherclientCloseMainLine(tunnel_t *t, line_t *main_l)
+{
+    connectionfisherclientCloseMainLineInternal(t, main_l, true);
+}
+
+void connectionfisherclientCloseMainLineFromUpstream(tunnel_t *t, line_t *main_l)
+{
+    connectionfisherclientCloseMainLineInternal(t, main_l, false);
 }
 
 static void connectionfisherclientCloseChildLineInternal(tunnel_t *t, line_t *child_l, bool force_close_main,
@@ -233,9 +243,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
                 lineMarkEstablished(main_l);
             }
 
-            tunnelPrevDownStreamEst(t, main_l);
-
-            if (! lineIsAlive(main_l))
+            if (! withLineLocked(main_l, tunnelPrevDownStreamEst, t))
             {
                 if (losers != NULL)
                 {

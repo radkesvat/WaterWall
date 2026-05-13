@@ -4,13 +4,18 @@
 
 void encryptionserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    encryptionserver_lstate_t *ls = lineGetState(l, t);
+    lineLock(l);
 
-    if (! ls->prev_finished)
+    encryptionserver_lstate_t *ls = lineGetState(l, t);
+    bool send_prev = ! ls->prev_finished;
+
+    ls->prev_finished = true;
+    encryptionserverLinestateDestroy(ls);
+
+    if (send_prev)
     {
-        ls->prev_finished = true;
         tunnelPrevDownStreamFinish(t, l);
     }
 
-    encryptionserverLinestateDestroy(ls);
+    lineUnlock(l);
 }

@@ -8,7 +8,7 @@ void connectionfisherclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->role == kConnectionFisherClientRoleMain)
     {
-        connectionfisherclientCloseMainLine(t, l);
+        connectionfisherclientCloseMainLineFromUpstream(t, l);
         return;
     }
 

@@ -4,13 +4,18 @@
 
 void encryptionclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    encryptionclient_lstate_t *ls = lineGetState(l, t);
+    lineLock(l);
 
-    if (! ls->next_finished)
+    encryptionclient_lstate_t *ls = lineGetState(l, t);
+    bool send_next = ! ls->next_finished;
+
+    ls->next_finished = true;
+    encryptionclientLinestateDestroy(ls);
+
+    if (send_next)
     {
-        ls->next_finished = true;
         tunnelNextUpStreamFinish(t, l);
     }
 
-    encryptionclientLinestateDestroy(ls);
+    lineUnlock(l);
 }

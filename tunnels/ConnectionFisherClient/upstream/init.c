@@ -2,12 +2,24 @@
 
 #include "loggers/network_logger.h"
 
+static bool connectionfisherclientMainLineStillOpen(tunnel_t *t, line_t *main_l)
+{
+    if (! lineIsAlive(main_l))
+    {
+        return false;
+    }
+
+    connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
+    return main_ls->role == kConnectionFisherClientRoleMain;
+}
+
 void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
 {
     connectionfisherclient_tstate_t *ts      = tunnelGetState(t);
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
 
     connectionfisherclientLinestateInitializeMain(main_ls, main_l, ts->simultaneous_tries_perline);
+    lineLock(main_l);
 
     for (uint32_t i = 0; i < ts->simultaneous_tries_perline; ++i)
     {
@@ -20,9 +32,9 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
 
         if (! withLineLocked(child_l, tunnelNextUpStreamInit, t))
         {
-            connectionfisherclient_lstate_t *check_main_ls = lineGetState(main_l, t);
-            if (! lineIsAlive(main_l) || check_main_ls->role != kConnectionFisherClientRoleMain)
+            if (! connectionfisherclientMainLineStillOpen(t, main_l))
             {
+                lineUnlock(main_l);
                 return;
             }
 
@@ -31,27 +43,28 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
 
         if (! connectionfisherclientSendPing(t, child_l))
         {
-            connectionfisherclient_lstate_t *check_main_ls = lineGetState(main_l, t);
-            if (! lineIsAlive(main_l) || check_main_ls->role != kConnectionFisherClientRoleMain)
+            if (! connectionfisherclientMainLineStillOpen(t, main_l))
             {
+                lineUnlock(main_l);
                 return;
             }
         }
 
+        if (! connectionfisherclientMainLineStillOpen(t, main_l))
         {
-            connectionfisherclient_lstate_t *check_main_ls = lineGetState(main_l, t);
-            if (! lineIsAlive(main_l) || check_main_ls->role != kConnectionFisherClientRoleMain)
-            {
-                return;
-            }
+            lineUnlock(main_l);
+            return;
         }
     }
 
+    main_ls = lineGetState(main_l, t);
     if (main_ls->open_child_count == 0)
     {
         connectionfisherclientCloseMainLine(t, main_l);
+        lineUnlock(main_l);
         return;
     }
 
     lineScheduleDelayedTask(main_l, connectionfisherclientTimeoutTask, kConnectionFisherTimeoutMs, t);
+    lineUnlock(main_l);
 }

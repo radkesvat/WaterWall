@@ -49,20 +49,30 @@ int encryptionclientDecryptAead(uint32_t algorithm, unsigned char *dst, const un
 
 void encryptionclientCloseLineBidirectional(tunnel_t *t, line_t *l)
 {
-    encryptionclient_lstate_t *ls = lineGetState(l, t);
-
-    if (! ls->next_finished)
+    if (! lineIsAlive(l))
     {
-        ls->next_finished = true;
-        if (! withLineLocked(l, tunnelNextUpStreamFinish, t))
-        {
-            return;
-        }
+        return;
     }
 
-    if (! ls->prev_finished)
+    lineLock(l);
+
+    encryptionclient_lstate_t *ls = lineGetState(l, t);
+    bool send_next = ! ls->next_finished;
+    bool send_prev = ! ls->prev_finished;
+
+    ls->next_finished = true;
+    ls->prev_finished = true;
+    encryptionclientLinestateDestroy(ls);
+
+    if (send_next)
     {
-        ls->prev_finished = true;
+        tunnelNextUpStreamFinish(t, l);
+    }
+
+    if (send_prev && lineIsAlive(l))
+    {
         tunnelPrevDownStreamFinish(t, l);
     }
+
+    lineUnlock(l);
 }

@@ -33,5 +33,5 @@ void connectionfisherclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         lineMarkEstablished(ls->main_line);
     }
 
-    tunnelPrevDownStreamEst(t, ls->main_line);
+    (void) withLineLocked(ls->main_line, tunnelPrevDownStreamEst, t);
 }
