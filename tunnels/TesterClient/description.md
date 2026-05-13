@@ -11,8 +11,8 @@ It is meant for validating tunnel composition and payload integrity, not for pro
 - acts as a chain head and creates the test lines itself
 - waits `50 ms` after startup before creating one worker-local test line per chain worker
 - initializes per-line state in `Init`, then drives the request side only after downstream `Est`
-- sends `11` fixed-size request chunks upstream
-- verifies `11` fixed-size response chunks coming back downstream
+- sends `11` fixed-size request chunks upstream by default
+- verifies `11` fixed-size response chunks coming back downstream by default
 - fails fast on any size, order, byte-pattern, or timeout mismatch
 - in normal stream mode, logs success after the full response is verified and exits the program once all workers complete
 - in `packet-mode`, reuses the worker packet line and never expects normal runtime `Finish`
@@ -71,6 +71,8 @@ Current `packet-ipv4` chunk sizes are:
 - `1044`
 - `1499`
 - `1500`
+
+`chunk-count` can limit the active sequence to a prefix of these tables. When omitted, all `11` chunks are used.
 
 ## Typical Placement
 
@@ -176,6 +178,10 @@ Packet mode with synthetic IPv4 packets:
 
   When `true`, early downstream payload is accepted and verified normally. This is useful for validating genuinely
   bidirectional transports where response bytes may arrive while the request side is still active.
+
+- `chunk-count` `(integer)`
+  Limits the request and response sequence to the first N documented chunks for the selected mode.
+  Default: `11`
 
 - `packet-ipv4` `(object)`
   Optional synthetic IPv4 envelope mode for `packet-mode`.

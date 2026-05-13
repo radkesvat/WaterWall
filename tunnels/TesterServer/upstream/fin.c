@@ -13,7 +13,7 @@ void testerserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->request_rx_index != kTesterServerChunkCount || ! ls->response_ready)
+    if (ls->request_rx_index != testerserverGetChunkCount(t) || ! ls->response_ready)
     {
         testerserverFail(t, l, "received finish before full request verification");
         return;

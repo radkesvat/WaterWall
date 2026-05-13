@@ -198,9 +198,9 @@ tunnel_t *pingserverCreate(node_t *node)
     pingserver_tstate_t *state    = tunnelGetState(t);
     const cJSON         *settings = node->node_settings_json;
 
-    if (! (cJSON_IsObject(settings) && settings->child != NULL))
+    if (settings != NULL && ! cJSON_IsObject(settings))
     {
-        LOGF("JSON Error: PingServer->settings (object field) : The object was empty or invalid");
+        LOGF("JSON Error: PingServer->settings (object field) : expected an object when settings is provided");
         pingserverDestroy(t);
         return NULL;
     }

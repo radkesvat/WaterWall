@@ -12,6 +12,7 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint32_t bad_offset = 0;
         uint8_t  expected   = 0;
         uint8_t  actual     = 0;
+        uint8_t  chunk_count = testerclientGetChunkCount(t);
 
         if (! ls->request_complete)
         {
@@ -27,7 +28,7 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (ls->response_rx_index >= kTesterClientChunkCount)
+        if (ls->response_rx_index >= chunk_count)
         {
             lineReuseBuffer(l, buf);
             testerclientFail(t, l, "received more packet-mode responses than expected");
@@ -50,7 +51,7 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         ls->response_rx_index += 1;
 
-        if (ls->response_rx_index == kTesterClientChunkCount)
+        if (ls->response_rx_index == chunk_count)
         {
             ls->response_complete = true;
             testerclientMarkWorkerComplete(t, l);
@@ -80,7 +81,9 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    while (ls->response_rx_index < kTesterClientChunkCount &&
+    const uint8_t chunk_count = testerclientGetChunkCount(t);
+
+    while (ls->response_rx_index < chunk_count &&
            bufferstreamGetBufLen(&ls->read_stream) >= testerclientGetChunkSize(t, ls->response_rx_index))
     {
         uint32_t bad_offset   = 0;
@@ -103,7 +106,7 @@ void testerclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         ls->response_rx_index += 1;
     }
 
-    if (ls->response_rx_index == kTesterClientChunkCount)
+    if (ls->response_rx_index == chunk_count)
     {
         if (! bufferstreamIsEmpty(&ls->read_stream))
         {

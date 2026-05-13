@@ -219,9 +219,18 @@ void testerclientFail(tunnel_t *t, line_t *l, const char *reason)
     terminateProgram(1);
 }
 
+uint8_t testerclientGetChunkCount(tunnel_t *t)
+{
+    testerclient_tstate_t *ts = tunnelGetState(t);
+
+    assert(ts->chunk_count > 0);
+    assert(ts->chunk_count <= kTesterClientChunkCount);
+    return ts->chunk_count;
+}
+
 uint32_t testerclientGetChunkSize(tunnel_t *t, uint8_t index)
 {
-    assert(index < kTesterClientChunkCount);
+    assert(index < testerclientGetChunkCount(t));
     return testerclientGetChunkTable(t)[index];
 }
 
@@ -230,7 +239,9 @@ uint64_t testerclientGetRemainingBytes(tunnel_t *t, uint8_t index)
     uint64_t        remaining   = 0;
     const uint32_t *chunk_sizes = testerclientGetChunkTable(t);
 
-    for (uint8_t i = index; i < kTesterClientChunkCount; ++i)
+    const uint8_t chunk_count = testerclientGetChunkCount(t);
+
+    for (uint8_t i = index; i < chunk_count; ++i)
     {
         remaining += chunk_sizes[i];
     }
@@ -383,7 +394,9 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 
     ls->request_send_scheduled = false;
 
-    while (! ls->request_paused && ls->request_tx_index < kTesterClientChunkCount)
+    const uint8_t chunk_count = testerclientGetChunkCount(t);
+
+    while (! ls->request_paused && ls->request_tx_index < chunk_count)
     {
         uint32_t chunk_size = testerclientGetChunkSize(t, ls->request_tx_index);
         uint32_t remaining  = chunk_size - ls->request_tx_offset;
@@ -417,7 +430,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
         }
     }
 
-    if (ls->request_tx_index == kTesterClientChunkCount)
+    if (ls->request_tx_index == chunk_count)
     {
         ls->request_complete = true;
     }

@@ -12,8 +12,9 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint32_t bad_offset = 0;
         uint8_t  expected   = 0;
         uint8_t  actual     = 0;
+        uint8_t  chunk_count = testerserverGetChunkCount(t);
 
-        if (ls->request_rx_index >= kTesterServerChunkCount)
+        if (ls->request_rx_index >= chunk_count)
         {
             lineReuseBuffer(l, buf);
             testerserverFail(t, l, "received extra packet-mode request payload after verification completed");
@@ -60,7 +61,9 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    while (ls->request_rx_index < kTesterServerChunkCount &&
+    const uint8_t chunk_count = testerserverGetChunkCount(t);
+
+    while (ls->request_rx_index < chunk_count &&
            bufferstreamGetBufLen(&ls->read_stream) >= testerserverGetChunkSize(t, ls->request_rx_index))
     {
         uint32_t bad_offset   = 0;
@@ -84,7 +87,7 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         request_progressed = true;
     }
 
-    if (ls->request_rx_index == kTesterServerChunkCount)
+    if (ls->request_rx_index == chunk_count)
     {
         if (! bufferstreamIsEmpty(&ls->read_stream))
         {

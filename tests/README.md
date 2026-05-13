@@ -69,6 +69,17 @@ Practical rule:
 - `udp_listener_packet_bridge_roundtrip`
   Verifies that `PacketsToStream -> UdpConnector -> UdpListener -> StreamToPackets` preserves packet integrity across
   a real UDP loopback transport while multiple workers create independent UDP peers against one shared listener socket.
+- `ping_new_ip_icmp_roundtrip`
+  Verifies `PingClient` and `PingServer` with `wrap-in-new-ip-and-icmp-header`, including outer IPv4/ICMP wrapping,
+  ICMP payload XOR, and roundup padding.
+- `ping_reuse_ipv4_addresses_roundtrip`
+  Verifies `wrap-in-icmp-header-and-reuse-ipv4-addresses`, including reuse of the original IPv4 header and restoration
+  of the tester packet's original IPv4 protocol.
+- `ping_only_icmp_roundtrip`
+  Verifies `wrap-in-only-icmp-header` using raw packet-mode bytes rather than synthetic IPv4 packets.
+- `ping_protocol_swap_roundtrip`
+  Verifies `change-only-ipv4-protocol-number` over the full packet IPv4 corpus because this strategy does not add
+  bytes to packets.
 - `halfduplex_roundtrip`
   Verifies that `HalfDuplexClient` and `HalfDuplexServer` split and reconstruct one logical line correctly.
 - `http1_bidirectional_roundtrip`

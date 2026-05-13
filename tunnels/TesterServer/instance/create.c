@@ -114,10 +114,22 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
 
     testerserver_tstate_t *ts       = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;
+    int                    chunk_count = kTesterServerChunkCount;
 
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_init_on_start, settings, "packet-init-on-start", false);
     getBoolFromJsonObjectOrDefault(&ts->streaming_response, settings, "streaming-response", false);
+    getIntFromJsonObjectOrDefault(&chunk_count, settings, "chunk-count", kTesterServerChunkCount);
+
+    if (chunk_count <= 0 || chunk_count > kTesterServerChunkCount)
+    {
+        LOGF("JSON Error: TesterServer->settings->chunk-count (int field) : expected a value between 1 and %u",
+             (unsigned int) kTesterServerChunkCount);
+        testerserverTunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->chunk_count = (uint8_t) chunk_count;
 
     if (ts->packet_init_on_start && ! ts->packet_mode)
     {

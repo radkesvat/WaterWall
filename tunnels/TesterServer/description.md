@@ -10,8 +10,8 @@ It is meant for validating tunnel correctness and data integrity, not for servin
 - acts as a chain end and receives the synthetic test flow from the previous node
 - initializes per-line state during upstream `Init`
 - immediately reports downstream `Est` so the chain head can begin sending requests
-- verifies the fixed `11`-chunk request sequence coming from upstream
-- sends the fixed `11`-chunk response sequence back downstream
+- verifies the fixed `11`-chunk request sequence coming from upstream by default
+- sends the fixed `11`-chunk response sequence back downstream by default
 - aborts the process on any size, order, byte-pattern, or lifecycle mismatch
 - in `packet-mode`, uses the worker packet line and never expects normal runtime `Finish`
 - optionally wraps packet-mode request and response chunks in a synthetic IPv4 packet with configured source,
@@ -64,6 +64,8 @@ Current `packet-ipv4` chunk sizes are:
 - `1044`
 - `1499`
 - `1500`
+
+`chunk-count` can limit the active sequence to a prefix of these tables. When omitted, all `11` chunks are used.
 
 ## Typical Placement
 
@@ -154,6 +156,10 @@ Packet mode with synthetic IPv4 packets:
 
   When `true`, response chunks become eligible to send as soon as the matching request chunks are verified. This is
   useful for validating bidirectional transports where the response must overlap the request.
+
+- `chunk-count` `(integer)`
+  Limits the request and response sequence to the first N documented chunks for the selected mode.
+  Default: `11`
 
 - `packet-ipv4` `(object)`
   Optional synthetic IPv4 envelope mode for `packet-mode`.

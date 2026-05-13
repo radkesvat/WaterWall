@@ -221,9 +221,18 @@ void testerserverFail(tunnel_t *t, line_t *l, const char *reason)
     terminateProgram(1);
 }
 
+uint8_t testerserverGetChunkCount(tunnel_t *t)
+{
+    testerserver_tstate_t *ts = tunnelGetState(t);
+
+    assert(ts->chunk_count > 0);
+    assert(ts->chunk_count <= kTesterServerChunkCount);
+    return ts->chunk_count;
+}
+
 uint32_t testerserverGetChunkSize(tunnel_t *t, uint8_t index)
 {
-    assert(index < kTesterServerChunkCount);
+    assert(index < testerserverGetChunkCount(t));
     return testerserverGetChunkTable(t)[index];
 }
 
@@ -232,7 +241,9 @@ uint64_t testerserverGetRemainingBytes(tunnel_t *t, uint8_t index)
     uint64_t remaining = 0;
     const uint32_t *chunk_sizes = testerserverGetChunkTable(t);
 
-    for (uint8_t i = index; i < kTesterServerChunkCount; ++i)
+    const uint8_t chunk_count = testerserverGetChunkCount(t);
+
+    for (uint8_t i = index; i < chunk_count; ++i)
     {
         remaining += chunk_sizes[i];
     }
@@ -393,7 +404,7 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
     }
     else
     {
-        uint8_t response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? kTesterServerChunkCount : 0);
+        uint8_t response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? testerserverGetChunkCount(t) : 0);
 
         if (ls->response_paused || ls->response_tx_index >= response_limit)
         {
@@ -428,7 +439,9 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
             }
         }
 
-        if (ls->request_rx_index == kTesterServerChunkCount && ls->response_tx_index == kTesterServerChunkCount &&
+        const uint8_t chunk_count = testerserverGetChunkCount(t);
+
+        if (ls->request_rx_index == chunk_count && ls->response_tx_index == chunk_count &&
             bufferqueueGetBufCount(&ls->response_queue) == 0)
         {
             ls->response_sent = true;
@@ -437,7 +450,8 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    uint8_t response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? kTesterServerChunkCount : 0);
+    const uint8_t chunk_count = testerserverGetChunkCount(t);
+    uint8_t       response_limit = ts->streaming_response ? ls->request_rx_index : (ls->response_ready ? chunk_count : 0);
 
     while (! ls->response_paused && ls->response_tx_index < response_limit)
     {
@@ -473,7 +487,7 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         }
     }
 
-    if (ls->response_tx_index == kTesterServerChunkCount)
+    if (ls->response_tx_index == chunk_count)
     {
         ls->response_sent = true;
     }

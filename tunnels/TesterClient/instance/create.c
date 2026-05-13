@@ -115,11 +115,13 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     testerclient_tstate_t *ts       = tunnelGetState(t);
     const cJSON           *settings = node->node_settings_json;
     int                    packet_start_delay_ms = 0;
+    int                    chunk_count = kTesterClientChunkCount;
 
     getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_start_immediately, settings, "packet-start-immediately", false);
     getIntFromJsonObjectOrDefault(&packet_start_delay_ms, settings, "packet-start-delay-ms", 0);
+    getIntFromJsonObjectOrDefault(&chunk_count, settings, "chunk-count", kTesterClientChunkCount);
 
     if (packet_start_delay_ms < 0)
     {
@@ -129,6 +131,16 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     }
 
     ts->packet_start_delay_ms = (uint32_t) packet_start_delay_ms;
+
+    if (chunk_count <= 0 || chunk_count > kTesterClientChunkCount)
+    {
+        LOGF("JSON Error: TesterClient->settings->chunk-count (int field) : expected a value between 1 and %u",
+             (unsigned int) kTesterClientChunkCount);
+        testerclientTunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->chunk_count = (uint8_t) chunk_count;
 
     if ((ts->packet_start_immediately || ts->packet_start_delay_ms > 0) && ! ts->packet_mode)
     {

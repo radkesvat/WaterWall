@@ -23,6 +23,7 @@ typedef struct testerserver_tstate_s
     bool        packet_ipv4_mode;
     uint32_t    packet_ipv4_source_addr;
     uint32_t    packet_ipv4_dest_addr;
+    uint8_t     chunk_count;
     uint8_t     packet_ipv4_protocol;
     uint8_t     packet_ipv4_ttl;
     atomic_uint packet_ipv4_identification;
@@ -74,6 +75,7 @@ void testerserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void     testerserverLinestateInitialize(testerserver_lstate_t *ls, buffer_pool_t *pool);
 void     testerserverLinestateDestroy(testerserver_lstate_t *ls);
 void     testerserverFail(tunnel_t *t, line_t *l, const char *reason);
+uint8_t  testerserverGetChunkCount(tunnel_t *t);
 uint32_t testerserverGetChunkSize(tunnel_t *t, uint8_t index);
 uint64_t testerserverGetRemainingBytes(tunnel_t *t, uint8_t index);
 sbuf_t  *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, uint32_t chunk_offset,
