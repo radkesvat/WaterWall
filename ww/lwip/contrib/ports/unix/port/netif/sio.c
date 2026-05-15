@@ -122,6 +122,7 @@ static int sio_init( char * device, int devnum, sio_status_t * siostat )
 	struct termios oldtio,newtio;
 #if ! (PPP_SUPPORT || LWIP_HAVE_SLIPIF)
 	struct sigaction saio;           /* definition of signal action */
+	int flags;
 #endif
 	int fd;
 	LWIP_UNUSED_ARG(siostat);
@@ -161,9 +162,14 @@ static int sio_init( char * device, int devnum, sio_status_t * siostat )
 		perror( device );
 		exit( -1 );
 	}
-	/* Make the file descriptor asynchronous (the manual page says only
-	O_APPEND and O_NONBLOCK, will work with F_SETFL...) */
-       	if ( fcntl( fd, F_SETFL, FASYNC ) != 0)
+	/* Make the file descriptor asynchronous without clearing O_NONBLOCK. */
+	flags = fcntl( fd, F_GETFL, 0 );
+	if ( flags < 0 )
+	{
+		perror( device );
+		exit( -1 );
+	}
+	if ( fcntl( fd, F_SETFL, flags | O_NONBLOCK | FASYNC ) != 0)
 	{
 		perror( device );
 		exit( -1 );

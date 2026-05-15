@@ -28,7 +28,7 @@ u8_t fifoGet(fifo_t * fifo)
 
 	sys_sem_wait(&fifo->sem);      /* enter critical section */
 
-	if (fifo->dataslot == fifo->emptyslot)
+	while (fifo->len == 0)
 	{
             fifo->getWaiting = TRUE;    /* tell putFifo to signal us when data is available */
             sys_sem_signal(&fifo->sem);  /* leave critical section (allow input from serial port..) */
@@ -54,7 +54,7 @@ s16_t fifoGetNonBlock(fifo_t * fifo)
 
 	sys_sem_wait(&fifo->sem);      /* enter critical section */
 
-	if (fifo->dataslot == fifo->emptyslot)
+	if (fifo->len == 0)
 	{
             /* empty fifo */
 		c = -1;
@@ -77,22 +77,50 @@ s16_t fifoGetNonBlock(fifo_t * fifo)
 void fifoPut(fifo_t * fifo, int fd)
 {
 	/* FIXME: mutex around struct data.. */
-	int cnt=0;
+	int cnt;
+	int read_len;
+	int do_signal = FALSE;
 
 	sys_sem_wait(&fifo->sem ); /* enter critical */
 
 	LWIP_DEBUGF( SIO_FIFO_DEBUG,("fifoput: len%d dat%d empt%d --> ", fifo->len, fifo->dataslot, fifo->emptyslot ) );
 
-	if ( fifo->emptyslot < fifo->dataslot )
+	while ( fifo->len < FIFOSIZE )
 	{
-		cnt = read( fd, &fifo->data[fifo->emptyslot], fifo->dataslot - fifo->emptyslot );
+		if ( fifo->emptyslot < fifo->dataslot )
+		{
+			read_len = fifo->dataslot - fifo->emptyslot;
+		}
+		else
+		{
+			read_len = FIFOSIZE - fifo->emptyslot;
+		}
+
+		if ( read_len == 0 )
+		{
+			fifo->emptyslot = 0;
+			LWIP_DEBUGF( SIO_FIFO_DEBUG, ("(WRAP) ") );
+			continue;
+		}
+
+		cnt = (int)read( fd, &fifo->data[fifo->emptyslot], read_len );
+		if ( cnt <= 0 )
+		{
+			break;
+		}
+
+		fifo->emptyslot += cnt;
+		fifo->len += cnt;
+		do_signal = TRUE;
+
+		if ( fifo->emptyslot == FIFOSIZE )
+		{
+			fifo->emptyslot = 0;
+			LWIP_DEBUGF( SIO_FIFO_DEBUG, ("(WRAP) ") );
+			continue;
+		}
+		break;
 	}
-	else
-	{
-		cnt = read( fd, &fifo->data[fifo->emptyslot], FIFOSIZE-fifo->emptyslot );
-	}
-	fifo->emptyslot += cnt;
-	fifo->len += cnt;
 
 	LWIP_DEBUGF( SIO_FIFO_DEBUG,("len%d dat%d empt%d\n", fifo->len, fifo->dataslot, fifo->emptyslot ) );
 
@@ -104,16 +132,7 @@ void fifoPut(fifo_t * fifo, int fd)
 		fifo->len = 0;
 	}
 
-	if ( fifo->emptyslot == FIFOSIZE )
-	{
-		fifo->emptyslot = 0;
-		LWIP_DEBUGF( SIO_FIFO_DEBUG, ("(WRAP) ") );
-
-		sys_sem_signal(&fifo->sem ); /* leave critical */
-		fifoPut( fifo, fd );
-		return;
-	}
-	if ( fifo->getWaiting )
+	if ( do_signal && fifo->getWaiting )
 	{
 		fifo->getWaiting = FALSE;
 		sys_sem_signal(&fifo->getSem );
