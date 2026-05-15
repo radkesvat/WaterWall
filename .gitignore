@@ -1,6 +1,7 @@
 .DS_Store
 node_modules
 /build
+/WaterWall-Docs
 
 /tunnels/shared/protobuf/generator
 /core/texts
