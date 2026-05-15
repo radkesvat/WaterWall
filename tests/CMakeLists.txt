@@ -74,3 +74,20 @@ add_waterwall_integration_test(waterwall.ping_only_icmp_roundtrip ping_only_icmp
 add_waterwall_integration_test(waterwall.ping_protocol_swap_roundtrip ping_protocol_swap_roundtrip)
 add_waterwall_integration_test(waterwall.reverse_tcp_bridge_roundtrip reverse_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.wireguard_udpstateless_packet_roundtrip wireguard_udpstateless_packet_roundtrip)
+
+if(TARGET ww)
+  add_executable(aes256gcm_test aes256gcm_test.c)
+  target_link_libraries(aes256gcm_test PRIVATE ww)
+
+  add_test(
+    NAME waterwall.aes256gcm_unit
+    COMMAND $<TARGET_FILE:aes256gcm_test>
+  )
+
+  set_tests_properties(
+    waterwall.aes256gcm_unit
+    PROPERTIES
+      TIMEOUT 30
+      LABELS "unit;crypto;aes256gcm"
+  )
+endif()
