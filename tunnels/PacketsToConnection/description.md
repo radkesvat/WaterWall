@@ -42,12 +42,18 @@ Unsupported packets are dropped conservatively.
 
 Upstream payload must be a full IPv4 packet.
 
-For each destination IPv4 address, `PacketsToConnection` creates an lwIP `netif` on demand.
+`PacketsToConnection` does not create one lwIP `netif` per destination IP.
 
-For each destination port on that `netif`:
+Instead, it keeps a worker-local route context for each packet worker that sends packets into the tunnel. For IPv4, that route context owns one lwIP `netif` with `NETIF_FLAG_PRETEND` enabled.
 
-- TCP gets an lwIP listener on first SYN
-- UDP gets an lwIP PCB on first matching datagram
+The destination IP is preserved in the packet and in the lwIP PCB tuple, but it is not used as the key for creating separate route contexts. In the current source, the IPv4 route-context lookup is keyed by packet worker id.
+
+For each worker-local pretend netif:
+
+- TCP gets one pretend wildcard listener on first TCP packet
+- UDP gets one pretend wildcard PCB on first UDP packet
+
+The Waterwall lwIP pretend patch lets those wildcard PCBs accept packets for arbitrary destination addresses and ports on the pretend netif while still preserving the original local destination tuple.
 
 ### TCP flow creation
 
@@ -60,9 +66,16 @@ When lwIP accepts a TCP connection:
 
 Downstream payload from the next tunnel is written back into lwIP with `tcp_write()`.
 
+The TCP listener is not per destination port. It is bound as a pretend listener on the worker-local netif, and accepted TCP PCBs carry the original destination IP and port from the packet.
+
 ### UDP flow creation
 
-UDP is tracked per worker, per destination route, and per source tuple.
+UDP is tracked per worker-local route context and per 4-tuple:
+
+- source IPv4 address
+- destination IPv4 address
+- source port
+- destination port
 
 When the first datagram for a UDP flow arrives:
 
@@ -71,9 +84,11 @@ When the first datagram for a UDP flow arrives:
 - schedules upstream `Init`
 - forwards datagrams with upstream `Payload`
 
-Downstream payload from the next tunnel is sent back with `udp_sendto()`.
+Downstream payload from the next tunnel is sent back through the connected UDP PCB, using the original local destination address and port as the packet source.
 
 UDP lines are closed by idle timeout, not by packet half-close semantics.
+
+Like TCP, the initial UDP listener is not per destination port. The pretend UDP path creates or reuses a connected per-flow UDP PCB carrying the original source and destination tuple, and `PacketsToConnection` maps that tuple to a Waterwall line.
 
 ## Worker And Lifetime Model
 
@@ -82,11 +97,15 @@ This tunnel sits on a shared packet line on the packet side and creates normal W
 Important internal rules:
 
 - the packet line is not closed during runtime
+- packet-line `Init` is a startup/bootstrap event, not a per-flow open
 - generated TCP/UDP Waterwall lines are owned by the packet worker that accepted the flow
 - lwIP callbacks hand work back to the owning line worker through `lineScheduleTask()` and `lineScheduleTaskWithBuf()`
 - delayed UDP idle close runs on the line owner with `lineScheduleDelayedTask()`
+- packets emitted back to the packet side use the worker packet line for that packet worker
 
 This keeps line destruction and tunnel state teardown on the normal Waterwall line side instead of relying on ad-hoc cross-worker message ownership.
+
+The internally created TCP/UDP lines are normal connection lines. They are separate from the persistent worker packet line and may be closed and destroyed during normal runtime.
 
 ## Finish / Close Behavior
 
@@ -106,6 +125,8 @@ When the next tunnel sends downstream `Finish`:
 It does not reflect that downstream `Finish` back toward upstream.
 
 That matches Waterwall's direction rules for internally created lines.
+
+The shared packet line is not destroyed by these flow closes. It remains alive until the tunnel chain is destroyed.
 
 ## Pause / Resume
 
@@ -156,7 +177,7 @@ The minimum allowed `udp-idle-timeout-ms` value is `1`.
 - `cache-size` `(int, default: 10000)`
 - `ttl` `(int seconds, default: 1)`
 
-The legacy key `mapdns` is accepted as an alias for `fake-dns`.
+The legacy key `mapdns` is accepted as an alias for `fake-dns`. The key `fake_dns` is also accepted.
 
 ### Example
 
@@ -198,8 +219,10 @@ The key idea is that the previous side is packet-oriented, while the next side i
 - IPv6 is not implemented
 - ICMP is not implemented
 - UDP pause is lossy, not queued
-- route/netif contexts are created on demand and are not currently exposed as a tuning surface
+- IPv4 route/netif contexts are created on demand per packet worker, not per destination IP, and are not currently exposed as a tuning surface
+- TCP and UDP listeners are pretend wildcard PCBs on the worker-local netif, not one listener per destination port
 - this node assumes packet payload really is IP traffic and does not validate every malformed edge case beyond conservative basic checks
+- this node is not a packet-framing tunnel and does not add per-payload headers; its node declares no extra left-padding requirement
 
 ## Difference From PacketsToStream
 
