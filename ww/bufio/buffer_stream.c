@@ -60,33 +60,7 @@ void bufferstreamDestroy(buffer_stream_t *self)
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 {
     assert(self != NULL && buf != NULL);
-
-    // BUFFER_WONT_BE_REUSED(buf);
-
-    // if (self->size > 0 && bs_doublequeue_t_size(&self->q) == 1)
-    // {
-    //     sbuf_t  *last       = *bs_doublequeue_t_front(&self->q);
-    //     uint32_t write_size = min(sbufGetMaximumWriteableSize(last), sbufGetLength(buf));
-
-    //     if (write_size > 0)
-    //     {
-    //         // Check for potential overflow
-    //         assert(self->size <= SIZE_MAX - write_size);
-
-    //         sbufWriteLarge(last, buf, write_size);
-    //         sbufSetLength(last, sbufGetLength(last) + write_size);
-    //         self->size += write_size;
-
-    //         sbufShiftRight(buf, write_size);
-
-    //         if (sbufGetLength(buf) == 0)
-    //         {
-    //             sbufDestroy(buf);
-    //             return;
-    //         }
-    //     }
-    // }
-
+    
     size_t buf_len = sbufGetLength(buf);
     bufferstreamCheckSbufByteCount(buf_len, "push");
 
