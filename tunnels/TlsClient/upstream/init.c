@@ -6,12 +6,31 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     tlsclient_tstate_t *ts = tunnelGetState(t);
     tlsclient_lstate_t *ls = lineGetState(l, t);
+    sbuf_t             *ech_payload = NULL;
 
     tlsclientLinestateInitialize(ls, ts->threadlocal_ssl_contexts[lineGetWID(l)]);
 
-    SSL_set_connect_state(ls->ssl); /* sets ssl to work in client mode. */
-    SSL_set_bio(ls->ssl, ls->rbio, ls->wbio);
-    SSL_set_tlsext_host_name(ls->ssl, ts->sni);
+    if (! tlsclientCreateEchGreaseInnerClientHello(ts, lineGetWID(l), &ech_payload))
+    {
+        goto failed;
+    }
+
+    if (! tlsclientConfigureSslForConnect(
+            ls->ssl,
+            ls->rbio,
+            ls->wbio,
+            ts->sni,
+            ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
+            ech_payload != NULL ? sbufGetLength(ech_payload) : 0))
+    {
+        goto failed;
+    }
+
+    if (ech_payload != NULL)
+    {
+        lineReuseBuffer(l, ech_payload);
+        ech_payload = NULL;
+    }
 
     if (! withLineLocked(l, tunnelNextUpStreamInit, t))
     {
@@ -63,6 +82,11 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     terminateProgram(1);
 
 failed:
+    if (ech_payload != NULL)
+    {
+        lineReuseBuffer(l, ech_payload);
+    }
+
     LOGW("TlsClient: upstream init failed: boringssl state is printed below");
     tlsclientPrintSSLState(ls->ssl);
 

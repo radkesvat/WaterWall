@@ -719,6 +719,70 @@ static size_t random_size(size_t min, size_t max) {
   return value % (max - min + 1) + min;
 }
 
+static bool maybe_apply_ech_grease_override_name(SSL_HANDSHAKE *hs) {
+  if (hs->ech_client_outer.empty() || hs->config->ech_grease_override_name.empty()) {
+    return true;
+  }
+
+  SSL *const ssl = hs->ssl;
+  if (ssl->hostname == nullptr) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    return false;
+  }
+
+  const auto override_name = Span(hs->config->ech_grease_override_name);
+  const auto outer_name = StringAsBytes(ssl->hostname.get());
+  if (override_name.size() != outer_name.size() ||
+      override_name.size() > 0xffff - 5) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    return false;
+  }
+
+  CBS ech_outer, enc, payload;
+  uint16_t kdf_id, aead_id;
+  uint8_t config_id;
+  CBS_init(&ech_outer, hs->ech_client_outer.data(), hs->ech_client_outer.size());
+  if (!CBS_get_u16(&ech_outer, &kdf_id) ||
+      !CBS_get_u16(&ech_outer, &aead_id) ||
+      !CBS_get_u8(&ech_outer, &config_id) ||
+      !CBS_get_u16_length_prefixed(&ech_outer, &enc) ||
+      !CBS_get_u16_length_prefixed(&ech_outer, &payload) ||
+      CBS_len(&ech_outer) != 0) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    return false;
+  }
+  static_cast<void>(kdf_id);
+  static_cast<void>(aead_id);
+  static_cast<void>(config_id);
+
+  const size_t copied_sni_len = 9 + override_name.size();
+  if (CBS_len(&payload) < copied_sni_len) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    return false;
+  }
+
+  uint8_t *payload_ptr =
+      hs->ech_client_outer.data() +
+      (CBS_data(&payload) - hs->ech_client_outer.data());
+  const uint16_t extension_len = static_cast<uint16_t>(override_name.size() + 5);
+  const uint16_t server_name_list_len =
+      static_cast<uint16_t>(override_name.size() + 3);
+  const uint16_t hostname_len = static_cast<uint16_t>(override_name.size());
+
+  payload_ptr[0] = 0;
+  payload_ptr[1] = 0;
+  payload_ptr[2] = static_cast<uint8_t>(extension_len >> 8);
+  payload_ptr[3] = static_cast<uint8_t>(extension_len);
+  payload_ptr[4] = static_cast<uint8_t>(server_name_list_len >> 8);
+  payload_ptr[5] = static_cast<uint8_t>(server_name_list_len);
+  payload_ptr[6] = TLSEXT_NAMETYPE_host_name;
+  payload_ptr[7] = static_cast<uint8_t>(hostname_len >> 8);
+  payload_ptr[8] = static_cast<uint8_t>(hostname_len);
+  OPENSSL_memcpy(payload_ptr + 9, override_name.data(), override_name.size());
+
+  return true;
+}
+
 static bool setup_ech_grease(SSL_HANDSHAKE *hs) {
   assert(!hs->selected_ech_config);
   if (hs->max_version < TLS1_3_VERSION || !hs->config->ech_grease_enabled) {
@@ -754,8 +818,11 @@ static bool setup_ech_grease(SSL_HANDSHAKE *hs) {
   // The server_name extension has an overhead of 9 bytes. For now, arbitrarily
   // estimate maximum_name_length to be between 32 and 100 bytes. Then round up
   // to a multiple of 32, to match draft-ietf-tls-esni-13, section 6.1.3.
+  const auto override_payload = Span(hs->config->ech_grease_override_payload);
   const size_t payload_len =
-      32 * random_size(128 / 32, 224 / 32) + aead_overhead(aead);
+      override_payload.empty()
+          ? 32 * random_size(128 / 32, 224 / 32) + aead_overhead(aead)
+          : override_payload.size();
   bssl::ScopedCBB cbb;
   CBB enc_cbb, payload_cbb;
   uint8_t *payload;
@@ -765,9 +832,20 @@ static bool setup_ech_grease(SSL_HANDSHAKE *hs) {
       !CBB_add_u16_length_prefixed(cbb.get(), &enc_cbb) ||
       !CBB_add_bytes(&enc_cbb, enc, sizeof(enc)) ||
       !CBB_add_u16_length_prefixed(cbb.get(), &payload_cbb) ||
-      !CBB_add_space(&payload_cbb, &payload, payload_len) ||
-      !RAND_bytes(payload, payload_len) ||
-      !CBBFinishArray(cbb.get(), &hs->ech_client_outer)) {
+      !CBB_add_space(&payload_cbb, &payload, payload_len)) {
+    return false;
+  }
+
+  if (override_payload.empty()) {
+    if (!RAND_bytes(payload, payload_len)) {
+      return false;
+    }
+  } else {
+    OPENSSL_memcpy(payload, override_payload.data(), override_payload.size());
+  }
+
+  if (!CBBFinishArray(cbb.get(), &hs->ech_client_outer) ||
+      (override_payload.empty() && !maybe_apply_ech_grease_override_name(hs))) {
     return false;
   }
   return true;
@@ -911,6 +989,35 @@ void SSL_set_enable_ech_grease(SSL *ssl, int enable) {
     return;
   }
   ssl->config->ech_grease_enabled = !!enable;
+}
+
+int SSL_set1_ech_grease_override_name(SSL *ssl, const uint8_t *name,
+                                      size_t name_len) {
+  if (!ssl->config) {
+    return 0;
+  }
+
+  if (name == nullptr || name_len == 0) {
+    ssl->config->ech_grease_override_name.Reset();
+    return 1;
+  }
+
+  return ssl->config->ech_grease_override_name.CopyFrom(Span(name, name_len));
+}
+
+int SSL_set1_ech_grease_override_payload(SSL *ssl, const uint8_t *payload,
+                                         size_t payload_len) {
+  if (!ssl->config) {
+    return 0;
+  }
+
+  if (payload == nullptr || payload_len == 0) {
+    ssl->config->ech_grease_override_payload.Reset();
+    return 1;
+  }
+
+  return ssl->config->ech_grease_override_payload.CopyFrom(
+      Span(payload, payload_len));
 }
 
 int SSL_set1_ech_config_list(SSL *ssl, const uint8_t *ech_config_list,

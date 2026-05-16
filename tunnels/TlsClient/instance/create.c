@@ -59,6 +59,31 @@ static void getX25519MLKEM768Setting(tlsclient_tstate_t *ts, const cJSON *settin
     getBoolFromJsonObjectOrDefault(&ts->x25519mlkem768_enabled, settings, "x25519mlkem768", true);
 }
 
+static void getVerifySetting(tlsclient_tstate_t *ts, const cJSON *settings)
+{
+    getBoolFromJsonObjectOrDefault(&ts->verify, settings, "verify", true);
+}
+
+static bool getAndValidateEchGreaseSniOverrideSetting(tlsclient_tstate_t *ts, const cJSON *settings, tunnel_t *t)
+{
+    if (! getStringFromJsonObject(&(ts->ech_grease_sni_override), settings, "ech-sni-trick"))
+    {
+        return true;
+    }
+
+    const size_t override_len = stringLength(ts->ech_grease_sni_override);
+
+    if (override_len == 0)
+    {
+        LOGF("JSON Error: TlsClient->settings->ech-sni-trick (string field) : The data was empty or invalid");
+        tlsclientTunnelstateDestroy(ts);
+        tunnelDestroy(t);
+        return false;
+    }
+
+    return true;
+}
+
 static const char *getSupportedGroupsList(bool x25519mlkem768_enabled)
 {
     if (x25519mlkem768_enabled)
@@ -107,7 +132,7 @@ static bool loadCaCertificates(SSL_CTX *ssl_ctx)
     return true;
 }
 
-static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool x25519mlkem768_enabled)
+static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool verify, bool x25519mlkem768_enabled)
 {
     SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_client_method());
 
@@ -116,7 +141,7 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool x25519m
         return NULL;
     }
 
-    SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
+    SSL_CTX_set_verify(ssl_ctx, verify ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, NULL);
 
     if (! SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_2_VERSION))
     {
@@ -150,7 +175,8 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool x25519m
     }
 
     // Enable certificate compression with brotli (Chrome supports this)
-    SSL_CTX_add_cert_compression_alg(ssl_ctx, TLSEXT_cert_compression_brotli,
+    SSL_CTX_add_cert_compression_alg(ssl_ctx,
+                                     TLSEXT_cert_compression_brotli,
                                      NULL /* compression not supported (same as chrome)*/,
                                      tlsclientDecompressBrotliCert);
 
@@ -159,28 +185,29 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool x25519m
 
     // Configure signature algorithms to match Chrome
     // Chrome uses these signature algorithms in this order
-    if (! SSL_CTX_set1_sigalgs_list(ssl_ctx, "ecdsa_secp256r1_sha256:"
-                                             "rsa_pss_rsae_sha256:"
-                                             "rsa_pkcs1_sha256:"
-                                             "ecdsa_secp384r1_sha384:"
-                                             "rsa_pss_rsae_sha384:"
-                                             "rsa_pkcs1_sha384:"
-                                             "rsa_pss_rsae_sha512:"
-                                             "rsa_pkcs1_sha512"))
+    if (! SSL_CTX_set1_sigalgs_list(ssl_ctx,
+                                    "ecdsa_secp256r1_sha256:"
+                                    "rsa_pss_rsae_sha256:"
+                                    "rsa_pkcs1_sha256:"
+                                    "ecdsa_secp384r1_sha384:"
+                                    "rsa_pss_rsae_sha384:"
+                                    "rsa_pkcs1_sha384:"
+                                    "rsa_pss_rsae_sha512:"
+                                    "rsa_pkcs1_sha512"))
     {
         LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set signature algorithms for SSL_CTX");
         SSL_CTX_free(ssl_ctx);
         return NULL;
     }
 
-    if (! loadCaCertificates(ssl_ctx))
+    if (verify && ! loadCaCertificates(ssl_ctx))
     {
         SSL_CTX_free(ssl_ctx);
         return NULL;
     }
 
     // boringssl: Note this function's return value is backwards.
-    if (SSL_CTX_set_alpn_protos(ssl_ctx, (const unsigned char *)alpn_format, alpn_len))
+    if (SSL_CTX_set_alpn_protos(ssl_ctx, (const unsigned char *) alpn_format, alpn_len))
     {
         LOGF("TlsClient: (part of making SSL_CTX match chrome) Failed to set ALPN for SSL_CTX (len=%zu)", alpn_len);
         SSL_CTX_free(ssl_ctx);
@@ -190,14 +217,14 @@ static SSL_CTX *setupSslContext(void *alpn_format, size_t alpn_len, bool x25519m
 }
 
 static bool createSslContextPool(SSL_CTX ***out_contexts, void *alpn_format, size_t alpn_len, int worker_count,
-                                 bool x25519mlkem768_enabled)
+                                 bool verify, bool x25519mlkem768_enabled)
 {
     *out_contexts = memoryAllocate((size_t) worker_count * sizeof(SSL_CTX *));
     memoryZero(*out_contexts, (size_t) worker_count * sizeof(SSL_CTX *));
 
     for (int i = 0; i < worker_count; i++)
     {
-        (*out_contexts)[i] = setupSslContext(alpn_format, alpn_len, x25519mlkem768_enabled);
+        (*out_contexts)[i] = setupSslContext(alpn_format, alpn_len, verify, x25519mlkem768_enabled);
 
         if ((*out_contexts)[i] == NULL)
         {
@@ -225,9 +252,12 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     }
 
     getX25519MLKEM768Setting(ts, settings);
+    getVerifySetting(ts, settings);
+    if (! getAndValidateEchGreaseSniOverrideSetting(ts, settings, t))
+    {
+        return NULL;
+    }
     // We want to build up exact chrome handshake, so we dont ask for alpn settings
-
-    // getBoolFromJsonObjectOrDefault(&(ts->verify), settings, "verify", true);
 
     // if (!validateAlpnSetting(ts, settings, t))
     // {
@@ -237,11 +267,38 @@ tunnel_t *tlsclientTunnelCreate(node_t *node)
     // size_t alpn_len = stringLength(ts->alpn);
     // void *alpn_format = createAlpnFormat(ts->alpn, alpn_len);
 
-    const uint8_t chrome_alpn[] = {2, 'h', '2', // HTTP/2
-                                   8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    const uint8_t chrome_alpn[] = {2,
+                                   'h',
+                                   '2', // HTTP/2
+                                   8,
+                                   'h',
+                                   't',
+                                   't',
+                                   'p',
+                                   '/',
+                                   '1',
+                                   '.',
+                                   '1'};
 
-    if (! createSslContextPool(&(ts->threadlocal_ssl_contexts), (void *) &chrome_alpn[0], sizeof(chrome_alpn),
-                               worker_count, ts->x25519mlkem768_enabled))
+    if (! createSslContextPool(&(ts->threadlocal_ssl_contexts),
+                               (void *) &chrome_alpn[0],
+                               sizeof(chrome_alpn),
+                               worker_count,
+                               ts->verify,
+                               ts->x25519mlkem768_enabled))
+    {
+        tlsclientTunnelstateDestroy(ts);
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (ts->ech_grease_sni_override != NULL &&
+        ! createSslContextPool(&(ts->threadlocal_ech_grease_inner_ssl_contexts),
+                               (void *) &chrome_alpn[0],
+                               sizeof(chrome_alpn),
+                               worker_count,
+                               false,
+                               false))
     {
         tlsclientTunnelstateDestroy(ts);
         tunnelDestroy(t);

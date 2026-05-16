@@ -50,7 +50,12 @@ static inline int performHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
     {
         if (X509_V_OK != SSL_get_verify_result(ls->ssl))
         {
-            LOGE("TlsClient: downstream payload failed: boringssl says certificate verification failed");
+            long        verify_result = SSL_get_verify_result(ls->ssl);
+            const char *verify_reason = X509_verify_cert_error_string(verify_result);
+            LOGE("TlsClient: downstream payload failed: boringssl says certificate verification failed "
+                 "(verify_result=%ld, reason=%s)",
+                 verify_result,
+                 verify_reason != NULL ? verify_reason : "unknown");
         }
         else
         {

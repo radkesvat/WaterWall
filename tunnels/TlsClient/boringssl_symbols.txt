@@ -2456,6 +2456,8 @@ SSL_set_connect_state
 SSL_set_custom_verify
 SSL_set_early_data_enabled
 SSL_set_enable_ech_grease
+SSL_set1_ech_grease_override_name
+SSL_set1_ech_grease_override_payload
 SSL_set_enforce_rsa_key_usage
 SSL_set_ex_data
 SSL_set_fd

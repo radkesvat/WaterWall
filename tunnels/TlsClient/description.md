@@ -16,7 +16,7 @@ This node does a real Tls hadshake and mimics chorme behaviour, verified with JA
 - Encrypts upstream payload with `SSL_write()`.
 - Decrypts downstream payload with `SSL_read()`.
 - Buffers application payload until the TLS handshake completes.
-- Verifies peer certificates using a built-in CA bundle.
+- Verifies peer certificates using a built-in CA bundle by default.
 
 ## Typical Placement
 
@@ -44,6 +44,8 @@ That arrangement lets:
   "type": "TlsClient",
   "settings": {
     "sni": "example.com",
+    "verify": true,
+    "ech-sni-trick": "example.net",
     "x25519mlkem768": true
   },
   "next": "tcp-connector"
@@ -69,6 +71,33 @@ That arrangement lets:
 
 ## Optional `settings` Fields
 
+- `verify` `(boolean, default: true)`
+  Controls whether BoringSSL verifies the peer certificate chain.
+
+  When this is left enabled:
+
+  - peer verification stays enabled
+  - the built-in CA bundle from `utils/cacert.h` is loaded into the TLS context
+
+  When this is disabled:
+
+  - `TlsClient` still performs a real TLS handshake
+  - BoringSSL peer verification is disabled for that tunnel instance
+  - certificate chain errors no longer fail the handshake at the TLS layer
+
+- `ech-sni-trick` `(string)`
+  When set, `TlsClient` generates a full fake TLS ClientHello using this hostname and embeds those bytes as the GREASE `encrypted_client_hello` payload before the outer ClientHello is serialized and hashed.
+
+  The outer cleartext SNI remains `settings.sni`.
+
+  The embedded fake ClientHello is generated with `x25519mlkem768` disabled, even if the outer tunnel keeps `x25519mlkem768` enabled. This keeps the embedded payload small enough for the packet-side trick while leaving the real outer ClientHello Chrome-like.
+
+  Validation rules:
+
+  - the field must not be empty
+
+  This is intended for use with `IpManipulator`'s packet-splitting `ech-sni-trick`, so the bytes that `TlsClient` hashes are the same bytes that go on the wire.
+
 - `x25519mlkem768` `(boolean, default: true)`
   Controls whether `TlsClient` advertises the `X25519MLKEM768` hybrid post-quantum group.
 
@@ -83,7 +112,6 @@ That arrangement lets:
 Important current-implementation notes:
 
 - a field named `alpn` exists in the source, but the active create path does not use a JSON ALPN value
-- a field named `verify` exists in the source, but certificate verification is currently always enabled in code
 
 ## Tunnel API
 
@@ -170,7 +198,7 @@ The tunnel creates one `SSL_CTX` per worker thread at tunnel construction time.
 
 Current SSL context configuration includes:
 
-- peer verification enabled
+- peer verification enabled by default, or disabled when `settings.verify` is `false`
 - minimum protocol version TLS 1.2
 - maximum protocol version TLS 1.3
 - session cache mode enabled for client sessions
@@ -181,7 +209,7 @@ Current SSL context configuration includes:
 - signed certificate timestamps enabled
 - Brotli certificate decompression support
 
-The tunnel also loads a built-in CA certificate bundle from `utils/cacert.h`.
+When verification is enabled, the tunnel also loads a built-in CA certificate bundle from `utils/cacert.h`.
 
 ### Chrome-like handshake shaping
 
@@ -204,7 +232,7 @@ The bundled BoringSSL tree also contains local patches used by this tunnel.
 - `downstream Init` is disabled in the current implementation and aborts if called.
 - The tunnel does not open sockets by itself. Pair it with a transport such as `TcpConnector`.
 - The active create path hardcodes a Chrome-like ALPN advertisement instead of using a user-provided ALPN list.
-- Certificate verification is enabled in the current implementation and uses the built-in CA bundle.
+- `settings.verify` defaults to `true`; when disabled, certificate verification is skipped for that tunnel instance.
 - `Est` reflects transport establishment, not TLS handshake completion.
 
 ## Advanced Details
@@ -235,6 +263,7 @@ The SSL context is configured to stay in the same protocol band this tunnel was 
 - GREASE is enabled
 - TLS extension permutation is enabled
 - ECH grease is enabled on each `SSL` object
+- if `settings.ech-sni-trick` is configured, the GREASE ECH payload is replaced with a generated fake ClientHello before the outer ClientHello is emitted
 - OCSP stapling and signed certificate timestamps are enabled
 
 ### Cipher suite ordering patch
@@ -276,10 +305,10 @@ ALPS needed special care because it is easy to feed the wrong bytes into the Bor
 
 ### CA verification and session behavior
 
-The tunnel is still a real verifying TLS client, not just a fingerprint shaper.
+The tunnel is still a real TLS client, not just a fingerprint shaper.
 
-- peer verification remains enabled
-- CA roots are loaded from the built-in bundle in `utils/cacert.h`
+- peer verification is enabled by default and can be disabled with `settings.verify`
+- when verification is enabled, CA roots are loaded from the built-in bundle in `utils/cacert.h`
 - client session caching is enabled
 - application data is buffered until the TLS handshake completes
 

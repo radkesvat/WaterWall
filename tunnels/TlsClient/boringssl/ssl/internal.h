@@ -3291,6 +3291,14 @@ struct SSL_CONFIG {
   // structure for the client to use when negotiating ECH.
   Array<uint8_t> client_ech_config_list;
 
+  // ech_grease_override_name, if not empty, is serialized as a synthetic
+  // server_name extension at the start of the GREASE ECH payload.
+  Array<uint8_t> ech_grease_override_name;
+
+  // ech_grease_override_payload, if not empty, is serialized as the full GREASE
+  // ECH payload bytes. It takes precedence over |ech_grease_override_name|.
+  Array<uint8_t> ech_grease_override_payload;
+
   // compliance_policy limits the set of ciphers that can be selected when
   // negotiating a TLS 1.3 connection.
   enum ssl_compliance_policy_t compliance_policy = ssl_compliance_policy_none;

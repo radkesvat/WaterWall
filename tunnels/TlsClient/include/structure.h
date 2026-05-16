@@ -11,11 +11,13 @@ typedef struct tlsclient_tstate_s
     // settings
     char *alpn;
     char *sni;
+    char *ech_grease_sni_override;
     bool  verify;
     bool  x25519mlkem768_enabled;
 
     // state
     SSL_CTX **threadlocal_ssl_contexts;
+    SSL_CTX **threadlocal_ech_grease_inner_ssl_contexts;
 } tlsclient_tstate_t;
 
 typedef struct tlsclient_lstate_s
@@ -85,4 +87,11 @@ void tlsclientLinestateDestroy(tlsclient_lstate_t *ls);
 void tlsclientPrintSSLState(const SSL *ssl);
 void tlsclientPrintSSLError(void);
 void tlsclientPrintSSLErrorAndAbort(void);
+bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char *sni,
+                                     const uint8_t *ech_grease_override_payload,
+                                     size_t ech_grease_override_payload_len);
+bool tlsclientCreateClientHelloFromContext(SSL_CTX *ssl_ctx, const char *sni,
+                                           const uint8_t *ech_grease_override_payload,
+                                           size_t ech_grease_override_payload_len, sbuf_t **out);
+bool tlsclientCreateEchGreaseInnerClientHello(tlsclient_tstate_t *ts, wid_t wid, sbuf_t **out);
 void tlsclientTunnelstateDestroy(tlsclient_tstate_t *ts);

@@ -4186,6 +4186,29 @@ OPENSSL_EXPORT const char *SSL_early_data_reason_string(
 // ECH extension when no supported ECHConfig is available.
 OPENSSL_EXPORT void SSL_set_enable_ech_grease(SSL *ssl, int enable);
 
+// SSL_set1_ech_grease_override_name configures |ssl|, when sending a GREASE
+// ECH extension, to overwrite the beginning of the GREASE payload with a full
+// synthetic server_name extension whose hostname bytes are |name|. |name| must
+// be the same length as the outer SNI configured on |ssl|. This only affects
+// GREASE ECH, not real ECH offers.
+//
+// Passing a NULL pointer or a zero-length name clears the override.
+OPENSSL_EXPORT int SSL_set1_ech_grease_override_name(SSL *ssl,
+                                                     const uint8_t *name,
+                                                     size_t name_len);
+
+// SSL_set1_ech_grease_override_payload configures |ssl|, when sending a
+// GREASE ECH extension, to use |payload| as the exact encrypted payload bytes.
+// The payload is intentionally not interpreted as a valid ECH ciphertext. This
+// only affects GREASE ECH, not real ECH offers. If both this and
+// |SSL_set1_ech_grease_override_name| are configured, the full payload override
+// takes precedence.
+//
+// Passing a NULL pointer or a zero-length payload clears the override.
+OPENSSL_EXPORT int SSL_set1_ech_grease_override_payload(SSL *ssl,
+                                                        const uint8_t *payload,
+                                                        size_t payload_len);
+
 // SSL_set1_ech_config_list configures |ssl| to, as a client, offer ECH with the
 // specified configuration. |ech_config_list| should contain a serialized
 // ECHConfigList structure. It returns one on success and zero on error.
