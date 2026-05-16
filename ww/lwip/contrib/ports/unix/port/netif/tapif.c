@@ -31,6 +31,7 @@
  */
 
 #include <fcntl.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -41,6 +42,7 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include "lwip/opt.h"
 
@@ -57,8 +59,6 @@
 #include "lwip/ethip6.h"
 
 #include "netif/tapif.h"
-
-#define IFCONFIG_BIN "/sbin/ifconfig "
 
 #if defined(LWIP_UNIX_LINUX)
 #include <sys/ioctl.h>
@@ -78,16 +78,18 @@
 #ifndef DEVTAP
 #define DEVTAP "/dev/net/tun"
 #endif
-#define NETMASK_ARGS "netmask %d.%d.%d.%d"
-#define IFCONFIG_ARGS "tap0 inet %d.%d.%d.%d " NETMASK_ARGS
+#define TAPIF_CONFIG_IF DEVTAP_DEFAULT_IF
 #elif defined(LWIP_UNIX_OPENBSD)
 #define DEVTAP "/dev/tun0"
-#define NETMASK_ARGS "netmask %d.%d.%d.%d"
-#define IFCONFIG_ARGS "tun0 inet %d.%d.%d.%d " NETMASK_ARGS " link0"
+#define TAPIF_CONFIG_IF "tun0"
+#define TAPIF_IFCONFIG_NEEDS_LINK0 1
 #else /* others */
 #define DEVTAP "/dev/tap0"
-#define NETMASK_ARGS "netmask %d.%d.%d.%d"
-#define IFCONFIG_ARGS "tap0 inet %d.%d.%d.%d " NETMASK_ARGS
+#define TAPIF_CONFIG_IF "tap0"
+#endif
+
+#ifndef TAPIF_IFCONFIG_NEEDS_LINK0
+#define TAPIF_IFCONFIG_NEEDS_LINK0 0
 #endif
 
 /* Define those to better describe your network interface. */
@@ -109,6 +111,63 @@ static void tapif_input(struct netif *netif);
 static void tapif_thread(void *arg);
 #endif /* !NO_SYS */
 
+#if LWIP_IPV4
+static int
+tapif_format_ipv4(char *dst, size_t dst_len, const ip4_addr_t *addr)
+{
+  int written;
+
+  written = snprintf(dst, dst_len, "%d.%d.%d.%d",
+                     ip4_addr1(addr),
+                     ip4_addr2(addr),
+                     ip4_addr3(addr),
+                     ip4_addr4(addr));
+  if ((written < 0) || ((size_t)written >= dst_len)) {
+    return -1;
+  }
+
+  return 0;
+}
+
+static int
+tapif_run_ifconfig(const char *ifname, const char *addr, const char *netmask)
+{
+  pid_t childpid;
+  int status;
+
+  childpid = fork();
+  if (childpid < 0) {
+    perror("tapif_init: fork ifconfig");
+    return -1;
+  }
+
+  if (childpid == 0) {
+#if TAPIF_IFCONFIG_NEEDS_LINK0
+    execl("/sbin/ifconfig", "ifconfig", ifname, "inet", addr, "netmask", netmask, "link0", (char *)NULL);
+#else
+    execl("/sbin/ifconfig", "ifconfig", ifname, "inet", addr, "netmask", netmask, (char *)NULL);
+#endif
+    perror("tapif_init: execl ifconfig");
+    _exit(127);
+  }
+
+  do {
+    if (waitpid(childpid, &status, 0) >= 0) {
+      if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+      }
+      if (WIFSIGNALED(status)) {
+        printf("ifconfig terminated by signal %d\n", WTERMSIG(status));
+      }
+      return -1;
+    }
+  } while (errno == EINTR);
+
+  perror("tapif_init: waitpid ifconfig");
+  return -1;
+}
+#endif /* LWIP_IPV4 */
+
 /*-----------------------------------------------------------------------------------*/
 static void
 low_level_init(struct netif *netif)
@@ -116,7 +175,8 @@ low_level_init(struct netif *netif)
   struct tapif *tapif;
 #if LWIP_IPV4
   int ret;
-  char buf[1024];
+  char addr[16];
+  char netmask[16];
 #endif /* LWIP_IPV4 */
   char *preconfigured_tapif = getenv("PRECONFIGURED_TAPIF");
 
@@ -171,22 +231,18 @@ low_level_init(struct netif *netif)
 
   if (preconfigured_tapif == NULL) {
 #if LWIP_IPV4
-    snprintf(buf, 1024, IFCONFIG_BIN IFCONFIG_ARGS,
-             ip4_addr1(netif_ip4_gw(netif)),
-             ip4_addr2(netif_ip4_gw(netif)),
-             ip4_addr3(netif_ip4_gw(netif)),
-             ip4_addr4(netif_ip4_gw(netif))
-#ifdef NETMASK_ARGS
-             ,
-             ip4_addr1(netif_ip4_netmask(netif)),
-             ip4_addr2(netif_ip4_netmask(netif)),
-             ip4_addr3(netif_ip4_netmask(netif)),
-             ip4_addr4(netif_ip4_netmask(netif))
-#endif /* NETMASK_ARGS */
-             );
+    if ((tapif_format_ipv4(addr, sizeof(addr), netif_ip4_gw(netif)) != 0) ||
+        (tapif_format_ipv4(netmask, sizeof(netmask), netif_ip4_netmask(netif)) != 0)) {
+      perror("tapif_init: invalid IPv4 address");
+      exit(1);
+    }
 
-    LWIP_DEBUGF(TAPIF_DEBUG, ("tapif_init: system(\"%s\");\n", buf));
-    ret = system(buf);
+    LWIP_DEBUGF(TAPIF_DEBUG, ("tapif_init: execl(\"/sbin/ifconfig\", \"ifconfig\", \"%s\", \"inet\", \"%s\", \"netmask\", \"%s\"%s);\n",
+                              TAPIF_CONFIG_IF,
+                              addr,
+                              netmask,
+                              TAPIF_IFCONFIG_NEEDS_LINK0 ? ", \"link0\"" : ""));
+    ret = tapif_run_ifconfig(TAPIF_CONFIG_IF, addr, netmask);
     if (ret < 0) {
       perror("ifconfig failed");
       exit(1);

@@ -56,6 +56,11 @@
 #define LWIP_HAVE_SLIPIF 0
 #endif
 
+#if LWIP_HAVE_SLIPIF
+#include <errno.h>
+#include <sys/wait.h>
+#endif
+
 #if (PPP_SUPPORT || LWIP_HAVE_SLIPIF) && defined(LWIP_UNIX_LINUX)
 #include <pty.h>
 #endif
@@ -233,6 +238,57 @@ static void sio_speed( int fd, int speed )
 
 	LWIP_DEBUGF(SIO_DEBUG, ("sio_speed[%d]: leave\n", fd));
 }
+
+#if LWIP_HAVE_SLIPIF
+static int sio_run_ifconfig_slip(int mtu, const char *local_addr, const char *peer_addr)
+{
+	pid_t childpid;
+	int status;
+	int written;
+	char mtu_arg[32];
+
+	written = snprintf(mtu_arg, sizeof(mtu_arg), "%d", mtu);
+	if ((written < 0) || ((size_t)written >= sizeof(mtu_arg)))
+	{
+		fprintf(stderr, "ifconfig failed: invalid MTU value\n");
+		return -1;
+	}
+
+	childpid = fork();
+	if (childpid < 0)
+	{
+		perror("fork ifconfig");
+		return -1;
+	}
+
+	if (childpid == 0)
+	{
+		execl("/sbin/ifconfig", "ifconfig", "sl0", "mtu", mtu_arg, local_addr, "pointopoint", peer_addr, "up",
+		      (char *)NULL);
+		perror("execl ifconfig");
+		_exit(127);
+	}
+
+	do
+	{
+		if (waitpid(childpid, &status, 0) >= 0)
+		{
+			if (WIFEXITED(status))
+			{
+				return WEXITSTATUS(status);
+			}
+			if (WIFSIGNALED(status))
+			{
+				fprintf(stderr, "ifconfig terminated by signal %d\n", WTERMSIG(status));
+			}
+			return -1;
+		}
+	} while (errno == EINTR);
+
+	perror("waitpid ifconfig");
+	return -1;
+}
+#endif /* LWIP_HAVE_SLIPIF */
 
 /* --public-functions----------------------------------------------------------------------------- */
 void sio_send( u8_t c, sio_status_t * siostat )
@@ -434,17 +490,14 @@ sio_fd_t sio_open(u8_t devnum)
 		exit (1);
 	    } else {
 		int ret;
-		char buf[1024];
 		LWIP_DEBUGF(SIO_DEBUG, ("sio_open[%d]: spawned slattach pid %d on %s\n",
 			siostate->fd, childpid, ptsname(siostate->fd)));
 		/* wait a moment for slattach startup */
 		sleep(1);
 		/* configure SLIP interface on host side as P2P interface */
-		snprintf(buf, sizeof(buf),
-			"/sbin/ifconfig sl0 mtu %d %s pointopoint %s up",
-			SLIP_MAX_SIZE, "192.168.2.1", "192.168.2.2");
-		LWIP_DEBUGF(SIO_DEBUG, ("sio_open[%d]: system(\"%s\");\n", siostate->fd, buf));
-		ret = system(buf);
+		LWIP_DEBUGF(SIO_DEBUG, ("sio_open[%d]: execl(\"/sbin/ifconfig\", \"ifconfig\", \"sl0\", \"mtu\", \"%d\", \"%s\", \"pointopoint\", \"%s\", \"up\");\n",
+			siostate->fd, SLIP_MAX_SIZE, "192.168.2.1", "192.168.2.2"));
+		ret = sio_run_ifconfig_slip(SLIP_MAX_SIZE, "192.168.2.1", "192.168.2.2");
 		if (ret < 0) {
 		    perror("ifconfig failed");
 		    exit(1);
