@@ -190,14 +190,19 @@ static bool executeIptablesRule(const char *protocol, unsigned int port_min, uns
     char command[256];
     bool result = true;
 
+    if (strcasecmp(protocol, "TCP") != 0 && strcasecmp(protocol, "UDP") != 0)
+    {
+        return false;
+    }
+
     if (port_min == port_max)
     {
-        sprintf(command, "iptables -t nat -A PREROUTING -p %s --dport %u -j REDIRECT --to-port %u", protocol, port_min,
+        snprintf(command, sizeof(command), "iptables -t nat -A PREROUTING -p %s --dport %u -j REDIRECT --to-port %u", protocol, port_min,
                 to_port);
     }
     else
     {
-        sprintf(command, "iptables -t nat -A PREROUTING -p %s --dport %u:%u -j REDIRECT --to-port %u", protocol,
+        snprintf(command, sizeof(command), "iptables -t nat -A PREROUTING -p %s --dport %u:%u -j REDIRECT --to-port %u", protocol,
                 port_min, port_max, to_port);
     }
     result = execCmd(command).exit_code == 0;
@@ -207,12 +212,12 @@ static bool executeIptablesRule(const char *protocol, unsigned int port_min, uns
     {
         if (port_min == port_max)
         {
-            sprintf(command, "ip6tables -t nat -A PREROUTING -p %s --dport %u -j REDIRECT --to-port %u", protocol,
+            snprintf(command, sizeof(command), "ip6tables -t nat -A PREROUTING -p %s --dport %u -j REDIRECT --to-port %u", protocol,
                     port_min, to_port);
         }
         else
         {
-            sprintf(command, "ip6tables -t nat -A PREROUTING -p %s --dport %u:%u -j REDIRECT --to-port %u", protocol,
+            snprintf(command, sizeof(command), "ip6tables -t nat -A PREROUTING -p %s --dport %u:%u -j REDIRECT --to-port %u", protocol,
                     port_min, port_max, to_port);
         }
         result = result && execCmd(command).exit_code == 0;
@@ -220,6 +225,7 @@ static bool executeIptablesRule(const char *protocol, unsigned int port_min, uns
 #endif
     return result;
 }
+
 
 /**
  * @brief Install TCP redirect rule for one range.
