@@ -31,6 +31,7 @@ add_library(IpManipulator STATIC
                     common/tricks/smugglefin/trick.c
                     common/tricks/smugglesni/trick.c
                     common/tricks/synfinsni/trick.c
+                    common/tricks/echsnitrick/trick.c
                     common/tricks/sniblender/trick.c
                     common/tricks/tcpbitchange/trick.c
                     common/tricks/portghost/trick.c

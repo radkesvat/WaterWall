@@ -34,6 +34,17 @@ static bool parseTcpBitActionField(enum tcp_bit_action_dynamic_value *dest, cons
     return true;
 }
 
+static bool validateProtocolSwapNumber(const char *key, int protocol_number)
+{
+    if (protocol_number < 0 || protocol_number > UINT8_MAX)
+    {
+        LOGF("IpManipulator: settings->%s must be between 0 and 255", key);
+        return false;
+    }
+
+    return true;
+}
+
 tunnel_t *ipmanipulatorCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(ipmanipulator_tstate_t), 0);
@@ -60,13 +71,32 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     state->trick_synfin_sni_fake_ttl             = -1;
     state->trick_synfin_sni_additional_range_min = 0;
     state->trick_synfin_sni_additional_range_max = 0;
+    state->trick_ech_sni_shard1_delay_ms         = 0;
+    state->trick_ech_sni_shard2_delay_ms         = 0;
 
-    bool has_proto_swap = false;
-    has_proto_swap |= getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap");
-    has_proto_swap |= getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap-tcp");
-    has_proto_swap |= getIntFromJsonObject(&state->trick_proto_swap_udp_number, settings, "protoswap-udp");
-    getIntFromJsonObjectOrDefault(&state->trick_proto_swap_tcp_number_2, settings, "protoswap-tcp-2", -1);
-    state->trick_proto_swap = has_proto_swap;
+    bool has_proto_swap_legacy = false;
+    bool has_proto_swap_tcp    = false;
+    bool has_proto_swap_udp    = false;
+    bool has_proto_swap_tcp_2  = false;
+    has_proto_swap_legacy = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap");
+    has_proto_swap_tcp    = getIntFromJsonObject(&state->trick_proto_swap_tcp_number, settings, "protoswap-tcp");
+    has_proto_swap_udp    = getIntFromJsonObject(&state->trick_proto_swap_udp_number, settings, "protoswap-udp");
+    has_proto_swap_tcp_2 =
+        getIntFromJsonObject(&state->trick_proto_swap_tcp_number_2, settings, "protoswap-tcp-2");
+
+    const char *proto_swap_tcp_key = has_proto_swap_tcp ? "protoswap-tcp" : "protoswap";
+
+    if (((has_proto_swap_legacy || has_proto_swap_tcp) &&
+         ! validateProtocolSwapNumber(proto_swap_tcp_key, state->trick_proto_swap_tcp_number)) ||
+        (has_proto_swap_udp && ! validateProtocolSwapNumber("protoswap-udp", state->trick_proto_swap_udp_number)) ||
+        (has_proto_swap_tcp_2 &&
+         ! validateProtocolSwapNumber("protoswap-tcp-2", state->trick_proto_swap_tcp_number_2)))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    state->trick_proto_swap = has_proto_swap_legacy || has_proto_swap_tcp || has_proto_swap_udp;
 
     bool sni_blender_enabled = false;
     getBoolFromJsonObject(&sni_blender_enabled, settings, "sni-blender");
@@ -562,6 +592,67 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         memoryFree(json_string_of_tls_client);
     }
 
+    bool has_ech_sni = getStringFromJsonObject(&state->trick_ech_sni_value, settings, "ech-sni-trick");
+    if (has_ech_sni)
+    {
+        int    shard1_delay_ms = 0;
+        int    shard2_delay_ms = 0;
+        size_t ech_sni_len     = stringLength(state->trick_ech_sni_value);
+
+        if (ech_sni_len == 0)
+        {
+            LOGF("IpManipulator: ech-sni-trick field \"ech-sni-trick\" must not be empty");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        if (ech_sni_len > UINT16_MAX)
+        {
+            LOGF("IpManipulator: ech-sni-trick field \"ech-sni-trick\" must fit in 16-bit TLS length fields");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        if (! nodeHasNext(node))
+        {
+            LOGF("IpManipulator: ech-sni-trick requires a normal top-level next node");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        if (getIntFromJsonObject(&shard1_delay_ms, settings, "data-shard-1-delay"))
+        {
+            if (shard1_delay_ms < 0)
+            {
+                LOGF("IpManipulator: ech-sni-trick field \"data-shard-1-delay\" must be zero or greater");
+                tunnelDestroy(t);
+                return NULL;
+            }
+        }
+
+        if (getIntFromJsonObject(&shard2_delay_ms, settings, "data-shard-2-delay"))
+        {
+            if (shard2_delay_ms < 0)
+            {
+                LOGF("IpManipulator: ech-sni-trick field \"data-shard-2-delay\" must be zero or greater");
+                tunnelDestroy(t);
+                return NULL;
+            }
+        }
+
+        if ((uint64_t) shard1_delay_ms + (uint64_t) shard2_delay_ms > UINT32_MAX)
+        {
+            LOGF("IpManipulator: ech-sni-trick combined shard delay exceeds supported range");
+            tunnelDestroy(t);
+            return NULL;
+        }
+
+        state->trick_ech_sni_value_len        = (uint16_t) ech_sni_len;
+        state->trick_ech_sni_shard1_delay_ms  = (uint32_t) shard1_delay_ms;
+        state->trick_ech_sni_shard2_delay_ms  = (uint32_t) shard2_delay_ms;
+        state->trick_ech_sni                  = true;
+    }
+
     if (state->trick_smuggle_sni && state->trick_overlap_sni)
     {
         LOGF("IpManipulator: smuggle-sni and overlap-sni cannot be enabled at the same time");
@@ -579,6 +670,27 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
     if (state->trick_overlap_sni && state->trick_synfin_sni)
     {
         LOGF("IpManipulator: overlap-sni and synfin-sni cannot be enabled at the same time");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (state->trick_ech_sni && state->trick_smuggle_sni)
+    {
+        LOGF("IpManipulator: ech-sni-trick and smuggle-sni cannot be enabled at the same time");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (state->trick_ech_sni && state->trick_overlap_sni)
+    {
+        LOGF("IpManipulator: ech-sni-trick and overlap-sni cannot be enabled at the same time");
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (state->trick_ech_sni && state->trick_synfin_sni)
+    {
+        LOGF("IpManipulator: ech-sni-trick and synfin-sni cannot be enabled at the same time");
         tunnelDestroy(t);
         return NULL;
     }
@@ -676,7 +788,7 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
          state->up_tcp_bit_syn_action != kDvsNoAction || state->up_tcp_bit_fin_action != kDvsNoAction);
 
     if (! (state->trick_proto_swap || state->trick_sni_blender || state->trick_first_sni || state->trick_smuggle_sni ||
-           state->trick_overlap_sni || state->trick_synfin_sni || state->trick_smuggle_fin ||
+           state->trick_overlap_sni || state->trick_synfin_sni || state->trick_ech_sni || state->trick_smuggle_fin ||
            state->trick_tcp_bit_changes ||
            state->trick_packet_duplicate || state->trick_bit_transport || state->trick_source_port_ghost ||
            state->trick_dest_port_ghost))
@@ -727,6 +839,15 @@ tunnel_t *ipmanipulatorCreate(node_t *node)
         mutexInit(&state->synfin_flows_mutex);
         state->synfin_flows_capacity = initial_flows;
         state->synfin_flows          = memoryAllocateZero(sizeof(*state->synfin_flows) * initial_flows);
+    }
+
+    if (state->trick_ech_sni)
+    {
+        uint32_t initial_flows = max(kIpManipulatorSmuggleInitialFlows, (uint32_t) getTotalWorkersCount() * 8U);
+
+        mutexInit(&state->echsni_flows_mutex);
+        state->echsni_flows_capacity = initial_flows;
+        state->echsni_flows          = memoryAllocateZero(sizeof(*state->echsni_flows) * initial_flows);
     }
 
     if (state->trick_smuggle_fin)

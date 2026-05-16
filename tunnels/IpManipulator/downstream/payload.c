@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 
 #include "tricks/protoswap/trick.h"
+#include "tricks/echsnitrick/trick.h"
 #include "tricks/overlapsni/trick.h"
 #include "tricks/portghost/trick.h"
 #include "tricks/smugglefin/trick.h"
@@ -24,6 +25,11 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     if (state->trick_smuggle_fin && smugglefintrickDownStreamPayload(t, l, buf))
+    {
+        return;
+    }
+
+    if (state->trick_ech_sni && echsnitrickDownStreamPayload(t, l, buf))
     {
         return;
     }

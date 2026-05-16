@@ -11,6 +11,7 @@ The current implementation provides these classes of tricks:
 - TLS ClientHello split-route delay (`smuggle-sni`)
 - TLS ClientHello overlap split (`overlap-sni`)
 - TLS ClientHello SYN/FIN overlap (`synfin-sni`)
+- TLS ClientHello ECH-aware transport split (`ech-sni-trick`)
 - mirrored TCP FIN injection (`smuggle-fin`)
 - TLS ClientHello fragmentation and shuffle (`sni-blender`)
 - TCP flag bit rewriting
@@ -24,6 +25,7 @@ The current implementation provides these classes of tricks:
 - Can inject a crafted mirrored FIN/ACK packet on a dedicated upstream helper branch.
 - Can hold the third upstream TLS ClientHello packet, overlap it with a crafted fake ClientHello after the fourth packet arrives, send a crafted server-side TLS packet on a helper upstream branch, emit a fake TCP SYN on the same 4-tuple, and then flush the remaining real ClientHello bytes.
 - Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, then emit an enlarged real first TLS chunk, a client-looking FIN packet, a fake TCP SYN, a full crafted fake ClientHello, one valid generated TLS-looking filler packet, and the remaining real TLS bytes immediately on the normal upstream path.
+- Can hold the third upstream TLS ClientHello packet, complete it with the fourth packet, locate a fake TLS ClientHello embedded inside the `encrypted_client_hello` payload, send that byte range first as an out-of-order TCP segment, and then release the original captured ClientHello packets after a delay without changing the TLS bytes.
 - Optionally duplicates the final outgoing packet after all other enabled tricks.
 - Marks packets for checksum recalculation when it changes protocol or TCP flags.
 - Can replace one outgoing TLS ClientHello packet with multiple shuffled IP fragments.
@@ -248,6 +250,45 @@ If none of the supported trick settings are present, tunnel creation fails with:
 
 `smuggle-sni` and `overlap-sni` are mutually exclusive in the current implementation.
 
+### ech-sni-trick settings
+
+- `ech-sni-trick` `(string)`
+  Enables the `ech-sni-trick`.
+
+  In the current architecture, this value should match `TlsClient.settings.ech-sni-trick` for the same flow. `TlsClient` is responsible for embedding the fake ClientHello inside the GREASE `encrypted_client_hello` payload, and `IpManipulator` is responsible for the transport-level out-of-order send and delayed release.
+
+  In the current implementation, the first two upstream packets pass unchanged, the third packet is held, and the fourth packet completes the captured real TLS ClientHello. `IpManipulator` then requires:
+  - a valid SNI extension
+  - a valid `encrypted_client_hello` extension
+  - a full fake TLS ClientHello inside the ECH payload bytes
+
+  When those checks pass, `IpManipulator` keeps the captured ClientHello bytes unchanged and sends:
+  - one out-of-order TCP packet carrying only the fake inner ClientHello bytes from the ECH payload, using the TCP sequence number that corresponds to those bytes inside the original ClientHello stream
+  - after `data-shard-1-delay`, the original held upstream packet unchanged
+  - after `data-shard-2-delay`, the following original upstream packet unchanged
+
+  During both delay windows, later upstream packets on the same 4-tuple are discarded as expected retransmissions.
+
+  In the current implementation, the crafted out-of-order `ech-sni-trick` TCP packet is sent with the `PSH` flag set so it is less likely to be buffered by middle services.
+
+  If the out-of-order fake-inner packet would exceed `GLOBAL_MTU_SIZE`, the flow is rejected instead of being reshaped.
+
+- `data-shard-1-delay` `(integer)`
+  Optional.
+
+  Delay in milliseconds between sending the out-of-order fake inner ClientHello segment and releasing the original held upstream packet.
+
+  Defaults to `0`.
+
+- `data-shard-2-delay` `(integer)`
+  Optional.
+
+  Delay in milliseconds between releasing the original held upstream packet and releasing the following original upstream packet. After this packet is released, the original ClientHello has been fully sent.
+
+  Defaults to `0`.
+
+`ech-sni-trick`, `smuggle-sni`, `overlap-sni`, and `synfin-sni` are mutually exclusive in the current implementation.
+
 ### synfin-sni settings
 
 - `synfin-sni` `(string)`
@@ -455,16 +496,21 @@ The protocol-swap trick only applies to IPv4 packets.
 
 Behavior:
 
-- if the packet protocol is TCP and `protoswap-tcp` is enabled, the tunnel rewrites the IP protocol field to the configured custom number
-- if the packet protocol is already equal to that custom number, it rewrites it back to normal TCP
+- if the packet protocol is TCP and `protoswap-tcp` is enabled, the tunnel rewrites the IP protocol field to the configured protocol number
+- if the packet protocol is already equal to that configured number, it rewrites it back to normal TCP
 - the same idea applies to `protoswap-udp`
+- the configured protocol number may be another real protocol such as `17` for UDP or `6` for TCP, so configuring
+  `protoswap-tcp=17` and `protoswap-udp=6` swaps TCP and UDP protocol numbers in one pass
 
 If `protoswap-tcp-2` is configured:
 
 - TCP packets alternate between `protoswap-tcp` and `protoswap-tcp-2`
 - upstream and downstream maintain their own toggle state
 
-Whenever the tunnel changes the protocol field, it sets `line->recalculate_checksum = true` so a later packet writer can rebuild checksums.
+Whenever the tunnel changes the protocol field to or from a non-TCP/non-UDP protocol number, it sets
+`line->recalculate_checksum = true` so a later packet writer can rebuild checksums. For direct TCP-to-UDP or
+UDP-to-TCP protocol-number swaps, it refreshes only the IPv4 header checksum so the unchanged transport header is not
+reinterpreted as the opposite transport protocol during checksum repair.
 
 ### SNI blender
 

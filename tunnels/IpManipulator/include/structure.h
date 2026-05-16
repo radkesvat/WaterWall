@@ -202,6 +202,30 @@ typedef struct ipmanipulator_synfin_flow_s
     sbuf_t                            *syn_packet_template;
 } ipmanipulator_synfin_flow_t;
 
+typedef enum ipmanipulator_echsni_flow_phase_e
+{
+    kIpManipulatorEchSniFlowPhaseWarmup = 0,
+    kIpManipulatorEchSniFlowPhaseHoldThird,
+    kIpManipulatorEchSniFlowPhasePassthrough,
+    kIpManipulatorEchSniFlowPhaseBlocked
+} ipmanipulator_echsni_flow_phase_e;
+
+typedef struct ipmanipulator_echsni_flow_s
+{
+    uint64_t                           created_ms;
+    uint64_t                           last_activity_ms;
+    uint64_t                           shard1_release_at_ms;
+    uint64_t                           shard2_release_at_ms;
+    uint32_t                           src_addr;
+    uint32_t                           dst_addr;
+    uint16_t                           src_port;
+    uint16_t                           dst_port;
+    uint8_t                            warmup_packets_seen;
+    ipmanipulator_echsni_flow_phase_e  phase;
+    bool                               active;
+    ipmanipulator_captured_packet_t    held_packet;
+} ipmanipulator_echsni_flow_t;
+
 typedef struct ipmanipulator_smuggle_fin_flow_s
 {
     uint64_t last_activity_ms;
@@ -253,6 +277,7 @@ typedef struct ipmanipulator_tstate_s
     uint64_t trick_smuggle_sni : 1;
     uint64_t trick_overlap_sni : 1;
     uint64_t trick_synfin_sni : 1;
+    uint64_t trick_ech_sni : 1;
     uint64_t trick_smuggle_fin : 1;
     uint64_t trick_tcp_bit_changes : 1;
     uint64_t trick_packet_duplicate : 1;
@@ -311,6 +336,11 @@ typedef struct ipmanipulator_tstate_s
     node_t   *trick_synfin_sni_tls_client_node;
     tunnel_t *trick_synfin_sni_tls_client_tunnel;
 
+    char    *trick_ech_sni_value;
+    uint16_t trick_ech_sni_value_len;
+    uint32_t trick_ech_sni_shard1_delay_ms;
+    uint32_t trick_ech_sni_shard2_delay_ms;
+
     node_t   *trick_real_fin_upstream_node;
     tunnel_t *trick_real_fin_upstream_tunnel;
     uint32_t  trick_smuggle_fin_delay_ms;
@@ -334,6 +364,10 @@ typedef struct ipmanipulator_tstate_s
     wmutex_t                         synfin_flows_mutex;
     ipmanipulator_synfin_flow_t     *synfin_flows;
     uint32_t                         synfin_flows_capacity;
+
+    wmutex_t                         echsni_flows_mutex;
+    ipmanipulator_echsni_flow_t     *echsni_flows;
+    uint32_t                         echsni_flows_capacity;
 
     wmutex_t                              smuggle_fin_mutex;
     ipmanipulator_smuggle_fin_flow_t     *smuggle_fin_flows;

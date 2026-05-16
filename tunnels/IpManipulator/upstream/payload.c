@@ -3,6 +3,7 @@
 #include "loggers/network_logger.h"
 
 #include "tricks/protoswap/trick.h"
+#include "tricks/echsnitrick/trick.h"
 #include "tricks/firstsni/trick.h"
 #include "tricks/overlapsni/trick.h"
 #include "tricks/smugglefin/trick.h"
@@ -36,6 +37,11 @@ void ipmanipulatorUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     // LOGD("IpManipulator: Upstream payload received, length=%d", sbufGetLength(buf));
 
     if (state->trick_synfin_sni && synfinsnitrickUpStreamPayload(t, l, buf))
+    {
+        return;
+    }
+
+    if (state->trick_ech_sni && echsnitrickUpStreamPayload(t, l, buf))
     {
         return;
     }
