@@ -289,7 +289,7 @@
                 "CMAKE_UNITY_BUILD": true
             }
         }
-        
+
     ],
     "buildPresets": [
         {
@@ -373,7 +373,7 @@
         {
             "name": "options",
             "hidden": true,
-            "configuration": "Debug",
+            "configuration": "Release",
             "output": {
                 "verbosity": "verbose"
             }

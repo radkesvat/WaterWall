@@ -1,5 +1,7 @@
 find_program(BASH_EXECUTABLE bash REQUIRED)
 
+add_subdirectory(unittests)
+
 function(add_waterwall_integration_test test_name case_name)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
@@ -20,24 +22,6 @@ function(add_waterwall_integration_test test_name case_name)
       LABELS "integration;tunnels"
   )
 endfunction()
-
-if(TARGET tcp_over_udp_fec)
-  add_executable(tcp_over_udp_fec_test tcp_over_udp_fec_test.cc)
-  target_compile_features(tcp_over_udp_fec_test PRIVATE cxx_std_17)
-  target_link_libraries(tcp_over_udp_fec_test PRIVATE tcp_over_udp_fec)
-
-  add_test(
-    NAME waterwall.tcp_over_udp_fec_unit
-    COMMAND $<TARGET_FILE:tcp_over_udp_fec_test>
-  )
-
-  set_tests_properties(
-    waterwall.tcp_over_udp_fec_unit
-    PROPERTIES
-      TIMEOUT 30
-      LABELS "unit;tunnels;fec"
-  )
-endif()
 
 add_waterwall_integration_test(waterwall.disturber_passthrough disturber_passthrough)
 add_waterwall_integration_test(waterwall.obfuscator_roundtrip obfuscator_roundtrip)
@@ -75,19 +59,25 @@ add_waterwall_integration_test(waterwall.ping_protocol_swap_roundtrip ping_proto
 add_waterwall_integration_test(waterwall.reverse_tcp_bridge_roundtrip reverse_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.wireguard_udpstateless_packet_roundtrip wireguard_udpstateless_packet_roundtrip)
 
-if(TARGET ww)
-  add_executable(aes256gcm_test aes256gcm_test.c)
-  target_link_libraries(aes256gcm_test PRIVATE ww)
+add_custom_target(check_waterwall_integration_tests
+  COMMAND
+    "${CMAKE_CTEST_COMMAND}"
+    --test-dir "${CMAKE_BINARY_DIR}"
+    -C "$<CONFIG>"
+    --output-on-failure
+    -L integration
+  DEPENDS Waterwall
+  USES_TERMINAL
+)
 
-  add_test(
-    NAME waterwall.aes256gcm_unit
-    COMMAND $<TARGET_FILE:aes256gcm_test>
-  )
-
-  set_tests_properties(
-    waterwall.aes256gcm_unit
-    PROPERTIES
-      TIMEOUT 30
-      LABELS "unit;crypto;aes256gcm"
-  )
-endif()
+add_custom_target(check_waterwall_tests
+  COMMAND
+    "${CMAKE_CTEST_COMMAND}"
+    --test-dir "${CMAKE_BINARY_DIR}"
+    -C "$<CONFIG>"
+    --output-on-failure
+  DEPENDS
+    Waterwall
+    waterwall_unit_tests
+  USES_TERMINAL
+)

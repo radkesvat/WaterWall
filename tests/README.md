@@ -1,4 +1,15 @@
-# Waterwall Integration Tests
+# Waterwall Tests
+
+The test tree is split by scope:
+
+- `unittests/`
+  Small library-level tests that build standalone executables and do not launch `Waterwall`.
+- `cases/`
+  Integration cases that run the real `Waterwall` binary through the shell harness.
+
+See [unittests/README.md](/root/WaterWall/tests/unittests/README.md) for the unit-test list and workflow.
+
+## Integration Tests
 
 These tests run the real `Waterwall` binary with synthetic chains built from:
 
@@ -25,6 +36,8 @@ Practical rule:
 
 ## Current layout
 
+- `unittests/`
+  Unit-test sources and CMake registration.
 - `cases/<name>/config.json`
   One Waterwall config file for a test case.
 - `cases/<name>/workers.txt`
@@ -38,7 +51,7 @@ Practical rule:
   The generated `core.json` uses the `client` RAM profile so stream cases are not bottlenecked by the minimal 4 KB
   large-buffer size.
 - `CMakeLists.txt`
-  Registers each case with CTest.
+  Registers integration cases with CTest and delegates unit-test registration to `unittests/CMakeLists.txt`.
 
 ## Current cases
 
@@ -176,20 +189,30 @@ important for validating full-duplex transports such as the HTTP cases above.
 
 ```sh
 cmake --preset linux-gcc-x64
-cmake --build --preset linux-gcc-x64 --target Waterwall
-ctest --preset linux-gcc -C Release --output-on-failure
+cmake --build --preset linux-gcc-x64 --target check_waterwall_tests
 ```
 
 Important:
 
-- use `-C Release` with the current Linux CTest preset in this repo, otherwise CTest may look for a `Debug` binary
 - run commands from the repo root
 - `ctest --preset linux-gcc` always reads the `build/linux-gcc-x64` tree, so if your IDE or CMake menu is building a
   different preset or build directory you may be testing a different binary than the one your menu just ran
-- do not combine `Waterwall` and `test` in one `cmake --build ... --target ...` command with Ninja.
-  Build `Waterwall` first, then run `ctest` separately.
-  When both targets are requested together, Ninja may start the `test` target while the `Waterwall` executable is still
-  being linked, which can produce misleading failures such as `Permission denied` against the binary path
+- the Linux CTest presets use `Release`, matching the default Linux build preset
+- direct `ctest` runs do not build missing executables.
+  Build `waterwall_unit_tests`, `Waterwall`, or one of the `check_waterwall_*` targets first depending on the scope you
+  want to run.
+
+Run only unit tests:
+
+```sh
+cmake --build --preset linux-gcc-x64 --target check_waterwall_unit_tests
+```
+
+Run only integration tests:
+
+```sh
+cmake --build --preset linux-gcc-x64 --target check_waterwall_integration_tests
+```
 
 ## What `run_waterwall_case.sh` does
 
@@ -218,7 +241,7 @@ Success and failure are decided inside Waterwall:
 Show every registered integration test:
 
 ```sh
-ctest --preset linux-gcc -C Release -N
+ctest --preset linux-gcc -L integration -N
 ```
 
 That prints names like:
@@ -232,7 +255,7 @@ That prints names like:
 Recommended way with `ctest`:
 
 ```sh
-ctest --preset linux-gcc -C Release --output-on-failure -R '^waterwall\.disturber_passthrough$'
+ctest --preset linux-gcc --output-on-failure -R '^waterwall\.disturber_passthrough$'
 ```
 
 Equivalent low-level way with the helper script:
@@ -249,13 +272,13 @@ tests/run_waterwall_case.sh \
 Run only `disturber_passthrough` and `obfuscator_roundtrip`:
 
 ```sh
-ctest --preset linux-gcc -C Release --output-on-failure -R '^waterwall\.(disturber_passthrough|obfuscator_roundtrip)$'
+ctest --preset linux-gcc --output-on-failure -R '^waterwall\.(disturber_passthrough|obfuscator_roundtrip)$'
 ```
 
 Another example for two encryption cases:
 
 ```sh
-ctest --preset linux-gcc -C Release --output-on-failure -R '^waterwall\.(encryption_roundtrip|encryption_small_frame_roundtrip)$'
+ctest --preset linux-gcc --output-on-failure -R '^waterwall\.(encryption_roundtrip|encryption_small_frame_roundtrip)$'
 ```
 
 `run_waterwall_case.sh` runs only one case at a time.
@@ -266,13 +289,13 @@ If you want two or more cases in one command, use `ctest`.
 Run every encryption-related case:
 
 ```sh
-ctest --preset linux-gcc -C Release --output-on-failure -R '^waterwall\.encryption_'
+ctest --preset linux-gcc --output-on-failure -R '^waterwall\.encryption_'
 ```
 
 Run every MUX case:
 
 ```sh
-ctest --preset linux-gcc -C Release --output-on-failure -R '^waterwall\.mux_'
+ctest --preset linux-gcc --output-on-failure -R '^waterwall\.mux_'
 ```
 
 ## When to use the helper script directly
@@ -300,7 +323,7 @@ Typical loop for editing one case:
 ```sh
 cmake --preset linux-gcc-x64
 cmake --build --preset linux-gcc-x64 --target Waterwall
-ctest --preset linux-gcc -C Release --output-on-failure -R '^waterwall\.disturber_passthrough$'
+ctest --preset linux-gcc --output-on-failure -R '^waterwall\.disturber_passthrough$'
 ```
 
 Typical loop for debugging one case manually:
