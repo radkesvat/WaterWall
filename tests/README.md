@@ -66,6 +66,9 @@ Practical rule:
 - `encryption_small_frame_roundtrip`
   Verifies the encryption pair with `max-frame-size=4096`, so the framing logic is exercised even when the harness uses
   larger stream buffers.
+- `tls_roundtrip`
+  Verifies `TlsClient` and `TlsServer` chained directly with a self-signed test certificate, peer verification disabled
+  on the client, SNI checked by the server, and streaming responses enabled so TLS traffic flows in both directions.
 - `connection_fisher_roundtrip`
   Verifies that `ConnectionFisherClient` and `ConnectionFisherServer` complete their `5`-byte probe handshake and
   preserve the tester roundtrip across a real TCP loopback transport.
@@ -93,6 +96,10 @@ Practical rule:
 - `ping_protocol_swap_roundtrip`
   Verifies `change-only-ipv4-protocol-number` over the full packet IPv4 corpus because this strategy does not add
   bytes to packets.
+- `ipmanipulator_tcp_udp_swap_roundtrip`
+  Verifies that `IpManipulator` can rewrite IPv4 TCP protocol numbers to UDP and restore the response path.
+- `ipmanipulator_udp_tcp_swap_roundtrip`
+  Verifies the opposite `IpManipulator` protocol-number mapping, UDP to TCP and back on the response path.
 - `halfduplex_roundtrip`
   Verifies that `HalfDuplexClient` and `HalfDuplexServer` split and reconstruct one logical line correctly.
 - `http1_bidirectional_roundtrip`
@@ -147,8 +154,6 @@ buffer.
 
 Some scenarios are still better treated as future work:
 
-- `TlsClient` and `TlsServer` need a certificate arrangement that matches `TlsClient`'s real verification behavior
-  before they can be added as portable integration tests
 - default `h2c` upgrade remains a manual future-work case for bidirectional integrity testing in the current
   single-stream model.
   `nghttp2_session_upgrade2()` opens stream `1` half-closed on both sides, so a truthful tester-driven bidirectional

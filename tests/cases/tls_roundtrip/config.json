@@ -1,0 +1,39 @@
+{
+  "name": "tls-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true
+      },
+      "next": "tls-client"
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "verify": false
+      },
+      "next": "tls-server"
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "tls.integration.test"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true
+      }
+    }
+  ]
+}
