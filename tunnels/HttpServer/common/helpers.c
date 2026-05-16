@@ -7,15 +7,6 @@ static inline bool asciiCaseEqual(char a, char b)
     return (char) tolower((unsigned char) a) == (char) tolower((unsigned char) b);
 }
 
-static inline char *httpserverNextToken(char *str, const char *delim, char **saveptr)
-{
-#ifdef COMPILER_MSVC
-    return strtok_s(str, delim, saveptr);
-#else
-    return strtok_r(str, delim, saveptr);
-#endif
-}
-
 bool httpserverStringCaseEquals(const char *a, const char *b)
 {
     if (a == NULL || b == NULL)
@@ -74,46 +65,61 @@ bool httpserverStringCaseContains(const char *haystack, const char *needle)
 
 bool httpserverStringCaseContainsToken(const char *value, const char *token)
 {
-    if (value == NULL || token == NULL)
+    if (value == NULL || token == NULL || *token == '\0')
     {
         return false;
     }
 
-    char *tmp = stringDuplicate(value);
-    stringLowerCase(tmp);
+    size_t token_len = strlen(token);
 
-    char *token_l = stringDuplicate(token);
-    stringLowerCase(token_l);
-
-    bool  found   = false;
-    char *saveptr = NULL;
-
-    for (char *part = httpserverNextToken(tmp, ",", &saveptr); part != NULL;
-         part = httpserverNextToken(NULL, ",", &saveptr))
+    const char *p = value;
+    while (*p != '\0')
     {
-        while (*part == ' ' || *part == '\t')
+        while (*p == ' ' || *p == '\t' || *p == ',')
         {
-            ++part;
+            p++;
         }
 
-        char *end = part + strlen(part);
-        while (end > part && (end[-1] == ' ' || end[-1] == '\t'))
+        if (*p == '\0')
         {
-            --end;
-        }
-        *end = '\0';
-
-        if (stringCompare(part, token_l) == 0)
-        {
-            found = true;
             break;
         }
+
+        const char *end = p;
+        while (*end != '\0' && *end != ',')
+        {
+            end++;
+        }
+
+        const char *token_end = end;
+        while (token_end > p && (token_end[-1] == ' ' || token_end[-1] == '\t'))
+        {
+            token_end--;
+        }
+
+        size_t part_len = (size_t) (token_end - p);
+
+        if (part_len == token_len)
+        {
+            bool match = true;
+            for (size_t i = 0; i < part_len; i++)
+            {
+                if (! asciiCaseEqual(p[i], token[i]))
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match)
+            {
+                return true;
+            }
+        }
+
+        p = end;
     }
 
-    memoryFree(token_l);
-    memoryFree(tmp);
-
-    return found;
+    return false;
 }
 
 bool httpserverBufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end)
@@ -125,16 +131,46 @@ bool httpserverBufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end)
         return false;
     }
 
-    for (size_t i = 0; i + 1 < len; i++)
-    {
-        uint8_t c1 = bufferstreamViewByteAt(stream, i);
-        uint8_t c2 = bufferstreamViewByteAt(stream, i + 1);
+    int    state      = 0;
+    size_t match_idx  = 0;
+    size_t cur_offset = 0;
 
-        if (c1 == '\r' && c2 == '\n')
+    c_foreach(qi, bs_doublequeue_t, stream->q)
+    {
+        sbuf_t *b = *qi.ref;
+        size_t b_size = sbufGetLength(b);
+        uint8_t *b_data = (uint8_t *)sbufGetRawPtr(b);
+
+        for (size_t i = 0; i < b_size; i++)
         {
-            *line_end = i;
-            return true;
+            uint8_t c = b_data[i];
+
+            if (state == 0)
+            {
+                if (c == '\r')
+                {
+                    state     = 1;
+                    match_idx = cur_offset + i;
+                }
+            }
+            else if (state == 1)
+            {
+                if (c == '\n')
+                {
+                    *line_end = match_idx;
+                    return true;
+                }
+                else if (c == '\r')
+                {
+                    match_idx = cur_offset + i;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
         }
+        cur_offset += b_size;
     }
 
     return false;
@@ -149,18 +185,73 @@ bool httpserverBufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *heade
         return false;
     }
 
-    for (size_t i = 0; i + 3 < len; i++)
-    {
-        uint8_t b0 = bufferstreamViewByteAt(stream, i + 0);
-        uint8_t b1 = bufferstreamViewByteAt(stream, i + 1);
-        uint8_t b2 = bufferstreamViewByteAt(stream, i + 2);
-        uint8_t b3 = bufferstreamViewByteAt(stream, i + 3);
+    int    state      = 0;
+    size_t match_idx  = 0;
+    size_t cur_offset = 0;
 
-        if (b0 == '\r' && b1 == '\n' && b2 == '\r' && b3 == '\n')
+    c_foreach(qi, bs_doublequeue_t, stream->q)
+    {
+        sbuf_t *b = *qi.ref;
+        size_t b_size = sbufGetLength(b);
+        uint8_t *b_data = (uint8_t *)sbufGetRawPtr(b);
+
+        for (size_t i = 0; i < b_size; i++)
         {
-            *header_end = i + 4;
-            return true;
+            uint8_t c = b_data[i];
+
+            if (state == 0)
+            {
+                if (c == '\r')
+                {
+                    state     = 1;
+                    match_idx = cur_offset + i;
+                }
+            }
+            else if (state == 1)
+            {
+                if (c == '\n')
+                {
+                    state = 2;
+                }
+                else if (c == '\r')
+                {
+                    match_idx = cur_offset + i;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
+            else if (state == 2)
+            {
+                if (c == '\r')
+                {
+                    state = 3;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
+            else if (state == 3)
+            {
+                if (c == '\n')
+                {
+                    *header_end = match_idx + 4;
+                    return true;
+                }
+                else if (c == '\r')
+                {
+                    state     = 1;
+                    match_idx = cur_offset + i;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
         }
+        cur_offset += b_size;
     }
 
     return false;

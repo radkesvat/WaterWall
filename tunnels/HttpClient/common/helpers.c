@@ -7,15 +7,6 @@ static inline bool asciiCaseEqual(char a, char b)
     return (char) tolower((unsigned char) a) == (char) tolower((unsigned char) b);
 }
 
-static inline char *httpclientNextToken(char *str, const char *delim, char **saveptr)
-{
-#ifdef COMPILER_MSVC
-    return strtok_s(str, delim, saveptr);
-#else
-    return strtok_r(str, delim, saveptr);
-#endif
-}
-
 bool httpclientStringCaseEquals(const char *a, const char *b)
 {
     if (a == NULL || b == NULL)
@@ -79,41 +70,59 @@ bool httpclientStringCaseContainsToken(const char *value, const char *token)
         return false;
     }
 
-    char *tmp = stringDuplicate(value);
-    stringLowerCase(tmp);
-
-    char *token_l = stringDuplicate(token);
-    stringLowerCase(token_l);
-
-    bool  found   = false;
-    char *saveptr = NULL;
-
-    for (char *part = httpclientNextToken(tmp, ",", &saveptr); part != NULL;
-         part = httpclientNextToken(NULL, ",", &saveptr))
+    size_t token_len = strlen(token);
+    if (token_len == 0)
     {
-        while (*part == ' ' || *part == '\t')
-        {
-            ++part;
-        }
-
-        char *end = part + strlen(part);
-        while (end > part && (end[-1] == ' ' || end[-1] == '\t'))
-        {
-            --end;
-        }
-        *end = '\0';
-
-        if (stringCompare(part, token_l) == 0)
-        {
-            found = true;
-            break;
-        }
+        return false;
     }
 
-    memoryFree(token_l);
-    memoryFree(tmp);
+    const char *p = value;
+    while (*p != '\0')
+    {
+        while (*p == ' ' || *p == '\t' || *p == ',')
+        {
+            p++;
+        }
 
-    return found;
+        if (*p == '\0')
+        {
+            break;
+        }
+
+        const char *end = p;
+        while (*end != '\0' && *end != ',')
+        {
+            end++;
+        }
+
+        const char *tail = end;
+        while (tail > p && (tail[-1] == ' ' || tail[-1] == '\t'))
+        {
+            tail--;
+        }
+
+        size_t part_len = tail - p;
+        if (part_len == token_len)
+        {
+            bool match = true;
+            for (size_t i = 0; i < part_len; i++)
+            {
+                if (! asciiCaseEqual(p[i], token[i]))
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match)
+            {
+                return true;
+            }
+        }
+
+        p = end;
+    }
+
+    return false;
 }
 
 bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end)
@@ -125,16 +134,40 @@ bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end)
         return false;
     }
 
-    for (size_t i = 0; i + 1 < len; i++)
-    {
-        uint8_t c1 = bufferstreamViewByteAt(stream, i);
-        uint8_t c2 = bufferstreamViewByteAt(stream, i + 1);
+    size_t offset = 0;
+    int    state  = 0;
 
-        if (c1 == '\r' && c2 == '\n')
+    c_foreach(i, bs_doublequeue_t, stream->q)
+    {
+        sbuf_t  *b    = *i.ref;
+        size_t   blen = sbufGetLength(b);
+        uint8_t *ptr  = (uint8_t *) sbufGetRawPtr(b);
+
+        for (size_t j = 0; j < blen; j++)
         {
-            *line_end = i;
-            return true;
+            uint8_t c = ptr[j];
+            if (state == 0 && c == '\r')
+            {
+                state = 1;
+            }
+            else if (state == 1 && c == '\n')
+            {
+                *line_end = offset + j - 1;
+                return true;
+            }
+            else
+            {
+                if (c == '\r')
+                {
+                    state = 1;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
         }
+        offset += blen;
     }
 
     return false;
@@ -149,23 +182,52 @@ bool bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end)
         return false;
     }
 
-    for (size_t i = 0; i + 3 < len; i++)
-    {
-        uint8_t b0 = bufferstreamViewByteAt(stream, i + 0);
-        uint8_t b1 = bufferstreamViewByteAt(stream, i + 1);
-        uint8_t b2 = bufferstreamViewByteAt(stream, i + 2);
-        uint8_t b3 = bufferstreamViewByteAt(stream, i + 3);
+    size_t offset = 0;
+    int    state  = 0;
 
-        if (b0 == '\r' && b1 == '\n' && b2 == '\r' && b3 == '\n')
+    c_foreach(i, bs_doublequeue_t, stream->q)
+    {
+        sbuf_t  *b    = *i.ref;
+        size_t   blen = sbufGetLength(b);
+        uint8_t *ptr  = (uint8_t *) sbufGetRawPtr(b);
+
+        for (size_t j = 0; j < blen; j++)
         {
-            *header_end = i + 4;
-            return true;
+            uint8_t c = ptr[j];
+            if (state == 0 && c == '\r')
+            {
+                state = 1;
+            }
+            else if (state == 1 && c == '\n')
+            {
+                state = 2;
+            }
+            else if (state == 2 && c == '\r')
+            {
+                state = 3;
+            }
+            else if (state == 3 && c == '\n')
+            {
+                *header_end = offset + j + 1;
+                return true;
+            }
+            else
+            {
+                if (c == '\r')
+                {
+                    state = 1;
+                }
+                else
+                {
+                    state = 0;
+                }
+            }
         }
+        offset += blen;
     }
 
     return false;
 }
-
 
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len)
 {

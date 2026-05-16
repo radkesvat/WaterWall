@@ -2262,16 +2262,10 @@ bool httpserverTransportDetectRuntimeProtocol(tunnel_t *t, line_t *l, httpserver
 
     size_t probe_len = minSize(len, HTTP2_MAGIC_LEN);
 
-    bool magic_prefix = true;
-    for (size_t i = 0; i < probe_len; i++)
-    {
-        uint8_t b = bufferstreamViewByteAt(&ls->in_stream, i);
-        if (b != (uint8_t) HTTP2_MAGIC[i])
-        {
-            magic_prefix = false;
-            break;
-        }
-    }
+    uint8_t probe_buf[HTTP2_MAGIC_LEN];
+    bufferstreamViewBytesAt(&ls->in_stream, 0, probe_buf, probe_len);
+
+    bool magic_prefix = (memoryCompare(probe_buf, HTTP2_MAGIC, probe_len) == 0);
 
     if (magic_prefix)
     {
