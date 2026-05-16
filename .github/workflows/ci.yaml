@@ -234,9 +234,12 @@ jobs:
           -DCPM_SOURCE_CACHE="${{ env.cpm-path }}"
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
-      - name: Test
+      - name: Unit tests
         if: matrix.preset == 'linux-gcc-x64'
-        run: ctest --preset linux-gcc -C Release --output-on-failure
+        run: cmake --build --preset ${{ matrix.preset }} --target check_waterwall_unit_tests
+      - name: Integration tests
+        if: matrix.preset == 'linux-gcc-x64'
+        run: ctest --preset linux-gcc -C Release --output-on-failure -L integration
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -482,4 +485,3 @@ jobs:
             tag_name: v${{ env.VERSION }}
             files: |
               zipped_artifacts/*.zip
-
