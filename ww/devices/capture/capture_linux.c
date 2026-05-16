@@ -3,8 +3,8 @@
 #include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "worker.h"
-#include "wproc.h"
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/if_ether.h>
 #include <linux/ipv6.h>
@@ -15,8 +15,11 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <poll.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 enum
 {
@@ -26,13 +29,10 @@ enum
     kNetfilterQueueLen          = 16384 * 32
 };
 
-static const char *ip_tables_enable_queue_mi  = "iptables -I INPUT -s %s -j NFQUEUE --queue-num %d";
-static const char *ip_tables_disable_queue_mi = "iptables -D INPUT -s %s -j NFQUEUE --queue-num %d";
-
-static const char *sysctl_set_rmem_max     = "sysctl -w net.core.rmem_max=67108864";
-static const char *sysctl_set_rmem_default = "sysctl -w net.core.rmem_default=33554432";
-static const char *sysctl_set_wmem_max     = "sysctl -w net.core.wmem_max=33554432";
-static const char *sysctl_set_wmem_default = "sysctl -w net.core.wmem_default=16777216";
+static const char *sysctl_set_rmem_max     = "net.core.rmem_max=67108864";
+static const char *sysctl_set_rmem_default = "net.core.rmem_default=33554432";
+static const char *sysctl_set_wmem_max     = "net.core.wmem_max=33554432";
+static const char *sysctl_set_wmem_default = "net.core.wmem_default=16777216";
 
 static uint8_t capturedeviceIpv4MaskPrefixLength(const ip_addr_t *mask)
 {
@@ -63,38 +63,86 @@ static void capturedeviceFormatCidr(const ipmask_t *range, char *dest, size_t de
     stringNPrintf(dest, dest_len, "%s/%u", ip, prefix);
 }
 
-static char *capturedeviceFormatCommand(const char *format, const ipmask_t *range, int queue_number)
+static int capturedeviceRunCommand(const char *command_name, const char *const argv[])
 {
-    enum
+    pid_t childpid = fork();
+    if (childpid < 0)
     {
-        kCommandMaxLen = 160
-    };
+        LOGE("CaptureDevice: failed to fork for %s: %s", command_name, strerror(errno));
+        return -1;
+    }
 
-    char  cidr[24];
-    char *command = memoryAllocate(kCommandMaxLen);
+    if (childpid == 0)
+    {
+        execvp(command_name, (char *const *) argv);
+        perror(command_name);
+        _exit(127);
+    }
 
-    capturedeviceFormatCidr(range, cidr, sizeof(cidr));
-    stringNPrintf(command, kCommandMaxLen, format, cidr, queue_number);
+    int status = 0;
+    while (waitpid(childpid, &status, 0) < 0)
+    {
+        if (errno == EINTR)
+        {
+            continue;
+        }
 
-    return command;
+        LOGE("CaptureDevice: failed to wait for %s: %s", command_name, strerror(errno));
+        return -1;
+    }
+
+    if (WIFEXITED(status))
+    {
+        return WEXITSTATUS(status);
+    }
+
+    if (WIFSIGNALED(status))
+    {
+        LOGE("CaptureDevice: %s terminated by signal %d", command_name, WTERMSIG(status));
+    }
+
+    return -1;
 }
 
-static void capturedeviceFreeCommands(char **commands, uint32_t count)
+static void capturedeviceSetSysctl(const char *setting)
 {
-    if (commands == NULL)
+    const char *const argv[] = {"sysctl", "-w", setting, NULL};
+    discard capturedeviceRunCommand("sysctl", argv);
+}
+
+static bool capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr, uint32_t queue_number)
+{
+    char queue_number_arg[16];
+    stringNPrintf(queue_number_arg, sizeof(queue_number_arg), "%u", queue_number);
+
+    const char *const argv[] = {"iptables", operation, "INPUT", "-s", cidr, "-j", "NFQUEUE", "--queue-num",
+                                queue_number_arg, NULL};
+    return capturedeviceRunCommand("iptables", argv) == 0;
+}
+
+static char *capturedeviceFormatCidrString(const ipmask_t *range)
+{
+    char cidr[24];
+    capturedeviceFormatCidr(range, cidr, sizeof(cidr));
+    return stringDuplicate(cidr);
+}
+
+static void capturedeviceFreeCidrs(char **cidrs, uint32_t count)
+{
+    if (cidrs == NULL)
     {
         return;
     }
 
     for (uint32_t i = 0; i < count; ++i)
     {
-        if (commands[i] != NULL)
+        if (cidrs[i] != NULL)
         {
-            memoryFree(commands[i]);
+            memoryFree(cidrs[i]);
         }
     }
 
-    memoryFree(commands);
+    memoryFree(cidrs);
 }
 
 /**
@@ -523,11 +571,11 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 {
     assert(! cdev->up);
 
-    for (uint32_t i = 0; i < cdev->command_count; ++i)
+    for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
-        if (execCmd(cdev->bringup_commands[i]).exit_code != 0)
+        if (! capturedeviceRunIptablesQueueRule("-I", cdev->capture_cidrs[i], cdev->queue_number))
         {
-            LOGE("CaptureDevice: command failed: %s", cdev->bringup_commands[i]);
+            LOGE("CaptureDevice: failed to install iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
             terminateProgram(1);
             return false;
         }
@@ -555,11 +603,11 @@ bool caputredeviceBringDown(capture_device_t *cdev)
 
     atomicThreadFence(memory_order_release);
 
-    for (uint32_t i = 0; i < cdev->command_count; ++i)
+    for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
-        if (execCmd(cdev->bringdown_commands[i]).exit_code != 0)
+        if (! capturedeviceRunIptablesQueueRule("-D", cdev->capture_cidrs[i], cdev->queue_number))
         {
-            LOGE("CaptureDevice: command failed: %s", cdev->bringdown_commands[i]);
+            LOGE("CaptureDevice: failed to remove iptables NFQUEUE rule for %s", cdev->capture_cidrs[i]);
             terminateProgram(1);
         }
     }
@@ -583,10 +631,10 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
 
     /* Fixing the most crazy socket stop reason */
-    execCmd(sysctl_set_rmem_max);
-    execCmd(sysctl_set_rmem_default);
-    execCmd(sysctl_set_wmem_max);
-    execCmd(sysctl_set_wmem_default);
+    capturedeviceSetSysctl(sysctl_set_rmem_max);
+    capturedeviceSetSysctl(sysctl_set_rmem_default);
+    capturedeviceSetSysctl(sysctl_set_wmem_max);
+    capturedeviceSetSysctl(sysctl_set_wmem_default);
 
     int socket_netfilter = socket(AF_NETLINK, SOCK_RAW, NETLINK_NETFILTER);
     if (socket_netfilter < 0)
@@ -642,24 +690,26 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     }
     int queue_number = GSTATE.capturedevice_queue_start_number++;
 
-    char **bringup_commands   = memoryAllocate((size_t) capture_range_count * sizeof(*bringup_commands));
-    char **bringdown_commands = memoryAllocate((size_t) capture_range_count * sizeof(*bringdown_commands));
-    memorySet(bringup_commands, 0, (size_t) capture_range_count * sizeof(*bringup_commands));
-    memorySet(bringdown_commands, 0, (size_t) capture_range_count * sizeof(*bringdown_commands));
+    char **capture_cidrs = memoryAllocate((size_t) capture_range_count * sizeof(*capture_cidrs));
+    memorySet(capture_cidrs, 0, (size_t) capture_range_count * sizeof(*capture_cidrs));
 
     for (uint32_t i = 0; i < capture_range_count; ++i)
     {
-        bringup_commands[i]   = capturedeviceFormatCommand(ip_tables_enable_queue_mi, &capture_ranges[i], queue_number);
-        bringdown_commands[i] =
-            capturedeviceFormatCommand(ip_tables_disable_queue_mi, &capture_ranges[i], queue_number);
+        capture_cidrs[i] = capturedeviceFormatCidrString(&capture_ranges[i]);
+        if (capture_cidrs[i] == NULL)
+        {
+            LOGE("CaptureDevice: failed to format capture range");
+            close(socket_netfilter);
+            capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
+            return NULL;
+        }
     }
 
     if (! netfilterSetConfig(socket_netfilter, NFQNL_CFG_CMD_BIND, queue_number, 0))
     {
         LOGE("CaptureDevice: unable to bind netfilter to queue number %u", queue_number);
         close(socket_netfilter);
-        capturedeviceFreeCommands(bringup_commands, capture_range_count);
-        capturedeviceFreeCommands(bringdown_commands, capture_range_count);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
         return NULL;
     }
 
@@ -671,8 +721,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
              range);
 
         close(socket_netfilter);
-        capturedeviceFreeCommands(bringup_commands, capture_range_count);
-        capturedeviceFreeCommands(bringdown_commands, capture_range_count);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
         return NULL;
     }
     if (! netfilterSetQueueLength(socket_netfilter, queue_number, kNetfilterQueueLen))
@@ -680,8 +729,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
         LOGE("CaptureDevice: unable to set netfilter queue maximum length to %u", kNetfilterQueueLen);
 
         close(socket_netfilter);
-        capturedeviceFreeCommands(bringup_commands, capture_range_count);
-        capturedeviceFreeCommands(bringdown_commands, capture_range_count);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
         return NULL;
     }
     int rcvbuf_size = 64 * 1024 * 1024; // 64MB
@@ -689,8 +737,7 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     {
         LOGE("CaptureDevice: failed to set SO_RCVBUF: %s", strerror(errno));
         close(socket_netfilter);
-        capturedeviceFreeCommands(bringup_commands, capture_range_count);
-        capturedeviceFreeCommands(bringdown_commands, capture_range_count);
+        capturedeviceFreeCidrs(capture_cidrs, capture_range_count);
         return NULL;
     }
 
@@ -713,16 +760,14 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
                                 .userdata               = userdata,
                                 .reader_message_pool    = masterpoolCreateWithCapacity(RAM_PROFILE * 2),
                                 .netfilter_queue_number = queue_number,
-                                .bringup_commands       = bringup_commands,
-                                .bringdown_commands     = bringdown_commands,
-                                .command_count          = capture_range_count,
+                                .capture_cidrs          = capture_cidrs,
+                                .capture_range_count    = capture_range_count,
                                 .reader_buffer_pool     = reader_bpool};
     if (pipe(cdev->linux_pipe_fds) != 0)
     {
         LOGE("CaptureDevice: failed to create pipe for linux_pipe_fds");
         memoryFree(cdev->name);
-        capturedeviceFreeCommands(cdev->bringup_commands, cdev->command_count);
-        capturedeviceFreeCommands(cdev->bringdown_commands, cdev->command_count);
+        capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
         bufferpoolDestroy(cdev->reader_buffer_pool);
         masterpoolDestroy(cdev->reader_message_pool);
         close(cdev->socket);
@@ -742,8 +787,7 @@ void capturedeviceDestroy(capture_device_t *cdev)
         caputredeviceBringDown(cdev);
     }
     memoryFree(cdev->name);
-    capturedeviceFreeCommands(cdev->bringup_commands, cdev->command_count);
-    capturedeviceFreeCommands(cdev->bringdown_commands, cdev->command_count);
+    capturedeviceFreeCidrs(cdev->capture_cidrs, cdev->capture_range_count);
     bufferpoolDestroy(cdev->reader_buffer_pool);
     masterpoolMakeEmpty(cdev->reader_message_pool, NULL);
     masterpoolDestroy(cdev->reader_message_pool);

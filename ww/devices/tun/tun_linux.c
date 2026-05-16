@@ -3,12 +3,16 @@
 #include "loggers/internal_logger.h"
 #include "tun.h"
 #include "wchan.h"
-#include "wproc.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -180,6 +184,55 @@ static bool routeTableArgIsSafe(const char *route_table)
 
     return true;
 }
+
+static int tunRunCommand(const char *command_name, const char *const argv[])
+{
+    pid_t childpid = fork();
+    if (childpid < 0)
+    {
+        LOGE("TunDevice: failed to fork for %s: %s", command_name, strerror(errno));
+        return -1;
+    }
+
+    if (childpid == 0)
+    {
+        execvp(command_name, (char *const *) argv);
+        perror(command_name);
+        _exit(127);
+    }
+
+    int status = 0;
+    while (waitpid(childpid, &status, 0) < 0)
+    {
+        if (errno == EINTR)
+        {
+            continue;
+        }
+
+        LOGE("TunDevice: failed to wait for %s: %s", command_name, strerror(errno));
+        return -1;
+    }
+
+    if (WIFEXITED(status))
+    {
+        return WEXITSTATUS(status);
+    }
+
+    if (WIFSIGNALED(status))
+    {
+        LOGE("TunDevice: %s terminated by signal %d", command_name, WTERMSIG(status));
+    }
+
+    return -1;
+}
+
+#ifndef OS_LINUX
+static bool tunFormatIpPrefixArg(char *buffer, size_t buffer_size, const char *ip_presentation, unsigned int subnet)
+{
+    int written = stringNPrintf(buffer, buffer_size, "%s/%u", ip_presentation, subnet);
+    return written >= 0 && (size_t) written < buffer_size;
+}
+#endif
 
 /**
  * Event message structure for TUN device communication
@@ -570,11 +623,16 @@ linux_done:
     }
     return ok;
 #else
-    char command[128];
+    char ip_prefix[INET6_ADDRSTRLEN + 12];
 
-    snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
+    if (! tunFormatIpPrefixArg(ip_prefix, sizeof(ip_prefix), ip_presentation, subnet))
+    {
+        LOGE("TunDevice: ip address argument is too long");
+        return false;
+    }
 
-    if (execCmd(command).exit_code != 0)
+    const char *const argv[] = {"ifconfig", tdev->name, "inet", ip_prefix, "-alias", NULL};
+    if (tunRunCommand("ifconfig", argv) != 0)
     {
         LOGE("TunDevice: error unassigning ip address");
         return false;
@@ -683,11 +741,16 @@ bool tundeviceAssignIP(tun_device_t *tdev, const char *ip_presentation, unsigned
     LOGE("TunDevice: Cannot set IP -> Invalid IP address or prefix: %s/%u", ip_presentation, subnet);
     return false;
 #else
-    char command[128];
+    char ip_prefix[INET6_ADDRSTRLEN + 12];
 
-    snprintf(command, sizeof(command), "ifconfig %s inet %s/%d -alias", tdev->name, ip_presentation, subnet);
+    if (! tunFormatIpPrefixArg(ip_prefix, sizeof(ip_prefix), ip_presentation, subnet))
+    {
+        LOGE("TunDevice: ip address argument is too long");
+        return false;
+    }
 
-    if (execCmd(command).exit_code != 0)
+    const char *const argv[] = {"ifconfig", tdev->name, "inet", ip_prefix, "-alias", NULL};
+    if (tunRunCommand("ifconfig", argv) != 0)
     {
         LOGE("TunDevice: error setting ip address");
         return false;
@@ -706,23 +769,25 @@ bool tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_t
     }
 
 #ifdef OS_LINUX
-    char        command[512];
     const char *family = stringChr(cidr, ':') != NULL ? "-6" : "-4";
 
     if (routeTableIsMain(route_table))
     {
-        stringNPrintf(command, sizeof(command), "ip %s route add %s dev %s", family, cidr, tdev->name);
+        const char *const argv[] = {"ip", family, "route", "add", cidr, "dev", tdev->name, NULL};
+        if (tunRunCommand("ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
+            return false;
+        }
     }
     else
     {
-        stringNPrintf(
-            command, sizeof(command), "ip %s route add %s dev %s table %s", family, cidr, tdev->name, route_table);
-    }
-
-    if (execCmd(command).exit_code != 0)
-    {
-        LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
-        return false;
+        const char *const argv[] = {"ip", family, "route", "add", cidr, "dev", tdev->name, "table", route_table, NULL};
+        if (tunRunCommand("ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
+            return false;
+        }
     }
 
     LOGI("TunDevice: added system route %s on %s", cidr, tdev->name);
@@ -734,11 +799,9 @@ bool tundeviceAddRoute(tun_device_t *tdev, const char *cidr, const char *route_t
         return false;
     }
 
-    char        command[512];
     const char *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
-    stringNPrintf(command, sizeof(command), "route -n add %s %s -interface %s", family, cidr, tdev->name);
-
-    if (execCmd(command).exit_code != 0)
+    const char *const argv[] = {"route", "-n", "add", family, cidr, "-interface", tdev->name, NULL};
+    if (tunRunCommand("route", argv) != 0)
     {
         LOGE("TunDevice: failed to add system route %s on %s", cidr, tdev->name);
         return false;
@@ -760,23 +823,25 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
     }
 
 #ifdef OS_LINUX
-    char        command[512];
     const char *family = stringChr(cidr, ':') != NULL ? "-6" : "-4";
 
     if (routeTableIsMain(route_table))
     {
-        stringNPrintf(command, sizeof(command), "ip %s route del %s dev %s", family, cidr, tdev->name);
+        const char *const argv[] = {"ip", family, "route", "del", cidr, "dev", tdev->name, NULL};
+        if (tunRunCommand("ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
+            return false;
+        }
     }
     else
     {
-        stringNPrintf(
-            command, sizeof(command), "ip %s route del %s dev %s table %s", family, cidr, tdev->name, route_table);
-    }
-
-    if (execCmd(command).exit_code != 0)
-    {
-        LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
-        return false;
+        const char *const argv[] = {"ip", family, "route", "del", cidr, "dev", tdev->name, "table", route_table, NULL};
+        if (tunRunCommand("ip", argv) != 0)
+        {
+            LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
+            return false;
+        }
     }
 
     LOGI("TunDevice: removed system route %s on %s", cidr, tdev->name);
@@ -788,11 +853,9 @@ bool tundeviceRemoveRoute(tun_device_t *tdev, const char *cidr, const char *rout
         return false;
     }
 
-    char        command[512];
     const char *family = stringChr(cidr, ':') != NULL ? "-inet6" : "-inet";
-    stringNPrintf(command, sizeof(command), "route -n delete %s %s -interface %s", family, cidr, tdev->name);
-
-    if (execCmd(command).exit_code != 0)
+    const char *const argv[] = {"route", "-n", "delete", family, cidr, "-interface", tdev->name, NULL};
+    if (tunRunCommand("route", argv) != 0)
     {
         LOGE("TunDevice: failed to remove system route %s on %s", cidr, tdev->name);
         return false;

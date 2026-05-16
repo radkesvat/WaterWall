@@ -24,9 +24,8 @@ typedef struct capture_device_s
     int      socket;
     int      linux_pipe_fds[2]; // used for signaling read thread to stop
     uint32_t queue_number;
-    char   **bringup_commands;
-    char   **bringdown_commands;
-    uint32_t command_count;
+    char   **capture_cidrs;
+    uint32_t capture_range_count;
     int      netfilter_queue_number;
 #endif
     bool      drop_captured_packet;
