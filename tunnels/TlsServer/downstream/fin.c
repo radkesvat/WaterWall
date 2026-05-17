@@ -14,6 +14,8 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
              (unsigned int) lineGetWID(l), (int) ls->next_finished, (int) ls->prev_finished);
     }
 
+    ls->next_finished = true;
+
     if (ls->prev_finished)
     {
         if (ls->verbose)
