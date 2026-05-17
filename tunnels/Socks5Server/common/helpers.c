@@ -619,10 +619,15 @@ void socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l)
         memoryFree(remote_lines);
     }
 
+    bool close_prev = ! client_ls->prev_finished;
+
     client_ls->next_finished = true;
     client_ls->prev_finished = true;
     socks5serverLinestateDestroy(client_ls);
-    tunnelPrevDownStreamFinish(t, client_l);
+    if (close_prev)
+    {
+        tunnelPrevDownStreamFinish(t, client_l);
+    }
     lineUnlock(client_l);
 }
 

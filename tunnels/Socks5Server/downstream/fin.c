@@ -26,7 +26,6 @@ void socks5serverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         ls->next_finished = true;
         bool close_prev   = ! ls->prev_finished;
         ls->prev_finished = true;
-        socks5serverLinestateDestroy(ls);
 
         if (send_connect_failure)
         {
@@ -36,6 +35,8 @@ void socks5serverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
                 tunnelPrevDownStreamPayload(t, l, reply);
             }
         }
+
+        socks5serverLinestateDestroy(ls);
 
         if (lineIsAlive(l) && close_prev)
         {

@@ -233,10 +233,6 @@ void keepaliveserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
     keepaliveserverLinestateDestroy(lineGetState(l, t));
 
     tunnelNextUpStreamFinish(t, l);
-    if (lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
 
     lineUnlock(l);
 }
@@ -247,10 +243,6 @@ void keepaliveserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
     keepaliveserverLinestateDestroy(lineGetState(l, t));
 
     tunnelPrevDownStreamFinish(t, l);
-    if (lineIsAlive(l))
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
 
     lineUnlock(l);
 }
