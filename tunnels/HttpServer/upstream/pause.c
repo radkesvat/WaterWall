@@ -5,6 +5,12 @@
 void httpserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
     httpserver_lstate_t *ls = lineGetState(l, t);
+
+    if (ls->next_finished)
+    {
+        return;
+    }
+
     if (ls->split_role == kHttpServerSplitRoleDownload && ls->split_main_line != NULL)
     {
         tunnelNextUpStreamPause(t, ls->split_main_line);

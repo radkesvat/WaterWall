@@ -15,6 +15,8 @@ void httpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     lineLock(l);
 
+    ls->prev_finished = true;
+
     if (ts->websocket_enabled && ls->websocket_active)
     {
         if (! httpclientTransportSendWebSocketClose(t, l, ls))
