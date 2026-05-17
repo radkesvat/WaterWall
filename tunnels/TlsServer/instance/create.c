@@ -9,6 +9,56 @@ enum
     kTlsServerDefaultSessionTimeout = 300
 };
 
+static const char *tlsserverSessionCacheName(int mode)
+{
+    switch (mode)
+    {
+    case kTlsServerSessionCacheOff:
+        return "off";
+    case kTlsServerSessionCacheBuiltin:
+        return "builtin";
+    case kTlsServerSessionCacheNone:
+    default:
+        return "none";
+    }
+}
+
+static void tlsserverInfoCallback(const SSL *ssl, int where, int ret)
+{
+    tlsserver_tstate_t *ts      = SSL_CTX_get_app_data(SSL_get_SSL_CTX(ssl));
+    bool                verbose = ts != NULL && ts->verbose;
+
+    if ((where & SSL_CB_ALERT) != 0)
+    {
+        const char *alert_type = SSL_alert_type_string_long(ret);
+        if (verbose)
+        {
+            LOGD("TlsServer: TLS alert %s: %s:%s",
+                 (where & SSL_CB_READ) != 0 ? "read" : "write",
+                 alert_type,
+                 SSL_alert_desc_string_long(ret));
+        }
+        else if (stricmp(alert_type, "fatal") == 0)
+        {
+            LOGW("TlsServer: TLS fatal alert %s: %s",
+                 (where & SSL_CB_READ) != 0 ? "read" : "write",
+                 SSL_alert_desc_string_long(ret));
+        }
+        return;
+    }
+
+    if (verbose && (where & SSL_CB_HANDSHAKE_START) != 0)
+    {
+        LOGD("TlsServer: OpenSSL handshake started (state=\"%s\")", SSL_state_string_long(ssl));
+        return;
+    }
+
+    if (verbose && (where & SSL_CB_HANDSHAKE_DONE) != 0)
+    {
+        LOGD("TlsServer: OpenSSL handshake done (state=\"%s\")", SSL_state_string_long(ssl));
+    }
+}
+
 static void configureTunnelCallbacks(tunnel_t *t)
 {
     t->fnInitU    = &tlsserverTunnelUpStreamInit;
@@ -312,21 +362,31 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
     SSL_CTX *ctx = (SSL_CTX *) sslCtxNew(&params);
     if (ctx == NULL)
     {
+        LOGE("TlsServer: failed to create SSL_CTX with cert-file=\"%s\" key-file=\"%s\"",
+             ts->cert_file, ts->key_file);
+        tlsserverPrintSSLError();
         return NULL;
     }
 
     if (! SSL_CTX_set_min_proto_version(ctx, ts->min_proto_version) ||
         ! SSL_CTX_set_max_proto_version(ctx, ts->max_proto_version))
     {
+        LOGE("TlsServer: failed to set TLS protocol version range");
+        tlsserverPrintSSLError();
         SSL_CTX_free(ctx);
         return NULL;
     }
 
     if (SSL_CTX_set_cipher_list(ctx, ts->ciphers) != 1)
     {
+        LOGE("TlsServer: failed to set TLS cipher list \"%s\"", ts->ciphers);
+        tlsserverPrintSSLError();
         SSL_CTX_free(ctx);
         return NULL;
     }
+
+    SSL_CTX_set_app_data(ctx, ts);
+    SSL_CTX_set_info_callback(ctx, tlsserverInfoCallback);
 
     if (ts->prefer_server_ciphers)
     {
@@ -343,6 +403,8 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
         SSL_CTX_sess_set_cache_size(ctx, (long) ts->session_cache_size);
         if (! SSL_CTX_set_session_id_context(ctx, ts->session_id_context, ts->session_id_context_len))
         {
+            LOGE("TlsServer: failed to set TLS session id context");
+            tlsserverPrintSSLError();
             SSL_CTX_free(ctx);
             return NULL;
         }
@@ -366,12 +428,20 @@ static SSL_CTX *createServerSslContext(tlsserver_tstate_t *ts)
 
     if (ts->expected_sni != NULL)
     {
+        if (ts->verbose)
+        {
+            LOGD("TlsServer: enabling exact SNI check for \"%s\"", ts->expected_sni);
+        }
         SSL_CTX_set_tlsext_servername_callback(ctx, tlsserverOnServername);
         SSL_CTX_set_tlsext_servername_arg(ctx, ts);
     }
 
     if (ts->alpns_length > 0)
     {
+        if (ts->verbose)
+        {
+            LOGD("TlsServer: enabling ALPN selection with %u configured protocol(s)", ts->alpns_length);
+        }
         SSL_CTX_set_alpn_select_cb(ctx, tlsserverOnAlpnSelect, ts);
     }
 
@@ -393,6 +463,8 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
         return NULL;
     }
 
+    getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
+
     if (! parseRequiredString(&ts->cert_file, settings, "cert-file", t) ||
         ! parseRequiredString(&ts->key_file, settings, "key-file", t) ||
         ! parseOptionalString(&ts->expected_sni, settings, "sni", t) ||
@@ -405,6 +477,24 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
     tlsserverInitializeSessionIdContext(ts, node);
 
     int worker_count = getWorkersCount();
+    if (ts->verbose)
+    {
+        LOGD("TlsServer: creating node \"%s\" cert-file=\"%s\" key-file=\"%s\" sni=\"%s\" min-version=%d max-version=%d "
+             "ciphers=\"%s\" session-cache=%s session-cache-size=%d session-tickets=%d alpns=%u workers=%d",
+             node->name,
+             ts->cert_file,
+             ts->key_file,
+             ts->expected_sni != NULL ? ts->expected_sni : "<none>",
+             ts->min_proto_version,
+             ts->max_proto_version,
+             ts->ciphers,
+             tlsserverSessionCacheName(ts->session_cache_mode),
+             ts->session_cache_size,
+             (int) ts->session_tickets,
+             ts->alpns_length,
+             worker_count);
+    }
+
     ts->threadlocal_ssl_contexts = memoryAllocate((size_t) worker_count * sizeof(SSL_CTX *));
     memoryZero(ts->threadlocal_ssl_contexts, (size_t) worker_count * sizeof(SSL_CTX *));
 
@@ -413,9 +503,13 @@ tunnel_t *tlsserverTunnelCreate(node_t *node)
         ts->threadlocal_ssl_contexts[i] = createServerSslContext(ts);
         if (ts->threadlocal_ssl_contexts[i] == NULL)
         {
-            LOGF("TlsServer: failed to create OpenSSL server context");
+            LOGF("TlsServer: failed to create OpenSSL server context for worker %d", i);
             tlsserverTunnelDestroy(t);
             return NULL;
+        }
+        if (ts->verbose)
+        {
+            LOGD("TlsServer: created OpenSSL server context for worker %d", i);
         }
     }
 

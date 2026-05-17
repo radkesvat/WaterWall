@@ -47,7 +47,8 @@ That arrangement lets:
     "max-version": "TLSv1.3",
     "ciphers": "HIGH:!aNULL:!MD5",
     "session-cache": "none",
-    "session-tickets": true
+    "session-tickets": true,
+    "verbose": false
   },
   "next": "http-server"
 }
@@ -140,6 +141,12 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
   Enables or disables TLS session tickets.
   Default: `true`
 
+- `verbose` `(boolean)`
+  Enables detailed TLS lifecycle debug logs.
+  Default: `false`
+
+  Handshake success logs and handshake failure/rejection reasons are still emitted without this flag.
+
 ## Detailed Behavior
 
 ### Handshake and data flow
@@ -157,6 +164,7 @@ This means the next node always sees plain application data, not TLS records.
 ### `Est` behavior
 
 In Waterwall terms, downstream `Est` still represents the underlying transport becoming established.
+`TlsServer` forwards that `Est` immediately; it does not wait for the TLS handshake.
 
 TLS readiness happens later, when the handshake completes.
 

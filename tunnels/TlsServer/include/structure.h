@@ -30,6 +30,7 @@ typedef struct tlsserver_tstate_s
     int  session_cache_size;
     bool prefer_server_ciphers;
     bool session_tickets;
+    bool verbose;
 } tlsserver_tstate_t;
 
 typedef struct tlsserver_lstate_s
@@ -40,12 +41,12 @@ typedef struct tlsserver_lstate_s
     buffer_queue_t pending_down;
 
     bool handshake_completed;
-    bool downstream_est_pending;
     bool next_finished;
     bool prev_finished;
     bool close_notify_sent;
     bool peer_close_notify_received;
     bool resources_released;
+    bool verbose;
 } tlsserver_lstate_t;
 
 enum
@@ -107,7 +108,7 @@ void tlsserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void tlsserverTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tlsserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx);
+bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, bool verbose);
 void tlsserverLinestateDestroy(tlsserver_lstate_t *ls);
 void tlsserverLinestateRelease(tlsserver_lstate_t *ls);
 
@@ -122,4 +123,4 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf);
 bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
 bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls);
-void tlsserverCloseLineFatal(tunnel_t *t, line_t *l, bool close_next_first);
+void tlsserverCloseLineFatal(tunnel_t *t, line_t *l);

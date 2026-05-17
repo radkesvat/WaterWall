@@ -2,9 +2,9 @@
 
 #include "loggers/network_logger.h"
 
-bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx)
+bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, bool verbose)
 {
-    *ls = (tlsserver_lstate_t) {.pending_down = bufferqueueCreate(2)};
+    *ls = (tlsserver_lstate_t) {.pending_down = bufferqueueCreate(2), .verbose = verbose};
 
     ls->rbio = BIO_new(BIO_s_mem());
     ls->wbio = BIO_new(BIO_s_mem());
@@ -12,6 +12,9 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx)
 
     if (ls->rbio == NULL || ls->wbio == NULL || ls->ssl == NULL)
     {
+        LOGE("TlsServer: failed to allocate per-line TLS objects (rbio=%p, wbio=%p, ssl=%p)",
+             (void *) ls->rbio, (void *) ls->wbio, (void *) ls->ssl);
+        tlsserverPrintSSLError();
         tlsserverLinestateDestroy(ls);
         return false;
     }
@@ -28,12 +31,20 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
 {
     if (ls->resources_released)
     {
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: per-line TLS resources already released");
+        }
         return;
     }
     ls->resources_released = true;
 
     if (ls->ssl != NULL)
     {
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: releasing per-line SSL object");
+        }
         SSL_free(ls->ssl);
         ls->ssl = NULL;
     }
@@ -41,11 +52,19 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
     {
         if (ls->rbio != NULL)
         {
+            if (ls->verbose)
+            {
+                LOGD("TlsServer: releasing detached read BIO");
+            }
             BIO_free(ls->rbio);
             ls->rbio = NULL;
         }
         if (ls->wbio != NULL)
         {
+            if (ls->verbose)
+            {
+                LOGD("TlsServer: releasing detached write BIO");
+            }
             BIO_free(ls->wbio);
             ls->wbio = NULL;
         }
@@ -53,8 +72,7 @@ void tlsserverLinestateRelease(tlsserver_lstate_t *ls)
 
     bufferqueueDestroy(&ls->pending_down);
 
-    ls->handshake_completed    = false;
-    ls->downstream_est_pending = false;
+    ls->handshake_completed = false;
 }
 
 void tlsserverLinestateDestroy(tlsserver_lstate_t *ls)

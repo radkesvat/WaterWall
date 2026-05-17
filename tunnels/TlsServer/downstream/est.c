@@ -4,16 +4,10 @@
 
 void tlsserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
-    tlsserver_lstate_t *ls = lineGetState(l, t);
-
-    if (ls->handshake_completed)
+    tlsserver_tstate_t *ts = tunnelGetState(t);
+    if (ts->verbose)
     {
-        if (! lineIsEstablished(l))
-        {
-            tunnelPrevDownStreamEst(t, l);
-        }
-        return;
+        LOGD("TlsServer: worker %u forwarding downstream Est", (unsigned int) lineGetWID(l));
     }
-
-    ls->downstream_est_pending = true;
+    tunnelPrevDownStreamEst(t, l);
 }

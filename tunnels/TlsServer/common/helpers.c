@@ -22,6 +22,11 @@ int tlsserverOnServername(SSL *ssl, int *ad, void *arg)
         return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
 
+    if (ts->verbose)
+    {
+        LOGD("TlsServer: accepted SNI \"%s\"", sni);
+    }
+
     return SSL_TLSEXT_ERR_OK;
 }
 
@@ -36,7 +41,17 @@ int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *ou
 
         while (client_offset < inlen)
         {
-            unsigned int        current_len = in[client_offset];
+            unsigned int current_len = in[client_offset];
+            if (client_offset + 1U + current_len > inlen)
+            {
+                LOGW("TlsServer: rejected TLS connection due to malformed ALPN extension");
+#ifdef SSL_AD_DECODE_ERROR
+                return SSL_TLSEXT_ERR_ALERT_FATAL;
+#else
+                return SSL_TLSEXT_ERR_NOACK;
+#endif
+            }
+
             const unsigned char *cur        = &in[client_offset + 1];
 
             if (ts->alpns[i].name_length == current_len &&
@@ -44,6 +59,10 @@ int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *ou
             {
                 *out    = cur;
                 *outlen = (unsigned char) current_len;
+                if (ts->verbose)
+                {
+                    LOGD("TlsServer: selected ALPN \"%.*s\"", (int) current_len, (const char *) cur);
+                }
                 return SSL_TLSEXT_ERR_OK;
             }
 
@@ -80,6 +99,10 @@ void tlsserverPrintSSLError(void)
     if (len > 0)
     {
         LOGE("TlsServer: OpenSSL Error: %.*s", (int) len, buf);
+    }
+    else
+    {
+        LOGD("TlsServer: OpenSSL error queue is empty");
     }
     BIO_free(bio);
 }
@@ -133,8 +156,13 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
         if (n > 0)
         {
             sbufSetLength(ssl_buf, n);
+            if (ls->verbose)
+            {
+                LOGD("TlsServer: worker %u flushing %d TLS bytes downstream", (unsigned int) lineGetWID(l), n);
+            }
             if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, ssl_buf))
             {
+                LOGW("TlsServer: line closed while flushing TLS bytes downstream");
                 return false;
             }
             continue;
@@ -144,6 +172,8 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 
         if (! BIO_should_retry(SSL_get_wbio(ls->ssl)))
         {
+            LOGW("TlsServer: TLS write BIO failed while flushing output");
+            tlsserverPrintSSLError();
             return false;
         }
         return true;
@@ -153,6 +183,10 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls, sbuf_t *buf)
 {
     int len = (int) sbufGetLength(buf);
+    if (ls->verbose)
+    {
+        LOGD("TlsServer: worker %u encrypting %d cleartext bytes for downstream", (unsigned int) lineGetWID(l), len);
+    }
 
     while (len > 0)
     {
@@ -166,19 +200,25 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
 
             if (! tlsserverFlushSslOutput(t, l, ls))
             {
-                lineReuseBuffer(l, buf);
+                reuseBuffer(buf);
                 return false;
             }
         }
 
         if (status == kSslstatusFail)
         {
-            lineReuseBuffer(l, buf);
+            LOGW("TlsServer: SSL_write failed while encrypting cleartext payload");
+            tlsserverPrintSSLError();
+            reuseBuffer(buf);
             return false;
         }
 
         if (n == 0)
         {
+            if (ls->verbose)
+            {
+                LOGD("TlsServer: SSL_write produced no progress while encrypting cleartext payload");
+            }
             break;
         }
     }
@@ -189,6 +229,16 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
 
 bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
+    uint32_t pending_count = bufferqueueGetBufCount(&ls->pending_down);
+    if (pending_count > 0)
+    {
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: worker %u flushing %u queued downstream payload buffers after handshake",
+                 (unsigned int) lineGetWID(l), (unsigned int) pending_count);
+        }
+    }
+
     while (bufferqueueGetBufCount(&ls->pending_down) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pending_down);
@@ -205,30 +255,51 @@ bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
     if (ls->resources_released || ls->ssl == NULL || ! ls->handshake_completed || ls->close_notify_sent)
     {
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: skipping close_notify (released=%d, ssl=%p, handshake=%d, already_sent=%d)",
+                 (int) ls->resources_released, (void *) ls->ssl, (int) ls->handshake_completed,
+                 (int) ls->close_notify_sent);
+        }
         return true;
+    }
+
+    if (ls->verbose)
+    {
+        LOGD("TlsServer: worker %u sending TLS close_notify", (unsigned int) lineGetWID(l));
     }
 
     int shutdown_result = SSL_shutdown(ls->ssl);
 
     if (! tlsserverFlushSslOutput(t, l, ls))
     {
+        LOGW("TlsServer: failed while flushing close_notify");
         return false;
     }
 
     if (shutdown_result >= 0 || (SSL_get_shutdown(ls->ssl) & SSL_SENT_SHUTDOWN) != 0)
     {
         ls->close_notify_sent = true;
+        if (ls->verbose)
+        {
+            LOGD("TlsServer: close_notify sent successfully");
+        }
         return true;
     }
 
+    LOGW("TlsServer: SSL_shutdown did not send close_notify (result=%d)", shutdown_result);
     return false;
 }
 
-void tlsserverCloseLineFatal(tunnel_t *t, line_t *l, bool close_next_first)
+void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
 {
     if (! lineIsAlive(l))
     {
-        tlsserverLinestateDestroy(lineGetState(l, t));
+        tlsserver_tstate_t *ts = tunnelGetState(t);
+        if (ts->verbose)
+        {
+            LOGD("TlsServer: fatal close requested after line was already closed");
+        }
         return;
     }
 
@@ -241,29 +312,19 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l, bool close_next_first)
     ls->next_finished = true;
     ls->prev_finished = true;
 
+    LOGW("TlsServer: closing line after fatal TLS failure (close_next=%d, close_prev=%d)",
+         (int) close_next, (int) close_prev);
+
     tlsserverLinestateDestroy(ls);
 
-    if (close_next_first)
+    if (close_next)
     {
-        if (close_next)
-        {
-            tunnelNextUpStreamFinish(t, l);
-        }
-        if (lineIsAlive(l) && close_prev)
-        {
-            tunnelPrevDownStreamFinish(t, l);
-        }
+        tunnelNextUpStreamFinish(t, l);
     }
-    else
+
+    if (lineIsAlive(l) && close_prev)
     {
-        if (close_prev)
-        {
-            tunnelPrevDownStreamFinish(t, l);
-        }
-        if (lineIsAlive(l) && close_next)
-        {
-            tunnelNextUpStreamFinish(t, l);
-        }
+        tunnelPrevDownStreamFinish(t, l);
     }
 
     lineUnlock(l);
