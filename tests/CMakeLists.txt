@@ -63,6 +63,7 @@ add_waterwall_integration_test(waterwall.ipmanipulator_tcp_udp_swap_roundtrip ip
 add_waterwall_integration_test(waterwall.ipmanipulator_udp_tcp_swap_roundtrip ipmanipulator_udp_tcp_swap_roundtrip)
 add_waterwall_integration_test(waterwall.reverse_tcp_bridge_roundtrip reverse_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.wireguard_udpstateless_packet_roundtrip wireguard_udpstateless_packet_roundtrip)
+
 add_custom_target(check_waterwall_integration_tests
   COMMAND
     "${CMAKE_CTEST_COMMAND}"
