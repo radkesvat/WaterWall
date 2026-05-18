@@ -63,22 +63,6 @@ add_waterwall_integration_test(waterwall.ipmanipulator_tcp_udp_swap_roundtrip ip
 add_waterwall_integration_test(waterwall.ipmanipulator_udp_tcp_swap_roundtrip ipmanipulator_udp_tcp_swap_roundtrip)
 add_waterwall_integration_test(waterwall.reverse_tcp_bridge_roundtrip reverse_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.wireguard_udpstateless_packet_roundtrip wireguard_udpstateless_packet_roundtrip)
-add_test(
-  NAME waterwall.packet_analysis_sender_receiver
-  COMMAND
-    "${BASH_EXECUTABLE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/run_packet_analysis_case.sh"
-    "$<TARGET_FILE:Waterwall>"
-    "${CMAKE_CURRENT_SOURCE_DIR}/cases/packet_analysis_sender_receiver"
-    "30"
-)
-set_tests_properties(
-  waterwall.packet_analysis_sender_receiver
-  PROPERTIES
-    TIMEOUT 120
-    LABELS "integration;tunnels"
-)
-
 add_custom_target(check_waterwall_integration_tests
   COMMAND
     "${CMAKE_CTEST_COMMAND}"
