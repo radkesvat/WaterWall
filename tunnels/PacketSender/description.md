@@ -13,7 +13,8 @@ It can also accept multiple IPv4 source ranges and walk them in order, finishing
 - accepts one or more IPv4 CIDR source ranges and one IPv4 destination
 - pre-generates every packet before transmission begins
 - sends packets on the upstream path with `tunnelNextUpStreamPayload()`
-- never closes the shared worker packet lines during normal runtime
+- closes each worker packet line with an upstream finish when that worker completes, so a downstream analysis node can know the send phase is over
+- never closes the shared worker packet lines during normal runtime except for the completion finish signal above
 - drops any unexpected downstream payload because it has no external return side
 
 ## Typical Placement
@@ -95,6 +96,13 @@ All protocols:
   When an array is provided, ranges are consumed in the array order: the first range is exhausted, then the second,
   then the third, and so on.
 
+- `packets-per-ip` `(integer)`
+  Optional multiplier for each source IP.
+
+  Default: `1`
+
+  When this is greater than `1`, `PacketSender` emits that many packets for each source IP instead of just one.
+
 - `dest-ip4` `(string)`
   Required destination IPv4 address.
 
@@ -111,6 +119,9 @@ All protocols:
   Required positive duration in milliseconds.
 
   `PacketSender` spreads the full generated packet set across this time window instead of bursting everything at once.
+
+  When `packets-per-ip` is greater than `1`, the repeated packets for each source IP are included in the same smooth
+  schedule.
 
 ## Conditionally Required `settings`
 
@@ -212,4 +223,5 @@ node.
 - `dest-port` and `src-port` are used only for generated TCP and UDP packets
 - when `protocol-number` is `ALL`, the TCP and UDP packets inside the set still use those configured ports
 - when `source-ip4-range` is an array, `PacketSender` walks the ranges in order and does not interleave them
+- when `packets-per-ip` is greater than `1`, `PacketSender` repeats the full per-IP packet set in source order
 - because it is a layer-3 chain head, worker packet-line init is supplied by Waterwall's normal packet-chain bootstrap

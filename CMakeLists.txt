@@ -194,6 +194,7 @@ option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"   
 option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"                TRUE)
 option(INCLUDE_TUN_DEVICE               "link TunDevice staticly to the core"                ${TUNDEVICE_SUPPORTED})
 option(INCLUDE_PACKET_SENDER            "link PacketSender staticly to the core"             TRUE)
+option(INCLUDE_PACKET_RECEIVER          "link PacketReceiver staticly to the core"           TRUE)
 option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"                ${RAWSOCKET_SUPPORTED})
 option(INCLUDE_DISTURBER                "link Disturber staticly to the core"                TRUE)
 option(INCLUDE_BLACKHOLE                "link BlackHole staticly to the core"                 TRUE)
@@ -306,6 +307,14 @@ if(INCLUDE_PACKET_SENDER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketSender)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketSender)
   target_link_libraries(Waterwall PacketSender)
+endif()
+
+#packet receiver
+if(INCLUDE_PACKET_RECEIVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_PACKET_RECEIVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketReceiver)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketReceiver)
+  target_link_libraries(Waterwall PacketReceiver)
 endif()
 
 #packet to connection

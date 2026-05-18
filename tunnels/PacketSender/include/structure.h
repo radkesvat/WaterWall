@@ -40,10 +40,12 @@ typedef struct packetsender_tstate_s
 
     atomic_uint completed_workers;
 
-    uint64_t source_count;
+    uint32_t source_count;
+    uint32_t packets_per_ip;
     uint64_t total_packets;
     size_t   total_packet_bytes;
     size_t   bytes_per_source;
+    size_t   bytes_per_source_repeat;
 
     uint16_t fixed_packet_length;
     uint16_t protocol_lengths[255];

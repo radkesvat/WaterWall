@@ -130,6 +130,12 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
         total_source_count += state->source_ranges[i].count;
     }
 
+    if (total_source_count > UINT32_MAX)
+    {
+        LOGF("PacketSender: total source count exceeds the supported range");
+        return false;
+    }
+
     state->source_count = total_source_count;
     return true;
 }
@@ -191,6 +197,22 @@ static bool packetsenderLoadProtocolMode(packetsender_tstate_t *state, const cJS
     }
 
     memoryFree(mode);
+    return true;
+}
+
+static bool packetsenderLoadPacketsPerIp(packetsender_tstate_t *state, const cJSON *settings)
+{
+    int packets_per_ip = 1;
+
+    getIntFromJsonObjectOrDefault(&packets_per_ip, settings, "packets-per-ip", 1);
+
+    if (packets_per_ip <= 0)
+    {
+        LOGF("JSON Error: PacketSender->settings->packets-per-ip (int field) : expected a positive packet count");
+        return false;
+    }
+
+    state->packets_per_ip = (uint32_t) packets_per_ip;
     return true;
 }
 
@@ -316,9 +338,12 @@ tunnel_t *packetsenderTunnelCreate(node_t *node)
         return NULL;
     }
 
+    state->packets_per_ip = 1;
+
     if (! packetsenderLoadSourceRanges(state, settings) || ! packetsenderLoadDestIpv4(state, settings) ||
-        ! packetsenderLoadProtocolMode(state, settings) || ! packetsenderLoadDuration(state, settings) ||
-        ! packetsenderLoadDestPort(state, settings) || ! packetsenderLoadSrcPort(state, settings))
+        ! packetsenderLoadProtocolMode(state, settings) || ! packetsenderLoadPacketsPerIp(state, settings) ||
+        ! packetsenderLoadDuration(state, settings) || ! packetsenderLoadDestPort(state, settings) ||
+        ! packetsenderLoadSrcPort(state, settings))
     {
         packetsenderTunnelDestroy(t);
         return NULL;
