@@ -229,7 +229,7 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
 
 bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    uint32_t pending_count = bufferqueueGetBufCount(&ls->pending_down);
+    size_t pending_count = bufferqueueGetBufCount(&ls->pending_down);
     if (pending_count > 0)
     {
         if (ls->verbose)
