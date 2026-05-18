@@ -12,7 +12,7 @@ function(add_waterwall_integration_test test_name case_name)
       "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
       "$<TARGET_FILE:Waterwall>"
       "${case_dir}"
-      "15"
+      "30"
   )
 
   set_tests_properties(
@@ -35,6 +35,8 @@ add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip 
 add_waterwall_integration_test(waterwall.udp_over_tcp_roundtrip udp_over_tcp_roundtrip)
 add_waterwall_integration_test(waterwall.tcp_over_udp_roundtrip tcp_over_udp_roundtrip)
 add_waterwall_integration_test(waterwall.tcp_over_udp_fec_roundtrip tcp_over_udp_fec_roundtrip)
+add_waterwall_integration_test(waterwall.tcp_over_udp_disturber_roundtrip tcp_over_udp_disturber_roundtrip)
+add_waterwall_integration_test(waterwall.tcp_over_udp_fec_disturber_roundtrip tcp_over_udp_fec_disturber_roundtrip)
 add_waterwall_integration_test(waterwall.halfduplex_roundtrip halfduplex_roundtrip)
 add_waterwall_integration_test(waterwall.http1_bidirectional_roundtrip http1_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http1_bidirectional_tcp_loopback http1_bidirectional_tcp_loopback)

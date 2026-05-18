@@ -79,6 +79,11 @@ Practical rule:
   Verifies that `TcpOverUdpClient` and `TcpOverUdpServer` preserve stream integrity through their KCP datagram path.
 - `tcp_over_udp_fec_roundtrip`
   Verifies the same TCP-over-UDP pair with Reed-Solomon FEC enabled on both peers.
+- `tcp_over_udp_disturber_roundtrip`
+  Verifies that the TCP-over-UDP KCP stream survives packet loss, duplication, simple reordering, and jitter injected in
+  both directions by `Disturber` between the client and server peers.
+- `tcp_over_udp_fec_disturber_roundtrip`
+  Verifies the same bidirectionally disturbed TCP-over-UDP path with Reed-Solomon FEC enabled on both peers.
 - `packets_stream_bridge_roundtrip`
   Verifies that `PacketsToStream` and `StreamToPackets` preserve packet boundaries and payload integrity across their
   worker-packet-line to stream-line bridge.
