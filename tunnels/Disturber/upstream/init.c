@@ -9,9 +9,9 @@ void disturberTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     disturberLinestateInitialize(ls);
 
-    if (roll100(ts->chance_instant_close))
+    if (ts->disturb_upstream && roll100(ts->chance_instant_close))
     {
-        LOGD("Disturber: Closing connection instantly");
+        LOGD("Disturber: Closing upstream direction instantly");
         tunnelPrevDownStreamFinish(t, l);
         return;
     }

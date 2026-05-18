@@ -42,6 +42,8 @@ It can be placed almost anywhere in a chain where you want to simulate hostile o
   "name": "disturber",
   "type": "Disturber",
   "settings": {
+    "disturb-upstream": true,
+    "disturb-downstream": false,
     "chance_instant_close": 5,
     "chance_middle_close": 2,
     "chance_payload_corruption": 3,
@@ -75,8 +77,16 @@ All disturbance controls are optional. If omitted, they default to `0` and the t
 
 All chance fields are integer percentages interpreted as a probability for that event when the relevant callback runs.
 
+- `disturb-upstream` `(boolean)`
+  Enables disturbance injection on upstream payload and upstream-init close handling.
+  Default: `true`
+
+- `disturb-downstream` `(boolean)`
+  Enables disturbance injection on downstream payload and downstream-init close handling.
+  Default: `false`
+
 - `chance_instant_close` `(integer)`
-  Chance that a connection is closed immediately when upstream init arrives.
+  Chance that a direction is closed immediately when init arrives for an enabled direction.
 
 - `chance_middle_close` `(integer)`
   Chance that a connection is closed while payload is being forwarded.
@@ -125,7 +135,7 @@ This lets you test both startup failure handling and unexpected disconnect handl
 
 ### Payload mutation behavior
 
-For each upstream payload, `Disturber` evaluates a sequence of possible disturbances.
+For each enabled-direction payload, `Disturber` evaluates a sequence of possible disturbances.
 
 The available behaviors are:
 
@@ -140,7 +150,7 @@ Corruption is applied by modifying random payload bytes. The current implementat
 
 ### Reordering model
 
-`Disturber` keeps at most one held payload per line for out-of-order delivery.
+`Disturber` keeps at most one held payload per line per enabled direction for out-of-order delivery.
 
 When out-of-order mode triggers:
 
@@ -171,9 +181,9 @@ This simulates a connection that appears alive at the structural level but stops
 
 ### Directional behavior
 
-`Disturber` primarily injects disturbances on the upstream data path.
-
-For downstream control flow and most downstream payload handling, it behaves like a normal forwarding tunnel. This makes it easy to place in a chain without changing the overall topology.
+By default, `Disturber` preserves its original behavior and injects disturbances only on the upstream data path.
+Set `disturb-downstream=true` to apply the same payload disturbance model to downstream payloads. Set
+`disturb-upstream=false` when only the downstream direction should be disturbed.
 
 ## Notes And Caveats
 

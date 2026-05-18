@@ -4,5 +4,5 @@
 
 void disturberTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    tunnelPrevDownStreamPayload(t, l, buf);
+    disturberTunnelPayload(t, l, buf, kDisturberPayloadDirectionDownstream);
 }

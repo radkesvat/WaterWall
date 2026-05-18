@@ -4,6 +4,8 @@
 
 typedef struct disturber_tstate_s
 {
+    bool disturb_upstream;
+    bool disturb_downstream;
     int chance_instant_close;
     int chance_middle_close;
     int chance_payload_corruption;
@@ -17,12 +19,24 @@ typedef struct disturber_tstate_s
 
 } disturber_tstate_t;
 
-typedef struct disturber_lstate_s
+typedef struct disturber_direction_lstate_s
 {
     bool is_deadhang; // the connection is dead, no packet type will be transmitted, but only close
 
     sbuf_t *held_payload; // store  a payload and wait for next, to be able to send them out of order
+} disturber_direction_lstate_t;
+
+typedef struct disturber_lstate_s
+{
+    disturber_direction_lstate_t upstream;
+    disturber_direction_lstate_t downstream;
 } disturber_lstate_t;
+
+typedef enum disturber_payload_direction_e
+{
+    kDisturberPayloadDirectionUpstream = 0,
+    kDisturberPayloadDirectionDownstream = 1
+} disturber_payload_direction_e;
 
 enum
 {
@@ -55,3 +69,4 @@ void disturberTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void disturberLinestateInitialize(disturber_lstate_t *ls);
 void disturberLinestateDestroy(disturber_lstate_t *ls);
+void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_payload_direction_e direction);

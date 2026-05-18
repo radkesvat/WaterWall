@@ -27,6 +27,8 @@ tunnel_t *disturberTunnelCreate(node_t *node)
     const cJSON        *settings = node->node_settings_json;
     disturber_tstate_t *ts       = tunnelGetState(t);
 
+    getBoolFromJsonObjectOrDefault(&ts->disturb_upstream, settings, "disturb-upstream", true);
+    getBoolFromJsonObjectOrDefault(&ts->disturb_downstream, settings, "disturb-downstream", false);
     getIntFromJsonObjectOrDefault(&ts->chance_instant_close, settings, "chance_instant_close", 0);
     getIntFromJsonObjectOrDefault(&ts->chance_middle_close, settings, "chance_middle_close", 0);
     getIntFromJsonObjectOrDefault(&ts->chance_payload_corruption, settings, "chance_payload_corruption", 0);
