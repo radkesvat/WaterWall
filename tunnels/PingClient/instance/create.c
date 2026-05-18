@@ -66,15 +66,19 @@ static bool pingclientParseIpv4String(uint32_t *dest, const char *ipbuf, const c
     return true;
 }
 
-static bool pingclientLoadRequiredIpv4Setting(uint32_t *dest, const cJSON *settings, const char *key, const char *json_path)
+static bool pingclientLoadOptionalIpv4Setting(uint32_t *dest, bool *configured, const cJSON *settings, const char *key,
+                                              const char *json_path)
 {
     char *ipbuf = NULL;
+    *dest       = 0;
+    *configured = false;
+
     if (! getStringFromJsonObject(&ipbuf, settings, key))
     {
-        LOGF("JSON Error: %s (string field) : expected an IPv4 address", json_path);
-        return false;
+        return true;
     }
 
+    *configured   = true;
     const bool ok = pingclientParseIpv4String(dest, ipbuf, json_path);
     memoryFree(ipbuf);
     return ok;
@@ -241,8 +245,10 @@ tunnel_t *pingclientCreate(node_t *node)
 
     if (state->strategy == kPingClientStrategyWrapNewIpAndIcmpHeader)
     {
-        if (! pingclientLoadRequiredIpv4Setting(&state->source_addr, settings, "source", "PingClient->settings->source") ||
-            ! pingclientLoadRequiredIpv4Setting(&state->dest_addr, settings, "dest", "PingClient->settings->dest"))
+        if (! pingclientLoadOptionalIpv4Setting(&state->source_addr, &state->source_addr_configured, settings,
+                                                "source", "PingClient->settings->source") ||
+            ! pingclientLoadOptionalIpv4Setting(&state->dest_addr, &state->dest_addr_configured, settings, "dest",
+                                                "PingClient->settings->dest"))
         {
             pingclientDestroy(t);
             return NULL;

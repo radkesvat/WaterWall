@@ -11,6 +11,8 @@ typedef struct pingserver_tstate_s
     uint16_t    identifier;
     uint32_t    source_addr;
     uint32_t    dest_addr;
+    bool        source_addr_configured;
+    bool        dest_addr_configured;
     uint8_t     ttl;
     uint8_t     tos;
     uint8_t     strategy;

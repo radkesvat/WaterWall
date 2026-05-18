@@ -7,9 +7,9 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 ## What It Does
 
 - upstream uses one of four JSON-controlled strategies
-- downstream reverses that strategy for matching packets
+- downstream reverses that strategy for matching ICMP packets and forwards unmatched packets unchanged
 - IPv4 packet strategies support IPv4 only
-- any IPv6 packet that reaches an IPv4 packet strategy is logged and dropped
+- any packet that an IPv4 packet strategy cannot safely rewrite is forwarded unchanged
 - `xor-byte` still applies only to the ICMP payload modes
 - `roundup-size` still applies only to the ICMP payload modes
 - `identifier` and `sequence-start` are only meaningful for the ICMP modes
@@ -21,11 +21,12 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 
 - wraps the whole inner IPv4 packet as:
   `new outer IPv4 header -> ICMP echo header -> original IPv4 packet`
-- requires both `source` and `dest` in `settings`
-- uses those configured IPv4 addresses for the outer packet
-- on decapsulation, the packet must also match the configured outer source and destination
-- if ICMP framing and identifier match but source or destination does not, `PingClient` logs a runtime warning and leaves the packet unchanged for the previous node
-- source/destination verification accepts both the configured direction and the reversed direction
+- `source` and `dest` are optional in `settings`
+- uses configured IPv4 addresses for the outer packet when provided
+- when `source` or `dest` is omitted, that outer address is copied from the inner IPv4 packet
+- on decapsulation, configured source/destination addresses are not verified
+- accepts ICMP echo requests and echo replies with the configured identifier
+- after a matching ICMP envelope is found, the payload is stripped and forwarded even if the recovered bytes are not a valid IPv4 packet
 
 ### `wrap-in-icmp-header-and-reuse-ipv4-addresses`
 
@@ -37,8 +38,8 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 - places the original transport bytes in the ICMP payload
 - appends a small metadata trailer as the last bytes of the ICMP payload
 - metadata stores the original IPv4 protocol number and original transport length so the peer can restore the packet
-- drops fragmented IPv4 packets because this mode cannot restore them safely
-- drops packets whose ICMP-wrapped size would exceed `kMaxAllowedPacketLength`
+- forwards fragmented IPv4 packets unchanged because this mode cannot restore them safely
+- forwards packets unchanged when the ICMP-wrapped size would exceed `kMaxAllowedPacketLength`
 
 ### `wrap-in-only-icmp-header`
 
@@ -101,12 +102,14 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
   Default: `false`
 
 - `source` `(string)`
-  Required only when `strategy` is `wrap-in-new-ip-and-icmp-header`.
-  Must be a single IPv4 address.
+  Optional for `wrap-in-new-ip-and-icmp-header`.
+  When omitted, the outer source is copied from the inner IPv4 packet.
+  When provided, it must be a single IPv4 address.
 
 - `dest` `(string)`
-  Required only when `strategy` is `wrap-in-new-ip-and-icmp-header`.
-  Must be a single IPv4 address.
+  Optional for `wrap-in-new-ip-and-icmp-header`.
+  When omitted, the outer destination is copied from the inner IPv4 packet.
+  When provided, it must be a single IPv4 address.
 
 - `swap-protocol` `(string or integer)`
   Required only when `strategy` is `change-only-ipv4-protocol-number`.
@@ -117,7 +120,7 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 {
   "name": "icmp-client",
   "type": "PingClient",
-  "settings": {
+  "settings": { 
     "strategy": "wrap-in-new-ip-and-icmp-header",
     "identifier": 4660,
     "source": "198.51.100.10",
@@ -135,8 +138,8 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 
 - `settings` may be omitted or empty; defaults are used when possible
 - `required_padding_left` remains `28` bytes so the tunnel can prepend the worst-case IPv4 plus ICMP envelope safely
-- ICMP payload modes drop packets when added bytes would exceed `kMaxAllowedPacketLength`
+- ICMP payload modes forward packets unchanged when added bytes would exceed `kMaxAllowedPacketLength`
 - fragmented outer ICMP packets are not decapsulated here
 - unmatched IPv4 traffic is still forwarded unchanged in the same direction
-- IPv6 is dropped by the IPv4 packet strategies; `wrap-in-only-icmp-header` treats input as raw bytes
+- IPv4 packet strategies forward packets unchanged when they cannot safely rewrite them; `wrap-in-only-icmp-header` treats input as raw bytes
 - legacy aliases such as `warp-*`, `warp-in-icmp-header-and-update-ipv4-header`, `change-only-ip4-packet-identifier-number`, and `swap-identifier` are still accepted for backward compatibility
