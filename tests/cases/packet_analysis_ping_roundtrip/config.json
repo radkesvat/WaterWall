@@ -17,9 +17,14 @@
       "name": "ping-client",
       "type": "PingClient",
       "settings": {
-        "strategy": "wrap-in-only-icmp-header",
+        "strategy": "wrap-in-new-ip-and-icmp-header",
         "identifier": 4662,
         "sequence-start": 30,
+        "ipv4-id-start": 300,
+        "ttl": 63,
+        "tos": 16,
+        "source": "192.0.2.30",
+        "dest": "203.0.113.30",
         "xor-byte": 165,
         "roundup-size": true
       },
@@ -29,9 +34,14 @@
       "name": "ping-server",
       "type": "PingServer",
       "settings": {
-        "strategy": "wrap-in-only-icmp-header",
+        "strategy": "wrap-in-new-ip-and-icmp-header",
         "identifier": 4662,
         "sequence-start": 30,
+        "ipv4-id-start": 300,
+        "ttl": 63,
+        "tos": 16,
+        "source": "192.0.2.30",
+        "dest": "203.0.113.30",
         "xor-byte": 165,
         "roundup-size": true
       },
