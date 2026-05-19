@@ -72,9 +72,11 @@ Current `packet-ipv4` chunk sizes are:
 `TesterServer` belongs at the end of a synthetic validation chain, for example:
 
 - `TesterClient -> EncryptionClient -> EncryptionServer -> TesterServer`
-- `TesterClient(packet-mode=true) -> PingClient -> PingServer -> TesterServer(packet-mode=true)`
+- `TesterClient(packet-mode=true) -> PingClient -> Bridge`, paired with
+  `TesterServer(packet-mode=true) -> PingServer -> Bridge`
 
-`TesterServer` must be the chain end.
+`TesterServer` is normally the chain end. In `packet-mode`, it can also sit before another packet tunnel and receive
+request packets through downstream callbacks, which is useful with `Bridge` pairs that intentionally invert direction.
 
 ## Configuration Example
 
@@ -240,8 +242,9 @@ bug because packet lines are shared worker state, not per-connection lines.
 ## Notes And Caveats
 
 - `TesterServer` is a synthetic validation tunnel, not a listener or transport connector
-- `DownStreamInit`, `DownStreamEst`, `DownStreamPayload`, `DownStreamPause`, `DownStreamResume`, and
-  `DownStreamFinish` are intentionally disabled because this node is a chain end
+- downstream callbacks remain disabled in normal stream mode
+- in packet mode, downstream `Init`/`Payload`/`Pause`/`Resume` are supported so a bridged packet path can feed
+  requests into `TesterServer` from the next side and receive responses back upstream
 - in packet mode, `TesterServer` now generates the deterministic response pattern instead of merely reflecting request
   bytes, so both directions are validated consistently
 - in `packet-ipv4` mode the documented chunk sizes include the `20`-byte IPv4 header, so the verified synthetic

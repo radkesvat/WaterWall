@@ -9,39 +9,8 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ts->packet_mode)
     {
-        uint32_t bad_offset = 0;
-        uint8_t  expected   = 0;
-        uint8_t  actual     = 0;
-        uint8_t  chunk_count = testerserverGetChunkCount(t);
-
-        if (ls->request_rx_index >= chunk_count)
-        {
-            lineReuseBuffer(l, buf);
-            testerserverFail(t, l, "received extra packet-mode request payload after verification completed");
-            return;
-        }
-
-        if (! testerserverVerifyChunk(t, l, buf, ls->request_rx_index, kTesterServerDirectionRequest, &bad_offset,
-                                      &expected, &actual))
-        {
-            LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
-                 "expected=0x%02x actual=0x%02x)",
-                 (unsigned int) lineGetWID(l), (unsigned int) ls->request_rx_index, (unsigned int) sbufGetLength(buf),
-                 (unsigned int) testerserverGetChunkSize(t, ls->request_rx_index), (unsigned int) bad_offset,
-                 (unsigned int) expected, (unsigned int) actual);
-            lineReuseBuffer(l, buf);
-            terminateProgram(1);
-            return;
-        }
-
-        sbuf_t *response_buf = testerserverCreatePayload(t, l, ls->request_rx_index, 0,
-                                                         testerserverGetChunkSize(t, ls->request_rx_index),
-                                                         kTesterServerDirectionResponse);
-
-        lineReuseBuffer(l, buf);
-        ls->request_rx_index += 1;
-        bufferqueuePushBack(&ls->response_queue, response_buf);
-        testerserverScheduleResponseSend(t, l, ls);
+        ls->response_to_next = false;
+        testerserverHandlePacketRequestPayload(t, l, buf);
         return;
     }
 

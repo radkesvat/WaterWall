@@ -386,6 +386,44 @@ bool testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_
     return true;
 }
 
+void testerserverHandlePacketRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    testerserver_lstate_t *ls          = lineGetState(l, t);
+    uint32_t               bad_offset  = 0;
+    uint8_t                expected    = 0;
+    uint8_t                actual      = 0;
+    uint8_t                chunk_count = testerserverGetChunkCount(t);
+
+    if (ls->request_rx_index >= chunk_count)
+    {
+        lineReuseBuffer(l, buf);
+        testerserverFail(t, l, "received extra packet-mode request payload after verification completed");
+        return;
+    }
+
+    if (! testerserverVerifyChunk(t, l, buf, ls->request_rx_index, kTesterServerDirectionRequest, &bad_offset,
+                                  &expected, &actual))
+    {
+        LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
+             "expected=0x%02x actual=0x%02x)",
+             (unsigned int) lineGetWID(l), (unsigned int) ls->request_rx_index, (unsigned int) sbufGetLength(buf),
+             (unsigned int) testerserverGetChunkSize(t, ls->request_rx_index), (unsigned int) bad_offset,
+             (unsigned int) expected, (unsigned int) actual);
+        lineReuseBuffer(l, buf);
+        terminateProgram(1);
+        return;
+    }
+
+    sbuf_t *response_buf = testerserverCreatePayload(t, l, ls->request_rx_index, 0,
+                                                     testerserverGetChunkSize(t, ls->request_rx_index),
+                                                     kTesterServerDirectionResponse);
+
+    lineReuseBuffer(l, buf);
+    ls->request_rx_index += 1;
+    bufferqueuePushBack(&ls->response_queue, response_buf);
+    testerserverScheduleResponseSend(t, l, ls);
+}
+
 void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstate_t *ls)
 {
     testerserver_tstate_t *ts = tunnelGetState(t);
@@ -428,10 +466,12 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
     {
         while (! ls->response_paused && bufferqueueGetBufCount(&ls->response_queue) > 0)
         {
+            LineTaskFnWithBuf send_response =
+                ls->response_to_next ? tunnelNextUpStreamPayload : tunnelPrevDownStreamPayload;
             sbuf_t *buf = bufferqueuePopFront(&ls->response_queue);
 
             ls->response_tx_index += 1;
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
+            if (! withLineLockedWithBuf(l, send_response, t, buf))
             {
                 LOGF("TesterServer: packet line died during packet-mode response send");
                 terminateProgram(1);

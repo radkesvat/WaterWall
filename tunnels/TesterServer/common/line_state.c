@@ -13,7 +13,8 @@ void testerserverLinestateInitialize(testerserver_lstate_t *ls, buffer_pool_t *p
         .response_ready          = false,
         .response_paused         = false,
         .response_send_scheduled = false,
-        .response_sent           = false
+        .response_sent           = false,
+        .response_to_next        = false
     };
 }
 

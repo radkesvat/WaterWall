@@ -121,6 +121,13 @@ tunnel_t *testerserverTunnelCreate(node_t *node)
     getBoolFromJsonObjectOrDefault(&ts->streaming_response, settings, "streaming-response", false);
     getIntFromJsonObjectOrDefault(&chunk_count, settings, "chunk-count", kTesterServerChunkCount);
 
+    if (nodeHasNext(node) && ! ts->packet_mode)
+    {
+        LOGF("TesterServer: using a next node is supported only when packet-mode=true");
+        testerserverTunnelDestroy(t);
+        return NULL;
+    }
+
     if (chunk_count <= 0 || chunk_count > kTesterServerChunkCount)
     {
         LOGF("JSON Error: TesterServer->settings->chunk-count (int field) : expected a value between 1 and %u",

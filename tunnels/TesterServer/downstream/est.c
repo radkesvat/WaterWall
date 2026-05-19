@@ -4,8 +4,14 @@
 
 void testerserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
-    discard t;
+    testerserver_tstate_t *ts = tunnelGetState(t);
+
     discard l;
-    LOGF("TesterServer: downStreamEst disabled");
-    assert(false);
+
+    if (! ts->packet_mode)
+    {
+        LOGF("TesterServer: downStreamEst disabled");
+        assert(false);
+        return;
+    }
 }

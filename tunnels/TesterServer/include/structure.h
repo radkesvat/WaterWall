@@ -43,6 +43,7 @@ typedef struct testerserver_lstate_s
     bool    response_paused;
     bool    response_send_scheduled;
     bool    response_sent;
+    bool    response_to_next;
 } testerserver_lstate_t;
 
 enum
@@ -82,5 +83,6 @@ sbuf_t  *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, 
                                    uint32_t payload_len, testerserver_direction_e direction);
 bool     testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_index, testerserver_direction_e direction,
                                  uint32_t *bad_offset, uint8_t *expected, uint8_t *actual);
+void     testerserverHandlePacketRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void     testerserverResponseSendTask(tunnel_t *t, line_t *l);
 void     testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstate_t *ls);
