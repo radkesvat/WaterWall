@@ -346,8 +346,6 @@ static void packetsenderMarkWorkerComplete(packetsender_worker_state_t *slot)
              (unsigned long long) state->total_packets,
              (unsigned int) state->duration_ms);
     }
-
-    tunnelNextUpStreamFinish(slot->tunnel, slot->line);
 }
 
 static void packetsenderArmWorkerTimer(packetsender_worker_state_t *slot, uint32_t delay_ms)

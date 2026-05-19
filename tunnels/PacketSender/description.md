@@ -10,6 +10,7 @@ packet lines during the configured duration.
 - `packets-per-ip` repeats each source IP `N` times, default `1`
 - `ALL` mode still emits `255` protocol variants per repeat
 - source ranges are processed in order and are not interleaved
+- does not close or finish worker packet lines after sending
 
 ## Example
 
