@@ -1,13 +1,13 @@
 # PingServer Node
 
-`PingServer` is the server-side peer for `PingClient`. On the upstream path it reverses the configured packet disguise logic, and on the downstream path it reapplies the matching strategy toward the client side.
+`PingServer` is the server-side peer for `PingClient`. On the upstream path it applies the configured packet disguise logic toward the client side, and on the downstream path it reverses matching peer traffic back to plain packets.
 
 It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on the chain's worker packet lines and does not add per-line state.
 
 ## What It Does
 
-- upstream applies the configured reverse transform for ICMP packets coming from the client side and forwards unmatched packets unchanged
-- downstream applies the forward transform toward the client side
+- upstream applies the configured forward transform toward the client side
+- downstream applies the reverse transform for ICMP packets coming from the client side and forwards unmatched packets unchanged
 - IPv4 packet strategies support IPv4 only
 - any packet that an IPv4 packet strategy cannot safely rewrite is forwarded unchanged
 - `xor-byte` and `roundup-size` only affect the ICMP envelope modes
@@ -18,9 +18,9 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on th
 
 ### `wrap-in-new-ip-and-icmp-header`
 
-- upstream expects:
+- downstream expects:
   `outer IPv4 header -> ICMP echo header -> original IPv4 packet`
-- downstream recreates that same envelope
+- upstream recreates that same envelope
 - `source` and `dest` are optional in `settings`
 - uses configured IPv4 addresses for the outer packet when provided
 - when `source` or `dest` is omitted, that outer address is copied from the inner IPv4 packet
@@ -56,8 +56,8 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on th
 - does not add an ICMP header and does not prepend a new IPv4 header
 - only swaps the IPv4 protocol number in place
 - requires `swap-protocol`
-- downstream changes packets whose current IPv4 protocol matches `swap-protocol` into `ICMP`
-- upstream changes matching `ICMP` packets back to `swap-protocol`
+- upstream changes packets whose current IPv4 protocol matches `swap-protocol` into `ICMP`
+- downstream changes matching `ICMP` packets back to `swap-protocol`
 - recalculates the IPv4 header checksum immediately and leaves transport bytes unchanged
 - this mode does not use `identifier`, `sequence-start`, `ipv4-id-start`, `xor-byte`, or `roundup-size`
 

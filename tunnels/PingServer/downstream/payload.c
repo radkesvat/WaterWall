@@ -4,5 +4,5 @@
 
 void pingserverDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    pingserverEncapsulatePacket(t, l, buf);
+    pingserverDecapsulatePacket(t, l, buf);
 }
