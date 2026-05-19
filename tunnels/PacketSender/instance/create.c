@@ -136,7 +136,7 @@ static bool packetsenderLoadSourceRanges(packetsender_tstate_t *state, const cJS
         return false;
     }
 
-    state->source_count = total_source_count;
+    state->source_count = (uint32_t) total_source_count;
     return true;
 }
 
