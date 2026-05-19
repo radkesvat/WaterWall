@@ -27,19 +27,14 @@
         "xor-byte": 51,
         "roundup-size": true
       },
-      "next": "ping-server"
+      "next": "ping-client-bridge"
     },
     {
-      "name": "ping-server",
-      "type": "PingServer",
+      "name": "ping-client-bridge",
+      "type": "Bridge",
       "settings": {
-        "strategy": "wrap-in-icmp-header-and-reuse-ipv4-addresses",
-        "identifier": 4661,
-        "sequence-start": 20,
-        "xor-byte": 51,
-        "roundup-size": true
-      },
-      "next": "tester-server"
+        "pair": "ping-server-bridge"
+      }
     },
     {
       "name": "tester-server",
@@ -54,6 +49,26 @@
           "protocol": 253,
           "ttl": 64
         }
+      },
+      "next": "ping-server"
+    },
+    {
+      "name": "ping-server",
+      "type": "PingServer",
+      "settings": {
+        "strategy": "wrap-in-icmp-header-and-reuse-ipv4-addresses",
+        "identifier": 4661,
+        "sequence-start": 20,
+        "xor-byte": 51,
+        "roundup-size": true
+      },
+      "next": "ping-server-bridge"
+    },
+    {
+      "name": "ping-server-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "ping-client-bridge"
       }
     }
   ]

@@ -32,6 +32,29 @@
         "xor-byte": 90,
         "roundup-size": true
       },
+      "next": "ping-client-bridge"
+    },
+    {
+      "name": "ping-client-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "ping-server-bridge"
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-init-on-start": true,
+        "chunk-count": 9,
+        "packet-ipv4": {
+          "source-ip": "10.80.0.1",
+          "dest-ip": "10.80.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
       "next": "ping-server"
     },
     {
@@ -49,21 +72,13 @@
         "xor-byte": 90,
         "roundup-size": true
       },
-      "next": "tester-server"
+      "next": "ping-server-bridge"
     },
     {
-      "name": "tester-server",
-      "type": "TesterServer",
+      "name": "ping-server-bridge",
+      "type": "Bridge",
       "settings": {
-        "packet-mode": true,
-        "packet-init-on-start": true,
-        "chunk-count": 9,
-        "packet-ipv4": {
-          "source-ip": "10.80.0.1",
-          "dest-ip": "10.80.0.2",
-          "protocol": 253,
-          "ttl": 64
-        }
+        "pair": "ping-client-bridge"
       }
     }
   ]

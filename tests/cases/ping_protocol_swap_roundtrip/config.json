@@ -23,16 +23,14 @@
         "strategy": "change-only-ipv4-protocol-number",
         "swap-protocol": 253
       },
-      "next": "ping-server"
+      "next": "ping-client-bridge"
     },
     {
-      "name": "ping-server",
-      "type": "PingServer",
+      "name": "ping-client-bridge",
+      "type": "Bridge",
       "settings": {
-        "strategy": "change-only-ipv4-protocol-number",
-        "swap-protocol": 253
-      },
-      "next": "tester-server"
+        "pair": "ping-server-bridge"
+      }
     },
     {
       "name": "tester-server",
@@ -46,6 +44,23 @@
           "protocol": 253,
           "ttl": 64
         }
+      },
+      "next": "ping-server"
+    },
+    {
+      "name": "ping-server",
+      "type": "PingServer",
+      "settings": {
+        "strategy": "change-only-ipv4-protocol-number",
+        "swap-protocol": 253
+      },
+      "next": "ping-server-bridge"
+    },
+    {
+      "name": "ping-server-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "ping-client-bridge"
       }
     }
   ]

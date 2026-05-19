@@ -21,6 +21,23 @@
         "xor-byte": 165,
         "roundup-size": true
       },
+      "next": "ping-client-bridge"
+    },
+    {
+      "name": "ping-client-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "ping-server-bridge"
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-init-on-start": true,
+        "chunk-count": 9
+      },
       "next": "ping-server"
     },
     {
@@ -33,15 +50,13 @@
         "xor-byte": 165,
         "roundup-size": true
       },
-      "next": "tester-server"
+      "next": "ping-server-bridge"
     },
     {
-      "name": "tester-server",
-      "type": "TesterServer",
+      "name": "ping-server-bridge",
+      "type": "Bridge",
       "settings": {
-        "packet-mode": true,
-        "packet-init-on-start": true,
-        "chunk-count": 9
+        "pair": "ping-client-bridge"
       }
     }
   ]
