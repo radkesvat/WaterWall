@@ -70,3 +70,4 @@ void disturberTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void disturberLinestateInitialize(disturber_lstate_t *ls);
 void disturberLinestateDestroy(disturber_lstate_t *ls);
 void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_payload_direction_e direction);
+bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l);
