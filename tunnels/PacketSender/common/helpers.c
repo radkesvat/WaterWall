@@ -246,18 +246,28 @@ static void packetsenderResolvePacketView(const packetsender_tstate_t *state, ui
 
     if (state->protocol_mode == kPacketSenderProtocolAll)
     {
-        const uint32_t protocol_index = (uint32_t) (packet_index % kPacketSenderProtocolsPerSource);
-        source_index = packet_index / kPacketSenderProtocolsPerSource;
+        const uint64_t packets_per_source = (uint64_t) state->packets_per_ip * (uint64_t) kPacketSenderProtocolsPerSource;
+        const uint64_t source_repeat_index = packet_index % packets_per_source;
+        const uint32_t repeat_index        = (uint32_t) (source_repeat_index / kPacketSenderProtocolsPerSource);
+        const uint32_t protocol_index      = (uint32_t) (source_repeat_index % kPacketSenderProtocolsPerSource);
+
+        source_index = packet_index / packets_per_source;
         protocol     = (uint8_t) protocol_index;
         packet_len   = state->protocol_lengths[protocol_index];
-        offset = ((size_t) source_index * state->bytes_per_source) + state->protocol_offsets[protocol_index];
+        offset = ((size_t) source_index * state->bytes_per_source) +
+                 ((size_t) repeat_index * state->bytes_per_source_repeat) + state->protocol_offsets[protocol_index];
     }
     else
     {
-        source_index = packet_index;
+        const uint64_t packets_per_source = (uint64_t) state->packets_per_ip;
+        const uint64_t source_repeat_index = packet_index % packets_per_source;
+        const uint32_t repeat_index        = (uint32_t) source_repeat_index;
+
+        source_index = packet_index / packets_per_source;
         protocol     = packetsenderGetSingleProtocolNumber(state);
         packet_len   = state->fixed_packet_length;
-        offset       = (size_t) source_index * state->fixed_packet_length;
+        offset       = ((size_t) source_index * state->bytes_per_source) +
+                       ((size_t) repeat_index * state->bytes_per_source_repeat);
     }
 
     uint32_t src_addr_host    = 0;
@@ -450,6 +460,12 @@ void packetsenderPrepareRuntime(tunnel_t *t)
         terminateProgram(1);
     }
 
+    if (state->packets_per_ip == 0)
+    {
+        LOGF("PacketSender: internal error, packets-per-ip is zero");
+        terminateProgram(1);
+    }
+
     if (state->protocol_mode == kPacketSenderProtocolAll)
     {
         uint32_t running_offset = 0;
@@ -463,36 +479,65 @@ void packetsenderPrepareRuntime(tunnel_t *t)
         }
 
         state->protocol_offsets[kPacketSenderProtocolsPerSource] = running_offset;
-        bytes_per_source   = running_offset;
-        if (state->source_count > (UINT64_MAX / kPacketSenderProtocolsPerSource))
-        {
-            LOGF("PacketSender: total packet count would overflow");
-            terminateProgram(1);
-        }
-        state->total_packets = state->source_count * kPacketSenderProtocolsPerSource;
+        state->bytes_per_source_repeat = running_offset;
     }
     else
     {
-        state->fixed_packet_length = packetsenderStoredLengthForProtocol(packetsenderGetSingleProtocolNumber(state));
-        bytes_per_source           = state->fixed_packet_length;
-        state->total_packets       = state->source_count;
+        state->fixed_packet_length     = packetsenderStoredLengthForProtocol(packetsenderGetSingleProtocolNumber(state));
+        state->bytes_per_source_repeat = state->fixed_packet_length;
     }
 
-    state->bytes_per_source = bytes_per_source;
-
-    if (bytes_per_source == 0 || state->total_packets == 0)
+    if (state->bytes_per_source_repeat == 0)
     {
-        LOGF("PacketSender: internal error, computed zero packets or zero bytes per source");
+        LOGF("PacketSender: internal error, computed zero bytes per source repeat");
         terminateProgram(1);
     }
 
-    if (state->source_count > ((uint64_t) SIZE_MAX / bytes_per_source))
+    if (state->packets_per_ip > 1U && state->bytes_per_source_repeat > (SIZE_MAX / (size_t) state->packets_per_ip))
+    {
+        LOGF("PacketSender: generated packet store exceeds addressable memory");
+        terminateProgram(1);
+    }
+
+    bytes_per_source = state->bytes_per_source_repeat * (size_t) state->packets_per_ip;
+    state->bytes_per_source = bytes_per_source;
+
+    if (state->source_count > 0 && bytes_per_source > (SIZE_MAX / (size_t) state->source_count))
     {
         LOGF("PacketSender: generated packet store exceeds addressable memory");
         terminateProgram(1);
     }
 
     state->total_packet_bytes = (size_t) (state->source_count * bytes_per_source);
+
+    {
+        uint64_t packets_per_source = (uint64_t) state->packets_per_ip;
+
+        if (state->protocol_mode == kPacketSenderProtocolAll)
+        {
+            if (packets_per_source > (UINT64_MAX / kPacketSenderProtocolsPerSource))
+            {
+                LOGF("PacketSender: total packet count would overflow");
+                terminateProgram(1);
+            }
+
+            packets_per_source *= kPacketSenderProtocolsPerSource;
+        }
+
+        if (state->source_count > (UINT64_MAX / packets_per_source))
+        {
+            LOGF("PacketSender: total packet count would overflow");
+            terminateProgram(1);
+        }
+
+        state->total_packets = state->source_count * packets_per_source;
+    }
+
+    if (state->total_packet_bytes == 0 || state->total_packets == 0)
+    {
+        LOGF("PacketSender: internal error, computed zero packets or zero bytes per source");
+        terminateProgram(1);
+    }
     if (state->total_packet_bytes > kPacketSenderMaxMaterializedBytes)
     {
         LOGF("PacketSender: generated packet store needs %llu bytes, exceeding the %u-byte safety cap; shrink "
@@ -505,30 +550,35 @@ void packetsenderPrepareRuntime(tunnel_t *t)
 
     for (uint64_t source_index = 0; source_index < state->source_count; ++source_index)
     {
-        uint32_t       src_addr_host    = 0;
-        uint32_t       src_addr_network = 0;
-        uint8_t       *source_base      = state->packet_bytes + ((size_t) source_index * state->bytes_per_source);
+        uint32_t src_addr_host    = 0;
+        uint32_t src_addr_network = 0;
+        uint8_t *source_base      = state->packet_bytes + ((size_t) source_index * state->bytes_per_source);
 
         packetsenderResolveSourceAddress(state, source_index, &src_addr_host, &src_addr_network);
 
-        if (state->protocol_mode == kPacketSenderProtocolAll)
+        for (uint32_t repeat = 0; repeat < state->packets_per_ip; ++repeat)
         {
-            for (uint32_t protocol = 0; protocol < kPacketSenderProtocolsPerSource; ++protocol)
+            uint8_t *repeat_base = source_base + ((size_t) repeat * state->bytes_per_source_repeat);
+
+            if (state->protocol_mode == kPacketSenderProtocolAll)
             {
-                packetsenderBuildPacketForProtocol(state, source_base + state->protocol_offsets[protocol], src_addr_host,
-                                                   src_addr_network, (uint8_t) protocol);
+                for (uint32_t protocol = 0; protocol < kPacketSenderProtocolsPerSource; ++protocol)
+                {
+                    packetsenderBuildPacketForProtocol(state, repeat_base + state->protocol_offsets[protocol],
+                                                       src_addr_host, src_addr_network, (uint8_t) protocol);
+                }
             }
-        }
-        else
-        {
-            packetsenderBuildPacketForProtocol(state, source_base, src_addr_host, src_addr_network,
-                                               packetsenderGetSingleProtocolNumber(state));
+            else
+            {
+                packetsenderBuildPacketForProtocol(state, repeat_base, src_addr_host, src_addr_network,
+                                                   packetsenderGetSingleProtocolNumber(state));
+            }
         }
     }
 
-    state->workers_count = chain->workers_count;
-    state->workers       = memoryAllocateZero(sizeof(*state->workers) * state->workers_count);
-    state->active_workers = 0;
+    state->workers_count  = chain->workers_count;
+    state->workers        = memoryAllocateZero(sizeof(*state->workers) * state->workers_count);
+    state->active_workers = state->workers_count;
 
     uint64_t start_index = 0;
     const uint64_t base_count = state->total_packets / state->workers_count;
@@ -545,18 +595,13 @@ void packetsenderPrepareRuntime(tunnel_t *t)
         slot->packet_index_end   = start_index + assigned;
         slot->next_packet_index  = start_index;
 
-        if (assigned > 0)
-        {
-            state->active_workers += 1;
-        }
-
         start_index += assigned;
     }
 
     LOGI("PacketSender: prepared %llu IPv4 packets (%llu bytes) across %u workers for %u ms",
          (unsigned long long) state->total_packets,
          (unsigned long long) state->total_packet_bytes,
-         (unsigned int) state->active_workers,
+         (unsigned int) state->workers_count,
          (unsigned int) state->duration_ms);
 }
 
@@ -570,16 +615,17 @@ void packetsenderStartWorker(void *worker_ptr, void *arg1, void *arg2, void *arg
     discard arg2;
     discard arg3;
 
-    if (slot->packet_index_begin == slot->packet_index_end)
-    {
-        return;
-    }
-
     slot->line = tunnelchainGetWorkerPacketLine(tunnelGetChain(t), worker->wid);
     if (slot->line == NULL || ! lineIsAlive(slot->line))
     {
         LOGF("PacketSender: worker %u packet line is not available", (unsigned int) worker->wid);
         terminateProgram(1);
+        return;
+    }
+
+    if (slot->packet_index_begin == slot->packet_index_end)
+    {
+        packetsenderMarkWorkerComplete(slot);
         return;
     }
 

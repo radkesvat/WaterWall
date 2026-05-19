@@ -12,7 +12,14 @@ void disturberTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (ts->disturb_upstream && roll100(ts->chance_instant_close))
     {
         LOGD("Disturber: Closing upstream direction instantly");
-        tunnelPrevDownStreamFinish(t, l);
+        if (! disturberIsWorkerPacketLine(t, l))
+        {
+            disturberLinestateDestroy(ls);
+            tunnelPrevDownStreamFinish(t, l);
+            return;
+        }
+        ls->upstream.is_deadhang = true;
+        tunnelNextUpStreamInit(t, l);
         return;
     }
 

@@ -29,15 +29,22 @@ static LineTaskFnWithBuf disturberGetDelayedPayloadFn(disturber_payload_directio
                                                            : disturberTunnelDownStreamPayload;
 }
 
-static void disturberForwardMiddleClose(tunnel_t *t, line_t *l, disturber_payload_direction_e direction)
+bool disturberIsWorkerPacketLine(tunnel_t *t, line_t *l)
 {
-    if (direction == kDisturberPayloadDirectionUpstream)
-    {
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
+    tunnel_chain_t *chain = tunnelGetChain(t);
+
+    return chain != NULL && chain->packet_lines != NULL && lineGetWID(l) < chain->workers_count &&
+           tunnelchainGetWorkerPacketLine(chain, lineGetWID(l)) == l;
+}
+
+static void disturberCloseNormalLine(tunnel_t *t, line_t *l)
+{
+    disturber_lstate_t *ls = lineGetState(l, t);
+
+    disturberLinestateDestroy(ls);
 
     tunnelNextUpStreamFinish(t, l);
+    tunnelPrevDownStreamFinish(t, l);
 }
 
 void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_payload_direction_e direction)
@@ -64,7 +71,12 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
     {
         LOGD("Disturber: Closing %s direction in the middle of transmission", dir_name);
         lineReuseBuffer(l, buf);
-        disturberForwardMiddleClose(t, l, direction);
+        if (disturberIsWorkerPacketLine(t, l))
+        {
+            dir_ls->is_deadhang = true;
+            return;
+        }
+        disturberCloseNormalLine(t, l);
         return;
     }
 

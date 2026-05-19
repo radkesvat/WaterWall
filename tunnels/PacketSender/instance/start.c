@@ -11,11 +11,6 @@ void packetsenderTunnelOnStart(tunnel_t *t)
 
     for (wid_t wi = 0; wi < state->workers_count; ++wi)
     {
-        if (state->workers[wi].packet_index_begin == state->workers[wi].packet_index_end)
-        {
-            continue;
-        }
-
         sendWorkerMessageForceQueue(wi, packetsenderStartWorker, t, NULL, NULL);
     }
 }

@@ -1,0 +1,46 @@
+{
+  "name": "packet-analysis-receiver-head-bridge",
+  "nodes": [
+    {
+      "name": "receiver",
+      "type": "PacketReceiver",
+      "settings": {
+        "source-ip4-range": "198.51.101.10/32",
+        "expected-packets-per-ip": 6,
+        "report-after-ms": 700,
+        "output-file": "packet-receiver-report.txt"
+      },
+      "next": "receiver-bridge"
+    },
+    {
+      "name": "receiver-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "sender-bridge"
+      }
+    },
+    {
+      "name": "sender",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "packet-start-immediately": true,
+        "chunk-count": 3,
+        "packet-ipv4": {
+          "source-ip": "198.51.101.10",
+          "dest-ip": "203.0.113.20",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
+      "next": "sender-bridge"
+    },
+    {
+      "name": "sender-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "receiver-bridge"
+      }
+    }
+  ]
+}
