@@ -144,6 +144,22 @@ static bool packetreceiverLoadOutputFile(packetreceiver_tstate_t *state, const c
     return true;
 }
 
+static bool packetreceiverLoadReportAfterMs(packetreceiver_tstate_t *state, const cJSON *settings)
+{
+    int report_after_ms = 1000;
+
+    getIntFromJsonObjectOrDefault(&report_after_ms, settings, "report-after-ms", report_after_ms);
+
+    if (report_after_ms <= 0)
+    {
+        LOGF("JSON Error: PacketReceiver->settings->report-after-ms (int field) : expected a positive millisecond value");
+        return false;
+    }
+
+    state->report_after_ms = (uint32_t) report_after_ms;
+    return true;
+}
+
 tunnel_t *packetreceiverTunnelCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(packetreceiver_tstate_t), 0);
@@ -185,7 +201,7 @@ tunnel_t *packetreceiverTunnelCreate(node_t *node)
     state->expected_packets_per_ip = 1;
 
     if (! packetreceiverLoadSourceRanges(state, settings) || ! packetreceiverLoadExpectedPacketsPerIp(state, settings) ||
-        ! packetreceiverLoadOutputFile(state, settings))
+        ! packetreceiverLoadOutputFile(state, settings) || ! packetreceiverLoadReportAfterMs(state, settings))
     {
         packetreceiverTunnelDestroy(t);
         return NULL;

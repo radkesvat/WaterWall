@@ -4,6 +4,5 @@
 
 void packetreceiverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    discard t;
-    lineReuseBuffer(l, buf);
+    packetreceiverHandlePacket(t, l, buf);
 }

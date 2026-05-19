@@ -136,6 +136,26 @@ static bool packetreceiverWriteReport(tunnel_t *t)
     uint64_t total_received = 0;
     uint64_t total_lost     = 0;
 
+    uint64_t index = 0;
+    for (uint32_t ri = 0; ri < state->source_range_count; ++ri)
+    {
+        const packetreceiver_source_range_t *range = &state->source_ranges[ri];
+
+        for (uint64_t i = 0; i < range->count; ++i)
+        {
+            const uint64_t source_index = index++;
+            const uint64_t received     = state->received_counts[source_index];
+            const uint64_t expected     = (uint64_t) state->expected_packets_per_ip;
+            const uint64_t lost         = (expected > received) ? (expected - received) : 0ULL;
+
+            total_received += received;
+            total_lost += lost;
+        }
+    }
+
+    state->total_received_packets = total_received;
+    state->total_lost_packets     = total_lost;
+
     packetreceiverAppendText(&report, "PacketReceiver report\n");
     packetreceiverAppendFormat(&report, "output-file: %s\n", state->output_file);
     packetreceiverAppendFormat(&report, "source-ip-count: %llu\n", (unsigned long long) state->source_count);
@@ -149,7 +169,7 @@ static bool packetreceiverWriteReport(tunnel_t *t)
     packetreceiverAppendFormat(&report, "unexpected-packets: %llu\n", (unsigned long long) state->unexpected_packets);
     packetreceiverAppendText(&report, "\nsource-ip | sent | received | lost | loss-percent | histogram\n");
 
-    uint64_t index = 0;
+    index = 0;
     for (uint32_t ri = 0; ri < state->source_range_count; ++ri)
     {
         const packetreceiver_source_range_t *range = &state->source_ranges[ri];
@@ -170,14 +190,8 @@ static bool packetreceiverWriteReport(tunnel_t *t)
             packetreceiverAppendFormat(&report, "%s | %llu | %llu | %llu | %.2f%% | [%s]\n", ipbuf,
                                        (unsigned long long) expected, (unsigned long long) received,
                                        (unsigned long long) lost, loss_percent, bar);
-
-            total_received += received;
-            total_lost += lost;
         }
     }
-
-    state->total_received_packets = total_received;
-    state->total_lost_packets     = total_lost;
 
     packetreceiverAppendText(&report, "\nsummary\n");
     packetreceiverAppendFormat(&report, "sent-total-packets: %llu\n", (unsigned long long) state->total_expected_packets);
@@ -190,46 +204,14 @@ static bool packetreceiverWriteReport(tunnel_t *t)
     return ok;
 }
 
-static void packetreceiverMarkWorkerFinished(packetreceiver_tstate_t *state, wid_t wid, bool *should_write_out)
-{
-    if (wid >= state->workers_count)
-    {
-        LOGF("PacketReceiver: worker id %u is out of range", (unsigned int) wid);
-        terminateProgram(1);
-        return;
-    }
-
-    mutexLock(&state->state_mutex);
-
-    if (! state->worker_finished[wid])
-    {
-        state->worker_finished[wid] = true;
-        state->completed_workers += 1U;
-    }
-
-    if (state->completed_workers >= state->workers_count && ! state->report_written)
-    {
-        state->report_written = true;
-        *should_write_out     = true;
-    }
-
-    mutexUnlock(&state->state_mutex);
-}
-
 void packetreceiverPrepareRuntime(tunnel_t *t)
 {
     packetreceiver_tstate_t *state = tunnelGetState(t);
     tunnel_chain_t          *chain = tunnelGetChain(t);
 
-    if (t->prev == NULL)
+    if (t->prev == NULL && t->next == NULL)
     {
-        LOGF("PacketReceiver: must have a previous tunnel to receive packets from");
-        terminateProgram(1);
-    }
-
-    if (t->next != NULL)
-    {
-        LOGF("PacketReceiver: must be the chain end");
+        LOGF("PacketReceiver: must have a previous or next tunnel to receive packets from");
         terminateProgram(1);
     }
 
@@ -248,7 +230,6 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
     }
 
     state->received_counts = memoryAllocateZero((size_t) state->source_count * sizeof(uint64_t));
-    state->worker_finished = memoryAllocateZero(sizeof(*state->worker_finished) * state->workers_count);
 
     if (state->source_count > (UINT64_MAX / (uint64_t) state->expected_packets_per_ip))
     {
@@ -257,8 +238,7 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
     }
 
     state->total_expected_packets = state->source_count * (uint64_t) state->expected_packets_per_ip;
-    state->completed_workers = 0;
-    state->report_written     = false;
+    state->report_written         = false;
 }
 
 void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -280,39 +260,24 @@ void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (match)
     {
         mutexLock(&state->state_mutex);
-        state->received_counts[source_index] += 1ULL;
-        state->total_received_packets += 1ULL;
+        if (! state->report_written)
+        {
+            state->received_counts[source_index] += 1ULL;
+            state->total_received_packets += 1ULL;
+        }
         mutexUnlock(&state->state_mutex);
     }
     else
     {
         mutexLock(&state->state_mutex);
-        state->unexpected_packets += 1ULL;
+        if (! state->report_written)
+        {
+            state->unexpected_packets += 1ULL;
+        }
         mutexUnlock(&state->state_mutex);
     }
 
     lineReuseBuffer(l, buf);
-}
-
-void packetreceiverHandleWorkerFinish(tunnel_t *t, line_t *l)
-{
-    packetreceiver_tstate_t *state = tunnelGetState(t);
-    bool                     should_write = false;
-
-    packetreceiverMarkWorkerFinished(state, lineGetWID(l), &should_write);
-
-    if (should_write)
-    {
-        if (! packetreceiverWriteReport(t))
-        {
-            LOGF("PacketReceiver: failed to write report to \"%s\"", state->output_file);
-            terminateProgram(1);
-            return;
-        }
-
-        LOGI("PacketReceiver: wrote packet analysis report to \"%s\"", state->output_file);
-        terminateProgram(0);
-    }
 }
 
 void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
@@ -320,7 +285,7 @@ void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
     packetreceiver_tstate_t *state = tunnelGetState(t);
     bool                     should_write = false;
 
-    if (state->received_counts == NULL || state->worker_finished == NULL)
+    if (state->received_counts == NULL)
     {
         return;
     }
@@ -351,4 +316,13 @@ void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
     {
         terminateProgram(0);
     }
+}
+
+void packetreceiverReportTimerTask(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard worker;
+    discard arg2;
+    discard arg3;
+
+    packetreceiverFinalizeReport((tunnel_t *) arg1, true);
 }

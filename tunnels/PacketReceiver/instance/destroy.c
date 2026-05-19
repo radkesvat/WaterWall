@@ -23,12 +23,6 @@ void packetreceiverTunnelDestroy(tunnel_t *t)
         state->received_counts = NULL;
     }
 
-    if (state->worker_finished != NULL)
-    {
-        memoryFree(state->worker_finished);
-        state->worker_finished = NULL;
-    }
-
     if (state->output_file != NULL)
     {
         memoryFree(state->output_file);

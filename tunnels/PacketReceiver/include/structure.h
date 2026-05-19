@@ -21,11 +21,10 @@ typedef struct packetreceiver_tstate_s
     uint64_t                      total_received_packets;
     uint64_t                      total_lost_packets;
     uint64_t                      unexpected_packets;
-    uint64_t                      completed_workers;
     wid_t                         workers_count;
-    bool                         *worker_finished;
     uint64_t                     *received_counts;
     char                         *output_file;
+    uint32_t                      report_after_ms;
     wmutex_t                      state_mutex;
     bool                          report_written;
 } packetreceiver_tstate_t;
@@ -66,5 +65,5 @@ void packetreceiverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void packetreceiverPrepareRuntime(tunnel_t *t);
 void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf);
-void packetreceiverHandleWorkerFinish(tunnel_t *t, line_t *l);
 void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write);
+void packetreceiverReportTimerTask(void *worker, void *arg1, void *arg2, void *arg3);

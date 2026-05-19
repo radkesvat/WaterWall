@@ -4,5 +4,6 @@
 
 void packetreceiverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    packetreceiverHandleWorkerFinish(t, l);
+    discard t;
+    discard l;
 }
