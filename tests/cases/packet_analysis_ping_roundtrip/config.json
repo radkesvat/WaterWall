@@ -1,0 +1,51 @@
+{
+  "name": "packet-analysis-ping-roundtrip",
+  "nodes": [
+    {
+      "name": "sender",
+      "type": "PacketSender",
+      "settings": {
+        "source-ip4-range": "198.51.100.0/31",
+        "dest-ip4": "203.0.113.10",
+        "protocol-number": "ICMP",
+        "duration-ms": 100,
+        "packets-per-ip": 3
+      },
+      "next": "ping-client"
+    },
+    {
+      "name": "ping-client",
+      "type": "PingClient",
+      "settings": {
+        "strategy": "wrap-in-only-icmp-header",
+        "identifier": 4662,
+        "sequence-start": 30,
+        "xor-byte": 165,
+        "roundup-size": true
+      },
+      "next": "ping-server"
+    },
+    {
+      "name": "ping-server",
+      "type": "PingServer",
+      "settings": {
+        "strategy": "wrap-in-only-icmp-header",
+        "identifier": 4662,
+        "sequence-start": 30,
+        "xor-byte": 165,
+        "roundup-size": true
+      },
+      "next": "receiver"
+    },
+    {
+      "name": "receiver",
+      "type": "PacketReceiver",
+      "settings": {
+        "source-ip4-range": "198.51.100.0/31",
+        "expected-packets-per-ip": 3,
+        "report-after-ms": 700,
+        "output-file": "packet-receiver-report.txt"
+      }
+    }
+  ]
+}

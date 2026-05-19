@@ -23,6 +23,27 @@ function(add_waterwall_integration_test test_name case_name)
   )
 endfunction()
 
+function(add_waterwall_packet_analysis_test test_name case_name)
+  set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
+
+  add_test(
+    NAME ${test_name}
+    COMMAND
+      "${BASH_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/run_packet_analysis_case.sh"
+      "$<TARGET_FILE:Waterwall>"
+      "${case_dir}"
+      "30"
+  )
+
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      TIMEOUT 120
+      LABELS "integration;tunnels;packet-analysis"
+  )
+endfunction()
+
 add_waterwall_integration_test(waterwall.disturber_passthrough disturber_passthrough)
 add_waterwall_integration_test(waterwall.obfuscator_roundtrip obfuscator_roundtrip)
 add_waterwall_integration_test(waterwall.obfuscator_tls_record_roundtrip obfuscator_tls_record_roundtrip)
@@ -63,6 +84,9 @@ add_waterwall_integration_test(waterwall.ipmanipulator_tcp_udp_swap_roundtrip ip
 add_waterwall_integration_test(waterwall.ipmanipulator_udp_tcp_swap_roundtrip ipmanipulator_udp_tcp_swap_roundtrip)
 add_waterwall_integration_test(waterwall.reverse_tcp_bridge_roundtrip reverse_tcp_bridge_roundtrip)
 add_waterwall_integration_test(waterwall.wireguard_udpstateless_packet_roundtrip wireguard_udpstateless_packet_roundtrip)
+add_waterwall_packet_analysis_test(waterwall.packet_analysis_ping_roundtrip packet_analysis_ping_roundtrip)
+add_waterwall_packet_analysis_test(waterwall.packet_analysis_disturber_loss packet_analysis_disturber_loss)
+add_waterwall_packet_analysis_test(waterwall.packet_analysis_receiver_head_bridge packet_analysis_receiver_head_bridge)
 
 add_custom_target(check_waterwall_integration_tests
   COMMAND
