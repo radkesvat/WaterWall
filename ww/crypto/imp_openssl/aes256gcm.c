@@ -51,6 +51,7 @@ int aes256gcmEncrypt(unsigned char *dst, const unsigned char *src, size_t src_le
     }
     ciphertext_len += len;
 
+    len = 0;
     if (EVP_EncryptFinal_ex(ctx, dst + ciphertext_len, &len) != 1)
     {
         goto cleanup;
@@ -122,6 +123,7 @@ int aes256gcmDecrypt(unsigned char *dst, const unsigned char *src, size_t src_le
         goto cleanup;
     }
 
+    len = 0;
     if (EVP_DecryptFinal_ex(ctx, dst + plaintext_len, &len) != 1)
     {
         goto cleanup;
