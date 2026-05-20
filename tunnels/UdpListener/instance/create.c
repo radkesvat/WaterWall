@@ -100,37 +100,39 @@ static void configureMultiportBackend(socket_filter_option_t *filter_opt, udplis
     }
 }
 
-static void parseWhitelistEntry(const cJSON *list_item, socket_filter_option_t *filter_opt, int index)
+static void parseIpMaskListEntry(const cJSON *list_item, vec_ipmask_t *target_list, const char *list_name, int index)
 {
     char *ip_str = NULL;
     ipmask_t ipmask;
 
     if (!getStringFromJson(&ip_str, list_item) || !verifyIPCdir(ip_str))
     {
-        LOGF("JSON Error: UdpListener->settings->whitelist (array of strings field) index %d : The data was empty or invalid", index);
+        LOGF("JSON Error: UdpListener->settings->%s (array of strings field) index %d : The data was empty or invalid",
+             list_name, index);
         terminateProgram(1);
     }
 
     int parse_result = parseIPWithSubnetMask(ip_str, &(ipmask.ip), &(ipmask.mask));
     if (parse_result == -1)
     {
-        LOGF("UdpListener: stopping due to whitelist address [%d] \"%s\" parse failure", index, ip_str);
+        LOGF("UdpListener: stopping due to %s address [%d] \"%s\" parse failure", list_name, index, ip_str);
         terminateProgram(1);
     }
-    
-    vec_ipmask_t_push(&filter_opt->white_list, ipmask);
+
+    vec_ipmask_t_push(target_list, ipmask);
+    memoryFree(ip_str);
 }
 
-static void parseWhitelist(socket_filter_option_t *filter_opt, const cJSON *settings)
+static void parseIpMaskList(const cJSON *settings, const char *list_name, vec_ipmask_t *target_list)
 {
-    const cJSON *wlist = cJSON_GetObjectItemCaseSensitive(settings, "whitelist");
-    
-    if (!cJSON_IsArray(wlist))
+    const cJSON *list = cJSON_GetObjectItemCaseSensitive(settings, list_name);
+
+    if (!cJSON_IsArray(list))
     {
         return;
     }
-    
-    int len = cJSON_GetArraySize(wlist);
+
+    int len = cJSON_GetArraySize(list);
     if (len <= 0)
     {
         return;
@@ -138,9 +140,9 @@ static void parseWhitelist(socket_filter_option_t *filter_opt, const cJSON *sett
 
     int i = 0;
     const cJSON *list_item = NULL;
-    cJSON_ArrayForEach(list_item, wlist)
+    cJSON_ArrayForEach(list_item, list)
     {
-        parseWhitelistEntry(list_item, filter_opt, i);
+        parseIpMaskListEntry(list_item, target_list, list_name, i);
         i++;
     }
 }
@@ -156,7 +158,8 @@ static void setupFilterOptions(socket_filter_option_t *filter_opt, udplistener_t
 
     parsePortSection(state, settings);
     configureMultiportBackend(filter_opt, state, settings);
-    parseWhitelist(filter_opt, settings);
+    parseIpMaskList(settings, "whitelist", &filter_opt->white_list);
+    parseIpMaskList(settings, "blacklist", &filter_opt->black_list);
 
     filter_opt->host = state->listen_address;
     filter_opt->port_min = state->listen_port_min;

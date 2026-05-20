@@ -8,7 +8,7 @@ In practice, this node is used at the beginning of a chain.
 
 - Binds and listens on one UDP port or a UDP port range.
 - Accepts inbound UDP packets through the socket manager.
-- Applies optional filtering such as whitelist checks and balance groups.
+- Applies optional filtering such as whitelist/blacklist checks and balance groups.
 - Creates one line per remote peer address and port.
 - Sends inbound datagrams to the next node as upstream payload.
 - Sends downstream payload back to the remembered peer address.
@@ -32,6 +32,9 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
     "whitelist": [
       "192.168.1.0/24",
       "2001:db8::/64"
+    ],
+    "blacklist": [
+      "192.168.1.50/32"
     ]
   },
   "next": "next-node-name"
@@ -92,6 +95,10 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
   List of allowed client IPs or CIDR ranges.
   Supports IPv4 and IPv6.
 
+- `blacklist` `(array of strings)`
+  List of blocked client IPs or CIDR ranges.
+  Supports IPv4 and IPv6.
+
 ## Detailed Behavior
 
 ### Per-peer line model
@@ -148,17 +155,19 @@ Current timeouts:
 
 If the peer line expires, the line is finished upstream and destroyed.
 
-### Whitelist and balance behavior
+### Whitelist, blacklist, and balance behavior
 
 Filtering and balancing are handled through the shared socket manager:
 
 - `whitelist` limits which peer IPs are accepted by this listener
+- `blacklist` rejects matching peer IPs for this listener
 - `balance-group` enables sticky distribution between multiple listeners on the same port
 - `multiport-backend` controls how port ranges are implemented
 
+When both ACL lists are configured, a peer must match the whitelist, if any, and must not match the blacklist.
+
 ## Notes And Caveats
 
-- The current implementation parses `whitelist`, but it does not parse a `blacklist` field from JSON.
 - `port` is currently parsed as a number or a two-item array.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused peer lines drop inbound datagrams instead of buffering them.

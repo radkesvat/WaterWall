@@ -11,7 +11,7 @@ In practice, this node is used at the beginning of a chain.
 - Creates a WaterWall line for each accepted socket.
 - Sends data received from the client to the next node.
 - Sends downstream data from the next node back to the client socket.
-- Applies optional accept-time filters such as whitelist checks and balance groups.
+- Applies optional accept-time filters such as whitelist/blacklist checks and balance groups.
 
 This node is a chain head. Its upstream entry callbacks are disabled because connections are created by external clients, not by a previous tunnel.
 
@@ -33,6 +33,9 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
     "whitelist": [
       "192.168.1.0/24",
       "2001:db8::/64"
+    ],
+    "blacklist": [
+      "192.168.1.50/32"
     ]
   },
   "next": "next-node-name"
@@ -108,6 +111,15 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
   ["10.0.0.0/8", "2001:db8::/64"]
   ```
 
+- `blacklist` `(array of strings)`
+  List of blocked client IPs or CIDR ranges.
+  Supports IPv4 and IPv6.
+  Example:
+
+  ```json
+  ["10.0.0.13/32", "2001:db8:bad::/64"]
+  ```
+
 ## Detailed Behavior
 
 ### Accept path
@@ -153,9 +165,11 @@ Each accepted connection is tracked in an idle table.
 
 If multiple listeners share the same `balance-group` and port, the socket manager selects one of them for a new client and remembers that choice using a hash of the client IP. During `balance-interval`, later connections from the same client IP stay pinned to the same listener.
 
-### Whitelist matching
+### Whitelist and blacklist matching
 
 If `whitelist` is present, only matching client IPs are accepted by this listener. If multiple listeners are registered on the same port, another listener may still receive the same connection if its filter matches and this listener's filter does not.
+
+If `blacklist` is present, matching client IPs are rejected by this listener. When both lists are configured, a client must match the whitelist, if any, and must not match the blacklist.
 
 ### Multiport backend notes
 
@@ -168,7 +182,6 @@ If you want `iptables` specifically, set it explicitly.
 
 ## Notes And Caveats
 
-- The current `TcpListener` implementation parses `whitelist`, but it does not parse a `blacklist` field from JSON.
 - The current parser expects `port` as a number or a two-item array, not a string range.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - This node is designed to be used as an inbound entry point in the chain.
