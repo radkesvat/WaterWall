@@ -227,6 +227,16 @@ static void asyncdnsTimerCallback(wtimer_t *timer)
     asyncdnsRefreshTimer(r);
 }
 
+static bool asyncdnsAddrNodeUsable(const struct ares_addrinfo_node *node, size_t max_addrlen)
+{
+    if ((node->ai_family != AF_INET && node->ai_family != AF_INET6) || node->ai_addr == NULL)
+    {
+        return false;
+    }
+
+    return (uintmax_t) node->ai_addrlen <= (uintmax_t) max_addrlen;
+}
+
 static size_t asyncdnsCountAddrs(const struct ares_addrinfo *res)
 {
     size_t count = 0;
@@ -237,8 +247,7 @@ static size_t asyncdnsCountAddrs(const struct ares_addrinfo *res)
 
     for (const struct ares_addrinfo_node *node = res->nodes; node != NULL; node = node->ai_next)
     {
-        if ((node->ai_family == AF_INET || node->ai_family == AF_INET6) &&
-            node->ai_addr != NULL && node->ai_addrlen <= sizeof(struct sockaddr_storage))
+        if (asyncdnsAddrNodeUsable(node, sizeof(struct sockaddr_storage)))
         {
             ++count;
         }
@@ -253,15 +262,16 @@ static void asyncdnsCopyAddrs(dns_resolved_addr_t *out, const struct ares_addrin
 
     for (const struct ares_addrinfo_node *node = res->nodes; node != NULL; node = node->ai_next)
     {
-        if ((node->ai_family != AF_INET && node->ai_family != AF_INET6) ||
-            node->ai_addr == NULL || node->ai_addrlen > sizeof(out[index].addr))
+        if (!asyncdnsAddrNodeUsable(node, sizeof(out[index].addr)))
         {
             continue;
         }
 
+        size_t addrlen = (size_t) node->ai_addrlen;
+
         memoryZero(&out[index], sizeof(out[index]));
-        memoryCopy(&out[index].addr, node->ai_addr, node->ai_addrlen);
-        out[index].addrlen = node->ai_addrlen;
+        memoryCopy(&out[index].addr, node->ai_addr, addrlen);
+        out[index].addrlen = (socklen_t) addrlen;
         out[index].family  = node->ai_family;
         out[index].ttl     = node->ai_ttl;
         ++index;
