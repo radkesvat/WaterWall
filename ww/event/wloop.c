@@ -938,6 +938,92 @@ void wioAttach(wloop_t *loop, wio_t *io)
     loop->ios.ptr[fd] = io;
 }
 
+static void wioReleaseNoCloseNow(wio_t *io)
+{
+    if (io == NULL || io->destroy)
+    {
+        return;
+    }
+
+    wloop_t *loop = io->loop;
+    int      fd   = io->fd;
+
+    if (io->events != 0)
+    {
+        wioDel(io, WW_RDWR);
+    }
+
+    if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
+    {
+        loop->ios.ptr[fd] = NULL;
+    }
+
+    wioDelConnectTimer(io);
+    wioDelCloseTimer(io);
+    wioDelReadTimer(io);
+    wioDelWriteTimer(io);
+    wioDelKeepaliveTimer(io);
+    wioDelHeartBeatTimer(io);
+    wioDone(io);
+
+    io->destroy = 1;
+    EVENTLOOP_FREE(io->localaddr);
+    EVENTLOOP_FREE(io->peeraddr);
+    threadsafegenericpoolReuseItem(getWorkerWiosPool(loop->wid), io);
+}
+
+static void wioReleaseNoCloseEvent(wevent_t *ev)
+{
+    wio_t   *io = (wio_t *) ev->userdata;
+    uint32_t id = (uint32_t) (uintptr_t) ev->privdata;
+
+    if (io != NULL && io->id == id)
+    {
+        wioReleaseNoCloseNow(io);
+    }
+}
+
+void wioReleaseNoClose(wio_t *io)
+{
+    if (io == NULL)
+    {
+        return;
+    }
+
+    wloop_t *loop = io->loop;
+    int      fd   = io->fd;
+    bool     was_pending = io->pending;
+
+    if (io->events != 0)
+    {
+        wioDel(io, WW_RDWR);
+    }
+
+    if (loop != NULL && fd >= 0 && fd < (int) loop->ios.maxsize && loop->ios.ptr[fd] == io)
+    {
+        loop->ios.ptr[fd] = NULL;
+    }
+
+    if (was_pending)
+    {
+        wevent_t ev;
+        memorySet(&ev, 0, sizeof(ev));
+        ev.cb       = wioReleaseNoCloseEvent;
+        ev.userdata = io;
+        ev.privdata = (void *) (uintptr_t) io->id;
+        if (wloopPostEvent(loop, &ev))
+        {
+            return;
+        }
+
+        // During global shutdown custom posting may be disabled. In that case
+        // avoid freeing the current pending event under the event loop.
+        return;
+    }
+
+    wioReleaseNoCloseNow(io);
+}
+
 bool wioExists(wloop_t *loop, int fd)
 {
     if (fd >= (int) loop->ios.maxsize)

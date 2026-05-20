@@ -260,6 +260,9 @@ void on_accpet(wio_t* io) {
  */
 WW_EXPORT void wioDetach(/*wloop_t* loop,*/ wio_t* io);
 WW_EXPORT void wioAttach(wloop_t* loop, wio_t* io);
+// Release a Waterwall watcher for an fd owned by another subsystem.
+// This removes loop interest and recycles the wio_t without closing io->fd.
+WW_EXPORT void wioReleaseNoClose(wio_t* io);
 WW_EXPORT bool wioExists(wloop_t* loop, int fd);
 
 // wio_t fields
