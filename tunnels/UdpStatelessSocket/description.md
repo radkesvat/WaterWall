@@ -96,7 +96,8 @@ This means the next tunnel can inspect the sender address through the normal rou
 When payload is sent through `UdpStatelessSocket`:
 
 - the tunnel reads the destination address from `l->routing_context.dest_ctx`
-- converts that address context into a socket address
+- resolves the destination asynchronously if it is an unresolved domain
+- converts the resolved/IP address context into a socket address
 - sets the UDP socket's current peer address
 - writes the datagram through the bound socket
 
@@ -141,6 +142,7 @@ Its init, est, fin, pause, and resume callbacks are effectively no-ops because t
 
 - `UdpStatelessSocket` is intended for stateless UDP traffic, especially around `WireGuardDevice`.
 - The tunnel depends on valid routing context for outbound sends. In particular, `dest_ctx` must be initialized before sending payload.
+- For packet lines, unresolved domain sends snapshot the domain and port for that datagram before resolving, because packet-line routing context is scratch metadata.
 - This node does not create per-peer connection state.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - The JSON parser requires `listen-address` and `listen-port`; `source-ip` may override the effective local bind address.

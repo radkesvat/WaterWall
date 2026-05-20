@@ -25,6 +25,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     t->onDestroy = &udpstatelesssocketTunnelDestroy;
 
     udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    mutexInit(&state->dns_cache_mutex);
 
     const cJSON *settings = node->node_settings_json;
 

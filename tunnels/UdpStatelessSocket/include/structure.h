@@ -2,6 +2,23 @@
 
 #include "wwapi.h"
 
+enum
+{
+    kUdpStatelessSocketDnsRefreshIntervalMs = 30 * 60 * 1000
+};
+
+typedef struct udpstatelesssocket_dns_cache_entry_s udpstatelesssocket_dns_cache_entry_t;
+
+struct udpstatelesssocket_dns_cache_entry_s
+{
+    char                                   *domain;
+    uint16_t                                port;
+    int                                     strategy;
+    sockaddr_u                              peer_addr;
+    unsigned int                            resolved_at_ms;
+    udpstatelesssocket_dns_cache_entry_t   *next;
+};
+
 typedef struct udpstatelesssocket_tstate_s
 {
     TunnelFlowRoutinePayload WriteReceivedPacket; // function to give received data to the next/prev tunnel
@@ -19,6 +36,9 @@ typedef struct udpstatelesssocket_tstate_s
     sockaddr_u cached_peer_addr; // last owner-worker peer selected for outbound sends
     bool       cached_peer_valid;
     bool       source_ip_configured;
+
+    wmutex_t                              dns_cache_mutex;
+    udpstatelesssocket_dns_cache_entry_t *dns_cache;
 } udpstatelesssocket_tstate_t;
 
 typedef struct udpstatelesssocket_lstate_s
