@@ -488,6 +488,13 @@ CPMAddPackage(
 )
 
 if(cares_ADDED)
+
+    foreach(CARES_TARGET IN ITEMS c-ares c-ares_static)
+        if(TARGET ${CARES_TARGET})
+            set_target_properties(${CARES_TARGET} PROPERTIES UNITY_BUILD OFF)
+        endif()
+    endforeach()
+
     set(LIBS ${LIBS} c-ares::cares_static)
 else()
     message(FATAL_ERROR "c-ares was added by CPM, but no c-ares CMake target was created")
