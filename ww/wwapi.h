@@ -13,6 +13,7 @@
 #include "bufio/context_queue.h"
 
 #include "net/adapter.h"
+#include "net/async_dns.h"
 #include "net/packet_tunnel.h"
 #include "net/pipe_tunnel.h"
 #include "net/sync_dns.h"
@@ -33,6 +34,5 @@
 #include "utils/json_helpers.h"
 
 #include "crypto/wcrypto.h"
-
 
 

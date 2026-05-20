@@ -89,6 +89,7 @@ add_library(ww STATIC
     net/packet_tunnel.c
     net/pipe_tunnel.c
     net/sync_dns.c
+    net/async_dns.c
     net/adapter.c
     net/tunnel.c
     net/line.c
