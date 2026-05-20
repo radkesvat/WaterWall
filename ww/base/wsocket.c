@@ -38,6 +38,7 @@ void WSADeinit(void)
 #else
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <poll.h>
 
 #endif
 
@@ -333,6 +334,20 @@ static int ConnectFDTimeout(int connfd, int ms)
 {
     int            err    = 0;
     socklen_t      optlen = sizeof(err);
+
+#ifdef OS_UNIX
+    // Use poll() to avoid FD_SETSIZE limit (fd >= 1024 crashes with select)
+    struct pollfd pfd;
+    pfd.fd = connfd;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
+    int ret = poll(&pfd, 1, ms);
+    if (ret < 0) {
+        perror("poll");
+        goto error;
+    }
+#else
+    // Windows: select() is safe (fd_set uses different implementation)
     struct timeval tv     = {ms / 1000, (ms % 1000) * 1000};
     fd_set         writefds;
     FD_ZERO(&writefds);
@@ -347,6 +362,7 @@ static int ConnectFDTimeout(int connfd, int ms)
         printError("select");
         goto error;
     }
+#endif
     if (ret == 0)
     {
         errno = ETIMEDOUT;
