@@ -347,6 +347,8 @@ static inline address_context_t *lineGetDestinationAddressContext(line_t *const 
 
 typedef void (*LineTaskFnWithBuf)(tunnel_t *t, line_t *l, sbuf_t *buf);
 typedef void (*LineTaskFnNoBuf)(tunnel_t *t, line_t *l);
+typedef void (*LineDnsResolveFn)(tunnel_t *t, line_t *l, void *userdata, int status, const char *error,
+                                 const dns_resolved_addr_t *addrs, size_t naddrs);
 
 /**
  * @brief Schedule a no-buffer task on the line's next event-loop iteration.
@@ -388,6 +390,43 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
  */
 void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
                                     sbuf_t *buf);
+
+/**
+ * @brief Resolve a domain on the line's worker while keeping the line alive.
+ *
+ * Must be called from line->wid. The callback runs only if the line is still
+ * alive when the DNS result arrives. Resolver cleanup statuses are consumed by
+ * this helper after releasing the line reference; no user callback is invoked
+ * for ARES_ECANCELLED or ARES_EDESTRUCTION.
+ *
+ * @param line Target line.
+ * @param domain Domain name to resolve.
+ * @param cb DNS result callback.
+ * @param t Tunnel argument forwarded to callback.
+ * @param userdata User argument forwarded to callback.
+ * @return ARES_SUCCESS if the request was submitted, otherwise a c-ares error.
+ */
+int lineResolveDomainAsync(line_t *const line, const char *domain, LineDnsResolveFn cb, tunnel_t *t, void *userdata);
+
+/**
+ * @brief Resolve a domain/service pair on the line's worker while keeping the line alive.
+ *
+ * Must be called from line->wid. The callback runs only if the line is still
+ * alive when the DNS result arrives. Resolver cleanup statuses are consumed by
+ * this helper after releasing the line reference; no user callback is invoked
+ * for ARES_ECANCELLED or ARES_EDESTRUCTION.
+ *
+ * @param line Target line.
+ * @param domain Domain name to resolve.
+ * @param service Optional service name or port string.
+ * @param socktype Socket type hint, such as 0, SOCK_STREAM, or SOCK_DGRAM.
+ * @param cb DNS result callback.
+ * @param t Tunnel argument forwarded to callback.
+ * @param userdata User argument forwarded to callback.
+ * @return ARES_SUCCESS if the request was submitted, otherwise a c-ares error.
+ */
+int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,
+                                  LineDnsResolveFn cb, tunnel_t *t, void *userdata);
 
 
 /**

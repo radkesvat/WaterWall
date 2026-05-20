@@ -28,6 +28,14 @@ typedef struct line_task_msg_with_buf_s
 static_assert(sizeof(line_task_msg_with_buf_t) == sizeof(worker_msg_t),
               "line_task_msg_with_buf_t size should match worker_msg_t size");
 
+typedef struct line_dns_resolve_msg_s
+{
+    LineDnsResolveFn callback;
+    tunnel_t        *tunnel;
+    line_t          *line;
+    void            *userdata;
+} line_dns_resolve_msg_t;
+
 static void lineScheduledWorkerMessageReceived(wevent_t *ev)
 {
     worker_msg_t *msg = weventGetUserdata(ev);
@@ -58,6 +66,31 @@ static bool linePostScheduledTask(wid_t target_wid, WorkerMessageCallback callba
     }
 
     return true;
+}
+
+static void lineDnsResolveMsgDestroy(line_dns_resolve_msg_t *msg)
+{
+    if (msg == NULL)
+    {
+        return;
+    }
+
+    memoryFree(msg);
+}
+
+static void lineDnsResolveResult(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs,
+                                 size_t naddrs)
+{
+    line_dns_resolve_msg_t *msg  = userdata;
+    line_t                 *line = msg->line;
+
+    if (lineIsAlive(line) && ! asyncdnsStatusIsShutdown(status))
+    {
+        msg->callback(msg->tunnel, line, msg->userdata, status, error, addrs, naddrs);
+    }
+
+    lineUnlock(line);
+    lineDnsResolveMsgDestroy(msg);
 }
 
 /**
@@ -139,7 +172,8 @@ void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
 
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
 
-    *msg = (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
+    *msg =
+        (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
     (void) linePostScheduledTask(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, line, msg);
 }
 
@@ -160,8 +194,8 @@ void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t 
 
     *msg = (line_task_msg_no_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = NULL};
 
-    sendWorkerMessageTimed(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, delay_ms, line,(void *) msg,
-                           NULL);
+    sendWorkerMessageTimed(
+        lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, delay_ms, line, (void *) msg, NULL);
 }
 
 void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, uint32_t delay_ms, tunnel_t *t,
@@ -180,8 +214,51 @@ void lineScheduleDelayedTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, 
 
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
 
-    *msg = (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
+    *msg =
+        (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
 
-    sendWorkerMessageTimed(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, delay_ms, line,
-                           (void *) msg, NULL);
+    sendWorkerMessageTimed(
+        lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, delay_ms, line, (void *) msg, NULL);
+}
+
+int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,
+                                  LineDnsResolveFn cb, tunnel_t *t, void *userdata)
+{
+    if (line == NULL || domain == NULL || domain[0] == '\0' || cb == NULL)
+    {
+        return ARES_EFORMERR;
+    }
+
+    lineLock(line);
+    assert(lineGetWID(line) == getWID());
+
+    line_dns_resolve_msg_t *msg = memoryAllocate(sizeof(*msg));
+    if (msg == NULL)
+    {
+        lineUnlock(line);
+        return ARES_ENOMEM;
+    }
+
+    *msg = (line_dns_resolve_msg_t) {
+        .callback = cb,
+        .tunnel   = t,
+        .line     = line,
+        .userdata = userdata,
+    };
+
+    int rc =
+        workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, lineDnsResolveResult, msg);
+    if (rc != ARES_SUCCESS)
+    {
+        lineUnlock(line);
+        lineDnsResolveMsgDestroy(msg);
+        return rc;
+    }
+
+    return ARES_SUCCESS;
+}
+
+int lineResolveDomainAsync(line_t *const line, const char *domain, LineDnsResolveFn cb, tunnel_t *t, void *userdata)
+{
+    return lineResolveDomainServiceAsync(line, domain, NULL, 0, cb, t, userdata);
 }
