@@ -167,7 +167,7 @@ static bool packetreceiverWriteReport(tunnel_t *t)
                                (unsigned long long) state->total_received_packets);
     packetreceiverAppendFormat(&report, "lost-total-packets: %llu\n", (unsigned long long) state->total_lost_packets);
     packetreceiverAppendFormat(&report, "unexpected-packets: %llu\n", (unsigned long long) state->unexpected_packets);
-    packetreceiverAppendText(&report, "\nsource-ip | sent | received | lost | loss-percent | histogram\n");
+    packetreceiverAppendText(&report, "\nsource-ip | expected | received | lost | loss-percent | histogram\n");
 
     index = 0;
     for (uint32_t ri = 0; ri < state->source_range_count; ++ri)
@@ -194,7 +194,6 @@ static bool packetreceiverWriteReport(tunnel_t *t)
     }
 
     packetreceiverAppendText(&report, "\nsummary\n");
-    packetreceiverAppendFormat(&report, "sent-total-packets: %llu\n", (unsigned long long) state->total_expected_packets);
     packetreceiverAppendFormat(&report, "received-total-packets: %llu\n", (unsigned long long) total_received);
     packetreceiverAppendFormat(&report, "lost-total-packets: %llu\n", (unsigned long long) total_lost);
     packetreceiverAppendFormat(&report, "expected-total-packets: %llu\n", (unsigned long long) state->total_expected_packets);
