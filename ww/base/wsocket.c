@@ -36,8 +36,8 @@ void WSADeinit(void)
     }
 }
 #else
-#include <net/if.h> 
 #include <ifaddrs.h>
+#include <net/if.h>
 
 #endif
 
@@ -60,15 +60,19 @@ const char *socketStrError(int err)
 #ifdef OS_WIN
     static char buffer[128];
 
-    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK, 0,
-                   ABS((DWORD) err), 0, buffer, sizeof(buffer), NULL);
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+                   0,
+                   ABS((DWORD) err),
+                   0,
+                   buffer,
+                   sizeof(buffer),
+                   NULL);
 
     return buffer;
 #else
     return strerror(ABS(err));
 #endif
 }
-
 
 int resolveAddr(const char *host, sockaddr_u *addr)
 {
@@ -405,10 +409,18 @@ int ConnectNonblock(const char *host, int port)
 
 int ConnectTimeout(const char *host, int port, int ms)
 {
-    int connfd = wwConnect(host, port, 1);
+    unsigned int start_time = getTickMS();
+    int          connfd     = wwConnect(host, port, 1);
     if (connfd < 0)
         return connfd;
-    return ConnectFDTimeout(connfd, ms);
+    unsigned int elapsed   = getTickMS() - start_time;
+    int          remaining = ms - (int) elapsed;
+    if (remaining <= 0)
+    {
+        closesocket(connfd);
+        return -ETIMEDOUT;
+    }
+    return ConnectFDTimeout(connfd, remaining);
 }
 
 #ifdef ENABLE_UDS
@@ -581,25 +593,29 @@ bool verifyIPCdir(const char *ipc)
 
     if (is_v4 && (prefix_length < 0 || prefix_length > 32))
     {
-        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
+        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32",
+             ipc,
              prefix_length);
         return false;
     }
     if (! is_v4 && (prefix_length < 0 || prefix_length > 128))
     {
-        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
-             "verifyIPCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128", ipc,
+        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32",
+             ipc,
+             "verifyIPCdir Error: Invalid subnet mask length for ipv6 %s prefix %d must be between 0 and 128",
+             ipc,
              prefix_length);
         return false;
     }
     if (prefix_length > 0 && slash + 2 + (int) (log10(prefix_length)) < ipc + ipc_length)
     {
-        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32", ipc,
-             "verifyIPCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix", ipc);
+        LOGE("verifyIPCdir Error: Invalid subnet mask length for ipv4 %s prefix %d must be between 0 and 32",
+             ipc,
+             "verifyIPCdir Warning: the value \"%s\" looks incorrect, it has more data than ip/prefix",
+             ipc);
     }
     return true;
 }
-
 
 bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
 {
