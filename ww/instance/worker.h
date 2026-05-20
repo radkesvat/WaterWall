@@ -1,6 +1,7 @@
 #pragma once
 
 #include "threadsafe_generic_pool.h"
+#include "async_dns.h"
 #include "watomic.h"
 #include "wlibc.h"
 #include "wloop.h"
@@ -20,6 +21,7 @@ typedef struct worker_s
     threadsafe_generic_pool_t *wios_pool;
 
     wloop_t        *loop;                // Event loop associated with the worker.
+    dns_resolver_t  dns_resolver;        // Worker-local async DNS resolver.
     buffer_pool_t  *buffer_pool;         // Buffer pool for managing memory buffers.
     generic_pool_t *context_pool;        // Generic pool for managing context objects.
     generic_pool_t *pipetunnel_msg_pool; // Generic pool for managing pipe tunnel messages.
@@ -50,6 +52,23 @@ void workerRun(worker_t *worker);
  * @param worker Pointer to the worker to run.
  */
 void workerSpawn(worker_t *worker);
+
+/**
+ * @brief Resolves a domain on the current worker's async DNS channel.
+ *
+ * The caller must pass its own worker ID. This helper is intentionally
+ * worker-local and asserts if called for a different worker.
+ */
+int workerResolveDomainAsync(wid_t wid, const char *domain, dns_resolve_cb cb, void *userdata);
+
+/**
+ * @brief Resolves a domain/service pair on the current worker's async DNS channel.
+ *
+ * The caller must pass its own worker ID. socktype may be 0, SOCK_STREAM, or
+ * SOCK_DGRAM depending on the intended socket use.
+ */
+int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype,
+                                    dns_resolve_cb cb, void *userdata);
 
 /**
  * @brief Gets the worker ID of the current thread.
