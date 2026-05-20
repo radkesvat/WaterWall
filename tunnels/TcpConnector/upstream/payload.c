@@ -7,16 +7,20 @@ static void handleQueueOverflow(tunnel_t *t, line_t *l, tcpconnector_tstate_t *t
     LOGE("TcpConnector: Upstream write queue overflow, size: %d , limit: %d", 
          bufferqueueGetBufLen(&ls->pause_queue), kMaxPauseQueueSize);
 
-    bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcpconnectorIdleKey(ls->io));
-    if (!removed)
+    if (ls->io != NULL)
     {
-        LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
-        terminateProgram(1);
+        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcpconnectorIdleKey(ls->io));
+        if (!removed)
+        {
+            LOGF("TcpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
+            terminateProgram(1);
+        }
+
+        ls->idle_handle = NULL;
+        weventSetUserData(ls->io, NULL);
+        wioClose(ls->io);
     }
 
-    ls->idle_handle = NULL;
-    weventSetUserData(ls->io, NULL);
-    wioClose(ls->io);
     tcpconnectorLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
 }
@@ -25,7 +29,12 @@ static void handlePausedWrite(tunnel_t *t, line_t *l, tcpconnector_tstate_t *ts,
 {
     if (bufferqueueGetBufLen(&ls->pause_queue) > kMinPauseQueueSize)
     {
-        tunnelPrevDownStreamPause(t, l);
+        buffer_pool_t *pool = lineGetBufferPool(l);
+        if (! withLineLocked(l, tunnelPrevDownStreamPause, t))
+        {
+            bufferpoolReuseBuffer(pool, buf);
+            return;
+        }
     }
 
     bufferqueuePushBack(&ls->pause_queue, buf);

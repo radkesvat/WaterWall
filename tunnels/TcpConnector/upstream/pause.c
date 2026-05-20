@@ -10,6 +10,9 @@ void tcpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l)
     {
         // LOGD("TcpConnector: Pausing read on line FD: %x", wioGetFD(lstate->io));
         lstate->read_paused = true;
-        wioReadStop(lstate->io);
+        if (lstate->io != NULL)
+        {
+            wioReadStop(lstate->io);
+        }
     }
 }

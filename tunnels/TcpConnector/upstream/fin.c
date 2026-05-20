@@ -7,6 +7,12 @@ void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     tcpconnector_lstate_t *ls = lineGetState(l, t);
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->io == NULL)
+    {
+        tcpconnectorLinestateDestroy(ls);
+        return;
+    }
+
     // This indicates that line is closed. Even if we get the closeCallback
     // while flushing the queue, no FIN will be sent to downstroam
     bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, tcpconnectorIdleKey(ls->io));

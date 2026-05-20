@@ -92,7 +92,10 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
              SOCKADDR_STR(wioGetPeerAddr(upstream_io), peeraddrstr));
     }
 
-    wioRead(lstate->io);
+    if (! lstate->read_paused)
+    {
+        wioRead(lstate->io);
+    }
 
     if (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
     {
@@ -101,7 +104,10 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
             wioSetCallBackWrite(lstate->io, NULL);
             lstate->write_paused = false;
 
-            tunnelPrevDownStreamResume(t, l);
+            if (! withLineLocked(l, tunnelPrevDownStreamResume, t))
+            {
+                return;
+            }
         }
         else
         {
@@ -123,6 +129,11 @@ void tcpconnectorOnOutBoundConnected(wio_t *upstream_io)
 
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate)
 {
+    if (lstate->io == NULL)
+    {
+        return;
+    }
+
     while (bufferqueueGetBufCount(&lstate->pause_queue) > 0)
     {
         if (wioIsClosed(lstate->io))

@@ -10,6 +10,9 @@ void tcpconnectorTunnelUpStreamResume(tunnel_t *t, line_t *l)
     {
         // LOGD("TcpConnector: Resuming read on line FD: %x", wioGetFD(lstate->io));
         lstate->read_paused = false;
-        wioRead(lstate->io);
+        if (lstate->io != NULL)
+        {
+            wioRead(lstate->io);
+        }
     }
 }

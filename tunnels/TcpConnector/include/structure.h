@@ -36,17 +36,27 @@ typedef struct tcpconnector_destination_s
     uint32_t          weight;
 } tcpconnector_destination_t;
 
+typedef struct tcpconnector_dns_request_s
+{
+    tunnel_t *tunnel;
+    line_t   *line;
+    uint64_t  outbound_ip_range;
+    bool      cancelled;
+} tcpconnector_dns_request_t;
+
 typedef struct tcpconnector_lstate_s
 {
     tunnel_t     *tunnel;      // reference to the tunnel (TcpConnector)
     line_t       *line;        // reference to the line
     wio_t        *io;          // IO handle for the connection (socket)
     idle_item_t *idle_handle; // reference to the idle item for this connection
+    tcpconnector_dns_request_t *dns_request;
     // These fields are used internally for the queue implementation for TCP
     buffer_queue_t pause_queue;
     buffer_pool_t *buffer_pool;
     bool           write_paused : 1;
     bool           read_paused : 1;
+    bool           resolving : 1;
 
 } tcpconnector_lstate_t;
 
@@ -109,6 +119,7 @@ void tcpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void tcpconnectorLinestateInitialize(tcpconnector_lstate_t *ls);
 void tcpconnectorLinestateDestroy(tcpconnector_lstate_t *ls);
+void tcpconnectorCancelDnsRequest(tcpconnector_lstate_t *ls);
 
 bool tcpconnectorApplyFreeBindRandomDestIp(address_context_t *dest_ctx, uint64_t outbound_ip_range);
 void tcpconnectorFlushWriteQueue(tcpconnector_lstate_t *lstate);
