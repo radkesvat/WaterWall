@@ -12,6 +12,14 @@ typedef struct asyncdns_request_s
     char           *service;
 } asyncdns_request_t;
 
+enum
+{
+    kAsyncDnsQueryCacheMaxTtlSeconds = 30 * 60,
+    kAsyncDnsInitialTimeoutMs        = 1000,
+    kAsyncDnsMaxTimeoutMs            = 5000,
+    kAsyncDnsTries                   = 2
+};
+
 static void asyncdnsTimerCallback(wtimer_t *timer);
 
 static dns_watch_t *asyncdnsFindWatch(dns_resolver_t *r, ares_socket_t fd)
@@ -364,8 +372,14 @@ int asyncdnsInit(dns_resolver_t *r, wloop_t *loop)
     memoryZero(&options, sizeof(options));
     options.sock_state_cb      = asyncdnsSockStateCallback;
     options.sock_state_cb_data = r;
+    options.qcache_max_ttl     = kAsyncDnsQueryCacheMaxTtlSeconds;
+    options.timeout            = kAsyncDnsInitialTimeoutMs;
+    options.maxtimeout         = kAsyncDnsMaxTimeoutMs;
+    options.tries              = kAsyncDnsTries;
 
-    int rc = ares_init_options(&r->channel, &options, ARES_OPT_SOCK_STATE_CB);
+    const int optmask = ARES_OPT_SOCK_STATE_CB | ARES_OPT_QUERY_CACHE | ARES_OPT_TIMEOUTMS | ARES_OPT_MAXTIMEOUTMS |
+                        ARES_OPT_TRIES;
+    int rc = ares_init_options(&r->channel, &options, optmask);
     if (rc != ARES_SUCCESS)
     {
         memoryZero(r, sizeof(*r));
