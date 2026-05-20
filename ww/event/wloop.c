@@ -1155,18 +1155,8 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         return NULL;
     sockaddr_u addr;
     memorySet(&addr, 0, sizeof(addr));
-    int ret = -1;
-#ifdef ENABLE_UDS
-    if (port < 0)
-    {
-        sockaddr_set_path(&addr, host);
-        ret = 0;
-    }
-#endif
-    if (port >= 0)
-    {
-        ret = sockaddrSetIpAddressPort(&addr, host, port);
-    }
+    int ret =  sockaddrSetIpAddressPort(&addr, host, port);
+
     if (ret != 0)
     {
         // printError("unknown host: %s\n", host);
