@@ -51,14 +51,14 @@ static void asyncdnsReleaseWatch(dns_resolver_t *r, dns_watch_t *watch)
     memoryFree(watch);
 }
 
-static void asyncdnsProcessFd(dns_resolver_t *r, ares_socket_t fd, unsigned int events)
+static void asyncdnsProcessFd(dns_resolver_t *r, ares_socket_t fd, unsigned int fd_events)
 {
     if (r->shutting_down || r->channel == NULL)
     {
         return;
     }
 
-    ares_fd_events_t ev = {.fd = fd, .events = events};
+    ares_fd_events_t ev = {.fd = fd, .events = fd_events};
     (void) ares_process_fds(r->channel, &ev, 1, ARES_PROCESS_FLAG_NONE);
     asyncdnsRefreshTimer(r);
 }
@@ -71,40 +71,40 @@ static void asyncdnsIoCallback(wio_t *io)
         return;
     }
 
-    unsigned int events = ARES_FD_EVENT_NONE;
+    unsigned int fd_events = ARES_FD_EVENT_NONE;
     if (wioGetREvents(io) & WW_READ)
     {
-        events |= ARES_FD_EVENT_READ;
+        fd_events |= ARES_FD_EVENT_READ;
     }
     if (wioGetREvents(io) & WW_WRITE)
     {
-        events |= ARES_FD_EVENT_WRITE;
+        fd_events |= ARES_FD_EVENT_WRITE;
     }
 
     io->revents = 0;
 
-    if (events != ARES_FD_EVENT_NONE)
+    if (fd_events != ARES_FD_EVENT_NONE)
     {
-        asyncdnsProcessFd(watch->resolver, watch->fd, events);
+        asyncdnsProcessFd(watch->resolver, watch->fd, fd_events);
     }
 }
 
 static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable, int writable)
 {
-    dns_resolver_t *r      = data;
-    int             events = 0;
+    dns_resolver_t *r         = data;
+    int             io_events = 0;
 
     if (readable)
     {
-        events |= WW_READ;
+        io_events |= WW_READ;
     }
     if (writable)
     {
-        events |= WW_WRITE;
+        io_events |= WW_WRITE;
     }
 
     dns_watch_t *watch = asyncdnsFindWatch(r, fd);
-    if (events == 0)
+    if (io_events == 0)
     {
         if (watch != NULL)
         {
@@ -138,8 +138,8 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
         weventSetUserData(watch->io, watch);
     }
 
-    int add_events = events & ~watch->events;
-    int del_events = watch->events & ~events;
+    int add_events = io_events & ~watch->events;
+    int del_events = watch->events & ~io_events;
 
     if (del_events != 0)
     {
@@ -150,7 +150,7 @@ static void asyncdnsSockStateCallback(void *data, ares_socket_t fd, int readable
         wioAdd(watch->io, asyncdnsIoCallback, add_events);
     }
 
-    watch->events = events;
+    watch->events = io_events;
     asyncdnsRefreshTimer(r);
 }
 
