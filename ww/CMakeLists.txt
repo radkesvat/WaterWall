@@ -472,6 +472,27 @@ if(cjson_ADDED)
 endif()
 target_compile_definitions(ww PUBLIC ENABLE_TARGET_EXPORT=OFF)
 
+# C-Ares library
+CPMAddPackage(
+    NAME cares
+    GIT_REPOSITORY https://github.com/c-ares/c-ares
+    GIT_TAG v1.34.6
+    OPTIONS
+        "CARES_INSTALL OFF"
+        "CARES_BUILD_TESTS OFF"
+        "CARES_BUILD_TOOLS OFF"
+        "CARES_SHARED OFF"
+        "CARES_THREADS ON"
+        "CARES_STATIC ON"
+)
+
+if(cares_ADDED)
+    set(LIBS ${LIBS} c-ares::cares_static)
+else()
+    message(FATAL_ERROR "c-ares was added by CPM, but no c-ares CMake target was created")
+endif()
+
+
 # LibSodium library
 CPMAddPackage(
     NAME libsodium
@@ -494,9 +515,8 @@ endif()
 set(LIBS ${LIBS} sodium)
 
 
+
 # Openssl Library
-
-
 if(PROJECT_REQUIRERS_OPENSSL OR WCRYPTO_BACKEND_OPENSSL)
     if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
         set(WW_OPENSSL_CPM_OPTIONS
