@@ -6,12 +6,22 @@
 #include "wlog.h"
 #include "wmutex.h"
 
+#include <limits.h>
+
 // #include "wtime.h"
 #define SECONDS_PER_HOUR 3600
 #define SECONDS_PER_DAY  86400  // 24*3600
 #define SECONDS_PER_WEEK 604800 // 7*24*3600;
 
 static int s_gmtoff = 28800; // 8*3600
+
+#if defined(va_copy)
+#define LOGGER_VA_COPY(dst, src) va_copy(dst, src)
+#elif defined(__va_copy)
+#define LOGGER_VA_COPY(dst, src) __va_copy(dst, src)
+#else
+#define LOGGER_VA_COPY(dst, src) ((dst) = (src))
+#endif
 
 struct logger_s
 {
@@ -33,8 +43,30 @@ struct logger_s
     time_t             last_logfile_ts;
     int                can_write_cnt;
 
-    wmutex_t mutex_; // thread-safe
+    wmutex_t mutex_;       // protects format buffer/settings
+    wmutex_t write_mutex_; // protects file state
 };
+
+static bool loggerFilePathDisablesFile(const char *filepath)
+{
+    if (filepath == NULL)
+    {
+        return true;
+    }
+
+    size_t path_len = stringLength(filepath);
+    if (path_len == 0)
+    {
+        return true;
+    }
+
+    char last = filepath[path_len - 1];
+#ifdef OS_WIN
+    return last == '/' || last == '\\';
+#else
+    return last == '/';
+#endif
+}
 
 /**
  * @brief Initialize a logger object with default settings.
@@ -51,20 +83,19 @@ static void initLogger(logger_t *logger)
     logger->enable_color = 0;
     // NOTE: format is faster 6% than snprintf
     // logger->format[0] = '\0';
-#if defined(OS_UNIX)
-    strncpy(logger->format, DEFAULT_LOG_FORMAT, sizeof(logger->format) - 1);
-#else
-    strncpy_s(logger->format, sizeof(logger->format), DEFAULT_LOG_FORMAT, sizeof(logger->format) - 1);
-#endif
+    stringCopyN(logger->format, DEFAULT_LOG_FORMAT, sizeof(logger->format));
 
     logger->fp_          = NULL;
     logger->max_filesize = DEFAULT_LOG_MAX_FILESIZE;
     logger->remain_days  = DEFAULT_LOG_REMAIN_DAYS;
     logger->enable_fsync = 1;
-    loggerSetFile(logger, DEFAULT_LOG_FILE);
+    logger->filepath[0]  = '\0';
+    logger->cur_logfile[0] = '\0';
     logger->last_logfile_ts = 0;
     logger->can_write_cnt   = -1;
     mutexInit(&logger->mutex_);
+    mutexInit(&logger->write_mutex_);
+    loggerSetFile(logger, DEFAULT_LOG_FILE);
 }
 
 logger_t *loggerCreate(void)
@@ -91,6 +122,10 @@ logger_t *loggerCreate(void)
     s_gmtoff     = (local_hour - gmt_hour) * SECONDS_PER_HOUR;
 
     logger_t *logger = (logger_t *) memoryAllocate(sizeof(logger_t));
+    if (logger == NULL)
+    {
+        return NULL;
+    }
     initLogger(logger);
     return logger;
 }
@@ -99,6 +134,8 @@ void loggerDestroy(logger_t *logger)
 {
     if (logger)
     {
+        mutexLock(&logger->mutex_);
+        mutexLock(&logger->write_mutex_);
         if (logger->buf)
         {
             memoryFree(logger->buf);
@@ -109,6 +146,9 @@ void loggerDestroy(logger_t *logger)
             fclose(logger->fp_);
             logger->fp_ = NULL;
         }
+        mutexUnlock(&logger->write_mutex_);
+        mutexUnlock(&logger->mutex_);
+        mutexDestroy(&logger->write_mutex_);
         mutexDestroy(&logger->mutex_);
         memoryFree(logger);
     }
@@ -116,18 +156,39 @@ void loggerDestroy(logger_t *logger)
 
 void loggerSetHandler(logger_t *logger, logger_handler fn)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+    mutexLock(&logger->mutex_);
     logger->handler = fn;
+    mutexUnlock(&logger->mutex_);
 }
 
 void loggerSetLevel(logger_t *logger, int level)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+    mutexLock(&logger->mutex_);
     logger->level = level;
+    mutexUnlock(&logger->mutex_);
 }
 
 void loggerSetLevelByString(logger_t *logger, const char *szLoglevel)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+
     int loglevel = DEFAULT_LOG_LEVEL;
-    if (strcmp(szLoglevel, "VERBOSE") == 0)
+    if (szLoglevel == NULL)
+    {
+        loglevel = DEFAULT_LOG_LEVEL;
+    }
+    else if (strcmp(szLoglevel, "VERBOSE") == 0)
     {
         loglevel = LOG_LEVEL_VERBOSE;
     }
@@ -159,56 +220,109 @@ void loggerSetLevelByString(logger_t *logger, const char *szLoglevel)
     {
         loglevel = DEFAULT_LOG_LEVEL;
     }
+    mutexLock(&logger->mutex_);
     logger->level = loglevel;
+    mutexUnlock(&logger->mutex_);
 }
 
 int loggerCheckWriteLevel(logger_t *logger, log_level_e level)
 {
-    return (logger->level) <= (int) level;
+    if (logger == NULL)
+    {
+        return 0;
+    }
+    mutexLock(&logger->mutex_);
+    int can_write = (logger->level) <= (int) level;
+    mutexUnlock(&logger->mutex_);
+    return can_write;
 }
 
 logger_handler loggerGetHandle(logger_t *logger)
 {
-    return logger->handler;
+    if (logger == NULL)
+    {
+        return NULL;
+    }
+    mutexLock(&logger->mutex_);
+    logger_handler handler = logger->handler;
+    mutexUnlock(&logger->mutex_);
+    return handler;
 }
 
 void loggerSetFormat(logger_t *logger, const char *format)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+
+    mutexLock(&logger->mutex_);
     if (format)
     {
-#if defined(OS_UNIX)
-        strncpy(logger->format, format, sizeof(logger->format) - 1);
-#else
-        strncpy_s(logger->format, sizeof(logger->format), format, sizeof(logger->format) - 1);
-#endif
+        stringCopyN(logger->format, format, sizeof(logger->format));
     }
     else
     {
         logger->format[0] = '\0';
     }
+    mutexUnlock(&logger->mutex_);
 }
 
 void loggerSetRemainDays(logger_t *logger, int days)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+    mutexLock(&logger->write_mutex_);
     logger->remain_days = days;
+    mutexUnlock(&logger->write_mutex_);
 }
 
 void loggerSetMaxBufSIze(logger_t *logger, unsigned int bufsize)
 {
+    if (logger == NULL || bufsize < 2 || bufsize > (unsigned int) INT_MAX)
+    {
+        return;
+    }
+
+    mutexLock(&logger->mutex_);
+    mutexLock(&logger->write_mutex_);
+    char *new_buf = (char *) memoryReAllocate(logger->buf, bufsize);
+    if (new_buf == NULL)
+    {
+        mutexUnlock(&logger->write_mutex_);
+        mutexUnlock(&logger->mutex_);
+        return;
+    }
+
     logger->bufsize = bufsize;
-    logger->buf     = (char *) realloc(logger->buf, bufsize);
+    logger->buf     = new_buf;
+    mutexUnlock(&logger->write_mutex_);
+    mutexUnlock(&logger->mutex_);
 }
 
 void loggerEnableColor(logger_t *logger, int on)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+    mutexLock(&logger->mutex_);
     logger->enable_color = on;
+    mutexUnlock(&logger->mutex_);
 }
 
 bool loggerSetFile(logger_t *logger, const char *filepath)
 {
-    // when path ends with / means no log file
+    if (logger == NULL)
+    {
+        return false;
+    }
 
-    if (strrchr(filepath, '/') == filepath + stringLength(filepath) - 1 || stringLength(filepath) == 0)
+    // when path ends with / means no log file
+    mutexLock(&logger->write_mutex_);
+    if (loggerFilePathDisablesFile(filepath))
     {
         if (logger->fp_)
         {
@@ -216,14 +330,20 @@ bool loggerSetFile(logger_t *logger, const char *filepath)
             logger->fp_ = NULL;
         }
         logger->filepath[0] = 0X0;
+        logger->cur_logfile[0] = '\0';
+        logger->last_logfile_ts = 0;
+        logger->can_write_cnt = -1;
+        mutexUnlock(&logger->write_mutex_);
         return false;
     }
 
-#if defined(OS_UNIX)
-    strncpy(logger->filepath, filepath, sizeof(logger->filepath) - 1);
-#else
-    strncpy_s(logger->filepath, sizeof(logger->filepath), filepath, sizeof(logger->filepath) - 1);
-#endif
+    if (logger->fp_)
+    {
+        fclose(logger->fp_);
+        logger->fp_ = NULL;
+    }
+
+    stringCopyN(logger->filepath, filepath, sizeof(logger->filepath));
 
     // remove suffix .log
     char *suffix = strrchr(logger->filepath, '.');
@@ -231,16 +351,31 @@ bool loggerSetFile(logger_t *logger, const char *filepath)
     {
         *suffix = '\0';
     }
+    logger->cur_logfile[0] = '\0';
+    logger->last_logfile_ts = 0;
+    logger->can_write_cnt = -1;
+    mutexUnlock(&logger->write_mutex_);
     return true;
 }
 
 void loggerSetMaxFileSize(logger_t *logger, unsigned long long filesize)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+    mutexLock(&logger->write_mutex_);
     logger->max_filesize = filesize;
+    mutexUnlock(&logger->write_mutex_);
 }
 
 void loggerSetMaxFileSizeByStr(logger_t *logger, const char *str)
 {
+    if (logger == NULL || str == NULL)
+    {
+        return;
+    }
+
     int num = atoi(str);
     if (num <= 0)
         return;
@@ -272,26 +407,42 @@ void loggerSetMaxFileSizeByStr(logger_t *logger, const char *str)
         filesize <<= 20;
         break;
     }
+    mutexLock(&logger->write_mutex_);
     logger->max_filesize = filesize;
+    mutexUnlock(&logger->write_mutex_);
 }
 
 void loggerEnableFileSync(logger_t *logger, int on)
 {
+    if (logger == NULL)
+    {
+        return;
+    }
+    mutexLock(&logger->write_mutex_);
     logger->enable_fsync = on;
+    mutexUnlock(&logger->write_mutex_);
 }
 
 void loggerSyncFile(logger_t *logger)
 {
-    mutexLock(&logger->mutex_);
+    if (logger == NULL)
+    {
+        return;
+    }
+    mutexLock(&logger->write_mutex_);
     if (logger->fp_)
     {
         fflush(logger->fp_);
     }
-    mutexUnlock(&logger->mutex_);
+    mutexUnlock(&logger->write_mutex_);
 }
 
 const char *loggerSetCurrentFile(logger_t *logger)
 {
+    if (logger == NULL)
+    {
+        return "";
+    }
     return logger->cur_logfile;
 }
 
@@ -330,6 +481,11 @@ static void logfile_name(const char *filepath, time_t ts, char *buf, int len)
  */
 static FILE *shiftLogFile(logger_t *logger)
 {
+    if (logger->filepath[0] == '\0')
+    {
+        return NULL;
+    }
+
     time_t ts_now = time(NULL);
     int    interval_days =
         logger->last_logfile_ts == 0
@@ -387,8 +543,20 @@ static FILE *shiftLogFile(logger_t *logger)
     // NOTE: estimate can_write_cnt to avoid frequent fseek/ftell
     if (logger->fp_ && --logger->can_write_cnt < 0)
     {
-        fseek(logger->fp_, 0, SEEK_END);
-        unsigned long long filesize = (unsigned long long) ftell(logger->fp_);
+        if (fseek(logger->fp_, 0, SEEK_END) != 0)
+        {
+            logger->can_write_cnt = 0;
+            return logger->fp_;
+        }
+
+        long file_pos = ftell(logger->fp_);
+        if (file_pos < 0)
+        {
+            logger->can_write_cnt = 0;
+            return logger->fp_;
+        }
+
+        unsigned long long filesize = (unsigned long long) file_pos;
         if (filesize > logger->max_filesize)
         {
             fclose(logger->fp_);
@@ -422,6 +590,12 @@ static FILE *shiftLogFile(logger_t *logger)
 
 void loggerWrite(logger_t *logger, const char *buf, int len)
 {
+    if (logger == NULL || buf == NULL || len <= 0)
+    {
+        return;
+    }
+
+    mutexLock(&logger->write_mutex_);
     FILE *fp = shiftLogFile(logger);
     if (fp)
     {
@@ -431,6 +605,7 @@ void loggerWrite(logger_t *logger, const char *buf, int len)
             fflush(fp);
         }
     }
+    mutexUnlock(&logger->write_mutex_);
 }
 
 /**
@@ -543,10 +718,29 @@ static inline void loggerAppendFormat(char *buf, int bufsize, int *len, const ch
     va_end(ap);
 }
 
+static inline void loggerAppendMessageFormat(char *buf, int bufsize, int *len, const char *fmt, va_list ap)
+{
+    va_list ap_copy;
+    LOGGER_VA_COPY(ap_copy, ap);
+    loggerAppendVFormat(buf, bufsize, len, fmt, ap_copy);
+    va_end(ap_copy);
+}
+
 int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 {
+    if (logger == NULL || fmt == NULL)
+    {
+        return -1;
+    }
+
+    // lock logger->buf
+    mutexLock(&logger->mutex_);
+
     if (level < logger->level)
+    {
+        mutexUnlock(&logger->mutex_);
         return -10;
+    }
 
     int year, month, day, hour, min, sec, us;
 #ifdef _WIN32
@@ -575,7 +769,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 #endif
 
     const char *pcolor = "";
-    const char *plevel = "";
+    const char *plevel = "UNKWN";
 #define XXX(id, str, clr)                                                                                              \
     case id:                                                                                                           \
         plevel = str;                                                                                                  \
@@ -584,16 +778,26 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 
     switch (level)
     {
+    case LOG_LEVEL_VERBOSE:
+        plevel = "VERBO";
+        pcolor = CLR_WHITE;
+        break;
+    case LOG_LEVEL_SILENT:
+        plevel = "SILEN";
+        pcolor = CLR_WHITE;
+        break;
         LOG_LEVEL_MAP(XXX)
     }
 #undef XXX
 
-    // lock logger->buf
-    mutexLock(&logger->mutex_);
-
     char *buf     = logger->buf;
     int   bufsize = (int)logger->bufsize;
     int   len     = 0;
+    if (buf == NULL || bufsize < 2)
+    {
+        mutexUnlock(&logger->mutex_);
+        return -1;
+    }
 
     if (logger->enable_color)
     {
@@ -607,7 +811,13 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
         {
             if (*p == '%')
             {
-                switch (*++p)
+                ++p;
+                if (*p == '\0')
+                {
+                    break;
+                }
+
+                switch (*p)
                 {
                 case 'y':
                     loggerAppendFixedInt(buf, bufsize, &len, year, 4);
@@ -643,7 +853,7 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
                     }
                     break;
                 case 's': {
-                    loggerAppendVFormat(buf, bufsize, &len, fmt, ap);
+                    loggerAppendMessageFormat(buf, bufsize, &len, fmt, ap);
                 }
                 break;
                 case '%':
@@ -658,6 +868,8 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
                 loggerAppendChar(buf, bufsize, &len, *p);
             }
             ++p;
+            if (len >= bufsize - 1)
+                break;
         }
     }
     else
@@ -665,10 +877,10 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
         loggerAppendFormat(buf, bufsize, &len, "%04d-%02d-%02d %02d:%02d:%02d.%03d %s ", year, month, day, hour,
                            min, sec, us / 1000, plevel);
 
-        loggerAppendVFormat(buf, bufsize, &len, fmt, ap);
+        loggerAppendMessageFormat(buf, bufsize, &len, fmt, ap);
     }
 
-    if (logger->enable_color)
+    if (logger->enable_color && len < bufsize)
     {
         loggerAppendFormat(buf, bufsize, &len, "%s", CLR_CLR);
     }
@@ -693,14 +905,22 @@ int loggerPrintVA(logger_t *logger, int level, const char *fmt, va_list ap)
 void stdoutLogger(int loglevel, const char *buf, int len)
 {
     discard loglevel;
-    ssize_t count = write(fileno(stdout), buf,  len);
+    if (buf == NULL || len <= 0)
+    {
+        return;
+    }
+    ssize_t count = write(fileno(stdout), buf,  (size_t) len);
     discard count;
 }
 
 void stderrLogger(int loglevel, const char *buf, int len)
 {
     discard loglevel;
-    ssize_t count = write(fileno(stderr), buf, len);
+    if (buf == NULL || len <= 0)
+    {
+        return;
+    }
+    ssize_t count = write(fileno(stderr), buf, (size_t) len);
     discard count;
 }
 
