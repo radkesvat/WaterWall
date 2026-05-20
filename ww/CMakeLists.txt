@@ -489,9 +489,22 @@ CPMAddPackage(
 
 if(cares_ADDED)
 
+    set(CARES_NO_UNUSED_RESULT_SOURCES
+        src/lib/event/ares_event_wake_pipe.c
+    )
+
     foreach(CARES_TARGET IN ITEMS c-ares c-ares_static)
         if(TARGET ${CARES_TARGET})
             set_target_properties(${CARES_TARGET} PROPERTIES UNITY_BUILD OFF)
+
+            foreach(CARES_SOURCE IN LISTS CARES_NO_UNUSED_RESULT_SOURCES)
+                set_source_files_properties(
+                    "${cares_SOURCE_DIR}/${CARES_SOURCE}"
+                    TARGET_DIRECTORY ${CARES_TARGET}
+                    PROPERTIES
+                        COMPILE_OPTIONS "$<$<COMPILE_LANG_AND_ID:C,GNU,Clang,AppleClang>:-Wno-unused-result>"
+                )
+            endforeach()
         endif()
     endforeach()
 
