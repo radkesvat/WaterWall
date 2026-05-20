@@ -10,6 +10,8 @@
 #include "managers/signal_manager.h"
 #include "managers/socket_manager.h"
 
+#include <ares.h>
+
 #if defined(WCRYPTO_BACKEND_OPENSSL)
 
 #include "crypto/openssl_instance.h"
@@ -216,6 +218,12 @@ void createGlobalState(const ww_construction_data_t init_data)
     GSTATE.flag_initialized = true;
     atomicStoreRelaxed(&GSTATE.application_stopping_flag, false);
     atomicStoreRelaxed(&GSTATE.workers_run_flag, false);
+    int ares_rc = ares_library_init(ARES_LIB_INIT_ALL);
+    if (ares_rc != ARES_SUCCESS)
+    {
+        printError("Failed to initialize c-ares: %s\n", ares_strerror(ares_rc));
+        terminateProgram(1);
+    }
 
     // [Section] loggers
     {
@@ -541,6 +549,8 @@ WW_EXPORT void destroyGlobalState(void)
     WORKERS = NULL;
 
     nodelibraryCleanup();
+
+    ares_library_cleanup();
 
 #ifdef WW_CALL_GNU_FREES
     call_freeres();
