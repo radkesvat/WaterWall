@@ -229,12 +229,31 @@ static void asyncdnsTimerCallback(wtimer_t *timer)
 
 static bool asyncdnsAddrNodeUsable(const struct ares_addrinfo_node *node, size_t max_addrlen)
 {
-    if ((node->ai_family != AF_INET && node->ai_family != AF_INET6) || node->ai_addr == NULL)
+    if (node == NULL || node->ai_addr == NULL)
     {
         return false;
     }
 
-    return (uintmax_t) node->ai_addrlen <= (uintmax_t) max_addrlen;
+    size_t min_addrlen;
+    switch (node->ai_family)
+    {
+    case AF_INET:
+        min_addrlen = sizeof(struct sockaddr_in);
+        break;
+    case AF_INET6:
+        min_addrlen = sizeof(struct sockaddr_in6);
+        break;
+    default:
+        return false;
+    }
+
+    if (node->ai_addr->sa_family != node->ai_family)
+    {
+        return false;
+    }
+
+    uintmax_t addrlen = (uintmax_t) node->ai_addrlen;
+    return addrlen >= (uintmax_t) min_addrlen && addrlen <= (uintmax_t) max_addrlen;
 }
 
 static size_t asyncdnsCountAddrs(const struct ares_addrinfo *res)
@@ -309,14 +328,25 @@ static void asyncdnsAddrInfoCallback(void *arg, int status, int timeouts, struct
         else
         {
             addrs = memoryAllocate(sizeof(*addrs) * count);
-            asyncdnsCopyAddrs(addrs, res);
+            if (addrs == NULL)
+            {
+                cb_status = ARES_ENOMEM;
+                count     = 0;
+            }
+            else
+            {
+                asyncdnsCopyAddrs(addrs, res);
+            }
         }
     }
 
     req->cb(req->userdata, cb_status, ares_strerror(cb_status), addrs, count);
 
     memoryFree(addrs);
-    ares_freeaddrinfo(res);
+    if (res != NULL)
+    {
+        ares_freeaddrinfo(res);
+    }
     asyncdnsRequestDestroy(req);
 }
 
@@ -347,11 +377,6 @@ int asyncdnsInit(dns_resolver_t *r, wloop_t *loop)
 
 void asyncdnsCleanup(dns_resolver_t *r)
 {
-    if (r == NULL)
-    {
-        return;
-    }
-
     r->shutting_down = 1;
 
     if (r->timer != NULL)
@@ -389,12 +414,36 @@ int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, in
     }
 
     asyncdns_request_t *req = memoryAllocate(sizeof(*req));
+    if (req == NULL)
+    {
+        return ARES_ENOMEM;
+    }
+
+    char *host_copy = stringDuplicate(host);
+    if (host_copy == NULL)
+    {
+        memoryFree(req);
+        return ARES_ENOMEM;
+    }
+
+    char *service_copy = NULL;
+    if (service != NULL)
+    {
+        service_copy = stringDuplicate(service);
+        if (service_copy == NULL)
+        {
+            memoryFree(host_copy);
+            memoryFree(req);
+            return ARES_ENOMEM;
+        }
+    }
+
     *req = (asyncdns_request_t) {
         .resolver  = r,
         .cb        = cb,
         .userdata  = userdata,
-        .host      = stringDuplicate(host),
-        .service   = service != NULL ? stringDuplicate(service) : NULL,
+        .host      = host_copy,
+        .service   = service_copy,
     };
 
     struct ares_addrinfo_hints hints;

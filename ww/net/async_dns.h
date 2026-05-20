@@ -39,5 +39,18 @@ struct dns_resolver_s
 int  asyncdnsInit(dns_resolver_t *r, wloop_t *loop);
 void asyncdnsCleanup(dns_resolver_t *r);
 
+static inline bool asyncdnsStatusIsShutdown(int status)
+{
+    return status == ARES_ECANCELLED || status == ARES_EDESTRUCTION;
+}
+
+/*
+ * The callback always runs on the resolver's worker thread. `addrs` is owned by
+ * async_dns and is valid only until the callback returns.
+ *
+ * During resolver cleanup c-ares invokes callbacks with ARES_ECANCELLED or
+ * ARES_EDESTRUCTION. Callers must release their userdata for those statuses, but
+ * should not start new tunnel lifecycle or socket work from them.
+ */
 int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, int socktype, dns_resolve_cb cb,
                     void *userdata);
