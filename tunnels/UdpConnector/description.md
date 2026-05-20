@@ -174,7 +174,7 @@ The connector first picks one destination object by weight, then resolves that c
 
 ### Domain resolution
 
-If the selected address is a domain name, resolution is done synchronously during upstream `init`. If resolution fails, the line is finished immediately.
+If the selected address is a domain name, resolution is submitted asynchronously on the line's worker during upstream `init`. Payloads that arrive before resolution completes are kept in a bounded pre-connect queue. If resolution fails, the line is finished immediately.
 
 ### Establishment semantics
 
@@ -219,7 +219,7 @@ If `port` uses `random(x,y)`, the destination port is chosen once during line in
 
 ## Notes And Caveats
 
-- Domain resolution in this path is synchronous.
+- Domain resolution in this path is asynchronous and keeps pre-resolution datagrams queued up to the connector queue limit.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused reads drop inbound datagrams instead of buffering them.
 - Downstream `est` is only triggered after the first packet is received from the remote side.

@@ -120,3 +120,22 @@ void udpconnectorOnIdleConnectionExpire(idle_item_t *idle_udp)
     udpconnectorLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
 }
+
+void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
+{
+    if (ls->io == NULL)
+    {
+        return;
+    }
+
+    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+    {
+        if (wioIsClosed(ls->io))
+        {
+            return;
+        }
+
+        sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
+        wioWrite(ls->io, buf);
+    }
+}

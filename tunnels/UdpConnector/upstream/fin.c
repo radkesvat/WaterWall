@@ -9,6 +9,12 @@ void udpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     udpconnector_lstate_t *ls = lineGetState(l, t);
     wio_t                 *io = ls->io;
 
+    if (io == NULL)
+    {
+        udpconnectorLinestateDestroy(ls);
+        return;
+    }
+
     bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, udpconnectorIdleKey(ls->io));
     if (! removed)
     {
@@ -18,6 +24,7 @@ void udpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     ls->idle_handle = NULL; // mark as removed
 
     weventSetUserData(io, NULL);
+    udpconnectorFlushWriteQueue(ls);
     udpconnectorLinestateDestroy(ls);
     wioClose(io);
 }

@@ -41,24 +41,39 @@ typedef struct udpconnector_destination_s
     uint32_t          weight;
 } udpconnector_destination_t;
 
+typedef struct udpconnector_dns_request_s
+{
+    tunnel_t *tunnel;
+    line_t   *line;
+    bool      cancelled;
+} udpconnector_dns_request_t;
+
 typedef struct udpconnector_lstate_s
 {
-    tunnel_t    *tunnel;       // reference to the tunnel
-    line_t      *line;         // reference to the line
-    wio_t       *io;           // IO handle for the connection (socket)
-    idle_item_t *idle_handle;  // reference to the idle item for this connection
-    sockaddr_u   peer_addr;    // selected remote peer for this line
-    bool         read_paused : 1; // whether the read is paused
-    bool         established : 1; // whether anything received to send est downstream once
+    tunnel_t                   *tunnel;      // reference to the tunnel
+    line_t                     *line;        // reference to the line
+    wio_t                      *io;          // IO handle for the connection (socket)
+    idle_item_t                *idle_handle; // reference to the idle item for this connection
+    udpconnector_dns_request_t *dns_request;
+    sockaddr_u                  peer_addr;   // selected remote peer for this line
+    buffer_queue_t              pause_queue;
+    bool                        read_paused : 1;        // whether the read is paused
+    bool                        established : 1;        // whether anything received to send est downstream once
+    bool                        resolving : 1;          // whether async DNS is pending
+    bool                        write_paused : 1;       // whether upstream writes are queued
+    bool                        queue_pause_sent : 1;   // whether downstream pause was sent for the queue
 
 } udpconnector_lstate_t;
 
 enum
 {
-    kTunnelStateSize   = sizeof(udpconnector_tstate_t),
-    kLineStateSize     = sizeof(udpconnector_lstate_t),
-    kUdpInitExpireTime = 30 * 1000,
-    kUdpKeepExpireTime = 300 * 1000
+    kTunnelStateSize        = sizeof(udpconnector_tstate_t),
+    kLineStateSize          = sizeof(udpconnector_lstate_t),
+    kUdpInitExpireTime      = 30 * 1000,
+    kUdpKeepExpireTime      = 300 * 1000,
+    kUdpMaxPauseQueueSize   = (1U << 24), // 16MB
+    kUdpMinPauseQueueSize   = (1U << 10), // 1KB
+    kUdpPauseQueueCapacity  = 2
 };
 
 static inline hash_t udpconnectorIdleKey(const wio_t *io)
@@ -97,7 +112,9 @@ void udpconnectorTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, line_t *l, wio_t *io);
 void udpconnectorLinestateDestroy(udpconnector_lstate_t *ls);
+void udpconnectorCancelDnsRequest(udpconnector_lstate_t *ls);
 void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf);
 void udpconnectorOnClose(wio_t *io);
+void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls);
 
 void udpconnectorOnIdleConnectionExpire(idle_item_t *idle_udp);

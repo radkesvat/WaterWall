@@ -2,6 +2,56 @@
 
 #include "loggers/network_logger.h"
 
+static void closeLine(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls)
+{
+    if (ls->io != NULL)
+    {
+        bool removed = idletableRemoveIdleItemByHash(lineGetWID(l), ts->idle_table, udpconnectorIdleKey(ls->io));
+        if (! removed)
+        {
+            LOGF("UdpConnector: failed to remove idle item for FD:%x ", wioGetFD(ls->io));
+            terminateProgram(1);
+        }
+
+        ls->idle_handle = NULL;
+        weventSetUserData(ls->io, NULL);
+        wioClose(ls->io);
+    }
+
+    udpconnectorLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+}
+
+static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls)
+{
+    LOGE("UdpConnector: upstream write queue overflow, size: %d, limit: %d",
+         (int) bufferqueueGetBufLen(&ls->pause_queue),
+         (int) kUdpMaxPauseQueueSize);
+
+    closeLine(t, l, ts, ls);
+}
+
+static void handleQueuedWrite(tunnel_t *t, line_t *l, udpconnector_tstate_t *ts, udpconnector_lstate_t *ls, sbuf_t *buf)
+{
+    if (! ls->queue_pause_sent && bufferqueueGetBufLen(&ls->pause_queue) > kUdpMinPauseQueueSize)
+    {
+        buffer_pool_t *pool = lineGetBufferPool(l);
+        if (! withLineLocked(l, tunnelPrevDownStreamPause, t))
+        {
+            bufferpoolReuseBuffer(pool, buf);
+            return;
+        }
+        ls->queue_pause_sent = true;
+    }
+
+    bufferqueuePushBack(&ls->pause_queue, buf);
+
+    if (bufferqueueGetBufLen(&ls->pause_queue) > kUdpMaxPauseQueueSize)
+    {
+        handleQueueOverflow(t, l, ts, ls);
+    }
+}
+
 static bool udpconnectorPayloadSockAddrEquals(const sockaddr_u *lhs, const sockaddr_u *rhs)
 {
     if (lhs == NULL || rhs == NULL || lhs->sa.sa_family != rhs->sa.sa_family)
@@ -28,6 +78,12 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     udpconnector_lstate_t *ls = lineGetState(l, t);
 
     wio_t *io = ls->io;
+    if (ls->write_paused || ls->resolving || io == NULL)
+    {
+        handleQueuedWrite(t, l, ts, ls, buf);
+        return;
+    }
+
     if (UNLIKELY(wioIsClosed(io)))
     {
         // should not happen in our structure

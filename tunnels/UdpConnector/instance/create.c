@@ -302,6 +302,7 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     }
 
     getBoolFromJsonObject(&(state->reuse_addr), settings, "reuseaddr");
+    getIntFromJsonObjectOrDefault(&(state->domain_strategy), settings, "domain-strategy", 0);
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
