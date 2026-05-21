@@ -647,12 +647,16 @@ static void splitCloseFromTransport(tunnel_t *t, line_t *l, bool finish_sender)
     {
         lineLock(download_line);
         httpserver_lstate_t *dls = lineGetState(download_line, t);
+        dls->next_finished = true;
         if (dls->h1_response_headers_sent && ! dls->fin_sent)
         {
             dls->fin_sent = true;
             (void) httpserverTransportSendHttp1FinalChunk(t, download_line);
         }
-        splitCloseTransport(t, download_line, true);
+        if (lineIsAlive(download_line))
+        {
+            splitCloseTransport(t, download_line, true);
+        }
         lineUnlock(download_line);
     }
 
@@ -973,6 +977,7 @@ void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    lineLock(l);
     lineLock(download_line);
     httpserver_lstate_t *dls = lineGetState(download_line, t);
     if (! dls->h1_response_headers_sent)
@@ -980,8 +985,12 @@ void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! httpserverTransportSendHttp1ResponseHeaders(t, download_line))
         {
             lineReuseBuffer(l, buf);
+            if (lineIsAlive(download_line))
+            {
+                splitCloseFromTransport(t, download_line, true);
+            }
             lineUnlock(download_line);
-            splitCloseFromTransport(t, download_line, true);
+            lineUnlock(l);
             return;
         }
         dls->h1_response_headers_sent = true;
@@ -989,11 +998,16 @@ void httpserverSplitDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (! httpserverTransportSendHttp1ChunkedPayload(t, download_line, buf))
     {
+        if (lineIsAlive(download_line))
+        {
+            splitCloseFromTransport(t, download_line, true);
+        }
         lineUnlock(download_line);
-        splitCloseFromTransport(t, download_line, true);
+        lineUnlock(l);
         return;
     }
     lineUnlock(download_line);
+    lineUnlock(l);
 }
 
 void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
@@ -1002,21 +1016,52 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
     line_t              *upload_line   = mls->split_upload_line;
     line_t              *download_line = mls->split_download_line;
 
+    lineLock(l);
+
     if (download_line != NULL && lineIsAlive(download_line))
     {
         lineLock(download_line);
         httpserver_lstate_t *dls = lineGetState(download_line, t);
+        dls->next_finished = true;
         if (! dls->h1_response_headers_sent)
         {
-            (void) httpserverTransportSendHttp1ResponseHeaders(t, download_line);
-            dls->h1_response_headers_sent = true;
+            if (! httpserverTransportSendHttp1ResponseHeaders(t, download_line))
+            {
+                if (lineIsAlive(download_line))
+                {
+                    splitCloseFromTransport(t, download_line, true);
+                }
+                lineUnlock(download_line);
+                if (lineIsAlive(l))
+                {
+                    splitCloseMain(t, l, false);
+                }
+                lineUnlock(l);
+                return;
+            }
+            if (lineIsAlive(download_line))
+            {
+                dls->h1_response_headers_sent = true;
+            }
         }
-        if (! dls->fin_sent)
+        if (lineIsAlive(download_line) && ! dls->fin_sent)
         {
             dls->fin_sent = true;
-            (void) httpserverTransportSendHttp1FinalChunk(t, download_line);
+            if (! httpserverTransportSendHttp1FinalChunk(t, download_line) && ! lineIsAlive(download_line))
+            {
+                lineUnlock(download_line);
+                if (lineIsAlive(l))
+                {
+                    splitCloseMain(t, l, false);
+                }
+                lineUnlock(l);
+                return;
+            }
         }
-        splitCloseTransport(t, download_line, true);
+        if (lineIsAlive(download_line))
+        {
+            splitCloseTransport(t, download_line, true);
+        }
         lineUnlock(download_line);
     }
 
@@ -1027,5 +1072,9 @@ void httpserverSplitDownStreamFinish(tunnel_t *t, line_t *l)
         lineUnlock(upload_line);
     }
 
-    splitCloseMain(t, l, false);
+    if (lineIsAlive(l))
+    {
+        splitCloseMain(t, l, false);
+    }
+    lineUnlock(l);
 }
