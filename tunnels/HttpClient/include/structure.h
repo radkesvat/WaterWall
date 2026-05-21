@@ -46,6 +46,15 @@ typedef enum httpclient_split_role_e
     kHttpClientSplitRoleDownload = 3
 } httpclient_split_role_t;
 
+typedef struct httpclient_h2_data_item_s
+{
+    sbuf_t                          *payload;
+    uint32_t                         offset;
+    bool                             end_stream;
+    bool                             complete;
+    struct httpclient_h2_data_item_s *next;
+} httpclient_h2_data_item_t;
+
 typedef enum httpclient_split_placement_e
 {
     kHttpClientSplitPlacementQuery  = 0,
@@ -120,6 +129,9 @@ typedef struct httpclient_lstate_s
     buffer_stream_t in_stream;
     buffer_queue_t  pending_up;
     context_queue_t events_down;
+    httpclient_h2_data_item_t *h2_data_head;
+    httpclient_h2_data_item_t *h2_data_tail;
+    httpclient_h2_data_item_t *h2_data_active;
 
     httpclient_runtime_proto_t runtime_proto;
 
@@ -200,6 +212,7 @@ void httpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
+void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls);
 
 
 

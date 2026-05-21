@@ -37,6 +37,7 @@ typedef struct httpserver_h1_request_info_s
 
 enum
 {
+    kHttpServerNghttp2RecvChunkBytes = 16U * 1024U,
     kWebSocketOpcodeContinuation = 0x0,
     kWebSocketOpcodeText         = 0x1,
     kWebSocketOpcodeBinary       = 0x2,
@@ -55,6 +56,8 @@ static int  httpserverOnDataChunkRecvCallback(nghttp2_session *session, uint8_t 
 static int  httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata);
 static int  httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t stream_id, uint32_t error_code,
                                              void *userdata);
+static int  httpserverOnFrameSendCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata);
+static bool httpserverSubmitNextHttp2Data(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 
 static bool httpserverVerboseEnabled(tunnel_t *t)
 {
@@ -1030,13 +1033,14 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
                     info->connection_http2_settings = true;
                 }
             }
-            else if (httpserverStringCaseEquals(key, "Upgrade") && httpserverStringCaseContains(value, "h2c"))
+            else if (httpserverStringCaseEquals(key, "Upgrade") && httpserverStringCaseContainsToken(value, "h2c"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
                 info->upgrade_h2c = true;
             }
-            else if (httpserverStringCaseEquals(key, "Upgrade") && httpserverStringCaseContains(value, "websocket"))
+            else if (httpserverStringCaseEquals(key, "Upgrade") &&
+                     httpserverStringCaseContainsToken(value, "websocket"))
             {
                 info->has_upgrade_header = true;
                 snprintf(info->upgrade_value, sizeof(info->upgrade_value), "%s", value);
@@ -1195,6 +1199,11 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
         return false;
     }
 
+    if (! httpserverSubmitNextHttp2Data(t, l, ls))
+    {
+        return false;
+    }
+
     while (true)
     {
         const uint8_t *data = NULL;
@@ -1208,6 +1217,17 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 
         if (len == 0)
         {
+            if (ls->h2_data_active == NULL && ls->h2_data_head != NULL)
+            {
+                if (! httpserverSubmitNextHttp2Data(t, l, ls))
+                {
+                    return false;
+                }
+                if (ls->h2_data_active != NULL)
+                {
+                    continue;
+                }
+            }
             break;
         }
 
@@ -1239,6 +1259,138 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     return true;
 }
 
+static httpserver_h2_data_item_t *httpserverH2DataItemCreate(sbuf_t *payload, bool end_stream)
+{
+    httpserver_h2_data_item_t *item = memoryAllocate(sizeof(*item));
+    *item = (httpserver_h2_data_item_t) {
+        .payload    = payload,
+        .offset     = 0,
+        .end_stream = end_stream,
+        .complete   = false,
+        .next       = NULL
+    };
+    return item;
+}
+
+static void httpserverH2DataItemDestroy(line_t *line, httpserver_h2_data_item_t *item)
+{
+    if (item == NULL)
+    {
+        return;
+    }
+    if (item->payload != NULL)
+    {
+        lineReuseBuffer(line, item->payload);
+    }
+    memoryFree(item);
+}
+
+static void httpserverH2DataQueuePush(httpserver_lstate_t *ls, httpserver_h2_data_item_t *item)
+{
+    if (ls->h2_data_tail == NULL)
+    {
+        ls->h2_data_head = item;
+        ls->h2_data_tail = item;
+        return;
+    }
+    ls->h2_data_tail->next = item;
+    ls->h2_data_tail       = item;
+}
+
+static void httpserverH2DataQueuePushFront(httpserver_lstate_t *ls, httpserver_h2_data_item_t *item)
+{
+    item->next = ls->h2_data_head;
+    ls->h2_data_head = item;
+    if (ls->h2_data_tail == NULL)
+    {
+        ls->h2_data_tail = item;
+    }
+}
+
+static httpserver_h2_data_item_t *httpserverH2DataQueuePop(httpserver_lstate_t *ls)
+{
+    httpserver_h2_data_item_t *item = ls->h2_data_head;
+    if (item == NULL)
+    {
+        return NULL;
+    }
+    ls->h2_data_head = item->next;
+    if (ls->h2_data_head == NULL)
+    {
+        ls->h2_data_tail = NULL;
+    }
+    item->next = NULL;
+    return item;
+}
+
+static ssize_t httpserverH2DataReadCallback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length,
+                                            uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
+{
+    discard session;
+    discard stream_id;
+    discard user_data;
+
+    httpserver_h2_data_item_t *item = source == NULL ? NULL : source->ptr;
+    if (item == NULL)
+    {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+
+    uint32_t payload_len = item->payload == NULL ? 0 : sbufGetLength(item->payload);
+    uint32_t remaining   = payload_len - item->offset;
+    uint32_t to_copy     = (uint32_t) min((uint64_t) remaining, (uint64_t) length);
+
+    if (to_copy > 0)
+    {
+        memoryCopy(buf, (uint8_t *) sbufGetRawPtr(item->payload) + item->offset, to_copy);
+        item->offset += to_copy;
+    }
+
+    if (item->offset == payload_len)
+    {
+        item->complete = true;
+        *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+        if (! item->end_stream)
+        {
+            *data_flags |= NGHTTP2_DATA_FLAG_NO_END_STREAM;
+        }
+    }
+
+    return (ssize_t) to_copy;
+}
+
+static bool httpserverSubmitNextHttp2Data(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    discard t;
+
+    if (ls->h2_data_active != NULL || ls->h2_data_head == NULL)
+    {
+        return true;
+    }
+
+    httpserver_h2_data_item_t *item = httpserverH2DataQueuePop(ls);
+    nghttp2_data_provider      provider = {
+             .source        = {.ptr = item},
+             .read_callback = httpserverH2DataReadCallback,
+    };
+    uint8_t flags = item->end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
+    int     rc    = nghttp2_submit_data(ls->session, flags, ls->h2_stream_id, &provider);
+    if (rc == NGHTTP2_ERR_DATA_EXIST)
+    {
+        httpserverH2DataQueuePushFront(ls, item);
+        return true;
+    }
+    if (rc != 0)
+    {
+        LOGE("HttpServer: nghttp2_submit_data failed stream_id=%d rc=%d", ls->h2_stream_id, rc);
+        httpserverH2DataItemDestroy(l, item);
+        return false;
+    }
+
+    ls->h2_data_active = item;
+    return true;
+}
+
 static bool httpserverTransportEnsureHttp2SessionInternal(tunnel_t *t, line_t *l, httpserver_lstate_t *ls,
                                                           bool flush_outbound)
 {
@@ -1254,6 +1406,7 @@ static bool httpserverTransportEnsureHttp2SessionInternal(tunnel_t *t, line_t *l
     nghttp2_session_callbacks_set_on_data_chunk_recv_callback(ts->cbs, httpserverOnDataChunkRecvCallback);
     nghttp2_session_callbacks_set_on_frame_recv_callback(ts->cbs, httpserverOnFrameRecvCallback);
     nghttp2_session_callbacks_set_on_stream_close_callback(ts->cbs, httpserverOnStreamClosedCallback);
+    nghttp2_session_callbacks_set_on_frame_send_callback(ts->cbs, httpserverOnFrameSendCallback);
 
     if (nghttp2_session_server_new3(&ls->session, ts->cbs, ls, ts->ngoptions, NULL) != 0)
     {
@@ -1318,6 +1471,35 @@ static bool validateWebSocketHttp2Request(const httpserver_tstate_t *ts, const h
     return true;
 }
 
+static bool validateHttp2Request(const httpserver_tstate_t *ts, const httpserver_lstate_t *ls)
+{
+    if (ts->expected_method != NULL && ts->expected_method[0] != '\0' &&
+        (! ls->websocket_h2_method_seen || ! httpserverStringCaseEquals(ts->expected_method, ls->websocket_h2_method)))
+    {
+        LOGW("HttpServer: HTTP/2 method mismatch, expected=%s got=%s", ts->expected_method,
+             ls->websocket_h2_method_seen ? ls->websocket_h2_method : "<missing>");
+        return false;
+    }
+
+    if (ts->expected_path != NULL && ts->expected_path[0] != '\0' &&
+        (! ls->websocket_h2_path_seen || stringCompare(ts->expected_path, ls->websocket_h2_path) != 0))
+    {
+        LOGW("HttpServer: HTTP/2 path mismatch, expected=%s got=%s", ts->expected_path,
+             ls->websocket_h2_path_seen ? ls->websocket_h2_path : "<missing>");
+        return false;
+    }
+
+    if (! hostMatchesExpected(ts->expected_host,
+                              ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : ""))
+    {
+        LOGW("HttpServer: HTTP/2 authority mismatch, expected=%s got=%s", ts->expected_host,
+             ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : "<missing>");
+        return false;
+    }
+
+    return true;
+}
+
 static int httpserverOnHeaderCallback(nghttp2_session *session, const nghttp2_frame *frame, const uint8_t *name,
                                       size_t namelen, const uint8_t *value, size_t valuelen, uint8_t flags,
                                       void *userdata)
@@ -1346,8 +1528,7 @@ static int httpserverOnHeaderCallback(nghttp2_session *session, const nghttp2_fr
         return 0;
     }
 
-    httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
-    if (! ts->websocket_enabled || name == NULL || value == NULL)
+    if (name == NULL || value == NULL)
     {
         return 0;
     }
@@ -1374,6 +1555,13 @@ static int httpserverOnHeaderCallback(nghttp2_session *session, const nghttp2_fr
         ls->websocket_h2_path_seen      = true;
     }
     else if (namelen == 10 && memoryCompare(name, ":authority", 10) == 0)
+    {
+        size_t copy_len = min(valuelen, sizeof(ls->websocket_h2_authority) - 1U);
+        memoryCopy(ls->websocket_h2_authority, value, copy_len);
+        ls->websocket_h2_authority[copy_len] = '\0';
+        ls->websocket_h2_authority_seen      = true;
+    }
+    else if (namelen == 4 && memoryCompare(name, "host", 4) == 0 && ! ls->websocket_h2_authority_seen)
     {
         size_t copy_len = min(valuelen, sizeof(ls->websocket_h2_authority) - 1U);
         memoryCopy(ls->websocket_h2_authority, value, copy_len);
@@ -1418,7 +1606,7 @@ static int httpserverOnDataChunkRecvCallback(nghttp2_session *session, uint8_t f
 
     httpserver_lstate_t *ls = (httpserver_lstate_t *) userdata;
 
-    if (ls->h2_stream_id != 0 && stream_id != ls->h2_stream_id)
+    if (ls->h2_request_rejected || (ls->h2_stream_id != 0 && stream_id != ls->h2_stream_id))
     {
         return 0;
     }
@@ -1501,9 +1689,16 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
                      ls->websocket_h2_subprotocol_seen ? ls->websocket_h2_subprotocol : "<none>");
             }
         }
+        else if (! validateHttp2Request(ts, ls))
+        {
+            ls->h2_request_rejected = true;
+            nghttp2_submit_rst_stream(ls->session, NGHTTP2_FLAG_NONE, frame->hd.stream_id, NGHTTP2_REFUSED_STREAM);
+            return 0;
+        }
     }
 
-    if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM && frame->hd.stream_id == ls->h2_stream_id)
+    if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) && frame->hd.stream_id > 0 &&
+        (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM && frame->hd.stream_id == ls->h2_stream_id)
     {
         httpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
         if (ts->verbose)
@@ -1550,6 +1745,32 @@ static int httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t st
     return 0;
 }
 
+static int httpserverOnFrameSendCallback(nghttp2_session *session, const nghttp2_frame *frame, void *userdata)
+{
+    discard session;
+
+    if (userdata == NULL || frame == NULL || frame->hd.type != NGHTTP2_DATA)
+    {
+        return 0;
+    }
+
+    httpserver_lstate_t *ls = (httpserver_lstate_t *) userdata;
+    if (frame->hd.stream_id != ls->h2_stream_id || ls->h2_data_active == NULL || ! ls->h2_data_active->complete)
+    {
+        return 0;
+    }
+
+    httpserverH2DataItemDestroy(ls->line, ls->h2_data_active);
+    ls->h2_data_active = NULL;
+
+    if (! httpserverSubmitNextHttp2Data(ls->tunnel, ls->line, ls))
+    {
+        return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+
+    return 0;
+}
+
 bool httpserverTransportEnsureHttp2Session(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     return httpserverTransportEnsureHttp2SessionInternal(t, l, ls, true);
@@ -1589,7 +1810,7 @@ static bool httpserverTransportApplyUpgradeSettingsAndOpenStream(tunnel_t *t, li
         return false;
     }
 
-    ls->h2_stream_id  = 1;
+    ls->h2_stream_id  = 0;
     ls->runtime_proto = kHttpServerRuntimeHttp2;
 
     return flush_outbound ? sendNghttp2Outbound(t, l, ls) : true;
@@ -1706,112 +1927,14 @@ bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_ls
         return true;
     }
 
-    uint32_t remote_max = nghttp2_session_get_remote_settings(ls->session, NGHTTP2_SETTINGS_MAX_FRAME_SIZE);
-    if (remote_max < HTTP2_FRAME_HDLEN)
+    if (httpserverVerboseEnabled(t))
     {
-        remote_max = (1U << 14);
+        LOGD("HttpServer: queueing HTTP/2 DATA stream_id=%d payload_len=%u end_stream=%s", ls->h2_stream_id,
+             payload_len, end_stream ? "true" : "false");
     }
 
-    buffer_pool_t *pool           = lineGetBufferPool(l);
-    uint32_t       large_buf_size = bufferpoolGetLargeBufferSize(pool);
-    if (large_buf_size == 0)
-    {
-        if (payload != NULL)
-        {
-            lineReuseBuffer(l, payload);
-        }
-        return false;
-    }
-
-    uint32_t frame_limit = min((uint32_t) kHttpServerHttp2FrameBytes, remote_max);
-    if (frame_limit < (1U << 14))
-    {
-        frame_limit = (1U << 14);
-    }
-
-    bool send_empty_frame = (payload == NULL) || (payload_len == 0 && end_stream);
-
-    if (! send_empty_frame && payload_len <= frame_limit)
-    {
-        http2_frame_hd frame = {.length    = payload_len,
-                                .type      = kHttP2Data,
-                                .flags     = end_stream ? kHttP2FlagEndStream : kHttP2FlagNone,
-                                .stream_id = (unsigned int) ls->h2_stream_id};
-
-        if (sbufGetLeftCapacity(payload) >= HTTP2_FRAME_HDLEN)
-        {
-            sbufShiftLeft(payload, HTTP2_FRAME_HDLEN);
-            http2FrameHdPack(&frame, sbufGetMutablePtr(payload));
-            return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload);
-        }
-
-        sbuf_t *header_buf = httpserverAllocBufferForLength(l, HTTP2_FRAME_HDLEN);
-        sbufSetLength(header_buf, HTTP2_FRAME_HDLEN);
-        http2FrameHdPack(&frame, sbufGetMutablePtr(header_buf));
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, header_buf))
-        {
-            lineReuseBuffer(l, payload);
-            return false;
-        }
-
-        return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, payload);
-    }
-
-    uint32_t       remaining   = payload_len;
-    const uint8_t *payload_ptr = (payload == NULL) ? NULL : (const uint8_t *) sbufGetRawPtr(payload);
-
-    while (remaining > 0 || send_empty_frame)
-    {
-        uint32_t frame_payload = send_empty_frame ? 0 : min(remaining, min(frame_limit, large_buf_size));
-        bool     frame_end     = end_stream && (send_empty_frame || remaining == frame_payload);
-
-        http2_frame_hd frame = {.length    = frame_payload,
-                                .type      = kHttP2Data,
-                                .flags     = frame_end ? kHttP2FlagEndStream : kHttP2FlagNone,
-                                .stream_id = (unsigned int) ls->h2_stream_id};
-
-        sbuf_t *header_buf = httpserverAllocBufferForLength(l, HTTP2_FRAME_HDLEN);
-        sbufSetLength(header_buf, HTTP2_FRAME_HDLEN);
-        http2FrameHdPack(&frame, sbufGetMutablePtr(header_buf));
-        if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, header_buf))
-        {
-            if (payload != NULL)
-            {
-                lineReuseBuffer(l, payload);
-            }
-            return false;
-        }
-
-        if (frame_payload > 0)
-        {
-            sbuf_t *data_buf = httpserverAllocBufferForLength(l, frame_payload);
-            sbufSetLength(data_buf, frame_payload);
-            sbufWriteLarge(data_buf, payload_ptr, frame_payload);
-            payload_ptr += frame_payload;
-            remaining -= frame_payload;
-
-            if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, data_buf))
-            {
-                if (payload != NULL)
-                {
-                    lineReuseBuffer(l, payload);
-                }
-                return false;
-            }
-        }
-
-        if (send_empty_frame)
-        {
-            break;
-        }
-    }
-
-    if (payload != NULL)
-    {
-        lineReuseBuffer(l, payload);
-    }
-
-    return true;
+    httpserverH2DataQueuePush(ls, httpserverH2DataItemCreate(payload, end_stream));
+    return sendNghttp2Outbound(t, l, ls);
 }
 
 bool httpserverTransportSendWebSocketData(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *payload,
@@ -2167,7 +2290,8 @@ bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate
 
     while (len > 0)
     {
-        nghttp2_ssize ret = nghttp2_session_mem_recv2(ls->session, ptr, len);
+        size_t        feed_len = min((size_t) len, (size_t) kHttpServerNghttp2RecvChunkBytes);
+        nghttp2_ssize ret      = nghttp2_session_mem_recv2(ls->session, ptr, feed_len);
         if (ret < 0)
         {
             LOGE("HttpServer: nghttp2_session_mem_recv2 failed (%zd)", ret);
@@ -2182,6 +2306,13 @@ bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate
             return false;
         }
 
+        if ((size_t) ret > feed_len)
+        {
+            LOGE("HttpServer: nghttp2_session_mem_recv2 consumed beyond feed size (%zd > %zu)", ret, feed_len);
+            lineReuseBuffer(l, buf);
+            return false;
+        }
+
         ptr += (size_t) ret;
         len -= (uint32_t) ret;
     }
@@ -2191,6 +2322,11 @@ bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate
     httpserver_tstate_t *ts = tunnelGetState(t);
 
     if (! sendNghttp2Outbound(t, l, ls))
+    {
+        return false;
+    }
+
+    if (ls->h2_request_rejected)
     {
         return false;
     }

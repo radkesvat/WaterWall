@@ -330,10 +330,10 @@ That means:
 
 For `http-version = both` plus `upgrade = true`:
 
-- if the server accepts `h2c`, any payload buffered while waiting for `101` is flushed afterward as HTTP/2 DATA on stream `1`
+- if the server accepts `h2c`, Waterwall cancels the original upgraded stream `1`, opens one fresh HTTP/2 tunnel stream, and flushes any payload buffered while waiting for `101` on that tunnel stream
 - if a custom `upgrade-protocol` is accepted with `101`, the tunnel switches to raw bidirectional byte forwarding after the HTTP headers
 
-The implementation uses `required_padding_left = 16` so it can prepend chunk prefixes or HTTP/2 frame headers efficiently with `sbufShiftLeft()` when possible.
+The implementation uses `required_padding_left = 16` so HTTP/1.1 chunks and small tunnel frames can prepend protocol bytes efficiently with `sbufShiftLeft()` when possible. HTTP/2 DATA is emitted through nghttp2, not hand-packed into caller buffers.
 
 ### WebSocket behavior
 
@@ -360,6 +360,9 @@ Current session settings include:
 Upstream payload is turned into HTTP/2 DATA frames.
 If the remote peer advertises a smaller frame size, payload is split accordingly.
 
+Incoming HTTP/2 bytes are fed to nghttp2 in 16 KiB slices. This is intentionally smaller than 32 KiB so large Waterwall
+buffers cannot trigger old nghttp2 receive-side stalls observed with oversized `nghttp2_session_mem_recv2()` calls.
+
 Upstream `Finish` becomes an empty DATA frame with `END_STREAM`, or `END_STREAM` is attached to the last DATA frame when appropriate.
 
 ### Upgrade behavior
@@ -373,7 +376,7 @@ When `http-version` is `both` and `upgrade` is enabled:
 If the response is:
 
 - `101 Switching Protocols` with `Upgrade: h2c`
-  the tunnel creates an nghttp2 session, applies the advertised `HTTP2-Settings`, and continues as HTTP/2
+  the tunnel creates an nghttp2 session, applies the advertised `HTTP2-Settings`, cancels stream `1` because it represents the original HTTP/1.1 upgrade request, submits one fresh HTTP/2 tunnel request, and continues as HTTP/2 on that stream
 
 - `101 Switching Protocols` with a configured non-`h2c` `upgrade-protocol`
   the tunnel stops doing HTTP body framing and continues as raw bidirectional byte forwarding

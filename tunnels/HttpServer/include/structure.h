@@ -49,6 +49,15 @@ typedef enum httpserver_split_role_e
     kHttpServerSplitRoleMain     = 4
 } httpserver_split_role_t;
 
+typedef struct httpserver_h2_data_item_s
+{
+    sbuf_t                          *payload;
+    uint32_t                         offset;
+    bool                             end_stream;
+    bool                             complete;
+    struct httpserver_h2_data_item_s *next;
+} httpserver_h2_data_item_t;
+
 typedef enum httpserver_split_placement_e
 {
     kHttpServerSplitPlacementQuery  = 0,
@@ -67,6 +76,9 @@ typedef struct httpserver_lstate_s
     buffer_stream_t in_stream;
     buffer_queue_t  pending_down;
     context_queue_t events_up;
+    httpserver_h2_data_item_t *h2_data_head;
+    httpserver_h2_data_item_t *h2_data_tail;
+    httpserver_h2_data_item_t *h2_data_active;
 
     httpserver_runtime_proto_t runtime_proto;
 
@@ -83,6 +95,7 @@ typedef struct httpserver_lstate_s
 
     bool h2_response_headers_sent;
     bool h2_request_finished;
+    bool h2_request_rejected;
 
     bool fin_sent;
     bool prev_finished;
@@ -210,6 +223,7 @@ void httpserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t *l);
 void httpserverLinestateDestroy(httpserver_lstate_t *ls);
+void httpserverH2DataQueueDestroy(httpserver_lstate_t *ls);
 
 bool    httpserverStringCaseEquals(const char *a, const char *b);
 bool    httpserverStringCaseContains(const char *haystack, const char *needle);
