@@ -1,0 +1,50 @@
+{
+  "name": "ipmanipulator-tcp-udp-tcp-transport-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 6,
+        "packet-ipv4": {
+          "source-ip": "10.85.0.1",
+          "dest-ip": "10.85.0.2",
+          "transport": "tcp",
+          "ttl": 64
+        }
+      },
+      "next": "tcp-to-udp"
+    },
+    {
+      "name": "tcp-to-udp",
+      "type": "IpManipulator",
+      "settings": {
+        "protoswap-tcp": 17
+      },
+      "next": "udp-to-tcp"
+    },
+    {
+      "name": "udp-to-tcp",
+      "type": "IpManipulator",
+      "settings": {
+        "protoswap-tcp": 17
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 6,
+        "packet-ipv4": {
+          "source-ip": "10.85.0.1",
+          "dest-ip": "10.85.0.2",
+          "transport": "tcp",
+          "ttl": 64
+        }
+      }
+    }
+  ]
+}

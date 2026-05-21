@@ -105,6 +105,12 @@ Practical rule:
   Verifies that `IpManipulator` can rewrite IPv4 TCP protocol numbers to UDP and restore the response path.
 - `ipmanipulator_udp_tcp_swap_roundtrip`
   Verifies the opposite `IpManipulator` protocol-number mapping, UDP to TCP and back on the response path.
+- `ipmanipulator_tcp_udp_tcp_transport_roundtrip`
+  Verifies two chained `IpManipulator` nodes can turn a synthetic TCP IPv4 packet into protocol `17` and restore it to
+  a valid TCP packet before `TesterServer` sees it.
+- `ipmanipulator_tcp_udp_tcp_transport_bridge_roundtrip`
+  Verifies the same TCP -> protocol `17` -> TCP restoration when a `Bridge` feeds the manipulated packet downstream
+  directly into the second `IpManipulator`, with `TesterServer` placed at the head of that paired chain.
 - `halfduplex_roundtrip`
   Verifies that `HalfDuplexClient` and `HalfDuplexServer` split and reconstruct one logical line correctly.
 - `http1_bidirectional_roundtrip`
