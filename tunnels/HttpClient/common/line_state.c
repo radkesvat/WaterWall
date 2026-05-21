@@ -42,7 +42,7 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .split_download_line            = NULL};
 }
 
-static void httpclientH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item)
+static void httpclientLinestateH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t *item)
 {
     if (item == NULL)
     {
@@ -57,14 +57,14 @@ static void httpclientH2DataItemDestroy(line_t *line, httpclient_h2_data_item_t 
 
 void httpclientH2DataQueueDestroy(httpclient_lstate_t *ls)
 {
-    httpclientH2DataItemDestroy(ls->line, ls->h2_data_active);
+    httpclientLinestateH2DataItemDestroy(ls->line, ls->h2_data_active);
     ls->h2_data_active = NULL;
 
     httpclient_h2_data_item_t *item = ls->h2_data_head;
     while (item != NULL)
     {
         httpclient_h2_data_item_t *next = item->next;
-        httpclientH2DataItemDestroy(ls->line, item);
+        httpclientLinestateH2DataItemDestroy(ls->line, item);
         item = next;
     }
 

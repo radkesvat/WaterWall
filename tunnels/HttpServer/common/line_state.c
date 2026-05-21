@@ -47,7 +47,7 @@ void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t 
                                 .split_hash                    = 0};
 }
 
-static void httpserverH2DataItemDestroy(line_t *line, httpserver_h2_data_item_t *item)
+static void httpserverLinestateH2DataItemDestroy(line_t *line, httpserver_h2_data_item_t *item)
 {
     if (item == NULL)
     {
@@ -62,14 +62,14 @@ static void httpserverH2DataItemDestroy(line_t *line, httpserver_h2_data_item_t 
 
 void httpserverH2DataQueueDestroy(httpserver_lstate_t *ls)
 {
-    httpserverH2DataItemDestroy(ls->line, ls->h2_data_active);
+    httpserverLinestateH2DataItemDestroy(ls->line, ls->h2_data_active);
     ls->h2_data_active = NULL;
 
     httpserver_h2_data_item_t *item = ls->h2_data_head;
     while (item != NULL)
     {
         httpserver_h2_data_item_t *next = item->next;
-        httpserverH2DataItemDestroy(ls->line, item);
+        httpserverLinestateH2DataItemDestroy(ls->line, item);
         item = next;
     }
 
