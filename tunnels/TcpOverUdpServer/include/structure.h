@@ -10,6 +10,17 @@ typedef struct tcpoverudpserver_tstate_s
     bool    fec_enabled;
     uint8_t fec_data_shards;
     uint8_t fec_parity_shards;
+    bool    kcp_nodelay;
+    bool    kcp_no_congestion_control;
+    int     kcp_interval_ms;
+    int     kcp_resend;
+    int     kcp_send_window;
+    int     kcp_recv_window;
+    int     kcp_initial_cwnd;
+    int     kcp_rx_minrto_ms;
+    int     kcp_send_buffer_limit;
+    uint32_t ping_interval_ms;
+    uint32_t no_recv_timeout_ms;
 
 } tcpoverudpserver_tstate_t;
 
@@ -44,18 +55,18 @@ enum
 
 enum tcpoverudpserver_kcpsettings_e
 {
-    kTcpOverUdpServerKcpNodelay     = 1,  // enable nodelay
-    kTcpOverUdpServerKcpInterval    = 10, // interval for processing kcp stack (ms)
-    kTcpOverUdpServerKcpResend      = 2,  // resend count
-    kTcpOverUdpServerKcpFlowCtl     = 0,  // stream mode
-    kTcpOverUdpServerKcpSendWindow  = 2048,
-    kTcpOverUdpServerKcpRecvWindow  = 2048,
-    kTcpOverUdpServerPingintervalMs = 3000,
-    kTcpOverUdpServerNoRecvTimeOut  = 6000,
+    kTcpOverUdpServerKcpNodelayDefault             = 1,
+    kTcpOverUdpServerKcpIntervalDefault            = 10,
+    kTcpOverUdpServerKcpResendDefault              = 2,
+    kTcpOverUdpServerKcpNoCongestionControlDefault = 1,
+    kTcpOverUdpServerKcpSendWindowDefault          = 8192,
+    kTcpOverUdpServerKcpRecvWindowDefault          = 8192,
+    kTcpOverUdpServerKcpInitialCwndDefault         = 4096,
+    kTcpOverUdpServerKcpRxMinRtoDefault            = 30,
+    kTcpOverUdpServerKcpSendBufferLimitDefault     = 0,
+    kTcpOverUdpServerPingintervalMsDefault         = 10000,
+    kTcpOverUdpServerNoRecvTimeOutDefault          = 30000,
 };
-
-// 1400 - 20 (IP) - 8 (UDP) - ~24 (KCP) ≈ 1348 bytes
-#define KCP_SEND_WINDOW_LIMIT (int) (ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10)
 
 static inline uint32_t tcpoverudpserverGetOuterFecOverhead(const tcpoverudpserver_tstate_t *ts)
 {
@@ -74,6 +85,17 @@ static inline int tcpoverudpserverGetKcpMtu(const tcpoverudpserver_tstate_t *ts)
 static inline int tcpoverudpserverGetKcpWriteMtu(const tcpoverudpserver_tstate_t *ts)
 {
     return (int) (GLOBAL_MTU_SIZE - 20 - 8 - 24 - kFrameHeaderLength - tcpoverudpserverGetOuterFecOverhead(ts));
+}
+
+static inline int tcpoverudpserverGetKcpSendBufferLimit(const tcpoverudpserver_lstate_t *ls)
+{
+    const tcpoverudpserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+    if (ts->kcp_send_buffer_limit > 0)
+    {
+        return ts->kcp_send_buffer_limit;
+    }
+
+    return (int) (ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10U);
 }
 
 WW_EXPORT void         tcpoverudpserverTunnelDestroy(tunnel_t *t);

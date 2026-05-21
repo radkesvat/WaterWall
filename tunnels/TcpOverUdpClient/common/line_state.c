@@ -24,10 +24,10 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
 
     ikcp_setoutput(k_handle, tcpoverudpclientKUdpOutput);
 
-    ikcp_nodelay(k_handle, kTcpOverUdpClientKcpNodelay, kTcpOverUdpClientKcpInterval, kTcpOverUdpClientKcpResend,
-                 kTcpOverUdpClientKcpFlowCtl);
+    ikcp_nodelay(k_handle, ts->kcp_nodelay ? 1 : 0, ts->kcp_interval_ms, ts->kcp_resend,
+                 ts->kcp_no_congestion_control ? 1 : 0);
 
-    ikcp_wndsize(k_handle, kTcpOverUdpClientKcpSendWindow, kTcpOverUdpClientKcpRecvWindow);
+    ikcp_wndsize(k_handle, ts->kcp_send_window, ts->kcp_recv_window);
 
     if (ikcp_setmtu(k_handle, tcpoverudpclientGetKcpMtu(ts)) != 0)
     {
@@ -36,15 +36,15 @@ void tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *
         terminateProgram(1);
     }
 
-    k_handle->cwnd = kTcpOverUdpClientKcpSendWindow / 4;
+    k_handle->cwnd = (IUINT32) ts->kcp_initial_cwnd;
 
     k_handle->writelog = kcpPrintLog;
     // k_handle->logmask = 0x0FFFFFFF; // Enable all logs
 
-    k_handle->rx_minrto = 30;
+    k_handle->rx_minrto = (IINT32) ts->kcp_rx_minrto_ms;
 
     wtimer_t *k_timer = wtimerAdd(getWorkerLoop(lineGetWID(l)), tcpoverudpclientKcpLoopIntervalCallback,
-                                  kTcpOverUdpClientKcpInterval, INFINITE);
+                                  (uint32_t) ts->kcp_interval_ms, INFINITE);
 
     weventSetUserData(k_timer, ls);
 

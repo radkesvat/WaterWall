@@ -34,7 +34,10 @@ It should usually sit opposite `TcpOverUdpClient`.
   "settings": {
     "fec": true,
     "fec-data-shards": 10,
-    "fec-parity-shards": 3
+    "fec-parity-shards": 3,
+    "kcp-send-window": 8192,
+    "kcp-recv-window": 8192,
+    "no-recv-timeout-ms": 30000
   },
   "next": "service-stream-node"
 }
@@ -71,6 +74,50 @@ There are no required tunnel-specific settings.
   Number of parity shards per FEC block when `fec` is enabled.
   Default: `3`
 
+- `kcp-nodelay` `(boolean)`
+  Enables KCP nodelay mode.
+  Default: `true`
+
+- `kcp-interval-ms` `(number)`
+  KCP update interval in milliseconds.
+  Default: `10`
+
+- `kcp-resend` `(number)`
+  KCP fast-resend threshold.
+  Default: `2`
+
+- `kcp-no-congestion-control` `(boolean)`
+  Disables KCP congestion control for higher-throughput UDP paths.
+  Default: `true`
+
+- `kcp-send-window` `(number)`
+  KCP send window in segments.
+  Default: `8192`
+
+- `kcp-recv-window` `(number)`
+  KCP receive window in segments.
+  Default: `8192`
+
+- `kcp-initial-cwnd` `(number)`
+  Initial KCP congestion window in segments. If omitted, it defaults to half of `kcp-send-window`.
+  Default with the built-in send window: `4096`
+
+- `kcp-rx-minrto-ms` `(number)`
+  Minimum KCP retransmission timeout in milliseconds.
+  Default: `30`
+
+- `kcp-send-buffer-limit` `(number)`
+  Backpressure threshold for queued KCP packets. `0` keeps the derived limit: local send window + remote window + `10`.
+  Default: `0`
+
+- `ping-interval-ms` `(number)`
+  Time without received packets before sending an internal ping.
+  Default: `10000`
+
+- `no-recv-timeout-ms` `(number)`
+  Time without received packets before closing the line. Must be greater than `ping-interval-ms`.
+  Default: `30000`
+
 ## Detailed Behavior
 
 ### KCP transport model
@@ -91,18 +138,21 @@ Inside the KCP payload, this tunnel uses:
 
 Data frames carry stream bytes after the flag byte.
 
-### Current hard-coded KCP settings
+### Default KCP settings
 
-The current implementation uses built-in KCP settings and does not expose them in JSON:
+The implementation exposes KCP tuning in JSON. The higher-throughput defaults are:
 
-- `nodelay = 1`
-- `interval = 10 ms`
-- `resend = 2`
-- `flowctl = 0`
-- send window `2048`
-- receive window `2048`
-- ping interval `3000 ms`
-- no-receive timeout `6000 ms`
+- `kcp-nodelay = true`
+- `kcp-interval-ms = 10`
+- `kcp-resend = 2`
+- `kcp-no-congestion-control = true`
+- `kcp-send-window = 8192`
+- `kcp-recv-window = 8192`
+- `kcp-initial-cwnd = 4096`
+- `kcp-rx-minrto-ms = 30`
+- `kcp-send-buffer-limit = 0` (derived from KCP windows)
+- `ping-interval-ms = 10000`
+- `no-recv-timeout-ms = 30000`
 
 KCP MTU is also taken from `GLOBAL_MTU_SIZE`.
 If FEC is enabled, the tunnel subtracts the FEC wire overhead from the outer KCP/UDP packet budget so the transport stays inside the same MTU envelope.
@@ -138,12 +188,12 @@ If the service-facing side finishes, `TcpOverUdpServer` sends a close frame over
 
 Idle handling is the same basic model as the client side:
 
-- after `3000 ms` of no receive activity, a ping is sent if needed
-- after `6000 ms` of no receive activity, the line is closed
+- after `ping-interval-ms` of no receive activity, a ping is sent if needed
+- after `no-recv-timeout-ms` of no receive activity, the line is closed
 
 ### Backpressure behavior
 
-If the KCP send queue grows too large, `TcpOverUdpServer` schedules a pause toward the next side. When queued KCP data drops back below the internal threshold, it schedules resume.
+If the KCP send queue grows beyond `kcp-send-buffer-limit`, `TcpOverUdpServer` schedules a pause toward the next side. When that setting is `0`, the limit is derived from the current KCP windows. When queued KCP data drops back below the threshold, it schedules resume.
 
 ## Notes And Caveats
 

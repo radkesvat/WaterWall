@@ -121,9 +121,10 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
         return;
     }
 
-    uint64 current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
+    uint64                    current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
+    tcpoverudpclient_tstate_t *ts           = tunnelGetState(ls->tunnel);
 
-    if ((current_time - ls->last_recv) > kTcpOverUdpClientPingintervalMs)
+    if ((current_time - ls->last_recv) > ts->ping_interval_ms)
     {
         if (! ls->ping_sent)
         {
@@ -133,7 +134,7 @@ void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer)
             uint8_t ping_buf[kFrameHeaderLength] = {kFrameFlagPing};
             ikcp_send(ls->k_handle, (const char *) ping_buf, (int) sizeof(ping_buf));
         }
-        else if ((current_time - ls->last_recv) > kTcpOverUdpClientNoRecvTimeOut)
+        else if ((current_time - ls->last_recv) > ts->no_recv_timeout_ms)
         {
             LOGW("TcpOverUdpClient -> KCP[%d]: no data received for too long, closing connection", ls->k_handle->conv);
 
@@ -169,7 +170,7 @@ int tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *use
     }
     line_t *l = ls->line;
 
-    if (ls->write_paused && ikcp_waitsnd(ls->k_handle) < KCP_SEND_WINDOW_LIMIT)
+    if (ls->write_paused && ikcp_waitsnd(ls->k_handle) < tcpoverudpclientGetKcpSendBufferLimit(ls))
     {
         ls->write_paused = false;
         context_t *ctx   = contextCreateResume(l);
