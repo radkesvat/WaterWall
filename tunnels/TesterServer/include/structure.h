@@ -1,6 +1,9 @@
 #pragma once
 
 #include "wwapi.h"
+#include "lwip/prot/icmp.h"
+#include "lwip/prot/tcp.h"
+#include "lwip/prot/udp.h"
 
 enum
 {
@@ -15,6 +18,14 @@ typedef enum testerserver_direction_e
     kTesterServerDirectionResponse = 1
 } testerserver_direction_e;
 
+typedef enum testerserver_packet_ipv4_transport_e
+{
+    kTesterServerPacketIpv4TransportNone = 0,
+    kTesterServerPacketIpv4TransportTcp,
+    kTesterServerPacketIpv4TransportUdp,
+    kTesterServerPacketIpv4TransportIcmp
+} testerserver_packet_ipv4_transport_e;
+
 typedef struct testerserver_tstate_s
 {
     bool        packet_mode;
@@ -27,6 +38,7 @@ typedef struct testerserver_tstate_s
     uint8_t     packet_ipv4_protocol;
     uint8_t     packet_ipv4_ttl;
     atomic_uint packet_ipv4_identification;
+    testerserver_packet_ipv4_transport_e packet_ipv4_transport;
 } testerserver_tstate_t;
 
 typedef struct testerserver_lstate_s

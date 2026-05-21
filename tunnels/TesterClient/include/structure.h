@@ -1,6 +1,9 @@
 #pragma once
 
 #include "wwapi.h"
+#include "lwip/prot/icmp.h"
+#include "lwip/prot/tcp.h"
+#include "lwip/prot/udp.h"
 
 enum
 {
@@ -17,6 +20,14 @@ typedef enum testerclient_direction_e
     kTesterClientDirectionRequest = 0,
     kTesterClientDirectionResponse = 1
 } testerclient_direction_e;
+
+typedef enum testerclient_packet_ipv4_transport_e
+{
+    kTesterClientPacketIpv4TransportNone = 0,
+    kTesterClientPacketIpv4TransportTcp,
+    kTesterClientPacketIpv4TransportUdp,
+    kTesterClientPacketIpv4TransportIcmp
+} testerclient_packet_ipv4_transport_e;
 
 typedef struct testerclient_worker_state_s
 {
@@ -38,6 +49,7 @@ typedef struct testerclient_tstate_s
     uint8_t                     packet_ipv4_protocol;
     uint8_t                     packet_ipv4_ttl;
     atomic_uint                 packet_ipv4_identification;
+    testerclient_packet_ipv4_transport_e packet_ipv4_transport;
     testerclient_worker_state_t workers[kTesterClientMaxWorkers];
 } testerclient_tstate_t;
 

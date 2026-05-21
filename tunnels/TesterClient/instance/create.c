@@ -18,6 +18,60 @@ static bool testerclientLoadUint8Setting(uint8_t *dest, const cJSON *settings, c
     return true;
 }
 
+static uint8_t testerclientPacketIpv4ProtocolForTransport(testerclient_packet_ipv4_transport_e transport)
+{
+    switch (transport)
+    {
+    case kTesterClientPacketIpv4TransportTcp:
+        return IP_PROTO_TCP;
+    case kTesterClientPacketIpv4TransportUdp:
+        return IP_PROTO_UDP;
+    case kTesterClientPacketIpv4TransportIcmp:
+        return IP_PROTO_ICMP;
+    default:
+        return kTesterClientPacketIpv4ProtocolDefault;
+    }
+}
+
+static bool testerclientLoadPacketIpv4TransportSetting(testerclient_packet_ipv4_transport_e *dest,
+                                                       const cJSON *packet_ipv4)
+{
+    char *transport = NULL;
+
+    *dest = kTesterClientPacketIpv4TransportNone;
+
+    if (! getStringFromJsonObject(&transport, packet_ipv4, "transport"))
+    {
+        return true;
+    }
+
+    if (stringCompare(transport, "tcp") == 0)
+    {
+        *dest = kTesterClientPacketIpv4TransportTcp;
+    }
+    else if (stringCompare(transport, "udp") == 0)
+    {
+        *dest = kTesterClientPacketIpv4TransportUdp;
+    }
+    else if (stringCompare(transport, "icmp") == 0)
+    {
+        *dest = kTesterClientPacketIpv4TransportIcmp;
+    }
+    else if (stringCompare(transport, "raw") == 0 || stringCompare(transport, "none") == 0)
+    {
+        *dest = kTesterClientPacketIpv4TransportNone;
+    }
+    else
+    {
+        LOGF("JSON Error: TesterClient->settings->packet-ipv4->transport (string field) : expected tcp, udp, icmp, raw, or none");
+        memoryFree(transport);
+        return false;
+    }
+
+    memoryFree(transport);
+    return true;
+}
+
 static bool testerclientParseIpv4String(uint32_t *dest, const char *ipbuf, const char *json_path)
 {
     ip4_addr_t parsed_ipv4;
@@ -54,6 +108,7 @@ static bool testerclientLoadPacketIpv4Settings(testerclient_tstate_t *ts, const 
     ts->packet_ipv4_mode     = false;
     ts->packet_ipv4_protocol = kTesterClientPacketIpv4ProtocolDefault;
     ts->packet_ipv4_ttl      = kTesterClientPacketIpv4TtlDefault;
+    ts->packet_ipv4_transport = kTesterClientPacketIpv4TransportNone;
     atomicStoreRelaxed(&ts->packet_ipv4_identification, 0);
 
     if (packet_ipv4 == NULL)
@@ -73,17 +128,40 @@ static bool testerclientLoadPacketIpv4Settings(testerclient_tstate_t *ts, const 
         return false;
     }
 
+    int  protocol_value = kTesterClientPacketIpv4ProtocolDefault;
+    bool has_protocol   = getIntFromJsonObject(&protocol_value, packet_ipv4, "protocol");
+
+    if (protocol_value < 0 || protocol_value > UINT8_MAX)
+    {
+        LOGF("JSON Error: TesterClient->settings->packet-ipv4->protocol (int field) : expected a value between 0 and %u",
+             (unsigned int) UINT8_MAX);
+        return false;
+    }
+
+    ts->packet_ipv4_protocol = (uint8_t) protocol_value;
+
     if (! testerclientLoadRequiredIpv4Setting(&ts->packet_ipv4_source_addr, packet_ipv4, "source-ip",
                                               "TesterClient->settings->packet-ipv4->source-ip") ||
         ! testerclientLoadRequiredIpv4Setting(&ts->packet_ipv4_dest_addr, packet_ipv4, "dest-ip",
                                               "TesterClient->settings->packet-ipv4->dest-ip") ||
-        ! testerclientLoadUint8Setting(&ts->packet_ipv4_protocol, packet_ipv4, "protocol",
-                                       kTesterClientPacketIpv4ProtocolDefault,
-                                       "TesterClient->settings->packet-ipv4->protocol") ||
         ! testerclientLoadUint8Setting(&ts->packet_ipv4_ttl, packet_ipv4, "ttl", kTesterClientPacketIpv4TtlDefault,
-                                       "TesterClient->settings->packet-ipv4->ttl"))
+                                       "TesterClient->settings->packet-ipv4->ttl") ||
+        ! testerclientLoadPacketIpv4TransportSetting(&ts->packet_ipv4_transport, packet_ipv4))
     {
         return false;
+    }
+
+    if (ts->packet_ipv4_transport != kTesterClientPacketIpv4TransportNone)
+    {
+        uint8_t transport_protocol = testerclientPacketIpv4ProtocolForTransport(ts->packet_ipv4_transport);
+
+        if (has_protocol && ts->packet_ipv4_protocol != transport_protocol)
+        {
+            LOGF("TesterClient: settings->packet-ipv4->protocol must match packet-ipv4->transport");
+            return false;
+        }
+
+        ts->packet_ipv4_protocol = transport_protocol;
     }
 
     ts->packet_ipv4_mode = true;

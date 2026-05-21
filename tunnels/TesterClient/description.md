@@ -17,6 +17,7 @@ It is meant for validating tunnel composition and payload integrity, not for pro
 - in normal stream mode, logs success after the full response is verified and exits the program once all workers complete
 - in `packet-mode`, reuses the worker packet line and never expects normal runtime `Finish`
 - optionally wraps packet-mode payloads in a synthetic IPv4 packet with configured source, destination, protocol, and TTL
+- optionally builds deterministic TCP, UDP, or ICMP headers inside the synthetic IPv4 packet
 
 ## Request And Response Pattern
 
@@ -63,6 +64,21 @@ Current `packet-ipv4` chunk sizes are:
 - `21`
 - `22`
 - `24`
+- `52`
+- `84`
+- `148`
+- `276`
+- `532`
+- `1044`
+- `1499`
+- `1500`
+
+When `packet-ipv4.transport` is `tcp`, `udp`, or `icmp`, the packet chunks include IPv4 plus transport headers and use
+these sizes:
+
+- `41`
+- `42`
+- `44`
 - `52`
 - `84`
 - `148`
@@ -195,6 +211,12 @@ Packet mode with synthetic IPv4 packets:
     Required IPv4 destination address for request packets. Response packets use the reverse direction automatically.
 
   Optional child fields:
+  - `transport` `(string)`
+    Optional transport header to generate and verify inside the IPv4 packet.
+    Supported values: `tcp`, `udp`, `icmp`, `raw`, `none`.
+    When set to `tcp`, `udp`, or `icmp`, the IPv4 protocol number is derived from the transport. If `protocol` is also
+    present, it must match that transport.
+    Default: `none`
   - `protocol` `(integer)`
     IPv4 protocol number written into the synthetic header and required again during verification.
     Default: `253`
@@ -260,7 +282,8 @@ closable connection lines.
 - `TesterClient` is a synthetic validation tunnel, not a transport adapter.
 - the watchdog currently aborts the process if a worker line does not complete within `30000 ms`
 - `TesterClient` keeps one completion slot per worker and currently supports at most `254` chain workers
-- in `packet-ipv4` mode the documented chunk sizes include the `20`-byte IPv4 header, so the verified synthetic
-  payload body is `chunk-size - 20`
+- in `packet-ipv4` mode the documented chunk sizes include packet headers, so the verified synthetic payload body is
+  `chunk-size - IPv4 header length` in raw mode, or `chunk-size - IPv4 header length - transport header length` when
+  `transport` is enabled
 - `UpStreamInit`, `UpStreamEst`, `UpStreamPayload`, `UpStreamPause`, `UpStreamResume`, and `UpStreamFinish` are
   intentionally disabled because this node is a chain head

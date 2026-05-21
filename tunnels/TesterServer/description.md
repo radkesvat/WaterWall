@@ -16,6 +16,7 @@ It is meant for validating tunnel correctness and data integrity, not for servin
 - in `packet-mode`, uses the worker packet line and never expects normal runtime `Finish`
 - optionally wraps packet-mode request and response chunks in a synthetic IPv4 packet with configured source,
   destination, protocol, and TTL
+- optionally builds deterministic TCP, UDP, or ICMP headers inside the synthetic IPv4 packet
 
 ## Request And Response Pattern
 
@@ -56,6 +57,21 @@ Current `packet-ipv4` chunk sizes are:
 - `21`
 - `22`
 - `24`
+- `52`
+- `84`
+- `148`
+- `276`
+- `532`
+- `1044`
+- `1499`
+- `1500`
+
+When `packet-ipv4.transport` is `tcp`, `udp`, or `icmp`, the packet chunks include IPv4 plus transport headers and use
+these sizes:
+
+- `41`
+- `42`
+- `44`
 - `52`
 - `84`
 - `148`
@@ -177,6 +193,12 @@ Packet mode with synthetic IPv4 packets:
     direction automatically.
 
   Optional child fields:
+  - `transport` `(string)`
+    Optional transport header to generate and verify inside the IPv4 packet.
+    Supported values: `tcp`, `udp`, `icmp`, `raw`, `none`.
+    When set to `tcp`, `udp`, or `icmp`, the IPv4 protocol number is derived from the transport. If `protocol` is also
+    present, it must match that transport.
+    Default: `none`
   - `protocol` `(integer)`
     IPv4 protocol number written into synthetic response headers and required again during request verification.
     Default: `253`
@@ -247,5 +269,6 @@ bug because packet lines are shared worker state, not per-connection lines.
   requests into `TesterServer` from the next side and receive responses back upstream
 - in packet mode, `TesterServer` now generates the deterministic response pattern instead of merely reflecting request
   bytes, so both directions are validated consistently
-- in `packet-ipv4` mode the documented chunk sizes include the `20`-byte IPv4 header, so the verified synthetic
-  payload body is `chunk-size - 20`
+- in `packet-ipv4` mode the documented chunk sizes include packet headers, so the verified synthetic payload body is
+  `chunk-size - IPv4 header length` in raw mode, or `chunk-size - IPv4 header length - transport header length` when
+  `transport` is enabled
