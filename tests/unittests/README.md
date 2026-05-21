@@ -11,6 +11,9 @@ These tests exercise small library-level behavior without launching the `Waterwa
 - `waterwall.tcp_over_udp_fec_unit`
   Verifies the TCP-over-UDP Reed-Solomon FEC helper directly, including one missing data shard recovery, encoder reset
   after a failed parity emit callback, and malformed packet rejection.
+- `waterwall.nghttp2_large_recv_unit`
+  Verifies the bundled nghttp2 can consume one contiguous HTTP/2 input buffer larger than 32 KiB while preserving DATA
+  callbacks. The Waterwall HTTP tunnels still feed nghttp2 in smaller slices defensively.
 
 ## Running Unit Tests
 

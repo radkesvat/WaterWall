@@ -2,7 +2,7 @@ find_program(BASH_EXECUTABLE bash REQUIRED)
 
 add_subdirectory(unittests)
 
-function(add_waterwall_integration_test test_name case_name)
+function(add_waterwall_integration_test_with_timeout test_name case_name timeout_seconds)
   set(case_dir "${CMAKE_CURRENT_SOURCE_DIR}/cases/${case_name}")
 
   add_test(
@@ -12,7 +12,7 @@ function(add_waterwall_integration_test test_name case_name)
       "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_case.sh"
       "$<TARGET_FILE:Waterwall>"
       "${case_dir}"
-      "30"
+      "${timeout_seconds}"
   )
 
   set_tests_properties(
@@ -20,6 +20,19 @@ function(add_waterwall_integration_test test_name case_name)
     PROPERTIES
       TIMEOUT 120
       LABELS "integration;tunnels"
+  )
+endfunction()
+
+function(add_waterwall_integration_test test_name case_name)
+  add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 30)
+endfunction()
+
+function(add_waterwall_negative_integration_test test_name case_name)
+  add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 10)
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      WILL_FAIL TRUE
   )
 endfunction()
 
@@ -66,6 +79,9 @@ add_waterwall_integration_test(waterwall.http1_split_tcp_loopback http1_split_tc
 add_waterwall_integration_test(waterwall.http1_split_path_cookie_roundtrip http1_split_path_cookie_roundtrip)
 add_waterwall_integration_test(waterwall.http2_bidirectional_roundtrip http2_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http2_bidirectional_tcp_loopback http2_bidirectional_tcp_loopback)
+add_waterwall_integration_test(waterwall.http_upgrade_h2c_bidirectional_roundtrip http_upgrade_h2c_bidirectional_roundtrip)
+add_waterwall_integration_test(waterwall.http_upgrade_h2c_bidirectional_tcp_loopback http_upgrade_h2c_bidirectional_tcp_loopback)
+add_waterwall_negative_integration_test(waterwall.http2_request_validation_rejects_mismatch http2_request_validation_rejects_mismatch)
 add_waterwall_integration_test(waterwall.http_websocket_bidirectional_roundtrip http_websocket_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http_websocket_bidirectional_tcp_loopback http_websocket_bidirectional_tcp_loopback)
 add_waterwall_integration_test(waterwall.http_upgrade_custom_bidirectional_roundtrip http_upgrade_custom_bidirectional_roundtrip)

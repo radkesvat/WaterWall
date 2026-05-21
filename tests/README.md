@@ -133,6 +133,14 @@ Practical rule:
   Verifies that direct HTTP/2 request and response DATA can overlap correctly through `HttpClient` and `HttpServer`.
 - `http2_bidirectional_tcp_loopback`
   Verifies the same direct HTTP/2 bidirectional behavior across a real TCP loopback transport.
+- `http_upgrade_h2c_bidirectional_roundtrip`
+  Verifies default `h2c` upgrade plus bidirectional HTTP/2 DATA after the client opens a fresh post-upgrade tunnel
+  stream.
+- `http_upgrade_h2c_bidirectional_tcp_loopback`
+  Verifies the same default `h2c` upgrade behavior across a real TCP loopback transport.
+- `http2_request_validation_rejects_mismatch`
+  Negative case: verifies that `HttpServer` rejects a direct HTTP/2 request whose method, path, and authority do not
+  match its configured expectations.
 - `http_websocket_bidirectional_roundtrip`
   Verifies HTTP/1.1 WebSocket handshake plus bidirectional framed payload transport when the pair is chained directly.
 - `http_websocket_bidirectional_tcp_loopback`
@@ -163,12 +171,9 @@ Now that `TesterClient` and `TesterServer` split oversized logical chunks into `
 several framed tunnels are testable directly even when the logical end-to-end chunk is much larger than one physical
 buffer.
 
-Some scenarios are still better treated as future work:
-
-- default `h2c` upgrade remains a manual future-work case for bidirectional integrity testing in the current
-  single-stream model.
-  `nghttp2_session_upgrade2()` opens stream `1` half-closed on both sides, so a truthful tester-driven bidirectional
-  round-trip over that original upgraded stream is not currently representable as a passing integration case.
+The default `h2c` upgrade tests deliberately avoid carrying tunnel payload on stream `1`.
+`nghttp2_session_upgrade2()` models stream `1` as the original HTTP/1.1 upgrade request, so Waterwall cancels that
+stream and uses one fresh post-upgrade HTTP/2 stream for the bidirectional tunnel body.
 
 ## Adding a new tunnel test
 
