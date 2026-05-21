@@ -207,6 +207,7 @@ tunnel_t *ipoverriderCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(ipoverrider_tstate_t), 0);
 
+    t->fnInitD    = &ipoverriderDownStreamInit;
     t->fnPayloadU = &ipoverriderUpStreamPayload;
     t->fnPayloadD = &ipoverriderDownStreamPayload;
     t->onPrepare  = &ipoverriderOnPrepair;

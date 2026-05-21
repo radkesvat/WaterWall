@@ -193,6 +193,7 @@ tunnel_t *pingclientCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(pingclient_tstate_t), 0);
 
+    t->fnInitD    = &pingclientDownStreamInit;
     t->fnPayloadU = &pingclientUpStreamPayload;
     t->fnPayloadD = &pingclientDownStreamPayload;
     t->onPrepare  = &pingclientOnPrepair;

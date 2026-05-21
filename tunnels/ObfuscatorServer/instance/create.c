@@ -6,6 +6,7 @@ tunnel_t *obfuscatorserverTunnelCreate(node_t *node)
 {
     tunnel_t *t = packettunnelCreate(node, sizeof(obfuscatorserver_tstate_t), 0);
 
+    t->fnInitD    = &obfuscatorserverTunnelDownStreamInit;
     t->fnPayloadU = &obfuscatorserverTunnelUpStreamPayload;
     t->fnPayloadD = &obfuscatorserverTunnelDownStreamPayload;
 

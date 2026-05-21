@@ -93,6 +93,7 @@ static tunnel_t *createBaseTunnel(node_t *node)
         return NULL;
     }
 
+    t->fnInitD    = &wireguarddeviceTunnelDownStreamInit;
     t->fnPayloadU = &wireguarddeviceTunnelUpStreamPayload;
     t->fnPayloadD = &wireguarddeviceTunnelDownStreamPayload;
     t->onPrepare = &wireguarddeviceTunnelOnPrepair;
