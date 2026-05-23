@@ -12,21 +12,23 @@
 
 #include <ares.h>
 
-#if defined(WCRYPTO_BACKEND_OPENSSL)
+#if defined(WCRYPTO_USING_OPENSSL)
 
 #include "crypto/openssl_instance.h"
 
-#elif defined(WCRYPTO_BACKEND_SODIUM)
+#endif
+
+#if defined(WCRYPTO_BACKEND_SODIUM)
 
 #include "crypto/sodium_instance.h"
 
-#elif defined(WCRYPTO_BACKEND_SOFTWARE)
+#endif
 
-#else
-
-#error "No crypto backend defined"
+#if defined(WCRYPTO_BACKEND_SOFTWARE)
 
 #endif
+
+
 
 // Global instance of the ww_global_state_t structure.
 ww_global_state_t global_ww_state = {0};
@@ -296,7 +298,7 @@ void createGlobalState(const ww_construction_data_t init_data)
     {
 
 // later we gona brind openssl anyway...
-#if defined(WCRYPTO_BACKEND_OPENSSL)
+#if defined(WCRYPTO_USING_OPENSSL)
 
         opensslGlobalInit();
         GSTATE.flag_openssl_initialized = true;
