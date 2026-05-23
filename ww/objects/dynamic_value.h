@@ -7,7 +7,7 @@
 #include "wlibc.h"
 
 /*
-    This object is supposed to be kept on stack, but in can have allocated pointer,
+    This object is supposed to be kept on stack, but it can have allocated pointer,
     therefore it is required to call dynamicvalueDestroy
 */
 
