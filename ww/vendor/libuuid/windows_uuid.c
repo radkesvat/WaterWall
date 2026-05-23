@@ -15,9 +15,14 @@
 #include <rpc.h>
 #include <string.h>
 
+/* rpcdce.h maps uuid_t to UUID, but libuuid owns uuid_t here. */
+#ifdef uuid_t
+#undef uuid_t
+#endif
+
 #include "uuidP.h"
 
-static void rpc_uuid_pack(const UUID *rpc_uuid, uuid_t out)
+static void rpc_uuid_pack(const GUID *rpc_uuid, uuid_t out)
 {
 	struct uuid uu;
 
@@ -32,22 +37,24 @@ static void rpc_uuid_pack(const UUID *rpc_uuid, uuid_t out)
 
 void uuid_generate_random(uuid_t out)
 {
-	if (BCryptGenRandom(NULL, out, sizeof(uuid_t),
+	PUCHAR out_bytes = (PUCHAR) out;
+
+	if (BCryptGenRandom(NULL, out_bytes, (ULONG) sizeof(uuid_t),
 			    BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
-		UUID rpc_uuid;
+		GUID rpc_uuid;
 
 		(void) UuidCreate(&rpc_uuid);
 		rpc_uuid_pack(&rpc_uuid, out);
 		return;
 	}
 
-	out[6] = (out[6] & 0x0F) | 0x40;
-	out[8] = (out[8] & 0x3F) | 0x80;
+	out_bytes[6] = (out_bytes[6] & 0x0F) | 0x40;
+	out_bytes[8] = (out_bytes[8] & 0x3F) | 0x80;
 }
 
 int uuid_generate_time_safe(uuid_t out)
 {
-	UUID rpc_uuid;
+	GUID rpc_uuid;
 	RPC_STATUS status = UuidCreateSequential(&rpc_uuid);
 
 	if (status != RPC_S_OK && status != RPC_S_UUID_LOCAL_ONLY)
