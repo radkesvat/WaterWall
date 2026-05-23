@@ -342,9 +342,11 @@ if(WCRYPTO_BACKEND_SODIUM)
         crypto/sodium_instance.c
         crypto/impl_sodium/aes256gcm.c
         crypto/impl_sodium/chacha20poly1305.c
+        crypto/impl_sodium/hash.c
         crypto/impl_sodium/xchacha20poly1305.c
         crypto/impl_sodium/x25519.c
         crypto/impl_software/blake2s.c
+        crypto/impl_software/hash_md5_sha1.c
     )
     target_compile_definitions(ww PUBLIC WCRYPTO_BACKEND_SODIUM=1)
     
@@ -359,6 +361,7 @@ elseif(WCRYPTO_BACKEND_OPENSSL)
         crypto/imp_openssl/aes256gcm.c
         crypto/imp_openssl/blake2s.c
         crypto/imp_openssl/chacha20poly1305.c
+        crypto/imp_openssl/hash.c
         crypto/imp_openssl/xchacha20poly1305.c
         crypto/imp_openssl/x25519.c
         crypto/impl_software/chacha20.c
@@ -374,6 +377,8 @@ elseif(WCRYPTO_BACKEND_SOFTWARE)
         crypto/impl_software/blake2s.c
         crypto/impl_software/chacha20.c
         crypto/impl_software/chacha20poly1305.c
+        crypto/impl_software/hash_md5_sha1.c
+        crypto/impl_software/hash_unsupported.c
         crypto/impl_software/poly1305.c
         crypto/impl_software/poly1305-donna.c
         crypto/impl_software/x25519.c
