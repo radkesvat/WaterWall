@@ -3,7 +3,7 @@
 
 #include "sodium.h"
 
-static int validateHashInput(const void *out, const unsigned char *in, size_t inlen)
+static int sodiumHashValidateInput(const void *out, const unsigned char *in, size_t inlen)
 {
     if (!out || (!in && inlen > 0))
     {
@@ -14,7 +14,7 @@ static int validateHashInput(const void *out, const unsigned char *in, size_t in
     return 0;
 }
 
-static const unsigned char *normalizeHashInput(const unsigned char *in)
+static const unsigned char *sodiumHashNormalizeInput(const unsigned char *in)
 {
     static const unsigned char empty_input = 0;
     return in ? in : &empty_input;
@@ -37,12 +37,12 @@ int wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen)
 int wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen)
 {
     assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-    if (validateHashInput(out, in, inlen) != 0)
+    if (sodiumHashValidateInput(out, in, inlen) != 0)
     {
         return -1;
     }
 
-    return crypto_hash_sha256(out->bytes, normalizeHashInput(in), (unsigned long long) inlen);
+    return crypto_hash_sha256(out->bytes, sodiumHashNormalizeInput(in), (unsigned long long) inlen);
 }
 
 int wCryptoSHA384(sha384_hash_t *out, const unsigned char *in, size_t inlen)
@@ -56,12 +56,12 @@ int wCryptoSHA384(sha384_hash_t *out, const unsigned char *in, size_t inlen)
 int wCryptoSHA512(sha512_hash_t *out, const unsigned char *in, size_t inlen)
 {
     assert(sodium_init() != -1 && "libsodium must be initialized before calling this function");
-    if (validateHashInput(out, in, inlen) != 0)
+    if (sodiumHashValidateInput(out, in, inlen) != 0)
     {
         return -1;
     }
 
-    return crypto_hash_sha512(out->bytes, normalizeHashInput(in), (unsigned long long) inlen);
+    return crypto_hash_sha512(out->bytes, sodiumHashNormalizeInput(in), (unsigned long long) inlen);
 }
 
 int wCryptoSHA3_224(sha3_224_hash_t *out, const unsigned char *in, size_t inlen)
