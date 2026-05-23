@@ -19,7 +19,7 @@
 
 enum
 {
-    kTunWriteChannelQueueMax    = 1024,
+    kTunWriteChannelQueueMax    = 4096,
     kMaxReadDistributeQueueSize = 128
 };
 

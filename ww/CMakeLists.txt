@@ -181,16 +181,31 @@ check_header("sys/types.h")
 check_header("sys/stat.h")
 check_header("sys/time.h")
 check_header("fcntl.h")
+check_header("inttypes.h")
+check_header("limits.h")
+check_header("netinet/in.h")
 check_header("pthread.h")
+check_header("stdlib.h")
+check_header("string.h")
 check_header("endian.h")
 check_header("errno.h")
 check_header("sys/endian.h")
+check_header("sys/file.h")
+check_header("sys/ioctl.h")
+check_header("sys/socket.h")
+check_header("unistd.h")
 check_header("x86intrin.h")
 check_header("immintrin.h")
 
+check_function("ftruncate" "unistd.h")
 check_function("gettid" "unistd.h")
+check_function("memset" "string.h")
+check_function("socket" "sys/socket.h")
 check_function("strlcpy" "string.h")
 check_function("strlcat" "string.h")
+check_function("strtoul" "stdlib.h")
+check_function("usleep" "unistd.h")
+check_function("srandom" "stdlib.h")
 check_function("clock_gettime" "time.h")
 check_function("gettimeofday" "sys/time.h")
 check_function("pthread_spin_lock" "pthread.h")
@@ -337,6 +352,9 @@ elseif(WCRYPTO_BACKEND_OPENSSL)
     set(WCRYPTO_BACKEND_SODIUM OFF CACHE BOOL "Enable Sodium backend" FORCE)
     set(WCRYPTO_BACKEND_SOFTWARE OFF CACHE BOOL "Enable Software backend" FORCE)
     
+    set(PROJECT_REQUIRERS_OPENSSL TRUE CACHE INTERNAL "if any of the tunnels that require openssl is included, this will be set to true" FORCE)
+
+
     target_sources(ww PRIVATE 
         crypto/imp_openssl/aes256gcm.c
         crypto/imp_openssl/blake2s.c
@@ -538,7 +556,7 @@ set(LIBS ${LIBS} sodium)
 
 
 # Openssl Library
-if(PROJECT_REQUIRERS_OPENSSL OR WCRYPTO_BACKEND_OPENSSL)
+if(PROJECT_REQUIRERS_OPENSSL)
     if(NOT TARGET OpenSSL::SSL OR NOT TARGET OpenSSL::Crypto)
         set(WW_OPENSSL_CPM_OPTIONS
             "OPENSSL_CONFIGURE_OPTIONS no-shared\\\\;no-tests"
@@ -672,9 +690,81 @@ if(PROJECT_REQUIRERS_OPENSSL OR WCRYPTO_BACKEND_OPENSSL)
     )
 endif()
 
+# libuuid library
+set(LIBUUID_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libuuid)
 
+set(LIBUUID_SOURCES
+    ${LIBUUID_DIR}/unparse.c
+    ${LIBUUID_DIR}/unpack.c
+    ${LIBUUID_DIR}/pack.c
+    ${LIBUUID_DIR}/parse.c
+    ${LIBUUID_DIR}/isnull.c
+    ${LIBUUID_DIR}/copy.c
+    ${LIBUUID_DIR}/clear.c
+    ${LIBUUID_DIR}/compare.c
+)
 
+if(WIN32)
+    list(APPEND LIBUUID_SOURCES
+        ${LIBUUID_DIR}/windows_uuid.c
+    )
+else()
+    list(APPEND LIBUUID_SOURCES
+        ${LIBUUID_DIR}/gen_uuid.c
+        ${LIBUUID_DIR}/randutils.c
+        ${LIBUUID_DIR}/uuid_time.c
+    )
+endif()
 
+add_library(libuuid OBJECT
+    ${LIBUUID_SOURCES}
+)
+
+target_include_directories(libuuid
+    PRIVATE
+        ${LIBUUID_DIR}
+    PUBLIC
+        ${LIBUUID_DIR}/include
+)
+
+target_compile_definitions(libuuid
+    PRIVATE
+        $<$<BOOL:${HAVE_FCNTL_H}>:HAVE_FCNTL_H=1>
+        $<$<BOOL:${HAVE_FTRUNCATE}>:HAVE_FTRUNCATE=1>
+        $<$<BOOL:${HAVE_GETTIMEOFDAY}>:HAVE_GETTIMEOFDAY=1>
+        $<$<BOOL:${HAVE_INTTYPES_H}>:HAVE_INTTYPES_H=1>
+        $<$<BOOL:${HAVE_LIMITS_H}>:HAVE_LIMITS_H=1>
+        $<$<BOOL:${HAVE_MEMSET}>:HAVE_MEMSET=1>
+        $<$<BOOL:${HAVE_NETINET_IN_H}>:HAVE_NETINET_IN_H=1>
+        $<$<BOOL:${HAVE_SOCKET}>:HAVE_SOCKET=1>
+        $<$<BOOL:${HAVE_SRANDOM}>:HAVE_SRANDOM=1>
+        $<$<BOOL:${HAVE_STDINT_H}>:HAVE_STDINT_H=1>
+        $<$<BOOL:${HAVE_STDLIB_H}>:HAVE_STDLIB_H=1>
+        $<$<BOOL:${HAVE_STRING_H}>:HAVE_STRING_H=1>
+        $<$<BOOL:${HAVE_STRTOUL}>:HAVE_STRTOUL=1>
+        $<$<BOOL:${HAVE_SYS_FILE_H}>:HAVE_SYS_FILE_H=1>
+        $<$<BOOL:${HAVE_SYS_IOCTL_H}>:HAVE_SYS_IOCTL_H=1>
+        $<$<BOOL:${HAVE_SYS_SOCKET_H}>:HAVE_SYS_SOCKET_H=1>
+        $<$<BOOL:${HAVE_SYS_STAT_H}>:HAVE_SYS_STAT_H=1>
+        $<$<BOOL:${HAVE_SYS_TIME_H}>:HAVE_SYS_TIME_H=1>
+        $<$<BOOL:${HAVE_SYS_TYPES_H}>:HAVE_SYS_TYPES_H=1>
+        $<$<BOOL:${HAVE_UNISTD_H}>:HAVE_UNISTD_H=1>
+        $<$<BOOL:${HAVE_USLEEP}>:HAVE_USLEEP=1>
+)
+
+if(WIN32)
+    target_compile_definitions(libuuid PRIVATE
+        WIN32_LEAN_AND_MEAN
+        _WIN32_WINNT=0x0600
+    )
+    target_link_libraries(libuuid PUBLIC rpcrt4 bcrypt)
+elseif(UNIX)
+    target_compile_definitions(libuuid PRIVATE _DEFAULT_SOURCE)
+endif()
+
+set_target_properties(libuuid PROPERTIES UNITY_BUILD OFF)
+
+set(LIBS ${LIBS} libuuid)
 
 
 ################################################################################
