@@ -22,9 +22,139 @@
 #include "sodium.h"
 #endif
 
+
+
+
+
+#define MD5_DIGEST_SIZE          16  /* 128 bits */
+#define SHA1_DIGEST_SIZE         20  /* 160 bits */
+
+#define SHA224_DIGEST_SIZE       28  /* 224 bits */
+#define SHA256_DIGEST_SIZE       32  /* 256 bits */
+#define SHA384_DIGEST_SIZE       48  /* 384 bits */
+#define SHA512_DIGEST_SIZE       64  /* 512 bits */
+
+#define SHA3_224_DIGEST_SIZE     28
+#define SHA3_256_DIGEST_SIZE     32
+#define SHA3_384_DIGEST_SIZE     48
+#define SHA3_512_DIGEST_SIZE     64
+
+typedef struct {
+    uint8_t bytes[MD5_DIGEST_SIZE];
+} md5_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA1_DIGEST_SIZE];
+} sha1_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA224_DIGEST_SIZE];
+} sha224_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA256_DIGEST_SIZE];
+} sha256_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA384_DIGEST_SIZE];
+} sha384_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA512_DIGEST_SIZE];
+} sha512_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA3_224_DIGEST_SIZE];
+} sha3_224_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA3_256_DIGEST_SIZE];
+} sha3_256_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA3_384_DIGEST_SIZE];
+} sha3_384_hash_t;
+
+typedef struct {
+    uint8_t bytes[SHA3_512_DIGEST_SIZE];
+} sha3_512_hash_t;
+
+/**
+ * @brief Perform a single-shot MD5 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoMD5(md5_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA-1 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA1(sha1_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA-224 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA224(sha224_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA-256 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA256(sha256_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA-384 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA384(sha384_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA-512 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA512(sha512_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA3-224 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA3_224(sha3_224_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA3-256 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA3_256(sha3_256_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA3-384 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA3_384(sha3_384_hash_t *out, const unsigned char *in, size_t inlen);
+
+/**
+ * @brief Perform a single-shot SHA3-512 digest.
+ *
+ * @return 0 on success, non-zero on failure.
+ */
+int wCryptoSHA3_512(sha3_512_hash_t *out, const unsigned char *in, size_t inlen);
+
+
+
+
+
+
 #if defined (WCRYPTO_BACKEND_SODIUM) || defined (WCRYPTO_BACKEND_SOFTWARE)
-
-
 
 /**
  * @brief Context for BLAKE2s hash computations.
