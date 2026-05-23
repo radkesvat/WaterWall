@@ -4,10 +4,10 @@
 
 #include "socket_manager.h"
 
-#include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
 #include "stc/common.h"
+#include "threadsafe_generic_pool.h"
 #include "tunnel.h"
 #include "widle_table.h"
 #include "wloop.h"
@@ -51,19 +51,8 @@ typedef struct socket_manager_s
 {
     filters_t filters[kFilterLevels];
 
-    struct
-    {
-        generic_pool_t *pool; /* holds udp_payload_t */
-        wmutex_t        mutex;
-
-    } *udp_pools;
-
-    struct
-    {
-        generic_pool_t *pool; /* holds socket_accept_result_t */
-        wmutex_t        mutex;
-
-    } *tcp_pools;
+    threadsafe_generic_pool_t **udp_pools; /* holds udp_payload_t */
+    threadsafe_generic_pool_t **tcp_pools; /* holds socket_accept_result_t */
 
     master_pool_t *mp_udp;
     master_pool_t *mp_tcp;
@@ -146,9 +135,7 @@ void socketacceptresultDestroy(socket_accept_result_t *sar)
 {
     const wid_t wid = sar->wid;
 
-    mutexLock(&(socketmanager_gstate->tcp_pools[wid].mutex));
-    genericpoolReuseItem(socketmanager_gstate->tcp_pools[wid].pool, sar);
-    mutexUnlock(&(socketmanager_gstate->tcp_pools[wid].mutex));
+    threadsafegenericpoolReuseItem(socketmanager_gstate->tcp_pools[wid], sar);
 }
 
 /**
@@ -159,9 +146,7 @@ void socketacceptresultDestroy(socket_accept_result_t *sar)
  */
 static udp_payload_t *newUdpPayload(wid_t wid)
 {
-    mutexLock(&(socketmanager_gstate->udp_pools[wid].mutex));
-    udp_payload_t *item = genericpoolGetItem(socketmanager_gstate->udp_pools[wid].pool);
-    mutexUnlock(&(socketmanager_gstate->udp_pools[wid].mutex));
+    udp_payload_t *item = threadsafegenericpoolGetItem(socketmanager_gstate->udp_pools[wid]);
     return item;
 }
 
@@ -169,9 +154,7 @@ void udppayloadDestroy(udp_payload_t *upl)
 {
     const wid_t wid = upl->wid;
 
-    mutexLock(&(socketmanager_gstate->udp_pools[wid].mutex));
-    genericpoolReuseItem(socketmanager_gstate->udp_pools[wid].pool, upl);
-    mutexUnlock(&(socketmanager_gstate->udp_pools[wid].mutex));
+    threadsafegenericpoolReuseItem(socketmanager_gstate->udp_pools[wid], upl);
 }
 
 /**
@@ -401,9 +384,7 @@ static void distributeSocket(void *io, socket_filter_t *filter, uint16_t local_p
 
     wid_t wid = getNextDistributionWID();
 
-    mutexLock(&(socketmanager_gstate->tcp_pools[wid].mutex));
-    socket_accept_result_t *result = genericpoolGetItem(socketmanager_gstate->tcp_pools[wid].pool);
-    mutexUnlock(&(socketmanager_gstate->tcp_pools[wid].mutex));
+    socket_accept_result_t *result = threadsafegenericpoolGetItem(socketmanager_gstate->tcp_pools[wid]);
 
     *result = (socket_accept_result_t) {
         .io             = io,
@@ -1020,9 +1001,7 @@ static void noUdpSocketConsumerFound(const udp_payload_t upl)
  */
 static void postUdpPayload(udp_payload_t post_pl, socket_filter_t *filter)
 {
-    mutexLock(&(socketmanager_gstate->udp_pools[post_pl.wid].mutex));
-    udp_payload_t *pl = genericpoolGetItem(socketmanager_gstate->udp_pools[post_pl.wid].pool);
-    mutexUnlock(&(socketmanager_gstate->udp_pools[post_pl.wid].mutex));
+    udp_payload_t *pl = threadsafegenericpoolGetItem(socketmanager_gstate->udp_pools[post_pl.wid]);
     *pl = post_pl;
 
     pl->tunnel           = filter->tunnel;
@@ -1500,18 +1479,11 @@ static void initializeSocketManagerPools(void)
 
     for (unsigned int i = 0; i < getTotalWorkersCount(); ++i)
     {
-        socketmanager_gstate->udp_pools[i].pool = genericpoolCreateWithCapacity(
+        socketmanager_gstate->udp_pools[i] = threadsafegenericpoolCreateWithCapacity(
             socketmanager_gstate->mp_udp, (8) + RAM_PROFILE, allocUdpPayloadPoolHandle, destroyUdpPayloadPoolHandle);
-        mutexInit(&(socketmanager_gstate->udp_pools[i].mutex));
 
-        socketmanager_gstate->tcp_pools[i].pool = genericpoolCreateWithCapacity(
+        socketmanager_gstate->tcp_pools[i] = threadsafegenericpoolCreateWithCapacity(
             socketmanager_gstate->mp_tcp, (8) + RAM_PROFILE, allocTcpResultObjectPoolHandle, destroyTcpResultObjectPoolHandle);
-        mutexInit(&(socketmanager_gstate->tcp_pools[i].mutex));
-
-#ifdef DEBUG
-        socketmanager_gstate->udp_pools[i].pool->no_thread_check = true;
-        socketmanager_gstate->tcp_pools[i].pool->no_thread_check = true;
-#endif
     }
 }
 
@@ -1636,10 +1608,8 @@ static void destroyPools(void)
 {
     for (unsigned int i = 0; i < getTotalWorkersCount(); ++i)
     {
-        mutexDestroy(&(socketmanager_gstate->udp_pools[i].mutex));
-        genericpoolDestroy(socketmanager_gstate->udp_pools[i].pool);
-        mutexDestroy(&(socketmanager_gstate->tcp_pools[i].mutex));
-        genericpoolDestroy(socketmanager_gstate->tcp_pools[i].pool);
+        threadsafegenericpoolDestroy(socketmanager_gstate->udp_pools[i]);
+        threadsafegenericpoolDestroy(socketmanager_gstate->tcp_pools[i]);
     }
 
     memoryFree(socketmanager_gstate->udp_pools);
