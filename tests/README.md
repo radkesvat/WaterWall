@@ -90,6 +90,10 @@ Practical rule:
 - `udp_listener_packet_bridge_roundtrip`
   Verifies that `PacketsToStream -> UdpConnector -> UdpListener -> StreamToPackets` preserves packet integrity across
   a real UDP loopback transport while multiple workers create independent UDP peers against one shared listener socket.
+- `udp_connector_packet_balance_mode_roundtrip`
+  Verifies that `UdpConnector` accepts `balance-mode: "packet"` with multiple weighted `lvh.me` domain targets,
+  resolves those targets through DNS, and preserves packet integrity while balancing packets across several UDP loopback
+  listener ports.
 - `ping_new_ip_icmp_roundtrip`
   Verifies `PingClient` and `PingServer` through a paired `Bridge`, including outer IPv4/ICMP wrapping, ICMP payload
   XOR, roundup padding, and PingServer's downstream decapsulation direction.

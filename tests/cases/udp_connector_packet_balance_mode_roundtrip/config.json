@@ -1,0 +1,140 @@
+{
+  "name": "udp-connector-packet-balance-mode-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "packet-stateless": true,
+        "packet-start-immediately": true,
+        "packet-start-delay-ms": 100
+      },
+      "next": "packets-to-stream"
+    },
+    {
+      "name": "packets-to-stream",
+      "type": "PacketsToStream",
+      "next": "udp-connector"
+    },
+    {
+      "name": "udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "balance-mode": "packet",
+        "domain-strategy": 3,
+        "addresses": [
+          {
+            "address": "lvh.me",
+            "port": 42142,
+            "weight": 1
+          },
+          {
+            "address": "lvh.me",
+            "port": 42143,
+            "weight": 1
+          },
+          {
+            "address": "lvh.me",
+            "port": 42144,
+            "weight": 1
+          },
+          {
+            "address": "lvh.me",
+            "port": 42145,
+            "weight": 1
+          }
+        ],
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "udp-listener-42142",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42142
+      },
+      "next": "stream-to-packets-42142"
+    },
+    {
+      "name": "stream-to-packets-42142",
+      "type": "StreamToPackets",
+      "next": "tester-server-42142"
+    },
+    {
+      "name": "tester-server-42142",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-stateless": true
+      }
+    },
+    {
+      "name": "udp-listener-42143",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42143
+      },
+      "next": "stream-to-packets-42143"
+    },
+    {
+      "name": "stream-to-packets-42143",
+      "type": "StreamToPackets",
+      "next": "tester-server-42143"
+    },
+    {
+      "name": "tester-server-42143",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-stateless": true
+      }
+    },
+    {
+      "name": "udp-listener-42144",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42144
+      },
+      "next": "stream-to-packets-42144"
+    },
+    {
+      "name": "stream-to-packets-42144",
+      "type": "StreamToPackets",
+      "next": "tester-server-42144"
+    },
+    {
+      "name": "tester-server-42144",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-stateless": true
+      }
+    },
+    {
+      "name": "udp-listener-42145",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42145
+      },
+      "next": "stream-to-packets-42145"
+    },
+    {
+      "name": "stream-to-packets-42145",
+      "type": "StreamToPackets",
+      "next": "tester-server-42145"
+    },
+    {
+      "name": "tester-server-42145",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-stateless": true
+      }
+    }
+  ]
+}
