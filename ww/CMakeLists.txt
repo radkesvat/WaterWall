@@ -65,6 +65,8 @@ add_library(ww STATIC
     utils/cacert.c
     utils/md5.c
     utils/sha1.c
+    objects/user.c
+    objects/users.c
     
     # Event handling
     event/wevent.c
@@ -948,9 +950,17 @@ message(STATUS "CMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
 # Build type definitions
 target_compile_definitions(ww PUBLIC 
     $<$<CONFIG:Debug>:DEBUG=1>
-    $<$<CONFIG:RelWithDebInfo>:NDEBUG=1;RELEASEWITHDEBUGINFO=1>
+    $<$<CONFIG:RelWithDebInfo>:RELEASEWITHDEBUGINFO=1>
     $<$<CONFIG:Release>:NDEBUG=1;RELEASE=1>
 )
+
+# CMake's default RelWithDebInfo flags define NDEBUG. Undefine it after those
+# flags so assert() remains active in release-with-debug builds.
+if(MSVC)
+    target_compile_options(ww PUBLIC $<$<CONFIG:RelWithDebInfo>:/UNDEBUG>)
+else()
+    target_compile_options(ww PUBLIC $<$<CONFIG:RelWithDebInfo>:-UNDEBUG>)
+endif()
 
 # Optional features
 if(ENABLE_UDS)
