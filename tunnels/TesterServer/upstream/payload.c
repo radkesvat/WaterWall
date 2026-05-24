@@ -10,6 +10,12 @@ void testerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ts->packet_mode)
     {
         ls->response_to_next = false;
+        if (ts->packet_stateless)
+        {
+            testerserverHandlePacketStatelessRequestPayload(t, l, buf);
+            return;
+        }
+
         testerserverHandlePacketRequestPayload(t, l, buf);
         return;
     }

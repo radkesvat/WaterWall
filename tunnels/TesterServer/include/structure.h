@@ -29,6 +29,7 @@ typedef enum testerserver_packet_ipv4_transport_e
 typedef struct testerserver_tstate_s
 {
     bool        packet_mode;
+    bool        packet_stateless;
     bool        packet_init_on_start;
     bool        streaming_response;
     bool        packet_ipv4_mode;
@@ -96,5 +97,6 @@ sbuf_t  *testerserverCreatePayload(tunnel_t *t, line_t *l, uint8_t chunk_index, 
 bool     testerserverVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_index, testerserver_direction_e direction,
                                  uint32_t *bad_offset, uint8_t *expected, uint8_t *actual);
 void     testerserverHandlePacketRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void     testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void     testerserverResponseSendTask(tunnel_t *t, line_t *l);
 void     testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstate_t *ls);

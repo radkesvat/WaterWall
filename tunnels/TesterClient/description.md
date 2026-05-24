@@ -195,6 +195,12 @@ Packet mode with synthetic IPv4 packets:
   When `true`, early downstream payload is accepted and verified normally. This is useful for validating genuinely
   bidirectional transports where response bytes may arrive while the request side is still active.
 
+- `packet-stateless` `(boolean)`
+  Only meaningful when `packet-mode=true`.
+  When `true`, packet-mode responses may arrive out of order. The client identifies response chunks by their packet size
+  and completes once each expected chunk has arrived exactly once.
+  Default: `false`
+
 - `chunk-count` `(integer)`
   Limits the request and response sequence to the first N documented chunks for the selected mode.
   Default: `11`

@@ -623,6 +623,86 @@ void testerserverHandlePacketRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     testerserverScheduleResponseSend(t, l, ls);
 }
 
+static bool testerserverInferPacketChunkIndex(tunnel_t *t, sbuf_t *buf, uint8_t *chunk_index_out)
+{
+    const uint8_t  chunk_count = testerserverGetChunkCount(t);
+    const uint32_t payload_len = sbufGetLength(buf);
+
+    for (uint8_t i = 0; i < chunk_count; ++i)
+    {
+        if (payload_len == testerserverGetChunkSize(t, i))
+        {
+            *chunk_index_out = i;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool testerserverVerifyStatelessPacketChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_index,
+                                                   uint32_t *bad_offset, uint8_t *expected, uint8_t *actual)
+{
+    testerserver_lstate_t *ls = lineGetState(l, t);
+    uint8_t                original_flow_id = ls->flow_id;
+
+    if (chunk_index == 0)
+    {
+        return testerserverVerifyChunk(t, l, buf, chunk_index, kTesterServerDirectionRequest, bad_offset, expected,
+                                       actual);
+    }
+
+    for (uint16_t flow_id = 0; flow_id < 254U; ++flow_id)
+    {
+        ls->flow_id = (uint8_t) flow_id;
+        if (testerserverVerifyChunk(t, l, buf, chunk_index, kTesterServerDirectionRequest, bad_offset, expected,
+                                    actual))
+        {
+            return true;
+        }
+    }
+
+    ls->flow_id = original_flow_id;
+    return false;
+}
+
+void testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    testerserver_lstate_t *ls = lineGetState(l, t);
+    uint32_t               bad_offset = 0;
+    uint8_t                expected = 0;
+    uint8_t                actual = 0;
+    uint8_t                chunk_index = 0;
+
+    if (! testerserverInferPacketChunkIndex(t, buf, &chunk_index))
+    {
+        lineReuseBuffer(l, buf);
+        testerserverFail(t, l, "received packet-mode stateless request with unexpected packet size");
+        return;
+    }
+
+    if (! testerserverVerifyStatelessPacketChunk(t, l, buf, chunk_index, &bad_offset, &expected, &actual))
+    {
+        LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
+             "expected=0x%02x actual=0x%02x)",
+             (unsigned int) lineGetWID(l), (unsigned int) chunk_index, (unsigned int) sbufGetLength(buf),
+             (unsigned int) testerserverGetChunkSize(t, chunk_index), (unsigned int) bad_offset,
+             (unsigned int) expected, (unsigned int) actual);
+        lineReuseBuffer(l, buf);
+        terminateProgram(1);
+        return;
+    }
+
+    sbuf_t *response_buf =
+        testerserverCreatePayload(t, l, chunk_index, 0, testerserverGetChunkSize(t, chunk_index),
+                                  kTesterServerDirectionResponse);
+
+    lineReuseBuffer(l, buf);
+    ls->request_rx_index += 1;
+    bufferqueuePushBack(&ls->response_queue, response_buf);
+    testerserverScheduleResponseSend(t, l, ls);
+}
+
 void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstate_t *ls)
 {
     testerserver_tstate_t *ts = tunnelGetState(t);

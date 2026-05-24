@@ -9,6 +9,8 @@ void testerclientLinestateInitialize(testerclient_lstate_t *ls, buffer_pool_t *p
         .request_tx_index       = 0,
         .response_rx_index      = 0,
         .flow_id                = 0,
+        .request_tx_offset      = 0,
+        .packet_stateless_response_mask = 0,
         .est_received           = false,
         .request_paused         = false,
         .request_send_scheduled = false,

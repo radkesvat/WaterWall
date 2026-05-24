@@ -40,6 +40,7 @@ typedef struct testerclient_tstate_s
     atomic_uint                 completed_workers;
     bool                        allow_early_response;
     bool                        packet_mode;
+    bool                        packet_stateless;
     bool                        packet_start_immediately;
     bool                        packet_ipv4_mode;
     uint32_t                    packet_ipv4_source_addr;
@@ -61,6 +62,7 @@ typedef struct testerclient_lstate_s
     uint8_t response_rx_index;
     uint8_t flow_id;
     uint32_t request_tx_offset;
+    uint32_t packet_stateless_response_mask;
 
     bool    est_received;
     bool    request_paused;

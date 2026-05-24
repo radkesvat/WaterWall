@@ -197,6 +197,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
 
     getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
+    getBoolFromJsonObjectOrDefault(&ts->packet_stateless, settings, "packet-stateless", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_start_immediately, settings, "packet-start-immediately", false);
     getIntFromJsonObjectOrDefault(&packet_start_delay_ms, settings, "packet-start-delay-ms", 0);
     getIntFromJsonObjectOrDefault(&chunk_count, settings, "chunk-count", kTesterClientChunkCount);
@@ -223,6 +224,13 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     if ((ts->packet_start_immediately || ts->packet_start_delay_ms > 0) && ! ts->packet_mode)
     {
         LOGF("TesterClient: packet-start-immediately and packet-start-delay-ms require packet-mode=true");
+        testerclientTunnelDestroy(t);
+        return NULL;
+    }
+
+    if (ts->packet_stateless && ! ts->packet_mode)
+    {
+        LOGF("TesterClient: settings->packet-stateless requires packet-mode=true");
         testerclientTunnelDestroy(t);
         return NULL;
     }

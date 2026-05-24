@@ -175,6 +175,12 @@ Packet mode with synthetic IPv4 packets:
   When `true`, response chunks become eligible to send as soon as the matching request chunks are verified. This is
   useful for validating bidirectional transports where the response must overlap the request.
 
+- `packet-stateless` `(boolean)`
+  Only meaningful when `packet-mode=true`.
+  When `true`, packet-mode requests may arrive out of order or as a subset of the full sequence. The server identifies
+  the request chunk by packet size, verifies the deterministic payload, and sends the matching response packet.
+  Default: `false`
+
 - `chunk-count` `(integer)`
   Limits the request and response sequence to the first N documented chunks for the selected mode.
   Default: `11`
