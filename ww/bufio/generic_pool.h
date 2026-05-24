@@ -89,6 +89,7 @@ static inline void genericpoolDebugCheckThreadAccess(generic_pool_t *pool)
     if (UNLIKELY(pool->tid != getTID()))
     {
         printError("GenericPool: Access from wrong thread %d, expected %d", getTID(), pool->tid);
+        assert(false);
         terminateProgram(1);
     }
 }
