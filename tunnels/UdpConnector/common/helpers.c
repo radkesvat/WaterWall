@@ -36,8 +36,10 @@ void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
     tunnel_t *t       = ls->tunnel;
     line_t   *l       = ls->line;
     sbuf_t   *payload = buf;
+    udpconnector_tstate_t *ts = tunnelGetState(t);
 
-    if (! udpconnectorSockAddrEquals(wioGetPeerAddrU(io), &ls->peer_addr))
+    if (ts->balance_mode == kUdpConnectorBalanceModeConnection &&
+        ! udpconnectorSockAddrEquals(wioGetPeerAddrU(io), &ls->peer_addr))
     {
         if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
         {
@@ -64,7 +66,6 @@ void udpconnectorOnRecvFrom(wio_t *io, sbuf_t *buf)
             return;
         }
     }
-    udpconnector_tstate_t *ts = tunnelGetState(ls->tunnel);
 
     idletableKeepIdleItemForAtleast(ts->idle_table, ls->idle_handle, kUdpKeepExpireTime);
 
@@ -121,6 +122,18 @@ void udpconnectorOnIdleConnectionExpire(idle_item_t *idle_udp)
     tunnelPrevDownStreamFinish(t, l);
 }
 
+size_t udpconnectorQueuedWriteBytes(udpconnector_lstate_t *ls)
+{
+    size_t total = bufferqueueGetBufLen(&ls->pause_queue);
+
+    for (uint32_t i = 0; i < ls->packet_destinations_count; ++i)
+    {
+        total += bufferqueueGetBufLen(&ls->packet_destinations[i].pending_queue);
+    }
+
+    return total;
+}
+
 void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
 {
     if (ls->io == NULL)
@@ -138,4 +151,33 @@ void udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
         sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
         wioWrite(ls->io, buf);
     }
+}
+
+bool udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls)
+{
+    if (ls->io == NULL)
+    {
+        return true;
+    }
+
+    tunnel_t *t = ls->tunnel;
+    line_t   *l = ls->line;
+
+    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+    {
+        if (wioIsClosed(ls->io))
+        {
+            return true;
+        }
+
+        sbuf_t *buf = bufferqueuePopFront(&ls->pause_queue);
+        udpconnectorTunnelUpStreamPayload(t, l, buf);
+
+        if (! lineIsAlive(l))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }

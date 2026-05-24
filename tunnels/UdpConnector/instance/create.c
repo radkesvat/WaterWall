@@ -23,6 +23,39 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy = &udpconnectorTunnelDestroy;
 }
 
+static bool parseBalanceMode(udpconnector_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *jbalance_mode = cJSON_GetObjectItemCaseSensitive(settings, "balance-mode");
+
+    state->balance_mode = kUdpConnectorBalanceModeConnection;
+
+    if (jbalance_mode == NULL)
+    {
+        return true;
+    }
+
+    if (! cJSON_IsString(jbalance_mode) || jbalance_mode->valuestring == NULL)
+    {
+        LOGF("JSON Error: UdpConnector->settings->balance-mode (string field) : expected \"connection\" or \"packet\"");
+        return false;
+    }
+
+    if (stringCompare(jbalance_mode->valuestring, "connection") == 0)
+    {
+        state->balance_mode = kUdpConnectorBalanceModeConnection;
+        return true;
+    }
+
+    if (stringCompare(jbalance_mode->valuestring, "packet") == 0)
+    {
+        state->balance_mode = kUdpConnectorBalanceModePacket;
+        return true;
+    }
+
+    LOGF("JSON Error: UdpConnector->settings->balance-mode (string field) : expected \"connection\" or \"packet\"");
+    return false;
+}
+
 static bool parseDestinationWeight(const cJSON *settings, int index, uint32_t *weight)
 {
     const cJSON *jweight = cJSON_GetObjectItemCaseSensitive(settings, "weight");
@@ -306,6 +339,10 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
     getStringFromJsonObject(&(state->interface_name), settings, "interface");
     getStringFromJsonObject(&(state->source_ip), settings, "source-ip");
+    if (! parseBalanceMode(state, settings))
+    {
+        return NULL;
+    }
     if (state->source_ip != NULL && ! addressIsIp(state->source_ip))
     {
         LOGF("JSON Error: UdpConnector->settings->source-ip (string field) : The value must be a valid IP address");

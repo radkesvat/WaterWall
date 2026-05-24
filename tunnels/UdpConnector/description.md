@@ -41,6 +41,7 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
   "name": "udp-out",
   "type": "UdpConnector",
   "settings": {
+    "balance-mode": "packet",
     "addresses": [
       {
         "address": "1.1.1.1",
@@ -57,6 +58,8 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
   }
 }
 ```
+
+`balance-mode` is not a required JSON field. It stays in `settings`, outside the `addresses` array.
 
 ## Required JSON Fields
 
@@ -113,9 +116,18 @@ This node acts like a chain end. Its downstream entry callbacks are disabled bec
   `address` and `port` inside each element support the same forms as the legacy top-level fields.
 
   `weight` must be a positive integer.
-  Each new line chooses exactly one element from the array, with probability proportional to its weight.
+  By default, each new line chooses exactly one element from the array, with probability proportional to its weight.
 
 ## Optional `settings` Fields
+
+- `balance-mode` `(string)`
+  Controls when weighted destination selection happens.
+  This field is optional and defaults to `"connection"`.
+  It must be placed directly inside `settings`, not inside each `addresses` element.
+
+  Possible values:
+  - `"connection"`: choose one target during upstream `init`; all packets on that WaterWall line keep using that target.
+  - `"packet"`: choose a target for each upstream payload packet before sending it.
 
 - `reuseaddr` `(boolean)`
   Enables `SO_REUSEADDR` on the created UDP socket.
@@ -170,11 +182,16 @@ The destination port can come from:
 This makes `UdpConnector` useful after nodes that fill routing context dynamically.
 
 When `addresses` is used, the same selection rules apply inside each array element.
-The connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
+In the default `"connection"` balance mode, the connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
+In `"packet"` balance mode, the weighted choice happens for every upstream payload packet, but each destination object's resolved context is cached on the WaterWall line after first use.
+
+`"packet"` mode still uses one UDP socket per WaterWall line, so all selected packet destinations must be compatible with that socket's address family. For example, do not mix IPv4-only and IPv6-only targets in one packet-balanced list unless the selected socket family can send to all of them.
 
 ### Domain resolution
 
 If the selected address is a domain name, resolution is submitted asynchronously on the line's worker during upstream `init`. Payloads that arrive before resolution completes are kept in a bounded pre-connect queue. If resolution fails, the line is finished immediately.
+
+In `"packet"` balance mode, domain names inside packet-balanced destination objects are resolved lazily per destination object on each WaterWall line. The first packet that selects an unresolved domain starts one async DNS request for that destination and packets for that destination wait in a bounded queue. After the destination is resolved, that resolved address context is reused for later packets on the same line; there is no time-based DNS cache and no per-packet DNS request.
 
 ### Establishment semantics
 
@@ -192,6 +209,9 @@ So from the previous node's point of view, this tunnel becomes established lazil
 
 - Previous node to remote peer: upstream payload -> UDP send
 - Remote peer to previous node: UDP receive -> downstream payload
+
+In `"connection"` balance mode, inbound datagrams are accepted only from the single selected remote peer.
+In `"packet"` balance mode, inbound datagrams are accepted from the connector socket so replies from any target selected by packet balancing can return even if packets are answered out of order.
 
 ### Pause behavior
 
@@ -215,7 +235,8 @@ If the UDP line expires, the socket is closed and downstream `finish` is sent to
 
 ### Random destination port selection
 
-If `port` uses `random(x,y)`, the destination port is chosen once during line initialization. After that, the line keeps using that selected port for its lifetime.
+If `port` uses `random(x,y)` with `"connection"` balance mode, the destination port is chosen once during line initialization. After that, the line keeps using that selected port for its lifetime.
+With `"packet"` balance mode, a `random(x,y)` port is selected when that destination object is first materialized on the line, then reused for later packets that choose the same destination object.
 
 ## Notes And Caveats
 
@@ -223,4 +244,4 @@ If `port` uses `random(x,y)`, the destination port is chosen once during line in
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused reads drop inbound datagrams instead of buffering them.
 - Downstream `est` is only triggered after the first packet is received from the remote side.
-- Inbound datagrams from unexpected peers are ignored.
+- Inbound datagrams from unexpected peers are ignored in `"connection"` mode. In `"packet"` mode, datagrams received on the connector socket are accepted so replies from any packet-balanced target can return.

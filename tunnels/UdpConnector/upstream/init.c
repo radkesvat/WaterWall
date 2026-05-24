@@ -2,11 +2,11 @@
 
 #include "loggers/network_logger.h"
 
-static const udpconnector_destination_t *selectWeightedDestination(const udpconnector_tstate_t *ts)
+uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t *ts)
 {
     if (ts->destinations_count == 0)
     {
-        return NULL;
+        return 0;
     }
 
     assert(ts->destinations_weight_total > 0);
@@ -19,11 +19,21 @@ static const udpconnector_destination_t *selectWeightedDestination(const udpconn
         cumulative += ts->destinations[i].weight;
         if (pick < cumulative)
         {
-            return &ts->destinations[i];
+            return i;
         }
     }
 
-    return &ts->destinations[ts->destinations_count - 1];
+    return ts->destinations_count - 1;
+}
+
+const udpconnector_destination_t *udpconnectorSelectWeightedDestination(const udpconnector_tstate_t *ts)
+{
+    if (ts->destinations_count == 0)
+    {
+        return NULL;
+    }
+
+    return &ts->destinations[udpconnectorSelectWeightedDestinationIndex(ts)];
 }
 
 static const char *getSourceBindIp(const udpconnector_tstate_t *ts, char *interface_ip, size_t interface_ip_len)
@@ -132,8 +142,9 @@ static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
     return sockfd;
 }
 
-static void setupDestinationAddress(const dynamic_value_t *dest_addr_selected, const address_context_t *constant_dest_addr,
-                                    address_context_t *dest_ctx, address_context_t *src_ctx)
+void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_selected,
+                                         const address_context_t *constant_dest_addr,
+                                         address_context_t *dest_ctx, address_context_t *src_ctx)
 {
     switch (dest_addr_selected->status)
     {
@@ -149,9 +160,10 @@ static void setupDestinationAddress(const dynamic_value_t *dest_addr_selected, c
     }
 }
 
-static void setupDestinationPort(const dynamic_value_t *dest_port_selected, const address_context_t *constant_dest_addr,
-                                 uint16_t random_dest_port_x, uint16_t random_dest_port_y, address_context_t *dest_ctx,
-                                 address_context_t *src_ctx)
+void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
+                                      const address_context_t *constant_dest_addr,
+                                      uint16_t random_dest_port_x, uint16_t random_dest_port_y,
+                                      address_context_t *dest_ctx, address_context_t *src_ctx)
 {
     switch (dest_port_selected->status)
     {
@@ -199,8 +211,8 @@ static bool udpconnectorDnsFamilyPreferredByStrategy(int family, int strategy)
     }
 }
 
-static const dns_resolved_addr_t *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
-                                                                    int strategy)
+const dns_resolved_addr_t *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
+                                                            int strategy)
 {
     const dns_resolved_addr_t *fallback = NULL;
 
@@ -225,7 +237,7 @@ static const dns_resolved_addr_t *udpconnectorSelectResolvedAddress(const dns_re
     return fallback;
 }
 
-static bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_resolved_addr_t *resolved)
+bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_resolved_addr_t *resolved)
 {
     if (resolved == NULL || (resolved->family != AF_INET && resolved->family != AF_INET6) ||
         (uintmax_t) resolved->addrlen > (uintmax_t) sizeof(sockaddr_u))
@@ -245,6 +257,23 @@ static bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const 
     dest_ctx->type_ip         = kCCTypeIp;
     dest_ctx->domain_resolved = true;
     return true;
+}
+
+static void udpconnectorSeedPacketDestinationCache(udpconnector_tstate_t *ts, udpconnector_lstate_t *ls,
+                                                   const address_context_t *dest_ctx)
+{
+    if (ts->balance_mode != kUdpConnectorBalanceModePacket || ls->packet_destinations == NULL ||
+        ls->packet_initial_destination_index >= ls->packet_destinations_count)
+    {
+        return;
+    }
+
+    udpconnector_packet_destination_t *cache = &ls->packet_destinations[ls->packet_initial_destination_index];
+    if (! cache->has_context)
+    {
+        addresscontextAddrCopy(&cache->dest_ctx, dest_ctx);
+        cache->has_context = true;
+    }
 }
 
 static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
@@ -272,6 +301,7 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
 
     ls->io        = io;
     ls->peer_addr = addr;
+    udpconnectorSeedPacketDestinationCache(ts, ls, dest_ctx);
     weventSetUserData(io, ls);
 
     ls->idle_handle =
@@ -306,15 +336,31 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
         wioRead(io);
     }
 
-    udpconnectorFlushWriteQueue(ls);
-
     const bool resume_prev = ls->queue_pause_sent;
-    ls->queue_pause_sent   = false;
     ls->write_paused      = false;
 
-    if (resume_prev)
+    lineLock(l);
+    bool alive = true;
+    if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
+        alive = udpconnectorReplayWriteQueue(ls);
+    }
+    else
+    {
+        udpconnectorFlushWriteQueue(ls);
+    }
+
+    if (alive && resume_prev && udpconnectorQueuedWriteBytes(ls) == 0 && ! ls->write_paused && ! ls->resolving)
+    {
+        ls->queue_pause_sent = false;
         tunnelPrevDownStreamResume(t, l);
+        alive = lineIsAlive(l);
+    }
+    lineUnlock(l);
+
+    if (! alive)
+    {
+        return false;
     }
 
     return true;
@@ -456,9 +502,16 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const address_context_t *constant_dest_addr = &ts->constant_dest_addr;
     uint16_t random_dest_port_x = ts->random_dest_port_x;
     uint16_t random_dest_port_y = ts->random_dest_port_y;
-    const udpconnector_destination_t *selected_destination = selectWeightedDestination(ts);
+    uint32_t selected_destination_index = udpconnectorSelectWeightedDestinationIndex(ts);
+    const udpconnector_destination_t *selected_destination =
+        ts->destinations_count > 0 ? &ts->destinations[selected_destination_index] : NULL;
 
     udpconnectorLinestateInitialize(ls, t, l, NULL);
+    if (ts->balance_mode == kUdpConnectorBalanceModePacket)
+    {
+        addresscontextAddrCopy(&ls->packet_base_dest_ctx, dest_ctx);
+        ls->packet_initial_destination_index = selected_destination_index;
+    }
 
     if (selected_destination != NULL)
     {
@@ -469,9 +522,9 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         random_dest_port_y = selected_destination->random_dest_port_y;
     }
 
-    setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, src_ctx);
-    setupDestinationPort(dest_port_selected, constant_dest_addr, random_dest_port_x, random_dest_port_y, dest_ctx,
-                         src_ctx);
+    udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, src_ctx);
+    udpconnectorSetupDestinationPort(dest_port_selected, constant_dest_addr, random_dest_port_x, random_dest_port_y,
+                                     dest_ctx, src_ctx);
 
     if (! addresscontextHasPort(dest_ctx))
     {
