@@ -66,7 +66,7 @@ typedef void *ssl_ctx_t; ///> SSL_CTX
 
 ssl_ctx_t sslCtxNew(ssl_ctx_opt_t *param)
 {
-    opensslGlobalInit();
+    assert(GSTATE.flag_openssl_initialized); // always done, manually checking is datarace
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_CTX *ctx = SSL_CTX_new(SSLv23_method());
