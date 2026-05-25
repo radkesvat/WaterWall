@@ -653,6 +653,89 @@ static bool usersCommitNewUserLocked(users_t *users, user_t *slot)
     return true;
 }
 
+static bool usersHashBytesConflict(bool a_valid, const void *a, bool b_valid, const void *b, size_t len)
+{
+    return a_valid && b_valid && wCryptoEqual(a, b, len);
+}
+
+static users_add_result_t usersValidateNewUserNoFatalLocked(const users_t *users, const user_t *user)
+{
+    if (user == NULL || ! user->initialized || ! user->sha256_pass_valid || ! userPasswordDataValid((user_t *) user))
+    {
+        return kUsersAddResultInvalidUser;
+    }
+    if (usersFindByNameLocked(users, user->name, NULL) != NULL)
+    {
+        return kUsersAddResultDuplicateName;
+    }
+
+    for (size_t i = 0; i < users->count; ++i)
+    {
+        user_t *existing = usersGetAtLocked(users, i);
+
+        if (existing->sha256_pass_valid && usersSha256Equal(existing->sha256_pass.bytes, user->sha256_pass.bytes))
+        {
+            return kUsersAddResultDuplicateSHA256;
+        }
+        if (existing->hash_pass == user->hash_pass)
+        {
+            return kUsersAddResultHashConflict;
+        }
+        if (usersHashBytesConflict(existing->sha224_pass_valid, existing->sha224_pass.bytes, user->sha224_pass_valid,
+                                   user->sha224_pass.bytes, SHA224_DIGEST_SIZE) ||
+            usersHashBytesConflict(existing->sha384_pass_valid, existing->sha384_pass.bytes, user->sha384_pass_valid,
+                                   user->sha384_pass.bytes, SHA384_DIGEST_SIZE) ||
+            usersHashBytesConflict(existing->sha512_pass_valid, existing->sha512_pass.bytes, user->sha512_pass_valid,
+                                   user->sha512_pass.bytes, SHA512_DIGEST_SIZE))
+        {
+            return kUsersAddResultHashConflict;
+        }
+    }
+
+    return kUsersAddResultOk;
+}
+
+users_add_result_t usersAddUserChecked(users_t *users, const user_t *user)
+{
+    user_t            *slot;
+    users_add_result_t result;
+
+    if (users == NULL || user == NULL)
+    {
+        return kUsersAddResultInvalidArgument;
+    }
+
+    rwlockWriteLock(&users->lock);
+
+    result = usersValidateNewUserNoFatalLocked(users, user);
+    if (result != kUsersAddResultOk)
+    {
+        rwlockWriteUnlock(&users->lock);
+        return result;
+    }
+    if (! usersReserveLocked(users, users->count + 1U))
+    {
+        rwlockWriteUnlock(&users->lock);
+        return kUsersAddResultAllocationFailed;
+    }
+
+    slot = usersStorageAtLocked(users, users->slot_count);
+    if (! userCopy(slot, user))
+    {
+        rwlockWriteUnlock(&users->lock);
+        return kUsersAddResultAllocationFailed;
+    }
+    if (! usersCommitNewUserLocked(users, slot))
+    {
+        userDestroy(slot);
+        rwlockWriteUnlock(&users->lock);
+        return kUsersAddResultCommitFailed;
+    }
+
+    rwlockWriteUnlock(&users->lock);
+    return kUsersAddResultOk;
+}
+
 static bool usersChangePasswordLocked(users_t *users, user_t *user, const char *password)
 {
     user_t                 *generic_collision_user = NULL;
@@ -1112,6 +1195,32 @@ bool usersAddUserFromJson(users_t *users, const cJSON *json)
     return result;
 }
 
+users_add_result_t usersAddUserFromJsonChecked(users_t *users, const cJSON *json)
+{
+    user_t             user;
+    users_add_result_t result;
+
+    if (users == NULL)
+    {
+        return kUsersAddResultInvalidArgument;
+    }
+    if (! cJSON_IsObject(json))
+    {
+        return kUsersAddResultInvalidJson;
+    }
+
+    memoryZero(&user, sizeof(user));
+    if (! userCreateFromJson(&user, json))
+    {
+        LOGE("Users: failed to create user from JSON entry");
+        return kUsersAddResultInvalidUser;
+    }
+
+    result = usersAddUserChecked(users, &user);
+    userDestroy(&user);
+    return result;
+}
+
 bool usersFeedJson(users_t *users, const cJSON *json)
 {
     size_t old_count;
@@ -1265,6 +1374,57 @@ user_t *usersLookupBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_S
 const user_t *usersLookupBySHA256Const(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE])
 {
     return usersLookupBySHA256((users_t *) users, sha256);
+}
+
+cJSON *usersUserToJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE])
+{
+    users_t *self = (users_t *) users;
+    user_t  *user = NULL;
+    cJSON   *json = NULL;
+
+    if (users == NULL || sha256 == NULL)
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&self->lock);
+    user = usersSHA256TableLookupLocked(self, sha256);
+    if (user != NULL)
+    {
+        json = userToJson(user);
+    }
+    rwlockReadUnlock(&self->lock);
+    return json;
+}
+
+cJSON *usersUserToJsonByPassword(const users_t *users, const char *password)
+{
+    users_password_probe_t password_probe;
+    users_t               *self = (users_t *) users;
+    user_t                *user = NULL;
+    cJSON                 *json = NULL;
+
+    if (users == NULL || password == NULL)
+    {
+        return NULL;
+    }
+
+    memoryZero(&password_probe, sizeof(password_probe));
+    if (! usersPasswordProbeCreate(&password_probe, password))
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&self->lock);
+    user = usersLookupByPasswordLocked(self, &password_probe, password);
+    if (user != NULL)
+    {
+        json = userToJson(user);
+    }
+    rwlockReadUnlock(&self->lock);
+
+    usersPasswordProbeDestroy(&password_probe);
+    return json;
 }
 
 user_t *usersLookupByPassword(users_t *users, const char *password)

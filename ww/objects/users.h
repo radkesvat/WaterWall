@@ -27,7 +27,10 @@
  * - No public function requires the caller to already hold users_t.lock.
  *
  * Fatal behavior:
- * - SHA-256 lookup-key collisions terminate the program.
+ * - The legacy usersAddUser()/usersFeedJson() insertion path terminates on a
+ *   duplicate SHA-256 lookup key, which protects startup database consistency.
+ * - usersAddUserChecked()/usersAddUserFromJsonChecked() report duplicate keys
+ *   to the caller instead, for runtime request handling.
  * - Calling generic-hash lookup after collision disabled that lookup terminates
  *   the program.
  *
@@ -63,6 +66,19 @@ typedef struct user_update_s
     user_stat_t      stats;
     int              record_stat_interval_ms;
 } user_update_t;
+
+typedef enum users_add_result_e
+{
+    kUsersAddResultOk = 0,
+    kUsersAddResultInvalidArgument,
+    kUsersAddResultInvalidJson,
+    kUsersAddResultInvalidUser,
+    kUsersAddResultDuplicateName,
+    kUsersAddResultDuplicateSHA256,
+    kUsersAddResultHashConflict,
+    kUsersAddResultAllocationFailed,
+    kUsersAddResultCommitFailed
+} users_add_result_t;
 
 enum
 {
@@ -103,7 +119,9 @@ bool usersCreate(users_t *users);
 void usersDestroy(users_t *users);
 
 bool usersAddUser(users_t *users, const user_t *user);
+users_add_result_t usersAddUserChecked(users_t *users, const user_t *user);
 bool usersAddUserFromJson(users_t *users, const cJSON *json);
+users_add_result_t usersAddUserFromJsonChecked(users_t *users, const cJSON *json);
 bool  usersFeedJson(users_t *users, const cJSON *json);
 cJSON *usersToJson(const users_t *users);
 bool  usersClear(users_t *users);
@@ -115,6 +133,8 @@ const user_t *usersLookupByHashConst(const users_t *users, hash_t hash);
 
 user_t       *usersLookupBySHA256(users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
 const user_t *usersLookupBySHA256Const(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
+cJSON        *usersUserToJsonBySHA256(const users_t *users, const uint8_t sha256[SHA256_DIGEST_SIZE]);
+cJSON        *usersUserToJsonByPassword(const users_t *users, const char *password);
 
 /*
  * Looks up by plaintext password. The helper tries generic hash lookup when it
