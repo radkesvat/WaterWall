@@ -27,6 +27,7 @@ typedef struct packetreceiver_tstate_s
     uint32_t                      report_after_ms;
     wmutex_t                      state_mutex;
     bool                          report_written;
+    bool                          report_in_progress;
 } packetreceiver_tstate_t;
 
 typedef struct packetreceiver_lstate_s

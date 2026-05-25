@@ -5,61 +5,26 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+enum
+{
+    kPacketReceiverFileBufferSize = 4096
+};
+
 static void packetreceiverFormatIpv4(char *dest, size_t size, uint32_t host_addr)
 {
     stringNPrintf(dest, size, "%u.%u.%u.%u", (host_addr >> 24U) & 0xFFU, (host_addr >> 16U) & 0xFFU,
                   (host_addr >> 8U) & 0xFFU, host_addr & 0xFFU);
 }
 
-static void packetreceiverAppendBytes(sbuf_t **report, const char *data, size_t len)
+static bool packetreceiverWriteFormat(FILE *file, const char *fmt, ...)
 {
-    if (len == 0)
-    {
-        return;
-    }
-
-    if (*report == NULL)
-    {
-        *report = sbufCreateWithPadding((uint32_t) len, 0);
-    }
-
-    const size_t old_len = (size_t) sbufGetLength(*report);
-    *report = sbufReserveSpace(*report, (uint32_t) (old_len + len));
-    sbufSetLength(*report, (uint32_t) (old_len + len));
-    memoryCopy(sbufGetMutablePtr(*report) + old_len, data, len);
-}
-
-static void packetreceiverAppendText(sbuf_t **report, const char *text)
-{
-    packetreceiverAppendBytes(report, text, stringLength(text));
-}
-
-static void packetreceiverAppendFormat(sbuf_t **report, const char *fmt, ...)
-{
-    char    stack_buf[1024];
     va_list args;
 
     va_start(args, fmt);
-    int written = vsnprintf(stack_buf, sizeof(stack_buf), fmt, args);
+    const int written = vfprintf(file, fmt, args);
     va_end(args);
 
-    if (written < 0)
-    {
-        return;
-    }
-
-    if ((size_t) written >= sizeof(stack_buf))
-    {
-        char *heap_buf = memoryAllocate((size_t) written + 1U);
-        va_start(args, fmt);
-        vsnprintf(heap_buf, (size_t) written + 1U, fmt, args);
-        va_end(args);
-        packetreceiverAppendBytes(report, heap_buf, (size_t) written);
-        memoryFree(heap_buf);
-        return;
-    }
-
-    packetreceiverAppendBytes(report, stack_buf, (size_t) written);
+    return written >= 0;
 }
 
 static bool packetreceiverResolveSourceIndex(const packetreceiver_tstate_t *state, uint32_t src_addr_network,
@@ -126,12 +91,15 @@ static void packetreceiverBuildHistogramBar(char *bar, size_t bar_size, uint64_t
 static bool packetreceiverWriteReport(tunnel_t *t)
 {
     packetreceiver_tstate_t *state = tunnelGetState(t);
-    sbuf_t                  *report = sbufCreateWithPadding(4096, 0);
+    char                     file_buffer[kPacketReceiverFileBufferSize];
+    FILE                    *file = fopen(state->output_file, "wb");
 
-    if (report == NULL)
+    if (file == NULL)
     {
         return false;
     }
+
+    setvbuf(file, file_buffer, _IOFBF, sizeof(file_buffer));
 
     uint64_t total_received = 0;
     uint64_t total_lost     = 0;
@@ -156,25 +124,28 @@ static bool packetreceiverWriteReport(tunnel_t *t)
     state->total_received_packets = total_received;
     state->total_lost_packets     = total_lost;
 
-    packetreceiverAppendText(&report, "PacketReceiver report\n");
-    packetreceiverAppendFormat(&report, "output-file: %s\n", state->output_file);
-    packetreceiverAppendFormat(&report, "source-ip-count: %llu\n", (unsigned long long) state->source_count);
-    packetreceiverAppendFormat(&report, "expected-packets-per-ip: %u\n",
-                               (unsigned int) state->expected_packets_per_ip);
-    packetreceiverAppendFormat(&report, "expected-total-packets: %llu\n",
-                               (unsigned long long) state->total_expected_packets);
-    packetreceiverAppendFormat(&report, "received-total-packets: %llu\n",
-                               (unsigned long long) state->total_received_packets);
-    packetreceiverAppendFormat(&report, "lost-total-packets: %llu\n", (unsigned long long) state->total_lost_packets);
-    packetreceiverAppendFormat(&report, "unexpected-packets: %llu\n", (unsigned long long) state->unexpected_packets);
-    packetreceiverAppendText(&report, "\nsource-ip | expected | received | lost | loss-percent | histogram\n");
+    bool ok = true;
+    ok = ok && packetreceiverWriteFormat(file, "PacketReceiver report\n");
+    ok = ok && packetreceiverWriteFormat(file, "output-file: %s\n", state->output_file);
+    ok = ok && packetreceiverWriteFormat(file, "source-ip-count: %llu\n", (unsigned long long) state->source_count);
+    ok = ok && packetreceiverWriteFormat(file, "expected-packets-per-ip: %u\n",
+                                         (unsigned int) state->expected_packets_per_ip);
+    ok = ok && packetreceiverWriteFormat(file, "expected-total-packets: %llu\n",
+                                         (unsigned long long) state->total_expected_packets);
+    ok = ok && packetreceiverWriteFormat(file, "received-total-packets: %llu\n",
+                                         (unsigned long long) state->total_received_packets);
+    ok = ok && packetreceiverWriteFormat(file, "lost-total-packets: %llu\n",
+                                         (unsigned long long) state->total_lost_packets);
+    ok = ok && packetreceiverWriteFormat(file, "unexpected-packets: %llu\n",
+                                         (unsigned long long) state->unexpected_packets);
+    ok = ok && packetreceiverWriteFormat(file, "\nsource-ip | expected | received | lost | loss-percent | histogram\n");
 
     index = 0;
-    for (uint32_t ri = 0; ri < state->source_range_count; ++ri)
+    for (uint32_t ri = 0; ok && ri < state->source_range_count; ++ri)
     {
         const packetreceiver_source_range_t *range = &state->source_ranges[ri];
 
-        for (uint64_t i = 0; i < range->count; ++i)
+        for (uint64_t i = 0; ok && i < range->count; ++i)
         {
             const uint64_t source_index = index++;
             const uint64_t received     = state->received_counts[source_index];
@@ -187,19 +158,22 @@ static bool packetreceiverWriteReport(tunnel_t *t)
             packetreceiverFormatIpv4(ipbuf, sizeof(ipbuf), range->base_host + (uint32_t) i);
             packetreceiverBuildHistogramBar(bar, sizeof(bar), expected, received);
 
-            packetreceiverAppendFormat(&report, "%s | %llu | %llu | %llu | %.2f%% | [%s]\n", ipbuf,
-                                       (unsigned long long) expected, (unsigned long long) received,
-                                       (unsigned long long) lost, loss_percent, bar);
+            ok = packetreceiverWriteFormat(file, "%s | %llu | %llu | %llu | %.2f%% | [%s]\n", ipbuf,
+                                           (unsigned long long) expected, (unsigned long long) received,
+                                           (unsigned long long) lost, loss_percent, bar);
         }
     }
 
-    packetreceiverAppendText(&report, "\nsummary\n");
-    packetreceiverAppendFormat(&report, "received-total-packets: %llu\n", (unsigned long long) total_received);
-    packetreceiverAppendFormat(&report, "lost-total-packets: %llu\n", (unsigned long long) total_lost);
-    packetreceiverAppendFormat(&report, "expected-total-packets: %llu\n", (unsigned long long) state->total_expected_packets);
+    ok = ok && packetreceiverWriteFormat(file, "\nsummary\n");
+    ok = ok && packetreceiverWriteFormat(file, "received-total-packets: %llu\n", (unsigned long long) total_received);
+    ok = ok && packetreceiverWriteFormat(file, "lost-total-packets: %llu\n", (unsigned long long) total_lost);
+    ok = ok && packetreceiverWriteFormat(file, "expected-total-packets: %llu\n",
+                                         (unsigned long long) state->total_expected_packets);
 
-    const bool ok = writeFile(state->output_file, (const char *) sbufGetRawPtr(report), sbufGetLength(report));
-    sbufDestroy(report);
+    if (fclose(file) != 0)
+    {
+        ok = false;
+    }
     return ok;
 }
 
@@ -238,6 +212,7 @@ void packetreceiverPrepareRuntime(tunnel_t *t)
 
     state->total_expected_packets = state->source_count * (uint64_t) state->expected_packets_per_ip;
     state->report_written         = false;
+    state->report_in_progress     = false;
 }
 
 void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -256,25 +231,20 @@ void packetreceiverHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if (match)
+    mutexLock(&state->state_mutex);
+    if (! state->report_written)
     {
-        mutexLock(&state->state_mutex);
-        if (! state->report_written)
+        if (match)
         {
             state->received_counts[source_index] += 1ULL;
             state->total_received_packets += 1ULL;
         }
-        mutexUnlock(&state->state_mutex);
-    }
-    else
-    {
-        mutexLock(&state->state_mutex);
-        if (! state->report_written)
+        else
         {
             state->unexpected_packets += 1ULL;
         }
-        mutexUnlock(&state->state_mutex);
     }
+    mutexUnlock(&state->state_mutex);
 
     lineReuseBuffer(l, buf);
 }
@@ -292,8 +262,9 @@ void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
     mutexLock(&state->state_mutex);
     if (! state->report_written)
     {
-        state->report_written = true;
-        should_write          = true;
+        state->report_written      = true;
+        state->report_in_progress = true;
+        should_write               = true;
     }
     mutexUnlock(&state->state_mutex);
 
@@ -302,7 +273,13 @@ void packetreceiverFinalizeReport(tunnel_t *t, bool terminate_after_write)
         return;
     }
 
-    if (! packetreceiverWriteReport(t))
+    const bool write_ok = packetreceiverWriteReport(t);
+
+    mutexLock(&state->state_mutex);
+    state->report_in_progress = false;
+    mutexUnlock(&state->state_mutex);
+
+    if (! write_ok)
     {
         LOGF("PacketReceiver: failed to write report to \"%s\"", state->output_file);
         terminateProgram(1);

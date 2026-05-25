@@ -5,10 +5,29 @@
 void packetreceiverTunnelDestroy(tunnel_t *t)
 {
     packetreceiver_tstate_t *state = tunnelGetState(t);
+    bool                     should_finalize;
 
-    if (! state->report_written)
+    mutexLock(&state->state_mutex);
+    should_finalize = ! state->report_written;
+    mutexUnlock(&state->state_mutex);
+
+    if (should_finalize)
     {
         packetreceiverFinalizeReport(t, false);
+    }
+
+    while (true)
+    {
+        mutexLock(&state->state_mutex);
+        const bool report_in_progress = state->report_in_progress;
+        mutexUnlock(&state->state_mutex);
+
+        if (! report_in_progress)
+        {
+            break;
+        }
+
+        wwSleepMS(1);
     }
 
     if (state->source_ranges != NULL)
