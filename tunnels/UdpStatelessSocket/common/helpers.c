@@ -512,7 +512,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
         }
 
-        (void) udpstatelesssocketStartDnsResolve(t, l, buf, dest_ctx);
+        discard udpstatelesssocketStartDnsResolve(t, l, buf, dest_ctx);
         return;
     }
 

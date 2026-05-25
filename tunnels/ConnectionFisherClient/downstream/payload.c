@@ -40,5 +40,5 @@ void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_
         return;
     }
 
-    (void) withLineLockedWithBuf(ls->main_line, tunnelPrevDownStreamPayload, t, buf);
+    discard withLineLockedWithBuf(ls->main_line, tunnelPrevDownStreamPayload, t, buf);
 }

@@ -4,5 +4,5 @@
 
 void keepaliveserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    (void) keepaliveserverSendNormalFrameDownstream(t, l, buf);
+    discard keepaliveserverSendNormalFrameDownstream(t, l, buf);
 }

@@ -67,7 +67,7 @@ static void asyncdnsProcessFd(dns_resolver_t *r, ares_socket_t fd, unsigned int 
     }
 
     ares_fd_events_t ev = {.fd = fd, .events = fd_events};
-    (void) ares_process_fds(r->channel, &ev, 1, ARES_PROCESS_FLAG_NONE);
+    discard ares_process_fds(r->channel, &ev, 1, ARES_PROCESS_FLAG_NONE);
     asyncdnsRefreshTimer(r);
 }
 
@@ -231,7 +231,7 @@ static void asyncdnsTimerCallback(wtimer_t *timer)
         return;
     }
 
-    (void) ares_process_fds(r->channel, NULL, 0, ARES_PROCESS_FLAG_NONE);
+    discard ares_process_fds(r->channel, NULL, 0, ARES_PROCESS_FLAG_NONE);
     asyncdnsRefreshTimer(r);
 }
 

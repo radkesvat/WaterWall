@@ -651,7 +651,7 @@ static void splitCloseFromTransport(tunnel_t *t, line_t *l, bool finish_sender)
         if (dls->h1_response_headers_sent && ! dls->fin_sent)
         {
             dls->fin_sent = true;
-            (void) httpserverTransportSendHttp1FinalChunk(t, download_line);
+            discard httpserverTransportSendHttp1FinalChunk(t, download_line);
         }
         if (lineIsAlive(download_line))
         {

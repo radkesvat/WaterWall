@@ -164,19 +164,19 @@ static void loggertunnelWriteFilePayload(loggertunnel_tstate_t *state, const uin
             return;
         }
 
-        (void) loggertunnelWriteBytesToPath(path, data, len, false);
+        discard loggertunnelWriteBytesToPath(path, data, len, false);
         mutexUnlock(&state->file_mutex);
         return;
     }
 
     if (state->output_mode == kLoggerTunnelOutputModeSingleFile)
     {
-        (void) loggertunnelWriteBytesToPath(state->all_path, data, len, true);
+        discard loggertunnelWriteBytesToPath(state->all_path, data, len, true);
         mutexUnlock(&state->file_mutex);
         return;
     }
 
-    (void) loggertunnelWriteBytesToPath(is_upstream ? state->up_path : state->down_path, data, len, true);
+    discard loggertunnelWriteBytesToPath(is_upstream ? state->up_path : state->down_path, data, len, true);
     mutexUnlock(&state->file_mutex);
 }
 

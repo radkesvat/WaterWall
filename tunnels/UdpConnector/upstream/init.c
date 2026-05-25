@@ -445,7 +445,7 @@ static void udpconnectorOnDnsResolved(void *userdata, int status, const char *er
 
     memoryFree(request);
 
-    (void) udpconnectorBeginSocket(t, l, ls);
+    discard udpconnectorBeginSocket(t, l, ls);
     lineUnlock(l);
 }
 

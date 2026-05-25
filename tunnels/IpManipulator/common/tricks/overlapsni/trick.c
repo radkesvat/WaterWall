@@ -908,7 +908,7 @@ static void overlapsnitrickSendHeldThenCurrentNormal(tunnel_t *t, ipmanipulator_
     {
         if (alive)
         {
-            (void) overlapsnitrickSendUpstreamDirect(t, line, current_buf);
+            discard overlapsnitrickSendUpstreamDirect(t, line, current_buf);
         }
         else
         {

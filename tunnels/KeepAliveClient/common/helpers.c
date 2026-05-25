@@ -243,7 +243,7 @@ void keepaliveclientWorkerTimerCallback(wtimer_t *timer)
             continue;
         }
 
-        (void) keepaliveclientSendPingFrame(t, lines[i]);
+        discard keepaliveclientSendPingFrame(t, lines[i]);
     }
 
     if (lines != NULL)

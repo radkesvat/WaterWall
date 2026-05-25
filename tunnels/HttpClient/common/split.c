@@ -318,7 +318,7 @@ void httpclientSplitUpStreamFinish(tunnel_t *t, line_t *l)
     if (upload_line != NULL && lineIsAlive(upload_line))
     {
         lineLock(upload_line);
-        (void) httpclientTransportSendHttp1FinalChunk(t, upload_line);
+        discard httpclientTransportSendHttp1FinalChunk(t, upload_line);
         if (lineIsAlive(upload_line))
         {
             httpclientSplitDestroyCreatedLine(t, upload_line, true);

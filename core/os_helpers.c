@@ -41,7 +41,7 @@ void increaseFileLimit(void)
 
 void increaseFileLimit(void)
 {
-    (void) (0);
+    discard (0);
 }
 
 #endif

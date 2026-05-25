@@ -189,7 +189,7 @@ static void ptcFakeDnsClearEntryName(ptc_fake_dns_t *dns, ptc_fake_dns_entry_t *
     }
 
     ptc_fake_dns_name_key_t key = {.name = entry->domain, .len = entry->domain_len};
-    (void) ptc_fake_dns_name_map_t_erase(&dns->names, key);
+    discard ptc_fake_dns_name_map_t_erase(&dns->names, key);
     memoryFree(entry->domain);
     entry->domain     = NULL;
     entry->domain_len = 0;
@@ -248,7 +248,7 @@ static uint32_t ptcFakeDnsGetOrCreate(ptc_fake_dns_t *dns, const char *domain, u
     ptcFakeDnsLruPushTail(dns, entry);
 
     ptc_fake_dns_name_key_t key = {.name = entry->domain, .len = entry->domain_len};
-    (void) ptc_fake_dns_name_map_t_insert(&dns->names, key, entry);
+    discard ptc_fake_dns_name_map_t_insert(&dns->names, key, entry);
     return entry->fake_addr_network;
 }
 

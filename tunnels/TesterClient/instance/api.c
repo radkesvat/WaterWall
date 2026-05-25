@@ -4,7 +4,7 @@
 
 api_result_t testerclientTunnelApi(tunnel_t *instance, sbuf_t *message)
 {
-    (void) instance;
+    discard instance;
     bufferpoolReuseBuffer(getWorkerBufferPool(getWID()), message);
     return (api_result_t) {.result_code = kApiResultOk};
 }

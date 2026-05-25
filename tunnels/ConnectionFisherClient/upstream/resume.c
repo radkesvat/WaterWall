@@ -8,7 +8,7 @@ void connectionfisherclientTunnelUpStreamResume(tunnel_t *t, line_t *l)
 
     if (ls->role == kConnectionFisherClientRoleMain && ls->selected_child != NULL)
     {
-        (void) withLineLocked(ls->selected_child, tunnelNextUpStreamResume, t);
+        discard withLineLocked(ls->selected_child, tunnelNextUpStreamResume, t);
         return;
     }
 

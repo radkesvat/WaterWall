@@ -16,5 +16,5 @@ void muxclientTunnelUpStreamResume(tunnel_t *t, line_t *child_l)
         return;
     }
 
-    (void) muxclientFlushChildPending(t, parent_ls->l, parent_ls, child_l, child_ls, false);
+    discard muxclientFlushChildPending(t, parent_ls->l, parent_ls, child_l, child_ls, false);
 }

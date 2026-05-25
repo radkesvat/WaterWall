@@ -251,7 +251,7 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
 
     if (asyncdnsStatusIsShutdown(status))
     {
-        (void) udpconnectorPacketDestinationFail(t, line, ls, cache);
+        discard udpconnectorPacketDestinationFail(t, line, ls, cache);
         lineUnlock(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
@@ -436,7 +436,7 @@ static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *
 
         if (! cache->resolving && ! udpconnectorStartPacketDnsResolve(t, l, ls, cache, destination_index))
         {
-            (void) udpconnectorPacketDestinationFail(t, l, ls, cache);
+            discard udpconnectorPacketDestinationFail(t, l, ls, cache);
         }
 
         return kUdpConnectorPacketPeerConsumed;

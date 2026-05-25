@@ -378,7 +378,7 @@ static void tcpconnectorOnDnsResolved(void *userdata, int status, const char *er
     uint64_t outbound_ip_range = request->outbound_ip_range;
     memoryFree(request);
 
-    (void) tcpconnectorBeginConnect(t, l, ls, outbound_ip_range);
+    discard tcpconnectorBeginConnect(t, l, ls, outbound_ip_range);
     lineUnlock(l);
 }
 

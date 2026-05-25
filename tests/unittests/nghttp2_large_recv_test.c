@@ -38,9 +38,9 @@ static uint8_t pattern_byte(size_t offset)
 static ssize_t read_payload_callback(nghttp2_session *session, int32_t stream_id, uint8_t *buf, size_t length,
                                      uint32_t *data_flags, nghttp2_data_source *source, void *user_data)
 {
-    (void) session;
-    (void) stream_id;
-    (void) user_data;
+    discard session;
+    discard stream_id;
+    discard user_data;
 
     client_data_t *client_data = (client_data_t *) source->ptr;
     size_t         remaining   = kPayloadLen - client_data->offset;
@@ -63,9 +63,9 @@ static ssize_t read_payload_callback(nghttp2_session *session, int32_t stream_id
 static int on_data_chunk_recv_callback(nghttp2_session *session, uint8_t flags, int32_t stream_id,
                                        const uint8_t *data, size_t len, void *user_data)
 {
-    (void) session;
-    (void) flags;
-    (void) stream_id;
+    discard session;
+    discard flags;
+    discard stream_id;
 
     server_data_t *server_data = (server_data_t *) user_data;
 

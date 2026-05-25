@@ -529,7 +529,7 @@ void ptcOpenLineTask(tunnel_t *t, line_t *l)
 {
     ptc_lstate_t *ls = lineGetState(l, t);
 
-    (void) ptcEnsureNextInit(t, l, ls);
+    discard ptcEnsureNextInit(t, l, ls);
 }
 
 void ptcDeliverPayloadTask(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -660,7 +660,7 @@ void ptcCloseLineTask(tunnel_t *t, line_t *l)
 
 void ptcResumeUpstreamTask(tunnel_t *t, line_t *l)
 {
-    (void) withLineLocked(l, tunnelNextUpStreamResume, t);
+    discard withLineLocked(l, tunnelNextUpStreamResume, t);
 }
 
 void ptcUdpIdleTask(tunnel_t *t, line_t *l)

@@ -99,6 +99,6 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (send_pause)
     {
-        (void) withLineLocked(l, tunnelNextUpStreamPause, t);
+        discard withLineLocked(l, tunnelNextUpStreamPause, t);
     }
 }

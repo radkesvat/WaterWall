@@ -161,7 +161,7 @@ void lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t)
     masterpoolGetItems(GSTATE.masterpool_messages, (const void **) &(msg), 1, NULL);
 
     *msg = (line_task_msg_no_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = NULL};
-    (void) linePostScheduledTask(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, line, msg);
+    discard linePostScheduledTask(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskNoBuf, line, msg);
 }
 
 void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_t *t, sbuf_t *buf)
@@ -174,7 +174,7 @@ void lineScheduleTaskWithBuf(line_t *const line, LineTaskFnWithBuf task, tunnel_
 
     *msg =
         (line_task_msg_with_buf_t) {.callback = task, .arg1 = (void *) t, .arg2 = (void *) line, .arg3 = (void *) buf};
-    (void) linePostScheduledTask(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, line, msg);
+    discard linePostScheduledTask(lineGetWID(line), (WorkerMessageCallback) lineRunScheduledtaskWithBuf, line, msg);
 }
 
 void lineScheduleDelayedTask(line_t *const line, LineTaskFnNoBuf task, uint32_t delay_ms, tunnel_t *t)
