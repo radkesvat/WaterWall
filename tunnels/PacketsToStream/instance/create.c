@@ -2,6 +2,46 @@
 
 #include "loggers/network_logger.h"
 
+static bool packetstostreamLoadPacketValidationLevel(packetstostream_packet_validation_level_t *level,
+                                                     const cJSON *settings)
+{
+    const cJSON *jlevel = cJSON_GetObjectItemCaseSensitive(settings, "packet-validation-level");
+
+    *level = kPacketsToStreamPacketValidationNone;
+
+    if (jlevel == NULL)
+    {
+        return true;
+    }
+
+    if (! cJSON_IsString(jlevel) || jlevel->valuestring == NULL)
+    {
+        LOGF("JSON Error: PacketsToStream->settings->packet-validation-level (string field) : expected none, loose, or hard");
+        return false;
+    }
+
+    if (stringCompare(jlevel->valuestring, "none") == 0)
+    {
+        *level = kPacketsToStreamPacketValidationNone;
+        return true;
+    }
+
+    if (stringCompare(jlevel->valuestring, "loose") == 0)
+    {
+        *level = kPacketsToStreamPacketValidationLoose;
+        return true;
+    }
+
+    if (stringCompare(jlevel->valuestring, "hard") == 0)
+    {
+        *level = kPacketsToStreamPacketValidationHard;
+        return true;
+    }
+
+    LOGF("JSON Error: PacketsToStream->settings->packet-validation-level (string field) : expected none, loose, or hard");
+    return false;
+}
+
 static bool packetstostreamLoadSettings(packetstostream_tstate_t *ts, const cJSON *settings)
 {
     int interval_ms  = kSensitiveDefaultIntervalMs;
@@ -20,6 +60,11 @@ static bool packetstostreamLoadSettings(packetstostream_tstate_t *ts, const cJSO
     if (tolerance_ms < 1)
     {
         LOGF("JSON Error: PacketsToStream->settings->tolerance-ms (int field) : expected a value >= 1");
+        return false;
+    }
+
+    if (! packetstostreamLoadPacketValidationLevel(&ts->packet_validation_level, settings))
+    {
         return false;
     }
 
@@ -56,6 +101,7 @@ tunnel_t *packetstostreamTunnelCreate(node_t *node)
     ts->worker_timeout_timers = NULL;
     ts->interval_ms  = kSensitiveDefaultIntervalMs;
     ts->tolerance_ms = kSensitiveDefaultToleranceMs;
+    ts->packet_validation_level = kPacketsToStreamPacketValidationNone;
     ts->sensitive_mode = false;
 
     if (! packetstostreamLoadSettings(ts, node->node_settings_json))

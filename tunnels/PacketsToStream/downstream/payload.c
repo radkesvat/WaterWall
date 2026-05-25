@@ -57,6 +57,12 @@ void packetstostreamTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             continue;
         }
 
+        if (! packetstostreamValidatePacket(ts->packet_validation_level, packet_buffer, "downstream"))
+        {
+            lineReuseBuffer(l, packet_buffer);
+            continue;
+        }
+
         tunnelPrevDownStreamPayload(t, packet_line, packet_buffer);
     }
 }

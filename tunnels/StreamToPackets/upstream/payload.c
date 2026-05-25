@@ -45,6 +45,12 @@ void streamtopacketsTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             continue;
         }
 
+        if (! streamtopacketsValidatePacket(ts->packet_validation_level, packet_buffer, "upstream"))
+        {
+            lineReuseBuffer(l, packet_buffer);
+            continue;
+        }
+
         tunnelNextUpStreamPayload(t, packet_line, packet_buffer);
 
         if (! lineIsAlive(l))

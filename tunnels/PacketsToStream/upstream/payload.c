@@ -15,13 +15,7 @@ void packetstostreamTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetMutablePtr(buf);
-
-    if (l->recalculate_checksum && IPH_V(ipheader) == 4)
-    {
-        calcFullPacketChecksum(sbufGetMutablePtr(buf));
-        l->recalculate_checksum = false;
-    }
+    packetstostreamRecalculateChecksumIfRequested(l, buf);
 
     uint32_t packet_length = sbufGetLength(buf);
 

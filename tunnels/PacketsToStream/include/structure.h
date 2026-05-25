@@ -2,13 +2,21 @@
 
 #include "wwapi.h"
 
+typedef enum packetstostream_packet_validation_level_e
+{
+    kPacketsToStreamPacketValidationNone = 0,
+    kPacketsToStreamPacketValidationLoose,
+    kPacketsToStreamPacketValidationHard
+} packetstostream_packet_validation_level_t;
+
 typedef struct packetstostream_tstate_s
 {
-    wtimer_t **worker_timers;
-    wtimer_t **worker_timeout_timers;
-    uint32_t   interval_ms;
-    uint32_t   tolerance_ms;
-    bool       sensitive_mode;
+    wtimer_t                                 **worker_timers;
+    wtimer_t                                 **worker_timeout_timers;
+    uint32_t                                   interval_ms;
+    uint32_t                                   tolerance_ms;
+    packetstostream_packet_validation_level_t packet_validation_level;
+    bool                                       sensitive_mode;
 } packetstostream_tstate_t;
 
 typedef struct packetstostream_lstate_s
@@ -65,6 +73,9 @@ void packetstostreamLinestateDestroy(packetstostream_lstate_t *ls);
 bool    packetstostreamReadStreamIsOverflowed(buffer_stream_t *read_stream);
 bool    packetstostreamTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out);
 bool    packetstostreamFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte);
+bool    packetstostreamValidatePacket(packetstostream_packet_validation_level_t level, sbuf_t *packet,
+                                       const char *direction);
+void    packetstostreamRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf);
 void    packetstostreamRecreateOutputLineTask(tunnel_t *t, line_t *packet_line);
 void    packetstostreamHeartbeatTimerCallback(wtimer_t *timer);
 void    packetstostreamTimeoutTimerCallback(wtimer_t *timer);

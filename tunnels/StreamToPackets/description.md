@@ -70,6 +70,41 @@ There are no required tunnel-specific settings in the current implementation.
 - `sensitive-mode` `(boolean)`
   Enables sensitive-mode heartbeat handling for framed 5-byte control packets.
 
+- `packet-validation-level` `(string, default: "none")`
+  Optional packet validation mode. See the Packet Validation section for usage and caveats.
+
+## Packet Validation
+
+`packet-validation-level` controls validation of packets decoded from incoming upstream framed data. Downstream packets
+that `StreamToPackets` receives from the packet side are not validated before framing.
+
+Supported values:
+
+- `"none"`: default. No packet validation is performed.
+- `"loose"`: drops non-IPv4 packets and malformed IPv4 packets. Checks include minimum IPv4 header size, version,
+  IPv4 header length, and IPv4 total length matching the received frame payload length.
+- `"hard"`: applies `loose` checks, verifies the IPv4 header checksum, and verifies TCP, UDP, and ICMP checksums for
+  non-fragmented packets. IPv4 UDP packets with checksum `0` are accepted because that is valid for IPv4 UDP.
+
+Example:
+
+```json
+"settings": {
+  "packet-validation-level": "hard"
+}
+```
+
+When validation drops a decoded upstream packet, `StreamToPackets` writes a warning log with the validation level and
+reason.
+
+`IpManipulator` tricks such as `bit-transport` and source/destination port ghosting append bytes by increasing the IPv4
+total-length field. Chained tricks are therefore valid as long as each transformed packet's IPv4 total length matches the
+framed packet length and any requested checksum recalculation has happened before validation.
+
+For fragmented IPv4 packets in `"hard"` mode, the IPv4 header checksum is verified. TCP/UDP/ICMP checksums are skipped
+for fragments because transport checksums can only be fully verified after reassembly.
+
+
 ## Detailed Behavior
 
 ### Active data line per worker

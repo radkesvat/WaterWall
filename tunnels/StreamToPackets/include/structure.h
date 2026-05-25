@@ -2,9 +2,17 @@
 
 #include "wwapi.h"
 
+typedef enum streamtopackets_packet_validation_level_e
+{
+    kStreamToPacketsPacketValidationNone = 0,
+    kStreamToPacketsPacketValidationLoose,
+    kStreamToPacketsPacketValidationHard
+} streamtopackets_packet_validation_level_t;
+
 typedef struct streamtopackets_tstate_s
 {
-    bool sensitive_mode;
+    streamtopackets_packet_validation_level_t packet_validation_level;
+    bool                                      sensitive_mode;
 } streamtopackets_tstate_t;
 
 typedef struct streamtopackets_lstate_s
@@ -56,4 +64,7 @@ void streamtopacketsLinestateReset(streamtopackets_lstate_t *ls);
 bool streamtopacketsReadStreamIsOverflowed(buffer_stream_t *read_stream);
 bool streamtopacketsTryReadIPv4Packet(buffer_stream_t *stream, sbuf_t **packet_out);
 bool streamtopacketsFrameMatchesFillByte(const sbuf_t *packet, uint8_t fill_byte);
+bool streamtopacketsValidatePacket(streamtopackets_packet_validation_level_t level, sbuf_t *packet,
+                                   const char *direction);
+void streamtopacketsRecalculateChecksumIfRequested(line_t *l, sbuf_t *buf);
 bool streamtopacketsSendSensitivePong(tunnel_t *t, line_t *stream_line);
