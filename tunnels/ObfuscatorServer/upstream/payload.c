@@ -6,14 +6,14 @@ void obfuscatorserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     obfuscatorserver_tstate_t *ts = tunnelGetState(t);
 
-    if (ts->tls_record_header && ! obfuscatorserverStripTlsRecordHeader(l, buf))
-    {
-        return;
-    }
-
     if (ts->method == kObfuscatorMethodXor)
     {
         obfuscatorserverApplyXor(t, l, buf);
+    }
+
+    if (ts->tls_record_header && ! obfuscatorserverWrapTlsRecordHeader(l, &buf))
+    {
+        return;
     }
 
     if (l == tunnelchainGetWorkerPacketLine(tunnelGetChain(t), lineGetWID(l)))
