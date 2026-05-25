@@ -4,6 +4,11 @@
     {
       "name": "tester-client",
       "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "packet-start-immediately": true,
+        "chunk-count": 9
+      },
       "next": "obfuscator-client"
     },
     {
@@ -14,6 +19,23 @@
         "xor_key": 60,
         "skip": "none",
         "tls_record_header": true
+      },
+      "next": "obfuscator-client-bridge"
+    },
+    {
+      "name": "obfuscator-client-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "obfuscator-server-bridge"
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-init-on-start": true,
+        "chunk-count": 9
       },
       "next": "obfuscator-server"
     },
@@ -26,11 +48,14 @@
         "skip": "none",
         "tls_record_header": true
       },
-      "next": "tester-server"
+      "next": "obfuscator-server-bridge"
     },
     {
-      "name": "tester-server",
-      "type": "TesterServer"
+      "name": "obfuscator-server-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "obfuscator-client-bridge"
+      }
     }
   ]
 }

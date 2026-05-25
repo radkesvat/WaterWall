@@ -1,6 +1,6 @@
 # ObfuscatorServer Node
 
-`ObfuscatorServer` is the server-side peer of `ObfuscatorClient`. It applies the same reversible payload transform on the remote side so payload is restored before reaching the next node and re-obfuscated again on the way back.
+`ObfuscatorServer` is the server-side peer of `ObfuscatorClient`. It applies the same reversible payload transform in the same WaterWall callback directions as the client side: upstream payload is transformed before forwarding to the next node, and downstream payload is restored before forwarding to the previous node.
 
 It is implemented as a stateless packet tunnel and does not keep per-line tunnel state.
 
@@ -8,9 +8,9 @@ In practice, this node is used together with `ObfuscatorClient` configured with 
 
 ## What It Does
 
-- Receives transformed payload from the previous node.
-- Applies the configured method to recover the original payload before forwarding it to the next node.
-- Applies the same method again to downstream reply payload before sending it back.
+- Reads payload from the previous node.
+- Applies the configured obfuscation method before sending payload to the next node.
+- Applies the same operation again on downstream payload returning from the next node.
 - Passes init, est, finish, pause, and resume events through unchanged.
 
 In the current implementation, the only supported method is XOR.
@@ -19,11 +19,11 @@ In the current implementation, the only supported method is XOR.
 
 A common layout is:
 
-- transport-facing node before `ObfuscatorServer`
+- service-facing packet node before `ObfuscatorServer`
 - `ObfuscatorServer`
-- normal service-facing nodes after it
+- transport-facing node after it
 
-It should usually sit opposite `ObfuscatorClient`.
+It should usually sit opposite `ObfuscatorClient`. With a `Bridge` pair, upstream traffic from `ObfuscatorClient` arrives at `ObfuscatorServer` through the server's downstream callback, so the server strips the TLS-like header there.
 
 ## Configuration Example
 
@@ -37,7 +37,7 @@ It should usually sit opposite `ObfuscatorClient`.
     "skip": "transport",
     "tls_record_header": true
   },
-  "next": "service-node"
+  "next": "transport-node"
 }
 ```
 
@@ -52,7 +52,7 @@ It should usually sit opposite `ObfuscatorClient`.
   Must be exactly `"ObfuscatorServer"`.
 
 - `next` `(string)`
-  The next node that should receive the restored payload.
+  The next node that should receive the upstream transformed payload.
 
 ### `settings`
 
@@ -93,8 +93,8 @@ There are no additional tunnel-specific optional settings in the current impleme
 
 For each payload buffer:
 
-- payload arriving from the previous node is XORed after the configured skip region and then forwarded upstream to the next node
-- payload returning from the next node is XORed again after the configured skip region before being sent back to the previous node
+- before sending upstream to the next node, payload bytes after the configured skip region are XORed with `xor_key`
+- when payload comes back downstream, payload bytes after the configured skip region are XORed with the same `xor_key` again
 
 Because XOR is symmetrical, the same code path is valid for obfuscation and de-obfuscation.
 
@@ -104,8 +104,8 @@ When `skip` is enabled and the payload does not parse as a valid IPv4 packet, th
 
 When `tls_record_header` is enabled:
 
-- before sending payload back toward the transport, the tunnel prepends a 5-byte TLS-like application-data header after XOR
-- when payload arrives from the transport, it validates and strips that same 5-byte header before XOR
+- after XOR on the upstream send path, the tunnel prepends a 5-byte TLS-like application-data header
+- on the downstream receive path, it validates and strips that same 5-byte header before XOR
 - the header bytes are `17 03 03` followed by the big-endian payload length
 
 This only imitates the post-handshake TLS record shape. It is not a real TLS handshake or encryption layer.
