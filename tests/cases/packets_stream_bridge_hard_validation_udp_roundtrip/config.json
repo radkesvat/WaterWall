@@ -1,0 +1,50 @@
+{
+  "name": "packets-stream-bridge-hard-validation-udp-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 6,
+        "packet-ipv4": {
+          "source-ip": "10.96.0.1",
+          "dest-ip": "10.96.0.2",
+          "transport": "udp",
+          "ttl": 64
+        }
+      },
+      "next": "packets-to-stream"
+    },
+    {
+      "name": "packets-to-stream",
+      "type": "PacketsToStream",
+      "settings": {
+        "packet-validation-level": "hard"
+      },
+      "next": "stream-to-packets"
+    },
+    {
+      "name": "stream-to-packets",
+      "type": "StreamToPackets",
+      "settings": {
+        "packet-validation-level": "hard"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 6,
+        "packet-ipv4": {
+          "source-ip": "10.96.0.1",
+          "dest-ip": "10.96.0.2",
+          "transport": "udp",
+          "ttl": 64
+        }
+      }
+    }
+  ]
+}

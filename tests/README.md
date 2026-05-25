@@ -87,6 +87,11 @@ Practical rule:
 - `packets_stream_bridge_roundtrip`
   Verifies that `PacketsToStream` and `StreamToPackets` preserve packet boundaries and payload integrity across their
   worker-packet-line to stream-line bridge.
+- `packets_stream_bridge_hard_validation_roundtrip`
+  Verifies that `PacketsToStream` and `StreamToPackets` accept valid IPv4/TCP packets when `packet-validation-level` is
+  set to `hard` on both sides of the bridge.
+- `packets_stream_bridge_hard_validation_udp_roundtrip`
+  Verifies the same `hard` validation path for valid IPv4/UDP packets, including UDP checksum verification.
 - `udp_listener_packet_bridge_roundtrip`
   Verifies that `PacketsToStream -> UdpConnector -> UdpListener -> StreamToPackets` preserves packet integrity across
   a real UDP loopback transport while multiple workers create independent UDP peers against one shared listener socket.
