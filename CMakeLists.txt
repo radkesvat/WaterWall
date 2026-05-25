@@ -137,6 +137,7 @@ endif()
 option(INCLUDE_TEMPLATE                 "link Template staticly to the core"                 TRUE)
 option(INCLUDE_TESTER_CLIENT            "link TesterClient staticly to the core"             TRUE)
 option(INCLUDE_TESTER_SERVER            "link TesterServer staticly to the core"             TRUE)
+option(INCLUDE_AUTHENTICATION_SERVER     "link AuthenticationServer staticly to the core"      TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"          TRUE)
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"       TRUE)
 option(INCLUDE_STREAM_TO_PACKETS        "link StreamToPackets staticly to the core"          TRUE)
@@ -291,6 +292,14 @@ if(INCLUDE_TESTER_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TesterServer)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TesterServer)
   target_link_libraries(Waterwall TesterServer)
+endif()
+
+#authentication server
+if(INCLUDE_AUTHENTICATION_SERVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_AUTHENTICATION_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/AuthenticationServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/AuthenticationServer)
+  target_link_libraries(Waterwall AuthenticationServer)
 endif()
 
 #tun device

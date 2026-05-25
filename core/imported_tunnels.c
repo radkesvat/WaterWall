@@ -16,6 +16,10 @@
 #include "tunnels/TesterServer/include/interface.h"
 #endif
 
+#ifdef INCLUDE_AUTHENTICATION_SERVER
+#include "tunnels/AuthenticationServer/include/interface.h"
+#endif
+
 #ifdef INCLUDE_TUN_DEVICE
 #include "tunnels/TunDevice/include/interface.h"
 #endif
@@ -293,6 +297,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_TESTER_SERVER
     USING(TesterServer);
+#endif
+
+#ifdef INCLUDE_AUTHENTICATION_SERVER
+    USING(AuthenticationServer);
 #endif
 
 #ifdef INCLUDE_TUN_DEVICE
