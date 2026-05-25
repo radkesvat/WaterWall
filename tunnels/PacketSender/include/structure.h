@@ -87,10 +87,12 @@ enum
     kPacketSenderRandomPortMin        = 49152,
     kPacketSenderRandomPortMax        = 65535,
     kPacketSenderRandomPortSpan       = (kPacketSenderRandomPortMax - kPacketSenderRandomPortMin) + 1,
-    kPacketSenderMaxMaterializedBytes = 512U * 1024U * 1024U,
     kTunnelStateSize                  = sizeof(packetsender_tstate_t),
     kLineStateSize                    = 0
 };
+
+static const uint64_t kPacketSenderMaxMaterializedBytes =
+    UINT64_C(8) * UINT64_C(1024) * UINT64_C(1024) * UINT64_C(1024);
 
 WW_EXPORT void         packetsenderTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *packetsenderTunnelCreate(node_t *node);

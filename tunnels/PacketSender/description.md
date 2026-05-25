@@ -10,6 +10,7 @@ packet lines during the configured duration.
 - `packets-per-ip` repeats each source IP `N` times, default `1`
 - `ALL` mode still emits `255` protocol variants per repeat
 - source ranges are processed in order and are not interleaved
+- prebuilt packet storage is capped at `8 GiB` and also must fit in the platform `size_t` address space
 - does not close or finish worker packet lines after sending
 
 ## Example
@@ -45,3 +46,5 @@ packet lines during the configured duration.
 ## Note
 
 When `protocol-number` is `ALL`, the total packets per source IP become `packets-per-ip * 255`.
+PacketSender materializes its packet store before sending, so large ranges and high repeat counts must fit under the
+`8 GiB` safety cap.

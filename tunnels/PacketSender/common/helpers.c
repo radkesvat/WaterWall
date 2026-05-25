@@ -508,7 +508,7 @@ void packetsenderPrepareRuntime(tunnel_t *t)
         terminateProgram(1);
     }
 
-    state->total_packet_bytes = (size_t) (state->source_count * bytes_per_source);
+    state->total_packet_bytes = (size_t) state->source_count * bytes_per_source;
 
     {
         uint64_t packets_per_source = (uint64_t) state->packets_per_ip;
@@ -538,11 +538,14 @@ void packetsenderPrepareRuntime(tunnel_t *t)
         LOGF("PacketSender: internal error, computed zero packets or zero bytes per source");
         terminateProgram(1);
     }
-    if (state->total_packet_bytes > kPacketSenderMaxMaterializedBytes)
+    const uint64_t total_packet_bytes_u64 = (uint64_t) state->total_packet_bytes;
+
+    if (total_packet_bytes_u64 > kPacketSenderMaxMaterializedBytes)
     {
-        LOGF("PacketSender: generated packet store needs %llu bytes, exceeding the %u-byte safety cap; shrink "
+        LOGF("PacketSender: generated packet store needs %llu bytes, exceeding the %llu-byte safety cap; shrink "
              "source-ip4-range or split traffic across multiple PacketSender nodes",
-             (unsigned long long) state->total_packet_bytes, (unsigned int) kPacketSenderMaxMaterializedBytes);
+             (unsigned long long) total_packet_bytes_u64,
+             (unsigned long long) kPacketSenderMaxMaterializedBytes);
         terminateProgram(1);
     }
 
