@@ -20,7 +20,7 @@ from a future `AuthenticationClient`.
 - sends one downstream response message containing all response frames for the processed request message
 
 The first implemented modules are `ping`, `GetUserBySHA256Hex`, `GetUserBySHA256Base64`, `GetUserBySHA256`,
-`GetUserByPassword`, and `AddNewUser`.
+`GetUserByPassword`, `AddNewUser`, and `UpdateUser`.
 
 ## Typical Placement
 
@@ -72,14 +72,162 @@ The database is parsed and exported through the existing Waterwall user helpers:
 - `ww/objects/users.h`
 - `ww/objects/user.h`
 
-Accepted JSON layouts are the layouts supported by `usersFeedJson()`, including:
+The recommended on-disk shape is an object with a `users` array:
 
-- a users array
-- an object containing a `users` array
-- an object map of username to user object
-- a single user object with `password` or `pass`
+```json
+{
+  "users": [
+    {
+      "name": "alice",
+      "password": "alice-secret",
+      "email": "alice@example.com",
+      "enabled": true,
+      "limit": {
+        "traffic": {
+          "up": 1073741824,
+          "down": 1073741824,
+          "total": 2147483648
+        },
+        "bandwidth": {
+          "up": 1048576,
+          "down": 1048576
+        },
+        "ips": 4,
+        "devices": 2,
+        "connections-in": 16,
+        "connections-out": 16
+      },
+      "time": {
+        "created-at-ms": 1735689600000,
+        "expire-at-ms": 1767225600000
+      },
+      "stats": {
+        "traffic": {
+          "up": 0,
+          "down": 0
+        },
+        "connections-in": 0,
+        "connections-out": 0
+      }
+    }
+  ]
+}
+```
 
 Saved databases are written as an object containing a `users` array.
+
+### Accepted User Database Layouts
+
+`usersFeedJson()` accepts a few input layouts for compatibility:
+
+- `null`, an empty array, or an empty object
+- an array of user objects: `[user, ...]`
+- an object with a `users` array: `{"users": [user, ...]}`
+- an object map: `{"alice": user, "bob": user}`
+- one standalone user object containing `password` or `pass`
+
+For object maps, the object key is used as a username hint only when the user object itself has no non-empty `name`.
+The saver always rewrites the database in the normalized `{"users": [...]}` form.
+
+### User JSON Structure
+
+A user object must contain a password string. All other fields are optional:
+
+- `password` or `pass` `(required string)`
+  Plaintext password used to create the user's password hash lookup keys.
+
+- `name` `(optional string)`
+  Human-readable username. User names must be unique when non-empty.
+
+- `email` `(optional string)`
+  User email metadata.
+
+- `notes` `(optional string)`
+  Free-form operator notes.
+
+- `gid` or `group-id` `(optional unsigned integer)`
+  Group identifier.
+
+- `enabled` or `enable` `(optional boolean)`
+  Defaults to `true`. Set to `false` to disable the user.
+
+- `record-stat-interval-ms` `(optional non-negative integer)`
+  Statistics record interval. If omitted, the default from `user.h` is used.
+
+- `limit` `(optional object)`
+  User limits. Missing fields mean no limit.
+
+- `time` `(optional object)`
+  User time metadata.
+
+- `stats` `(optional object)`
+  Runtime statistics. This is usually maintained by Waterwall, but can be supplied or updated when needed.
+
+The numeric fields accept JSON numbers when they fit in JSON's safe integer range. Larger values may be written and
+read as decimal strings.
+
+### `limit` Object
+
+`limit` can contain:
+
+- `traffic`
+  Object with `up`, `down`, and `total` byte limits. `u`/`d` are also accepted for `up`/`down`.
+
+- `bandwidth`
+  Object with `up` and `down` byte-per-second limits. `u`/`d` are also accepted.
+
+- `ips` or `ip`
+  Maximum IP count.
+
+- `devices`
+  Maximum device count.
+
+- `connections-in` or `cons-in`
+  Maximum inbound connection count.
+
+- `connections-out` or `cons-out`
+  Maximum outbound connection count.
+
+Zero or missing limit values mean unlimited.
+
+### `time` Object
+
+`time` can contain:
+
+- `created-at-ms` or `created_at_ms`
+- `first-usage-at-ms` or `first_usage_at_ms`
+- `expire-at-ms` or `expires-at-ms`
+- `expire-after-first-usage-ms` or `expire-after-first-use-ms`
+
+The same time fields are also accepted at the top level of the user object for compatibility. Values are milliseconds
+since Unix epoch, except `expire-after-first-usage-ms`, which is a duration after first usage.
+
+### `stats` Object
+
+`stats` can contain:
+
+- `ips` or `ip`
+- `devices`
+- `connections-in` or `cons-in`
+- `connections-out` or `cons-out`
+- `speed`
+  Object with `up`/`down` or `u`/`d`.
+- `traffic`
+  Object with `up`/`down` or `u`/`d`.
+
+### User Database Concerns
+
+- Passwords are stored in the JSON database as plaintext because `userToJson()` exports the `password` field. Protect
+  `db-path` and `db-path.backup` with filesystem permissions appropriate for secret material.
+- Password-derived hashes are not stored directly in JSON. They are rebuilt from `password` while loading users.
+- The SHA-256 password hash is a lookup key. Two users must not share the same password/SHA-256 key.
+- `AddNewUser` rejects duplicate usernames and password-hash conflicts, then saves the file immediately.
+- `UpdateUser` uses the supplied password only to find the existing user and deliberately does not change password or
+  password hashes. It updates in-memory metadata only and does not force an immediate file save.
+- Startup loading validates lookup-table consistency. A corrupted primary file can be recovered from `db-path.backup`,
+  but an invalid backup cannot be repaired automatically.
+- Avoid editing both primary and backup files by hand while Waterwall is running. The periodic saver may overwrite
+  manual edits with the current in-memory database state.
 
 ## Save Behavior
 
@@ -149,6 +297,7 @@ Current request types:
 - `4`: `GetUserBySHA256`
 - `5`: `GetUserByPassword`
 - `6`: `AddNewUser`
+- `7`: `UpdateUser`
 
 Current response types:
 
@@ -222,6 +371,21 @@ On success it returns response type `0` and response data equal to `user-added`.
 If validation or saving fails, it returns an error response frame with the same correlation ID. If the file save fails
 after the in-memory add succeeds, the module attempts to remove that user from memory and returns
 `database-save-failed`.
+
+### UpdateUser Module
+
+The `UpdateUser` module expects request data containing a full user JSON object in the same format exported by
+`userToJson()`. The password field is used only to find the existing user by its SHA-256 password hash; password and
+password-hash values are not updated by this module because they are database lookup keys.
+
+If the user exists, the module updates the mutable user fields in memory, including name, email, notes, group ID,
+enabled state, limits, time information, stats, and record-stat interval. It does not trigger an immediate database
+file save; the normal periodic save timer is still responsible for persisting in-memory state later.
+
+On success it returns response type `0` and response data equal to `user-updated`.
+
+If the JSON is malformed, the user does not exist, or the update would create a conflicting user name, it returns an
+error response frame with the same correlation ID.
 
 ## Lifecycle Behavior
 
