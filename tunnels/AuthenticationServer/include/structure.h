@@ -1,7 +1,7 @@
 #pragma once
 
 #include "wwapi.h"
-#include "objects/users.h"
+
 
 typedef struct authenticationserver_tstate_s
 {
@@ -9,7 +9,12 @@ typedef struct authenticationserver_tstate_s
     char    *backup_path;
     users_t  users;
     wtimer_t *save_timer;
+    wrwlock_t sync_lock;
+    wrecursive_mutex_t database_mutex;
+    atomic_uint server_index;
     uint32_t file_save_rate_ms;
+    bool     sync_lock_created;
+    bool     database_mutex_created;
     bool     users_created;
     bool     database_loaded;
 } authenticationserver_tstate_t;
@@ -27,6 +32,8 @@ enum
     kLineStateSize   = sizeof(authenticationserver_lstate_t),
 
     kAuthenticationServerMessageHeaderSize   = 4,
+    kAuthenticationServerIndexHeaderSize     = 4,
+    kAuthenticationServerEnvelopeHeaderSize  = kAuthenticationServerMessageHeaderSize + kAuthenticationServerIndexHeaderSize,
     kAuthenticationServerCorrelationIdSize   = 4,
     kAuthenticationServerRequestHeaderSize   = 1 + kAuthenticationServerCorrelationIdSize + 4,
     kAuthenticationServerResponseHeaderSize  = 1 + kAuthenticationServerCorrelationIdSize + 4,
@@ -44,11 +51,16 @@ enum
     kAuthenticationServerRequestTypeGetUserByPassword     = 5,
     kAuthenticationServerRequestTypeAddNewUser            = 6,
     kAuthenticationServerRequestTypeUpdateUser            = 7,
+    kAuthenticationServerRequestTypeUpdateUserTraficStatsDiff = 8,
+    kAuthenticationServerRequestTypeGetAllUsers           = 9,
+    kAuthenticationServerRequestTypePullChangesSync       = 10,
 
     kAuthenticationServerResponseTypeOk       = 0,
     kAuthenticationServerResponseTypeError    = 0xFF,
     kAuthenticationServerResponseTypePong     = 1,
-    kAuthenticationServerResponseTypeUser     = 2
+    kAuthenticationServerResponseTypeUser     = 2,
+    kAuthenticationServerResponseTypeUsers    = 3,
+    kAuthenticationServerResponseTypeSyncUsers = 4
 };
 
 typedef sbuf_t *(*authenticationserver_module_handler_fn)(
@@ -87,6 +99,11 @@ void authenticationserverLinestateDestroy(authenticationserver_lstate_t *ls);
 bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts);
 bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts);
 void authenticationserverSaveTimerCallback(wtimer_t *timer);
+uint32_t authenticationserverGetServerIndex(tunnel_t *t);
+bool authenticationserverMarkUserDirtyBySHA256(tunnel_t *t, const uint8_t sha256[SHA256_DIGEST_SIZE]);
+users_update_result_t authenticationserverUpdateUserBySHA256AndMarkDirty(tunnel_t *t,
+                                                                         const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                                         const user_update_t *update);
 
 bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls);
 bool authenticationserverFlushResponses(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls);
@@ -117,3 +134,5 @@ sbuf_t *authenticationserverDispatchRequest(
     line_t       *l,
     const uint8_t *request_data,
     uint32_t      request_data_len);
+bool authenticationserverRequestTypeReturnsUserState(uint8_t request_type);
+bool authenticationserverRequestTypeBumpsSyncIndex(uint8_t request_type);

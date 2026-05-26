@@ -27,5 +27,17 @@ void authenticationserverTunnelDestroy(tunnel_t *t)
     memoryFree(ts->db_path);
     memoryFree(ts->backup_path);
 
+    if (ts->sync_lock_created)
+    {
+        rwlockDestroy(&ts->sync_lock);
+        ts->sync_lock_created = false;
+    }
+
+    if (ts->database_mutex_created)
+    {
+        recursivemutexDestroy(&ts->database_mutex);
+        ts->database_mutex_created = false;
+    }
+
     tunnelDestroy(t);
 }

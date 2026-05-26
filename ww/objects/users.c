@@ -4,10 +4,8 @@
 
 #include "objects/users.h"
 
+#include "objects/user_internal.h"
 #include "loggers/internal_logger.h"
-
-#include <inttypes.h>
-#include <stdint.h>
 
 enum
 {
@@ -1740,6 +1738,282 @@ users_update_result_t usersUpdateUserBySHA256(users_t *users,
     return result;
 }
 
+static uint32_t usersIncrementUserSyncIndexLocked(user_t *user)
+{
+    /*
+     * PullChangesSync holds users->lock for reading while it builds a snapshot.
+     * Sync bumps therefore happen only while callers hold users->lock for
+     * writing, so a pull cannot pair old JSON with a new sync index or miss a
+     * user that became dirty mid-snapshot.
+     */
+    return userInternalSyncIndexIncrement(user);
+}
+
+users_update_result_t usersUpdateUserBySHA256AndIncrementSync(users_t *users,
+                                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                              const user_update_t *update,
+                                                              uint32_t *new_sync_index)
+{
+    char                 *name_copy  = NULL;
+    char                 *email_copy = NULL;
+    char                 *notes_copy = NULL;
+    users_update_result_t result;
+    user_t               *user;
+
+    if (users == NULL || sha256 == NULL)
+    {
+        return kUsersUpdateResultInvalidArgument;
+    }
+
+    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
+    if (result != kUsersUpdateResultOk)
+    {
+        return result;
+    }
+
+    rwlockWriteLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (user == NULL)
+    {
+        result = kUsersUpdateResultUserNotFound;
+    }
+    else
+    {
+        result = usersApplyUpdateToExistingUserLocked(users, user, update, &name_copy, &email_copy, &notes_copy);
+        if (result == kUsersUpdateResultOk)
+        {
+            uint32_t next_index = usersIncrementUserSyncIndexLocked(user);
+            if (new_sync_index != NULL)
+            {
+                *new_sync_index = next_index;
+            }
+        }
+    }
+    rwlockWriteUnlock(&users->lock);
+
+    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy);
+    return result;
+}
+
+users_update_result_t usersIncrementSyncIndexBySHA256(users_t *users,
+                                                      const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                      uint32_t *new_sync_index)
+{
+    user_t *user;
+
+    if (users == NULL || sha256 == NULL)
+    {
+        return kUsersUpdateResultInvalidArgument;
+    }
+
+    rwlockWriteLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (user != NULL)
+    {
+        uint32_t next_index = usersIncrementUserSyncIndexLocked(user);
+        if (new_sync_index != NULL)
+        {
+            *new_sync_index = next_index;
+        }
+    }
+    rwlockWriteUnlock(&users->lock);
+
+    return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
+}
+
+static const char *usersJsonPasswordField(const cJSON *json)
+{
+    const cJSON *password = cJSON_GetObjectItemCaseSensitive(json, "password");
+    if (password == NULL)
+    {
+        password = cJSON_GetObjectItemCaseSensitive(json, "pass");
+    }
+    if (! cJSON_IsString(password) || password->valuestring == NULL)
+    {
+        return NULL;
+    }
+    return password->valuestring;
+}
+
+static bool usersParseSyncIndexString(const char *value, uint32_t *out)
+{
+    char *end = NULL;
+
+    if (value == NULL || value[0] == '\0' || value[0] == '-')
+    {
+        return false;
+    }
+
+    errno                     = 0;
+    unsigned long long parsed = strtoull(value, &end, 10);
+    if (errno == ERANGE || parsed > UINT32_MAX)
+    {
+        return false;
+    }
+    while (end != NULL && *end != '\0')
+    {
+        if (! isspace((unsigned char) *end))
+        {
+            return false;
+        }
+        ++end;
+    }
+
+    *out = (uint32_t) parsed;
+    return true;
+}
+
+static bool usersJsonSyncIndexField(const cJSON *json, uint32_t *out)
+{
+    const cJSON *sync_index = cJSON_GetObjectItemCaseSensitive(json, "sync_index");
+    if (sync_index == NULL)
+    {
+        sync_index = cJSON_GetObjectItemCaseSensitive(json, "sync-index");
+    }
+    if (cJSON_IsString(sync_index))
+    {
+        return usersParseSyncIndexString(sync_index->valuestring, out);
+    }
+    if (! cJSON_IsNumber(sync_index))
+    {
+        return false;
+    }
+    if (! (sync_index->valuedouble >= 0.0) || sync_index->valuedouble > (double) UINT32_MAX)
+    {
+        return false;
+    }
+
+    uint32_t parsed = (uint32_t) sync_index->valuedouble;
+    if ((double) parsed != sync_index->valuedouble)
+    {
+        return false;
+    }
+
+    *out = parsed;
+    return true;
+}
+
+static bool usersClientSyncIndexForUser(const cJSON *client_users,
+                                        user_t *user,
+                                        bool *found,
+                                        uint32_t *client_sync_index)
+{
+    const cJSON *entry = NULL;
+
+    *found             = false;
+    *client_sync_index = 0;
+
+    cJSON_ArrayForEach(entry, client_users)
+    {
+        if (! cJSON_IsObject(entry))
+        {
+            return false;
+        }
+
+        const char *password = usersJsonPasswordField(entry);
+        uint32_t sync_index  = 0;
+        if (password == NULL || ! usersJsonSyncIndexField(entry, &sync_index))
+        {
+            return false;
+        }
+
+        if (userPasswordMatches(user, password))
+        {
+            *found             = true;
+            *client_sync_index = sync_index;
+            return true;
+        }
+    }
+
+    return true;
+}
+
+static bool usersValidateClientSyncArray(const cJSON *client_users)
+{
+    const cJSON *entry = NULL;
+
+    cJSON_ArrayForEach(entry, client_users)
+    {
+        uint32_t sync_index = 0;
+        if (! cJSON_IsObject(entry) || usersJsonPasswordField(entry) == NULL ||
+            ! usersJsonSyncIndexField(entry, &sync_index))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static cJSON *usersUserToJsonWithSyncIndex(user_t *user, uint32_t sync_index)
+{
+    cJSON *json = userToJson(user);
+    if (json == NULL)
+    {
+        return NULL;
+    }
+    if (! cJSON_AddNumberToObject(json, "sync_index", (double) sync_index))
+    {
+        cJSON_Delete(json);
+        return NULL;
+    }
+    return json;
+}
+
+cJSON *usersPullChangesJson(const users_t *users, const cJSON *client_users)
+{
+    users_t *self = (users_t *) users;
+    cJSON   *array;
+
+    if (users == NULL || ! cJSON_IsArray(client_users) || ! usersValidateClientSyncArray(client_users))
+    {
+        return NULL;
+    }
+
+    array = cJSON_CreateArray();
+    if (array == NULL)
+    {
+        return NULL;
+    }
+
+    rwlockReadLock(&self->lock);
+    for (size_t i = 0; i < self->count; ++i)
+    {
+        user_t  *user              = usersGetAtLocked(self, i);
+        uint32_t server_sync_index = userInternalSyncIndexLoad(user);
+        uint32_t client_sync_index = 0;
+        bool     found             = false;
+
+        if (! usersClientSyncIndexForUser(client_users, user, &found, &client_sync_index))
+        {
+            rwlockReadUnlock(&self->lock);
+            cJSON_Delete(array);
+            return NULL;
+        }
+
+        if (! found || client_sync_index != server_sync_index)
+        {
+            cJSON *user_json = usersUserToJsonWithSyncIndex(user, server_sync_index);
+            if (user_json == NULL)
+            {
+                rwlockReadUnlock(&self->lock);
+                cJSON_Delete(array);
+                return NULL;
+            }
+            if (! cJSON_AddItemToArray(array, user_json))
+            {
+                rwlockReadUnlock(&self->lock);
+                cJSON_Delete(user_json);
+                cJSON_Delete(array);
+                return NULL;
+            }
+        }
+    }
+    rwlockReadUnlock(&self->lock);
+
+    return array;
+}
+
 bool usersSetUserName(users_t *users, user_t *user, const char *name)
 {
     user_update_t update = {.mask = kUserUpdateName, .name = name};
@@ -1832,6 +2106,29 @@ bool usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64
     }
     rwlockReadUnlock(&users->lock);
     return result;
+}
+
+users_update_result_t usersAddTrafficBySHA256(users_t *users,
+                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                              uint64_t upload_bytes,
+                                              uint64_t download_bytes)
+{
+    user_t *user;
+
+    if (users == NULL || sha256 == NULL)
+    {
+        return kUsersUpdateResultInvalidArgument;
+    }
+
+    rwlockReadLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (user != NULL)
+    {
+        userAddTraffic(user, upload_bytes, download_bytes);
+    }
+    rwlockReadUnlock(&users->lock);
+
+    return user != NULL ? kUsersUpdateResultOk : kUsersUpdateResultUserNotFound;
 }
 
 bool usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes)

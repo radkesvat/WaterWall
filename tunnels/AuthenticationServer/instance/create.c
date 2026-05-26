@@ -67,6 +67,11 @@ tunnel_t *authenticationserverTunnelCreate(node_t *node)
     authenticationserverInitializeCallbacks(t);
 
     authenticationserver_tstate_t *ts = tunnelGetState(t);
+    rwlockinit(&ts->sync_lock);
+    ts->sync_lock_created = true;
+    recursivemutexInit(&ts->database_mutex);
+    ts->database_mutex_created = true;
+    atomicStoreRelaxed(&ts->server_index, 1U);
 
     if (! authenticationserverParseSettings(ts, node))
     {

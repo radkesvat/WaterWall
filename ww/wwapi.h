@@ -35,4 +35,6 @@
 
 #include "crypto/wcrypto.h"
 
+#include "objects/users.h"
+
 

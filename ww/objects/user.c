@@ -4,11 +4,7 @@
 
 #include "objects/user.h"
 
-#include <ctype.h>
-#include <errno.h>
-#include <inttypes.h>
-#include <limits.h>
-#include <stdio.h>
+#include "objects/user_internal.h"
 
 static const uint64_t kUserJsonSafeIntegerMax = 9007199254740991ULL;
 
@@ -19,7 +15,7 @@ static bool userStringIsEmpty(const char *value)
 
 static bool userObjectIsInitialized(const User *user)
 {
-    return user != NULL && user->initialized;
+    return user != NULL && user->initialized && user->private_state != NULL;
 }
 
 static bool userStringDuplicate(char **dest, const char *value)
@@ -71,6 +67,61 @@ static void userDestroyStrings(User *user)
     user->notes    = NULL;
 }
 
+bool userInternalStateCreate(User *user, uint32_t sync_index)
+{
+    if (user == NULL)
+    {
+        return false;
+    }
+    if (user->private_state != NULL)
+    {
+        atomicStoreRelaxed(&user->private_state->sync_index, sync_index);
+        return true;
+    }
+
+    user_private_t *state = memoryAllocate(sizeof(*state));
+    if (state == NULL)
+    {
+        return false;
+    }
+
+    memoryZero(state, sizeof(*state));
+    atomicStoreRelaxed(&state->sync_index, sync_index);
+    user->private_state = state;
+    return true;
+}
+
+void userInternalStateDestroy(User *user)
+{
+    if (user == NULL || user->private_state == NULL)
+    {
+        return;
+    }
+
+    memoryFree(user->private_state);
+    user->private_state = NULL;
+}
+
+uint32_t userInternalSyncIndexLoad(const User *user)
+{
+    if (user == NULL || user->private_state == NULL)
+    {
+        return 0;
+    }
+
+    return (uint32_t) atomicLoadRelaxed(&user->private_state->sync_index);
+}
+
+uint32_t userInternalSyncIndexIncrement(User *user)
+{
+    if (user == NULL || user->private_state == NULL)
+    {
+        return 0;
+    }
+
+    return (uint32_t) atomicAdd(&user->private_state->sync_index, 1U) + 1U;
+}
+
 typedef struct user_snapshot_s
 {
     char *name;
@@ -86,6 +137,7 @@ typedef struct user_snapshot_s
     int              record_stat_interval_ms;
 
     user_stat_t stats;
+    uint32_t    sync_index;
 
     hash_t        hash_pass;
     sha224_hash_t sha224_pass;
@@ -146,6 +198,7 @@ static bool userSnapshotCreate(user_snapshot_t *snapshot, const User *src)
     snapshot->timeinfo                = src->timeinfo;
     snapshot->record_stat_interval_ms = src->record_stat_interval_ms;
     snapshot->stats                   = src->stats;
+    snapshot->sync_index              = userInternalSyncIndexLoad(src);
     snapshot->hash_pass               = src->hash_pass;
     snapshot->sha224_pass             = src->sha224_pass;
     snapshot->sha256_pass             = src->sha256_pass;
@@ -685,6 +738,15 @@ bool userCreate(User *user, const char *password)
     memoryZero(user, sizeof(*user));
     rwlockinit(&user->lock);
     rwlockinit(&user->stats_lock);
+
+    if (! userInternalStateCreate(user, kUserSyncIndexInitial))
+    {
+        rwlockDestroy(&user->stats_lock);
+        rwlockDestroy(&user->lock);
+        memoryZero(user, sizeof(*user));
+        return false;
+    }
+
     user->initialized = true;
 
     user->enabled                 = true;
@@ -717,6 +779,16 @@ bool userCopy(User *dest, const User *src)
     memoryZero(dest, sizeof(*dest));
     rwlockinit(&dest->lock);
     rwlockinit(&dest->stats_lock);
+
+    if (! userInternalStateCreate(dest, snapshot.sync_index))
+    {
+        rwlockDestroy(&dest->stats_lock);
+        rwlockDestroy(&dest->lock);
+        memoryZero(dest, sizeof(*dest));
+        userSnapshotDestroy(&snapshot);
+        return false;
+    }
+
     dest->initialized = true;
 
     dest->name     = snapshot.name;
@@ -767,6 +839,7 @@ void userDestroy(User *user)
     memoryZero(&user->limit, sizeof(user->limit));
     memoryZero(&user->timeinfo, sizeof(user->timeinfo));
     memoryZero(&user->stats, sizeof(user->stats));
+    userInternalStateDestroy(user);
     user->hash_pass = 0;
     user->enabled   = false;
 

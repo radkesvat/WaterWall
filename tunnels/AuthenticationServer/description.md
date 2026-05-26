@@ -20,7 +20,7 @@ from a future `AuthenticationClient`.
 - sends one downstream response message containing all response frames for the processed request message
 
 The first implemented modules are `ping`, `GetUserBySHA256Hex`, `GetUserBySHA256Base64`, `GetUserBySHA256`,
-`GetUserByPassword`, `AddNewUser`, and `UpdateUser`.
+`GetUserByPassword`, `AddNewUser`, `UpdateUser`, `UpdateUserTraficStatsDiff`, and `GetAllUsers`.
 
 ## Typical Placement
 
@@ -221,9 +221,13 @@ since Unix epoch, except `expire-after-first-usage-ms`, which is a duration afte
   `db-path` and `db-path.backup` with filesystem permissions appropriate for secret material.
 - Password-derived hashes are not stored directly in JSON. They are rebuilt from `password` while loading users.
 - The SHA-256 password hash is a lookup key. Two users must not share the same password/SHA-256 key.
+- Each in-memory user also has a private atomic `sync_index` that starts at `1`. It is not loaded from, or settable by,
+  the database JSON. `PullChangesSync` responses include it so clients can track per-user sync state.
 - `AddNewUser` rejects duplicate usernames and password-hash conflicts, then saves the file immediately.
 - `UpdateUser` uses the supplied password only to find the existing user and deliberately does not change password or
   password hashes. It updates in-memory metadata only and does not force an immediate file save.
+- `UpdateUserTraficStatsDiff` uses the supplied password only to find the existing user, then adds only
+  `stats.traffic.up/down` as a delta. It does not force an immediate file save.
 - Startup loading validates lookup-table consistency. A corrupted primary file can be recovered from `db-path.backup`,
   but an invalid backup cannot be repaired automatically.
 - Avoid editing both primary and backup files by hand while Waterwall is running. The periodic saver may overwrite
@@ -254,21 +258,25 @@ was attempted, and whether recovery completed.
 
 ## Request And Response Framing
 
-Upstream payload bytes are buffered as a stream. The outer message framing is:
+Upstream payload bytes are buffered as a stream. The request envelope is:
 
-- 4-byte unsigned big-endian message payload size
-- message payload bytes
+- 4-byte unsigned big-endian body size
+- 4-byte unsigned big-endian `last_pull_index`
+- request payload bytes
 
-The message payload contains one or more request frames:
+The body size is the number of bytes after the size prefix, so it includes the 4-byte `last_pull_index` plus the
+request payload. `last_pull_index` is the latest server index known by the client.
+
+The request payload contains one or more request frames:
 
 - 1-byte request type
 - 4-byte (32-bit) correlation ID
 - 4-byte unsigned big-endian request data length
 - request data bytes
 
-Each request frame is validated before dispatch. If the outer message payload is empty, contains trailing bytes smaller
-than a request header, or declares request data that is not fully present inside the message payload,
-`AuthenticationServer` logs a warning and closes the logical connection safely.
+Each request frame is validated before dispatch. If the envelope body is too small for `last_pull_index`, the request
+payload is empty, contains trailing bytes smaller than a request header, or declares request data that is not fully
+present inside the request payload, `AuthenticationServer` logs a warning and closes the logical connection safely.
 
 Each module returns a response frame:
 
@@ -278,10 +286,15 @@ Each module returns a response frame:
 - response data bytes
 
 After all request frames in one message are processed, the server combines all response frames into a single response
-payload and sends it with the same outer framing:
+payload and sends it with the response envelope:
 
-- 4-byte unsigned big-endian response payload size
+- 4-byte unsigned big-endian body size
+- 4-byte unsigned big-endian `last_server_index`
 - response frame bytes
+
+`last_server_index` is the current AuthenticationServer tunnel `server_index`. It starts at `1` on tunnel creation and
+increments whenever a user-changing request marks a user dirty. `AddNewUser` and `UpdateUser` mark their affected user
+dirty. Read-only requests and `UpdateUserTraficStatsDiff` do not change it.
 
 This keeps the request/response transport extensible for future request types.
 
@@ -298,12 +311,17 @@ Current request types:
 - `5`: `GetUserByPassword`
 - `6`: `AddNewUser`
 - `7`: `UpdateUser`
+- `8`: `UpdateUserTraficStatsDiff`
+- `9`: `GetAllUsers`
+- `10`: `PullChangesSync`
 
 Current response types:
 
 - `0`: ok
 - `1`: `pong`
 - `2`: user
+- `3`: users database
+- `4`: sync users array
 - `255`: error
 
 ### Ping Module
@@ -385,6 +403,66 @@ file save; the normal periodic save timer is still responsible for persisting in
 On success it returns response type `0` and response data equal to `user-updated`.
 
 If the JSON is malformed, the user does not exist, or the update would create a conflicting user name, it returns an
+error response frame with the same correlation ID.
+
+### UpdateUserTraficStatsDiff Module
+
+The `UpdateUserTraficStatsDiff` module expects request data containing a full user JSON object. The password field is
+used only to find the existing user by its SHA-256 password hash.
+
+If the user exists, the module reads `stats.traffic.up` and `stats.traffic.down` from the supplied JSON and adds those
+values to the existing user's traffic counters. No other user fields are updated. The add operation uses the same
+saturating counter behavior as `userAddTraffic()`.
+
+This operation does not trigger an immediate database file save; the normal periodic save timer is still responsible
+for persisting in-memory state later.
+
+On success it returns response type `0` and response data equal to `user-traffic-stats-updated`.
+
+If the JSON is malformed or the user does not exist, it returns an error response frame with the same correlation ID.
+
+### GetAllUsers Module
+
+The `GetAllUsers` module expects an empty request payload.
+
+On success it returns response type `3` and response data containing the normalized users database JSON from
+`usersToJson()`. This is the same shape written to disk by normal saves:
+
+```json
+{"users":[...]}
+```
+
+If the request contains unexpected data, or if exporting/serializing the in-memory database fails, it returns an error
+response frame with the same correlation ID.
+
+### PullChangesSync Module
+
+The `PullChangesSync` module expects request data containing a minimized JSON array of the users known by the client.
+Each entry should contain only:
+
+```json
+[
+  {
+    "password": "alice-secret",
+    "sync_index": 1
+  }
+]
+```
+
+`password` identifies the user through the server-side password hash. `sync_index` is the last per-user sync index the
+client has for that user. `sync-index` is also accepted as an input alias.
+
+The server compares each server-side user with the client's claimed state. A user is returned when:
+
+- the client did not send that user
+- the server-side `sync_index` is greater than the client's `sync_index`
+- the client claims a `sync_index` greater than the server-side value, which can happen after a server restart
+
+On success it returns response type `4` and response data containing a JSON array of full user objects that need to be
+refreshed by the client. Each returned user includes a `sync_index` field. This `sync_index` is response metadata only;
+it is not accepted from normal database JSON and is not written as durable user state.
+
+If the JSON is malformed or any client array entry does not contain a usable `password` and `sync_index`, it returns an
 error response frame with the same correlation ID.
 
 ## Lifecycle Behavior

@@ -44,6 +44,8 @@
  *   lookup keys in this database.
  */
 
+#include "wlibc.h"
+
 #include "objects/user.h"
 
 typedef struct users_hash_table_s   users_hash_table_t;
@@ -166,6 +168,20 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update);
 users_update_result_t usersUpdateUserBySHA256(users_t *users,
                                               const uint8_t sha256[SHA256_DIGEST_SIZE],
                                               const user_update_t *update);
+/*
+ * For AuthenticationServer-style sync, apply the update and bump the private
+ * per-user sync index while the database write lock is held. Keeping these in
+ * one critical section prevents PullChangesSync from seeing a half-updated sync
+ * state.
+ */
+users_update_result_t usersUpdateUserBySHA256AndIncrementSync(users_t *users,
+                                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                              const user_update_t *update,
+                                                              uint32_t *new_sync_index);
+users_update_result_t usersIncrementSyncIndexBySHA256(users_t *users,
+                                                      const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                                      uint32_t *new_sync_index);
+cJSON *usersPullChangesJson(const users_t *users, const cJSON *client_users);
 bool usersSetUserName(users_t *users, user_t *user, const char *name);
 bool usersSetUserEmail(users_t *users, user_t *user, const char *email);
 bool usersSetUserNotes(users_t *users, user_t *user, const char *notes);
@@ -176,6 +192,10 @@ bool usersSetUserTimeInfo(users_t *users, user_t *user, const user_time_info_t *
 bool usersSetUserStats(users_t *users, user_t *user, const user_stat_t *stats);
 bool usersSetUserRecordStatInterval(users_t *users, user_t *user, int interval_ms);
 bool usersAddTraffic(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
+users_update_result_t usersAddTrafficBySHA256(users_t *users,
+                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                              uint64_t upload_bytes,
+                                              uint64_t download_bytes);
 bool usersAddUserUsage(users_t *users, user_t *user, uint64_t upload_bytes, uint64_t download_bytes);
 bool usersAddSpeed(users_t *users, user_t *user, uint64_t upload_bytes_per_sec, uint64_t download_bytes_per_sec);
 bool usersAddConnection(users_t *users, user_t *user, bool inbound);

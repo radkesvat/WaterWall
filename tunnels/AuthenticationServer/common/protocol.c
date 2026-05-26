@@ -15,6 +15,11 @@ static uint32_t authenticationserverReadNetworkUI32(const uint8_t *src)
     return ntohl(network_value);
 }
 
+typedef struct authenticationserver_request_batch_info_s
+{
+    bool     sync_bump_after_user_state_response;
+} authenticationserver_request_batch_info_t;
+
 sbuf_t *authenticationserverCreateResponseFrame(
     line_t       *l,
     uint8_t       response_type,
@@ -131,7 +136,7 @@ static bool authenticationserverSendOrQueueResponse(tunnel_t *t, line_t *l, auth
     return withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, response);
 }
 
-static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t *ls, uint32_t *message_payload_len)
+static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t *ls, uint32_t *message_body_len)
 {
     uint8_t header[kAuthenticationServerMessageHeaderSize];
 
@@ -141,7 +146,7 @@ static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t 
     }
 
     bufferstreamViewBytesAt(&ls->read_stream, 0, header, sizeof(header));
-    *message_payload_len = authenticationserverReadNetworkUI32(header);
+    *message_body_len = authenticationserverReadNetworkUI32(header);
     return true;
 }
 
@@ -149,8 +154,8 @@ static sbuf_t *authenticationserverCreateResponseMessage(line_t *l)
 {
     sbuf_t *message = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
 
-    message = sbufReserveSpace(message, kAuthenticationServerMessageHeaderSize);
-    sbufSetLength(message, kAuthenticationServerMessageHeaderSize);
+    message = sbufReserveSpace(message, kAuthenticationServerEnvelopeHeaderSize);
+    sbufSetLength(message, kAuthenticationServerEnvelopeHeaderSize);
     return message;
 }
 
@@ -158,7 +163,7 @@ static bool authenticationserverAppendResponseFrame(line_t *l, sbuf_t **message,
 {
     const uint32_t message_len = sbufGetLength(*message);
     const uint32_t frame_len   = sbufGetLength(frame);
-    const uint32_t payload_len = message_len - kAuthenticationServerMessageHeaderSize;
+    const uint32_t payload_len = message_len - kAuthenticationServerEnvelopeHeaderSize;
 
     if (frame_len > kAuthenticationServerMaxResponsePayload ||
         payload_len > kAuthenticationServerMaxResponsePayload - frame_len)
@@ -176,29 +181,32 @@ static bool authenticationserverAppendResponseFrame(line_t *l, sbuf_t **message,
     return true;
 }
 
-static void authenticationserverFinalizeResponseMessage(sbuf_t *message)
+static void authenticationserverFinalizeResponseMessage(sbuf_t *message, uint32_t server_index)
 {
     const uint32_t message_len = sbufGetLength(message);
-    assert(message_len >= kAuthenticationServerMessageHeaderSize);
+    assert(message_len >= kAuthenticationServerEnvelopeHeaderSize);
 
     authenticationserverWriteNetworkUI32(sbufGetMutablePtr(message),
                                         message_len - kAuthenticationServerMessageHeaderSize);
+    authenticationserverWriteNetworkUI32(sbufGetMutablePtr(message) + kAuthenticationServerMessageHeaderSize,
+                                        server_index);
 }
 
-static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l, sbuf_t *payload, sbuf_t **response_out)
+static bool authenticationserverValidateRequestPayload(sbuf_t *payload,
+                                                       authenticationserver_request_batch_info_t *info)
 {
     const uint8_t *ptr       = sbufGetRawPtr(payload);
     uint32_t       remaining = sbufGetLength(payload);
     uint32_t       offset    = 0;
-    uint32_t       count     = 0;
-    sbuf_t        *response  = authenticationserverCreateResponseMessage(l);
+    bool           saw_user_state_response = false;
 
     if (remaining == 0)
     {
         LOGW("AuthenticationServer: received empty message payload; expected at least one request frame");
-        lineReuseBuffer(l, response);
         return false;
     }
+
+    *info = (authenticationserver_request_batch_info_t) {0};
 
     while (remaining > 0)
     {
@@ -206,13 +214,11 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l, sbu
         {
             LOGW("AuthenticationServer: malformed message at offset %u: %u trailing bytes are smaller than a request header",
                  (unsigned int) offset, (unsigned int) remaining);
-            lineReuseBuffer(l, response);
             return false;
         }
 
         const uint8_t *frame           = ptr + offset;
         const uint8_t  request_type    = frame[0];
-        const uint8_t *correlation_id  = frame + 1;
         const uint8_t *length_ptr      = frame + 1 + kAuthenticationServerCorrelationIdSize;
         const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
 
@@ -220,7 +226,6 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l, sbu
         {
             LOGW("AuthenticationServer: request type %u at offset %u has oversized %u-byte data",
                  (unsigned int) request_type, (unsigned int) offset, (unsigned int) request_data_len);
-            lineReuseBuffer(l, response);
             return false;
         }
 
@@ -231,10 +236,45 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l, sbu
                  (unsigned int) offset,
                  (unsigned int) request_data_len,
                  (unsigned int) (remaining - kAuthenticationServerRequestHeaderSize));
-            lineReuseBuffer(l, response);
             return false;
         }
 
+        if (authenticationserverRequestTypeReturnsUserState(request_type))
+        {
+            saw_user_state_response = true;
+        }
+        if (authenticationserverRequestTypeBumpsSyncIndex(request_type) && saw_user_state_response)
+        {
+            info->sync_bump_after_user_state_response = true;
+        }
+
+        const uint32_t consumed = kAuthenticationServerRequestHeaderSize + request_data_len;
+        offset += consumed;
+        remaining -= consumed;
+    }
+
+    return true;
+}
+
+static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t,
+                                                           line_t *l,
+                                                           sbuf_t *payload,
+                                                           sbuf_t **response_out,
+                                                           uint32_t response_server_index)
+{
+    const uint8_t *ptr       = sbufGetRawPtr(payload);
+    uint32_t       remaining = sbufGetLength(payload);
+    uint32_t       offset    = 0;
+    uint32_t       count     = 0;
+    sbuf_t        *response  = authenticationserverCreateResponseMessage(l);
+
+    while (remaining > 0)
+    {
+        const uint8_t *frame            = ptr + offset;
+        const uint8_t  request_type     = frame[0];
+        const uint8_t *correlation_id   = frame + 1;
+        const uint8_t *length_ptr       = frame + 1 + kAuthenticationServerCorrelationIdSize;
+        const uint32_t request_data_len = authenticationserverReadNetworkUI32(length_ptr);
         const uint8_t *request_data = frame + kAuthenticationServerRequestHeaderSize;
         sbuf_t        *response_frame =
             authenticationserverDispatchRequest(request_type, correlation_id, t, l, request_data, request_data_len);
@@ -259,30 +299,72 @@ static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l, sbu
         ++count;
     }
 
-    authenticationserverFinalizeResponseMessage(response);
+    authenticationserverFinalizeResponseMessage(response, response_server_index);
     *response_out = response;
 
     LOGD("AuthenticationServer: processed %u request frame(s) from one message", (unsigned int) count);
     return true;
 }
 
+static bool authenticationserverBuildResponseMessage(tunnel_t *t, line_t *l, sbuf_t *payload, sbuf_t **response_out)
+{
+    authenticationserver_tstate_t *ts = tunnelGetState(t);
+
+    /*
+     * The outer response has one last_server_index for all frames. Serializing
+     * message construction keeps PullChangesSync snapshots, dirty bumps, and
+     * the final envelope index from representing different sync moments.
+     */
+    rwlockWriteLock(&ts->sync_lock);
+    authenticationserver_request_batch_info_t batch_info;
+    bool result = authenticationserverValidateRequestPayload(payload, &batch_info);
+    if (result)
+    {
+        const uint32_t start_index = authenticationserverGetServerIndex(t);
+        result = authenticationserverBuildResponseMessageLocked(t, l, payload, response_out, start_index);
+        if (result && batch_info.sync_bump_after_user_state_response)
+        {
+            /*
+             * If a batch reads user state and later mutates sync state, those
+             * earlier response frames are necessarily pre-mutation snapshots.
+             * In that mixed order we keep the start index so the client cannot
+             * believe it has already seen the later change.
+             */
+            LOGD("AuthenticationServer: response keeps pre-batch server index because the batch mutates after a "
+                 "user-state response");
+        }
+        else if (result)
+        {
+            authenticationserverFinalizeResponseMessage(*response_out, authenticationserverGetServerIndex(t));
+        }
+    }
+    rwlockWriteUnlock(&ts->sync_lock);
+    return result;
+}
+
 bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls)
 {
     while (true)
     {
-        uint32_t message_payload_len = 0;
-        if (! authenticationserverReadMessageHeader(ls, &message_payload_len))
+        uint32_t message_body_len = 0;
+        if (! authenticationserverReadMessageHeader(ls, &message_body_len))
         {
             return true;
         }
 
-        if (message_payload_len > kAuthenticationServerMaxMessagePayload)
+        if (message_body_len < kAuthenticationServerIndexHeaderSize)
+        {
+            authenticationserverCloseLine(t, l, ls, "message body is smaller than sync index header");
+            return false;
+        }
+
+        if (message_body_len > kAuthenticationServerMaxMessagePayload + kAuthenticationServerIndexHeaderSize)
         {
             authenticationserverCloseLine(t, l, ls, "message payload size exceeds limit");
             return false;
         }
 
-        const size_t message_len = (size_t) kAuthenticationServerMessageHeaderSize + (size_t) message_payload_len;
+        const size_t message_len = (size_t) kAuthenticationServerMessageHeaderSize + (size_t) message_body_len;
         if (bufferstreamGetBufLen(&ls->read_stream) < message_len)
         {
             return true;
@@ -290,6 +372,10 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
 
         sbuf_t *payload = bufferstreamReadExact(&ls->read_stream, message_len);
         sbufShiftRight(payload, kAuthenticationServerMessageHeaderSize);
+        uint32_t last_pull_index = authenticationserverReadNetworkUI32(sbufGetRawPtr(payload));
+        LOGD("AuthenticationServer: received request message with client server index %u",
+             (unsigned int) last_pull_index);
+        sbufShiftRight(payload, kAuthenticationServerIndexHeaderSize);
 
         sbuf_t *response = NULL;
         if (! authenticationserverBuildResponseMessage(t, l, payload, &response))

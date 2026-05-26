@@ -69,6 +69,7 @@ sbuf_t *authenticationserverAddNewUserHandle(
     cJSON_Delete(user_json);
 
     memoryCopy(added_sha256, user.sha256_pass.bytes, SHA256_DIGEST_SIZE);
+    recursivemutexLock(&ts->database_mutex);
     users_add_result_t add_result = usersAddUserChecked(&ts->users, &user);
     userDestroy(&user);
 
@@ -76,6 +77,7 @@ sbuf_t *authenticationserverAddNewUserHandle(
     {
         const char *error = authenticationserverUsersAddResultError(add_result);
         LOGW("AuthenticationServer: AddNewUser rejected user JSON: %s", error);
+        recursivemutexUnlock(&ts->database_mutex);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, error);
     }
 
@@ -86,8 +88,15 @@ sbuf_t *authenticationserverAddNewUserHandle(
         {
             LOGW("AuthenticationServer: AddNewUser could not roll back the in-memory user after save failure");
         }
+        recursivemutexUnlock(&ts->database_mutex);
         return authenticationserverCreateErrorResponseFrame(l, correlation_id, "database-save-failed");
     }
+    if (! authenticationserverMarkUserDirtyBySHA256(t, added_sha256))
+    {
+        recursivemutexUnlock(&ts->database_mutex);
+        return authenticationserverCreateErrorResponseFrame(l, correlation_id, "user-sync-mark-failed");
+    }
+    recursivemutexUnlock(&ts->database_mutex);
 
     static const char ok[] = "user-added";
     LOGI("AuthenticationServer: AddNewUser added a new user and saved the database");

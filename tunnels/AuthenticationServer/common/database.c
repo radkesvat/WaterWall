@@ -2,10 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include <errno.h>
-#include <stdio.h>
-#include <string.h>
-
 static char *authenticationserverCreateBackupPath(const char *db_path)
 {
     static const char suffix[] = ".backup";
@@ -113,7 +109,7 @@ static bool authenticationserverRewritePrimaryFromMemory(authenticationserver_ts
     return ok;
 }
 
-bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
+static bool authenticationserverSaveDatabaseUnlocked(authenticationserver_tstate_t *ts)
 {
     char  *json_text = NULL;
     size_t json_len  = 0;
@@ -146,6 +142,19 @@ bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
          ts->backup_path);
     memoryFree(json_text);
     return true;
+}
+
+bool authenticationserverSaveDatabase(authenticationserver_tstate_t *ts)
+{
+    /*
+     * Runtime modules can temporarily mutate users_t and then roll back on file
+     * failure. The database mutex keeps periodic/final saves from persisting
+     * those in-flight states or interleaving writes to db-path and backup.
+     */
+    recursivemutexLock(&ts->database_mutex);
+    bool ok = authenticationserverSaveDatabaseUnlocked(ts);
+    recursivemutexUnlock(&ts->database_mutex);
+    return ok;
 }
 
 bool authenticationserverLoadDatabase(authenticationserver_tstate_t *ts)
