@@ -14,6 +14,7 @@ typedef struct wgd_tstate_s
     tunnel_t *tunnel;
     wmutex_t  mutex;
     bool      transport_side_is_next;
+    bool      transport_direction_configured;
 
     // the data that came from json configuration, we build real wireguard device from this
     wireguard_device_init_data_t device_configuration;

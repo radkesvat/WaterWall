@@ -393,6 +393,43 @@ static bool processAllPeers(const cJSON *peers_array, wireguard_device_t *device
     return true;
 }
 
+static bool parseTransportDirection(wgd_tstate_t *state, const cJSON *settings)
+{
+    const cJSON *direction = cJSON_GetObjectItemCaseSensitive(settings, "transport-direction");
+
+    if (direction == NULL)
+    {
+        return true;
+    }
+
+    if (! cJSON_IsString(direction) || direction->valuestring == NULL)
+    {
+        LOGF("JSON Error: WireGuardDevice->settings->transport-direction must be \"next\"/\"up\" or "
+             "\"prev\"/\"down\"");
+        return false;
+    }
+
+    if (stringCompare(direction->valuestring, "next") == 0 || stringCompare(direction->valuestring, "up") == 0 ||
+        stringCompare(direction->valuestring, "upstream") == 0)
+    {
+        state->transport_side_is_next         = true;
+        state->transport_direction_configured = true;
+        return true;
+    }
+
+    if (stringCompare(direction->valuestring, "prev") == 0 || stringCompare(direction->valuestring, "down") == 0 ||
+        stringCompare(direction->valuestring, "downstream") == 0)
+    {
+        state->transport_side_is_next         = false;
+        state->transport_direction_configured = true;
+        return true;
+    }
+
+    LOGF("JSON Error: WireGuardDevice->settings->transport-direction must be \"next\"/\"up\" or "
+         "\"prev\"/\"down\"");
+    return false;
+}
+
 static void wireguarddeviceInit(wireguard_device_t *device, wireguard_device_init_data_t *data)
 {
     assert(data != NULL);
@@ -432,6 +469,11 @@ tunnel_t *wireguarddeviceTunnelCreate(node_t *node)
     if (!getStringFromJsonObject(&device_private_key, node->node_settings_json, "privatekey"))
     {
         LOGF("JSON Error: WireGuardDevice->settings->privatekey (string field) : The data was empty or invalid");
+        goto fail;
+    }
+
+    if (! parseTransportDirection(state, settings))
+    {
         goto fail;
     }
 

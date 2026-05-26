@@ -67,15 +67,18 @@ Common packet-side neighbors include:
 
 ## Transport-Side Detection
 
-During `onPrepare`, `WireGuardDevice` checks its adjacent tunnels and treats the side next to `UdpStatelessSocket` as the WireGuard transport side.
+During `onPrepare`, `WireGuardDevice` decides which side carries outer WireGuard UDP message bodies.
 
-So the safe intended layout is:
+If `settings.transport-direction` is set, that explicit value is used and no topology search is performed.
 
-- exactly one adjacent `UdpStatelessSocket`
+If it is not set, the tunnel searches outward in both chain directions:
 
-If both sides are `UdpStatelessSocket`, or neither side is, the current implementation falls back to treating the `next` side as the transport side.
+- first for `UdpStatelessSocket`, across all reachable `next` tunnels and all reachable `prev` tunnels
+- if no `UdpStatelessSocket` is found, for a tunnel whose node has `kNodeLayer4` enabled in `layer_group`
 
-That fallback is real code behavior, but it is usually not what you want. Keep the chain unambiguous and place exactly one `UdpStatelessSocket` next to `WireGuardDevice`.
+If `UdpStatelessSocket` is found only on one side, that side becomes the transport side. If `UdpStatelessSocket` is found in both directions, `transport-direction` is mandatory because the topology is ambiguous.
+
+If no UDP stateless socket is found, the Layer 4 search is a compatibility fallback. A single Layer 4 side is selected; otherwise the tunnel keeps the historical default of treating `next` as the transport side.
 
 ## Configuration Example
 
@@ -85,6 +88,7 @@ That fallback is real code behavior, but it is usually not what you want. Keep t
   "type": "WireGuardDevice",
   "settings": {
     "privatekey": "<base64-32-byte-private-key>",
+    "transport-direction": "next",
     "peers": [
       {
         "publickey": "<base64-32-byte-peer-public-key>",
@@ -120,6 +124,17 @@ That fallback is real code behavior, but it is usually not what you want. Keep t
   Current implementation rules:
   - must be a non-empty array
   - maximum peer count is `32`
+
+## Optional Settings Fields
+
+- `transport-direction` `(string)`
+  Explicitly selects which side of `WireGuardDevice` carries outer WireGuard transport packets.
+
+  Accepted values:
+  - `"next"` or `"up"` or `"upstream"`: the transport side is the next/upstream side
+  - `"prev"` or `"down"` or `"downstream"`: the transport side is the previous/downstream side
+
+  When omitted, `WireGuardDevice` auto-detects the transport side by searching for `UdpStatelessSocket` in both directions, then falls back to Layer 4 node detection. Set this field when both directions contain `UdpStatelessSocket` or when the chain shape is intentionally unusual.
 
 ### Per-peer required fields
 
@@ -362,6 +377,6 @@ That layout is useful as a minimal reference when you want WireGuard transport o
 - It uses worker packet lines supplied by the chain and should not be treated like a closable per-connection adapter.
 - The tunnel itself does not add a UDP header; that belongs to `UdpStatelessSocket`.
 - Hostname endpoints are resolved once during startup, not continuously re-resolved later.
-- Keep the chain shape unambiguous by placing exactly one adjacent `UdpStatelessSocket`.
+- Keep the chain shape unambiguous by placing `UdpStatelessSocket` on only one side, or set `transport-direction` explicitly.
 - Outbound routing depends entirely on `AllowedIPs`; if your inner destination addresses do not match a peer, traffic is dropped.
 - Inbound plaintext is forwarded only if the decrypted source address is allowed for that peer.
