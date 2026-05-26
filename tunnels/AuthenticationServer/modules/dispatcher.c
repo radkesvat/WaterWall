@@ -7,6 +7,7 @@
 #include "modules/get_user_by_sha256_base64/get_user_by_sha256_base64.h"
 #include "modules/get_user_by_sha256_hex/get_user_by_sha256_hex.h"
 #include "modules/ping/ping.h"
+#include "modules/update_user/update_user.h"
 
 typedef struct authenticationserver_module_s
 {
@@ -45,6 +46,11 @@ static const authenticationserver_module_t kAuthenticationServerModules[] = {
         .request_type = kAuthenticationServerRequestTypeAddNewUser,
         .name         = "AddNewUser",
         .handler      = authenticationserverAddNewUserHandle,
+    },
+    {
+        .request_type = kAuthenticationServerRequestTypeUpdateUser,
+        .name         = "UpdateUser",
+        .handler      = authenticationserverUpdateUserHandle,
     },
 };
 

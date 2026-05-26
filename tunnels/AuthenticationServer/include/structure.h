@@ -35,7 +35,7 @@ enum
     kAuthenticationServerMaxResponsePayload  = 16U * 1024U * 1024U,
     kAuthenticationServerMaxResponseQueue    = 16U * 1024U * 1024U,
     kAuthenticationServerResponseQueueCap    = 4,
-    kAuthenticationServerMaxPasswordLength = 1024U,
+    kAuthenticationServerMaxPasswordLength   = 1024U,
 
     kAuthenticationServerRequestTypePing                  = 1,
     kAuthenticationServerRequestTypeGetUserBySHA256Hex    = 2,
@@ -43,6 +43,7 @@ enum
     kAuthenticationServerRequestTypeGetUserBySHA256       = 4,
     kAuthenticationServerRequestTypeGetUserByPassword     = 5,
     kAuthenticationServerRequestTypeAddNewUser            = 6,
+    kAuthenticationServerRequestTypeUpdateUser            = 7,
 
     kAuthenticationServerResponseTypeOk       = 0,
     kAuthenticationServerResponseTypeError    = 0xFF,

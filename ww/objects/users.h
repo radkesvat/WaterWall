@@ -80,6 +80,18 @@ typedef enum users_add_result_e
     kUsersAddResultCommitFailed
 } users_add_result_t;
 
+typedef enum users_update_result_e
+{
+    kUsersUpdateResultOk = 0,
+    kUsersUpdateResultInvalidArgument,
+    kUsersUpdateResultUnknownFields,
+    kUsersUpdateResultInvalidRecordStatInterval,
+    kUsersUpdateResultAllocationFailed,
+    kUsersUpdateResultUserNotFound,
+    kUsersUpdateResultDuplicateName,
+    kUsersUpdateResultPasswordUpdateFailed
+} users_update_result_t;
+
 enum
 {
     kUserUpdatePassword = 1U << 0U,
@@ -151,6 +163,9 @@ bool usersRemoveUserByHash(users_t *users, hash_t hash);
 
 bool usersChangePassword(users_t *users, user_t *user, const char *password);
 bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update);
+users_update_result_t usersUpdateUserBySHA256(users_t *users,
+                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                              const user_update_t *update);
 bool usersSetUserName(users_t *users, user_t *user, const char *name);
 bool usersSetUserEmail(users_t *users, user_t *user, const char *email);
 bool usersSetUserNotes(users_t *users, user_t *user, const char *notes);

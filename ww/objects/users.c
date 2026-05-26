@@ -1532,88 +1532,111 @@ bool usersChangePassword(users_t *users, user_t *user, const char *password)
     return result;
 }
 
-bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
+static users_update_result_t usersValidateUpdateRequest(const user_update_t *update)
 {
-    char   *name_copy  = NULL;
-    char   *email_copy = NULL;
-    char   *notes_copy = NULL;
-    user_t *duplicate_name;
-
-    if (users == NULL || user == NULL || update == NULL)
+    if (update == NULL)
     {
-        return false;
+        return kUsersUpdateResultInvalidArgument;
     }
     if ((update->mask & ~((uint32_t) kKnownUserUpdateMask)) != 0U)
     {
         LOGE("Users: update request contains unknown fields");
-        return false;
+        return kUsersUpdateResultUnknownFields;
     }
     if ((update->mask & kUserUpdateRecordStatInterval) != 0U && update->record_stat_interval_ms < 0)
     {
         LOGE("Users: record stat interval must not be negative");
-        return false;
+        return kUsersUpdateResultInvalidRecordStatInterval;
     }
 
-    if ((update->mask & kUserUpdateName) != 0U && ! usersStringDuplicate(&name_copy, update->name))
+    return kUsersUpdateResultOk;
+}
+
+static void usersFreeUpdateStringCopies(char *name_copy, char *email_copy, char *notes_copy)
+{
+    memoryFree(name_copy);
+    memoryFree(email_copy);
+    memoryFree(notes_copy);
+}
+
+static users_update_result_t usersCopyUpdateStrings(const user_update_t *update,
+                                                    char **name_copy,
+                                                    char **email_copy,
+                                                    char **notes_copy)
+{
+    *name_copy  = NULL;
+    *email_copy = NULL;
+    *notes_copy = NULL;
+
+    if ((update->mask & kUserUpdateName) != 0U && ! usersStringDuplicate(name_copy, update->name))
     {
-        return false;
+        return kUsersUpdateResultAllocationFailed;
     }
-    if ((update->mask & kUserUpdateEmail) != 0U && ! usersStringDuplicate(&email_copy, update->email))
+    if ((update->mask & kUserUpdateEmail) != 0U && ! usersStringDuplicate(email_copy, update->email))
     {
-        memoryFree(name_copy);
-        return false;
+        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy);
+        *name_copy = *email_copy = *notes_copy = NULL;
+        return kUsersUpdateResultAllocationFailed;
     }
-    if ((update->mask & kUserUpdateNotes) != 0U && ! usersStringDuplicate(&notes_copy, update->notes))
+    if ((update->mask & kUserUpdateNotes) != 0U && ! usersStringDuplicate(notes_copy, update->notes))
     {
-        memoryFree(name_copy);
-        memoryFree(email_copy);
-        return false;
+        usersFreeUpdateStringCopies(*name_copy, *email_copy, *notes_copy);
+        *name_copy = *email_copy = *notes_copy = NULL;
+        return kUsersUpdateResultAllocationFailed;
     }
 
-    rwlockWriteLock(&users->lock);
-    if (! usersIndexOfLocked(users, user, NULL))
+    return kUsersUpdateResultOk;
+}
+
+static users_update_result_t usersPrepareUpdate(const user_update_t *update,
+                                                char **name_copy,
+                                                char **email_copy,
+                                                char **notes_copy)
+{
+    users_update_result_t result = usersValidateUpdateRequest(update);
+    if (result != kUsersUpdateResultOk)
     {
-        rwlockWriteUnlock(&users->lock);
-        memoryFree(name_copy);
-        memoryFree(email_copy);
-        memoryFree(notes_copy);
-        return false;
+        return result;
     }
+
+    return usersCopyUpdateStrings(update, name_copy, email_copy, notes_copy);
+}
+
+static users_update_result_t usersApplyUpdateToExistingUserLocked(users_t *users,
+                                                                  user_t *user,
+                                                                  const user_update_t *update,
+                                                                  char **name_copy,
+                                                                  char **email_copy,
+                                                                  char **notes_copy)
+{
+    user_t *duplicate_name;
 
     if ((update->mask & kUserUpdateName) != 0U)
     {
-        duplicate_name = usersFindByNameLocked(users, name_copy, user);
+        duplicate_name = usersFindByNameLocked(users, *name_copy, user);
         if (duplicate_name != NULL)
         {
-            LOGE("Users: duplicate username \"%s\" in update", name_copy);
-            rwlockWriteUnlock(&users->lock);
-            memoryFree(name_copy);
-            memoryFree(email_copy);
-            memoryFree(notes_copy);
-            return false;
+            LOGE("Users: duplicate username \"%s\" in update", *name_copy);
+            return kUsersUpdateResultDuplicateName;
         }
     }
     if ((update->mask & kUserUpdatePassword) != 0U && ! usersChangePasswordLocked(users, user, update->password))
     {
-        rwlockWriteUnlock(&users->lock);
-        memoryFree(name_copy);
-        memoryFree(email_copy);
-        memoryFree(notes_copy);
-        return false;
+        return kUsersUpdateResultPasswordUpdateFailed;
     }
 
     rwlockWriteLock(&user->lock);
     if ((update->mask & kUserUpdateName) != 0U)
     {
-        usersReplaceStringOwned(&user->name, &name_copy);
+        usersReplaceStringOwned(&user->name, name_copy);
     }
     if ((update->mask & kUserUpdateEmail) != 0U)
     {
-        usersReplaceStringOwned(&user->email, &email_copy);
+        usersReplaceStringOwned(&user->email, email_copy);
     }
     if ((update->mask & kUserUpdateNotes) != 0U)
     {
-        usersReplaceStringOwned(&user->notes, &notes_copy);
+        usersReplaceStringOwned(&user->notes, notes_copy);
     }
     if ((update->mask & kUserUpdateGid) != 0U)
     {
@@ -1644,12 +1667,77 @@ bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
         rwlockWriteUnlock(&user->stats_lock);
     }
 
+    return kUsersUpdateResultOk;
+}
+
+bool usersUpdateUser(users_t *users, user_t *user, const user_update_t *update)
+{
+    char                 *name_copy  = NULL;
+    char                 *email_copy = NULL;
+    char                 *notes_copy = NULL;
+    users_update_result_t result;
+
+    if (users == NULL || user == NULL)
+    {
+        return false;
+    }
+
+    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
+    if (result != kUsersUpdateResultOk)
+    {
+        return false;
+    }
+
+    rwlockWriteLock(&users->lock);
+    if (! usersIndexOfLocked(users, user, NULL))
+    {
+        result = kUsersUpdateResultUserNotFound;
+    }
+    else
+    {
+        result = usersApplyUpdateToExistingUserLocked(users, user, update, &name_copy, &email_copy, &notes_copy);
+    }
     rwlockWriteUnlock(&users->lock);
 
-    memoryFree(name_copy);
-    memoryFree(email_copy);
-    memoryFree(notes_copy);
-    return true;
+    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy);
+    return result == kUsersUpdateResultOk;
+}
+
+users_update_result_t usersUpdateUserBySHA256(users_t *users,
+                                              const uint8_t sha256[SHA256_DIGEST_SIZE],
+                                              const user_update_t *update)
+{
+    char                 *name_copy  = NULL;
+    char                 *email_copy = NULL;
+    char                 *notes_copy = NULL;
+    users_update_result_t result;
+    user_t               *user;
+
+    if (users == NULL || sha256 == NULL)
+    {
+        return kUsersUpdateResultInvalidArgument;
+    }
+
+    result = usersPrepareUpdate(update, &name_copy, &email_copy, &notes_copy);
+    if (result != kUsersUpdateResultOk)
+    {
+        return result;
+    }
+
+    rwlockWriteLock(&users->lock);
+    user = usersSHA256TableLookupLocked(users, sha256);
+    if (user == NULL)
+    {
+        result = kUsersUpdateResultUserNotFound;
+    }
+    else
+    {
+        result = usersApplyUpdateToExistingUserLocked(users, user, update, &name_copy, &email_copy, &notes_copy);
+    }
+    rwlockWriteUnlock(&users->lock);
+
+    usersFreeUpdateStringCopies(name_copy, email_copy, notes_copy);
+    return result;
 }
 
 bool usersSetUserName(users_t *users, user_t *user, const char *name)

@@ -12,6 +12,7 @@ add_library(AuthenticationServer STATIC
                     common/protocol.c
                     modules/dispatcher.c
                     modules/add_new_user/add_new_user.c
+                    modules/update_user/update_user.c
                     modules/get_user_by_password/get_user_by_password.c
                     modules/get_user_by_sha256/get_user_by_sha256.c
                     modules/get_user_by_sha256_base64/get_user_by_sha256_base64.c
