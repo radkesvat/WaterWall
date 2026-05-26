@@ -2,6 +2,7 @@
 #include "generic_pool.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "wproc.h"
 #include "worker.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -20,6 +21,10 @@
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#ifndef useExecCmd
+#define useExecCmd 1
+#endif
 
 enum
 {
@@ -63,8 +68,46 @@ static void capturedeviceFormatCidr(const ipmask_t *range, char *dest, size_t de
     stringNPrintf(dest, dest_len, "%s/%u", ip, prefix);
 }
 
+static void capturedeviceFormatCommand(const char *const argv[], char *dest, size_t dest_len)
+{
+    size_t offset = 0;
+
+    if (dest_len == 0)
+    {
+        return;
+    }
+
+    dest[0] = '\0';
+
+    for (size_t i = 0; argv[i] != NULL && offset < dest_len; ++i)
+    {
+        int written =
+            stringNPrintf(dest + offset, dest_len - offset, "%s%s", i == 0 ? "" : " ", argv[i]);
+        if (written < 0)
+        {
+            break;
+        }
+
+        if ((size_t) written >= dest_len - offset)
+        {
+            offset = dest_len - 1;
+            break;
+        }
+
+        offset += (size_t) written;
+    }
+}
+
 static int capturedeviceRunCommand(const char *command_name, const char *const argv[])
 {
+    char command[512];
+    capturedeviceFormatCommand(argv, command, sizeof(command));
+    LOGD("CaptureDevice: Running command: %s", command);
+
+#if useExecCmd
+    discard command_name;
+    return execCmd(command).exit_code;
+#else
     pid_t childpid = fork();
     if (childpid < 0)
     {
@@ -102,6 +145,7 @@ static int capturedeviceRunCommand(const char *command_name, const char *const a
     }
 
     return -1;
+#endif
 }
 
 static void capturedeviceSetSysctl(const char *setting)
