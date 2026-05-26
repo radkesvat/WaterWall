@@ -8,6 +8,10 @@ These tests exercise small library-level behavior without launching the `Waterwa
   Verifies the `aes256gcm` wrapper through successful encryption/decryption, empty associated data, wrong-key failure,
   wrong-associated-data failure, and tampered-ciphertext failure. If the selected crypto backend or CPU does not expose
   AES256-GCM, the test exits successfully after reporting that the AES-specific cases were skipped.
+- `waterwall.users_sync_unit`
+  Verifies user sync-index semantics and stress-tests the users database locking with concurrent update/pull loops and
+  concurrent add/remove/export/pull loops. These cases are intentionally loop-heavy to shake out missed write locks,
+  inconsistent pull snapshots, and stale `user_t` lifetime exposure.
 - `waterwall.tcp_over_udp_fec_unit`
   Verifies the TCP-over-UDP Reed-Solomon FEC helper directly, including one missing data shard recovery, encoder reset
   after a failed parity emit callback, and malformed packet rejection.
