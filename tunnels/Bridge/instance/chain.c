@@ -8,6 +8,7 @@ void bridgeTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     bridge_tstate_t *state = tunnelGetState(t);
 
     tunnelDefaultOnChain(t, chain);
+    chain = tunnelGetChain(t);
 
     if (! state->pair_tun)
     {
