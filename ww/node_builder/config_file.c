@@ -239,9 +239,8 @@ static bool findVariablesObjectRange(const char *json_text, size_t *start_out, s
             }
 
             bool is_variables = key_len == 9 && memoryCompare(json_text + string_start, "variables", 9) == 0;
-            bool is_variales  = key_len == 8 && memoryCompare(json_text + string_start, "variales", 8) == 0;
 
-            if (! (is_variables || is_variales) || *cursor != ':')
+            if (! is_variables || *cursor != ':')
             {
                 continue;
             }
@@ -255,7 +254,7 @@ static bool findVariablesObjectRange(const char *json_text, size_t *start_out, s
 
             if (*cursor != '{')
             {
-                LOGF("JSON Error: top-level \"%s\" block must be an object", is_variables ? "variables" : "variales");
+                LOGF("JSON Error: top-level \"variables\" block must be an object");
                 return false;
             }
 
@@ -263,13 +262,13 @@ static bool findVariablesObjectRange(const char *json_text, size_t *start_out, s
             size_t object_end   = 0;
             if (! findMatchingJsonBrace(json_text, object_start, &object_end))
             {
-                LOGF("JSON Error: top-level \"%s\" block is malformed", is_variables ? "variables" : "variales");
+                LOGF("JSON Error: top-level \"variables\" block is malformed");
                 return false;
             }
 
             *start_out = object_start;
             *end_out   = object_end;
-            *key_out   = is_variables ? "variables" : "variales";
+            *key_out   = "variables";
             return true;
         }
 

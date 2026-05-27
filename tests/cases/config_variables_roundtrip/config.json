@@ -1,7 +1,7 @@
 {
   // whole-line comments should be ignored before JSON parsing
   "name": "config-variables-roundtrip",
-  "variales": {
+  "variables": {
     "listener_address": "127.0.0.1",
     "listener_port": 45123, // end-of-line comments should work too
     "connect_target": "127.0.0.1",
