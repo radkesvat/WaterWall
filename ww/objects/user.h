@@ -25,8 +25,9 @@
 
 #include "wlibc.h"
 
-#include "wcrypto.h"  // For sha224_hash_t, sha256_hash_t, sha384_hash_t, sha512_hash_t, wCryptoZero(), wCryptoSHA256(), etc.
-#include "cjson/cJSON.h"  // For cJSON type and functions (adjust path based on your cJSON installation)
+#include "wcrypto.h" 
+#include "cJSON.h"
+
 
 #define USER_NO_LIMIT 0ULL
 #define USER_NO_EXPIRY 0ULL
