@@ -77,7 +77,7 @@ bool muxclientCheckConnectionIsExhausted(muxclient_tstate_t *ts, muxclient_lstat
 
     if (ts->concurrency_mode == kConcurrencyModeCounter)
     {
-        if (ls->children_count < ts->concurrency_capacity)
+        if (ls->connection_id < ts->concurrency_capacity)
         {
             return false; // Connection is not exhausted yet
         }
@@ -135,6 +135,27 @@ static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **parent_l_
 
     *parent_l_out = parent_l;
     return true;
+}
+
+static void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid, line_t *parent_l,
+                                                  muxclient_lstate_t *parent_ls)
+{
+    assert(parent_ls->is_child == false);
+    assert(parent_ls->children_count == 0);
+
+    lineLock(parent_l);
+
+    muxclientForgetParentLine(ts, wid, parent_l);
+    parent_ls->parent_finishing = true;
+    muxclientLinestateDestroy(parent_ls);
+    tunnelNextUpStreamFinish(t, parent_l);
+
+    if (lineIsAlive(parent_l))
+    {
+        lineDestroy(parent_l);
+    }
+
+    lineUnlock(parent_l);
 }
 
 static line_t *muxclientGetFixedParentLineForNewChild(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid)
@@ -203,8 +224,24 @@ line_t *muxclientGetParentLineForNewChild(tunnel_t *t, line_t *child_l)
         return muxclientGetFixedParentLineForNewChild(t, ts, wid);
     }
 
-    if (ts->unsatisfied_lines[wid] == NULL ||
-        muxclientCheckConnectionIsExhausted(ts, lineGetState(ts->unsatisfied_lines[wid], t)))
+    line_t *candidate_parent_l = ts->unsatisfied_lines[wid];
+    if (candidate_parent_l != NULL)
+    {
+        muxclient_lstate_t *candidate_parent_ls = lineGetState(candidate_parent_l, t);
+        if (muxclientCheckConnectionIsExhausted(ts, candidate_parent_ls))
+        {
+            if (candidate_parent_ls->children_count == 0)
+            {
+                muxclientCloseIdleExhaustedParentLine(t, ts, wid, candidate_parent_l, candidate_parent_ls);
+            }
+            else
+            {
+                ts->unsatisfied_lines[wid] = NULL;
+            }
+        }
+    }
+
+    if (ts->unsatisfied_lines[wid] == NULL)
     {
         line_t *parent_l = NULL;
         if (! muxclientCreateParentLine(t, wid, &parent_l))

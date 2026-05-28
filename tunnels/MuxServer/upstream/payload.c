@@ -62,9 +62,11 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     muxserverLinestateInitialize(new_child_ls, child_l, true, frame->cid);
     muxserverJoinConnection(parent_ls, new_child_ls);
 
-
-    tunnelNextUpStreamInit(t, child_l);
-    return true;
+    lineLock(parent_l);
+    discard withLineLocked(child_l, tunnelNextUpStreamInit, t);
+    bool parent_alive = lineIsAlive(parent_l);
+    lineUnlock(parent_l);
+    return parent_alive;
 }
 
 static muxserver_lstate_t *findChildByConnectionId(muxserver_lstate_t *parent_ls, uint32_t cid)
