@@ -32,7 +32,8 @@ typedef struct muxserver_lstate_s
     bool     is_child : 1;              // if this connection is muxed into a parent connection
     bool     paused : 1;                // child: local child write side is paused
     bool     flow_paused_sent : 1;      // child: FlowPause was sent to the peer for this cid
-    bool     parent_input_paused : 1;   // parent: main input was paused because a child queue hit the limit
+    bool     peer_flow_paused : 1;      // child: peer sent FlowPause for this cid
+    bool     parent_write_paused : 1;   // child: parent transport write pause was reflected to this child
     bool     parent_finishing : 1;      // parent: main FIN is being handled, suppress parent writes
 } muxserver_lstate_t;
 
@@ -126,9 +127,11 @@ bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t
 bool muxserverMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
                                       muxserver_lstate_t *parent_ls, line_t *child_l,
                                       muxserver_lstate_t *child_ls);
+bool muxserverPauseChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls, bool peer_flow,
+                               bool parent_write);
+bool muxserverResumeChildSource(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *child_ls, bool peer_flow,
+                                bool parent_write);
 bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
                                 muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls, sbuf_t *buf);
 bool muxserverFlushChildPending(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
                                 muxserver_lstate_t *child_ls, bool fin_mode);
-bool muxserverMaybeResumeParentForChildBuffers(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
-                                               muxserver_lstate_t *parent_ls);

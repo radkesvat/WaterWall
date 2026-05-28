@@ -18,7 +18,8 @@ void muxclientLinestateInitialize(muxclient_lstate_t *ls, line_t *l, bool is_chi
                                       .is_child       = is_child,
                                       .paused         = false,
                                       .flow_paused_sent = false,
-                                      .parent_input_paused = false,
+                                      .peer_flow_paused = false,
+                                      .parent_write_paused = false,
                                       .parent_finishing = false};
 }
 

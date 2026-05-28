@@ -142,13 +142,19 @@ static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *fra
     case kMuxFlagFlowPause:
         // LOGD("MuxClient: DownStreamPayload: FlowPause frame received, cid: %u", frame->cid);
         lineReuseBuffer(parent_l, frame_buffer);
-        tunnelPrevDownStreamPause(t, child_l);
+        if (! muxclientPauseChildSource(t, parent_l, child_ls, true, false))
+        {
+            return false;
+        }
         break;
 
     case kMuxFlagFlowResume:
         // LOGD("MuxClient: DownStreamPayload: FlowResume frame received, cid: %u", frame->cid);
         lineReuseBuffer(parent_l, frame_buffer);
-        tunnelPrevDownStreamResume(t, child_l);
+        if (! muxclientResumeChildSource(t, parent_l, child_ls, true, false))
+        {
+            return false;
+        }
         break;
 
     case kMuxFlagData:
