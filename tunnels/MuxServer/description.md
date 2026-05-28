@@ -60,6 +60,12 @@ There are no required tunnel-specific settings in the current implementation.
 
   Default: `8388608` (`8 MB`).
 
+- `child-buffer-pause-tolerance` `(integer, bytes, optional)`
+  Minimum queued data for a paused child line before `MuxServer` sends that child's `FlowPause` frame to the peer.
+
+  Default: `524288` (`512 KB`). Set to `0` for immediate per-child pause frames. Values above `child-buffer-limit`
+  are capped to `child-buffer-limit`.
+
 ## Detailed Behavior
 
 ### Parent and child model
@@ -125,7 +131,10 @@ If the parent transport line itself finishes, `MuxServer` closes all currently a
 
 Per-child `FlowPause` and `FlowResume` frames are forwarded to the matching child line.
 
-If writing parent-delivered data to a child causes that child to pause, `MuxServer` queues later data for that child and sends `FlowPause` to the remote peer. Queued child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`, so the peer can begin sending before the queue is fully empty.
+If writing parent-delivered data to a child causes that child to pause, `MuxServer` queues later data for that child.
+It sends `FlowPause` to the remote peer once that child's pending queue reaches `child-buffer-pause-tolerance`. Queued
+child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`,
+so the peer can begin sending before the queue is fully empty.
 
 If one paused child's queue reaches `child-buffer-limit`, `MuxServer` pauses the parent mux input. It resumes the parent input after all child queues are below their configured limit, allowing other child streams to continue.
 

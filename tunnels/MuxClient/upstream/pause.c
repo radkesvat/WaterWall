@@ -16,6 +16,6 @@ void muxclientTunnelUpStreamPause(tunnel_t *t, line_t *child_l)
         return;
     }
 
-    child_ls->flow_paused_sent = true;
-    discard muxclientSendControlFrame(t, parent_ls->l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowPause);
+    muxclient_tstate_t *ts = tunnelGetState(t);
+    discard muxclientMaybeSendChildFlowPause(t, parent_ls->l, ts, parent_ls, child_l, child_ls);
 }

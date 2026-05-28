@@ -112,6 +112,24 @@ bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t
     return true;
 }
 
+bool muxserverMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
+                                      muxserver_lstate_t *parent_ls, line_t *child_l,
+                                      muxserver_lstate_t *child_ls)
+{
+    if (parent_ls->parent_finishing || child_ls->flow_paused_sent)
+    {
+        return true;
+    }
+
+    if (bufferqueueGetBufLen(&child_ls->pending_child_data) < ts->child_buffer_pause_tolerance)
+    {
+        return true;
+    }
+
+    child_ls->flow_paused_sent = true;
+    return muxserverSendControlFrame(t, parent_l, parent_ls, child_l, child_ls->connection_id, kMuxFlagFlowPause);
+}
+
 static bool muxserverMaybePauseParentForChildBuffers(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
                                                      muxserver_lstate_t *parent_ls)
 {
@@ -158,6 +176,10 @@ bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_
                                 muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls, sbuf_t *buf)
 {
     bufferqueuePushBack(&child_ls->pending_child_data, buf);
+    if (! muxserverMaybeSendChildFlowPause(t, parent_l, ts, parent_ls, child_ls->l, child_ls))
+    {
+        return false;
+    }
     return muxserverMaybePauseParentForChildBuffers(t, parent_l, ts, parent_ls);
 }
 

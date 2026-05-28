@@ -14,6 +14,7 @@ typedef uint32_t cid_t;
 typedef struct muxserver_tstate_s
 {
     uint32_t child_buffer_limit;
+    uint32_t child_buffer_pause_tolerance;
 } muxserver_tstate_t;
 
 typedef struct muxserver_lstate_s
@@ -43,6 +44,7 @@ enum
     kConcurrencyModeCounter = kDvsSecondOption,
     kMaxMainChannelBufferSize = 1024 * 1024, // 1MB
     kMuxDefaultChildBufferLimit = 8 * 1024 * 1024,
+    kMuxDefaultChildBufferPauseTolerance = 512 * 1024,
     kMuxChildBufferResumeThreshold = 512 * 1024,
     kMuxChildBufferQueueCap = 8,
 };
@@ -121,6 +123,9 @@ void muxserverLeaveConnection(muxserver_lstate_t *child);
 void muxserverMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag);
 bool muxserverSendControlFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,
                                cid_t cid, uint8_t flag);
+bool muxserverMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
+                                      muxserver_lstate_t *parent_ls, line_t *child_l,
+                                      muxserver_lstate_t *child_ls);
 bool muxserverQueueChildPayload(tunnel_t *t, line_t *parent_l, muxserver_tstate_t *ts,
                                 muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls, sbuf_t *buf);
 bool muxserverFlushChildPending(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, line_t *child_l,

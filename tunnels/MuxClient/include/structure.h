@@ -18,6 +18,7 @@ typedef struct muxclient_tstate_s
     uint32_t concurrency_capacity;
     uint32_t fixed_connections_count;
     uint32_t child_buffer_limit;
+    uint32_t child_buffer_pause_tolerance;
 
     line_t  **fixed_parent_lines;
     uint32_t *fixed_next_parent_indexes;
@@ -54,6 +55,7 @@ enum
     kConcurrencyModeFixedConnectionsCount = kDvsThirdOption,
     kMaxMainChannelBufferSize = 1024 * 1024, // 1MB
     kMuxDefaultChildBufferLimit = 8 * 1024 * 1024,
+    kMuxDefaultChildBufferPauseTolerance = 512 * 1024,
     kMuxChildBufferResumeThreshold = 512 * 1024,
     kMuxChildBufferQueueCap = 8,
 };
@@ -134,6 +136,9 @@ void muxclientLeaveConnection(muxclient_lstate_t *child);
 void muxclientMakeMuxFrame(sbuf_t *buf, cid_t cid, uint8_t flag);
 bool muxclientSendControlFrame(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,
                                cid_t cid, uint8_t flag);
+bool muxclientMaybeSendChildFlowPause(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
+                                      muxclient_lstate_t *parent_ls, line_t *child_l,
+                                      muxclient_lstate_t *child_ls);
 bool muxclientQueueChildPayload(tunnel_t *t, line_t *parent_l, muxclient_tstate_t *ts,
                                 muxclient_lstate_t *parent_ls, muxclient_lstate_t *child_ls, sbuf_t *buf);
 bool muxclientFlushChildPending(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *parent_ls, line_t *child_l,

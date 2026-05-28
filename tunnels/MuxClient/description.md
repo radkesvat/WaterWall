@@ -123,6 +123,12 @@ Fixed connection count mode:
 
   Default: `8388608` (`8 MB`).
 
+- `child-buffer-pause-tolerance` `(integer, bytes, optional)`
+  Minimum queued data for a paused child line before `MuxClient` sends that child's `FlowPause` frame to the peer.
+
+  Default: `524288` (`512 KB`). Set to `0` for immediate per-child pause frames. Values above `child-buffer-limit`
+  are capped to `child-buffer-limit`.
+
 ## Detailed Behavior
 
 ### Parent and child model
@@ -197,9 +203,13 @@ For replies, it reads complete frames from the parent line, looks up the child b
 
 ### Pause and resume behavior
 
-When a child line is paused or resumed by the previous node, `MuxClient` sends a `FlowPause` or `FlowResume` frame for that child's `cid`.
+When a child line is paused or resumed by the previous node, `MuxClient` uses `FlowPause` and `FlowResume` frames for
+that child's `cid`; pause frames may be delayed by `child-buffer-pause-tolerance`.
 
-If writing parent-delivered data to a child causes that child to pause, `MuxClient` queues later data for that child and sends `FlowPause` to the remote peer. Queued child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`, so the peer can begin sending before the queue is fully empty.
+If writing parent-delivered data to a child causes that child to pause, `MuxClient` queues later data for that child.
+It sends `FlowPause` to the remote peer once that child's pending queue reaches `child-buffer-pause-tolerance`. Queued
+child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`,
+so the peer can begin sending before the queue is fully empty.
 
 If one paused child's queue reaches `child-buffer-limit`, `MuxClient` pauses the parent mux input. It resumes the parent input after all child queues are below their configured limit, allowing other child streams to continue.
 
