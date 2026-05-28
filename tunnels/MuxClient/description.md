@@ -119,7 +119,7 @@ Fixed connection count mode:
 ## Optional `settings` Fields
 
 - `child-buffer-limit` `(integer, bytes, optional)`
-  Maximum queued data per paused child line before `MuxClient` locally pauses the parent mux input.
+  Maximum queued data per paused child line before `MuxClient` closes that child stream.
 
   Default: `8388608` (`8 MB`).
 
@@ -211,9 +211,9 @@ It sends `FlowPause` to the remote peer once that child's pending queue reaches 
 child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`,
 so the peer can begin sending before the queue is fully empty.
 
-If one paused child's queue reaches `child-buffer-limit`, `MuxClient` pauses the parent mux input. It resumes the parent input after all child queues are below their configured limit, allowing other child streams to continue.
+If one paused child's queue reaches `child-buffer-limit`, `MuxClient` sends a `Close` for that child and finishes the local child line. The shared parent mux input stays unpaused so unrelated child streams can continue.
 
-When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume behaves similarly.
+When the remote side pauses the shared parent line, `MuxClient` tries to pause the child that most recently wrote to that parent. If no recent writer is known, it pauses all attached children. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
 
 ### Buffering and overflow handling
 

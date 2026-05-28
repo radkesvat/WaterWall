@@ -56,7 +56,7 @@ There are no required tunnel-specific settings in the current implementation.
 ## Optional `settings` Fields
 
 - `child-buffer-limit` `(integer, bytes, optional)`
-  Maximum queued data per paused child line before `MuxServer` locally pauses the parent mux input.
+  Maximum queued data per paused child line before `MuxServer` closes that child stream.
 
   Default: `8388608` (`8 MB`).
 
@@ -136,9 +136,9 @@ It sends `FlowPause` to the remote peer once that child's pending queue reaches 
 child data is flushed when the child resumes. A `FlowResume` is sent once the child's pending data drops below `512 KB`,
 so the peer can begin sending before the queue is fully empty.
 
-If one paused child's queue reaches `child-buffer-limit`, `MuxServer` pauses the parent mux input. It resumes the parent input after all child queues are below their configured limit, allowing other child streams to continue.
+If one paused child's queue reaches `child-buffer-limit`, `MuxServer` sends a `Close` for that child and finishes the local child line. The shared parent mux input stays unpaused so unrelated child streams can continue.
 
-If the parent transport is paused without a known recent writer, `MuxServer` pauses all child lines attached to that parent. Resume works the same way.
+If the parent transport is paused without a known recent writer, `MuxServer` pauses all child lines attached to that parent. Resume only clears parent-write pressure; a child that is still under peer `FlowPause` remains paused.
 
 ### Buffering and overflow handling
 
