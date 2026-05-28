@@ -104,7 +104,8 @@ Fixed connection count mode:
 - `connection-capacity` `(integer)`
   Required when `mode` is `"counter"`.
 
-  Maximum number of child lines that may be attached to one parent transport line.
+  Maximum number of child streams that may be opened on one parent transport line before `MuxClient` rotates to a new
+  parent.
 
   This value must be greater than `0`.
 
@@ -155,13 +156,14 @@ In fixed connection count mode, the first child on a worker creates that worker'
 The current parent line becomes exhausted in one of these ways:
 
 - timer mode: its age becomes greater than `connection-duration`
-- counter mode: its child count reaches `connection-capacity`
+- counter mode: its opened child stream count reaches `connection-capacity`
 - fixed connection count mode: parent lines are not exhausted by age or child count
 - absolute hard limit: the parent connection id reaches `4294967295`
 
 An exhausted parent line is not closed immediately. It simply stops accepting new child lines. Existing child streams continue using it until they finish.
 
-When the parent is exhausted and its last child closes, `MuxClient` closes the parent transport line too.
+When the parent is exhausted and its last child closes, `MuxClient` closes the parent transport line too. If a reusable
+parent becomes exhausted while it has no active children, `MuxClient` closes it before replacing it with a new parent.
 
 ### Internal frame format
 
