@@ -37,7 +37,7 @@ Timer mode:
   "type": "MuxClient",
   "settings": {
     "mode": "timer",
-    "connection-duration": 30000
+    "connection-duration-ms": 30000
   },
   "next": "outbound-transport"
 }
@@ -94,7 +94,7 @@ Fixed connection count mode:
   - `"counter"`
   - `"fixed-connections-count"`
 
-- `connection-duration` `(integer, milliseconds)`
+- `connection-duration-ms` `(integer, milliseconds)`
   Required when `mode` is `"timer"`.
 
   A parent transport line may accept new child lines only until this many milliseconds have passed since that parent was created.
@@ -161,7 +161,7 @@ In fixed connection count mode, the first child on a worker creates that worker'
 
 The current parent line becomes exhausted in one of these ways:
 
-- timer mode: its age becomes greater than `connection-duration`
+- timer mode: its age becomes greater than `connection-duration-ms`
 - counter mode: its opened child stream count reaches `connection-capacity`
 - fixed connection count mode: parent lines are not exhausted by age or child count
 - absolute hard limit: the parent connection id reaches `4294967295`
@@ -229,7 +229,7 @@ If that limit is exceeded, `MuxClient` closes the parent line and finishes all c
 
 - `MuxClient` is intended to be paired with `MuxServer`.
 - `mode` is mandatory in the current implementation.
-- `connection-duration` is only valid in timer mode.
+- `connection-duration-ms` is only valid in timer mode.
 - `connection-capacity` is only valid in counter mode.
 - `per-worker-connections-count` is only valid in fixed connection count mode.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation, so this node is not meant to be used as a generic chain endpoint.

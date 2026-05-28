@@ -11,7 +11,7 @@
       "type": "MuxClient",
       "settings": {
         "mode": "timer",
-        "connection-duration": 30000
+        "connection-duration-ms": 30000
       },
       "next": "mux-server"
     },
