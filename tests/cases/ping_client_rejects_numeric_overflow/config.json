@@ -1,0 +1,76 @@
+{
+  "name": "ping-client-rejects-numeric-overflow",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "packet-start-immediately": true,
+        "chunk-count": 1,
+        "packet-ipv4": {
+          "source-ip": "10.81.0.1",
+          "dest-ip": "10.81.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
+      "next": "ping-client"
+    },
+    {
+      "name": "ping-client",
+      "type": "PingClient",
+      "settings": {
+        "strategy": "wrap-in-icmp-header-and-reuse-ipv4-addresses",
+        "identifier": 4661,
+        "sequence-start": 20,
+        "ttl": 256,
+        "xor-byte": 51,
+        "roundup-size": true
+      },
+      "next": "ping-client-bridge"
+    },
+    {
+      "name": "ping-client-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "ping-server-bridge"
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "packet-init-on-start": true,
+        "chunk-count": 1,
+        "packet-ipv4": {
+          "source-ip": "10.81.0.1",
+          "dest-ip": "10.81.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
+      "next": "ping-server"
+    },
+    {
+      "name": "ping-server",
+      "type": "PingServer",
+      "settings": {
+        "strategy": "wrap-in-icmp-header-and-reuse-ipv4-addresses",
+        "identifier": 4661,
+        "sequence-start": 20,
+        "xor-byte": 51,
+        "roundup-size": true
+      },
+      "next": "ping-server-bridge"
+    },
+    {
+      "name": "ping-server-bridge",
+      "type": "Bridge",
+      "settings": {
+        "pair": "ping-client-bridge"
+      }
+    }
+  ]
+}
