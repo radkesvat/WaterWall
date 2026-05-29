@@ -51,6 +51,9 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
 
         udplistenerLinestateInitialize(ls, l, t, sock, real_localport, &data->peer_addr);
 
+        idle->userdata  = ls;
+        ls->idle_handle = idle;
+
         if (! withLineLocked(l, tunnelNextUpStreamInit, t))
         {
             LOGW("UdpListener: socket just got closed by upstream before anything happend");
@@ -59,9 +62,6 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
             udppayloadDestroy(data);
             return;
         }
-
-        idle->userdata  = ls;
-        ls->idle_handle = idle;
     }
     else
     {
