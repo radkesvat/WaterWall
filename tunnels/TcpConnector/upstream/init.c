@@ -27,7 +27,8 @@ static const tcpconnector_destination_t *selectWeightedDestination(const tcpconn
 }
 
 static void setupDestinationAddress(const dynamic_value_t *dest_addr_selected, const address_context_t *constant_dest_addr,
-                                    address_context_t *dest_ctx, address_context_t *src_ctx)
+                                    address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
+                                    address_context_t *src_ctx)
 {
     switch ((tcpconnector_strategy_e) dest_addr_selected->status)
     {
@@ -37,15 +38,18 @@ static void setupDestinationAddress(const dynamic_value_t *dest_addr_selected, c
     case kTcpConnectorStrategyConstant:
         addresscontextAddrCopy(dest_ctx, constant_dest_addr);
         break;
-    default:
     case kTcpConnectorStrategyFromDest:
+        addresscontextAddrCopy(dest_ctx, original_dest_ctx);
         addresscontextSetProtocol(dest_ctx, IPPROTO_TCP);
+        break;
+    default:
         break;
     }
 }
 
 static void setupDestinationPort(const dynamic_value_t *dest_port_selected, const address_context_t *constant_dest_addr,
-                                 address_context_t *dest_ctx, address_context_t *src_ctx)
+                                 address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
+                                 address_context_t *src_ctx)
 {
     switch ((tcpconnector_strategy_e) dest_port_selected->status)
     {
@@ -55,8 +59,10 @@ static void setupDestinationPort(const dynamic_value_t *dest_port_selected, cons
     case kTcpConnectorStrategyConstant:
         addresscontextCopyPort(dest_ctx, (address_context_t *) constant_dest_addr);
         break;
-    default:
     case kTcpConnectorStrategyFromDest:
+        addresscontextCopyPort(dest_ctx, (address_context_t *) original_dest_ctx);
+        break;
+    default:
         break;
     }
 }
@@ -452,8 +458,18 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         outbound_ip_range  = selected_destination->outbound_ip_range;
     }
 
-    setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, src_ctx);
-    setupDestinationPort(dest_port_selected, constant_dest_addr, dest_ctx, src_ctx);
+    address_context_t original_dest_ctx = {0};
+    addresscontextAddrCopy(&original_dest_ctx, dest_ctx);
+
+    setupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
+    setupDestinationPort(dest_port_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
+    addresscontextReset(&original_dest_ctx);
+
+    if (! addresscontextHasPort(dest_ctx))
+    {
+        LOGE("TcpConnector: destination port is not initialized");
+        goto fail;
+    }
 
     // Resolve domain name asynchronously if needed. Payloads that arrive before
     // DNS/connect completion keep using the normal pre-connect write queue.

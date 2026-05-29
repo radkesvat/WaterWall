@@ -181,6 +181,11 @@ static bool parseDestinationPort(dynamic_value_t *dest_port_selected, address_co
 
     if (dest_port_selected->status == kDvsConstant)
     {
+        if (dest_port_selected->integer == 0 || dest_port_selected->integer > UINT16_MAX)
+        {
+            LOGF("JSON Error: %s->port (number field) : expected a valid port number", error_path);
+            return false;
+        }
         addresscontextSetPort(constant_dest_addr, (uint16_t) dest_port_selected->integer);
     }
 
