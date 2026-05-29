@@ -2,15 +2,51 @@
 
 #include "loggers/network_logger.h"
 
+static bool pingclientLoadIntSetting(int *dest, const cJSON *settings, const char *key, int default_value,
+                                     int min_value, int max_value, const char *json_path)
+{
+    assert(default_value >= min_value && default_value <= max_value);
+
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, key);
+    if (item == NULL)
+    {
+        *dest = default_value;
+        return true;
+    }
+
+    if (! cJSON_IsNumber(item))
+    {
+        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value,
+             max_value);
+        return false;
+    }
+
+    const double value = item->valuedouble;
+    if (! (value >= (double) min_value && value <= (double) max_value))
+    {
+        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value,
+             max_value);
+        return false;
+    }
+
+    const int int_value = (int) value;
+    if ((double) int_value < value || (double) int_value > value)
+    {
+        LOGF("JSON Error: %s (int field) : expected a whole number between %d and %d", json_path, min_value,
+             max_value);
+        return false;
+    }
+
+    *dest = int_value;
+    return true;
+}
+
 static bool pingclientLoadUint16Setting(uint16_t *dest, const cJSON *settings, const char *key, int default_value,
                                         const char *json_path)
 {
-    int value = default_value;
-    getIntFromJsonObjectOrDefault(&value, settings, key, default_value);
-
-    if (value < 0 || value > UINT16_MAX)
+    int value;
+    if (! pingclientLoadIntSetting(&value, settings, key, default_value, 0, UINT16_MAX, json_path))
     {
-        LOGF("JSON Error: %s (int field) : expected a value between 0 and %u", json_path, (unsigned int) UINT16_MAX);
         return false;
     }
 
@@ -21,12 +57,9 @@ static bool pingclientLoadUint16Setting(uint16_t *dest, const cJSON *settings, c
 static bool pingclientLoadUint8Setting(uint8_t *dest, const cJSON *settings, const char *key, int default_value,
                                        const char *json_path)
 {
-    int value = default_value;
-    getIntFromJsonObjectOrDefault(&value, settings, key, default_value);
-
-    if (value < 0 || value > UINT8_MAX)
+    int value;
+    if (! pingclientLoadIntSetting(&value, settings, key, default_value, 0, UINT8_MAX, json_path))
     {
-        LOGF("JSON Error: %s (int field) : expected a value between 0 and %u", json_path, (unsigned int) UINT8_MAX);
         return false;
     }
 
@@ -34,16 +67,32 @@ static bool pingclientLoadUint8Setting(uint8_t *dest, const cJSON *settings, con
     return true;
 }
 
+static bool pingclientLoadBoolSetting(bool *dest, const cJSON *settings, const char *key, bool default_value,
+                                      const char *json_path)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, key);
+    if (item == NULL)
+    {
+        *dest = default_value;
+        return true;
+    }
+
+    if (! cJSON_IsBool(item))
+    {
+        LOGF("JSON Error: %s (boolean field) : expected true or false", json_path);
+        return false;
+    }
+
+    *dest = cJSON_IsTrue(item);
+    return true;
+}
+
 static bool pingclientLoadOptionalXorByteSetting(bool *enabled_out, uint8_t *value_out, const cJSON *settings,
                                                  const char *key, const char *json_path)
 {
-    int value = -1;
-    getIntFromJsonObjectOrDefault(&value, settings, key, -1);
-
-    if (value < -1 || value > UINT8_MAX)
+    int value;
+    if (! pingclientLoadIntSetting(&value, settings, key, kPingClientDefaultPayloadXorByte, -1, UINT8_MAX, json_path))
     {
-        LOGF("JSON Error: %s (int field) : expected a value between 0 and %u, or omit the field",
-             json_path, (unsigned int) UINT8_MAX);
         return false;
     }
 
@@ -90,7 +139,7 @@ static bool pingclientLoadStrategy(pingclient_tstate_t *state, const cJSON *sett
 
     if (! getStringFromJsonObject(&strategy, settings, "strategy"))
     {
-        state->strategy = kPingClientStrategyWrapIcmpHeaderAndReuseIpv4Addrs;
+        state->strategy = kPingClientDefaultStrategy;
         return true;
     }
 
@@ -146,13 +195,13 @@ static bool pingclientParseProtocolNumber(uint8_t *dest, const cJSON *settings, 
 
     if (cJSON_IsNumber(item))
     {
-        if (item->valueint < 0 || item->valueint > UINT8_MAX)
+        int value;
+        if (! pingclientLoadIntSetting(&value, settings, key, 0, 0, UINT8_MAX, json_path))
         {
-            LOGF("JSON Error: %s (int field) : expected a value between 0 and %u", json_path, (unsigned int) UINT8_MAX);
             return false;
         }
 
-        *dest = (uint8_t) item->valueint;
+        *dest = (uint8_t) value;
         return true;
     }
 
@@ -212,9 +261,11 @@ tunnel_t *pingclientCreate(node_t *node)
 
     if (! pingclientLoadUint16Setting(&state->identifier, settings, "identifier", kPingClientDefaultIdentifier,
                                       "PingClient->settings->identifier") ||
+        ! pingclientLoadBoolSetting(&state->identifier_check_enabled, settings, "check-identifier",
+                                    kPingClientDefaultIdentifierCheck, "PingClient->settings->check-identifier") ||
         ! pingclientLoadStrategy(state, settings) ||
         ! pingclientLoadUint8Setting(&state->ttl, settings, "ttl", kPingClientDefaultTtl, "PingClient->settings->ttl") ||
-        ! pingclientLoadUint8Setting(&state->tos, settings, "tos", 0, "PingClient->settings->tos") ||
+        ! pingclientLoadUint8Setting(&state->tos, settings, "tos", kPingClientDefaultTos, "PingClient->settings->tos") ||
         ! pingclientLoadOptionalXorByteSetting(&state->payload_xor_enabled, &state->payload_xor_byte, settings,
                                                "xor-byte", "PingClient->settings->xor-byte"))
     {
@@ -222,19 +273,21 @@ tunnel_t *pingclientCreate(node_t *node)
         return NULL;
     }
 
-    getBoolFromJsonObjectOrDefault(&state->roundup_payload_size, settings, "roundup-size", false);
+    getBoolFromJsonObjectOrDefault(&state->roundup_payload_size, settings, "roundup-size",
+                                   kPingClientDefaultRoundupPayload);
 
     if (! state->roundup_payload_size)
     {
-        getBoolFromJsonObjectOrDefault(&state->roundup_payload_size, settings, "roundup", false);
+        getBoolFromJsonObjectOrDefault(&state->roundup_payload_size, settings, "roundup",
+                                       kPingClientDefaultRoundupPayload);
     }
 
-    uint16_t sequence_start = 0;
-    uint16_t ipv4_id_start  = 0;
+    uint16_t sequence_start = kPingClientDefaultSequenceStart;
+    uint16_t ipv4_id_start  = kPingClientDefaultIpv4IdStart;
 
-    if (! pingclientLoadUint16Setting(&sequence_start, settings, "sequence-start", 0,
+    if (! pingclientLoadUint16Setting(&sequence_start, settings, "sequence-start", kPingClientDefaultSequenceStart,
                                       "PingClient->settings->sequence-start") ||
-        ! pingclientLoadUint16Setting(&ipv4_id_start, settings, "ipv4-id-start", 0,
+        ! pingclientLoadUint16Setting(&ipv4_id_start, settings, "ipv4-id-start", kPingClientDefaultIpv4IdStart,
                                       "PingClient->settings->ipv4-id-start"))
     {
         pingclientDestroy(t);

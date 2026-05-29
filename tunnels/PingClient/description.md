@@ -8,11 +8,12 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 
 - upstream uses one of four JSON-controlled strategies
 - downstream reverses that strategy for matching ICMP packets and forwards unmatched packets unchanged
+- downstream drops matching ICMP envelopes with malformed recovery metadata and logs the reason
 - IPv4 packet strategies support IPv4 only
 - any packet that an IPv4 packet strategy cannot safely rewrite is forwarded unchanged
 - `xor-byte` still applies only to the ICMP payload modes
 - `roundup-size` still applies only to the ICMP payload modes
-- `identifier` and `sequence-start` are only meaningful for the ICMP modes
+- `identifier`, `check-identifier`, and `sequence-start` are only meaningful for the ICMP modes
 - `ipv4-id-start`, `ttl`, and `tos` are only meaningful for the mode that creates a fresh outer IPv4 header
 
 ## `strategy`
@@ -26,6 +27,7 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 - when `source` or `dest` is omitted, that outer address is copied from the inner IPv4 packet
 - on decapsulation, configured source/destination addresses are not verified
 - accepts ICMP echo requests and echo replies with the configured identifier
+- if `check-identifier` is enabled, ICMP echo traffic with a mismatched identifier is warned and forwarded unchanged
 - after a matching ICMP envelope is found, the payload is stripped and forwarded even if the recovered bytes are not a valid IPv4 packet
 
 ### `wrap-in-icmp-header-and-reuse-ipv4-addresses`
@@ -76,26 +78,37 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 
 - `identifier` `(integer)`
   ICMP echo identifier for the ICMP envelope modes.
+  Range: `0..65535`
   Default: `44975` (`0xAFAF`)
+
+- `check-identifier` `(boolean)`
+  Requires downstream ICMP envelope packets to match `identifier`.
+  Set to `false` only when the peer intentionally uses a different ICMP identifier.
+  Default: `true`
 
 - `sequence-start` `(integer)`
   Initial ICMP echo sequence counter for the ICMP envelope modes.
+  Range: `0..65535`
   Default: `0`
 
 - `ipv4-id-start` `(integer)`
   Initial outer IPv4 identification counter for `wrap-in-new-ip-and-icmp-header`.
+  Range: `0..65535`
   Default: `0`
 
 - `ttl` `(integer)`
   Default outer IPv4 TTL for `wrap-in-new-ip-and-icmp-header`.
+  Range: `0..255`
   Default: `64`
 
 - `tos` `(integer)`
   Default outer IPv4 TOS byte for `wrap-in-new-ip-and-icmp-header`.
+  Range: `0..255`
   Default: `0`
 
 - `xor-byte` `(integer)`
   XOR byte applied only to the ICMP payload in the ICMP envelope modes.
+  Range: `0..255`
 
 - `roundup-size` `(boolean)`
   Pads only the ICMP payload in the ICMP envelope modes.
@@ -113,6 +126,7 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it does not c
 
 - `swap-protocol` `(string or integer)`
   Required only when `strategy` is `change-only-ipv4-protocol-number`.
+  Numeric range: `0..255`
 
 ## Example
 

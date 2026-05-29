@@ -295,6 +295,24 @@ static bool pingclientIcmpTypeIsAccepted(uint8_t type)
     return type == ICMP_ECHO || type == ICMP_ER;
 }
 
+static bool pingclientIcmpIdentifierMatches(const pingclient_tstate_t *state, const struct icmp_echo_hdr *icmpheader,
+                                            const char *mode)
+{
+    if (! state->identifier_check_enabled)
+    {
+        return true;
+    }
+
+    if (icmpheader->id == lwip_htons(state->identifier))
+    {
+        return true;
+    }
+
+    LOGW("PingClient: forwarding downstream %s unchanged because ICMP identifier mismatch: expected %u, got %u (set check-identifier=false to accept mismatched identifiers)",
+         mode, (unsigned int) state->identifier, (unsigned int) lwip_ntohs(icmpheader->id));
+    return false;
+}
+
 static bool pingclientMatchIpv4IcmpEnvelope(const pingclient_tstate_t *state, sbuf_t *buf,
                                             uint16_t *outer_header_len_out)
 {
@@ -344,8 +362,12 @@ static bool pingclientMatchIpv4IcmpEnvelope(const pingclient_tstate_t *state, sb
     }
 
     const struct icmp_echo_hdr *icmpheader = (const struct icmp_echo_hdr *) (packet + ip_header_len);
-    if (! pingclientIcmpTypeIsAccepted(icmpheader->type) || icmpheader->code != 0 ||
-        icmpheader->id != lwip_htons(state->identifier))
+    if (! pingclientIcmpTypeIsAccepted(icmpheader->type) || icmpheader->code != 0)
+    {
+        return false;
+    }
+
+    if (! pingclientIcmpIdentifierMatches(state, icmpheader, "IPv4+ICMP packet"))
     {
         return false;
     }
@@ -363,14 +385,24 @@ static bool pingclientMatchOnlyIcmpEnvelope(const pingclient_tstate_t *state, sb
     }
 
     const struct icmp_echo_hdr *icmpheader = (const struct icmp_echo_hdr *) sbufGetRawPtr(buf);
-    return pingclientIcmpTypeIsAccepted(icmpheader->type) && icmpheader->code == 0 &&
-           icmpheader->id == lwip_htons(state->identifier);
+    if (! pingclientIcmpTypeIsAccepted(icmpheader->type) || icmpheader->code != 0)
+    {
+        return false;
+    }
+
+    return pingclientIcmpIdentifierMatches(state, icmpheader, "ICMP-only frame");
 }
 
 static bool pingclientHandleUnmatchedDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tunnelPrevDownStreamPayload(t, l, buf);
     return true;
+}
+
+static void pingclientDropMalformedDownstreamPacket(line_t *l, sbuf_t *buf, const char *reason)
+{
+    LOGE("PingClient: dropping malformed downstream packet because %s", reason);
+    lineReuseBuffer(l, buf);
 }
 
 static void pingclientEncapsulateWithNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -618,14 +650,12 @@ static void pingclientDecapsulateNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *bu
         return;
     }
 
-    uint8_t *icmp_payload             = sbufGetMutablePtr(buf) + outer_header_len;
-    uint16_t icmp_payload_len         = (uint16_t) (sbufGetLength(buf) - outer_header_len);
-    bool     payload_decoded_in_place = false;
+    uint8_t *icmp_payload     = sbufGetMutablePtr(buf) + outer_header_len;
+    uint16_t icmp_payload_len = (uint16_t) (sbufGetLength(buf) - outer_header_len);
 
     if (state->payload_xor_enabled)
     {
         pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        payload_decoded_in_place = true;
     }
 
     uint16_t inner_packet_len = icmp_payload_len;
@@ -635,22 +665,14 @@ static void pingclientDecapsulateNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *bu
     {
         if (UNLIKELY(icmp_payload_len < kPingClientSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingclientDropMalformedDownstreamPacket(l, buf, "roundup-size prefix is missing");
             return;
         }
 
         inner_packet_len = (uint16_t) ((((uint16_t) icmp_payload[0]) << 8) | icmp_payload[1]);
         if (UNLIKELY(inner_packet_len > icmp_payload_len - kPingClientSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingclientDropMalformedDownstreamPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
             return;
         }
 
@@ -671,38 +693,28 @@ static void pingclientDecapsulateReusedIpv4Header(tunnel_t *t, line_t *l, sbuf_t
         return;
     }
 
-    uint8_t *packet                   = sbufGetMutablePtr(buf);
-    struct ip_hdr *ipheader           = (struct ip_hdr *) packet;
-    const uint16_t ip_header_len      = IPH_HL_BYTES(ipheader);
-    uint8_t       *icmp_payload       = packet + outer_header_len;
-    uint16_t       icmp_payload_len   = (uint16_t) (sbufGetLength(buf) - outer_header_len);
-    bool           decoded_in_place   = false;
+    uint8_t       *packet           = sbufGetMutablePtr(buf);
+    struct ip_hdr *ipheader         = (struct ip_hdr *) packet;
+    const uint16_t ip_header_len    = IPH_HL_BYTES(ipheader);
+    uint8_t       *icmp_payload     = packet + outer_header_len;
+    uint16_t       icmp_payload_len = (uint16_t) (sbufGetLength(buf) - outer_header_len);
 
     if (state->payload_xor_enabled)
     {
         pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        decoded_in_place = true;
     }
 
     uint8_t  original_protocol;
     uint16_t transport_len;
     if (! pingclientReadReuseTrailer(icmp_payload, icmp_payload_len, &original_protocol, &transport_len))
     {
-        if (decoded_in_place)
-        {
-            pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        }
-        tunnelPrevDownStreamPayload(t, l, buf);
+        pingclientDropMalformedDownstreamPacket(l, buf, "reuse-header trailer is missing or invalid");
         return;
     }
 
     if (UNLIKELY(transport_len > icmp_payload_len - kPingClientReuseTrailerLength))
     {
-        if (decoded_in_place)
-        {
-            pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        }
-        tunnelPrevDownStreamPayload(t, l, buf);
+        pingclientDropMalformedDownstreamPacket(l, buf, "reuse-header transport length exceeds ICMP payload");
         return;
     }
 
@@ -728,14 +740,12 @@ static void pingclientDecapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    uint8_t *icmp_payload             = sbufGetMutablePtr(buf) + kPingClientIcmpHeaderLength;
-    uint16_t icmp_payload_len         = (uint16_t) (sbufGetLength(buf) - kPingClientIcmpHeaderLength);
-    bool     payload_decoded_in_place = false;
+    uint8_t *icmp_payload     = sbufGetMutablePtr(buf) + kPingClientIcmpHeaderLength;
+    uint16_t icmp_payload_len = (uint16_t) (sbufGetLength(buf) - kPingClientIcmpHeaderLength);
 
     if (state->payload_xor_enabled)
     {
         pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        payload_decoded_in_place = true;
     }
 
     uint16_t raw_payload_len = icmp_payload_len;
@@ -745,22 +755,14 @@ static void pingclientDecapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (UNLIKELY(icmp_payload_len < kPingClientSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingclientDropMalformedDownstreamPacket(l, buf, "roundup-size prefix is missing");
             return;
         }
 
         raw_payload_len = (uint16_t) ((((uint16_t) icmp_payload[0]) << 8) | icmp_payload[1]);
         if (UNLIKELY(raw_payload_len > icmp_payload_len - kPingClientSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingclientXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingclientDropMalformedDownstreamPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
             return;
         }
 

@@ -9,6 +9,7 @@ typedef struct pingclient_tstate_s
     atomic_uint icmp_sequence;
     atomic_uint ipv4_identification;
     uint16_t    identifier;
+    bool        identifier_check_enabled;
     uint32_t    source_addr;
     uint32_t    dest_addr;
     bool        source_addr_configured;
@@ -33,6 +34,7 @@ enum
     kPingClientStrategyWrapIcmpHeaderAndReuseIpv4Addrs,
     kPingClientStrategyWrapOnlyIcmpHeader,
     kPingClientStrategyChangeOnlyIpv4ProtocolNumber,
+    kPingClientDefaultStrategy = kPingClientStrategyWrapIcmpHeaderAndReuseIpv4Addrs,
 
     kPingClientNetworkMtu            = kMaxAllowedPacketLength,
     kPingClientIpv4HeaderLength      = sizeof(struct ip_hdr),
@@ -45,6 +47,12 @@ enum
     kPingClientMaxInnerPacketLength  = kPingClientMaxIcmpPayloadLength,
     kPingClientDefaultIdentifier     = 0xAFAF,
     kPingClientDefaultTtl            = 64,
+    kPingClientDefaultTos            = 0,
+    kPingClientDefaultSequenceStart  = 0,
+    kPingClientDefaultIpv4IdStart    = 0,
+    kPingClientDefaultPayloadXorByte = -1,
+    kPingClientDefaultRoundupPayload = false,
+    kPingClientDefaultIdentifierCheck = true,
     kTunnelStateSize                 = sizeof(pingclient_tstate_t),
     kLineStateSize                   = sizeof(pingclient_lstate_t)
 };

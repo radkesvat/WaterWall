@@ -295,6 +295,24 @@ static bool pingserverIcmpTypeIsAccepted(uint8_t type)
     return type == ICMP_ECHO || type == ICMP_ER;
 }
 
+static bool pingserverIcmpIdentifierMatches(const pingserver_tstate_t *state, const struct icmp_echo_hdr *icmpheader,
+                                            const char *mode)
+{
+    if (! state->identifier_check_enabled)
+    {
+        return true;
+    }
+
+    if (icmpheader->id == lwip_htons(state->identifier))
+    {
+        return true;
+    }
+
+    LOGW("PingServer: forwarding downstream %s unchanged because ICMP identifier mismatch: expected %u, got %u (set check-identifier=false to accept mismatched identifiers)",
+         mode, (unsigned int) state->identifier, (unsigned int) lwip_ntohs(icmpheader->id));
+    return false;
+}
+
 static bool pingserverMatchIpv4IcmpEnvelope(const pingserver_tstate_t *state, sbuf_t *buf,
                                             uint16_t *outer_header_len_out)
 {
@@ -344,8 +362,12 @@ static bool pingserverMatchIpv4IcmpEnvelope(const pingserver_tstate_t *state, sb
     }
 
     const struct icmp_echo_hdr *icmpheader = (const struct icmp_echo_hdr *) (packet + ip_header_len);
-    if (! pingserverIcmpTypeIsAccepted(icmpheader->type) || icmpheader->code != 0 ||
-        icmpheader->id != lwip_htons(state->identifier))
+    if (! pingserverIcmpTypeIsAccepted(icmpheader->type) || icmpheader->code != 0)
+    {
+        return false;
+    }
+
+    if (! pingserverIcmpIdentifierMatches(state, icmpheader, "IPv4+ICMP packet"))
     {
         return false;
     }
@@ -363,8 +385,12 @@ static bool pingserverMatchOnlyIcmpEnvelope(const pingserver_tstate_t *state, sb
     }
 
     const struct icmp_echo_hdr *icmpheader = (const struct icmp_echo_hdr *) sbufGetRawPtr(buf);
-    return pingserverIcmpTypeIsAccepted(icmpheader->type) && icmpheader->code == 0 &&
-           icmpheader->id == lwip_htons(state->identifier);
+    if (! pingserverIcmpTypeIsAccepted(icmpheader->type) || icmpheader->code != 0)
+    {
+        return false;
+    }
+
+    return pingserverIcmpIdentifierMatches(state, icmpheader, "ICMP-only frame");
 }
 
 static bool pingserverHandleUnmatchedDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
