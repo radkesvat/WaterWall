@@ -695,6 +695,8 @@ if(PROJECT_REQUIRERS_OPENSSL)
     target_sources(ww PRIVATE 
         crypto/openssl_instance.c
     )
+    target_compile_definitions(ww PUBLIC WCRYPTO_USING_OPENSSL=1)
+    
 endif()
 
 # libuuid library
