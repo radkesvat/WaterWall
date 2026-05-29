@@ -8,6 +8,7 @@ It is a pure packet tunnel created with `packettunnelCreate()`, so it runs on th
 
 - upstream applies the configured forward transform toward the client side
 - downstream applies the reverse transform for ICMP packets coming from the client side and forwards unmatched packets unchanged
+- downstream drops matching ICMP envelopes with malformed recovery metadata and logs the reason
 - IPv4 packet strategies support IPv4 only
 - any packet that an IPv4 packet strategy cannot safely rewrite is forwarded unchanged
 - `xor-byte` and `roundup-size` only affect the ICMP envelope modes

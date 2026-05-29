@@ -373,6 +373,12 @@ static bool pingserverHandleUnmatchedDownstreamPacket(tunnel_t *t, line_t *l, sb
     return true;
 }
 
+static void pingserverDropMalformedDownstreamPacket(line_t *l, sbuf_t *buf, const char *reason)
+{
+    LOGE("PingServer: dropping malformed downstream packet because %s", reason);
+    lineReuseBuffer(l, buf);
+}
+
 static void pingserverEncapsulateWithNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     pingserver_tstate_t *state = tunnelGetState(t);
@@ -618,14 +624,12 @@ static void pingserverDecapsulateNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *bu
         return;
     }
 
-    uint8_t *icmp_payload             = sbufGetMutablePtr(buf) + outer_header_len;
-    uint16_t icmp_payload_len         = (uint16_t) (sbufGetLength(buf) - outer_header_len);
-    bool     payload_decoded_in_place = false;
+    uint8_t *icmp_payload     = sbufGetMutablePtr(buf) + outer_header_len;
+    uint16_t icmp_payload_len = (uint16_t) (sbufGetLength(buf) - outer_header_len);
 
     if (state->payload_xor_enabled)
     {
         pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        payload_decoded_in_place = true;
     }
 
     uint16_t inner_packet_len = icmp_payload_len;
@@ -635,22 +639,14 @@ static void pingserverDecapsulateNewIpAndIcmp(tunnel_t *t, line_t *l, sbuf_t *bu
     {
         if (UNLIKELY(icmp_payload_len < kPingServerSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size prefix is missing");
             return;
         }
 
         inner_packet_len = (uint16_t) ((((uint16_t) icmp_payload[0]) << 8) | icmp_payload[1]);
         if (UNLIKELY(inner_packet_len > icmp_payload_len - kPingServerSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
             return;
         }
 
@@ -671,38 +667,28 @@ static void pingserverDecapsulateReusedIpv4Header(tunnel_t *t, line_t *l, sbuf_t
         return;
     }
 
-    uint8_t *packet                   = sbufGetMutablePtr(buf);
-    struct ip_hdr *ipheader           = (struct ip_hdr *) packet;
-    const uint16_t ip_header_len      = IPH_HL_BYTES(ipheader);
-    uint8_t       *icmp_payload       = packet + outer_header_len;
-    uint16_t       icmp_payload_len   = (uint16_t) (sbufGetLength(buf) - outer_header_len);
-    bool           decoded_in_place   = false;
+    uint8_t       *packet           = sbufGetMutablePtr(buf);
+    struct ip_hdr *ipheader         = (struct ip_hdr *) packet;
+    const uint16_t ip_header_len    = IPH_HL_BYTES(ipheader);
+    uint8_t       *icmp_payload     = packet + outer_header_len;
+    uint16_t       icmp_payload_len = (uint16_t) (sbufGetLength(buf) - outer_header_len);
 
     if (state->payload_xor_enabled)
     {
         pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        decoded_in_place = true;
     }
 
     uint8_t  original_protocol;
     uint16_t transport_len;
     if (! pingserverReadReuseTrailer(icmp_payload, icmp_payload_len, &original_protocol, &transport_len))
     {
-        if (decoded_in_place)
-        {
-            pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        }
-        tunnelPrevDownStreamPayload(t, l, buf);
+        pingserverDropMalformedDownstreamPacket(l, buf, "reuse-header trailer is missing or invalid");
         return;
     }
 
     if (UNLIKELY(transport_len > icmp_payload_len - kPingServerReuseTrailerLength))
     {
-        if (decoded_in_place)
-        {
-            pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        }
-        tunnelPrevDownStreamPayload(t, l, buf);
+        pingserverDropMalformedDownstreamPacket(l, buf, "reuse-header transport length exceeds ICMP payload");
         return;
     }
 
@@ -728,14 +714,12 @@ static void pingserverDecapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    uint8_t *icmp_payload             = sbufGetMutablePtr(buf) + kPingServerIcmpHeaderLength;
-    uint16_t icmp_payload_len         = (uint16_t) (sbufGetLength(buf) - kPingServerIcmpHeaderLength);
-    bool     payload_decoded_in_place = false;
+    uint8_t *icmp_payload     = sbufGetMutablePtr(buf) + kPingServerIcmpHeaderLength;
+    uint16_t icmp_payload_len = (uint16_t) (sbufGetLength(buf) - kPingServerIcmpHeaderLength);
 
     if (state->payload_xor_enabled)
     {
         pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-        payload_decoded_in_place = true;
     }
 
     uint16_t raw_payload_len = icmp_payload_len;
@@ -745,22 +729,14 @@ static void pingserverDecapsulateOnlyIcmp(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (UNLIKELY(icmp_payload_len < kPingServerSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size prefix is missing");
             return;
         }
 
         raw_payload_len = (uint16_t) ((((uint16_t) icmp_payload[0]) << 8) | icmp_payload[1]);
         if (UNLIKELY(raw_payload_len > icmp_payload_len - kPingServerSizePrefixLength))
         {
-            if (payload_decoded_in_place)
-            {
-                pingserverXorPayload(icmp_payload, icmp_payload_len, state->payload_xor_byte);
-            }
-            tunnelPrevDownStreamPayload(t, l, buf);
+            pingserverDropMalformedDownstreamPacket(l, buf, "roundup-size payload length exceeds ICMP payload");
             return;
         }
 
