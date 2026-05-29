@@ -158,8 +158,8 @@ static bool parseRandomPortRange(const char *port_str, dynamic_value_t *dest_por
     long  x_long = strtol(x_str, &x_endptr, 10);
     long  y_long = strtol(y_str, &y_endptr, 10);
 
-    if (*x_endptr != '\0' || *y_endptr != '\0' || x_long < 0 || x_long > UINT16_MAX ||
-        y_long < 0 || y_long > UINT16_MAX || x_long > y_long)
+    if (*x_endptr != '\0' || *y_endptr != '\0' || x_long <= 0 || x_long > UINT16_MAX ||
+        y_long <= 0 || y_long > UINT16_MAX || x_long > y_long)
     {
         LOGF("JSON Error: %s->port: Invalid random port range values or x > y", error_path);
         return false;
@@ -177,18 +177,37 @@ static bool parseRandomPortRange(const char *port_str, dynamic_value_t *dest_por
     return true;
 }
 
-static bool parsePortAsNumber(const char *port_str, address_context_t *constant_dest_addr, const char *error_path)
+static bool parsePortSource(const char *port_str, dynamic_value_t *dest_port_selected)
+{
+    if (stringCompare(port_str, "src_context->port") == 0)
+    {
+        dest_port_selected->status = kDvsFromSource;
+        return true;
+    }
+
+    if (stringCompare(port_str, "dest_context->port") == 0)
+    {
+        dest_port_selected->status = kDvsFromDest;
+        return true;
+    }
+
+    return false;
+}
+
+static bool parsePortAsNumber(const char *port_str, dynamic_value_t *dest_port_selected,
+                              address_context_t *constant_dest_addr, const char *error_path)
 {
     char *endptr;
     long  port_long = strtol(port_str, &endptr, 10);
 
-    if (*endptr != '\0' || port_long < 0 || port_long > UINT16_MAX)
+    if (*endptr != '\0' || port_long <= 0 || port_long > UINT16_MAX)
     {
         LOGF("JSON Error: %s->port: Expected 'random(x,y)' format or valid port number", error_path);
         return false;
     }
 
     uint16_t port = (uint16_t) port_long;
+    dest_port_selected->status = kDvsConstant;
     addresscontextSetPort(constant_dest_addr, port);
     return true;
 }
@@ -203,13 +222,18 @@ static bool parsePortStringSettings(const char *port_str, dynamic_value_t *dest_
         return false;
     }
 
+    if (parsePortSource(port_str, dest_port_selected))
+    {
+        return true;
+    }
+
     if (strncmp(port_str, "random(", 7) == 0)
     {
         return parseRandomPortRange(port_str, dest_port_selected, constant_dest_addr, random_dest_port_x,
                                     random_dest_port_y, error_path);
     }
 
-    return parsePortAsNumber(port_str, constant_dest_addr, error_path);
+    return parsePortAsNumber(port_str, dest_port_selected, constant_dest_addr, error_path);
 }
 
 static bool parsePortSettings(dynamic_value_t *dest_port_selected, address_context_t *constant_dest_addr,
@@ -236,6 +260,11 @@ static bool parsePortSettings(dynamic_value_t *dest_port_selected, address_conte
 
     if (dest_port_selected->status == kDvsConstant)
     {
+        if (dest_port_selected->integer == 0 || dest_port_selected->integer > UINT16_MAX)
+        {
+            LOGF("JSON Error: %s->port (number field) : expected a valid port number", error_path);
+            return false;
+        }
         addresscontextSetPort(constant_dest_addr, (uint16_t) dest_port_selected->integer);
     }
 

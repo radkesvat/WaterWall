@@ -144,7 +144,8 @@ static int createAndBindSocket(int family, const udpconnector_tstate_t *ts)
 
 void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_selected,
                                          const address_context_t *constant_dest_addr,
-                                         address_context_t *dest_ctx, address_context_t *src_ctx)
+                                         address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
+                                         address_context_t *src_ctx)
 {
     switch (dest_addr_selected->status)
     {
@@ -154,8 +155,10 @@ void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_select
     case kDvsConstant:
         addresscontextAddrCopy(dest_ctx, constant_dest_addr);
         break;
-    default:
     case kDvsFromDest:
+        addresscontextAddrCopy(dest_ctx, original_dest_ctx);
+        break;
+    default:
         break;
     }
 }
@@ -163,7 +166,8 @@ void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_select
 void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
                                       const address_context_t *constant_dest_addr,
                                       uint16_t random_dest_port_x, uint16_t random_dest_port_y,
-                                      address_context_t *dest_ctx, address_context_t *src_ctx)
+                                      address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
+                                      address_context_t *src_ctx)
 {
     switch (dest_port_selected->status)
     {
@@ -177,8 +181,10 @@ void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
         addresscontextSetPort(dest_ctx, (fastRand() % (random_dest_port_y - random_dest_port_x + 1)) +
                                             random_dest_port_x);
         break;
-    default:
     case kDvsFromDest:
+        addresscontextCopyPort(dest_ctx, (address_context_t *) original_dest_ctx);
+        break;
+    default:
         break;
     }
 }
@@ -522,9 +528,13 @@ void udpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         random_dest_port_y = selected_destination->random_dest_port_y;
     }
 
-    udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, src_ctx);
+    address_context_t original_dest_ctx = {0};
+    addresscontextAddrCopy(&original_dest_ctx, dest_ctx);
+
+    udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
     udpconnectorSetupDestinationPort(dest_port_selected, constant_dest_addr, random_dest_port_x, random_dest_port_y,
-                                     dest_ctx, src_ctx);
+                                     dest_ctx, &original_dest_ctx, src_ctx);
+    addresscontextReset(&original_dest_ctx);
 
     if (! addresscontextHasPort(dest_ctx))
     {

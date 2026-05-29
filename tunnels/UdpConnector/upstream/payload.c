@@ -359,8 +359,9 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
 static void udpconnectorBuildPacketDestinationContext(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,
                                                       uint32_t destination_index, address_context_t *dest_ctx)
 {
-    udpconnector_tstate_t *ts      = tunnelGetState(t);
-    address_context_t    *src_ctx = lineGetSourceAddressContext(l);
+    udpconnector_tstate_t *ts = tunnelGetState(t);
+    address_context_t *src_ctx = lineGetSourceAddressContext(l);
+    address_context_t *line_dest_ctx = lineGetDestinationAddressContext(l);
     const dynamic_value_t *dest_addr_selected = &ts->dest_addr_selected;
     const dynamic_value_t *dest_port_selected = &ts->dest_port_selected;
     const address_context_t *constant_dest_addr = &ts->constant_dest_addr;
@@ -380,9 +381,13 @@ static void udpconnectorBuildPacketDestinationContext(tunnel_t *t, line_t *l, ud
         random_dest_port_y = selected_destination->random_dest_port_y;
     }
 
-    udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, src_ctx);
+    address_context_t original_dest_ctx = {0};
+    addresscontextAddrCopy(&original_dest_ctx, line_dest_ctx);
+
+    udpconnectorSetupDestinationAddress(dest_addr_selected, constant_dest_addr, dest_ctx, &original_dest_ctx, src_ctx);
     udpconnectorSetupDestinationPort(dest_port_selected, constant_dest_addr, random_dest_port_x, random_dest_port_y,
-                                     dest_ctx, src_ctx);
+                                     dest_ctx, &original_dest_ctx, src_ctx);
+    addresscontextReset(&original_dest_ctx);
 }
 
 static udpconnector_packet_destination_t *udpconnectorSelectPacketDestination(tunnel_t *t, udpconnector_lstate_t *ls,
@@ -414,8 +419,24 @@ static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *
         return kUdpConnectorPacketPeerConsumed;
     }
 
-    if (! cache->has_context)
+    const udpconnector_destination_t *selected_destination =
+        ts->destinations_count > 0 ? &ts->destinations[destination_index] : NULL;
+    const dynamic_value_t *dest_addr_selected =
+        selected_destination != NULL ? &selected_destination->dest_addr_selected : &ts->dest_addr_selected;
+    const dynamic_value_t *dest_port_selected =
+        selected_destination != NULL ? &selected_destination->dest_port_selected : &ts->dest_port_selected;
+    const bool uses_line_context = udpconnectorDestinationUsesLineContext(dest_addr_selected, dest_port_selected);
+
+    if (uses_line_context && cache->resolving)
     {
+        /* Keep the context that owns the in-flight DNS request. */
+    }
+    else if (! cache->has_context || uses_line_context)
+    {
+        if (cache->has_context)
+        {
+            addresscontextReset(&cache->dest_ctx);
+        }
         udpconnectorBuildPacketDestinationContext(t, l, ls, destination_index, &cache->dest_ctx);
         cache->has_context = true;
     }

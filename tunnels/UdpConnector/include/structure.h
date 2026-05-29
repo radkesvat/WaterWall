@@ -124,6 +124,18 @@ static inline void udpconnectorDestinationDeinit(udpconnector_destination_t *des
     dynamicvalueDestroy(destination->dest_port_selected);
 }
 
+static inline bool udpconnectorDynamicValueUsesLineContext(const dynamic_value_t *value)
+{
+    return value->status == kDvsFromSource || value->status == kDvsFromDest;
+}
+
+static inline bool udpconnectorDestinationUsesLineContext(const dynamic_value_t *dest_addr_selected,
+                                                         const dynamic_value_t *dest_port_selected)
+{
+    return udpconnectorDynamicValueUsesLineContext(dest_addr_selected) ||
+           udpconnectorDynamicValueUsesLineContext(dest_port_selected);
+}
+
 WW_EXPORT void         udpconnectorTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *udpconnectorTunnelCreate(node_t *node);
 WW_EXPORT api_result_t udpconnectorTunnelApi(tunnel_t *instance, sbuf_t *message);
@@ -163,11 +175,13 @@ uint32_t udpconnectorSelectWeightedDestinationIndex(const udpconnector_tstate_t 
 const udpconnector_destination_t *udpconnectorSelectWeightedDestination(const udpconnector_tstate_t *ts);
 void udpconnectorSetupDestinationAddress(const dynamic_value_t *dest_addr_selected,
                                          const address_context_t *constant_dest_addr,
-                                         address_context_t *dest_ctx, address_context_t *src_ctx);
+                                         address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
+                                         address_context_t *src_ctx);
 void udpconnectorSetupDestinationPort(const dynamic_value_t *dest_port_selected,
                                       const address_context_t *constant_dest_addr,
                                       uint16_t random_dest_port_x, uint16_t random_dest_port_y,
-                                      address_context_t *dest_ctx, address_context_t *src_ctx);
+                                      address_context_t *dest_ctx, const address_context_t *original_dest_ctx,
+                                      address_context_t *src_ctx);
 const dns_resolved_addr_t *udpconnectorSelectResolvedAddress(const dns_resolved_addr_t *addrs, size_t naddrs,
                                                             int strategy);
 bool udpconnectorApplyResolvedAddress(address_context_t *dest_ctx, const dns_resolved_addr_t *resolved);
