@@ -347,11 +347,21 @@ static bool udpconnectorBeginSocket(tunnel_t *t, line_t *l, udpconnector_lstate_
 
     lineLock(l);
     bool alive = true;
+    if (! ls->established)
+    {
+        ls->established = true;
+        tunnelPrevDownStreamEst(t, l);
+        alive = lineIsAlive(l);
+    }
+
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
-        alive = udpconnectorReplayWriteQueue(ls);
+        if (alive)
+        {
+            alive = udpconnectorReplayWriteQueue(ls);
+        }
     }
-    else
+    else if (alive)
     {
         udpconnectorFlushWriteQueue(ls);
     }

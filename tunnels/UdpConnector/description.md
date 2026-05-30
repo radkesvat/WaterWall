@@ -200,10 +200,11 @@ There is no true UDP connect handshake here.
 In the current implementation:
 
 - upstream `init` creates the socket and configures the peer
+- downstream `est` is emitted after the UDP socket is successfully created and ready to send
 - upstream payload can be sent immediately after that
-- downstream `est` is only emitted when the first datagram is received from the remote peer
 
-So from the previous node's point of view, this tunnel becomes established lazily on first reply, not on socket creation.
+So from the previous node's point of view, this tunnel becomes established when the local UDP socket is ready, not after
+a remote reply.
 
 ### Data flow direction
 
@@ -243,5 +244,5 @@ With `"packet"` balance mode, a `random(x,y)` port is selected when that destina
 - Domain resolution in this path is asynchronous and keeps pre-resolution datagrams queued up to the connector queue limit.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
 - Paused reads drop inbound datagrams instead of buffering them.
-- Downstream `est` is only triggered after the first packet is received from the remote side.
+- Downstream `est` is triggered after the local UDP socket is created and ready.
 - Inbound datagrams from unexpected peers are ignored in `"connection"` mode. In `"packet"` mode, datagrams received on the connector socket are accepted so replies from any packet-balanced target can return.

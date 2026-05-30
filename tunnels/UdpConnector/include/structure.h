@@ -95,7 +95,7 @@ typedef struct udpconnector_lstate_s
     sockaddr_u                  peer_addr;   // selected remote peer for this line
     buffer_queue_t              pause_queue;
     bool                        read_paused : 1;        // whether the read is paused
-    bool                        established : 1;        // whether anything received to send est downstream once
+    bool                        established : 1;        // whether downstream est was sent
     bool                        resolving : 1;          // whether async DNS is pending
     bool                        write_paused : 1;       // whether upstream writes are queued
     bool                        queue_pause_sent : 1;   // whether downstream pause was sent for the queue

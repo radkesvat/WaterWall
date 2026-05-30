@@ -799,7 +799,29 @@ static wio_t *createUdpServerWithSocketOptions(wloop_t *loop, socket_filter_t *f
 {
     char        host_if[INET_ADDRSTRLEN] = {0};
     const char *bind_host                = getSocketBindHost(filter, host, host_if);
-    return wloopCreateUdpServerWithOptions(loop, bind_host, port, filter->option.interface_name, filter->option.fwmark);
+    wio_t      *io                       =
+        wloopCreateUdpServerWithOptions(loop, bind_host, port, filter->option.interface_name, filter->option.fwmark);
+
+    if (io == NULL)
+    {
+        return NULL;
+    }
+
+    int size = 4 * 1024 * 1024;
+    if (socketOptionSendBuf(wioGetFD(io), size) != 0)
+    {
+        LOGE("SocketManager: set UDP socket send buffer failed");
+        wioClose(io);
+        return NULL;
+    }
+    if (socketOptionRecvBuf(wioGetFD(io), size) != 0)
+    {
+        LOGE("SocketManager: set UDP socket recv buffer failed");
+        wioClose(io);
+        return NULL;
+    }
+
+    return io;
 }
 
 /**
