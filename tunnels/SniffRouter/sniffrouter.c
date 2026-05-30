@@ -41,6 +41,18 @@ static int sniffrouterClassify(const uint8_t *p, uint32_t n)
     return any_prefix ? -1 : 0;
 }
 
+// Release any buffered bytes and zero the per-line state. Idempotent: safe to
+// call more than once (e.g. from re-entrant finishes).
+static void sniffrouterClearLineState(line_t *l, sniffrouter_lstate_t *ls)
+{
+    if (ls->pending != NULL)
+    {
+        lineReuseBuffer(l, ls->pending);
+        ls->pending = NULL;
+    }
+    memorySet(ls, 0, sizeof(*ls));
+}
+
 /* ------------------------------------------------------------------ */
 /* upstream (client -> server) flow                                    */
 /* ------------------------------------------------------------------ */
@@ -49,8 +61,10 @@ void sniffrouterTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     sniffrouter_lstate_t *ls = lineGetState(l, t);
 
-    ls->pending = NULL;
-    ls->decided = kSniffUndecided;
+    ls->pending       = NULL;
+    ls->decided       = kSniffUndecided;
+    ls->next_finished = false;
+    ls->prev_finished = false;
 
     // Intentionally do NOT propagate Init upstream yet. We initialize the chosen
     // branch lazily once we know where the connection should go.
@@ -148,23 +162,39 @@ void sniffrouterTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     sniffrouter_tstate_t *ts = tunnelGetState(t);
     sniffrouter_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->decided == kSniffRouteWeb)
+    if (ls->next_finished)
     {
-        tunnelUpStreamFin(ts->web_tunnel, l);
-        return;
+        return; // upstream branch already finished
     }
-    if (ls->decided == kSniffRouteTunnel)
+    ls->next_finished = true;
+
+    uint8_t route = ls->decided;
+
+    if (route == kSniffUndecided)
     {
-        tunnelNextUpStreamFinish(t, l);
+        // Peer closed before we classified: no upstream branch was ever created
+        // and nothing downstream will ever finish us, so the line is fully done.
+        ls->prev_finished = true;
+        sniffrouterClearLineState(l, ls);
         return;
     }
 
-    // Undecided: peer closed before we ever classified. Drop whatever we held;
-    // the downstream side (TlsServer/listener) drives the teardown.
-    if (ls->pending != NULL)
+    // Propagate the finish to the branch we chose. The flag is set first so a
+    // re-entrant downstream finish during this call is handled safely.
+    if (route == kSniffRouteWeb)
     {
-        lineReuseBuffer(l, ls->pending);
-        ls->pending = NULL;
+        tunnelUpStreamFin(ts->web_tunnel, l);
+    }
+    else
+    {
+        tunnelNextUpStreamFinish(t, l);
+    }
+
+    // If the downstream direction has already finished, the line is fully torn
+    // down -> release our state exactly once.
+    if (lineIsAlive(l) && ls->prev_finished)
+    {
+        sniffrouterClearLineState(l, ls);
     }
 }
 
@@ -212,13 +242,23 @@ void sniffrouterTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
     sniffrouter_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->pending != NULL)
+    if (ls->prev_finished)
     {
-        lineReuseBuffer(l, ls->pending);
-        ls->pending = NULL;
+        return; // downstream already finished
     }
+    ls->prev_finished = true;
 
+    // The flag is set first so a re-entrant upstream finish is handled safely.
     tunnelPrevDownStreamFinish(t, l);
+
+    // If the upstream branch has already finished, the line is fully torn down
+    // -> release our state exactly once. (pending is only set pre-decision, and
+    // a downstream finish never occurs before a branch is chosen, so it is NULL
+    // here; sniffrouterClearLineState handles it regardless.)
+    if (lineIsAlive(l) && ls->next_finished)
+    {
+        sniffrouterClearLineState(l, ls);
+    }
 }
 
 /* ------------------------------------------------------------------ */
