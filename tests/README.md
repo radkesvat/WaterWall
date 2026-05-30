@@ -14,8 +14,7 @@ See [unittests/README.md](/root/WaterWall/tests/unittests/README.md) for the uni
 These tests run the real `Waterwall` binary with synthetic chains built from:
 
 - `TesterClient`
-- the tunnel or tunnel-pair under test
-- optional `Disturber`
+- the tunnel or tunnel-pair under test, with optional `Disturber` inbetween.
 - `TesterServer`
 
 ## Which runner should I use?
