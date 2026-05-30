@@ -429,8 +429,18 @@ uint8_t testerserverGetChunkCount(tunnel_t *t)
 
 uint32_t testerserverGetChunkSize(tunnel_t *t, uint8_t index)
 {
+    testerserver_tstate_t *ts = tunnelGetState(t);
+    uint32_t               chunk_size;
+
     assert(index < testerserverGetChunkCount(t));
-    return testerserverGetChunkTable(t)[index];
+    chunk_size = testerserverGetChunkTable(t)[index];
+
+    if (ts->packet_mode && ts->max_payload_size > 0 && chunk_size > ts->max_payload_size)
+    {
+        chunk_size = ts->max_payload_size;
+    }
+
+    return chunk_size;
 }
 
 uint64_t testerserverGetRemainingBytes(tunnel_t *t, uint8_t index)
@@ -778,6 +788,11 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         uint32_t remaining  = chunk_size - ls->response_tx_offset;
         uint32_t max_len    = bufferpoolGetLargeBufferSize(pool);
 
+        if (ts->max_payload_size > 0 && ts->max_payload_size < max_len)
+        {
+            max_len = ts->max_payload_size;
+        }
+
         if (max_len == 0)
         {
             testerserverFail(t, l, "large buffer pool reports zero writable payload capacity");
@@ -802,6 +817,13 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
 
         if (! withLineLockedWithBuf(l, tunnelPrevDownStreamPayload, t, buf))
         {
+            return;
+        }
+
+        if (ts->max_payload_size > 0 && ! ls->response_paused && ls->response_tx_index < response_limit)
+        {
+            ls->response_send_scheduled = true;
+            lineScheduleDelayedTask(l, testerserverResponseSendTask, kTesterServerSplitPayloadDelayMs, t);
             return;
         }
     }

@@ -33,6 +33,21 @@ static uint8_t testerclientPacketIpv4ProtocolForTransport(testerclient_packet_ip
     }
 }
 
+static uint16_t testerclientPacketIpv4MinimumPacketSize(const testerclient_tstate_t *ts)
+{
+    switch (ts->packet_ipv4_transport)
+    {
+    case kTesterClientPacketIpv4TransportTcp:
+        return (uint16_t) (sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) + 1U);
+    case kTesterClientPacketIpv4TransportUdp:
+        return (uint16_t) (sizeof(struct ip_hdr) + sizeof(struct udp_hdr) + 1U);
+    case kTesterClientPacketIpv4TransportIcmp:
+        return (uint16_t) (sizeof(struct ip_hdr) + sizeof(struct icmp_echo_hdr) + 1U);
+    default:
+        return (uint16_t) (sizeof(struct ip_hdr) + 1U);
+    }
+}
+
 static bool testerclientLoadPacketIpv4TransportSetting(testerclient_packet_ipv4_transport_e *dest,
                                                        const cJSON *packet_ipv4)
 {
@@ -194,6 +209,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     const cJSON           *settings = node->node_settings_json;
     int                    packet_start_delay_ms = 0;
     int                    chunk_count = kTesterClientChunkCount;
+    int                    max_payload_size = 0;
 
     getBoolFromJsonObjectOrDefault(&ts->allow_early_response, settings, "allow-early-response", false);
     getBoolFromJsonObjectOrDefault(&ts->packet_mode, settings, "packet-mode", false);
@@ -201,6 +217,7 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
     getBoolFromJsonObjectOrDefault(&ts->packet_start_immediately, settings, "packet-start-immediately", false);
     getIntFromJsonObjectOrDefault(&packet_start_delay_ms, settings, "packet-start-delay-ms", 0);
     getIntFromJsonObjectOrDefault(&chunk_count, settings, "chunk-count", kTesterClientChunkCount);
+    getIntFromJsonObjectOrDefault(&max_payload_size, settings, "max-payload-size", 0);
 
     if (packet_start_delay_ms < 0)
     {
@@ -221,6 +238,15 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
 
     ts->chunk_count = (uint8_t) chunk_count;
 
+    if (max_payload_size < 0)
+    {
+        LOGF("JSON Error: TesterClient->settings->max-payload-size (int field) : expected a non-negative value");
+        testerclientTunnelDestroy(t);
+        return NULL;
+    }
+
+    ts->max_payload_size = (uint32_t) max_payload_size;
+
     if ((ts->packet_start_immediately || ts->packet_start_delay_ms > 0) && ! ts->packet_mode)
     {
         LOGF("TesterClient: packet-start-immediately and packet-start-delay-ms require packet-mode=true");
@@ -235,8 +261,23 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (ts->max_payload_size > 0 && ts->packet_stateless)
+    {
+        LOGF("TesterClient: settings->max-payload-size is not supported with packet-stateless=true");
+        testerclientTunnelDestroy(t);
+        return NULL;
+    }
+
     if (! testerclientLoadPacketIpv4Settings(ts, settings))
     {
+        testerclientTunnelDestroy(t);
+        return NULL;
+    }
+
+    if (ts->packet_ipv4_mode && ts->max_payload_size > 0 &&
+        ts->max_payload_size < testerclientPacketIpv4MinimumPacketSize(ts))
+    {
+        LOGF("TesterClient: settings->max-payload-size is too small for the configured packet-ipv4 headers");
         testerclientTunnelDestroy(t);
         return NULL;
     }

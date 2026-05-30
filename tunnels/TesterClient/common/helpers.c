@@ -427,8 +427,18 @@ uint8_t testerclientGetChunkCount(tunnel_t *t)
 
 uint32_t testerclientGetChunkSize(tunnel_t *t, uint8_t index)
 {
+    testerclient_tstate_t *ts = tunnelGetState(t);
+    uint32_t               chunk_size;
+
     assert(index < testerclientGetChunkCount(t));
-    return testerclientGetChunkTable(t)[index];
+    chunk_size = testerclientGetChunkTable(t)[index];
+
+    if (ts->packet_mode && ts->max_payload_size > 0 && chunk_size > ts->max_payload_size)
+    {
+        chunk_size = ts->max_payload_size;
+    }
+
+    return chunk_size;
 }
 
 uint64_t testerclientGetRemainingBytes(tunnel_t *t, uint8_t index)
@@ -590,6 +600,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 {
     testerclient_lstate_t *ls = lineGetState(l, t);
     buffer_pool_t         *pool = lineGetBufferPool(l);
+    testerclient_tstate_t *ts = tunnelGetState(t);
 
     ls->request_send_scheduled = false;
 
@@ -600,6 +611,11 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
         uint32_t chunk_size = testerclientGetChunkSize(t, ls->request_tx_index);
         uint32_t remaining  = chunk_size - ls->request_tx_offset;
         uint32_t max_len    = bufferpoolGetLargeBufferSize(pool);
+
+        if (ts->max_payload_size > 0 && ts->max_payload_size < max_len)
+        {
+            max_len = ts->max_payload_size;
+        }
 
         if (max_len == 0)
         {
@@ -625,6 +641,14 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 
         if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, buf))
         {
+            return;
+        }
+
+        if (! ts->packet_mode && ts->max_payload_size > 0 && ! ls->request_paused &&
+            ls->request_tx_index < chunk_count)
+        {
+            ls->request_send_scheduled = true;
+            lineScheduleDelayedTask(l, testerclientRequestSendTask, kTesterClientSplitPayloadDelayMs, t);
             return;
         }
     }

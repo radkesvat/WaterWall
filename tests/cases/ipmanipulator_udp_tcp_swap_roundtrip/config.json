@@ -7,7 +7,7 @@
       "settings": {
         "packet-mode": true,
         "packet-start-immediately": true,
-        "chunk-count": 3,
+        "max-payload-size": 24,
         "packet-ipv4": {
           "source-ip": "10.84.0.1",
           "dest-ip": "10.84.0.2",
@@ -45,7 +45,7 @@
       "settings": {
         "packet-mode": true,
         "packet-init-on-start": true,
-        "chunk-count": 3,
+        "max-payload-size": 24,
         "packet-ipv4": {
           "source-ip": "10.84.0.1",
           "dest-ip": "10.84.0.2",

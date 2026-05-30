@@ -185,6 +185,16 @@ Packet mode with synthetic IPv4 packets:
   Limits the request and response sequence to the first N documented chunks for the selected mode.
   Default: `11`
 
+- `max-payload-size` `(integer)`
+  When greater than `0` in stream mode, caps each generated downstream response payload buffer to this many bytes while
+  still sending the full logical response sequence. This should match the client's cap when a stream-mode tester pair is
+  intentionally placed over a datagram tunnel.
+
+  In packet mode, this caps the generated packet chunk size instead of splitting packets. The cap must still leave room
+  for the configured packet headers. This option is not supported with `packet-stateless=true` because stateless packet
+  verification identifies chunks by packet size.
+  Default: `0` (use the large buffer size)
+
 - `packet-ipv4` `(object)`
   Optional synthetic IPv4 envelope mode for `packet-mode`.
   When present, each packet-mode request and response chunk is treated as a complete IPv4 packet instead of opaque
@@ -278,3 +288,5 @@ bug because packet lines are shared worker state, not per-connection lines.
 - in `packet-ipv4` mode the documented chunk sizes include packet headers, so the verified synthetic payload body is
   `chunk-size - IPv4 header length` in raw mode, or `chunk-size - IPv4 header length - transport header length` when
   `transport` is enabled
+- in packet mode, `max-payload-size` reduces the effective chunk size before packet generation; it does not split one
+  logical packet into multiple packets

@@ -1,5 +1,5 @@
-received-total-packets: 6
+received-total-packets: 22
 lost-total-packets: 0
-198.51.101.10 | 6 | 6 | 0
+198.51.101.10 | 22 | 22 | 0
 source-ip | expected | received | lost | loss-percent | histogram
 | [################################]

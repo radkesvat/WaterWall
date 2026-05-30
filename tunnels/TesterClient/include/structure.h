@@ -11,6 +11,7 @@ enum
     kTesterClientMaxWorkers = 254,
     kTesterClientStartDelayMs = 50,
     kTesterClientWatchdogMs = 30000,
+    kTesterClientSplitPayloadDelayMs = 1,
     kTesterClientPacketIpv4ProtocolDefault = 253,
     kTesterClientPacketIpv4TtlDefault = 64
 };
@@ -45,6 +46,7 @@ typedef struct testerclient_tstate_s
     bool                        packet_ipv4_mode;
     uint32_t                    packet_ipv4_source_addr;
     uint32_t                    packet_ipv4_dest_addr;
+    uint32_t                    max_payload_size;
     uint32_t                    packet_start_delay_ms;
     uint8_t                     chunk_count;
     uint8_t                     packet_ipv4_protocol;

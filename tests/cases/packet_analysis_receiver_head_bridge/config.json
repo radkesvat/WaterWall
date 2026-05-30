@@ -6,7 +6,7 @@
       "type": "PacketReceiver",
       "settings": {
         "source-ip4-range": "198.51.101.10/32",
-        "expected-packets-per-ip": 6,
+        "expected-packets-per-ip": 22,
         "report-after-ms": 700,
         "output-file": "packet-receiver-report.txt"
       },
@@ -25,7 +25,7 @@
       "settings": {
         "packet-mode": true,
         "packet-start-immediately": true,
-        "chunk-count": 3,
+        "max-payload-size": 64,
         "packet-ipv4": {
           "source-ip": "198.51.101.10",
           "dest-ip": "203.0.113.20",
