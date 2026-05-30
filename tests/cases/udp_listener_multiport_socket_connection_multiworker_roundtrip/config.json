@@ -1,0 +1,42 @@
+{
+  "name": "udp-listener-multiport-socket-connection-multiworker-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "max-payload-size": 1200
+      },
+      "next": "udp-connector"
+    },
+    {
+      "name": "udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42361,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": [
+          42360,
+          42363
+        ],
+        "multiport-backend": "socket"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "max-payload-size": 1200
+      }
+    }
+  ]
+}

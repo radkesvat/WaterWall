@@ -98,6 +98,24 @@ Practical rule:
   Verifies that `UdpConnector` accepts `balance-mode: "packet"` with multiple weighted `lvh.me` domain targets,
   resolves those targets through DNS, and preserves packet integrity while balancing packets across several UDP loopback
   listener ports.
+- `udp_connector_listener_packet_loss_multiworker`
+  Verifies a real UDP loopback hop across four workers using `PacketSender -> UdpConnector` on the sender side and
+  `UdpListener -> PacketReceiver` on the receiver side, with the packet-analysis report requiring zero loss.
+- `udp_listener_connector_packet_loss_multiworker`
+  Verifies a two-hop UDP loopback path across four workers where the middle chain is `UdpListener -> UdpConnector`,
+  exercising listener-created UDP lines that immediately feed another UDP connector, with zero packet loss required.
+- `udp_listener_multiport_socket_packet_loss_multiworker`
+  Verifies `UdpListener` with the socket multiport backend across four workers while `UdpConnector` sends to an integer
+  destination port inside the listener's port range, with zero packet loss required.
+- `udp_connector_listener_connection_multiworker_roundtrip`
+  Verifies a stream-mode `TesterClient -> UdpConnector` and `UdpListener -> TesterServer` loopback across four workers
+  using the full normal TesterClient/TesterServer payload corpus split into UDP-sized payloads by the tester nodes.
+- `udp_listener_connector_connection_multiworker_roundtrip`
+  Verifies the same stream-mode full-payload corpus across a two-hop UDP path where the middle chain is
+  `UdpListener -> UdpConnector`.
+- `udp_listener_multiport_socket_connection_multiworker_roundtrip`
+  Verifies the stream-mode full-payload corpus through `UdpListener` with the socket multiport backend and an
+  integer connector destination port inside the listener's port range.
 - `ping_new_ip_icmp_roundtrip`
   Verifies `PingClient` and `PingServer` through a paired `Bridge`, including outer IPv4/ICMP wrapping, ICMP payload
   XOR, roundup padding, and PingServer's downstream decapsulation direction.

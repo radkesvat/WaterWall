@@ -1,0 +1,51 @@
+{
+  "name": "udp-listener-multiport-socket-packet-loss-multiworker",
+  "nodes": [
+    {
+      "name": "packet-sender",
+      "type": "PacketSender",
+      "settings": {
+        "source-ip4-range": "198.51.112.0/29",
+        "dest-ip4": "203.0.113.32",
+        "protocol-number": "UDP",
+        "src-port": 41020,
+        "dest-port": 42020,
+        "duration-ms": 200,
+        "packets-per-ip": 8
+      },
+      "next": "udp-connector"
+    },
+    {
+      "name": "udp-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 42341,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "udp-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": [
+          42340,
+          42343
+        ],
+        "multiport-backend": "socket"
+      },
+      "next": "packet-receiver"
+    },
+    {
+      "name": "packet-receiver",
+      "type": "PacketReceiver",
+      "settings": {
+        "source-ip4-range": "198.51.112.0/29",
+        "expected-packets-per-ip": 8,
+        "report-after-ms": 1200,
+        "output-file": "packet-receiver-report.txt"
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+source-ip-count: 8
+expected-packets-per-ip: 8
+expected-total-packets: 64
+received-total-packets: 64
+lost-total-packets: 0
+unexpected-packets: 0
