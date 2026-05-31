@@ -165,14 +165,16 @@ Packet boundary recovery is based on this 2-byte prefix.
 
 ### Pause and resume behavior
 
-When the downstream side pauses the stream-facing line, `PacketsToStream` marks the packet-facing side paused.
+When the downstream side pauses the stream-facing line, `PacketsToStream` marks the packet-facing side paused and
+propagates pause back to the previous packet-side node.
 
-While paused:
+While paused, if the previous node ignores backpressure:
 
 - incoming packet payload is dropped instead of buffered
 
 When resume arrives:
 
+- resume is propagated back to the previous packet-side node
 - packet forwarding continues normally
 
 ### Finish and line recreation
