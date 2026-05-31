@@ -59,6 +59,10 @@ WW_EXPORT void         sniffrouterTunnelDestroy(tunnel_t *t);
 WW_EXPORT tunnel_t    *sniffrouterTunnelCreate(node_t *node);
 WW_EXPORT api_result_t sniffrouterTunnelApi(tunnel_t *instance, sbuf_t *message);
 
+int  sniffrouterClassify(const uint8_t *p, uint32_t n);
+void sniffrouterLinestateInitialize(sniffrouter_lstate_t *ls);
+void sniffrouterLinestateDestroy(line_t *l, sniffrouter_lstate_t *ls);
+
 void sniffrouterTunnelOnIndex(tunnel_t *t, uint16_t index, uint16_t *mem_offset);
 void sniffrouterTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void sniffrouterTunnelOnPrepair(tunnel_t *t);
@@ -71,4 +75,9 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void sniffrouterTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void sniffrouterTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
+void sniffrouterTunnelDownStreamInit(tunnel_t *t, line_t *l);
+void sniffrouterTunnelDownStreamEst(tunnel_t *t, line_t *l);
+void sniffrouterTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void sniffrouterTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+void sniffrouterTunnelDownStreamPause(tunnel_t *t, line_t *l);
+void sniffrouterTunnelDownStreamResume(tunnel_t *t, line_t *l);
