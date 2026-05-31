@@ -72,6 +72,9 @@ Practical rule:
 - `connection_fisher_roundtrip`
   Verifies that `ConnectionFisherClient` and `ConnectionFisherServer` complete their `5`-byte probe handshake and
   preserve the tester roundtrip across a real TCP loopback transport.
+- `sniffrouter_non_http_tcp_loopback`
+  Verifies that `SniffRouter` sends non-HTTP first payload bytes to its normal `next` branch across a real TCP loopback
+  transport; the configured `web` branch points at an invalid local connector so an accidental HTTP/web route fails.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.
