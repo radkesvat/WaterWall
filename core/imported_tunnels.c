@@ -217,11 +217,11 @@
 #endif
 
 #ifdef INCLUDE_HEADER_SERVER
-#include "tunnels/server/header/header_server.h"
+#include "tunnels/HeaderServer/include/interface.h"
 #endif
 
 #ifdef INCLUDE_HEADER_CLIENT
-#include "tunnels/client/header/header_client.h"
+#include "tunnels/HeaderClient/include/interface.h"
 #endif
 
 #ifdef INCLUDE_OBFUSCATOR_CLIENT

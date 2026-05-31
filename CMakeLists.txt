@@ -680,16 +680,16 @@ endif()
 #header server
 if(INCLUDE_HEADER_SERVER)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_HEADER_SERVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/header)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/header)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HeaderServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HeaderServer)
   target_link_libraries(Waterwall HeaderServer)
 endif()
 
 #header client
 if(INCLUDE_HEADER_CLIENT)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_HEADER_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/header)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HeaderClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HeaderClient)
   target_link_libraries(Waterwall HeaderClient)
 endif()
 
