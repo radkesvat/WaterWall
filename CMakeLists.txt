@@ -784,16 +784,16 @@ endif()
 #bgp4server server
 if(INCLUDE_BGP4_SERVER)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_BGP4_SERVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/bgp4)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/server/bgp4)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bgp4Server)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bgp4Server)
   target_link_libraries(Waterwall Bgp4Server)
 endif()
 
 #bgp4client client
 if(INCLUDE_BGP4_CLIENT)
   target_compile_definitions(Waterwall PUBLIC INCLUDE_BGP4_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
-  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/client/bgp4)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bgp4Client)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bgp4Client)
   target_link_libraries(Waterwall Bgp4Client)
 endif()
 

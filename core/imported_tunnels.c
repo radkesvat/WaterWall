@@ -269,11 +269,11 @@
 #endif
 
 #ifdef INCLUDE_BGP4_SERVER
-#include "tunnels/server/bgp4/bgp4_server.h"
+#include "tunnels/Bgp4Server/include/interface.h"
 #endif
 
 #ifdef INCLUDE_BGP4_CLIENT
-#include "tunnels/client/bgp4/bgp4_client.h"
+#include "tunnels/Bgp4Client/include/interface.h"
 #endif
 
 #ifdef INCLUDE_MUX_SERVER
