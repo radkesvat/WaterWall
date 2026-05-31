@@ -168,6 +168,10 @@
 #include "tunnels/Bridge/include/interface.h"
 #endif
 
+#ifdef INCLUDE_SNIFF_ROUTER
+#include "tunnels/SniffRouter/include/interface.h"
+#endif
+
 #ifdef INCLUDE_WOLFSSL_SERVER
 #include "tunnels/server/wolfssl/wolfssl_server.h"
 #endif
@@ -449,6 +453,10 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_BRIDGE
     USING(Bridge);
+#endif
+
+#ifdef INCLUDE_SNIFF_ROUTER
+    USING(SniffRouter);
 #endif
 
 #ifdef INCLUDE_WOLFSSL_SERVER

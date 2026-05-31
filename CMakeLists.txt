@@ -165,6 +165,7 @@ option(INCLUDE_UDP_OVER_TCP_SERVER      "link UdpOverTcpServer staticly to the c
 option(INCLUDE_TCP_OVER_UDP_CLIENT      "link TcpOverUdpClient staticly to the core"         TRUE)
 option(INCLUDE_TCP_OVER_UDP_SERVER      "link TcpOverUdpServer staticly to the core"         TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"                   TRUE)
+option(INCLUDE_SNIFF_ROUTER             "link SniffRouter staticly to the core"              TRUE)
 option(INCLUDE_TLS_CLIENT               "link TLSClient staticly to the core"                TRUE)
 option(INCLUDE_TLS_SERVER               "link TLSServer staticly to the core"                TRUE)
 option(INCLUDE_TROJAN_AUTH_SERVER       "link TrojanAuthServer staticly to the core"         FALSE)
@@ -543,6 +544,14 @@ if(INCLUDE_BRIDGE)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bridge)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Bridge)
   target_link_libraries(Waterwall Bridge)
+endif()
+
+#sniff router
+if(INCLUDE_SNIFF_ROUTER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_SNIFF_ROUTER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SniffRouter)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SniffRouter)
+  target_link_libraries(Waterwall SniffRouter)
 endif()
 
 #http server

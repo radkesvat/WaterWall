@@ -1,0 +1,58 @@
+{
+  "name": "sniffrouter-non-http-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41031,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41031,
+        "nodelay": true
+      },
+      "next": "sniff-router"
+    },
+    {
+      "name": "sniff-router",
+      "type": "SniffRouter",
+      "settings": {
+        "web": "web-google-com-invalid"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "web-google-com-invalid",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1234,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+      }
+    }
+  ]
+}
