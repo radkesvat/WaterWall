@@ -4,7 +4,8 @@ void sniffrouterLinestateInitialize(sniffrouter_lstate_t *ls)
 {
     *ls = (sniffrouter_lstate_t) {
         .pending       = NULL,
-        .decided       = kSniffUndecided,
+        .target        = NULL,
+        .decided       = kSniffRouteUndecided,
         .next_finished = false,
         .prev_finished = false,
     };

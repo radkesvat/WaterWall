@@ -2,60 +2,77 @@
 
 A layer-4 content router. It is meant to be placed **right after a `TlsServer`**
 (TLS termination) and routes each connection by inspecting the first decrypted
-bytes:
+HTTP/1 request.
 
-- if the bytes look like a normal **HTTP request**, the connection is handed to
-  the node named in `web` (typically a `TcpConnector` to a local web server);
-- otherwise (binary protocols such as VLESS / VMess / Trojan over raw TCP), the
-  connection continues to `next`.
+- if the request `Host` header matches a configured route, the connection is
+  handed to that route's `next` node;
+- otherwise, including non-HTTP traffic and HTTP traffic with no matching host,
+  the connection continues to the node's normal top-level `next`.
 
-This makes it possible to share a single TLS port between a real website and a
-tunnel: a browser that opens the real domain is served locally, while a proxy
-client that speaks a binary protocol after the TLS handshake is forwarded into
-the tunnel (for example a `Bridge` feeding a `ReverseServer`).
+This makes it possible to share one TLS port between multiple HTTP backends and
+a default tunnel/fail path.
 
 ## How it works
 
-- `next` is a normal upstream continuation (the tunnel branch).
-- `web` is a second node that the router folds into the **same chain** during
-  `onChain` (using `tunnelchainCombine`, the same primitive `Bridge` uses), so
-  it gets a per-line state slot and its downstream traffic returns through the
+- The top-level `next` is the fallback upstream continuation.
+- Each route target is folded into the **same chain** during `onChain`, so it
+  gets a per-line state slot and its downstream traffic returns through the
   router to the previous node.
-- The decision is made lazily on the first payload; up to 8 bytes are buffered
-  and then replayed losslessly to the chosen branch. Upstream `Init` is deferred
-  until the branch is chosen so the unused branch is never initialized.
+- Upstream `Init` is deferred until the first payload selects a branch. The
+  buffered bytes are then replayed to the chosen branch with no loss.
 
-## Detection
+## Domain Matching
 
-A connection is treated as HTTP when the first bytes begin with one of:
-`GET `, `POST `, `PUT `, `HEAD `, `DELETE `, `OPTIONS `, `PATCH `, `TRACE `,
-`CONNECT `, or `PRI ` (the HTTP/2 connection preface). Anything else is routed to
-`next`.
+Domain matching is case-insensitive.
 
-> Note: this byte-sniff assumes the tunnel protocol is **not** itself HTTP-framed
-> after TLS (i.e. raw-TCP transports). For WebSocket/gRPC/HTTP-based transports a
-> path/host based split should be used instead.
+- `example.com` matches exactly `example.com`.
+- `*.example.com` matches subdomains such as `www.example.com` and
+  `api.edge.example.com`, but not `example.com` itself.
+- `*` matches any non-empty Host value.
+
+Host header ports are ignored for matching, so `example.com:443` matches
+`example.com`.
+
+HTTP/2 cleartext prefaces do not carry an HTTP/1 `Host` header, so they fall
+back to top-level `next` unless routed by some earlier tunnel.
 
 ## Settings
 
-| key   | type   | required | description                                                        |
-|-------|--------|----------|--------------------------------------------------------------------|
-| `web` | string | yes      | name of the node to receive HTTP connections (e.g. a TcpConnector) |
+| key | type | required | description |
+|-----|------|----------|-------------|
+| `routes` | array | no | ordered list of domain routes |
 
-The node must also define `next` (the non-HTTP / tunnel branch).
+Each route object:
+
+| key | type | required | description |
+|-----|------|----------|-------------|
+| `domains` | string or array of strings | yes | domain patterns for this route |
+| `next` | string | yes | target node name for matching domains |
+
+`domain` may be used instead of `domains` for a single domain. `target` is
+accepted as an alias for route `next`.
+
+The node itself must define top-level `next`, which is the default fallback.
+Routes are checked in order; the first matching domain wins.
 
 ## Example
 
 ```json
 {
-    "name": "sniff_router",
+    "name": "sniff-router",
     "type": "SniffRouter",
-    "settings": { "web": "tcp_to_nginx" },
-    "next": "bridge_user_side"
-},
-{
-    "name": "tcp_to_nginx",
-    "type": "TcpConnector",
-    "settings": { "address": "127.0.0.1", "port": 8080, "nodelay": true }
+    "settings": {
+        "routes": [
+            {
+                "domains": ["a.x.com", "b.x.com", "x.com"],
+                "next": "node_x"
+            },
+            {
+                "domains": ["*.mydomain.com", "*.mydomain2.com"],
+                "next": "node_one"
+            }
+        ]
+    },
+    "next": "default_fail_path"
 }
 ```

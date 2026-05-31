@@ -10,10 +10,11 @@ void sniffrouterTunnelUpStreamEst(tunnel_t *t, line_t *l)
     }
 
     /*
-     * The web branch is usually a TcpConnector, whose upstream Est is disabled.
-     * Only the normal tunnel branch receives upstream Est.
+     * Route targets are often adapter/server nodes whose upstream Est is not a
+     * valid callback. Preserve the old SniffRouter behavior and only forward
+     * upstream Est to the normal fallback branch.
      */
-    if (ls->decided == kSniffRouteTunnel)
+    if (ls->decided == kSniffRouteDefault)
     {
         tunnelNextUpStreamEst(t, l);
     }

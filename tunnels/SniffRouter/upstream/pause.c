@@ -2,7 +2,6 @@
 
 void sniffrouterTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
-    sniffrouter_tstate_t *ts = tunnelGetState(t);
     sniffrouter_lstate_t *ls = lineGetState(l, t);
 
     if (ls->prev_finished || ls->next_finished)
@@ -10,11 +9,11 @@ void sniffrouterTunnelUpStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (ls->decided == kSniffRouteWeb)
+    if (ls->decided == kSniffRouteTarget)
     {
-        tunnelUpStreamPause(ts->web_tunnel, l);
+        tunnelUpStreamPause(ls->target, l);
     }
-    else if (ls->decided == kSniffRouteTunnel)
+    else if (ls->decided == kSniffRouteDefault)
     {
         tunnelNextUpStreamPause(t, l);
     }
