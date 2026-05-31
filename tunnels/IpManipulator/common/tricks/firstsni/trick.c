@@ -11,10 +11,13 @@ typedef struct firstsnitrick_tcp_packet_info_s
 {
     uint32_t src_addr;
     uint32_t dst_addr;
+    uint32_t seq;
+    uint16_t ip_total_len;
     uint16_t src_port;
     uint16_t dst_port;
     uint16_t tcp_payload_len;
     uint8_t  tcp_flags;
+    uint8_t  ttl;
 } firstsnitrick_tcp_packet_info_t;
 
 static void firstsnitrickResetFlow(ipmanipulator_firstsni_flow_t *flow)
@@ -107,10 +110,13 @@ static bool firstsnitrickParseTcpPacketInfo(const uint8_t *packet, uint32_t pack
     *info = (firstsnitrick_tcp_packet_info_t) {
         .src_addr        = ipheader->src.addr,
         .dst_addr        = ipheader->dest.addr,
+        .seq             = lwip_ntohl(tcp_header->seqno),
+        .ip_total_len    = ip_total_len,
         .src_port        = lwip_ntohs(tcp_header->src),
         .dst_port        = lwip_ntohs(tcp_header->dest),
         .tcp_payload_len = (uint16_t) (ip_total_len - headers_len),
         .tcp_flags       = TCPH_FLAGS(tcp_header),
+        .ttl             = ipheader->_ttl,
     };
 
     return true;
@@ -415,6 +421,19 @@ static sbuf_t *craftFirstSniPacket(tunnel_t *t, line_t *l, sbuf_t *buf, const sn
     struct ip_hdr *ipheader = (struct ip_hdr *) dest;
     IPH_LEN_SET(ipheader, lwip_htons((uint16_t) new_ip_total_len));
 
+    LOGD("IpManipulator: first-sni crafted fake ClientHello original-sni=\"%.*s\" fake-sni=\"%.*s\" "
+         "ip-len=%u->%u tls-record=%u->%u client-hello=%u->%u",
+         (int) match->sni_name_len,
+         (const char *) (source + match->sni_name_offset),
+         (int) state->trick_first_sni_value_len,
+         state->trick_first_sni_value,
+         (unsigned int) match->ip_total_len,
+         (unsigned int) (uint16_t) new_ip_total_len,
+         (unsigned int) match->tls_record_len,
+         (unsigned int) (uint16_t) new_tls_record_len,
+         match->client_hello_len,
+         (uint32_t) new_client_hello_len);
+
     return clone;
 }
 
@@ -436,12 +455,50 @@ static void prepareFirstSniPacketForSend(tunnel_t *t, sbuf_t *packet)
 
 static void firstsnitrickSendCraftedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    firstsnitrick_tcp_packet_info_t before = {0};
+    discard firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &before);
+
     prepareFirstSniPacketForSend(t, buf);
+
+    firstsnitrick_tcp_packet_info_t after = {0};
+    if (firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &after))
+    {
+        ipmanipulator_tstate_t *state = tunnelGetState(t);
+
+        LOGD("IpManipulator: first-sni sending crafted packet ip-len=%u payload=%u seq=%u ttl=%u %u:%u -> %u:%u",
+             (unsigned int) after.ip_total_len,
+             (unsigned int) after.tcp_payload_len,
+             after.seq,
+             (unsigned int) after.ttl,
+             after.src_addr,
+             (unsigned int) after.src_port,
+             after.dst_addr,
+             (unsigned int) after.dst_port);
+
+        if (state->trick_first_sni_random_tcp_sequence && before.seq != after.seq)
+        {
+            LOGD("IpManipulator: first-sni randomized crafted TCP sequence %u -> %u", before.seq, after.seq);
+        }
+    }
+
     ipmanipulatorSendUpstreamMaybeSegmented(t, l, buf);
 }
 
 static void firstsnitrickSendOriginalPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    firstsnitrick_tcp_packet_info_t info = {0};
+    if (firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    {
+        LOGD("IpManipulator: first-sni forwarding original packet ip-len=%u payload=%u seq=%u %u:%u -> %u:%u",
+             (unsigned int) info.ip_total_len,
+             (unsigned int) info.tcp_payload_len,
+             info.seq,
+             info.src_addr,
+             (unsigned int) info.src_port,
+             info.dst_addr,
+             (unsigned int) info.dst_port);
+    }
+
     /*
         Packet lines are shared worker state, so delayed sends cannot rely on the
         current recalculate_checksum scratch flag still belonging to this packet.
@@ -494,6 +551,9 @@ static bool firstsnitrickMaybeDelayFlowPacket(tunnel_t *t, line_t *l, sbuf_t *bu
         return false;
     }
 
+    LOGD("IpManipulator: first-sni delaying flow packet payload=%u for %u ms while replay/final-delay window is active",
+         (unsigned int) info->tcp_payload_len,
+         tail_delay_ms);
     lineScheduleDelayedTaskWithBuf(l, firstsnitrickSendOriginalPacket, tail_delay_ms, t, buf);
     return true;
 }
@@ -515,6 +575,10 @@ static void firstsnitrickSendLastCraftedThenOriginal(tunnel_t *t, line_t *l, sbu
                 reuseBuffer(buf);
                 return;
             }
+        }
+        else
+        {
+            LOGD("IpManipulator: first-sni could not craft the last replay packet; forwarding original ClientHello");
         }
     }
 
@@ -542,12 +606,18 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
     sbuf_t *fake_packet = craftFirstSniPacket(t, l, buf, &match);
     if (fake_packet == NULL)
     {
-        return false;
+        LOGD("IpManipulator: first-sni matched ClientHello but skipped fake packet crafting; forwarding original");
+        firstsnitrickSendOriginalPacket(t, l, buf);
+        return true;
     }
 
-    LOGD("IpManipulator: first-sni injected SNI \"%s\" %u time(s) before forwarding the original ClientHello",
+    LOGD("IpManipulator: first-sni injecting SNI \"%.*s\" %u time(s) before forwarding original ClientHello "
+         "ip-len=%u tls-record=%u",
+         (int) state->trick_first_sni_value_len,
          state->trick_first_sni_value,
-         state->trick_first_sni_count);
+         state->trick_first_sni_count,
+         (unsigned int) match.ip_total_len,
+         (unsigned int) match.tls_record_len);
 
     lineLock(l);
 
@@ -652,6 +722,11 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return true;
     }
 
+    if (firstsnitrickHandleClientHello(t, l, buf, now_ms))
+    {
+        return true;
+    }
+
     ipmanipulator_tls_capture_slot_t   captured_slot  = {0};
     ipmanipulator_tls_capture_status_e capture_status =
         ipmanipulatorCaptureTlsClientHello(t, l, buf, kIpManipulatorTlsCaptureKindFirstSni, &captured_slot);
@@ -668,15 +743,19 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         captured_slot.assembled_packet = NULL;
         ipmanipulatorRecycleCapturedTlsPackets(t, &captured_slot);
 
+        LOGD("IpManipulator: first-sni handling assembled fragmented ClientHello packet len=%u",
+             sbufGetLength(captured_packet));
+
         if (! firstsnitrickHandleClientHello(t, l, captured_packet, now_ms))
         {
+            LOGD("IpManipulator: first-sni assembled packet was not a usable ClientHello; forwarding it unchanged");
             firstsnitrickSendOriginalPacket(t, l, captured_packet);
         }
 
         return true;
     }
 
-    return firstsnitrickHandleClientHello(t, l, buf, now_ms);
+    return false;
 }
 
 void firstsnitrickDestroyState(tunnel_t *t)

@@ -34,11 +34,32 @@ typedef struct ipmanipulator_tls_clienthello_start_s
     uint32_t                        tls_record_total_len;
 } ipmanipulator_tls_clienthello_start_t;
 
+typedef enum ipmanipulator_tls_clienthello_start_status_e
+{
+    kIpManipulatorTlsClientHelloStartMiss = 0,
+    kIpManipulatorTlsClientHelloStartComplete,
+    kIpManipulatorTlsClientHelloStartFragmented,
+    kIpManipulatorTlsClientHelloStartUnsupported
+} ipmanipulator_tls_clienthello_start_status_t;
+
 typedef struct ipmanipulator_tls_prestart_timeout_msg_s
 {
     uint32_t slot_index;
     uint32_t generation;
 } ipmanipulator_tls_prestart_timeout_msg_t;
+
+static const char *ipmanipulatorTlsCaptureKindName(ipmanipulator_tls_capture_kind_e kind)
+{
+    switch (kind)
+    {
+    case kIpManipulatorTlsCaptureKindFirstSni:
+        return "first-sni";
+    case kIpManipulatorTlsCaptureKindSmuggleSni:
+        return "smuggle-sni";
+    default:
+        return "unknown";
+    }
+}
 
 static void ipmanipulatorResetCapturedSlot(ipmanipulator_tls_capture_slot_t *slot)
 {
@@ -342,44 +363,54 @@ static bool ipmanipulatorParseTcpPacketInfo(const uint8_t *packet, uint32_t pack
     return true;
 }
 
-static bool ipmanipulatorInspectTlsClientHelloStart(const uint8_t *packet, uint32_t packet_length,
-                                                    ipmanipulator_tls_clienthello_start_t *start)
+static ipmanipulator_tls_clienthello_start_status_t
+ipmanipulatorInspectTlsClientHelloStart(const uint8_t *packet, uint32_t packet_length,
+                                        ipmanipulator_tls_clienthello_start_t *start)
 {
     ipmanipulator_tcp_packet_info_t tcp = {0};
 
     if (! ipmanipulatorParseTcpPacketInfo(packet, packet_length, &tcp))
     {
-        return false;
+        return kIpManipulatorTlsClientHelloStartMiss;
     }
 
     if (tcp.tcp_payload_len < 9)
     {
-        return false;
+        return kIpManipulatorTlsClientHelloStartMiss;
     }
 
     if (tcp.payload[0] != 0x16 || tcp.payload[1] != 0x03 || tcp.payload[2] > 0x03 || tcp.payload[5] != 0x01)
     {
-        return false;
+        return kIpManipulatorTlsClientHelloStartMiss;
     }
 
     uint16_t tls_record_len       = GET_BE16(tcp.payload + 3);
     uint32_t tls_record_total_len = 5U + (uint32_t) tls_record_len;
     uint32_t client_hello_len     = GET_BE24(tcp.payload + 6);
 
-    if (client_hello_len < 34 || client_hello_len + 4U > tls_record_len)
+    if (client_hello_len < 34)
     {
-        return false;
+        return kIpManipulatorTlsClientHelloStartUnsupported;
+    }
+
+    if (client_hello_len + 4U > tls_record_len)
+    {
+        LOGD("IpManipulator: TLS ClientHello starts in this packet but spans multiple TLS records "
+             "(record=%u, client_hello=%u); TLS capture currently only assembles one TLS record",
+             (unsigned int) tls_record_len,
+             client_hello_len);
+        return kIpManipulatorTlsClientHelloStartUnsupported;
     }
 
     if (tls_record_len == 0 || tls_record_total_len > kIpManipulatorTlsCaptureMaxRecordLen)
     {
         LOGD("IpManipulator: skipping oversized fragmented TLS ClientHello record (%u bytes)", tls_record_total_len);
-        return false;
+        return kIpManipulatorTlsClientHelloStartUnsupported;
     }
 
     if (tls_record_total_len <= tcp.tcp_payload_len)
     {
-        return false;
+        return kIpManipulatorTlsClientHelloStartComplete;
     }
 
     *start = (ipmanipulator_tls_clienthello_start_t) {
@@ -387,7 +418,7 @@ static bool ipmanipulatorInspectTlsClientHelloStart(const uint8_t *packet, uint3
         .tls_record_total_len = tls_record_total_len,
     };
 
-    return true;
+    return kIpManipulatorTlsClientHelloStartFragmented;
 }
 
 static bool ipmanipulatorTlsCaptureSlotMatches(const ipmanipulator_tls_capture_slot_t *slot,
@@ -513,6 +544,12 @@ static bool ipmanipulatorAppendPacketToCaptureSlot(ipmanipulator_tls_capture_slo
     slot->tls_record_captured_len += min((uint32_t) info->tcp_payload_len, remaining);
     slot->next_seq += info->tcp_payload_len;
     slot->last_update_ms = getTickMS();
+
+    LOGD("IpManipulator: captured TLS ClientHello fragment payload=%u captured=%u/%u packets=%u",
+         (unsigned int) info->tcp_payload_len,
+         slot->tls_record_captured_len,
+         slot->tls_record_total_len,
+         (unsigned int) slot->captured_packets_count);
 
     if (slot->tls_record_captured_len == slot->tls_record_total_len)
     {
@@ -693,6 +730,12 @@ bool ipmanipulatorSendWithForwardMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t *
     uint8_t        original_flags      = TCPH_FLAGS(tcp_header);
     bool           line_alive          = true;
 
+    LOGD("IpManipulator: segmenting TCP packet ip-len=%u payload=%u mtu=%u segment-payload=%u",
+         ip_total_len,
+         total_payload_len,
+         GLOBAL_MTU_SIZE,
+         max_segment_payload);
+
     lineLock(l);
 
     while (payload_offset < total_payload_len)
@@ -830,6 +873,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(
 
         if (appended && complete)
         {
+            LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%u",
+                 ipmanipulatorTlsCaptureKindName(kind),
+                 (unsigned int) slot->captured_packets_count,
+                 sbufGetLength(slot->assembled_packet));
+
             ipmanipulatorTakeCapturedSlot(out_slot, slot);
             mutexUnlock(&state->tls_capture_mutex);
 
@@ -880,8 +928,27 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(
     }
 
     ipmanipulator_tls_clienthello_start_t start = {0};
-    if (! ipmanipulatorInspectTlsClientHelloStart((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &start))
+    ipmanipulator_tls_clienthello_start_status_t start_status =
+        ipmanipulatorInspectTlsClientHelloStart((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &start);
+    if (start_status != kIpManipulatorTlsClientHelloStartFragmented)
     {
+        if (start_status == kIpManipulatorTlsClientHelloStartComplete ||
+            start_status == kIpManipulatorTlsClientHelloStartUnsupported)
+        {
+            mutexUnlock(&state->tls_capture_mutex);
+
+            if (have_release)
+            {
+                ipmanipulatorReleaseCapturedPacketsNormal(t, &release_slot);
+            }
+            if (have_prestart_release)
+            {
+                ipmanipulatorReleasePrestartPacketsNormal(t, &release_prestart_slot);
+            }
+
+            return kIpManipulatorTlsCaptureStatusMiss;
+        }
+
         if (info.tcp_payload_len == 0)
         {
             mutexUnlock(&state->tls_capture_mutex);
@@ -1106,6 +1173,16 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(
         .active               = true,
     };
 
+    LOGD("IpManipulator: %s started fragmented TLS ClientHello capture payload=%u record=%u seq=%u %u:%u -> %u:%u",
+         ipmanipulatorTlsCaptureKindName(kind),
+         (unsigned int) start.tcp.tcp_payload_len,
+         start.tls_record_total_len,
+         start.tcp.seq,
+         start.tcp.src_addr,
+         (unsigned int) start.tcp.src_port,
+         start.tcp.dst_addr,
+         (unsigned int) start.tcp.dst_port);
+
     memoryCopyLarge(sbufGetMutablePtr(slot->assembled_packet), start.tcp.packet, slot->headers_len);
 
     bool complete = false;
@@ -1149,6 +1226,11 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHello(
 
     if (complete)
     {
+        LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%u",
+             ipmanipulatorTlsCaptureKindName(kind),
+             (unsigned int) slot->captured_packets_count,
+             sbufGetLength(slot->assembled_packet));
+
         ipmanipulatorTakeCapturedSlot(out_slot, slot);
         mutexUnlock(&state->tls_capture_mutex);
 
