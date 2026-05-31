@@ -73,7 +73,10 @@ Practical rule:
   preserve the tester roundtrip across a real TCP loopback transport.
 - `sniffrouter_non_http_tcp_loopback`
   Verifies that `SniffRouter` sends non-HTTP first payload bytes to its normal `next` branch across a real TCP loopback
-  transport; the configured `web` branch points at an invalid local connector so an accidental HTTP/web route fails.
+  transport; a configured `google.com` route points at an invalid local connector so accidental route selection fails.
+- `sniffrouter_http_domain_tcp_loopback`
+  Verifies that `SniffRouter` parses an HTTP/1.1 Host header, matches a wildcard domain from a multi-domain route, and
+  forwards to that route's target while the top-level fallback `next` points at an invalid connector.
 - `udp_over_tcp_roundtrip`
   Verifies that `UdpOverTcpClient` and `UdpOverTcpServer` preserve end-to-end byte stream integrity through their
   length-prefixed framing.

@@ -1,0 +1,94 @@
+{
+  "name": "sniffrouter-http-domain-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true,
+        "chunk-count": 4
+      },
+      "next": "http-client"
+    },
+    {
+      "name": "http-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "api.route.example.test",
+        "path": "/ww/sniffrouter",
+        "scheme": "http",
+        "port": 41032,
+        "method": "POST",
+        "http-version": "1.1",
+        "full-duplex": true
+      },
+      "next": "tcp-connector"
+    },
+    {
+      "name": "tcp-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41032,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "tcp-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 41032,
+        "nodelay": true
+      },
+      "next": "sniff-router"
+    },
+    {
+      "name": "sniff-router",
+      "type": "SniffRouter",
+      "settings": {
+        "routes": [
+          {
+            "domains": ["a.x.com", "b.x.com", "*.route.example.test"],
+            "next": "http-server"
+          }
+        ]
+      },
+      "next": "default-invalid"
+    },
+    {
+      "name": "default-invalid",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1234,
+        "nodelay": true,
+        "fastopen": false,
+        "reuseaddr": false
+      }
+    },
+    {
+      "name": "http-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "1.1",
+        "host": "api.route.example.test",
+        "path": "/ww/sniffrouter",
+        "method": "POST",
+        "status": 200,
+        "full-duplex": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true,
+        "chunk-count": 4
+      }
+    }
+  ]
+}

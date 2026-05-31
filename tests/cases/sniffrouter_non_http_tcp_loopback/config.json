@@ -33,12 +33,17 @@
       "name": "sniff-router",
       "type": "SniffRouter",
       "settings": {
-        "web": "web-google-com-invalid"
+        "routes": [
+          {
+            "domains": ["google.com", "*.google.com"],
+            "next": "google-com-invalid"
+          }
+        ]
       },
       "next": "tester-server"
     },
     {
-      "name": "web-google-com-invalid",
+      "name": "google-com-invalid",
       "type": "TcpConnector",
       "settings": {
         "address": "127.0.0.1",
