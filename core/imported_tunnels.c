@@ -16,6 +16,14 @@
 #include "tunnels/TesterServer/include/interface.h"
 #endif
 
+#ifdef INCLUDE_SPEEDTEST_CLIENT
+#include "tunnels/SpeedTestClient/include/interface.h"
+#endif
+
+#ifdef INCLUDE_SPEEDTEST_SERVER
+#include "tunnels/SpeedTestServer/include/interface.h"
+#endif
+
 #ifdef INCLUDE_AUTHENTICATION_SERVER
 #include "tunnels/AuthenticationServer/include/interface.h"
 #endif
@@ -301,6 +309,14 @@ void loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_TESTER_SERVER
     USING(TesterServer);
+#endif
+
+#ifdef INCLUDE_SPEEDTEST_CLIENT
+    USING(SpeedTestClient);
+#endif
+
+#ifdef INCLUDE_SPEEDTEST_SERVER
+    USING(SpeedTestServer);
 #endif
 
 #ifdef INCLUDE_AUTHENTICATION_SERVER

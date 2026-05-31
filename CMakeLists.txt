@@ -137,6 +137,8 @@ endif()
 option(INCLUDE_TEMPLATE                 "link Template staticly to the core"                 TRUE)
 option(INCLUDE_TESTER_CLIENT            "link TesterClient staticly to the core"             TRUE)
 option(INCLUDE_TESTER_SERVER            "link TesterServer staticly to the core"             TRUE)
+option(INCLUDE_SPEEDTEST_CLIENT         "link SpeedTestClient staticly to the core"          TRUE)
+option(INCLUDE_SPEEDTEST_SERVER         "link SpeedTestServer staticly to the core"          TRUE)
 option(INCLUDE_AUTHENTICATION_SERVER     "link AuthenticationServer staticly to the core"      TRUE)
 option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"          TRUE)
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"       TRUE)
@@ -293,6 +295,22 @@ if(INCLUDE_TESTER_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TesterServer)
   target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TesterServer)
   target_link_libraries(Waterwall TesterServer)
+endif()
+
+#speedtest client
+if(INCLUDE_SPEEDTEST_CLIENT)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_SPEEDTEST_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedTestClient)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedTestClient)
+  target_link_libraries(Waterwall SpeedTestClient)
+endif()
+
+#speedtest server
+if(INCLUDE_SPEEDTEST_SERVER)
+  target_compile_definitions(Waterwall PUBLIC INCLUDE_SPEEDTEST_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedTestServer)
+  target_link_directories(Waterwall PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/SpeedTestServer)
+  target_link_libraries(Waterwall SpeedTestServer)
 endif()
 
 #authentication server
