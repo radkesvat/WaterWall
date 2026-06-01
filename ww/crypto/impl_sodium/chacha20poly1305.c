@@ -3,6 +3,8 @@
 
 #include "sodium.h"
 
+#include "loggers/internal_logger.h"
+
 // Helper function for encryption using EVP API
 int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t srclen, const unsigned char *ad,
                             size_t adlen, const unsigned char *nonce, const unsigned char *key)
@@ -15,7 +17,7 @@ int chacha20poly1305Encrypt(unsigned char *dst, const unsigned char *src, size_t
     // Perform encryption
     if (0 != crypto_aead_chacha20poly1305_ietf_encrypt(dst, &ciphertext_len, src, srclen, ad, adlen, NULL, nonce, key))
     {
-        printError("chacha20poly1305Encrypt failed\n");
+        // LOGE("chacha20poly1305Encrypt failed\n");
         return -1;
     }
 
@@ -38,7 +40,7 @@ int chacha20poly1305Decrypt(unsigned char *dst, const unsigned char *src, size_t
     if (0 != crypto_aead_chacha20poly1305_ietf_decrypt(dst, &plaintext_len, NULL, src, srclen, ad, adlen, nonce, key))
     {
         // "Decryption failed or authentication tag verification failed
-        printError("chacha20poly1305Decrypt failed\n");
+        // LOGE("chacha20poly1305Decrypt failed\n");
 
         return -1;
     }
