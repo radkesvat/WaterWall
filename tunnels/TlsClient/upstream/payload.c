@@ -6,6 +6,12 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tlsclient_lstate_t *ls = lineGetState(l, t);
 
+    if (ls->passthrough)
+    {
+        tunnelNextUpStreamPayload(t, l, buf);
+        return;
+    }
+
     if (! ls->handshake_completed)
     {
         bufferqueuePushBack(&(ls->bq), buf);
@@ -41,6 +47,7 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                     if (! withLineLockedWithBuf(l, tunnelNextUpStreamPayload, t, ssl_buf))
                     {
                         reuseBuffer(buf);
+                        return;
                     }
                 }
                 else if (! BIO_should_retry(ls->wbio))
@@ -75,7 +82,10 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 failed:
 
     LOGW("TlsClient: upstream Payload failed: boringssl state is printed below");
-    tlsclientPrintSSLState(ls->ssl);
+    if (ls->ssl != NULL)
+    {
+        tlsclientPrintSSLState(ls->ssl);
+    }
 
     tlsclientLinestateDestroy(ls);
 

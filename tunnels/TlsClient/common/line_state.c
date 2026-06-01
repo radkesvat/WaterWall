@@ -12,6 +12,8 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
 
     static_assert(sizeof(kChromeH2AlpsPayload) == 3, "Chrome h2 ALPS payload must stay 0x026832");
 
+    *ls = (tlsclient_lstate_t) {0};
+
     ls->rbio = BIO_new(BIO_s_mem());
     ls->wbio = BIO_new(BIO_s_mem());
     ls->ssl  = SSL_new(sctx);
@@ -58,12 +60,24 @@ void tlsclientLinestateInitialize(tlsclient_lstate_t *ls, SSL_CTX *sctx)
     SSL_enable_signed_cert_timestamps(ls->ssl);
 }
 
-void tlsclientLinestateDestroy(tlsclient_lstate_t *ls)
+void tlsclientLinestateRelease(tlsclient_lstate_t *ls)
 {
+    if (ls->resources_released)
+    {
+        return;
+    }
+
+    ls->resources_released = true;
 
     SSL_free(ls->ssl); /* free the SSL object and its BIO's */
-    // BIO_free(ls->rbio);
-    // BIO_free(ls->wbio);
+    ls->ssl  = NULL;
+    ls->rbio = NULL;
+    ls->wbio = NULL;
     bufferqueueDestroy(&(ls->bq));
+}
+
+void tlsclientLinestateDestroy(tlsclient_lstate_t *ls)
+{
+    tlsclientLinestateRelease(ls);
     memoryZeroAligned32(ls, sizeof(tlsclient_lstate_t));
 }

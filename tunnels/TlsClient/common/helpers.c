@@ -26,6 +26,86 @@ void tlsclientPrintSSLErrorAndAbort(void)
     abort();
 }
 
+static bool tlsclientDrainPendingRawBytes(line_t *l, BIO *bio, sbuf_t **pending_raw)
+{
+    if (pending_raw != NULL)
+    {
+        *pending_raw = NULL;
+    }
+
+    if (bio == NULL || pending_raw == NULL)
+    {
+        return true;
+    }
+
+    size_t pending = BIO_ctrl_pending(bio);
+    if (pending == 0)
+    {
+        return true;
+    }
+
+    if (pending > UINT32_MAX)
+    {
+        return false;
+    }
+
+    sbuf_t *buf = sbufCreateWithPadding((uint32_t) pending, bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)));
+    sbufSetLength(buf, (uint32_t) pending);
+
+    int n = BIO_read(bio, sbufGetMutablePtr(buf), (int) pending);
+    if (n != (int) pending)
+    {
+        lineReuseBuffer(l, buf);
+        return false;
+    }
+
+    *pending_raw = buf;
+    return true;
+}
+
+void tlsclientTunnelEnableHandshakeTakeover(tunnel_t *t)
+{
+    tlsclient_tstate_t *ts = tunnelGetState(t);
+    ts->handshake_takeover_enabled = true;
+}
+
+bool tlsclientTunnelIsHandshakeCompleted(tunnel_t *t, line_t *l)
+{
+    tlsclient_lstate_t *ls = lineGetState(l, t);
+    return ls->handshake_completed;
+}
+
+bool tlsclientTunnelDeinitAfterHandshake(tunnel_t *t, line_t *l, sbuf_t **pending_raw)
+{
+    tlsclient_lstate_t *ls = lineGetState(l, t);
+
+    if (pending_raw != NULL)
+    {
+        *pending_raw = NULL;
+    }
+
+    if (! ls->handshake_completed)
+    {
+        return false;
+    }
+
+    if (ls->passthrough)
+    {
+        return true;
+    }
+
+    if (! tlsclientDrainPendingRawBytes(l, SSL_get_rbio(ls->ssl), pending_raw))
+    {
+        return false;
+    }
+
+    tlsclientLinestateRelease(ls);
+    ls->handshake_completed = true;
+    ls->passthrough         = true;
+
+    return true;
+}
+
 bool tlsclientConfigureSslForConnect(SSL *ssl, BIO *rbio, BIO *wbio, const char *sni,
                                      const uint8_t *ech_grease_override_payload,
                                      size_t ech_grease_override_payload_len)

@@ -112,6 +112,7 @@ That arrangement lets:
 Important current-implementation notes:
 
 - a field named `alpn` exists in the source, but the active create path does not use a JSON ALPN value
+- internal users can enable handshake takeover mode, check TLS handshake completion, and deinitialize per-line TLS resources after the handshake without closing the underlying Waterwall line. In that mode `TlsClient` becomes a raw pass-through after takeover.
 
 ## Tunnel API
 

@@ -43,6 +43,7 @@ static inline bool flushSSLOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls
 
 static inline int performHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
+    tlsclient_tstate_t *ts = tunnelGetState(t);
     int            n      = SSL_connect(ls->ssl);
     enum sslstatus status = getSslStatus(ls->ssl, n);
 
@@ -86,6 +87,27 @@ static inline int performHandshake(tunnel_t *t, line_t *l, tlsclient_lstate_t *l
     {
         LOGD("TlsClient: Tls handshake complete");
         ls->handshake_completed = true;
+
+        if (ts->handshake_takeover_enabled)
+        {
+            if (! ls->handshake_est_sent)
+            {
+                ls->handshake_est_sent = true;
+                tunnelPrevDownStreamEst(t, l);
+                if (! lineIsAlive(l))
+                {
+                    return -1;
+                }
+            }
+
+            if (! ls->passthrough)
+            {
+                LOGW("TlsClient: handshake takeover was requested but the owner did not deinitialize TLS");
+                return -1;
+            }
+
+            return 2;
+        }
 
         // write the data that we previously wanted to encrypt and send
         // yes, after the handshake is complete we can safely call SSL_write
@@ -178,6 +200,12 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     tlsclient_lstate_t *ls = lineGetState(l, t);
     int                 n;
 
+    if (ls->passthrough)
+    {
+        tunnelPrevDownStreamPayload(t, l, buf);
+        return;
+    }
+
     lineLock(l);
     while (sbufGetLength(buf) > 0)
     {
@@ -206,7 +234,21 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 break; // Need more data (kSslstatusWantIo)
             }
 
+            if (handshake_result == 2)
+            {
+                lineReuseBuffer(l, buf);
+                lineUnlock(l);
+                return;
+            }
+
             // handshake_result == 1, continue or handshake completed
+        }
+
+        if (ls->passthrough)
+        {
+            lineReuseBuffer(l, buf);
+            lineUnlock(l);
+            return;
         }
 
         if (! processEncryptedData(t, l, ls))
@@ -235,10 +277,19 @@ void tlsclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     return;
 
 failed:
+    if (! lineIsAlive(l))
+    {
+        lineUnlock(l);
+        return;
+    }
+
     lineUnlock(l);
 
     LOGW("TlsClient: downstream payload failed: boringssl state is printed below");
-    tlsclientPrintSSLState(ls->ssl);
+    if (ls->ssl != NULL)
+    {
+        tlsclientPrintSSLState(ls->ssl);
+    }
 
     tlsclientLinestateDestroy(ls);
     tunnelNextUpStreamFinish(t, l);
