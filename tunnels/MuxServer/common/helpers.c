@@ -182,7 +182,6 @@ static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, mux
         return false;
     }
 
-    lineLock(child_l);
     muxserverLeaveConnection(child_ls);
     muxserverLinestateDestroy(child_ls);
     tunnelNextUpStreamFinish(t, child_l);
@@ -190,7 +189,6 @@ static bool muxserverCloseChildForBufferLimit(tunnel_t *t, line_t *parent_l, mux
     {
         lineDestroy(child_l);
     }
-    lineUnlock(child_l);
     return lineIsAlive(parent_l);
 }
 

@@ -143,10 +143,7 @@ static void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_
     assert(parent_ls->is_child == false);
     assert(parent_ls->children_count == 0);
 
-    lineLock(parent_l);
-
     muxclientForgetParentLine(ts, wid, parent_l);
-    parent_ls->parent_finishing = true;
     muxclientLinestateDestroy(parent_ls);
     tunnelNextUpStreamFinish(t, parent_l);
 
@@ -154,8 +151,6 @@ static void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_
     {
         lineDestroy(parent_l);
     }
-
-    lineUnlock(parent_l);
 }
 
 static line_t *muxclientGetFixedParentLineForNewChild(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid)

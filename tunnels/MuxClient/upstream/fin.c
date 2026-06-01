@@ -5,8 +5,6 @@
 static void muxclientCloseOwnedParentLineFromUpstreamFinish(tunnel_t *t, muxclient_tstate_t *ts, wid_t wid,
                                                             line_t *parent_l, muxclient_lstate_t *parent_ls)
 {
-    lineLock(parent_l);
-
     muxclientForgetParentLine(ts, wid, parent_l);
 
     muxclientLinestateDestroy(parent_ls);
@@ -16,8 +14,6 @@ static void muxclientCloseOwnedParentLineFromUpstreamFinish(tunnel_t *t, muxclie
     {
         lineDestroy(parent_l);
     }
-
-    lineUnlock(parent_l);
 }
 
 void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
@@ -30,7 +26,6 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
     assert(child_ls->is_child);
 
     assert(child_ls->parent);
- 
 
     muxclient_lstate_t *parent_ls = child_ls->parent;
     line_t             *parent_l  = parent_ls->l;
@@ -42,33 +37,9 @@ void muxclientTunnelUpStreamFinish(tunnel_t *t, line_t *child_l)
         return;
     }
 
-    // if (parent_ls->paused)
-    // {
-    //     parent_ls->paused = false;
-    //     // sbuf_t *resumepacket_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(child_l));
-    //     // muxclientMakeMuxFrame(resumepacket_buf, child_ls->connection_id, kMuxFlagFlowResume);
-    //     lineLock(parent_l);
-    //     // tunnelNextUpStreamPayload(t, parent_l, resumepacket_buf);
-    //     // if (! lineIsAlive(parent_l))
-    //     // {
-    //     //     muxclientLinestateDestroy(child_ls);
-    //     //     lineUnlock(parent_l);
-    //     //     return;
-    //     // }
-    //     tunnelNextUpStreamResume(t, parent_l);
-    //     if (! lineIsAlive(parent_l))
-    //     {
-    //         muxclientLinestateDestroy(child_ls);
-    //         lineUnlock(parent_l);
-    //         return;
-    //     }
-    //     lineUnlock(parent_l);
-    // }
-
     sbuf_t *finishpacket_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(child_l));
     muxclientMakeMuxFrame(finishpacket_buf, child_ls->connection_id, kMuxFlagClose);
     muxclientLinestateDestroy(child_ls);
-
 
     if (! withLineLockedWithBuf(parent_l, tunnelNextUpStreamPayload, t, finishpacket_buf))
     {

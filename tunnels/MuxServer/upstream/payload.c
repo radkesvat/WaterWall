@@ -7,8 +7,6 @@ static muxserver_lstate_t *findChildByConnectionId(muxserver_lstate_t *parent_ls
 static void muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t *child_l,
                                                             muxserver_lstate_t *child_ls)
 {
-    lineLock(child_l);
-
     muxserverLeaveConnection(child_ls);
     muxserverLinestateDestroy(child_ls);
     tunnelNextUpStreamFinish(t, child_l);
@@ -17,8 +15,6 @@ static void muxserverCloseOwnedChildLineFromUpstreamPayload(tunnel_t *t, line_t 
     {
         lineDestroy(child_l);
     }
-
-    lineUnlock(child_l);
 }
 
 static sbuf_t *tryReadCompleteFrame(muxserver_lstate_t *parent_ls, mux_frame_t *frame)

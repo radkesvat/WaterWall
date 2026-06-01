@@ -4,8 +4,6 @@
 
 static void muxserverCloseOwnedChildLineFromUpstreamFinish(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls)
 {
-    lineLock(child_l);
-
     muxserverLeaveConnection(child_ls);
     muxserverLinestateDestroy(child_ls);
     tunnelNextUpStreamFinish(t, child_l);
@@ -14,8 +12,6 @@ static void muxserverCloseOwnedChildLineFromUpstreamFinish(tunnel_t *t, line_t *
     {
         lineDestroy(child_l);
     }
-
-    lineUnlock(child_l);
 }
 
 void muxserverTunnelUpStreamFinish(tunnel_t *t, line_t *parent_l)

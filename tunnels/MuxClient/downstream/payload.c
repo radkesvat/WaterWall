@@ -7,8 +7,6 @@ static void muxclientCloseOwnedParentLineFromDownstreamPayload(tunnel_t *t, muxc
 {
     wid_t wid = lineGetWID(parent_l);
 
-    lineLock(parent_l);
-
     muxclientForgetParentLine(ts, wid, parent_l);
 
     muxclientLinestateDestroy(parent_ls);
@@ -18,8 +16,6 @@ static void muxclientCloseOwnedParentLineFromDownstreamPayload(tunnel_t *t, muxc
     {
         lineDestroy(parent_l);
     }
-
-    lineUnlock(parent_l);
 }
 
 static sbuf_t *tryReadCompleteFrame(muxclient_lstate_t *parent_ls, mux_frame_t *frame)
