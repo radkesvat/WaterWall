@@ -13,11 +13,6 @@ void connectionfisherserverLinestateInitialize(connectionfisherserver_lstate_t *
 
 void connectionfisherserverLinestateDestroy(connectionfisherserver_lstate_t *ls)
 {
-    if (ls->phase == kConnectionFisherServerPhaseNone)
-    {
-        return;
-    }
-
     bufferstreamDestroy(&ls->in_stream);
     memoryZeroAligned32(ls, sizeof(*ls));
 }

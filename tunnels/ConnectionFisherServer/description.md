@@ -39,8 +39,9 @@ or any other server-side stream chain where the first `5` bytes are reserved for
 ## Finish And Safety Behavior
 
 - if the probe is invalid, the tunnel destroys its line state first and then closes both directions
-- if the line closes after upstream init was already sent to `next`, the tunnel propagates the real upstream finish before sending downstream finish toward `prev`
-- if the line closes before upstream init was sent to `next`, only the previous side is closed because there is no next-side line yet
+- a real upstream `Finish` destroys local state and only propagates upstream if `next` was already initialized
+- a real downstream `Finish` destroys local state and propagates downstream toward `prev`
+- if a protocol error occurs before upstream init was sent to `next`, only the previous side is closed because there is no next-side line yet
 
 ## Configuration
 

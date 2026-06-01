@@ -4,7 +4,6 @@
 
 typedef enum connectionfisherserver_phase_e
 {
-    kConnectionFisherServerPhaseNone = 0,
     kConnectionFisherServerPhaseWaitPing,
     kConnectionFisherServerPhaseWaitPayload,
     kConnectionFisherServerPhaseEstablished
@@ -53,4 +52,5 @@ void connectionfisherserverLinestateDestroy(connectionfisherserver_lstate_t *ls)
 
 void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l);
 void connectionfisherserverCloseLineFromDownstream(tunnel_t *t, line_t *l);
+void connectionfisherserverCloseLineFromProtocolError(tunnel_t *t, line_t *l);
 void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t *buf);

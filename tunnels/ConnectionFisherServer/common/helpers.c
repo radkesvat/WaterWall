@@ -49,15 +49,27 @@ static sbuf_t *connectionfisherserverMakeReply(line_t *l)
 
 void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
-
     connectionfisherserver_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase == kConnectionFisherServerPhaseNone)
-    {
-        lineUnlock(l);
-        return;
-    }
+    bool close_next = ls->next_init_sent;
 
+    connectionfisherserverLinestateDestroy(ls);
+
+    if (close_next)
+    {
+        tunnelNextUpStreamFinish(t, l);
+    }
+}
+
+void connectionfisherserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
+{
+    connectionfisherserverLinestateDestroy(lineGetState(l, t));
+
+    tunnelPrevDownStreamFinish(t, l);
+}
+
+void connectionfisherserverCloseLineFromProtocolError(tunnel_t *t, line_t *l)
+{
+    connectionfisherserver_lstate_t *ls = lineGetState(l, t);
     bool close_next = ls->next_init_sent;
 
     connectionfisherserverLinestateDestroy(ls);
@@ -67,25 +79,7 @@ void connectionfisherserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
         tunnelNextUpStreamFinish(t, l);
     }
 
-    lineUnlock(l);
-}
-
-void connectionfisherserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
-{
-    lineLock(l);
-
-    connectionfisherserver_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase == kConnectionFisherServerPhaseNone)
-    {
-        lineUnlock(l);
-        return;
-    }
-
-    connectionfisherserverLinestateDestroy(ls);
-
     tunnelPrevDownStreamFinish(t, l);
-
-    lineUnlock(l);
 }
 
 void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -97,7 +91,7 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
     if (bufferstreamGetBufLen(&ls->in_stream) > kConnectionFisherServerMaxHandshakeBytes)
     {
         LOGW("ConnectionFisherServer: handshake buffer overflow, closing line");
-        connectionfisherserverCloseLineFromUpstream(t, l);
+        connectionfisherserverCloseLineFromProtocolError(t, l);
         return;
     }
 
@@ -115,7 +109,7 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
     {
         LOGW("ConnectionFisherServer: received bytes that do not match the ConnectionFisher client probe");
         bufferstreamEmpty(&ls->in_stream);
-        connectionfisherserverCloseLineFromUpstream(t, l);
+        connectionfisherserverCloseLineFromProtocolError(t, l);
         return;
     }
 
