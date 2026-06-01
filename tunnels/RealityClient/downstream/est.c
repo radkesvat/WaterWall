@@ -28,12 +28,6 @@ void realityclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     lineLock(l);
 
     realityclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->prev_finished)
-    {
-        lineUnlock(l);
-        return;
-    }
-
     if (! tlsclientTunnelIsHandshakeCompleted(ts->tls_tunnel, l) ||
         ! tlsclientTunnelDeinitAfterHandshake(ts->tls_tunnel, l, &pending_raw))
     {

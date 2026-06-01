@@ -7,10 +7,7 @@ void realityserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 
     if (ls->mode == kRealityServerModeAuthorized)
     {
-        if (! ls->next_finished)
-        {
-            tunnelNextUpStreamPause(t, l);
-        }
+        tunnelNextUpStreamPause(t, l);
         return;
     }
 

@@ -36,8 +36,6 @@ typedef struct realityserver_lstate_s
     bool            destination_init_sent;
     bool            destination_up_finished;
     bool            closing_destination_for_authorized;
-    bool            next_finished;
-    bool            prev_finished;
     bool            prev_est_sent;
 } realityserver_lstate_t;
 

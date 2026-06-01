@@ -8,18 +8,7 @@ void realityserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
-
-    ls = lineGetState(l, t);
-    bool send_prev = ! ls->prev_finished;
-
-    ls->prev_finished = true;
     realityserverLinestateDestroy(ls);
 
-    if (send_prev)
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
-
-    lineUnlock(l);
+    tunnelPrevDownStreamFinish(t, l);
 }

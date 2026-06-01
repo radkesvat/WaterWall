@@ -411,19 +411,13 @@ void realityserverCloseLineBidirectional(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
-
     realityserver_tstate_t *ts = tunnelGetState(t);
     realityserver_lstate_t *ls = lineGetState(l, t);
 
-    bool close_prev        = ! ls->prev_finished;
-    bool close_protected   = ls->protected_init_sent && ! ls->next_finished;
+    bool close_protected   = ls->protected_init_sent;
     bool close_destination = ls->destination_init_sent && ! ls->destination_up_finished &&
                              ls->mode != kRealityServerModeAuthorized;
 
-    ls->prev_finished           = true;
-    ls->next_finished           = true;
-    ls->destination_up_finished = true;
     realityserverLinestateDestroy(ls);
 
     if (close_protected)
@@ -435,10 +429,5 @@ void realityserverCloseLineBidirectional(tunnel_t *t, line_t *l)
         tunnelUpStreamFin(ts->destination_tunnel, l);
     }
 
-    if (close_prev && lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
-
-    lineUnlock(l);
+    tunnelPrevDownStreamFinish(t, l);
 }

@@ -19,8 +19,6 @@ typedef struct realityclient_lstate_s
     buffer_stream_t read_stream;
     buffer_queue_t  pending_up;
     bool            tls_ready;
-    bool            next_finished;
-    bool            prev_finished;
 } realityclient_lstate_t;
 
 enum realityclient_algorithm_e
