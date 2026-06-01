@@ -10,23 +10,12 @@ void tlsserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->verbose)
     {
-        LOGD("TlsServer: worker %u received downstream Finish (next_finished=%d, prev_finished=%d)",
-             (unsigned int) lineGetWID(l), (int) ls->next_finished, (int) ls->prev_finished);
+        LOGD("TlsServer: worker %u received downstream Finish (upstream_finished=%d)",
+             (unsigned int) lineGetWID(l), (int) ls->upstream_finished);
     }
 
-    ls->next_finished = true;
-
-    if (ls->prev_finished)
-    {
-        if (ls->verbose)
-        {
-            LOGD("TlsServer: downstream Finish already forwarded; ignoring duplicate");
-        }
-        lineUnlock(l);
-        return;
-    }
-
-    ls->prev_finished = true;
+    ls->upstream_finished    = true;
+    ls->downstream_finishing = true;
 
     if (! tlsserverSendCloseNotify(t, l, ls))
     {

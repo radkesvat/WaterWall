@@ -115,17 +115,16 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
         case SSL_ERROR_WANT_WRITE:
             return true;
         case SSL_ERROR_ZERO_RETURN:
-            ls->peer_close_notify_received = true;
             if (ls->verbose)
             {
                 LOGD("TlsServer: worker %u received TLS close_notify from peer", (unsigned int) lineGetWID(l));
             }
-            if (ls->next_finished)
+            if (ls->upstream_finished)
             {
                 return true;
             }
 
-            ls->next_finished = true;
+            ls->upstream_finished = true;
             if (ls->verbose)
             {
                 LOGD("TlsServer: forwarding upstream Finish after peer close_notify");

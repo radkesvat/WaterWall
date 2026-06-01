@@ -6,7 +6,7 @@ void tlsserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
     tlsserver_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->next_finished)
+    if (ls->upstream_finished)
     {
         if (ls->verbose)
         {

@@ -253,13 +253,12 @@ bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *
 
 bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    if (ls->resources_released || ls->ssl == NULL || ! ls->handshake_completed || ls->close_notify_sent)
+    if (ls->resources_released || ls->ssl == NULL || ! ls->handshake_completed)
     {
         if (ls->verbose)
         {
-            LOGD("TlsServer: skipping close_notify (released=%d, ssl=%p, handshake=%d, already_sent=%d)",
-                 (int) ls->resources_released, (void *) ls->ssl, (int) ls->handshake_completed,
-                 (int) ls->close_notify_sent);
+            LOGD("TlsServer: skipping close_notify (released=%d, ssl=%p, handshake=%d)",
+                 (int) ls->resources_released, (void *) ls->ssl, (int) ls->handshake_completed);
         }
         return true;
     }
@@ -279,7 +278,6 @@ bool tlsserverSendCloseNotify(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 
     if (shutdown_result >= 0 || (SSL_get_shutdown(ls->ssl) & SSL_SENT_SHUTDOWN) != 0)
     {
-        ls->close_notify_sent = true;
         if (ls->verbose)
         {
             LOGD("TlsServer: close_notify sent successfully");
@@ -303,14 +301,9 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
-
     tlsserver_lstate_t *ls         = lineGetState(l, t);
-    bool                close_next = ! ls->next_finished;
-    bool                close_prev = ! ls->prev_finished;
-
-    ls->next_finished = true;
-    ls->prev_finished = true;
+    bool                close_next = ! ls->upstream_finished;
+    bool                close_prev = ! ls->downstream_finishing;
 
     LOGW("TlsServer: closing line after fatal TLS failure (close_next=%d, close_prev=%d)",
          (int) close_next, (int) close_prev);
@@ -326,6 +319,4 @@ void tlsserverCloseLineFatal(tunnel_t *t, line_t *l)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-
-    lineUnlock(l);
 }

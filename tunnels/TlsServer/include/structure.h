@@ -41,10 +41,8 @@ typedef struct tlsserver_lstate_s
     buffer_queue_t pending_down;
 
     bool handshake_completed;
-    bool next_finished;
-    bool prev_finished;
-    bool close_notify_sent;
-    bool peer_close_notify_received;
+    bool upstream_finished;
+    bool downstream_finishing;
     bool resources_released;
     bool verbose;
 } tlsserver_lstate_t;
