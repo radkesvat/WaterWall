@@ -39,13 +39,10 @@ If `payload + 3` would exceed that limit:
 
 On either directional `Finish`, `KeepAliveServer`:
 
-1. locks the line
-2. destroys its own per-line state
-3. propagates the first directional finish
-4. if the line is still alive, propagates the opposite directional finish
-5. unlocks the line
+1. destroys its own per-line state
+2. propagates the received directional finish
 
-This keeps the close path aligned with Waterwall’s normal middle-tunnel lifetime rules.
+This keeps the close path aligned with Waterwall’s normal middle-tunnel directional finish rules.
 
 ## Configuration Example
 

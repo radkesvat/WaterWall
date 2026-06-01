@@ -8,8 +8,5 @@ void keepaliveclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     keepaliveclientLinestateInitialize(ls, l);
     keepaliveclientTrackLine(t, l);
 
-    if (! withLineLocked(l, tunnelNextUpStreamInit, t))
-    {
-        return;
-    }
+    tunnelNextUpStreamInit(t, l);
 }

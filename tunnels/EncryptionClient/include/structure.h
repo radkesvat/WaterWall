@@ -19,8 +19,6 @@ typedef struct encryptionclient_tstate_s
 typedef struct encryptionclient_lstate_s
 {
     buffer_stream_t read_stream;
-    bool            next_finished;
-    bool            prev_finished;
 } encryptionclient_lstate_t;
 
 enum

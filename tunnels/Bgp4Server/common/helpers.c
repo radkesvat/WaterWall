@@ -22,21 +22,11 @@ bool bgp4serverLoadSettings(bgp4server_tstate_t *ts, const cJSON *settings)
 
 void bgp4serverCloseLine(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
-
     bgp4server_lstate_t *ls = lineGetState(l, t);
-    if (ls->phase == kBgp4ServerPhaseNone)
-    {
-        lineUnlock(l);
-        return;
-    }
-
     bgp4serverLinestateDestroy(ls);
 
     tunnelNextUpStreamFinish(t, l);
     tunnelPrevDownStreamFinish(t, l);
-
-    lineUnlock(l);
 }
 
 bool bgp4serverWrapPayload(tunnel_t *t, line_t *l, sbuf_t **buf_io, uint8_t type)

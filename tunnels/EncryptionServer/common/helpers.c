@@ -50,25 +50,9 @@ void encryptionserverCloseLineBidirectional(tunnel_t *t, line_t *l)
         return;
     }
 
-    lineLock(l);
-
     encryptionserver_lstate_t *ls = lineGetState(l, t);
-    bool send_next = ! ls->next_finished;
-    bool send_prev = ! ls->prev_finished;
-
-    ls->next_finished = true;
-    ls->prev_finished = true;
     encryptionserverLinestateDestroy(ls);
 
-    if (send_next)
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
-
-    if (send_prev && lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
-
-    lineUnlock(l);
+    tunnelNextUpStreamFinish(t, l);
+    tunnelPrevDownStreamFinish(t, l);
 }

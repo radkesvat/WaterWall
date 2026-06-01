@@ -59,14 +59,11 @@ If `payload + 3` would exceed that limit:
 
 On either directional `Finish`, `KeepAliveClient`:
 
-1. locks the line
-2. removes the line from its tracked-line list
-3. destroys its own per-line state
-4. propagates the first directional finish
-5. if the line is still alive, propagates the opposite directional finish
-6. unlocks the line
+1. removes the line from its tracked-line list
+2. destroys its own per-line state
+3. propagates the received directional finish
 
-This matches Waterwall’s normal middle-tunnel close pattern and avoids touching line state after destruction.
+This matches Waterwall’s normal directional finish pattern and avoids touching line state after destruction.
 
 ## Configuration Example
 

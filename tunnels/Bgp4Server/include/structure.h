@@ -20,12 +20,6 @@ enum
     kBgp4ServerMaxBufferedBytes = (kBgp4ServerFrameHeaderSize + kBgp4ServerMaxBodyLength) * 2,
 };
 
-typedef enum bgp4server_phase_e
-{
-    kBgp4ServerPhaseNone = 0,
-    kBgp4ServerPhaseActive
-} bgp4server_phase_e;
-
 typedef struct bgp4server_tstate_s
 {
     uint16_t as_number;
@@ -35,9 +29,8 @@ typedef struct bgp4server_tstate_s
 
 typedef struct bgp4server_lstate_s
 {
-    bgp4server_phase_e phase;
-    buffer_stream_t    read_stream;
-    bool               open_received;
+    buffer_stream_t read_stream;
+    bool            open_received;
 } bgp4server_lstate_t;
 
 enum

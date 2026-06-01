@@ -5,9 +5,7 @@
 void encryptionserverLinestateInitialize(encryptionserver_lstate_t *ls, buffer_pool_t *pool)
 {
 
-    ls->read_stream   = bufferstreamCreate(pool, kEncryptionFramePrefixSize);
-    ls->next_finished = false;
-    ls->prev_finished = false;
+    ls->read_stream = bufferstreamCreate(pool, kEncryptionFramePrefixSize);
 }
 
 void encryptionserverLinestateDestroy(encryptionserver_lstate_t *ls)

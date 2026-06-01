@@ -229,20 +229,14 @@ bool keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
 
 void keepaliveserverCloseLineFromUpstream(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
     keepaliveserverLinestateDestroy(lineGetState(l, t));
 
     tunnelNextUpStreamFinish(t, l);
-
-    lineUnlock(l);
 }
 
 void keepaliveserverCloseLineFromDownstream(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
     keepaliveserverLinestateDestroy(lineGetState(l, t));
 
     tunnelPrevDownStreamFinish(t, l);
-
-    lineUnlock(l);
 }

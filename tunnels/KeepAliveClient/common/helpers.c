@@ -334,22 +334,16 @@ bool keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
 
 void keepaliveclientCloseLineFromUpstream(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
     keepaliveclientUntrackLine(t, l);
     keepaliveclientLinestateDestroy(lineGetState(l, t));
 
     tunnelNextUpStreamFinish(t, l);
-
-    lineUnlock(l);
 }
 
 void keepaliveclientCloseLineFromDownstream(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
     keepaliveclientUntrackLine(t, l);
     keepaliveclientLinestateDestroy(lineGetState(l, t));
 
     tunnelPrevDownStreamFinish(t, l);
-
-    lineUnlock(l);
 }
