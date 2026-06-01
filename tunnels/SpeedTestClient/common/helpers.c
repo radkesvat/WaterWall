@@ -396,7 +396,8 @@ static void speedtestclientSendEnd(tunnel_t *t, line_t *l, speedtestclient_lstat
 void speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
 {
     discard t;
-    if (ls->send_scheduled || ls->sender_finished || ls->send_paused || ! ls->est_received)
+    if (ls->send_scheduled || ls->send_paused || ! ls->est_received ||
+        (ls->sender_finished && ls->hello_sent))
     {
         return;
     }
