@@ -8,12 +8,9 @@ void socks5serverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->kind == kSocks5ServerLineKindUdpRemote)
     {
-        lineLock(l);
         socks5serverDetachRemoteFromClient(ls);
-        ls->next_finished = true;
         socks5serverLinestateDestroy(ls);
         lineDestroy(l);
-        lineUnlock(l);
         return;
     }
 
@@ -23,9 +20,6 @@ void socks5serverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
         bool send_connect_failure = ls->phase == kSocks5ServerPhaseConnectWaitEst && ! ls->connect_reply_sent;
         socks5serverUnregisterUdpAssociation(ls);
-        ls->next_finished = true;
-        bool close_prev   = ! ls->prev_finished;
-        ls->prev_finished = true;
 
         if (send_connect_failure)
         {
@@ -38,7 +32,7 @@ void socks5serverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
         socks5serverLinestateDestroy(ls);
 
-        if (lineIsAlive(l) && close_prev)
+        if (lineIsAlive(l))
         {
             tunnelPrevDownStreamFinish(t, l);
         }

@@ -321,28 +321,9 @@ bool socks5clientSendConnectRequest(tunnel_t *t, line_t *l, socks5client_lstate_
 
 void socks5clientCloseLineBidirectional(tunnel_t *t, line_t *l)
 {
-    lineLock(l);
-
-    socks5client_lstate_t *ls         = lineGetState(l, t);
-    bool                   close_next = ! ls->next_finished;
-    bool                   close_prev = ! ls->prev_finished;
-
-    ls->next_finished = true;
-    ls->prev_finished = true;
-
-    socks5clientLinestateDestroy(ls);
-
-    if (close_next)
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
-
-    if (lineIsAlive(l) && close_prev)
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
-
-    lineUnlock(l);
+    socks5clientLinestateDestroy(lineGetState(l, t));
+    tunnelNextUpStreamFinish(t, l);
+    tunnelPrevDownStreamFinish(t, l);
 }
 
 bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)

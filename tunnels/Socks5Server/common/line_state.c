@@ -18,8 +18,6 @@ void socks5serverLinestateInitialize(socks5server_lstate_t *ls, tunnel_t *t, lin
         .phase               = kind == kSocks5ServerLineKindControlTcp ? kSocks5ServerPhaseWaitMethod
                                                                        : kSocks5ServerPhaseIdle,
         .kind                = kind,
-        .next_finished       = false,
-        .prev_finished       = false,
         .connect_reply_sent  = false,
         .client_line_locked  = false
     };

@@ -60,8 +60,6 @@ typedef struct socks5server_lstate_s
     hash_t                     association_key;
     socks5server_phase_t       phase;
     socks5server_line_kind_t   kind;
-    bool                       next_finished;
-    bool                       prev_finished;
     bool                       connect_reply_sent;
     bool                       client_line_locked;
 } socks5server_lstate_t;
@@ -106,7 +104,9 @@ void socks5serverLinestateDestroy(socks5server_lstate_t *ls);
 void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts);
 bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
 void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
+void socks5serverCloseControlLineFromUpstream(tunnel_t *t, line_t *l);
 void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l);
+void socks5serverCloseUdpClientLineFromUpstream(tunnel_t *t, line_t *client_l);
 void socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l);
 void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l);
 bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lstate_t *ls, sbuf_t *buf);

@@ -552,20 +552,16 @@ void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts)
     memoryZeroAligned32(ts, sizeof(*ts));
 }
 
-void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l)
+static bool socks5serverControlHasUpstreamPeer(const socks5server_lstate_t *ls)
+{
+    return ls->phase == kSocks5ServerPhaseConnectWaitEst || ls->phase == kSocks5ServerPhaseTcpEstablished;
+}
+
+static void socks5serverCloseControlLineInternal(tunnel_t *t, line_t *l, bool close_prev)
 {
     socks5server_lstate_t *ls = lineGetState(l, t);
-
-    lineLock(l);
-
+    bool close_next = socks5serverControlHasUpstreamPeer(ls);
     socks5serverUnregisterUdpAssociation(ls);
-
-    bool close_next = ! ls->next_finished && (ls->phase == kSocks5ServerPhaseConnectWaitEst ||
-                                              ls->phase == kSocks5ServerPhaseTcpEstablished);
-    bool close_prev = ! ls->prev_finished;
-
-    ls->next_finished = true;
-    ls->prev_finished = true;
 
     socks5serverLinestateDestroy(ls);
 
@@ -578,15 +574,21 @@ void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l)
     {
         tunnelPrevDownStreamFinish(t, l);
     }
-
-    lineUnlock(l);
 }
 
-void socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l)
+void socks5serverCloseControlLineFromUpstream(tunnel_t *t, line_t *l)
+{
+    socks5serverCloseControlLineInternal(t, l, false);
+}
+
+void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l)
+{
+    socks5serverCloseControlLineInternal(t, l, true);
+}
+
+static void socks5serverCloseUdpClientLineInternal(tunnel_t *t, line_t *client_l, bool close_prev)
 {
     socks5server_lstate_t *client_ls = lineGetState(client_l, t);
-
-    lineLock(client_l);
 
     size_t line_count = socks5server_remote_map_t_size(&client_ls->udp_remote_lines);
     if (line_count > 0)
@@ -609,37 +611,44 @@ void socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l)
 
             socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
             socks5serverDetachRemoteFromClient(remote_ls);
-            if (! remote_ls->next_finished)
+            socks5serverLinestateDestroy(remote_ls);
+            tunnelNextUpStreamFinish(t, remote_l);
+            if (lineIsAlive(remote_l))
             {
-                remote_ls->next_finished = true;
-                tunnelNextUpStreamFinish(t, remote_l);
+                lineDestroy(remote_l);
             }
         }
 
         memoryFree(remote_lines);
     }
 
-    bool close_prev = ! client_ls->prev_finished;
-
-    client_ls->next_finished = true;
-    client_ls->prev_finished = true;
     socks5serverLinestateDestroy(client_ls);
     if (close_prev)
     {
         tunnelPrevDownStreamFinish(t, client_l);
     }
-    lineUnlock(client_l);
+}
+
+void socks5serverCloseUdpClientLineFromUpstream(tunnel_t *t, line_t *client_l)
+{
+    socks5serverCloseUdpClientLineInternal(t, client_l, false);
+}
+
+void socks5serverCloseUdpClientLine(tunnel_t *t, line_t *client_l)
+{
+    socks5serverCloseUdpClientLineInternal(t, client_l, true);
 }
 
 void socks5serverCloseUdpRemoteLine(tunnel_t *t, line_t *remote_l)
 {
     socks5server_lstate_t *remote_ls = lineGetState(remote_l, t);
 
-    if (! remote_ls->next_finished)
+    socks5serverDetachRemoteFromClient(remote_ls);
+    socks5serverLinestateDestroy(remote_ls);
+    tunnelNextUpStreamFinish(t, remote_l);
+    if (lineIsAlive(remote_l))
     {
-        remote_ls->next_finished = true;
-        socks5serverDetachRemoteFromClient(remote_ls);
-        tunnelNextUpStreamFinish(t, remote_l);
+        lineDestroy(remote_l);
     }
 }
 

@@ -38,8 +38,6 @@ typedef struct socks5client_lstate_s
     buffer_stream_t        in_stream;
     buffer_queue_t         pending_up;
     socks5client_phase_t   phase;
-    bool                   next_finished;
-    bool                   prev_finished;
 } socks5client_lstate_t;
 
 enum

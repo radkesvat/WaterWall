@@ -4,11 +4,6 @@
 
 void socks5clientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    socks5client_lstate_t *ls = lineGetState(l, t);
-
-    lineLock(l);
-    ls->next_finished = true;
-    socks5clientLinestateDestroy(ls);
+    socks5clientLinestateDestroy(lineGetState(l, t));
     tunnelNextUpStreamFinish(t, l);
-    lineUnlock(l);
 }
