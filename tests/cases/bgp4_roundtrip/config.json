@@ -1,0 +1,38 @@
+{
+  "name": "bgp4-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "allow-early-response": true,
+        "max-payload-size": 32768
+      },
+      "next": "bgp4-client"
+    },
+    {
+      "name": "bgp4-client",
+      "type": "Bgp4Client",
+      "settings": {
+        "password": "waterwall-bgp4-integration"
+      },
+      "next": "bgp4-server"
+    },
+    {
+      "name": "bgp4-server",
+      "type": "Bgp4Server",
+      "settings": {
+        "password": "waterwall-bgp4-integration"
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "streaming-response": true,
+        "max-payload-size": 32768
+      }
+    }
+  ]
+}

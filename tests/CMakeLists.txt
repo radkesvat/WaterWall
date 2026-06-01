@@ -27,6 +27,26 @@ function(add_waterwall_integration_test test_name case_name)
   add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 30)
 endfunction()
 
+function(add_waterwall_skipped_integration_test test_name skip_message)
+  add_test(
+    NAME ${test_name}
+    COMMAND
+      "${BASH_EXECUTABLE}"
+      "-c"
+      "printf '%s\n' \"$1\"; exit 77"
+      "waterwall-skip"
+      "${skip_message}"
+  )
+
+  set_tests_properties(
+    ${test_name}
+    PROPERTIES
+      TIMEOUT 120
+      LABELS "integration;tunnels"
+      SKIP_RETURN_CODE 77
+  )
+endfunction()
+
 function(add_waterwall_negative_integration_test test_name case_name)
   add_waterwall_integration_test_with_timeout(${test_name} ${case_name} 10)
   set_tests_properties(
@@ -62,11 +82,10 @@ add_waterwall_integration_test(waterwall.obfuscator_roundtrip obfuscator_roundtr
 add_waterwall_integration_test(waterwall.obfuscator_tls_record_roundtrip obfuscator_tls_record_roundtrip)
 add_waterwall_integration_test(waterwall.encryption_roundtrip encryption_roundtrip)
 add_waterwall_integration_test(waterwall.encryption_small_frame_roundtrip encryption_small_frame_roundtrip)
+add_waterwall_integration_test(waterwall.bgp4_roundtrip bgp4_roundtrip)
 add_waterwall_integration_test(waterwall.keepalive_roundtrip keepalive_roundtrip)
 add_waterwall_integration_test(waterwall.tls_roundtrip tls_roundtrip)
-if(INCLUDE_REALITY_CLIENT AND INCLUDE_REALITY_SERVER)
-  add_waterwall_integration_test(waterwall.reality_google_roundtrip reality_google_roundtrip)
-endif()
+add_waterwall_integration_test(waterwall.reality_google_roundtrip reality_google_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_roundtrip connection_fisher_roundtrip)
 add_waterwall_integration_test(waterwall.connection_fisher_encryption_roundtrip connection_fisher_encryption_roundtrip)
 add_waterwall_integration_test(waterwall.sniffrouter_non_http_tcp_loopback sniffrouter_non_http_tcp_loopback)

@@ -65,6 +65,9 @@ Practical rule:
 - `encryption_small_frame_roundtrip`
   Verifies the encryption pair with `max-frame-size=4096`, so the framing logic is exercised even when the harness uses
   larger stream buffers.
+- `bgp4_roundtrip`
+  Verifies that `Bgp4Client` and `Bgp4Server` preserve bidirectional stream payloads through BGP-like frames, including
+  the first upstream OPEN frame and subsequent non-OPEN frames.
 - `tls_roundtrip`
   Verifies `TlsClient` and `TlsServer` chained directly with a self-signed test certificate, peer verification disabled
   on the client, SNI checked by the server, and streaming responses enabled so TLS traffic flows in both directions.
